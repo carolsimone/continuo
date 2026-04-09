@@ -1,0 +1,38 @@
+# Development Dockerfile for graph service
+FROM golang:1.25.1
+
+# Install Docker CLI for integration tests
+RUN apt-get update && apt-get install -y \
+    docker.io \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy workspace files (monorepo support)
+COPY go.work go.work.sum* ./
+
+# Copy all workspace modules
+COPY state/ ./state/
+COPY startup-controller/ ./startup-controller/
+COPY executor-controller/ ./executor-controller/
+COPY dependency-controller/ ./dependency-controller/
+COPY k8s-controller/ ./k8s-controller/
+COPY graph/ ./graph/
+COPY pkg/ ./pkg/
+COPY e2e/ ./e2e/
+
+WORKDIR /app/graph
+
+# Download dependencies
+RUN go mod download
+
+# Install development tools
+RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+# Expose ports
+EXPOSE 8081
+EXPOSE 50052
+
+# Keep container running for development
+CMD ["tail", "-f", "/dev/null"]

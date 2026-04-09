@@ -1,0 +1,205 @@
+package grpc
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+)
+
+// Server wraps gRPC server with graceful shutdown
+type Server struct {
+	statev1.UnimplementedStateServiceServer
+	grpcServer           *grpc.Server
+	listener             net.Listener
+	logger               *slog.Logger
+	schedulerHandler     *handlers.SchedulerHandler
+	taskHandler          *handlers.TaskHandler
+	taskExecutionHandler *handlers.TaskExecutionHandler
+}
+
+// NewServer creates a new gRPC server
+func NewServer(
+	port int,
+	schedulerHandler *handlers.SchedulerHandler,
+	taskHandler *handlers.TaskHandler,
+	taskExecutionHandler *handlers.TaskExecutionHandler,
+	logger *slog.Logger,
+) (*Server, error) {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen: %w", err)
+	}
+
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(loggingInterceptor(logger)),
+	)
+
+	// Register service implementation
+	server := &Server{
+		grpcServer:           grpcServer,
+		listener:             listener,
+		logger:               logger,
+		schedulerHandler:     schedulerHandler,
+		taskHandler:          taskHandler,
+		taskExecutionHandler: taskExecutionHandler,
+	}
+
+	statev1.RegisterStateServiceServer(grpcServer, server)
+
+	// Enable reflection for grpcurl/testing
+	reflection.Register(grpcServer)
+
+	return server, nil
+}
+
+// Addr returns the address the server is listening on
+func (s *Server) Addr() string {
+	return s.listener.Addr().String()
+}
+
+// Start starts the gRPC server
+func (s *Server) Start() error {
+	s.logger.Info("Starting gRPC server", "addr", s.listener.Addr().String())
+	if err := s.grpcServer.Serve(s.listener); err != nil {
+		return fmt.Errorf("failed to serve: %w", err)
+	}
+	return nil
+}
+
+// Shutdown gracefully shuts down the gRPC server
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.logger.Info("Shutting down gRPC server")
+	s.grpcServer.GracefulStop()
+	return nil
+}
+
+// ============================================================================
+// IMPLEMENT STATE SERVICE SERVER INTERFACE
+// ============================================================================
+
+// CreateScheduler delegates to scheduler handler
+func (s *Server) CreateScheduler(ctx context.Context, req *statev1.CreateSchedulerRequest) (*statev1.SchedulerResponse, error) {
+	return s.schedulerHandler.CreateScheduler(ctx, req)
+}
+
+// GetScheduler delegates to scheduler handler
+func (s *Server) GetScheduler(ctx context.Context, req *statev1.GetSchedulerRequest) (*statev1.SchedulerResponse, error) {
+	return s.schedulerHandler.GetScheduler(ctx, req)
+}
+
+// UpdateScheduler delegates to scheduler handler
+func (s *Server) UpdateScheduler(ctx context.Context, req *statev1.UpdateSchedulerRequest) (*statev1.SchedulerResponse, error) {
+	return s.schedulerHandler.UpdateScheduler(ctx, req)
+}
+
+// CancelScheduler delegates to scheduler handler
+func (s *Server) CancelScheduler(ctx context.Context, req *statev1.CancelSchedulerRequest) (*statev1.SchedulerResponse, error) {
+	return s.schedulerHandler.CancelScheduler(ctx, req)
+}
+
+// UpdateSchedulerInitStatus delegates to scheduler handler
+func (s *Server) UpdateSchedulerInitStatus(ctx context.Context, req *statev1.UpdateSchedulerInitStatusRequest) (*statev1.SchedulerResponse, error) {
+	return s.schedulerHandler.UpdateSchedulerInitStatus(ctx, req)
+}
+
+// ResetInProgressInitializations delegates to scheduler handler
+func (s *Server) ResetInProgressInitializations(ctx context.Context, req *statev1.ResetInProgressInitializationsRequest) (*statev1.ResetInProgressInitializationsResponse, error) {
+	return s.schedulerHandler.ResetInProgressInitializations(ctx, req)
+}
+
+// ActivateSchedule delegates to scheduler handler
+func (s *Server) ActivateSchedule(ctx context.Context, req *statev1.ActivateScheduleRequest) (*statev1.ActivateScheduleResponse, error) {
+	return s.schedulerHandler.ActivateSchedule(ctx, req)
+}
+
+// ListAllSchedules delegates to scheduler handler
+func (s *Server) ListAllSchedules(ctx context.Context, req *statev1.ListAllSchedulesRequest) (*statev1.ListAllSchedulesResponse, error) {
+	return s.schedulerHandler.ListAllSchedules(ctx, req)
+}
+
+// TriggerSchedule delegates to scheduler handler
+func (s *Server) TriggerSchedule(ctx context.Context, req *statev1.TriggerScheduleRequest) (*statev1.TriggerScheduleResponse, error) {
+	return s.schedulerHandler.TriggerSchedule(ctx, req)
+}
+
+// CancelSchedule delegates to scheduler handler
+func (s *Server) CancelSchedule(ctx context.Context, req *statev1.CancelScheduleRequest) (*statev1.CancelScheduleResponse, error) {
+	return s.schedulerHandler.CancelSchedule(ctx, req)
+}
+
+// CreateTask delegates to task handler
+func (s *Server) CreateTask(ctx context.Context, req *statev1.CreateTaskRequest) (*statev1.TaskResponse, error) {
+	return s.taskHandler.CreateTask(ctx, req)
+}
+
+// GetTask delegates to task handler
+func (s *Server) GetTask(ctx context.Context, req *statev1.GetTaskRequest) (*statev1.TaskResponse, error) {
+	return s.taskHandler.GetTask(ctx, req)
+}
+
+// GetTaskByScheduleAndNode delegates to task handler
+func (s *Server) GetTaskByScheduleAndNode(ctx context.Context, req *statev1.GetTaskByScheduleAndNodeRequest) (*statev1.TaskResponse, error) {
+	return s.taskHandler.GetTaskByScheduleAndNode(ctx, req)
+}
+
+// UpdateTask delegates to task handler
+func (s *Server) UpdateTask(ctx context.Context, req *statev1.UpdateTaskRequest) (*statev1.TaskResponse, error) {
+	return s.taskHandler.UpdateTask(ctx, req)
+}
+
+// DeleteTask delegates to task handler
+func (s *Server) DeleteTask(ctx context.Context, req *statev1.DeleteTaskRequest) (*statev1.DeleteTaskResponse, error) {
+	return s.taskHandler.DeleteTask(ctx, req)
+}
+
+// ListTasks delegates to task handler
+func (s *Server) ListTasks(ctx context.Context, req *statev1.ListTasksRequest) (*statev1.ListTasksResponse, error) {
+	return s.taskHandler.ListTasks(ctx, req)
+}
+
+// ResetTask delegates to task handler
+func (s *Server) ResetTask(ctx context.Context, req *statev1.ResetTaskRequest) (*statev1.TaskResponse, error) {
+	return s.taskHandler.ResetTask(ctx, req)
+}
+
+// GetSchedulerInitStatus delegates to scheduler handler
+func (s *Server) GetSchedulerInitStatus(ctx context.Context, req *statev1.GetSchedulerInitStatusRequest) (*statev1.GetSchedulerInitStatusResponse, error) {
+	return s.schedulerHandler.GetSchedulerInitStatus(ctx, req)
+}
+
+// CreateTaskExecution delegates to task execution handler
+func (s *Server) CreateTaskExecution(ctx context.Context, req *statev1.CreateTaskExecutionRequest) (*statev1.TaskExecutionResponse, error) {
+	return s.taskExecutionHandler.CreateTaskExecution(ctx, req)
+}
+
+// GetTaskExecution delegates to task execution handler
+func (s *Server) GetTaskExecution(ctx context.Context, req *statev1.GetTaskExecutionRequest) (*statev1.TaskExecutionResponse, error) {
+	return s.taskExecutionHandler.GetTaskExecution(ctx, req)
+}
+
+// ListTaskExecutions delegates to task execution handler
+func (s *Server) ListTaskExecutions(ctx context.Context, req *statev1.ListTaskExecutionsRequest) (*statev1.ListTaskExecutionsResponse, error) {
+	return s.taskExecutionHandler.ListTaskExecutions(ctx, req)
+}
+
+// ============================================================================
+// INTERCEPTORS
+// ============================================================================
+
+// loggingInterceptor logs all gRPC requests
+func loggingInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		logger.Info("gRPC request", "method", info.FullMethod)
+		resp, err := handler(ctx, req)
+		if err != nil {
+			logger.Error("gRPC error", "method", info.FullMethod, "error", err)
+		}
+		return resp, err
+	}
+}

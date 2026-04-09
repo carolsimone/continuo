@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: service_1
+    schema: e2e_schema
+    tables:
+      - name: table_a
+      - name: table_b
+      - name: table_c
+  - name: service_2
+    schema: e2e_schema
+    tables:
+      - name: table_g
+      - name: table_h

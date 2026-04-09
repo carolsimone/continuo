@@ -1,0 +1,13 @@
+{
+  "nodes": {
+    "model.service_1.orders": {
+      "resource_type": "model",
+      "name": "orders",
+      "schema": "public",
+      "fqn": ["service_1", "orders"],
+      "tags": ["daily"],
+      "config": {"meta": {}},
+      "compiled_code": "SELECT 1"
+    }
+  }
+}

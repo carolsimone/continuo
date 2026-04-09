@@ -1,0 +1,39 @@
+FROM continuo-base:latest
+
+WORKDIR /app
+
+# Layer 1: Workspace (rarely changes)
+COPY go.work go.work.sum* ./
+
+# Layer 2: All go.mod files (changes when deps update)
+COPY state/go.mod state/go.sum ./state/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY graph/go.mod graph/go.sum ./graph/
+COPY startup-controller/go.mod startup-controller/go.sum ./startup-controller/
+COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
+COPY dependency-controller/go.mod dependency-controller/go.sum ./dependency-controller/
+COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY e2e/go.mod e2e/go.sum ./e2e/
+
+# Layer 3: Download dependencies with cache mount
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Layer 4: Copy source code (changes frequently)
+COPY state/ ./state/
+COPY pkg/ ./pkg/
+COPY graph/ ./graph/
+COPY startup-controller/ ./startup-controller/
+COPY executor-controller/ ./executor-controller/
+COPY dependency-controller/ ./dependency-controller/
+COPY k8s-controller/ ./k8s-controller/
+COPY e2e/ ./e2e/
+
+WORKDIR /app/executor-controller
+
+# Pre-compile the binary for faster startup in K8s
+RUN go build -o /app/executor-controller/bin/executor-controller main.go
+
+EXPOSE 8084
+
+CMD ["tail", "-f", "/dev/null"]

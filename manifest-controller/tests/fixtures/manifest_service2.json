@@ -1,0 +1,16 @@
+{
+  "nodes": {
+    "model.service-2.orders": {
+      "unique_id": "model.service-2.orders",
+      "name": "orders",
+      "schema": "test_schema",
+      "fqn": ["service-2", "orders"],
+      "tags": ["daily"],
+      "resource_type": "model",
+      "config": {
+        "meta": { "owner": "team-b", "criticality": "SECONDARY" }
+      },
+      "compiled_code": "SELECT * FROM test_schema.users"
+    }
+  }
+}

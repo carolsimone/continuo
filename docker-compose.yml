@@ -1,0 +1,555 @@
+services:
+
+  postgres:
+    image: postgres:16.4
+    # You avoid it to store anything in memory, which is what I want in tests.
+    # I do to avoid having the issue "no space left on the device" when running tests.
+    # I can also increase colima disk size to n GB.
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=runner
+      - POSTGRES_PASSWORD=runner
+      # POSTGRES_DB removed - databases created by init script
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
+
+  flyway-state:
+    image: flyway/flyway
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_state -user=runner -password=runner -connectRetries=30
+    volumes:
+      - ./db/migration/state:/flyway/sql
+    depends_on:
+      - postgres
+    tty: true
+
+  flyway-startup:
+    image: flyway/flyway
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_startup -user=runner -password=runner -connectRetries=30
+    volumes:
+      - ./db/migration/startup:/flyway/sql
+    depends_on:
+      - postgres
+    tty: true
+
+  flyway-executor:
+    image: flyway/flyway
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_executor -user=runner -password=runner -connectRetries=30
+    volumes:
+      - ./db/migration/executor:/flyway/sql
+    depends_on:
+      - postgres
+    tty: true
+
+  flyway-dependency:
+    image: flyway/flyway
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_dependency -user=runner -password=runner -connectRetries=30
+    volumes:
+      - ./db/migration/dependency:/flyway/sql
+    depends_on:
+      - postgres
+    tty: true
+
+  flyway-k8s:
+    image: flyway/flyway
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_k8s -user=runner -password=runner -connectRetries=30
+    volumes:
+      - ./db/migration/k8s:/flyway/sql
+    depends_on:
+      - postgres
+    tty: true
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    # Disable all persistence (both RDB snapshots and AOF) to avoid
+    # "No space left on device" errors when Colima's virtual disk is tight.
+    command: redis-server --appendonly no --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+
+  neo4j:
+    image: neo4j:5.15.0-community
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/atlas_password
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_dbms_memory_pagecache_size=512M
+      - NEO4J_dbms_memory_heap_initial__size=512M
+      - NEO4J_dbms_memory_heap_max__size=1G
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  state:
+    build:
+      context: .
+      dockerfile: state/Dockerfile.dev
+    container_name: state
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - POSTGRES_DB=continuo_state
+      - POSTGRES_USER=runner
+      - POSTGRES_PASSWORD=runner
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - DB_SSLMODE=disable
+      - DB_POOL_SIZE=10
+      - DB_MAX_OVERFLOW=20
+      - LOG_LEVEL=INFO
+      - ENV=local
+      - HEALTH_PORT=8082
+      - GRPC_PORT=50051
+      - REDIS_ADDR=redis:6379
+      - REDIS_STREAM_SCHEDULER_STARTED=scheduler.started:v1
+      - REDIS_STREAM_SCHEDULES_LOADED=schedules.loaded:v1
+      - SCHEDULES_CONFIG_PATH=/etc/continuo/schedules.yaml
+    ports:
+      - "8082:8082"   # Health check HTTP
+      - "50051:50051" # gRPC
+    volumes:
+      - ./state:/app/state
+      - ./startup-controller:/app/startup-controller
+      - ./executor-controller:/app/executor-controller
+      - ./dependency-controller:/app/dependency-controller
+      - ./k8s-controller:/app/k8s-controller
+      - ./pkg:/app/pkg
+      - ./graph:/app/graph
+      - ./e2e:/app/e2e
+      - ./go.work:/app/go.work
+      - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
+      - ./config/schedules.yaml:/etc/continuo/schedules.yaml:ro
+    networks:
+      - default
+    tty: true
+
+  startup-controller:
+    build:
+      context: .
+      dockerfile: startup-controller/Dockerfile.dev
+    container_name: startup-controller
+    depends_on:
+      - postgres
+      - redis
+      - neo4j
+      - state
+      - flyway-startup
+    environment:
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_CONSUMER_STREAM=scheduler.started:v1
+      - REDIS_CONSUMER_GROUP=startup_controller_consumers
+      - REDIS_PRODUCER_STREAM=query.model:v1
+      # Neo4j
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=atlas_password
+      # PostgreSQL
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=continuo_startup
+      - POSTGRES_USER=runner
+      - POSTGRES_PASSWORD=runner
+      # State Service
+      - STATE_SERVICE_GRPC_ADDR=state:50051
+      # Kubernetes
+      - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
+      # Application
+      - HTTP_PORT=8083
+      - ENV=local
+      - LOG_LEVEL=INFO
+    ports:
+      - "8083:8083"   # Health check HTTP
+    volumes:
+      - ./state:/app/state
+      - ./startup-controller:/app/startup-controller
+      - ./executor-controller:/app/executor-controller
+      - ./dependency-controller:/app/dependency-controller
+      - ./k8s-controller:/app/k8s-controller
+      - ./pkg:/app/pkg
+      - ./graph:/app/graph
+      - ./e2e:/app/e2e
+      - ./go.work:/app/go.work
+      - ./kubeconfig:/app/kubeconfig
+      - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
+      - ./startup-controller/kubeconfig:/root/.kube  # kubectl default location
+    networks:
+      - default
+      - kind
+    tty: true
+
+  executor-controller:
+    build:
+      context: .
+      dockerfile: executor-controller/Dockerfile.dev
+    image: continuo-executor-controller:latest
+    container_name: executor-controller
+    depends_on:
+      - postgres
+      - redis
+      - neo4j
+      - state
+    environment:
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_CONSUMER_STREAM=query.model:v1
+      - REDIS_CONSUMER_RETRY_STREAM=task.retry:v1
+      - REDIS_CONSUMER_GROUP=executor_controller_consumers
+      - REDIS_PRODUCER_STREAM=executor.deployed:v1
+      # PostgreSQL
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=continuo_executor
+      - POSTGRES_USER=runner
+      - POSTGRES_PASSWORD=runner
+      # State Service
+      - STATE_SERVICE_GRPC_ADDR=state:50051
+      # Kubernetes
+      - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
+      - K8S_NAMESPACE=default
+      # dbt PostgreSQL target (forwarded to K8s job pods)
+      - DBT_POSTGRES_DB=continuo_dbt
+      # Application
+      - HTTP_PORT=8084
+      - ENV=local
+      - LOG_LEVEL=INFO
+    ports:
+      - "8084:8084"   # Health check HTTP
+    volumes:
+      - ./state:/app/state
+      - ./startup-controller:/app/startup-controller
+      - ./executor-controller:/app/executor-controller
+      - ./dependency-controller:/app/dependency-controller
+      - ./k8s-controller:/app/k8s-controller
+      - ./pkg:/app/pkg
+      - ./graph:/app/graph
+      - ./e2e:/app/e2e
+      - ./go.work:/app/go.work
+      - ./kubeconfig:/app/kubeconfig
+      - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
+    networks:
+      - default
+      - kind
+    tty: true
+
+  k8s-controller:
+    build:
+      context: .
+      dockerfile: k8s-controller/Dockerfile.dev
+    image: continuo-k8s-controller:latest
+    container_name: k8s-controller
+    depends_on:
+      - postgres
+      - redis
+      - state
+      - localstack
+    environment:
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_CONSUMER_DEPLOYED_STREAM=executor.deployed:v1
+      - REDIS_CONSUMER_CHECK_STREAM=k8s.check:v1
+      - REDIS_CONSUMER_GROUP=k8s_controller_consumers
+      - REDIS_PRODUCER_CHECK_STREAM=k8s.check:v1
+      - REDIS_PRODUCER_RETRY_STREAM=task.retry:v1
+      - REDIS_PRODUCER_FAILED_STREAM=task.failed:v1
+      - REDIS_PRODUCER_UPDATE_TABLE_STREAM=update.table:v1
+      # PostgreSQL
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=continuo_k8s
+      - POSTGRES_USER=runner
+      - POSTGRES_PASSWORD=runner
+      # State Service
+      - STATE_SERVICE_GRPC_ADDR=state:50051
+      # Kubernetes
+      - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
+      - K8S_NAMESPACE=default
+      # S3 / LocalStack
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_BUCKET=continuo
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - LOG_TAIL_LINES=50
+      # Application
+      - K8S_CHECK_DELAY_SECONDS=30
+      - ERROR_MESSAGE_MAX_LENGTH=4096
+      - HTTP_PORT=8085
+      - ENV=local
+      - LOG_LEVEL=INFO
+    ports:
+      - "8085:8085"   # Health check HTTP
+    volumes:
+      - ./state:/app/state
+      - ./startup-controller:/app/startup-controller
+      - ./executor-controller:/app/executor-controller
+      - ./dependency-controller:/app/dependency-controller
+      - ./k8s-controller:/app/k8s-controller
+      - ./pkg:/app/pkg
+      - ./graph:/app/graph
+      - ./e2e:/app/e2e
+      - ./go.work:/app/go.work
+      - ./kubeconfig:/app/kubeconfig
+      - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
+    networks:
+      - default
+      - kind
+    tty: true
+
+  dependency-controller:
+    build:
+      context: .
+      dockerfile: dependency-controller/Dockerfile.dev
+    container_name: dependency-controller
+    depends_on:
+      - postgres
+      - redis
+      - state
+      - graph
+    environment:
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_CONSUMER_STREAM=update.table:v1
+      - REDIS_CONSUMER_GROUP=dependency_controller_consumers
+      - REDIS_PRODUCER_STREAM=query.model:v1
+      # PostgreSQL
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=continuo_dependency
+      - POSTGRES_USER=runner
+      - POSTGRES_PASSWORD=runner
+      # State Service
+      - STATE_SERVICE_GRPC_ADDR=state:50051
+      # Graph Service
+      - GRAPH_SERVICE_GRPC_ADDR=graph:50052
+      # Application
+      - HTTP_PORT=8086
+      - ENV=local
+      - LOG_LEVEL=INFO
+    ports:
+      - "8086:8086"   # Health check HTTP
+    volumes:
+      - ./state:/app/state
+      - ./startup-controller:/app/startup-controller
+      - ./executor-controller:/app/executor-controller
+      - ./dependency-controller:/app/dependency-controller
+      - ./k8s-controller:/app/k8s-controller
+      - ./pkg:/app/pkg
+      - ./graph:/app/graph
+      - ./e2e:/app/e2e
+      - ./go.work:/app/go.work
+      - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
+    networks:
+      - default
+    tty: true
+
+  graph:
+    build:
+      context: .
+      dockerfile: graph/Dockerfile.dev
+    container_name: graph
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=atlas_password
+      - GRPC_PORT=50052
+      - HEALTH_PORT=8081
+      - LOG_LEVEL=INFO
+      - ENV=local
+    ports:
+      - "8081:8081"   # Health check HTTP
+      - "50052:50052" # gRPC
+    volumes:
+      - ./state:/app/state
+      - ./startup-controller:/app/startup-controller
+      - ./executor-controller:/app/executor-controller
+      - ./dependency-controller:/app/dependency-controller
+      - ./k8s-controller:/app/k8s-controller
+      - ./pkg:/app/pkg
+      - ./graph:/app/graph
+      - ./e2e:/app/e2e
+      - ./go.work:/app/go.work
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+    tty: true
+
+  e2e:
+    build:
+      context: .
+      dockerfile: e2e/Dockerfile
+    container_name: e2e
+    depends_on:
+      state:
+        condition: service_started
+      startup-controller:
+        condition: service_started
+      dependency-controller:
+        condition: service_started
+      graph:
+        condition: service_started
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      neo4j:
+        condition: service_started
+      ui:
+        condition: service_started
+      compile-and-upload:
+        condition: service_completed_successfully
+    environment:
+      - GRAPH_HOST=graph
+      - STATE_HOST=state
+      - REDIS_HOST=redis
+      - NEO4J_HOST=neo4j
+      - POSTGRES_HOST=postgres
+      - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
+      - UI_HTTP_BASE=http://ui:8090
+    volumes:
+      - ./kubeconfig:/app/kubeconfig
+      - ./e2e:/app/e2e
+      - ./state:/app/state
+      - ./graph:/app/graph
+      - ./startup-controller:/app/startup-controller
+      - ./executor-controller:/app/executor-controller
+      - ./dependency-controller:/app/dependency-controller
+      - ./k8s-controller:/app/k8s-controller
+      - ./pkg:/app/pkg
+      - ./go.work:/app/go.work
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - kind
+    profiles:
+      - e2e
+    tty: true
+
+  ui:
+    build:
+      context: ./ui-service
+      network: host
+    container_name: ui
+    depends_on:
+      - state
+      - localstack
+    environment:
+      - STATE_GRPC_ADDR=state:50051
+      - GRAPH_GRPC_ADDR=graph:50052
+      - PORT=8090
+      - NODE_ENV=production
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_BUCKET=continuo
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+    ports:
+      - "8090:8090"
+    networks:
+      - default
+
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3
+      - DEFAULT_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4566/_localstack/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./localstack/init:/etc/localstack/init/ready.d
+
+  manifest-controller:
+    build:
+      context: ./manifest-controller
+      dockerfile: Dockerfile.dev
+    container_name: manifest-controller
+    environment:
+      REDIS_URL: redis://redis:6379
+      GRAPH_GRPC_ADDR: graph:50052
+      REGISTRY_PATH: /data/registry.csv
+      MANIFESTS_BASE: /manifests
+      S3_ENDPOINT_URL: http://localstack:4566
+      S3_BUCKET: continuo
+      S3_ENV: local
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ./dbt/services:/manifests:ro
+      - manifest-registry:/data
+    depends_on:
+      redis:
+        condition: service_started
+      graph:
+        condition: service_started
+      localstack:
+        condition: service_healthy
+
+  compile-and-upload:
+    build:
+      context: ./dbt
+      dockerfile: Dockerfile.upload
+    restart: "no"
+    depends_on:
+      localstack:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+    environment:
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_BUCKET=continuo
+      - S3_ENV=local
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      # dbt PostgreSQL connection for dbt compile
+      - DBT_POSTGRES_HOST=postgres
+      - DBT_POSTGRES_PORT=5432
+      - DBT_POSTGRES_DB=continuo_dbt
+      - DBT_POSTGRES_USER=runner
+      - DBT_POSTGRES_PASSWORD=runner
+    volumes:
+      - ./dbt/services:/app/services
+    profiles:
+      - e2e
+
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  manifest-registry:
+
+networks:
+  kind:
+    external: true
+    name: kind

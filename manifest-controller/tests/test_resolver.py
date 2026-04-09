@@ -1,0 +1,121 @@
+import pytest
+from domain.exceptions import UnqualifiedTableReferenceError
+from domain.model import ManifestNode, NodeRegistry, NodeRegistryEntry
+from service.resolver import resolve_upstream_deps
+
+
+def _make_registry(*table_names: str) -> dict:
+    entries = [
+        NodeRegistryEntry(
+            table_name=t,
+            schema_name="public",
+            service_name="service-1",
+            owner="data-platform",
+        )
+        for t in table_names
+    ]
+    return NodeRegistry(entries=entries).to_lookup()
+
+
+def _make_node(table_name: str, sql: str) -> ManifestNode:
+    return ManifestNode(
+        table_name=table_name,
+        schema_name="public",
+        service_name="service-1",
+        owner="data-platform",
+        schedule_name="daily",
+        criticality="SECONDARY",
+        compiled_sql=sql,
+    )
+
+
+def test_resolves_single_upstream():
+    registry = _make_registry("users")
+    node = _make_node("orders", "SELECT id FROM public.users")
+    deps = resolve_upstream_deps(node, registry)
+    assert len(deps) == 1
+    assert deps[0].table_name == "users"
+
+
+def test_skips_self_reference():
+    registry = _make_registry("orders")
+    node = _make_node("orders", "SELECT id FROM public.orders")
+    deps = resolve_upstream_deps(node, registry)
+    assert deps == []
+
+
+def test_skips_cte_names():
+    registry = _make_registry("raw_orders")
+    sql = """
+        WITH cte AS (SELECT id FROM public.raw_orders)
+        SELECT id FROM cte
+    """
+    node = _make_node("orders", sql)
+    deps = resolve_upstream_deps(node, registry)
+    assert len(deps) == 1
+    assert deps[0].table_name == "raw_orders"
+
+
+def test_deduplicates_upstreams():
+    registry = _make_registry("users")
+    sql = "SELECT a.id, b.id FROM public.users a JOIN public.users b ON a.id = b.id"
+    node = _make_node("orders", sql)
+    deps = resolve_upstream_deps(node, registry)
+    assert len(deps) == 1
+
+
+def test_skips_unknown_table():
+    # Tables not in the registry (seeds, sources, external refs) are silently
+    # skipped — they are not cross-service model dependencies.
+    registry = _make_registry("users")
+    node = _make_node("orders", "SELECT id FROM public.unknown_table")
+    deps = resolve_upstream_deps(node, registry)
+    assert deps == []
+
+
+def test_empty_sql_returns_no_deps():
+    registry = _make_registry("users")
+    node = _make_node("orders", "")
+    deps = resolve_upstream_deps(node, registry)
+    assert deps == []
+
+
+def test_multiple_upstreams():
+    registry = _make_registry("users", "products")
+    sql = "SELECT u.id, p.id FROM public.users u JOIN public.products p ON u.id = p.user_id"
+    node = _make_node("orders", sql)
+    deps = resolve_upstream_deps(node, registry)
+    assert len(deps) == 2
+    names = {d.table_name for d in deps}
+    assert names == {"users", "products"}
+
+
+def test_unqualified_table_raises():
+    registry = _make_registry("users")
+    node = _make_node("orders", "SELECT id FROM users")
+    with pytest.raises(UnqualifiedTableReferenceError) as exc_info:
+        resolve_upstream_deps(node, registry)
+    assert exc_info.value.table_name == "users"
+    assert exc_info.value.node_table_name == "orders"
+
+
+def test_resolves_same_table_name_in_different_schemas():
+    # Core regression test: same table_name in two schemas must resolve
+    # to the correct service — the bug this change fixes.
+    lookup = NodeRegistry(entries=[
+        NodeRegistryEntry("orders", "public", "service-a", "team-a"),
+        NodeRegistryEntry("orders", "billing", "service-b", "team-b"),
+    ]).to_lookup()
+    node = _make_node("summary", "SELECT id FROM billing.orders")
+    deps = resolve_upstream_deps(node, lookup)
+    assert len(deps) == 1
+    assert deps[0].service_name == "service-b"
+
+
+def test_schema_mismatch_returns_no_dep():
+    # If SQL references billing.orders but registry only has public.orders,
+    # no dep should be resolved — schema mismatch means different tables.
+    registry = _make_registry("orders")  # schema_name="public"
+    node = _make_node("summary", "SELECT id FROM billing.orders")
+    deps = resolve_upstream_deps(node, registry)
+    assert deps == []

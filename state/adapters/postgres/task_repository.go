@@ -1,0 +1,385 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"strings"
+
+	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+)
+
+// TaskTrackerRepository defines all operations for task_tracker table
+type TaskTrackerRepository interface {
+	Create(ctx context.Context, task *model.TaskTracker) error
+	GetByID(ctx context.Context, taskID uuid.UUID) (*model.TaskTracker, error)
+	GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*model.TaskTracker, error)
+	Update(ctx context.Context, task *model.TaskTracker) error
+	Delete(ctx context.Context, taskID uuid.UUID) error
+	ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *model.TaskStatus, limit, offset int) ([]*model.TaskTracker, int, error)
+	List(ctx context.Context, filters TaskFilters) ([]*model.TaskTracker, int, error)
+	// New: tx-accepting variant for atomic HTTP handler
+	UpdateTx(ctx context.Context, tx *sqlx.Tx, task *model.TaskTracker) error
+}
+
+// TaskFilters defines query filters for List operation
+type TaskFilters struct {
+	ScheduleID *uuid.UUID
+	Status     *model.TaskStatus
+	Limit      int
+	Offset     int
+}
+
+type taskTrackerRepository struct {
+	db     *sqlx.DB
+	logger *slog.Logger
+}
+
+// NewTaskTrackerRepository creates a new TaskTrackerRepository
+func NewTaskTrackerRepository(db *sqlx.DB, logger *slog.Logger) TaskTrackerRepository {
+	return &taskTrackerRepository{
+		db:     db,
+		logger: logger,
+	}
+}
+
+// Create inserts a new task_tracker record into the database
+func (r *taskTrackerRepository) Create(ctx context.Context, task *model.TaskTracker) error {
+	query := `
+		INSERT INTO task_tracker (
+			task_id, schedule_id, created_at, service_name, schema_name,
+			table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		) VALUES (
+			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
+			:table_name, :job_name, :status, :retry_count, :max_retries, :cancelled_at, :cancelled_by
+		)
+	`
+
+	_, err := r.db.NamedExecContext(ctx, query, task)
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505") {
+			r.logger.Warn("Duplicate key violation when creating task_tracker",
+				"task_id", task.TaskID,
+			)
+			return ErrDuplicateKey
+		}
+		r.logger.Error("Failed to create task_tracker",
+			"task_id", task.TaskID,
+			"schedule_id", task.ScheduleID,
+			"error", err,
+		)
+		return fmt.Errorf("failed to create task_tracker: %w", err)
+	}
+
+	r.logger.Info("Created task_tracker",
+		"task_id", task.TaskID,
+		"schedule_id", task.ScheduleID,
+		"service", task.ServiceName,
+		"table", task.TableName,
+	)
+
+	return nil
+}
+
+// GetByID retrieves a task_tracker by task_id
+func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (*model.TaskTracker, error) {
+	query := `
+		SELECT task_id, schedule_id, created_at, service_name, schema_name,
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		FROM task_tracker
+		WHERE task_id = $1
+	`
+
+	var task model.TaskTracker
+	err := r.db.GetContext(ctx, &task, query, taskID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			r.logger.Debug("Task tracker not found",
+				"task_id", taskID,
+			)
+			return nil, ErrNotFound
+		}
+		r.logger.Error("Failed to get task_tracker",
+			"task_id", taskID,
+			"error", err,
+		)
+		return nil, fmt.Errorf("failed to get task_tracker: %w", err)
+	}
+
+	r.logger.Debug("Retrieved task_tracker",
+		"task_id", taskID,
+		"status", task.Status,
+	)
+
+	return &task, nil
+}
+
+// GetByScheduleAndNode retrieves a task_tracker by schedule_id and node information
+func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*model.TaskTracker, error) {
+	query := `
+		SELECT task_id, schedule_id, created_at, service_name, schema_name,
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		FROM task_tracker
+		WHERE schedule_id = $1
+		  AND service_name = $2
+		  AND schema_name = $3
+		  AND table_name = $4
+	`
+
+	var task model.TaskTracker
+	err := r.db.GetContext(ctx, &task, query, scheduleID, serviceName, schemaName, tableName)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			r.logger.Debug("Task tracker not found by schedule and node",
+				"schedule_id", scheduleID,
+				"service_name", serviceName,
+				"schema_name", schemaName,
+				"table_name", tableName,
+			)
+			return nil, ErrNotFound
+		}
+		r.logger.Error("Failed to get task_tracker by schedule and node",
+			"schedule_id", scheduleID,
+			"service_name", serviceName,
+			"error", err,
+		)
+		return nil, fmt.Errorf("failed to get task_tracker: %w", err)
+	}
+
+	r.logger.Debug("Retrieved task_tracker by schedule and node",
+		"task_id", task.TaskID,
+		"schedule_id", scheduleID,
+		"status", task.Status,
+	)
+
+	return &task, nil
+}
+
+// Update updates task status, retry count, and cancellation fields
+func (r *taskTrackerRepository) Update(ctx context.Context, task *model.TaskTracker) error {
+	query := `
+		UPDATE task_tracker
+		SET status = :status,
+			retry_count = :retry_count,
+			cancelled_at = :cancelled_at,
+			cancelled_by = :cancelled_by
+		WHERE task_id = :task_id
+	`
+
+	result, err := r.db.NamedExecContext(ctx, query, task)
+	if err != nil {
+		r.logger.Error("Failed to update task_tracker",
+			"task_id", task.TaskID,
+			"error", err,
+		)
+		return fmt.Errorf("failed to update task_tracker: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		r.logger.Debug("Task tracker not found for update",
+			"task_id", task.TaskID,
+		)
+		return ErrNotFound
+	}
+
+	r.logger.Info("Updated task_tracker",
+		"task_id", task.TaskID,
+		"status", task.Status,
+		"retry_count", task.RetryCount,
+	)
+
+	return nil
+}
+
+// Delete removes a task_tracker record from the database
+func (r *taskTrackerRepository) Delete(ctx context.Context, taskID uuid.UUID) error {
+	query := `DELETE FROM task_tracker WHERE task_id = $1`
+
+	result, err := r.db.ExecContext(ctx, query, taskID)
+	if err != nil {
+		r.logger.Error("Failed to delete task_tracker",
+			"task_id", taskID,
+			"error", err,
+		)
+		return fmt.Errorf("failed to delete task_tracker: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		r.logger.Debug("Task tracker not found for delete",
+			"task_id", taskID,
+		)
+		return ErrNotFound
+	}
+
+	r.logger.Info("Deleted task_tracker",
+		"task_id", taskID,
+	)
+
+	return nil
+}
+
+// UpdateTx updates task status and retry count within an existing transaction.
+func (r *taskTrackerRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, task *model.TaskTracker) error {
+	query := `
+		UPDATE task_tracker
+		SET status = :status,
+			retry_count = :retry_count,
+			cancelled_at = :cancelled_at,
+			cancelled_by = :cancelled_by
+		WHERE task_id = :task_id
+	`
+	result, err := tx.NamedExecContext(ctx, query, task)
+	if err != nil {
+		return fmt.Errorf("failed to update task_tracker: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListByScheduleID retrieves all tasks for a specific schedule with optional status filter
+func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *model.TaskStatus, limit, offset int) ([]*model.TaskTracker, int, error) {
+	whereClauses := []string{"schedule_id = :schedule_id"}
+	args := map[string]interface{}{
+		"schedule_id": scheduleID,
+	}
+
+	if status != nil {
+		whereClauses = append(whereClauses, "status = :status")
+		args["status"] = *status
+	}
+
+	whereClause := strings.Join(whereClauses, " AND ")
+
+	// Count total matching records
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM task_tracker WHERE %s", whereClause)
+	var total int
+
+	countStmt, err := r.db.PrepareNamedContext(ctx, countQuery)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to prepare count query: %w", err)
+	}
+	defer countStmt.Close()
+
+	if err := countStmt.GetContext(ctx, &total, args); err != nil {
+		return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
+	}
+
+	// Fetch paginated results
+	args["limit"] = limit
+	args["offset"] = offset
+
+	query := fmt.Sprintf(`
+		SELECT task_id, schedule_id, created_at, service_name, schema_name,
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		FROM task_tracker
+		WHERE %s
+		ORDER BY created_at DESC
+		LIMIT :limit OFFSET :offset
+	`, whereClause)
+
+	stmt, err := r.db.PrepareNamedContext(ctx, query)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to prepare query: %w", err)
+	}
+	defer stmt.Close()
+
+	var tasks []*model.TaskTracker
+	if err := stmt.SelectContext(ctx, &tasks, args); err != nil {
+		r.logger.Error("Failed to list tasks by schedule",
+			"schedule_id", scheduleID,
+			"error", err,
+		)
+		return nil, 0, fmt.Errorf("failed to list tasks: %w", err)
+	}
+
+	r.logger.Debug("Listed tasks by schedule",
+		"schedule_id", scheduleID,
+		"count", len(tasks),
+		"total", total,
+	)
+
+	return tasks, total, nil
+}
+
+// List queries tasks with flexible filters and pagination
+func (r *taskTrackerRepository) List(ctx context.Context, filters TaskFilters) ([]*model.TaskTracker, int, error) {
+	// Build dynamic WHERE clause
+	whereClauses := []string{}
+	args := map[string]interface{}{}
+
+	if filters.ScheduleID != nil {
+		whereClauses = append(whereClauses, "schedule_id = :schedule_id")
+		args["schedule_id"] = *filters.ScheduleID
+	}
+
+	if filters.Status != nil {
+		whereClauses = append(whereClauses, "status = :status")
+		args["status"] = *filters.Status
+	}
+
+	whereClause := ""
+	if len(whereClauses) > 0 {
+		whereClause = "WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	// Count total matching records
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM task_tracker %s", whereClause)
+	var total int
+
+	if len(args) > 0 {
+		countStmt, err := r.db.PrepareNamedContext(ctx, countQuery)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to prepare count query: %w", err)
+		}
+		defer countStmt.Close()
+
+		if err := countStmt.GetContext(ctx, &total, args); err != nil {
+			return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
+		}
+	} else {
+		if err := r.db.GetContext(ctx, &total, countQuery); err != nil {
+			return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
+		}
+	}
+
+	// Fetch paginated results
+	args["limit"] = filters.Limit
+	args["offset"] = filters.Offset
+
+	query := fmt.Sprintf(`
+		SELECT task_id, schedule_id, created_at, service_name, schema_name,
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		FROM task_tracker
+		%s
+		ORDER BY created_at DESC
+		LIMIT :limit OFFSET :offset
+	`, whereClause)
+
+	stmt, err := r.db.PrepareNamedContext(ctx, query)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to prepare query: %w", err)
+	}
+	defer stmt.Close()
+
+	var tasks []*model.TaskTracker
+	if err := stmt.SelectContext(ctx, &tasks, args); err != nil {
+		r.logger.Error("Failed to list tasks", "error", err)
+		return nil, 0, fmt.Errorf("failed to list tasks: %w", err)
+	}
+
+	r.logger.Debug("Listed tasks",
+		"count", len(tasks),
+		"total", total,
+		"filters", filters,
+	)
+
+	return tasks, total, nil
+}

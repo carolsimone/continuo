@@ -1,0 +1,52 @@
+# CI-only override: adds GHA layer cache to every service build.
+# Applied via COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" in ci.yml.
+# Never used locally.
+services:
+  state:
+    build:
+      cache_from:
+        - "type=gha,scope=state"
+      cache_to:
+        - "type=gha,scope=state,mode=max"
+
+  graph:
+    build:
+      cache_from:
+        - "type=gha,scope=graph"
+      cache_to:
+        - "type=gha,scope=graph,mode=max"
+
+  startup-controller:
+    build:
+      cache_from:
+        - "type=gha,scope=startup-controller"
+      cache_to:
+        - "type=gha,scope=startup-controller,mode=max"
+
+  executor-controller:
+    build:
+      cache_from:
+        - "type=gha,scope=executor-controller"
+      cache_to:
+        - "type=gha,scope=executor-controller,mode=max"
+
+  dependency-controller:
+    build:
+      cache_from:
+        - "type=gha,scope=dependency-controller"
+      cache_to:
+        - "type=gha,scope=dependency-controller,mode=max"
+
+  k8s-controller:
+    build:
+      cache_from:
+        - "type=gha,scope=k8s-controller"
+      cache_to:
+        - "type=gha,scope=k8s-controller,mode=max"
+
+  ui:
+    build:
+      cache_from:
+        - "type=gha,scope=ui"
+      cache_to:
+        - "type=gha,scope=ui,mode=max"

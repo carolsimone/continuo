@@ -1,0 +1,135 @@
+package postgres
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/jmoiron/sqlx"
+)
+
+// ScheduleCatalogRepository manages the schedule_catalog table.
+type ScheduleCatalogRepository interface {
+	// UpsertAll inserts or reactivates all names in the list.
+	// On conflict: sets last_seen_at=now(), removed_at=NULL.
+	UpsertAll(ctx context.Context, names []string, manifestVersions map[string]string) error
+	// SoftDeleteAbsent soft-deletes any active row whose name is not in names.
+	SoftDeleteAbsent(ctx context.Context, names []string) error
+	// ListActive returns all schedule_names with removed_at IS NULL.
+	ListActive(ctx context.Context) ([]string, error)
+	// ExistsActive returns true if schedule_name is active in the catalog.
+	ExistsActive(ctx context.Context, scheduleName string) (bool, error)
+	GetManifestVersions(ctx context.Context, scheduleName string) (map[string]string, error)
+}
+
+type scheduleCatalogRepository struct {
+	db     *sqlx.DB
+	logger *slog.Logger
+}
+
+// NewScheduleCatalogRepository creates a new ScheduleCatalogRepository.
+func NewScheduleCatalogRepository(db *sqlx.DB, logger *slog.Logger) ScheduleCatalogRepository {
+	return &scheduleCatalogRepository{db: db, logger: logger}
+}
+
+func (r *scheduleCatalogRepository) UpsertAll(ctx context.Context, names []string, manifestVersions map[string]string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	versionsJSON, err := json.Marshal(manifestVersions)
+	if err != nil {
+		return fmt.Errorf("marshal manifest_versions: %w", err)
+	}
+	now := time.Now()
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin upsert transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, name := range names {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, manifest_versions)
+			VALUES ($1, $2, $2, NULL, $3)
+			ON CONFLICT (schedule_name) DO UPDATE
+			  SET last_seen_at = $2,
+			      removed_at = NULL,
+			      manifest_versions = $3
+		`, name, now, versionsJSON)
+		if err != nil {
+			return fmt.Errorf("upsert schedule_catalog %q: %w", name, err)
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *scheduleCatalogRepository) SoftDeleteAbsent(ctx context.Context, names []string) error {
+	now := time.Now()
+	if len(names) == 0 {
+		// Soft-delete everything active
+		_, err := r.db.ExecContext(ctx,
+			`UPDATE schedule_catalog SET removed_at = $1 WHERE removed_at IS NULL`,
+			now,
+		)
+		if err != nil {
+			return fmt.Errorf("soft-delete all active schedules: %w", err)
+		}
+		return nil
+	}
+	// Soft-delete rows not in the provided list
+	query, args, err := sqlx.In(
+		`UPDATE schedule_catalog SET removed_at = ? WHERE removed_at IS NULL AND schedule_name NOT IN (?)`,
+		now, names,
+	)
+	if err != nil {
+		return fmt.Errorf("build SoftDeleteAbsent query: %w", err)
+	}
+	query = r.db.Rebind(query)
+	_, err = r.db.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *scheduleCatalogRepository) ListActive(ctx context.Context) ([]string, error) {
+	var names []string
+	err := r.db.SelectContext(ctx, &names,
+		`SELECT schedule_name FROM schedule_catalog WHERE removed_at IS NULL ORDER BY schedule_name`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list active schedules: %w", err)
+	}
+	return names, nil
+}
+
+func (r *scheduleCatalogRepository) ExistsActive(ctx context.Context, scheduleName string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM schedule_catalog WHERE schedule_name = $1 AND removed_at IS NULL)`,
+		scheduleName,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("exists active schedule %q: %w", scheduleName, err)
+	}
+	return exists, nil
+}
+
+func (r *scheduleCatalogRepository) GetManifestVersions(ctx context.Context, scheduleName string) (map[string]string, error) {
+	var raw []byte
+	err := r.db.QueryRowContext(ctx,
+		`SELECT manifest_versions FROM schedule_catalog WHERE schedule_name = $1`,
+		scheduleName,
+	).Scan(&raw)
+	if err != nil {
+		return nil, fmt.Errorf("get manifest_versions for %q: %w", scheduleName, err)
+	}
+
+	var versions map[string]string
+	if err := json.Unmarshal(raw, &versions); err != nil {
+		return nil, fmt.Errorf("unmarshal manifest_versions: %w", err)
+	}
+	if versions == nil {
+		versions = map[string]string{}
+	}
+	return versions, nil
+}

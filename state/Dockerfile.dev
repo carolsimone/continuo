@@ -1,0 +1,53 @@
+FROM continuo-base:latest
+
+WORKDIR /app
+
+# Layer 1: Workspace (rarely changes)
+COPY go.work go.work.sum* ./
+
+# Layer 2: All go.mod files (changes when deps update)
+COPY state/go.mod state/go.sum ./state/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY graph/go.mod graph/go.sum ./graph/
+COPY startup-controller/go.mod startup-controller/go.sum ./startup-controller/
+COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
+COPY dependency-controller/go.mod dependency-controller/go.sum ./dependency-controller/
+COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY e2e/go.mod e2e/go.sum ./e2e/
+
+# Layer 3: Download dependencies with cache mount
+# IMPORTANT:
+#   RUN --mount=type=cache,target=/go/pkg/mod
+#  - Creates a cache mount pointing to /go/pkg/mod (Go's module cache directory)
+#  - This mount persists between Docker builds rather than being part of the image layers
+#  - When you rebuild the image, Docker reuses the cached Go modules instead of re-downloading them
+#
+#  go mod download
+#  - Downloads all Go module dependencies specified in the go.mod files
+#  - Stores them in /go/pkg/mod (which is now cache-mounted)
+#
+#  Why it's optimized:
+#
+#  1. Faster rebuilds: If your dependencies haven't changed, subsequent builds skip the download entirely because the cache mount already has them
+#  2. Layer ordering: Notice it's "Layer 3" - it runs AFTER copying go.mod files (Layer 2) but BEFORE copying source code (Layer 4). This means:
+#    - Dependency downloads only re-run when go.mod files change
+#    - Source code changes don't trigger dependency re-downloads
+#  3. No bloat: The downloaded modules aren't stored in the final image layers, just in the build cache
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Layer 4: Copy source code (changes frequently)
+COPY state/ ./state/
+COPY pkg/ ./pkg/
+COPY graph/ ./graph/
+COPY startup-controller/ ./startup-controller/
+COPY executor-controller/ ./executor-controller/
+COPY dependency-controller/ ./dependency-controller/
+COPY k8s-controller/ ./k8s-controller/
+COPY e2e/ ./e2e/
+
+WORKDIR /app/state
+
+EXPOSE 8082
+
+CMD ["tail", "-f", "/dev/null"]

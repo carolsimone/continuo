@@ -1,0 +1,14 @@
+name: service_3
+version: '1.0.0'
+config-version: 2
+profile: default
+
+model-paths: ["models"]
+
+models:
+  service_3:
+    +materialized: table
+    +tags: ["e2e-schedule"]
+    +meta:
+      owner: "test"
+      criticality: "CORE"

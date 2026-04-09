@@ -1,0 +1,12 @@
+FROM golang:1.25.1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    docker.io \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install golangci-lint once in the base image
+RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+WORKDIR /app

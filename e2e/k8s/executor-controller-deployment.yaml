@@ -1,0 +1,119 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: executor-controller
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: executor-controller
+  namespace: default
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: executor-controller
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: executor-controller
+subjects:
+  - kind: ServiceAccount
+    name: executor-controller
+    namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor-controller
+  namespace: default
+  labels:
+    app: executor-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: executor-controller
+  template:
+    metadata:
+      labels:
+        app: executor-controller
+    spec:
+      serviceAccountName: executor-controller
+      containers:
+        - name: executor-controller
+          image: continuo-executor-controller:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/app/executor-controller/bin/executor-controller"]
+          ports:
+            - containerPort: 8084
+              name: health
+          env:
+            - name: REDIS_HOST
+              value: "${DOCKER_BRIDGE_IP}"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_CONSUMER_STREAM
+              value: "query.model:v1"
+            - name: REDIS_CONSUMER_RETRY_STREAM
+              value: "task.retry:v1"
+            - name: REDIS_CONSUMER_GROUP
+              value: "executor_controller_consumers"
+            - name: REDIS_PRODUCER_STREAM
+              value: "executor.deployed:v1"
+            - name: POSTGRES_HOST
+              value: "${DOCKER_BRIDGE_IP}"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "continuo_executor"
+            - name: POSTGRES_USER
+              value: "runner"
+            - name: POSTGRES_PASSWORD
+              value: "runner"
+            - name: STATE_SERVICE_GRPC_ADDR
+              value: "${DOCKER_BRIDGE_IP}:50051"
+            - name: K8S_NAMESPACE
+              value: "default"
+            - name: HTTP_PORT
+              value: "8084"
+            - name: ENV
+              value: "local"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: DBT_POSTGRES_DB
+              value: "continuo_dbt"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8084
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8084
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: executor-controller
+  namespace: default
+spec:
+  selector:
+    app: executor-controller
+  ports:
+    - port: 8084
+      targetPort: 8084
+      name: health
+  type: ClusterIP

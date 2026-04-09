@@ -1,0 +1,208 @@
+package main
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"time"
+
+	"github.com/carolsimone/continuo/state/adapters/http"
+	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/adapters/redis"
+	"github.com/carolsimone/continuo/state/config"
+	"github.com/carolsimone/continuo/state/database"
+	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
+	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
+	"github.com/carolsimone/continuo/state/internal/lifecycle"
+	"github.com/carolsimone/continuo/state/internal/scheduler"
+	goredis "github.com/redis/go-redis/v9"
+)
+
+func main() {
+	// Setup structured logger
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
+	logger.Info("Starting state service")
+
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Initialize lifecycle manager
+	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
+	lifecycleManager.SetupSignalHandlers(ctx, cancel)
+
+	// Initialize PostgreSQL connection
+	db, err := database.GetPostgresConnection()
+	if err != nil {
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("PostgreSQL connection established")
+
+	// Register database cleanup
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Closing database connection")
+		return db.Close()
+	})
+
+	// Initialize repositories
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	logger.Info("Schedule catalog repository initialized")
+	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
+	outboxRepo := postgres.NewOutboxRepository(db, logger)
+
+	// Initialize Redis client
+	redisClient := goredis.NewClient(&goredis.Options{
+		Addr: config.GetRedisAddr(),
+	})
+
+	// Test Redis connection
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer pingCancel()
+	if err := redisClient.Ping(pingCtx).Err(); err != nil {
+		logger.Error("Failed to connect to Redis", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Redis connection established")
+
+	// Register Redis client cleanup
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Closing Redis client")
+		return redisClient.Close()
+	})
+
+	// Start outbox processor
+	outboxProcessor := redis.NewOutboxProcessor(outboxRepo, redisClient, logger)
+	go func() {
+		if err := outboxProcessor.Run(ctx); err != nil {
+			logger.Error("Outbox processor error", "error", err)
+		}
+	}()
+
+	// Initialize schedule catalog consumer (consumes schedules.loaded:v1)
+	catalogConsumer, err := redis.NewScheduleCatalogConsumer(
+		redisClient,
+		config.GetRedisStreamSchedulesLoaded(),
+		catalogRepo,
+		db,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create schedule catalog consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Schedule catalog consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping schedule catalog consumer")
+		catalogConsumer.Stop()
+		return nil
+	})
+
+	// Start catalog consumer in background
+	go func() {
+		if err := catalogConsumer.Start(ctx); err != nil {
+			logger.Error("Schedule catalog consumer error", "error", err)
+		}
+	}()
+
+	// Initialize schedule activator and activation service
+	activator := scheduler.NewScheduleActivator(schedulerRepo, logger)
+	activationService := scheduler.NewScheduleActivationService(
+		db,
+		activator,
+		catalogRepo,
+		schedulerRepo,
+		outboxRepo,
+		config.GetRedisStreamSchedulerStarted(),
+		logger,
+	)
+	logger.Info("Schedule activator and activation service initialized")
+
+	// Load schedules config — fail fast if missing or malformed
+	schedulesConfig, err := scheduler.LoadSchedulesConfig(config.GetSchedulesConfigPath())
+	if err != nil {
+		logger.Error("Failed to load schedules config", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Schedules config loaded", "schedules", len(schedulesConfig.Schedules))
+
+	// Initialize cron scheduler
+	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activationService, logger, schedulesConfig)
+	if err != nil {
+		logger.Error("Failed to create cron scheduler", "error", err)
+		os.Exit(1)
+	}
+
+	// Register cron scheduler cleanup
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping cron scheduler")
+		return cronScheduler.Stop(ctx)
+	})
+
+	// Start cron scheduler
+	if err := cronScheduler.Start(); err != nil {
+		logger.Error("Failed to start cron scheduler", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Cron scheduler started")
+
+	// Initialize gRPC handlers
+	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activationService, catalogRepo, schedulesConfig, logger)
+	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
+	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
+
+	// Create gRPC server
+	grpcPort := config.GetGRPCPort()
+	grpcServer, err := grpcserver.NewServer(grpcPort, schedulerHandler, taskHandler, taskExecutionHandler, logger)
+	if err != nil {
+		logger.Error("Failed to create gRPC server", "error", err)
+		os.Exit(1)
+	}
+
+	// Register gRPC server cleanup
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		return grpcServer.Shutdown(ctx)
+	})
+
+	// Start gRPC server in background
+	go func() {
+		if err := grpcServer.Start(); err != nil {
+			logger.Error("gRPC server error", "error", err)
+		}
+	}()
+
+	// Initialize rerun HTTP handler
+	rerunHandler := http.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
+
+	// Start HTTP health server
+	healthPort := config.GetHealthPort()
+	healthServer := http.NewServer(healthPort, rerunHandler, logger)
+
+	// Register health server cleanup
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		return healthServer.Shutdown(ctx)
+	})
+
+	go func() {
+		if err := healthServer.Start(); err != nil {
+			logger.Error("Health server error", "error", err)
+		}
+	}()
+
+	logger.Info("State service started successfully",
+		"grpc_port", grpcPort,
+		"health_port", healthPort,
+	)
+
+	// Wait for shutdown signal
+	<-ctx.Done()
+	logger.Info("Shutting down...")
+	time.Sleep(2 * time.Second)
+	logger.Info("Service stopped")
+}

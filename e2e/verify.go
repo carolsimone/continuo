@@ -1,0 +1,351 @@
+package e2e
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// verifyExecutorDeployedJobs checks that executor deployed k8s jobs
+func verifyExecutorDeployedJobs(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	expectedTables []string,
+	scheduleName string,
+) {
+	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
+		jobList, err := getK8sJobs(ctx, fmt.Sprintf("schedule=%s", scheduleName))
+		if err != nil {
+			return false, err
+		}
+
+		if len(jobList.Items) < len(expectedTables) {
+			return false, nil
+		}
+
+		// Extract table names from labels
+		deployedTables := []string{}
+		for _, job := range jobList.Items {
+			if tableName, ok := job.Metadata.Labels["table_name"]; ok {
+				deployedTables = append(deployedTables, tableName)
+			}
+		}
+
+		return containsAll(deployedTables, expectedTables), nil
+	}, fmt.Sprintf("Timeout waiting for executor to deploy %d jobs", len(expectedTables)))
+
+	t.Logf("✅ executor-controller deployed %d jobs", len(expectedTables))
+}
+
+// verifyJobsCompleted checks that all tasks have reached 'succeeded' status in
+// the state DB. Using the state DB (rather than K8s job status) is more reliable:
+// K8s jobs may be short-lived or cleaned up before the poll catches them.
+func verifyJobsCompleted(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	tables []string,
+	scheduleName string,
+) {
+	pollUntil(t, ctx, 8*time.Minute, 2*time.Second, func() (bool, error) {
+		for _, table := range tables {
+			var status string
+			err := clients.stateDB.QueryRowContext(ctx, `
+				SELECT tt.status
+				FROM task_tracker tt
+				JOIN scheduler_tracker st ON tt.schedule_id = st.schedule_id
+				WHERE st.schedule_name = $1 AND tt.table_name = $2
+			`, scheduleName, table).Scan(&status)
+			if err != nil {
+				return false, nil // row not yet present — retry
+			}
+			if status != "succeeded" {
+				return false, nil
+			}
+		}
+		return true, nil
+	}, fmt.Sprintf("Timeout waiting for %d jobs to reach 'succeeded' status", len(tables)))
+
+	t.Logf("✅ All %d jobs completed successfully", len(tables))
+}
+
+// verifyJobLogs checks that job logs contain expected parameters
+func verifyJobLogs(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	tableName string,
+	scheduleName string,
+) {
+	logs := getK8sJobLogs(ctx, t, tableName)
+
+	assert.Contains(t, logs, fmt.Sprintf("schedule_name=%s", scheduleName))
+	assert.Contains(t, logs, fmt.Sprintf("table_name=%s", tableName))
+	assert.Contains(t, logs, fmt.Sprintf("schema_name=%s", testSchemaName))
+	assert.Contains(t, logs, "job_name=")
+	assert.Contains(t, logs, fmt.Sprintf("service_name=%s", getServiceNameForTable(tableName)))
+}
+
+// verifyDependencyControllerUnlockedNextLevel checks that next level nodes were published
+func verifyDependencyControllerUnlockedNextLevel(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	nextLevelTables []string,
+	scheduleID uuid.UUID,
+) {
+	// Wait for query.model:v1 stream to contain messages for next level
+	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
+		messages, err := clients.redisClient.XRange(ctx, "query.model:v1", "-", "+").Result()
+		if err != nil {
+			return false, err
+		}
+
+		// Count messages matching next level tables for this specific schedule
+		matchCount := 0
+		for _, msg := range messages {
+			if msg.Values["schedule_id"] != scheduleID.String() {
+				continue
+			}
+			if tableName, ok := msg.Values["table_name"].(string); ok {
+				for _, expectedTable := range nextLevelTables {
+					if tableName == expectedTable {
+						matchCount++
+						break
+					}
+				}
+			}
+		}
+
+		return matchCount >= len(nextLevelTables), nil
+	}, fmt.Sprintf("Timeout waiting for dependency-controller to unlock %d nodes", len(nextLevelTables)))
+
+	t.Logf("✅ dependency-controller unlocked %d nodes", len(nextLevelTables))
+}
+
+// verifyFullDAGExecution verifies all 4 levels execute in order
+func verifyFullDAGExecution(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	scheduleID uuid.UUID,
+) {
+	levels := getDAGLevels()
+
+	for i, level := range levels {
+		t.Logf("Verifying level %d: %v", i, level)
+
+		// Wait for executor to deploy these jobs
+		verifyExecutorDeployedJobs(t, ctx, clients, level, testScheduleName)
+
+		// Wait for jobs to complete
+		verifyJobsCompleted(t, ctx, clients, level, testScheduleName)
+
+		// If not last level, verify dependency-controller published next level
+		if i < len(levels)-1 {
+			verifyDependencyControllerUnlockedNextLevel(t, ctx, clients, levels[i+1], scheduleID)
+		}
+	}
+
+	t.Log("✅ Full DAG execution completed successfully")
+}
+
+// verifyStartupController verifies the startup-controller processed the schedule
+// activation correctly: outbox entries are processed with correct payloads, and
+// the expected root node messages appear exactly once in query.model:v1.
+func verifyStartupController(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	schedulerID uuid.UUID,
+	expectedRootNodes []string,
+) {
+	t.Helper()
+	expectedCount := len(expectedRootNodes)
+
+	// 1. Wait for all outbox entries to be processed
+	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
+		var processedCount int
+		err := clients.startupDB.Get(&processedCount, `
+			SELECT COUNT(*)
+			FROM startup_outbox
+			WHERE aggregate_id = $1 AND status = 'processed'
+		`, schedulerID)
+		if err != nil {
+			return false, err
+		}
+		return processedCount == expectedCount, nil
+	}, fmt.Sprintf("Timeout waiting for startup-controller to process %d outbox entries", expectedCount))
+
+	// 2. Assert outbox payload correctness
+	var outboxEntries []struct {
+		Payload []byte `db:"payload"`
+		Status  string `db:"status"`
+	}
+	err := clients.startupDB.Select(&outboxEntries, `
+		SELECT payload, status FROM startup_outbox
+		WHERE aggregate_id = $1
+		ORDER BY created_at
+	`, schedulerID)
+	require.NoError(t, err, "Failed to query startup_outbox")
+	require.Len(t, outboxEntries, expectedCount, "Expected %d outbox entries", expectedCount)
+
+	seenTables := make(map[string]bool)
+	for _, entry := range outboxEntries {
+		assert.Equal(t, "processed", entry.Status)
+
+		var payload struct {
+			ScheduleID   string `json:"schedule_id"`
+			ScheduleName string `json:"schedule_name"`
+			TableName    string `json:"table_name"`
+			TaskID       string `json:"task_id"`
+			JobName      string `json:"job_name"`
+		}
+		require.NoError(t, json.Unmarshal(entry.Payload, &payload), "Failed to unmarshal outbox payload")
+
+		assert.Equal(t, schedulerID.String(), payload.ScheduleID)
+		assert.NotEmpty(t, payload.ScheduleName)
+		assert.NotEmpty(t, payload.TaskID)
+		assert.NotEmpty(t, payload.JobName)
+		assert.Regexp(t, `^[a-z0-9-]+$`, payload.JobName, "JobName must be k8s-compliant")
+		assert.Contains(t, expectedRootNodes, payload.TableName, "TableName must be one of the root nodes")
+		assert.False(t, seenTables[payload.TableName], "Duplicate outbox entry for table: %s", payload.TableName)
+		seenTables[payload.TableName] = true
+	}
+
+	// 3. Wait for query.model:v1 to contain the expected messages
+	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
+		messages, err := clients.redisClient.XRange(ctx, "query.model:v1", "-", "+").Result()
+		if err != nil {
+			return false, err
+		}
+		count := 0
+		for _, msg := range messages {
+			if msg.Values["schedule_id"] == schedulerID.String() {
+				count++
+			}
+		}
+		return count >= expectedCount, nil
+	}, fmt.Sprintf("Timeout waiting for %d messages in query.model:v1", expectedCount))
+
+	// 4. Assert Redis message content and no duplicates
+	messages, err := clients.redisClient.XRange(ctx, "query.model:v1", "-", "+").Result()
+	require.NoError(t, err)
+
+	var scheduleMessages []goredis.XMessage
+	for _, msg := range messages {
+		if msg.Values["schedule_id"] == schedulerID.String() {
+			scheduleMessages = append(scheduleMessages, msg)
+		}
+	}
+	require.Len(t, scheduleMessages, expectedCount, "Expected exactly %d messages for this schedule in query.model:v1", expectedCount)
+
+	seenStreamTables := make(map[string]bool)
+	for _, msg := range scheduleMessages {
+		tableName, _ := msg.Values["table_name"].(string)
+		assert.NotEmpty(t, msg.Values["task_id"], "task_id must be present")
+		assert.NotEmpty(t, msg.Values["job_name"], "job_name must be present")
+		assert.NotEmpty(t, msg.Values["outbox_entry_id"], "outbox_entry_id must be present")
+		assert.Contains(t, expectedRootNodes, tableName, "stream table_name must be a root node")
+		assert.False(t, seenStreamTables[tableName], "Duplicate Redis message for table: %s", tableName)
+		seenStreamTables[tableName] = true
+	}
+
+	t.Logf("✅ startup-controller verified: %d outbox entries processed, %d Redis messages correct", expectedCount, expectedCount)
+}
+
+// verifyTableEExhaustedRetries polls state DB until table_e has retry_count = 3
+// and status = 'failed', confirming all 3 retries were exhausted.
+func verifyTableEExhaustedRetries(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	schedulerID uuid.UUID,
+) {
+	t.Helper()
+	pollUntil(t, ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
+		var retryCount int
+		var status string
+		err := clients.stateDB.QueryRow(`
+			SELECT retry_count, status
+			FROM task_tracker
+			WHERE schedule_id = $1 AND table_name = 'table_e'
+		`, schedulerID).Scan(&retryCount, &status)
+		if err != nil {
+			return false, err
+		}
+		return retryCount == 3 && status == "failed", nil
+	}, "Timeout waiting for table_e to exhaust 3 retries and reach failed status")
+
+	t.Log("✅ table_e exhausted 3 retries and is permanently failed")
+}
+
+// verifyNoJobsDeployed asserts that none of the given tables have K8s jobs.
+// Called after table_e fails to confirm downstream nodes were never deployed.
+func verifyNoJobsDeployed(
+	t *testing.T,
+	ctx context.Context,
+	tables []string,
+) {
+	t.Helper()
+	for _, table := range tables {
+		jobList, err := getK8sJobs(ctx, fmt.Sprintf("table_name=%s", table))
+		require.NoError(t, err, "Failed to query K8s jobs for table: %s", table)
+		assert.Empty(t, jobList.Items, "Expected no K8s jobs for table %s but found %d", table, len(jobList.Items))
+	}
+	t.Logf("✅ Confirmed no K8s jobs deployed for: %v", tables)
+}
+
+// verifySchedulerSucceeded polls scheduler_tracker until the schedule reaches
+// 'succeeded' status, confirming dependency-controller finalised the run correctly.
+func verifySchedulerSucceeded(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	schedulerID uuid.UUID,
+) {
+	t.Helper()
+	pollUntil(t, ctx, 2*time.Minute, 3*time.Second, func() (bool, error) {
+		var status string
+		err := clients.stateDB.Get(&status, `
+			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
+		`, schedulerID)
+		if err != nil {
+			return false, err
+		}
+		return status == "succeeded", nil
+	}, "Timeout waiting for scheduler to reach 'succeeded' status")
+
+	t.Log("✅ Scheduler reached 'succeeded' status")
+}
+
+// verifySchedulerFailed polls scheduler_tracker until the schedule reaches
+// 'failed' status, confirming dependency-controller finalised the run correctly.
+func verifySchedulerFailed(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	schedulerID uuid.UUID,
+) {
+	t.Helper()
+	pollUntil(t, ctx, 5*time.Minute, 3*time.Second, func() (bool, error) {
+		var status string
+		err := clients.stateDB.Get(&status, `
+			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
+		`, schedulerID)
+		if err != nil {
+			return false, err
+		}
+		return status == "failed", nil
+	}, "Timeout waiting for scheduler to reach 'failed' status")
+
+	t.Log("✅ Scheduler reached 'failed' status")
+}

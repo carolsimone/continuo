@@ -1,0 +1,12 @@
+go 1.25.1
+
+use (
+	./dependency-controller
+	./e2e
+	./executor-controller
+	./graph
+	./k8s-controller
+	./pkg
+	./startup-controller
+	./state
+)

@@ -1,0 +1,238 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    env:
+      DOCKER_BUILDKIT: "1"
+
+    steps:
+      - name: Free disk space
+        # ubuntu-latest ships ~30 GB of tools we never use (Android SDK, .NET,
+        # Haskell, large apt packages).  Removing them before any Docker work
+        # gives ~20 GB of headroom so kind can save image tarballs to /tmp.
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /opt/hostedtoolcache
+          df -h /
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # install: true makes 'docker build' an alias for 'docker buildx build',
+          # so docker compose build also benefits from the buildx cache backend.
+          install: true
+
+      - name: Pull or build base image
+        # Normally pull continuo-base from GHCR (published by publish-base.yml).
+        # Fall back to a local build only when Dockerfile.base itself changed in
+        # this PR, because the published image hasn't been updated yet.
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          if git diff --name-only origin/main..HEAD | grep -q "^Dockerfile\.base$"; then
+            echo "Dockerfile.base changed in this PR — building locally..."
+            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
+          else
+            echo "Pulling continuo-base from GHCR..."
+            if docker pull ghcr.io/carolsimone/continuo/continuo-base:latest; then
+              docker tag ghcr.io/carolsimone/continuo/continuo-base:latest continuo-base:latest
+            else
+              echo "GHCR pull failed (image may not exist yet) — building locally as fallback..."
+              DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
+            fi
+          fi
+
+      - name: Switch to docker driver for local image access
+        # The docker-container buildx driver (used above to pull from GHCR) runs
+        # in an isolated container and cannot see local daemon images.
+        # The default docker driver shares the daemon's image store, so
+        # "FROM continuo-base:latest" resolves correctly in docker compose build.
+        # Docker Engine 24+ (shipped on ubuntu-latest) supports type=gha cache
+        # with the default driver, so we keep the GHA cache benefit.
+        run: docker buildx use default
+
+      - name: Set up infrastructure
+        # COMPOSE_FILE merges docker-compose.ci.yml so that docker compose build
+        # uses GHA layer cache for all service images.
+        # setup.sh inherits this env var and passes it to docker compose build.
+        run: COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" bash scripts/setup.sh
+
+      - name: Wait for service containers to be running
+        run: |
+          for container in state graph startup-controller executor-controller dependency-controller k8s-controller manifest-controller; do
+            echo "Waiting for $container..."
+            for i in $(seq 1 30); do
+              if docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
+                echo "✓ $container is running"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "✗ $container failed to start within 60s"
+                docker logs "$container" --tail 50 || true
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Start state and graph service processes
+        # Containers run `tail -f /dev/null` by default (dev mode).
+        # Build and start the service binaries so that gRPC ports are open
+        # before dependent controller tests run.
+        run: |
+          echo "Building and starting state service (gRPC :50051)..."
+          docker exec state go build -o bin/state .
+          docker exec -d state ./bin/state
+
+          echo "Building and starting graph service (gRPC :50052)..."
+          docker exec graph go build -o bin/graph .
+          docker exec -d graph ./bin/graph
+
+          echo "Waiting for state gRPC port 50051..."
+          for i in $(seq 1 30); do
+            if docker exec state bash -c 'echo > /dev/tcp/localhost/50051' 2>/dev/null; then
+              echo "✓ state gRPC ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "✗ state gRPC not ready after 60s"
+              docker logs state --tail 30 || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Waiting for graph gRPC port 50052..."
+          for i in $(seq 1 30); do
+            if docker exec graph bash -c 'echo > /dev/tcp/localhost/50052' 2>/dev/null; then
+              echo "✓ graph gRPC ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "✗ graph gRPC not ready after 60s"
+              docker logs graph --tail 30 || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Test state
+        run: docker exec state make test-ci
+
+      - name: Test graph
+        run: docker exec graph make test-ci
+
+      - name: Test startup-controller
+        run: docker exec startup-controller make test-ci
+
+      - name: Test executor-controller
+        run: docker exec executor-controller make test-ci
+
+      - name: Test dependency-controller
+        run: docker exec dependency-controller make test-ci
+
+      - name: Test k8s-controller
+        run: docker exec k8s-controller make test-ci
+
+      - name: Test manifest-controller
+        run: docker exec manifest-controller uv run pytest -v
+
+      - name: Test ui-service
+        # Run vitest unit tests directly on the CI runner (devDependencies are
+        # not installed in the production container image).
+        working-directory: ui-service
+        run: npm ci && npm test
+
+      # ── E2E test ────────────────────────────────────────────────────────────
+      - name: Start services for e2e
+        # Flyway migrations already ran as part of "docker compose up -d" in
+        # setup.sh.  Build and start the remaining service binaries that the
+        # e2e test needs beyond state/graph (which are already running above).
+        run: |
+          echo "Building and starting startup-controller (HTTP :8083)..."
+          docker exec startup-controller go build -o bin/startup-controller .
+          docker exec -d startup-controller ./bin/startup-controller
+
+          echo "Building and starting dependency-controller (HTTP :8086)..."
+          docker exec dependency-controller go build -o bin/dependency-controller .
+          docker exec -d dependency-controller ./bin/dependency-controller
+
+          echo "Waiting for startup-controller :8083..."
+          for i in $(seq 1 30); do
+            if docker exec startup-controller bash -c 'echo > /dev/tcp/localhost/8083' 2>/dev/null; then
+              echo "✓ startup-controller ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "✗ startup-controller not ready after 60s"
+              docker exec startup-controller cat /proc/1/fd/1 2>/dev/null || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Waiting for dependency-controller :8086..."
+          for i in $(seq 1 30); do
+            if docker exec dependency-controller bash -c 'echo > /dev/tcp/localhost/8086' 2>/dev/null; then
+              echo "✓ dependency-controller ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "✗ dependency-controller not ready after 60s"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Starting manifest-controller..."
+          docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"
+          sleep 3
+          echo "✓ manifest-controller started"
+
+      - name: Start ui-service container
+        run: |
+          echo "Starting ui container (HTTP :8090)..."
+          docker compose up -d ui
+
+          echo "Waiting for ui :8090..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8090/api/schedulers > /dev/null 2>&1; then
+              echo "✓ ui-service ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "✗ ui-service not ready after 60s"
+              docker logs ui --tail 30 || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Deploy k8s controllers
+        run: bash e2e/deploy-k8s-controllers.sh
+
+      - name: Run e2e test
+        timeout-minutes: 30
+        run: docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller go test -v -timeout 25m /app/e2e/...
+
+      - name: Cleanup k8s controllers
+        if: always()
+        run: bash e2e/cleanup-k8s-controllers.sh
+      # ────────────────────────────────────────────────────────────────────────
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --remove-orphans --volumes

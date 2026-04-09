@@ -1,0 +1,43 @@
+FROM continuo-base:latest
+
+WORKDIR /app
+
+# Layer 1: Workspace (rarely changes)
+COPY go.work go.work.sum* ./
+
+# Layer 2: All go.mod files (changes when deps update)
+COPY state/go.mod state/go.sum ./state/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY graph/go.mod graph/go.sum ./graph/
+COPY startup-controller/go.mod startup-controller/go.sum ./startup-controller/
+COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
+COPY dependency-controller/go.mod dependency-controller/go.sum ./dependency-controller/
+COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY e2e/go.mod e2e/go.sum ./e2e/
+
+# Layer 3: Download dependencies with cache mount
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Install kubectl for E2E testing
+# TODO: Consider moving kubectl to separate test container in future to reduce image size
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') \
+    && curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl" \
+    && chmod +x kubectl \
+    && mv kubectl /usr/local/bin/
+
+# Layer 4: Copy source code (changes frequently)
+COPY state/ ./state/
+COPY pkg/ ./pkg/
+COPY graph/ ./graph/
+COPY startup-controller/ ./startup-controller/
+COPY executor-controller/ ./executor-controller/
+COPY dependency-controller/ ./dependency-controller/
+COPY k8s-controller/ ./k8s-controller/
+COPY e2e/ ./e2e/
+
+WORKDIR /app/startup-controller
+
+EXPOSE 8083
+
+CMD ["tail", "-f", "/dev/null"]

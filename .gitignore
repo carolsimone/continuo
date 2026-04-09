@@ -1,0 +1,55 @@
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# env file
+.env
+
+# Editor/IDE
+.idea/
+# .vscode/
+
+*/kubeconfig/*
+*kubeconfig.yaml
+
+.DS_Store
+
+# Worktrees
+.worktrees/
+
+*/bin/
+*/bin/*.worktrees/
+
+*/manifest.json
+
+# dbt generated files
+dbt/services/*/.user.yml
+dbt/services/*/logs/
+dbt/services/*/target/
+dbt/services-fixed/*/.user.yml
+dbt/services-fixed/*/logs/
+dbt/services-fixed/*/target/
+
+*.archmcp/
+
+*.worktrees/
+*.scheduler-stop/.worktrees/
+.wrkt/
+.worktrees/
+
+ui-service/.superpowers*

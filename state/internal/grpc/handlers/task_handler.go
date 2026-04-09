@@ -1,0 +1,424 @@
+package handlers
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"time"
+
+	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
+	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/model"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+// TaskHandler handles all task-related gRPC requests
+type TaskHandler struct {
+	repo   postgres.TaskTrackerRepository
+	logger *slog.Logger
+}
+
+// NewTaskHandler creates a new TaskHandler
+func NewTaskHandler(repo postgres.TaskTrackerRepository, logger *slog.Logger) *TaskHandler {
+	return &TaskHandler{
+		repo:   repo,
+		logger: logger,
+	}
+}
+
+// CreateTask creates a new task
+func (h *TaskHandler) CreateTask(ctx context.Context, req *statev1.CreateTaskRequest) (*statev1.TaskResponse, error) {
+	h.logger.Info("Creating task",
+		"task_id", req.TaskId,
+		"schedule_id", req.ScheduleId,
+		"table", req.TableName,
+	)
+
+	// Validate required fields
+	if req.TaskId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "task_id is required (application-generated)")
+	}
+
+	if req.ScheduleId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
+	}
+
+	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "service_name, schema_name, and table_name are required")
+	}
+
+	// Parse UUIDs
+	taskID, err := uuid.Parse(req.TaskId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format: %v", err)
+	}
+
+	scheduleID, err := uuid.Parse(req.ScheduleId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format: %v", err)
+	}
+
+	// Convert proto status to domain model (default to pending if not specified)
+	domainStatus := protoToDomainTaskStatus(req.Status)
+	if req.Status == statev1.TaskStatus_TASK_STATUS_UNSPECIFIED {
+		domainStatus = model.TaskStatusPending
+	}
+
+	// Compute k8s-compliant job_name from service/schema/table
+	jobName, err := pkgDomain.ComputeJobName(req.ServiceName, req.SchemaName, req.TableName)
+	if err != nil {
+		h.logger.Error("failed to compute job_name", "error", err)
+		return nil, status.Errorf(codes.InvalidArgument, "invalid service/schema/table names: %v", err)
+	}
+
+	task := &model.TaskTracker{
+		TaskID:      taskID,
+		ScheduleID:  scheduleID,
+		CreatedAt:   time.Now(),
+		ServiceName: req.ServiceName,
+		SchemaName:  req.SchemaName,
+		TableName:   req.TableName,
+		JobName:     jobName,
+		Status:      domainStatus,
+		RetryCount:  0,
+		MaxRetries:  int(req.MaxRetries),
+	}
+
+	if err := h.repo.Create(ctx, task); err != nil {
+		if err == postgres.ErrDuplicateKey {
+			return nil, status.Errorf(codes.AlreadyExists, "task with id %s already exists", taskID)
+		}
+		h.logger.Error("Failed to create task", "error", err)
+		return nil, status.Errorf(codes.Internal, "failed to create task")
+	}
+
+	return &statev1.TaskResponse{
+		Task: domainToProtoTask(task),
+	}, nil
+}
+
+// GetTask retrieves a task by ID
+func (h *TaskHandler) GetTask(ctx context.Context, req *statev1.GetTaskRequest) (*statev1.TaskResponse, error) {
+	h.logger.Debug("Getting task", "task_id", req.TaskId)
+
+	if req.TaskId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")
+	}
+
+	taskID, err := uuid.Parse(req.TaskId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
+	}
+
+	task, err := h.repo.GetByID(ctx, taskID)
+	if err != nil {
+		if err == postgres.ErrNotFound {
+			return nil, status.Errorf(codes.NotFound, "task not found")
+		}
+		h.logger.Error("Failed to get task", "error", err)
+		return nil, status.Errorf(codes.Internal, "failed to get task")
+	}
+
+	return &statev1.TaskResponse{
+		Task: domainToProtoTask(task),
+	}, nil
+}
+
+// GetTaskByScheduleAndNode retrieves a task by schedule_id and node information
+func (h *TaskHandler) GetTaskByScheduleAndNode(ctx context.Context, req *statev1.GetTaskByScheduleAndNodeRequest) (*statev1.TaskResponse, error) {
+	h.logger.Debug("Getting task by schedule and node",
+		"schedule_id", req.ScheduleId,
+		"service_name", req.ServiceName,
+		"schema_name", req.SchemaName,
+		"table_name", req.TableName,
+	)
+
+	// Validate required fields
+	if req.ScheduleId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
+	}
+
+	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "service_name, schema_name, and table_name are required")
+	}
+
+	scheduleID, err := uuid.Parse(req.ScheduleId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
+	}
+
+	task, err := h.repo.GetByScheduleAndNode(ctx, scheduleID, req.ServiceName, req.SchemaName, req.TableName)
+	if err != nil {
+		if err == postgres.ErrNotFound {
+			return nil, status.Errorf(codes.NotFound, "task not found")
+		}
+		h.logger.Error("Failed to get task by schedule and node", "error", err)
+		return nil, status.Errorf(codes.Internal, "failed to get task")
+	}
+
+	return &statev1.TaskResponse{
+		Task: domainToProtoTask(task),
+	}, nil
+}
+
+// UpdateTask updates task status and retry count
+func (h *TaskHandler) UpdateTask(ctx context.Context, req *statev1.UpdateTaskRequest) (*statev1.TaskResponse, error) {
+	h.logger.Info("Updating task", "task_id", req.TaskId)
+
+	if req.TaskId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")
+	}
+
+	taskID, err := uuid.Parse(req.TaskId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
+	}
+
+	// Get existing task
+	task, err := h.repo.GetByID(ctx, taskID)
+	if err != nil {
+		if err == postgres.ErrNotFound {
+			return nil, status.Errorf(codes.NotFound, "task not found")
+		}
+		h.logger.Error("Failed to get task for update", "error", err)
+		return nil, status.Errorf(codes.Internal, "failed to get task")
+	}
+
+	// Update fields if provided
+	if req.Status != statev1.TaskStatus_TASK_STATUS_UNSPECIFIED {
+		caller, err := callerFromContext(ctx)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "missing caller identity: set x-caller-id metadata")
+		}
+		to := protoToDomainTaskStatus(req.Status)
+		if err := task.Transition(caller, to); err != nil {
+			if errors.Is(err, model.ErrInvalidTransition) {
+				return nil, status.Errorf(codes.FailedPrecondition,
+					"invalid transition %s → %s", task.Status, to)
+			}
+			if errors.Is(err, model.ErrUnauthorizedTransition) {
+				return nil, status.Errorf(codes.PermissionDenied,
+					"caller %q is not authorized to move task to %s", caller, to)
+			}
+			return nil, status.Errorf(codes.Internal, "transition error: %v", err)
+		}
+	}
+
+	if req.RetryCount > 0 {
+		task.RetryCount = int(req.RetryCount)
+	}
+
+	if req.CancelledAt != nil {
+		t := req.CancelledAt.AsTime()
+		task.CancelledAt = &t
+	}
+
+	if req.CancelledBy != "" {
+		task.CancelledBy = &req.CancelledBy
+	}
+
+	if err := h.repo.Update(ctx, task); err != nil {
+		if err == postgres.ErrNotFound {
+			return nil, status.Errorf(codes.NotFound, "task not found")
+		}
+		h.logger.Error("Failed to update task", "error", err)
+		return nil, status.Errorf(codes.Internal, "failed to update task")
+	}
+
+	return &statev1.TaskResponse{
+		Task: domainToProtoTask(task),
+	}, nil
+}
+
+// DeleteTask deletes a task
+func (h *TaskHandler) DeleteTask(ctx context.Context, req *statev1.DeleteTaskRequest) (*statev1.DeleteTaskResponse, error) {
+	h.logger.Info("Deleting task", "task_id", req.TaskId)
+
+	if req.TaskId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")
+	}
+
+	taskID, err := uuid.Parse(req.TaskId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
+	}
+
+	if err := h.repo.Delete(ctx, taskID); err != nil {
+		if err == postgres.ErrNotFound {
+			return nil, status.Errorf(codes.NotFound, "task not found")
+		}
+		h.logger.Error("Failed to delete task", "error", err)
+		return nil, status.Errorf(codes.Internal, "failed to delete task")
+	}
+
+	return &statev1.DeleteTaskResponse{
+		Success: true,
+		Message: "Task deleted successfully",
+	}, nil
+}
+
+// ListTasks lists tasks for a specific schedule with optional filters
+func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksRequest) (*statev1.ListTasksResponse, error) {
+	h.logger.Debug("Listing tasks", "schedule_id", req.ScheduleId, "status", req.Status)
+
+	if req.ScheduleId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
+	}
+
+	scheduleID, err := uuid.Parse(req.ScheduleId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
+	}
+
+	// Build filters
+	limit := 50 // Default page size
+	offset := 0
+
+	if req.PageSize > 0 {
+		limit = int(req.PageSize)
+	}
+
+	if req.PageOffset > 0 {
+		offset = int(req.PageOffset)
+	}
+
+	var statusFilter *model.TaskStatus
+	if req.Status != statev1.TaskStatus_TASK_STATUS_UNSPECIFIED {
+		s := protoToDomainTaskStatus(req.Status)
+		statusFilter = &s
+	}
+
+	tasks, total, err := h.repo.ListByScheduleID(ctx, scheduleID, statusFilter, limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to list tasks", "error", err)
+		return nil, status.Errorf(codes.Internal, "failed to list tasks")
+	}
+
+	protoTasks := make([]*statev1.Task, len(tasks))
+	for i, t := range tasks {
+		protoTasks[i] = domainToProtoTask(t)
+	}
+
+	return &statev1.ListTasksResponse{
+		Tasks:      protoTasks,
+		TotalCount: int32(total),
+	}, nil
+}
+
+// ResetTask unconditionally resets a task to PENDING with retry_count=0.
+// This is required because UpdateTask ignores retry_count=0 (proto3 zero-value ambiguity).
+func (h *TaskHandler) ResetTask(ctx context.Context, req *statev1.ResetTaskRequest) (*statev1.TaskResponse, error) {
+	if req.TaskId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")
+	}
+
+	taskID, err := uuid.Parse(req.TaskId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
+	}
+
+	// Extract caller identity
+	caller, err := callerFromContext(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "missing caller identity: set x-caller-id metadata")
+	}
+
+	task, err := h.repo.GetByID(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			return nil, status.Errorf(codes.NotFound, "task not found")
+		}
+		h.logger.Error("Failed to get task for reset", "error", err)
+		return nil, status.Errorf(codes.Internal, "failed to get task")
+	}
+
+	if err := task.Transition(caller, model.TaskStatusPending); err != nil {
+		if errors.Is(err, model.ErrInvalidTransition) {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"cannot reset task in state %s", task.Status)
+		}
+		if errors.Is(err, model.ErrUnauthorizedTransition) {
+			return nil, status.Errorf(codes.PermissionDenied,
+				"caller %q is not authorized to reset tasks", caller)
+		}
+		return nil, status.Errorf(codes.Internal, "reset error: %v", err)
+	}
+	task.RetryCount = 0
+
+	if err := h.repo.Update(ctx, task); err != nil {
+		h.logger.Error("Failed to reset task", "error", err)
+		return nil, status.Errorf(codes.Internal, "failed to reset task")
+	}
+
+	return &statev1.TaskResponse{Task: domainToProtoTask(task)}, nil
+}
+
+// ============================================================================
+// CONVERSION HELPERS
+// ============================================================================
+
+// protoToDomainTaskStatus converts proto status to domain model status
+func protoToDomainTaskStatus(s statev1.TaskStatus) model.TaskStatus {
+	switch s {
+	case statev1.TaskStatus_TASK_STATUS_PENDING:
+		return model.TaskStatusPending
+	case statev1.TaskStatus_TASK_STATUS_RUNNING:
+		return model.TaskStatusRunning
+	case statev1.TaskStatus_TASK_STATUS_SUCCEEDED:
+		return model.TaskStatusSucceeded
+	case statev1.TaskStatus_TASK_STATUS_FAILED:
+		return model.TaskStatusFailed
+	case statev1.TaskStatus_TASK_STATUS_CANCELLED:
+		return model.TaskStatusCancelled
+	default:
+		return model.TaskStatusPending
+	}
+}
+
+// domainToProtoTaskStatus converts domain model status to proto status
+func domainToProtoTaskStatus(s model.TaskStatus) statev1.TaskStatus {
+	switch s {
+	case model.TaskStatusPending:
+		return statev1.TaskStatus_TASK_STATUS_PENDING
+	case model.TaskStatusRunning:
+		return statev1.TaskStatus_TASK_STATUS_RUNNING
+	case model.TaskStatusSucceeded:
+		return statev1.TaskStatus_TASK_STATUS_SUCCEEDED
+	case model.TaskStatusFailed:
+		return statev1.TaskStatus_TASK_STATUS_FAILED
+	case model.TaskStatusCancelled:
+		return statev1.TaskStatus_TASK_STATUS_CANCELLED
+	default:
+		return statev1.TaskStatus_TASK_STATUS_UNSPECIFIED
+	}
+}
+
+// domainToProtoTask converts domain model to proto message
+func domainToProtoTask(t *model.TaskTracker) *statev1.Task {
+	task := &statev1.Task{
+		TaskId:      t.TaskID.String(),
+		ScheduleId:  t.ScheduleID.String(),
+		CreatedAt:   timestamppb.New(t.CreatedAt),
+		ServiceName: t.ServiceName,
+		SchemaName:  t.SchemaName,
+		TableName:   t.TableName,
+		JobName:     t.JobName,
+		Status:      domainToProtoTaskStatus(t.Status),
+		RetryCount:  int32(t.RetryCount),
+		MaxRetries:  int32(t.MaxRetries),
+	}
+
+	if t.CancelledAt != nil {
+		task.CancelledAt = timestamppb.New(*t.CancelledAt)
+	}
+
+	if t.CancelledBy != nil {
+		task.CancelledBy = *t.CancelledBy
+	}
+
+	return task
+}

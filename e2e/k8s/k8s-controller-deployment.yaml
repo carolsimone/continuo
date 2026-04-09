@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-controller
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-controller
+  namespace: default
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-controller
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8s-controller
+subjects:
+  - kind: ServiceAccount
+    name: k8s-controller
+    namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-controller
+  namespace: default
+  labels:
+    app: k8s-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-controller
+  template:
+    metadata:
+      labels:
+        app: k8s-controller
+    spec:
+      serviceAccountName: k8s-controller
+      containers:
+        - name: k8s-controller
+          image: continuo-k8s-controller:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/app/k8s-controller/bin/k8s-controller"]
+          ports:
+            - containerPort: 8085
+              name: health
+          env:
+            - name: REDIS_HOST
+              value: "${DOCKER_BRIDGE_IP}"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_CONSUMER_DEPLOYED_STREAM
+              value: "executor.deployed:v1"
+            - name: REDIS_CONSUMER_CHECK_STREAM
+              value: "k8s.check:v1"
+            - name: REDIS_CONSUMER_GROUP
+              value: "k8s_controller_consumers"
+            - name: REDIS_PRODUCER_CHECK_STREAM
+              value: "k8s.check:v1"
+            - name: REDIS_PRODUCER_RETRY_STREAM
+              value: "task.retry:v1"
+            - name: REDIS_PRODUCER_FAILED_STREAM
+              value: "task.failed:v1"
+            - name: REDIS_PRODUCER_UPDATE_TABLE_STREAM
+              value: "update.table:v1"
+            - name: POSTGRES_HOST
+              value: "${DOCKER_BRIDGE_IP}"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "continuo_k8s"
+            - name: POSTGRES_USER
+              value: "runner"
+            - name: POSTGRES_PASSWORD
+              value: "runner"
+            - name: STATE_SERVICE_GRPC_ADDR
+              value: "${DOCKER_BRIDGE_IP}:50051"
+            - name: K8S_NAMESPACE
+              value: "default"
+            - name: K8S_CHECK_DELAY_SECONDS
+              value: "5"
+            - name: ERROR_MESSAGE_MAX_LENGTH
+              value: "4096"
+            - name: HTTP_PORT
+              value: "8085"
+            - name: ENV
+              value: "local"
+            - name: LOG_LEVEL
+              value: "INFO"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8085
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8085
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-controller
+  namespace: default
+spec:
+  selector:
+    app: k8s-controller
+  ports:
+    - port: 8085
+      targetPort: 8085
+      name: health
+  type: ClusterIP

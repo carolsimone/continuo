@@ -1,0 +1,16 @@
+{
+  "nodes": {
+    "model.service-1.users": {
+      "unique_id": "model.service-1.users",
+      "name": "users",
+      "schema": "test_schema",
+      "fqn": ["service-1", "users"],
+      "tags": ["daily"],
+      "resource_type": "model",
+      "config": {
+        "meta": { "owner": "team-a", "criticality": "CORE" }
+      },
+      "compiled_code": "SELECT 1 AS id"
+    }
+  }
+}

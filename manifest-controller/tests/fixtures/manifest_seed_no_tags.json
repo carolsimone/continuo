@@ -1,0 +1,13 @@
+{
+  "nodes": {
+    "seed.service_1.my_seed": {
+      "resource_type": "seed",
+      "name": "my_seed",
+      "schema": "public",
+      "fqn": ["service_1", "my_seed"],
+      "tags": [],
+      "config": {"meta": {"owner": "data-platform"}},
+      "compiled_code": ""
+    }
+  }
+}

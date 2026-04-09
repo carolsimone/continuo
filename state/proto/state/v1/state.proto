@@ -1,0 +1,331 @@
+syntax = "proto3";
+
+package state.v1;
+
+option go_package = "github.com/carolsimone/continuo/state/api/state/v1;statev1";
+
+import "google/protobuf/timestamp.proto";
+
+// StateService provides state tracking for schedulers and tasks
+service StateService {
+  // Scheduler operations
+  rpc CreateScheduler(CreateSchedulerRequest) returns (SchedulerResponse);
+  rpc GetScheduler(GetSchedulerRequest) returns (SchedulerResponse);
+  rpc UpdateScheduler(UpdateSchedulerRequest) returns (SchedulerResponse);
+  rpc CancelScheduler(CancelSchedulerRequest) returns (SchedulerResponse);
+  rpc UpdateSchedulerInitStatus(UpdateSchedulerInitStatusRequest) returns (SchedulerResponse);
+  rpc ResetInProgressInitializations(ResetInProgressInitializationsRequest) returns (ResetInProgressInitializationsResponse);
+
+  // Trigger operations
+  rpc ActivateSchedule(ActivateScheduleRequest) returns (ActivateScheduleResponse);
+
+  // Schedule catalog operations
+  rpc ListAllSchedules(ListAllSchedulesRequest) returns (ListAllSchedulesResponse);
+  rpc TriggerSchedule(TriggerScheduleRequest) returns (TriggerScheduleResponse);
+  // CancelSchedule cancels the active run of a named schedule.
+  // Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
+  rpc CancelSchedule(CancelScheduleRequest) returns (CancelScheduleResponse);
+
+  // Task operations
+  rpc CreateTask(CreateTaskRequest) returns (TaskResponse);
+  rpc GetTask(GetTaskRequest) returns (TaskResponse);
+  rpc GetTaskByScheduleAndNode(GetTaskByScheduleAndNodeRequest) returns (TaskResponse);
+  rpc UpdateTask(UpdateTaskRequest) returns (TaskResponse);
+  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  // ResetTask unconditionally resets a task to PENDING with retry_count=0.
+  // Required because UpdateTask ignores retry_count=0 (proto3 zero-value).
+  rpc ResetTask(ResetTaskRequest) returns (TaskResponse);
+
+  // GetSchedulerInitStatus returns initialization_status for a scheduler.
+  // Used by dependency-controller to guard premature finalization during re-run.
+  rpc GetSchedulerInitStatus(GetSchedulerInitStatusRequest) returns (GetSchedulerInitStatusResponse);
+
+  // TaskExecution operations
+  rpc CreateTaskExecution(CreateTaskExecutionRequest) returns (TaskExecutionResponse);
+  rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
+  rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum SchedulerStatus {
+  SCHEDULER_STATUS_UNSPECIFIED = 0;
+  SCHEDULER_STATUS_PENDING = 1;
+  SCHEDULER_STATUS_RUNNING = 2;
+  SCHEDULER_STATUS_SUCCEEDED = 3;
+  SCHEDULER_STATUS_FAILED = 4;
+  SCHEDULER_STATUS_CANCELLED = 5;
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING = 1;
+  TASK_STATUS_RUNNING = 2;
+  TASK_STATUS_SUCCEEDED = 3;
+  TASK_STATUS_FAILED = 4;
+  TASK_STATUS_CANCELLED = 5;
+}
+
+// ============================================================================
+// DOMAIN MESSAGES
+// ============================================================================
+
+message Scheduler {
+  string schedule_id = 1;
+  string schedule_name = 2;
+  SchedulerStatus status = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp started_at = 5;
+  google.protobuf.Timestamp completed_at = 6;
+  google.protobuf.Timestamp last_heartbeat_at = 7;
+  google.protobuf.Timestamp cancelled_at = 8;
+  string cancelled_by = 9;
+  string cancellation_reason = 10;
+  string initialization_status = 11;  // 'pending', 'in_progress', 'completed', 'failed'
+}
+
+message Task {
+  string task_id = 1;
+  string schedule_id = 2;
+  google.protobuf.Timestamp created_at = 3;
+  string service_name = 4;
+  string schema_name = 5;
+  string table_name = 6;
+  string job_name = 7;  // K8s job identifier (computed from service-schema-table)
+  TaskStatus status = 8;
+  int32 retry_count = 9;
+  int32 max_retries = 10;
+  google.protobuf.Timestamp cancelled_at = 11;
+  string cancelled_by = 12;
+}
+
+message TaskExecution {
+  string id = 1;
+  string task_id = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp completed_at = 5;
+  double execution_time_seconds = 6;
+  string executor_id = 7;
+  string k8s_job_name = 8;
+  string error_message = 9;
+  google.protobuf.Timestamp cancelled_at = 10;
+  string cancelled_by = 11;
+  string cancellation_reason = 12;
+  string log_s3_key = 13;              // S3 object key for full pod log; empty if upload failed
+}
+
+// ============================================================================
+// SCHEDULER REQUESTS/RESPONSES
+// ============================================================================
+
+message CreateSchedulerRequest {
+  string schedule_id = 1;              // Optional: client can provide UUID
+  string schedule_name = 2;            // Required
+  SchedulerStatus status = 3;          // Optional: defaults to PENDING
+}
+
+message GetSchedulerRequest {
+  string schedule_id = 1;              // Required
+}
+
+message UpdateSchedulerRequest {
+  string schedule_id = 1;              // Required
+  SchedulerStatus status = 2;          // Optional
+  google.protobuf.Timestamp started_at = 3;         // Optional
+  google.protobuf.Timestamp completed_at = 4;       // Optional
+  google.protobuf.Timestamp last_heartbeat_at = 5;  // Optional
+}
+
+message CancelSchedulerRequest {
+  string schedule_id = 1;              // Required
+  string cancelled_by = 2;             // Optional
+  string cancellation_reason = 3;      // Optional
+}
+
+message SchedulerResponse {
+  Scheduler scheduler = 1;
+}
+
+message UpdateSchedulerInitStatusRequest {
+  string schedule_id = 1;                  // Required
+  string initialization_status = 2;        // Required: 'pending', 'in_progress', 'completed', 'failed'
+}
+
+message ResetInProgressInitializationsRequest {
+  // No parameters needed - resets all 'in_progress' to 'pending'
+}
+
+message ResetInProgressInitializationsResponse {
+  int32 count = 1;                         // Number of records reset
+}
+
+// ============================================================================
+// TASK REQUESTS/RESPONSES
+// ============================================================================
+
+message CreateTaskRequest {
+  string task_id = 1;                  // Required: application-generated UUID
+  string schedule_id = 2;              // Required
+  string service_name = 3;             // Required
+  string schema_name = 4;              // Required
+  string table_name = 5;               // Required
+  int32 max_retries = 6;               // Required
+  TaskStatus status = 7;               // Optional: defaults to PENDING
+}
+
+message GetTaskRequest {
+  string task_id = 1;                  // Required
+}
+
+message GetTaskByScheduleAndNodeRequest {
+  string schedule_id = 1;              // Required
+  string service_name = 2;             // Required
+  string schema_name = 3;              // Required
+  string table_name = 4;               // Required
+}
+
+message UpdateTaskRequest {
+  string task_id = 1;                  // Required
+  TaskStatus status = 2;               // Optional
+  int32 retry_count = 3;               // Optional
+  google.protobuf.Timestamp cancelled_at = 4;  // Optional
+  string cancelled_by = 5;             // Optional
+}
+
+message DeleteTaskRequest {
+  string task_id = 1;                  // Required
+}
+
+message DeleteTaskResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ListTasksRequest {
+  string schedule_id = 1;              // Required
+  TaskStatus status = 2;               // Optional filter
+  int32 page_size = 3;                 // Pagination (default 50)
+  int32 page_offset = 4;               // Pagination offset
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+  int32 total_count = 2;
+}
+
+message TaskResponse {
+  Task task = 1;
+}
+
+// ============================================================================
+// TASK EXECUTION REQUESTS/RESPONSES
+// ============================================================================
+
+message CreateTaskExecutionRequest {
+  string id = 1;                                    // Optional: client-provided UUID
+  string task_id = 2;                               // Required: parent task
+  google.protobuf.Timestamp started_at = 3;         // Optional
+  google.protobuf.Timestamp completed_at = 4;       // Optional
+  double execution_time_seconds = 5;                // Optional
+  string executor_id = 6;                           // Optional
+  string k8s_job_name = 7;                          // Optional
+  string error_message = 8;                         // Optional
+  string log_s3_key = 9;                            // Optional: S3 key for full pod log
+}
+
+message GetTaskExecutionRequest {
+  string id = 1;                                    // Required: execution ID
+}
+
+message TaskExecutionResponse {
+  TaskExecution task_execution = 1;
+}
+
+// ============================================================================
+// LIST TASK EXECUTIONS BY SCHEDULE
+// ============================================================================
+
+message ListTaskExecutionsRequest {
+  string schedule_id = 1;  // Required
+  int32  page_size   = 2;  // UI hardcodes 500
+  int32  page_offset = 3;
+}
+
+message ListTaskExecutionsResponse {
+  repeated TaskExecution task_executions = 1;
+  int32 total_count = 2;
+}
+
+// ============================================================================
+// TRIGGER REQUESTS/RESPONSES
+// ============================================================================
+
+message ActivateScheduleRequest {
+  string schedule_name = 1;  // Required: name of the schedule to activate
+}
+
+message ActivateScheduleResponse {
+  string schedule_id = 1;   // UUID of the created scheduler_tracker record
+                             // Empty string if a run was already active (no-op)
+}
+
+// ============================================================================
+// SCHEDULE CATALOG REQUESTS/RESPONSES
+// ============================================================================
+
+message ListAllSchedulesRequest {}
+
+// ScheduleSummary merges catalog data, last-run data, and cron config.
+// last_run_status uses lowercase strings ("succeeded", "failed", "cancelled")
+// matching the domain model — intentionally not the SchedulerStatus enum
+// to decouple this message from scheduler_tracker internals.
+message ScheduleSummary {
+  string schedule_name   = 1;
+  string cron_expression = 2;  // empty if not in schedules.yaml
+  string description     = 3;  // from schedules.yaml; empty if not found
+  string timezone        = 4;  // top-level timezone from schedules.yaml
+  bool   is_running      = 5;
+  google.protobuf.Timestamp last_run_at = 6;  // null if never run
+  string last_run_status = 7;  // "succeeded"/"failed"/"cancelled"; empty if never run
+  string last_run_id = 8;  // schedule_id of most recent run; empty string if never run
+}
+
+message ListAllSchedulesResponse {
+  repeated ScheduleSummary schedules = 1;
+}
+
+message TriggerScheduleRequest {
+  string schedule_name = 1;
+}
+
+// schedule_id is always non-empty on success.
+// Errors: NOT_FOUND (schedule not in catalog), FAILED_PRECONDITION (already running).
+message TriggerScheduleResponse {
+  string schedule_id = 1;
+}
+
+message CancelScheduleRequest {
+  string schedule_name       = 1;  // Required
+  string cancelled_by        = 2;  // Optional
+  string cancellation_reason = 3;  // Optional
+}
+
+message CancelScheduleResponse {
+  string schedule_id = 1;  // schedule_id of the cancelled run
+}
+
+message ResetTaskRequest {
+  string task_id = 1;
+}
+
+message GetSchedulerInitStatusRequest {
+  string schedule_id = 1;
+}
+
+message GetSchedulerInitStatusResponse {
+  string initialization_status = 1;
+}

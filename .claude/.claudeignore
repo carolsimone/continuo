@@ -1,0 +1,6 @@
+# Ignore unnecessary files
+
+*node_modules/
+*dist/
+*.lock
+*__pycache__/

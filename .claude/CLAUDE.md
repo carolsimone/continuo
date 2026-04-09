@@ -1,0 +1,1 @@
+/Users/simonecarolini/Desktop/github/conductor/AGENTS.md

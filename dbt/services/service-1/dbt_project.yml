@@ -1,0 +1,22 @@
+name: service_1
+version: '1.0.0'
+config-version: 2
+profile: default
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+
+seeds:
+  service_1:
+    +full_refresh: false
+    +meta:
+      owner: "test"
+      criticality: "CORE"
+
+models:
+  service_1:
+    +materialized: table
+    +tags: ["e2e-schedule"]
+    +meta:
+      owner: "test"
+      criticality: "CORE"

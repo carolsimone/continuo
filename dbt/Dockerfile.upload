@@ -1,0 +1,19 @@
+FROM dbt-base:latest
+
+# Override the inherited dbt entrypoint — this image runs Python scripts, not dbt jobs
+ENTRYPOINT []
+
+WORKDIR /app
+
+# Install uv
+RUN pip install uv --quiet
+
+# Install dependencies (including dev/pytest — this image is only used in dev/e2e)
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen
+
+# Copy upload script, compile-only script, and tests
+COPY upload_manifests.py compile_only.py .
+COPY tests/ ./tests/
+
+CMD ["uv", "run", "python", "upload_manifests.py"]
