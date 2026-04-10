@@ -1,0 +1,63 @@
+postgresql:
+  auth:
+    username: runner
+    password: changeme
+    postgresPassword: changeme
+  primary:
+    initdb:
+      user: postgres
+      password: changeme
+      scripts:
+        init-databases.sh: |
+          #!/bin/bash
+          set -e
+          export PGPASSWORD="$POSTGRES_INITSCRIPTS_PASSWORD"
+          psql -v ON_ERROR_STOP=1 --username "$POSTGRES_INITSCRIPTS_USERNAME" --dbname postgres <<-EOSQL
+              CREATE DATABASE continuo_state;
+              CREATE DATABASE continuo_startup;
+              CREATE DATABASE continuo_executor;
+              CREATE DATABASE continuo_dependency;
+              CREATE DATABASE continuo_k8s;
+              CREATE DATABASE continuo_dbt;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_state TO $POSTGRES_USER;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_startup TO $POSTGRES_USER;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_executor TO $POSTGRES_USER;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_dependency TO $POSTGRES_USER;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_k8s TO $POSTGRES_USER;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_dbt TO $POSTGRES_USER;
+          EOSQL
+    persistence:
+      storageClass: hcloud-volumes
+      size: 10Gi
+  sslmode: disable
+
+redis:
+  architecture: standalone
+  auth:
+    enabled: true
+    password: changeme
+  master:
+    persistence:
+      storageClass: hcloud-volumes
+      size: 2Gi
+
+neo4j:
+  neo4j:
+    name: neo4j
+    password: changeme
+  services:
+    neo4j:
+      enabled: false
+  config:
+    server.memory.pagecache.size: "512M"
+    server.memory.heap.initial_size: "512M"
+    server.memory.heap.max_size: "1G"
+  volumes:
+    data:
+      mode: dynamic
+      dynamic:
+        storageClassName: hcloud-volumes
+        accessModes:
+          - ReadWriteOnce
+        requests:
+          storage: 10Gi

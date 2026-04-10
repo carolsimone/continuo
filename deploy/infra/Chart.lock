@@ -1,0 +1,12 @@
+dependencies:
+- name: postgresql
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 16.7.27
+- name: redis
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 20.13.4
+- name: neo4j
+  repository: https://helm.neo4j.com/neo4j
+  version: 5.26.24
+digest: sha256:c0ecec44793c135285cca736c5e533e8aadc0efbbd121f1bab4dd578d9217a1a
+generated: "2026-04-10T18:23:46.311248+02:00"
