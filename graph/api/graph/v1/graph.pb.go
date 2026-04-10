@@ -2203,7 +2203,7 @@ const file_proto_graph_v1_graph_proto_rawDesc = "" +
 	"\vFinalizeRun\x12\x1c.graph.v1.FinalizeRunRequest\x1a\x1d.graph.v1.FinalizeRunResponse\x12A\n" +
 	"\bListRuns\x12\x19.graph.v1.ListRunsRequest\x1a\x1a.graph.v1.ListRunsResponse\x12J\n" +
 	"\vGetRunGraph\x12\x1c.graph.v1.GetRunGraphRequest\x1a\x1d.graph.v1.GetRunGraphResponse\x12n\n" +
-	"\x17GetTransitiveDownstream\x12(.graph.v1.GetTransitiveDownstreamRequest\x1a).graph.v1.GetTransitiveDownstreamResponseB=Z;github.com/carolsimone/continuo/graph/api/graph/v1;graphv1b\x06proto3"
+	"\x17GetTransitiveDownstream\x12(.graph.v1.GetTransitiveDownstreamRequest\x1a).graph.v1.GetTransitiveDownstreamResponseB<Z:github.com/carolsimone/continuo/graph/api/graph/v1;graphv1b\x06proto3"
 
 var (
 	file_proto_graph_v1_graph_proto_rawDescOnce sync.Once

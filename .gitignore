@@ -23,14 +23,10 @@ profile.cov
 # Editor/IDE
 .idea/
 # .vscode/
+.DS_Store
 
 */kubeconfig/*
 *kubeconfig.yaml
-
-.DS_Store
-
-# Worktrees
-.worktrees/
 
 */bin/
 */bin/*.worktrees/
@@ -45,11 +41,17 @@ dbt/services-fixed/*/.user.yml
 dbt/services-fixed/*/logs/
 dbt/services-fixed/*/target/
 
+# SKILLS
 *.archmcp/
 
+# WORKTREES
 *.worktrees/
 *.scheduler-stop/.worktrees/
 .wrkt/
 .worktrees/
 
 ui-service/.superpowers*
+
+# CLAUDE
+.claude/settings.json
+.claude/settings.local.json

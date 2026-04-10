@@ -2638,7 +2638,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x16GetSchedulerInitStatus\x12'.state.v1.GetSchedulerInitStatusRequest\x1a(.state.v1.GetSchedulerInitStatusResponse\x12\\\n" +
 	"\x13CreateTaskExecution\x12$.state.v1.CreateTaskExecutionRequest\x1a\x1f.state.v1.TaskExecutionResponse\x12V\n" +
 	"\x10GetTaskExecution\x12!.state.v1.GetTaskExecutionRequest\x1a\x1f.state.v1.TaskExecutionResponse\x12_\n" +
-	"\x12ListTaskExecutions\x12#.state.v1.ListTaskExecutionsRequest\x1a$.state.v1.ListTaskExecutionsResponseB=Z;github.com/carolsimone/continuo/state/api/state/v1;statev1b\x06proto3"
+	"\x12ListTaskExecutions\x12#.state.v1.ListTaskExecutionsRequest\x1a$.state.v1.ListTaskExecutionsResponseB<Z:github.com/carolsimone/continuo/state/api/state/v1;statev1b\x06proto3"
 
 var (
 	file_proto_state_v1_state_proto_rawDescOnce sync.Once

@@ -1,7 +1,7 @@
 # Structure
-This is a monorepo with multiple services.
+This is a monorepo with multiple micro-services.
 
-At the moment:
+Service at the moment are:
 * `state`
 * `graph`
 * `startup-controller`
@@ -9,11 +9,19 @@ At the moment:
 * `dependency-controller`
 * `k8s-controller`
 * `manifest-controller` — Python 3.12/uv service (not Go); consumes `update.graph:v1` Redis Stream events, batch-loads all dbt manifest.json files from `/manifests` (mounted from `dbt/services/`), resolves cross-service upstream deps via sqlglot, and loads nodes into the graph gRPC service. Run tests with `docker exec manifest-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.
-  These are the services that are actually part of the project.
 
 Fundamentally, in terms of architecture we use event-driven design and CQRS, always keeping things aligned with
 DDD philosophy. I believe CQRS is only applicable when the service has various consumer and producer components;
 otherwise simply DDD is enough, like in the `state` service.
+
+# graphify
+
+This project has a graphify knowledge graph at graphify-out/.
+
+Rules:
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` to keep the graph current
 
 # Architecture documentation
 The architecture pack under `docs/arch/` is part of the working agreement for this repository.

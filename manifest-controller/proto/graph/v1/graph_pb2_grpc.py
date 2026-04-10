@@ -90,10 +90,20 @@ class GraphServiceStub(object):
                 request_serializer=graph_dot_v1_dot_graph__pb2.SnapshotGraphRequest.SerializeToString,
                 response_deserializer=graph_dot_v1_dot_graph__pb2.SnapshotGraphResponse.FromString,
                 _registered_method=True)
-        self.DeleteRunSnapshot = channel.unary_unary(
-                '/graph.v1.GraphService/DeleteRunSnapshot',
-                request_serializer=graph_dot_v1_dot_graph__pb2.DeleteRunSnapshotRequest.SerializeToString,
-                response_deserializer=graph_dot_v1_dot_graph__pb2.DeleteRunSnapshotResponse.FromString,
+        self.FinalizeRun = channel.unary_unary(
+                '/graph.v1.GraphService/FinalizeRun',
+                request_serializer=graph_dot_v1_dot_graph__pb2.FinalizeRunRequest.SerializeToString,
+                response_deserializer=graph_dot_v1_dot_graph__pb2.FinalizeRunResponse.FromString,
+                _registered_method=True)
+        self.ListRuns = channel.unary_unary(
+                '/graph.v1.GraphService/ListRuns',
+                request_serializer=graph_dot_v1_dot_graph__pb2.ListRunsRequest.SerializeToString,
+                response_deserializer=graph_dot_v1_dot_graph__pb2.ListRunsResponse.FromString,
+                _registered_method=True)
+        self.GetRunGraph = channel.unary_unary(
+                '/graph.v1.GraphService/GetRunGraph',
+                request_serializer=graph_dot_v1_dot_graph__pb2.GetRunGraphRequest.SerializeToString,
+                response_deserializer=graph_dot_v1_dot_graph__pb2.GetRunGraphResponse.FromString,
                 _registered_method=True)
         self.GetTransitiveDownstream = channel.unary_unary(
                 '/graph.v1.GraphService/GetTransitiveDownstream',
@@ -174,7 +184,19 @@ class GraphServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def DeleteRunSnapshot(self, request, context):
+    def FinalizeRun(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListRuns(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetRunGraph(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -247,10 +269,20 @@ def add_GraphServiceServicer_to_server(servicer, server):
                     request_deserializer=graph_dot_v1_dot_graph__pb2.SnapshotGraphRequest.FromString,
                     response_serializer=graph_dot_v1_dot_graph__pb2.SnapshotGraphResponse.SerializeToString,
             ),
-            'DeleteRunSnapshot': grpc.unary_unary_rpc_method_handler(
-                    servicer.DeleteRunSnapshot,
-                    request_deserializer=graph_dot_v1_dot_graph__pb2.DeleteRunSnapshotRequest.FromString,
-                    response_serializer=graph_dot_v1_dot_graph__pb2.DeleteRunSnapshotResponse.SerializeToString,
+            'FinalizeRun': grpc.unary_unary_rpc_method_handler(
+                    servicer.FinalizeRun,
+                    request_deserializer=graph_dot_v1_dot_graph__pb2.FinalizeRunRequest.FromString,
+                    response_serializer=graph_dot_v1_dot_graph__pb2.FinalizeRunResponse.SerializeToString,
+            ),
+            'ListRuns': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListRuns,
+                    request_deserializer=graph_dot_v1_dot_graph__pb2.ListRunsRequest.FromString,
+                    response_serializer=graph_dot_v1_dot_graph__pb2.ListRunsResponse.SerializeToString,
+            ),
+            'GetRunGraph': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetRunGraph,
+                    request_deserializer=graph_dot_v1_dot_graph__pb2.GetRunGraphRequest.FromString,
+                    response_serializer=graph_dot_v1_dot_graph__pb2.GetRunGraphResponse.SerializeToString,
             ),
             'GetTransitiveDownstream': grpc.unary_unary_rpc_method_handler(
                     servicer.GetTransitiveDownstream,
@@ -567,7 +599,7 @@ class GraphService(object):
             _registered_method=True)
 
     @staticmethod
-    def DeleteRunSnapshot(request,
+    def FinalizeRun(request,
             target,
             options=(),
             channel_credentials=None,
@@ -580,9 +612,63 @@ class GraphService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/graph.v1.GraphService/DeleteRunSnapshot',
-            graph_dot_v1_dot_graph__pb2.DeleteRunSnapshotRequest.SerializeToString,
-            graph_dot_v1_dot_graph__pb2.DeleteRunSnapshotResponse.FromString,
+            '/graph.v1.GraphService/FinalizeRun',
+            graph_dot_v1_dot_graph__pb2.FinalizeRunRequest.SerializeToString,
+            graph_dot_v1_dot_graph__pb2.FinalizeRunResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListRuns(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/graph.v1.GraphService/ListRuns',
+            graph_dot_v1_dot_graph__pb2.ListRunsRequest.SerializeToString,
+            graph_dot_v1_dot_graph__pb2.ListRunsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetRunGraph(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/graph.v1.GraphService/GetRunGraph',
+            graph_dot_v1_dot_graph__pb2.GetRunGraphRequest.SerializeToString,
+            graph_dot_v1_dot_graph__pb2.GetRunGraphResponse.FromString,
             options,
             channel_credentials,
             insecure,
