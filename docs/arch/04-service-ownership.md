@@ -8,6 +8,10 @@ This sheet is the fastest way to answer three questions for each service:
 
 Use this before diving into the full service dossiers.
 
+## Bootstrap Migration Image
+
+The dedicated Flyway image artifact sequentially applies the SQL files under `db/migration/{state,startup,executor,dependency,k8s}` against the corresponding `continuo_*` databases. It owns no runtime state; it is only the packaging and entrypoint for those migrations.
+
 ## `state`
 
 | Category | Owned / used surface |

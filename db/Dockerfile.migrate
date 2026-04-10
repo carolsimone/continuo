@@ -1,0 +1,13 @@
+FROM flyway/flyway:10
+
+USER root
+COPY migrate-all.sh /migrate-all.sh
+RUN chmod +x /migrate-all.sh
+
+COPY migration/state /flyway/migrations/state
+COPY migration/startup /flyway/migrations/startup
+COPY migration/executor /flyway/migrations/executor
+COPY migration/dependency /flyway/migrations/dependency
+COPY migration/k8s /flyway/migrations/k8s
+
+ENTRYPOINT ["/bin/sh", "/migrate-all.sh"]

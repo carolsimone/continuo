@@ -7,6 +7,7 @@ Migrations are organized by service ownership:
 ```
 db/migration/
 ├── state/         State service (scheduler_tracker, task_tracker, task_execution)
+├── startup/       Startup-controller (startup_outbox)
 ├── executor/      Executor-controller (deployment_outbox, processed_events)
 ├── dependency/    Dependency-controller (outbox, message_processing, published_messages)
 └── k8s/           K8s-controller (k8s_status_outbox)
@@ -16,14 +17,21 @@ db/migration/
 
 | Service | Database | Tables |
 |---------|----------|--------|
-| State, Startup-controller | continuo_state | scheduler_tracker, task_tracker, task_execution |
+| State | continuo_state | scheduler_tracker, task_tracker, task_execution |
+| Startup-controller | continuo_startup | startup_outbox |
 | Executor-controller | continuo_executor | deployment_outbox, processed_events |
 | Dependency-controller | continuo_dependency | outbox, message_processing, published_messages |
 | K8s-controller | continuo_k8s | k8s_status_outbox |
 
 ## Running Migrations
 
-Migrations run automatically via Flyway on `docker-compose up`:
+The consolidated migration image added in `db/Dockerfile.migrate` bakes all service migration trees into one artifact and runs them sequentially via `db/migrate-all.sh`:
+
+```bash
+DOCKER_BUILDKIT=1 docker build -t continuo-migrations:test -f db/Dockerfile.migrate db/
+```
+
+The existing per-service Flyway examples remain available for the current `docker-compose` setup:
 
 ```bash
 docker-compose up -d postgres          # Start Postgres
