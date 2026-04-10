@@ -43,6 +43,7 @@ dbt/services-fixed/*/target/
 
 # SKILLS
 *.archmcp/
+graphify-out/*
 
 # WORKTREES
 *.worktrees/
