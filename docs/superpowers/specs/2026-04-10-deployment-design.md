@@ -8,7 +8,7 @@
 
 ## Context
 
-The continuo monorepo has 8 application services (6 Go, 1 Node.js, 1 Python) and 4 infrastructure dependencies (PostgreSQL, Redis, Neo4j, S3). The target is a single Hetzner Cloud server used as a persistent dev/testing environment. `executor-controller` and `k8s-controller` require a real Kubernetes API, so Docker Compose alone is not viable — k3s is required regardless.
+The continuo monorepo has 8 application services (6 Go, 1 Node.js, 1 Python) and 4 infrastructure dependencies (PostgreSQL, Redis, Neo4j, S3). The target is a single Hetzner Cloud server used as a persistent dev/testing environment. All 8 services are deployed to k3s. Docker Compose is not used on the server — notably, `executor-controller` and `k8s-controller` talk directly to the Kubernetes API (submitting Jobs, monitoring Pods), so a real cluster is required regardless.
 
 This design is intentionally production-viable. The split between infra and app charts means the dev setup evolves into production without a rewrite.
 
