@@ -2396,6 +2396,110 @@ func (x *GetSchedulerInitStatusResponse) GetInitializationStatus() string {
 	return ""
 }
 
+type TriggerRerunRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleId    string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`
+	Schema        string                 `protobuf:"bytes,2,opt,name=schema,proto3" json:"schema,omitempty"`
+	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
+	ServiceName   string                 `protobuf:"bytes,4,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TriggerRerunRequest) Reset() {
+	*x = TriggerRerunRequest{}
+	mi := &file_proto_state_v1_state_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TriggerRerunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TriggerRerunRequest) ProtoMessage() {}
+
+func (x *TriggerRerunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_state_v1_state_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TriggerRerunRequest.ProtoReflect.Descriptor instead.
+func (*TriggerRerunRequest) Descriptor() ([]byte, []int) {
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *TriggerRerunRequest) GetScheduleId() string {
+	if x != nil {
+		return x.ScheduleId
+	}
+	return ""
+}
+
+func (x *TriggerRerunRequest) GetSchema() string {
+	if x != nil {
+		return x.Schema
+	}
+	return ""
+}
+
+func (x *TriggerRerunRequest) GetTableName() string {
+	if x != nil {
+		return x.TableName
+	}
+	return ""
+}
+
+func (x *TriggerRerunRequest) GetServiceName() string {
+	if x != nil {
+		return x.ServiceName
+	}
+	return ""
+}
+
+type TriggerRerunResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TriggerRerunResponse) Reset() {
+	*x = TriggerRerunResponse{}
+	mi := &file_proto_state_v1_state_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TriggerRerunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TriggerRerunResponse) ProtoMessage() {}
+
+func (x *TriggerRerunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_state_v1_state_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TriggerRerunResponse.ProtoReflect.Descriptor instead.
+func (*TriggerRerunResponse) Descriptor() ([]byte, []int) {
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{38}
+}
+
 var File_proto_state_v1_state_proto protoreflect.FileDescriptor
 
 const file_proto_state_v1_state_proto_rawDesc = "" +
@@ -2598,7 +2702,15 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\vschedule_id\x18\x01 \x01(\tR\n" +
 	"scheduleId\"U\n" +
 	"\x1eGetSchedulerInitStatusResponse\x123\n" +
-	"\x15initialization_status\x18\x01 \x01(\tR\x14initializationStatus*\xcc\x01\n" +
+	"\x15initialization_status\x18\x01 \x01(\tR\x14initializationStatus\"\x90\x01\n" +
+	"\x13TriggerRerunRequest\x12\x1f\n" +
+	"\vschedule_id\x18\x01 \x01(\tR\n" +
+	"scheduleId\x12\x16\n" +
+	"\x06schema\x18\x02 \x01(\tR\x06schema\x12\x1d\n" +
+	"\n" +
+	"table_name\x18\x03 \x01(\tR\ttableName\x12!\n" +
+	"\fservice_name\x18\x04 \x01(\tR\vserviceName\"\x16\n" +
+	"\x14TriggerRerunResponse*\xcc\x01\n" +
 	"\x0fSchedulerStatus\x12 \n" +
 	"\x1cSCHEDULER_STATUS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18SCHEDULER_STATUS_PENDING\x10\x01\x12\x1c\n" +
@@ -2613,7 +2725,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x13TASK_STATUS_RUNNING\x10\x02\x12\x19\n" +
 	"\x15TASK_STATUS_SUCCEEDED\x10\x03\x12\x16\n" +
 	"\x12TASK_STATUS_FAILED\x10\x04\x12\x19\n" +
-	"\x15TASK_STATUS_CANCELLED\x10\x052\x95\x0e\n" +
+	"\x15TASK_STATUS_CANCELLED\x10\x052\xe4\x0e\n" +
 	"\fStateService\x12P\n" +
 	"\x0fCreateScheduler\x12 .state.v1.CreateSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12J\n" +
 	"\fGetScheduler\x12\x1d.state.v1.GetSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12P\n" +
@@ -2635,7 +2747,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"DeleteTask\x12\x1b.state.v1.DeleteTaskRequest\x1a\x1c.state.v1.DeleteTaskResponse\x12D\n" +
 	"\tListTasks\x12\x1a.state.v1.ListTasksRequest\x1a\x1b.state.v1.ListTasksResponse\x12?\n" +
 	"\tResetTask\x12\x1a.state.v1.ResetTaskRequest\x1a\x16.state.v1.TaskResponse\x12k\n" +
-	"\x16GetSchedulerInitStatus\x12'.state.v1.GetSchedulerInitStatusRequest\x1a(.state.v1.GetSchedulerInitStatusResponse\x12\\\n" +
+	"\x16GetSchedulerInitStatus\x12'.state.v1.GetSchedulerInitStatusRequest\x1a(.state.v1.GetSchedulerInitStatusResponse\x12M\n" +
+	"\fTriggerRerun\x12\x1d.state.v1.TriggerRerunRequest\x1a\x1e.state.v1.TriggerRerunResponse\x12\\\n" +
 	"\x13CreateTaskExecution\x12$.state.v1.CreateTaskExecutionRequest\x1a\x1f.state.v1.TaskExecutionResponse\x12V\n" +
 	"\x10GetTaskExecution\x12!.state.v1.GetTaskExecutionRequest\x1a\x1f.state.v1.TaskExecutionResponse\x12_\n" +
 	"\x12ListTaskExecutions\x12#.state.v1.ListTaskExecutionsRequest\x1a$.state.v1.ListTaskExecutionsResponseB<Z:github.com/carolsimone/continuo/state/api/state/v1;statev1b\x06proto3"
@@ -2653,7 +2766,7 @@ func file_proto_state_v1_state_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_state_v1_state_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_state_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_proto_state_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_proto_state_v1_state_proto_goTypes = []any{
 	(SchedulerStatus)(0),                           // 0: state.v1.SchedulerStatus
 	(TaskStatus)(0),                                // 1: state.v1.TaskStatus
@@ -2694,39 +2807,41 @@ var file_proto_state_v1_state_proto_goTypes = []any{
 	(*ResetTaskRequest)(nil),                       // 36: state.v1.ResetTaskRequest
 	(*GetSchedulerInitStatusRequest)(nil),          // 37: state.v1.GetSchedulerInitStatusRequest
 	(*GetSchedulerInitStatusResponse)(nil),         // 38: state.v1.GetSchedulerInitStatusResponse
-	(*timestamppb.Timestamp)(nil),                  // 39: google.protobuf.Timestamp
+	(*TriggerRerunRequest)(nil),                    // 39: state.v1.TriggerRerunRequest
+	(*TriggerRerunResponse)(nil),                   // 40: state.v1.TriggerRerunResponse
+	(*timestamppb.Timestamp)(nil),                  // 41: google.protobuf.Timestamp
 }
 var file_proto_state_v1_state_proto_depIdxs = []int32{
 	0,  // 0: state.v1.Scheduler.status:type_name -> state.v1.SchedulerStatus
-	39, // 1: state.v1.Scheduler.created_at:type_name -> google.protobuf.Timestamp
-	39, // 2: state.v1.Scheduler.started_at:type_name -> google.protobuf.Timestamp
-	39, // 3: state.v1.Scheduler.completed_at:type_name -> google.protobuf.Timestamp
-	39, // 4: state.v1.Scheduler.last_heartbeat_at:type_name -> google.protobuf.Timestamp
-	39, // 5: state.v1.Scheduler.cancelled_at:type_name -> google.protobuf.Timestamp
-	39, // 6: state.v1.Task.created_at:type_name -> google.protobuf.Timestamp
+	41, // 1: state.v1.Scheduler.created_at:type_name -> google.protobuf.Timestamp
+	41, // 2: state.v1.Scheduler.started_at:type_name -> google.protobuf.Timestamp
+	41, // 3: state.v1.Scheduler.completed_at:type_name -> google.protobuf.Timestamp
+	41, // 4: state.v1.Scheduler.last_heartbeat_at:type_name -> google.protobuf.Timestamp
+	41, // 5: state.v1.Scheduler.cancelled_at:type_name -> google.protobuf.Timestamp
+	41, // 6: state.v1.Task.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 7: state.v1.Task.status:type_name -> state.v1.TaskStatus
-	39, // 8: state.v1.Task.cancelled_at:type_name -> google.protobuf.Timestamp
-	39, // 9: state.v1.TaskExecution.created_at:type_name -> google.protobuf.Timestamp
-	39, // 10: state.v1.TaskExecution.started_at:type_name -> google.protobuf.Timestamp
-	39, // 11: state.v1.TaskExecution.completed_at:type_name -> google.protobuf.Timestamp
-	39, // 12: state.v1.TaskExecution.cancelled_at:type_name -> google.protobuf.Timestamp
+	41, // 8: state.v1.Task.cancelled_at:type_name -> google.protobuf.Timestamp
+	41, // 9: state.v1.TaskExecution.created_at:type_name -> google.protobuf.Timestamp
+	41, // 10: state.v1.TaskExecution.started_at:type_name -> google.protobuf.Timestamp
+	41, // 11: state.v1.TaskExecution.completed_at:type_name -> google.protobuf.Timestamp
+	41, // 12: state.v1.TaskExecution.cancelled_at:type_name -> google.protobuf.Timestamp
 	0,  // 13: state.v1.CreateSchedulerRequest.status:type_name -> state.v1.SchedulerStatus
 	0,  // 14: state.v1.UpdateSchedulerRequest.status:type_name -> state.v1.SchedulerStatus
-	39, // 15: state.v1.UpdateSchedulerRequest.started_at:type_name -> google.protobuf.Timestamp
-	39, // 16: state.v1.UpdateSchedulerRequest.completed_at:type_name -> google.protobuf.Timestamp
-	39, // 17: state.v1.UpdateSchedulerRequest.last_heartbeat_at:type_name -> google.protobuf.Timestamp
+	41, // 15: state.v1.UpdateSchedulerRequest.started_at:type_name -> google.protobuf.Timestamp
+	41, // 16: state.v1.UpdateSchedulerRequest.completed_at:type_name -> google.protobuf.Timestamp
+	41, // 17: state.v1.UpdateSchedulerRequest.last_heartbeat_at:type_name -> google.protobuf.Timestamp
 	2,  // 18: state.v1.SchedulerResponse.scheduler:type_name -> state.v1.Scheduler
 	1,  // 19: state.v1.CreateTaskRequest.status:type_name -> state.v1.TaskStatus
 	1,  // 20: state.v1.UpdateTaskRequest.status:type_name -> state.v1.TaskStatus
-	39, // 21: state.v1.UpdateTaskRequest.cancelled_at:type_name -> google.protobuf.Timestamp
+	41, // 21: state.v1.UpdateTaskRequest.cancelled_at:type_name -> google.protobuf.Timestamp
 	1,  // 22: state.v1.ListTasksRequest.status:type_name -> state.v1.TaskStatus
 	3,  // 23: state.v1.ListTasksResponse.tasks:type_name -> state.v1.Task
 	3,  // 24: state.v1.TaskResponse.task:type_name -> state.v1.Task
-	39, // 25: state.v1.CreateTaskExecutionRequest.started_at:type_name -> google.protobuf.Timestamp
-	39, // 26: state.v1.CreateTaskExecutionRequest.completed_at:type_name -> google.protobuf.Timestamp
+	41, // 25: state.v1.CreateTaskExecutionRequest.started_at:type_name -> google.protobuf.Timestamp
+	41, // 26: state.v1.CreateTaskExecutionRequest.completed_at:type_name -> google.protobuf.Timestamp
 	4,  // 27: state.v1.TaskExecutionResponse.task_execution:type_name -> state.v1.TaskExecution
 	4,  // 28: state.v1.ListTaskExecutionsResponse.task_executions:type_name -> state.v1.TaskExecution
-	39, // 29: state.v1.ScheduleSummary.last_run_at:type_name -> google.protobuf.Timestamp
+	41, // 29: state.v1.ScheduleSummary.last_run_at:type_name -> google.protobuf.Timestamp
 	30, // 30: state.v1.ListAllSchedulesResponse.schedules:type_name -> state.v1.ScheduleSummary
 	5,  // 31: state.v1.StateService.CreateScheduler:input_type -> state.v1.CreateSchedulerRequest
 	6,  // 32: state.v1.StateService.GetScheduler:input_type -> state.v1.GetSchedulerRequest
@@ -2746,32 +2861,34 @@ var file_proto_state_v1_state_proto_depIdxs = []int32{
 	19, // 46: state.v1.StateService.ListTasks:input_type -> state.v1.ListTasksRequest
 	36, // 47: state.v1.StateService.ResetTask:input_type -> state.v1.ResetTaskRequest
 	37, // 48: state.v1.StateService.GetSchedulerInitStatus:input_type -> state.v1.GetSchedulerInitStatusRequest
-	22, // 49: state.v1.StateService.CreateTaskExecution:input_type -> state.v1.CreateTaskExecutionRequest
-	23, // 50: state.v1.StateService.GetTaskExecution:input_type -> state.v1.GetTaskExecutionRequest
-	25, // 51: state.v1.StateService.ListTaskExecutions:input_type -> state.v1.ListTaskExecutionsRequest
-	9,  // 52: state.v1.StateService.CreateScheduler:output_type -> state.v1.SchedulerResponse
-	9,  // 53: state.v1.StateService.GetScheduler:output_type -> state.v1.SchedulerResponse
-	9,  // 54: state.v1.StateService.UpdateScheduler:output_type -> state.v1.SchedulerResponse
-	9,  // 55: state.v1.StateService.CancelScheduler:output_type -> state.v1.SchedulerResponse
-	9,  // 56: state.v1.StateService.UpdateSchedulerInitStatus:output_type -> state.v1.SchedulerResponse
-	12, // 57: state.v1.StateService.ResetInProgressInitializations:output_type -> state.v1.ResetInProgressInitializationsResponse
-	28, // 58: state.v1.StateService.ActivateSchedule:output_type -> state.v1.ActivateScheduleResponse
-	31, // 59: state.v1.StateService.ListAllSchedules:output_type -> state.v1.ListAllSchedulesResponse
-	33, // 60: state.v1.StateService.TriggerSchedule:output_type -> state.v1.TriggerScheduleResponse
-	35, // 61: state.v1.StateService.CancelSchedule:output_type -> state.v1.CancelScheduleResponse
-	21, // 62: state.v1.StateService.CreateTask:output_type -> state.v1.TaskResponse
-	21, // 63: state.v1.StateService.GetTask:output_type -> state.v1.TaskResponse
-	21, // 64: state.v1.StateService.GetTaskByScheduleAndNode:output_type -> state.v1.TaskResponse
-	21, // 65: state.v1.StateService.UpdateTask:output_type -> state.v1.TaskResponse
-	18, // 66: state.v1.StateService.DeleteTask:output_type -> state.v1.DeleteTaskResponse
-	20, // 67: state.v1.StateService.ListTasks:output_type -> state.v1.ListTasksResponse
-	21, // 68: state.v1.StateService.ResetTask:output_type -> state.v1.TaskResponse
-	38, // 69: state.v1.StateService.GetSchedulerInitStatus:output_type -> state.v1.GetSchedulerInitStatusResponse
-	24, // 70: state.v1.StateService.CreateTaskExecution:output_type -> state.v1.TaskExecutionResponse
-	24, // 71: state.v1.StateService.GetTaskExecution:output_type -> state.v1.TaskExecutionResponse
-	26, // 72: state.v1.StateService.ListTaskExecutions:output_type -> state.v1.ListTaskExecutionsResponse
-	52, // [52:73] is the sub-list for method output_type
-	31, // [31:52] is the sub-list for method input_type
+	39, // 49: state.v1.StateService.TriggerRerun:input_type -> state.v1.TriggerRerunRequest
+	22, // 50: state.v1.StateService.CreateTaskExecution:input_type -> state.v1.CreateTaskExecutionRequest
+	23, // 51: state.v1.StateService.GetTaskExecution:input_type -> state.v1.GetTaskExecutionRequest
+	25, // 52: state.v1.StateService.ListTaskExecutions:input_type -> state.v1.ListTaskExecutionsRequest
+	9,  // 53: state.v1.StateService.CreateScheduler:output_type -> state.v1.SchedulerResponse
+	9,  // 54: state.v1.StateService.GetScheduler:output_type -> state.v1.SchedulerResponse
+	9,  // 55: state.v1.StateService.UpdateScheduler:output_type -> state.v1.SchedulerResponse
+	9,  // 56: state.v1.StateService.CancelScheduler:output_type -> state.v1.SchedulerResponse
+	9,  // 57: state.v1.StateService.UpdateSchedulerInitStatus:output_type -> state.v1.SchedulerResponse
+	12, // 58: state.v1.StateService.ResetInProgressInitializations:output_type -> state.v1.ResetInProgressInitializationsResponse
+	28, // 59: state.v1.StateService.ActivateSchedule:output_type -> state.v1.ActivateScheduleResponse
+	31, // 60: state.v1.StateService.ListAllSchedules:output_type -> state.v1.ListAllSchedulesResponse
+	33, // 61: state.v1.StateService.TriggerSchedule:output_type -> state.v1.TriggerScheduleResponse
+	35, // 62: state.v1.StateService.CancelSchedule:output_type -> state.v1.CancelScheduleResponse
+	21, // 63: state.v1.StateService.CreateTask:output_type -> state.v1.TaskResponse
+	21, // 64: state.v1.StateService.GetTask:output_type -> state.v1.TaskResponse
+	21, // 65: state.v1.StateService.GetTaskByScheduleAndNode:output_type -> state.v1.TaskResponse
+	21, // 66: state.v1.StateService.UpdateTask:output_type -> state.v1.TaskResponse
+	18, // 67: state.v1.StateService.DeleteTask:output_type -> state.v1.DeleteTaskResponse
+	20, // 68: state.v1.StateService.ListTasks:output_type -> state.v1.ListTasksResponse
+	21, // 69: state.v1.StateService.ResetTask:output_type -> state.v1.TaskResponse
+	38, // 70: state.v1.StateService.GetSchedulerInitStatus:output_type -> state.v1.GetSchedulerInitStatusResponse
+	40, // 71: state.v1.StateService.TriggerRerun:output_type -> state.v1.TriggerRerunResponse
+	24, // 72: state.v1.StateService.CreateTaskExecution:output_type -> state.v1.TaskExecutionResponse
+	24, // 73: state.v1.StateService.GetTaskExecution:output_type -> state.v1.TaskExecutionResponse
+	26, // 74: state.v1.StateService.ListTaskExecutions:output_type -> state.v1.ListTaskExecutionsResponse
+	53, // [53:75] is the sub-list for method output_type
+	31, // [31:53] is the sub-list for method input_type
 	31, // [31:31] is the sub-list for extension type_name
 	31, // [31:31] is the sub-list for extension extendee
 	0,  // [0:31] is the sub-list for field type_name
@@ -2788,7 +2905,7 @@ func file_proto_state_v1_state_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_state_v1_state_proto_rawDesc), len(file_proto_state_v1_state_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   37,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

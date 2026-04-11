@@ -41,6 +41,10 @@ service StateService {
   // Used by dependency-controller to guard premature finalization during re-run.
   rpc GetSchedulerInitStatus(GetSchedulerInitStatusRequest) returns (GetSchedulerInitStatusResponse);
 
+  // TriggerRerun atomically resets the scheduler + target task and enqueues a
+  // command.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+  rpc TriggerRerun(TriggerRerunRequest) returns (TriggerRerunResponse);
+
   // TaskExecution operations
   rpc CreateTaskExecution(CreateTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
@@ -329,3 +333,12 @@ message GetSchedulerInitStatusRequest {
 message GetSchedulerInitStatusResponse {
   string initialization_status = 1;
 }
+
+message TriggerRerunRequest {
+  string schedule_id  = 1;
+  string schema       = 2;
+  string table_name   = 3;
+  string service_name = 4;
+}
+
+message TriggerRerunResponse {}
