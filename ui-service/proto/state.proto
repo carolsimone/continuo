@@ -34,6 +34,9 @@ service StateService {
   rpc CreateTaskExecution(CreateTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
+
+  // TriggerRerun enqueues a node-level rerun via the state service gRPC interface.
+  rpc TriggerRerun(TriggerRerunRequest) returns (TriggerRerunResponse);
 }
 
 // ============================================================================
@@ -279,3 +282,16 @@ message ScheduleSummary {
 message ListAllSchedulesResponse {
   repeated ScheduleSummary schedules = 1;
 }
+
+// ============================================================================
+// RERUN REQUESTS/RESPONSES
+// ============================================================================
+
+message TriggerRerunRequest {
+  string schedule_id  = 1;
+  string schema       = 2;
+  string table_name   = 3;
+  string service_name = 4;
+}
+
+message TriggerRerunResponse {}
