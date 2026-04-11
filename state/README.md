@@ -23,7 +23,7 @@ A gRPC-based state tracking service for scheduler executions and tasks.
 - Structured logging with slog
 - Graceful shutdown
 - Health check endpoint
-- **Task rerun functionality**: HTTP endpoint and Redis stream for rerunning failed tasks
+- **Task rerun functionality**: `TriggerRerun` gRPC method and Redis stream for rerunning failed tasks
 
 ## API Endpoints
 
@@ -49,7 +49,6 @@ A gRPC-based state tracking service for scheduler executions and tasks.
 ### HTTP (Port 8082)
 
 - `GET /health` - Health check endpoint
-- `POST /schedules/{schedule_id}/rerun` - Rerun failed tasks for a schedule
 
 ## Getting Started
 
@@ -230,7 +229,7 @@ docker exec state bash -c "cd /app/state && make test-integration"
 - **executor-service**: May consume rerun commands to directly retry task execution
 
 **Usage:**
-The rerun stream enables selective retry of failed tasks without requiring a full schedule restart. When a task fails, clients can call the HTTP endpoint `POST /schedules/{schedule_id}/rerun` with the specific task details, which publishes a rerun command to this stream. Downstream services consume these commands and retry the specified tasks.
+The rerun stream enables selective retry of failed tasks without requiring a full schedule restart. When a task fails, callers invoke the `TriggerRerun` gRPC method on `state` (exposed to end-users via the BFF route `POST /api/schedulers/{id}/rerun` on ui-service), which publishes a rerun command to this stream. Downstream services consume these commands and retry the specified tasks.
 
 ## Development
 

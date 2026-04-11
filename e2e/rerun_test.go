@@ -17,12 +17,12 @@ import (
 )
 
 // TestRerunFailedNode verifies that a FAILED mid-DAG node (table_e) can be re-run via
-// POST /schedules/{id}/rerun and the schedule recovers to SUCCEEDED.
+// POST /api/schedulers/{id}/rerun and the schedule recovers to SUCCEEDED.
 //
 // DAG: uses the failure DAG (e2e-schedule-failure).
 //   - table_e fails via service-3-broken after exhausting 3 retries.
 //   - The broken manifest is replaced with a working one and manifest-controller reloads.
-//   - POST /schedules/{id}/rerun is called for table_e.
+//   - POST /api/schedulers/{id}/rerun is called for table_e (BFF route → TriggerRerun gRPC).
 //   - The full downstream cascade (table_g, table_h, table_i, table_j) completes.
 //   - The schedule recovers to SUCCEEDED.
 func TestRerunFailedNode(t *testing.T) {
@@ -82,8 +82,8 @@ func TestRerunFailedNode(t *testing.T) {
 	t.Log("Phase 2: fixing table_e in service-3-broken and reloading graph...")
 	fixBrokenTableEAndReloadGraph(t, ctx, clients)
 
-	// Phase 3: POST /schedules/{id}/rerun for table_e
-	t.Log("Phase 3: calling POST /schedules/{id}/rerun for table_e...")
+	// Phase 3: POST /api/schedulers/{id}/rerun for table_e (BFF route → TriggerRerun gRPC)
+	t.Log("Phase 3: calling POST /api/schedulers/{id}/rerun for table_e...")
 	callRerunEndpoint(t, ctx, schedulerID, failureTestSchemaName, "table_e", "service-3-broken")
 
 	// Phase 4: Wait for table_e to be re-dispatched (second entry in query.model:v1)
