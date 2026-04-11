@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "continuo-app.migrationsJobName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo-app.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "continuo-app.labels" . | nindent 8 }}
+        app.kubernetes.io/name: db-migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: {{ printf "%s/continuo-migrations:%s" .Values.global.dockerHubUser .Values.global.imageTag | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.global.postgres.host | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.global.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.global.postgres.password | quote }}

@@ -1,0 +1,12 @@
+# config/schedules.yaml
+# Cron schedule definitions for the state service.
+# Timezone applies to all schedules.
+# Adding or changing a schedule requires editing this file and restarting state.
+timezone: Europe/Paris
+schedules:
+  - name: daily
+    cron: "0 1 * * *"
+    description: "Runs daily at 1am CET"
+  - name: hourly
+    cron: "0 * * * *"
+    description: "Runs every hour"
