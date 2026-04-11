@@ -49,7 +49,7 @@ graphify-out/*
 *.worktrees/
 *.scheduler-stop/.worktrees/
 .wrkt/
-.worktrees/
+.worktree/*
 
 ui-service/.superpowers*
 
@@ -61,3 +61,5 @@ deploy/app/values.secret.yaml
 # CLAUDE
 .claude/settings.json
 .claude/settings.local.json
+
+.rtk/*
