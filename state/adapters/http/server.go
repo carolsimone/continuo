@@ -13,12 +13,9 @@ type Server struct {
 }
 
 // NewServer creates a new HTTP server
-func NewServer(port string, rerunHandler *RerunHandler, logger *slog.Logger) *Server {
+func NewServer(port string, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", HealthHandler)
-	if rerunHandler != nil {
-		mux.Handle("/schedules/{schedule_id}/rerun", rerunHandler)
-	}
 
 	return &Server{
 		httpServer: &http.Server{
