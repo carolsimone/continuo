@@ -1,23 +1,45 @@
-FROM python:3.14-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-RUN pip install uv
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN pip install --no-cache-dir uv
 
-FROM python:3.14-slim
+RUN uv venv /app/.venv
 
-WORKDIR /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python \
+    boto3==1.42.68 \
+    grpcio==1.78.0 \
+    protobuf==6.33.5 \
+    redis==7.3.0 \
+    sqlglot==29.0.1
 
-COPY --from=builder /app/.venv /app/.venv
 COPY main.py ./
 COPY config/ ./config/
 COPY adapters/ ./adapters/
 COPY domain/ ./domain/
 COPY service/ ./service/
 COPY proto/ ./proto/
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/main.py ./
+COPY --from=builder /app/config/ ./config/
+COPY --from=builder /app/adapters/ ./adapters/
+COPY --from=builder /app/domain/ ./domain/
+COPY --from=builder /app/service/ ./service/
+COPY --from=builder /app/proto/ ./proto/
 
 ENV PATH="/app/.venv/bin:$PATH"
 
