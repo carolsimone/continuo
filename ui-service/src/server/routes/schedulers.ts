@@ -59,5 +59,20 @@ export function createSchedulersRouter(client: GrpcClient) {
     });
   });
 
+  router.post('/:id/rerun', (req, res) => {
+    client.triggerRerun(
+      {
+        schedule_id: req.params.id,
+        schema: req.body.schema,
+        table_name: req.body.table_name,
+        service_name: req.body.service_name,
+      },
+      (err: any) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.sendStatus(200);
+      }
+    );
+  });
+
   return router;
 }
