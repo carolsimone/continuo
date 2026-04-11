@@ -56,6 +56,7 @@ ui-service/.superpowers*
 # Helm chart dependencies
 deploy/infra/charts/
 deploy/app/charts/
+deploy/app/values.secret.yaml
 
 # CLAUDE
 .claude/settings.json
