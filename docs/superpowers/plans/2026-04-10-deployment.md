@@ -2,6 +2,32 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+---
+
+## Implementation Status (updated 2026-04-11)
+
+**Done by Claude (committed on `feat/deployment`):**
+- Task 1 — `graph/Dockerfile.prod` and `manifest-controller/Dockerfile.prod` (both build locally)
+- Task 2 — `db/migrate-all.sh` and `db/Dockerfile.migrate` (image builds locally)
+- Task 4 (Steps 1–4, 7) — `deploy/infra/` Chart.yaml + values.yaml, deps pulled, linted, committed
+- Tasks 5–11 — Full `deploy/app/` Helm chart (all 8 services; `helm lint` passes, `helm template` renders 8 Deployments/7 Services/1 Ingress/2 ConfigMaps/1 Secret/2 RBAC pairs/1 Job)
+- Task 14 (Steps 2, 5) — `.github/workflows/deploy.yml` written and committed
+
+**Remaining for you (requires Hetzner access or GitHub UI):**
+- Task 3 — Provision k3s on the Hetzner server (SSH, install k3s, hcloud-csi, Helm)
+- Task 4 (Steps 5–6) — Deploy `continuo-infra` chart; verify service names
+- Task 12 — Push images to Docker Hub, create server `values.secret.yaml`, deploy app chart, verify pods
+- Task 13 — Configure Traefik Let's Encrypt resolver on the server
+- Task 14 (Steps 1, 3, 4) — Add GitHub repo secrets (`DOCKERHUB_*`, `HETZNER_*`), clone repo on server, push to main and verify pipeline
+
+**Key deviations from original plan (improvements made):**
+- `manifest-controller/Dockerfile.prod` — Python 3.12 (not 3.14), pins exact package versions, proper two-stage build
+- `db/Dockerfile.migrate` — uses `/flyway/sql/` path (Flyway 10 default), `POSTGRES_PORT` configurable
+- `deploy/app/values.yaml` — services defined as list (not map) for ordered rendering; uses `secretEnv` field for granular secret injection; `__RELEASE_NAMESPACE__` placeholder for k8s controllers
+- `.github/workflows/deploy.yml` — more sophisticated than spec: matrix build, reuses `:latest` for unchanged services, pulls `continuo-base` from GHCR, `fail-fast: false`
+
+---
+
 **Goal:** Deploy all 8 continuo services to a single Hetzner k3s server using two independent Helm charts (infra and app) with GitHub Actions CI/CD pushing images to Docker Hub on every push to `main`.
 
 **Architecture:** Two Helm charts — `deploy/infra/` for stateful infrastructure (Postgres, Redis, Neo4j) deployed once via Bitnami/neo4j community charts, and `deploy/app/` for all 8 application services sharing a single iterable Deployment template. Flyway migrations run as a pre-install k8s Job via a custom migration image. GitHub Actions detects changed services by path, builds and pushes Docker Hub images tagged with git SHA, then SSHes into the Hetzner server to run `helm upgrade`.
@@ -53,7 +79,7 @@ config/
 - Create: `graph/Dockerfile.prod`
 - Create: `manifest-controller/Dockerfile.prod`
 
-- [ ] **Step 1: Write graph/Dockerfile.prod**
+- [x] **Step 1: Write graph/Dockerfile.prod**
 
   Model it after `state/Dockerfile.prod` (same monorepo Go multi-stage pattern). Binary is `graph`, ports 8081 and 50052.
 
@@ -90,7 +116,7 @@ config/
   CMD ["graph"]
   ```
 
-- [ ] **Step 2: Write manifest-controller/Dockerfile.prod**
+- [x] **Step 2: Write manifest-controller/Dockerfile.prod**
 
   Python 3.12 / uv multi-stage build. Installs only non-dev dependencies.
 
@@ -120,7 +146,7 @@ config/
   CMD ["python", "main.py"]
   ```
 
-- [ ] **Step 3: Build graph prod image locally to verify it compiles**
+- [x] **Step 3: Build graph prod image locally to verify it compiles**
 
   ```bash
   DOCKER_BUILDKIT=1 docker build -t continuo-graph:prod-test -f graph/Dockerfile.prod .
@@ -128,7 +154,7 @@ config/
 
   Expected: image builds successfully, no compilation errors.
 
-- [ ] **Step 4: Build manifest-controller prod image locally to verify**
+- [x] **Step 4: Build manifest-controller prod image locally to verify**
 
   ```bash
   DOCKER_BUILDKIT=1 docker build -t continuo-manifest-controller:prod-test -f manifest-controller/Dockerfile.prod manifest-controller/
@@ -136,7 +162,7 @@ config/
 
   Expected: image builds successfully.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```bash
   git add graph/Dockerfile.prod manifest-controller/Dockerfile.prod
@@ -153,7 +179,7 @@ config/
 
 Flyway cannot run multiple database migrations in a single invocation. This custom image bakes all SQL files in and runs them sequentially via a shell script.
 
-- [ ] **Step 1: Write db/migrate-all.sh**
+- [x] **Step 1: Write db/migrate-all.sh**
 
   ```bash
   #!/bin/sh
@@ -175,7 +201,7 @@ Flyway cannot run multiple database migrations in a single invocation. This cust
   echo "All migrations complete."
   ```
 
-- [ ] **Step 2: Write db/Dockerfile.migrate**
+- [x] **Step 2: Write db/Dockerfile.migrate**
 
   ```dockerfile
   FROM flyway/flyway:10
@@ -194,7 +220,7 @@ Flyway cannot run multiple database migrations in a single invocation. This cust
   ENTRYPOINT ["/bin/sh", "/migrate-all.sh"]
   ```
 
-- [ ] **Step 3: Build migration image locally to verify**
+- [x] **Step 3: Build migration image locally to verify**
 
   ```bash
   DOCKER_BUILDKIT=1 docker build -t continuo-migrations:test -f db/Dockerfile.migrate db/
@@ -202,7 +228,7 @@ Flyway cannot run multiple database migrations in a single invocation. This cust
 
   Expected: image builds, all SQL files are present inside the image.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add db/migrate-all.sh db/Dockerfile.migrate
@@ -287,7 +313,7 @@ Run all commands via SSH on the Hetzner server.
 - Create: `deploy/infra/Chart.yaml`
 - Create: `deploy/infra/values.yaml`
 
-- [ ] **Step 1: Write deploy/infra/Chart.yaml**
+- [x] **Step 1: Write deploy/infra/Chart.yaml**
 
   ```yaml
   apiVersion: v2
@@ -307,7 +333,7 @@ Run all commands via SSH on the Hetzner server.
       repository: https://helm.neo4j.com/neo4j
   ```
 
-- [ ] **Step 2: Write deploy/infra/values.yaml**
+- [x] **Step 2: Write deploy/infra/values.yaml**
 
   The initdb script creates all 6 databases in one Postgres instance. Passwords are placeholders — real values go in `values.secret.yaml` when deploying.
 
@@ -365,7 +391,7 @@ Run all commands via SSH on the Hetzner server.
           storage: 10Gi
   ```
 
-- [ ] **Step 3: Add Helm neo4j chart repo and pull dependencies**
+- [x] **Step 3: Add Helm neo4j chart repo and pull dependencies**
 
   Run locally (with kubeconfig pointing at Hetzner server):
 
@@ -377,7 +403,7 @@ Run all commands via SSH on the Hetzner server.
 
   Expected: `charts/` directory populated under `deploy/infra/`.
 
-- [ ] **Step 4: Lint the infra chart**
+- [x] **Step 4: Lint the infra chart**
 
   ```bash
   helm lint deploy/infra/
@@ -427,7 +453,7 @@ Run all commands via SSH on the Hetzner server.
   - `continuo-infra-redis-master`
   - `continuo-infra-neo4j` (or similar — update `deploy/app/values.yaml` if different)
 
-- [ ] **Step 7: Commit chart files (exclude charts/ directory)**
+- [x] **Step 7: Commit chart files (exclude charts/ directory)**
 
   ```bash
   echo "deploy/infra/charts/" >> .gitignore
@@ -447,7 +473,7 @@ Run all commands via SSH on the Hetzner server.
 - Create: `deploy/app/values.secret.yaml.example`
 - Modify: `.gitignore`
 
-- [ ] **Step 1: Write deploy/app/Chart.yaml**
+- [x] **Step 1: Write deploy/app/Chart.yaml**
 
   ```yaml
   apiVersion: v2
@@ -457,7 +483,7 @@ Run all commands via SSH on the Hetzner server.
   version: 0.1.0
   ```
 
-- [ ] **Step 2: Write deploy/app/templates/_helpers.tpl**
+- [x] **Step 2: Write deploy/app/templates/_helpers.tpl**
 
   ```
   {{/*
@@ -483,7 +509,7 @@ Run all commands via SSH on the Hetzner server.
   {{- end }}
   ```
 
-- [ ] **Step 3: Write deploy/app/templates/secret.yaml**
+- [x] **Step 3: Write deploy/app/templates/secret.yaml**
 
   Creates a single k8s Secret with all credentials. Services consume it via `envFrom.secretRef`.
 
@@ -505,7 +531,7 @@ Run all commands via SSH on the Hetzner server.
     AWS_SECRET_ACCESS_KEY: {{ .Values.global.s3.secretKey | quote }}
   ```
 
-- [ ] **Step 4: Write deploy/app/values.secret.yaml.example**
+- [x] **Step 4: Write deploy/app/values.secret.yaml.example**
 
   This is the template developers copy and fill in. The real file is gitignored.
 
@@ -520,13 +546,13 @@ Run all commands via SSH on the Hetzner server.
       secretKey: "changeme"
   ```
 
-- [ ] **Step 5: Gitignore the real secret file**
+- [x] **Step 5: Gitignore the real secret file**
 
   ```bash
   echo "deploy/app/values.secret.yaml" >> .gitignore
   ```
 
-- [ ] **Step 6: Lint**
+- [x] **Step 6: Lint**
 
   ```bash
   helm lint deploy/app/ --set global.imageTag=test \
@@ -541,7 +567,7 @@ Run all commands via SSH on the Hetzner server.
 
   Expected: `1 chart(s) linted, 0 chart(s) failed`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   ```bash
   git add deploy/app/ .gitignore
@@ -557,7 +583,7 @@ Run all commands via SSH on the Hetzner server.
 
 Shared non-secret config consumed by all services via `envFrom.configMapRef`. Secrets are separate (Task 5).
 
-- [ ] **Step 1: Write deploy/app/templates/configmap.yaml**
+- [x] **Step 1: Write deploy/app/templates/configmap.yaml**
 
   ```yaml
   apiVersion: v1
@@ -585,7 +611,7 @@ Shared non-secret config consumed by all services via `envFrom.configMapRef`. Se
     LOG_LEVEL: {{ .Values.global.logLevel | quote }}
   ```
 
-- [ ] **Step 2: Verify rendering with helm template**
+- [x] **Step 2: Verify rendering with helm template**
 
   ```bash
   helm template continuo-app deploy/app/ \
@@ -615,7 +641,7 @@ Shared non-secret config consumed by all services via `envFrom.configMapRef`. Se
 
   Expected: ConfigMap YAML with all keys populated, no `<nil>` values.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
   ```bash
   git add deploy/app/templates/configmap.yaml
@@ -631,7 +657,7 @@ Shared non-secret config consumed by all services via `envFrom.configMapRef`. Se
 
 `executor-controller` and `k8s-controller` need ServiceAccount, Role, and RoleBinding to call the Kubernetes API from inside the cluster. Other services get the default ServiceAccount.
 
-- [ ] **Step 1: Write deploy/app/templates/rbac.yaml**
+- [x] **Step 1: Write deploy/app/templates/rbac.yaml**
 
   ```yaml
   {{- range $name, $svc := .Values.services }}
@@ -674,7 +700,7 @@ Shared non-secret config consumed by all services via `envFrom.configMapRef`. Se
   {{- end }}
   ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
   ```bash
   git add deploy/app/templates/rbac.yaml
@@ -690,7 +716,7 @@ Shared non-secret config consumed by all services via `envFrom.configMapRef`. Se
 
 One template iterates the `services` map. Handles: services with no HTTP port (manifest-controller), services with gRPC port (state, graph), services with RBAC ServiceAccount (executor-controller, k8s-controller), and schedules ConfigMap mount (state).
 
-- [ ] **Step 1: Write deploy/app/templates/deployment.yaml**
+- [x] **Step 1: Write deploy/app/templates/deployment.yaml**
 
   ```yaml
   {{- range $name, $svc := .Values.services }}
@@ -783,7 +809,7 @@ One template iterates the `services` map. Handles: services with no HTTP port (m
   {{- end }}
   ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
   ```bash
   git add deploy/app/templates/deployment.yaml
@@ -798,7 +824,7 @@ One template iterates the `services` map. Handles: services with no HTTP port (m
 - Create: `deploy/app/templates/service.yaml`
 - Create: `deploy/app/templates/ingress.yaml`
 
-- [ ] **Step 1: Write deploy/app/templates/service.yaml**
+- [x] **Step 1: Write deploy/app/templates/service.yaml**
 
   Services with no HTTP port (manifest-controller) get no Service resource.
 
@@ -831,7 +857,7 @@ One template iterates the `services` map. Handles: services with no HTTP port (m
   {{- end }}
   ```
 
-- [ ] **Step 2: Write deploy/app/templates/ingress.yaml**
+- [x] **Step 2: Write deploy/app/templates/ingress.yaml**
 
   Only services with `ingress.enabled: true` get an Ingress. Traefik (bundled with k3s) handles TLS via Let's Encrypt automatically when the `cert-manager` or Traefik TLS resolver is configured.
 
@@ -870,7 +896,7 @@ One template iterates the `services` map. Handles: services with no HTTP port (m
   {{- end }}
   ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
   ```bash
   git add deploy/app/templates/service.yaml deploy/app/templates/ingress.yaml
@@ -886,7 +912,7 @@ One template iterates the `services` map. Handles: services with no HTTP port (m
 
 The Job runs as a Helm pre-install/pre-upgrade hook. It connects to Postgres and runs all 5 migration sets using the `continuo-migrations` image built in Task 2.
 
-- [ ] **Step 1: Write deploy/app/templates/migrations.yaml**
+- [x] **Step 1: Write deploy/app/templates/migrations.yaml**
 
   ```yaml
   apiVersion: batch/v1
@@ -929,7 +955,7 @@ The Job runs as a Helm pre-install/pre-upgrade hook. It connects to Postgres and
 
   **Note:** The migration Job uses direct `env` from configmap/secret (not `envFrom`) so it only has the env vars it actually needs.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
   ```bash
   git add deploy/app/templates/migrations.yaml
@@ -945,7 +971,7 @@ The Job runs as a Helm pre-install/pre-upgrade hook. It connects to Postgres and
 
 This is the main values file. All env vars are translated from `docker-compose.yml` to k3s ClusterIP service names. `KUBECONFIG` is omitted for `startup-controller`, `executor-controller`, `k8s-controller` — they use in-cluster ServiceAccount auth automatically via client-go.
 
-- [ ] **Step 1: Write deploy/app/values.yaml**
+- [x] **Step 1: Write deploy/app/values.yaml**
 
   ```yaml
   global:
@@ -1100,7 +1126,7 @@ This is the main values file. All env vars are translated from `docker-compose.y
 
   **Architecture note — manifest-controller volumes:** In the local docker-compose setup, `/manifests` is mounted from `./dbt/services/`. In k3s this directory is not available. Two options: (a) build manifests into the image at build time, or (b) run a `compile-and-upload` Job that uploads to S3 and update `MANIFESTS_BASE` to point to an S3 path. This is a follow-up task — for now the service deploys but won't process manifests until the volume is resolved.
 
-- [ ] **Step 2: Create ConfigMap for schedules.yaml**
+- [x] **Step 2: Create ConfigMap for schedules.yaml**
 
   The `state` service reads schedules from a mounted file. Create a template that renders `config/schedules.yaml` as a ConfigMap. Add this file:
 
@@ -1136,7 +1162,7 @@ This is the main values file. All env vars are translated from `docker-compose.y
       {{- .Files.Get "files/schedules.yaml" | nindent 4 }}
   ```
 
-- [ ] **Step 3: Run helm lint on full chart**
+- [x] **Step 3: Run helm lint on full chart**
 
   ```bash
   helm lint deploy/app/ -f deploy/app/values.yaml \
@@ -1148,7 +1174,7 @@ This is the main values file. All env vars are translated from `docker-compose.y
 
   Expected: `1 chart(s) linted, 0 chart(s) failed`.
 
-- [ ] **Step 4: Render and inspect all Deployments**
+- [x] **Step 4: Render and inspect all Deployments**
 
   ```bash
   helm template continuo-app deploy/app/ \
@@ -1174,7 +1200,7 @@ This is the main values file. All env vars are translated from `docker-compose.y
   1 Job              (db-migrate)
   ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```bash
   git add deploy/app/ config/
@@ -1325,7 +1351,7 @@ Three jobs: detect which services changed, build+push changed images, deploy via
   | `HETZNER_HOST` | Your Hetzner server IP |
   | `HETZNER_SSH_KEY` | Private key content for SSH (the key's public half must be in `~/.ssh/authorized_keys` on the server) |
 
-- [ ] **Step 2: Write .github/workflows/deploy.yml**
+- [x] **Step 2: Write .github/workflows/deploy.yml**
 
   ```yaml
   name: Build and Deploy
@@ -1505,7 +1531,7 @@ Three jobs: detect which services changed, build+push changed images, deploy via
   - `deploy` job SSHes and runs helm upgrade
   - All pods stay Running after deploy
 
-- [ ] **Step 5: Commit the workflow**
+- [x] **Step 5: Commit the workflow**
 
   ```bash
   git add .github/workflows/deploy.yml
