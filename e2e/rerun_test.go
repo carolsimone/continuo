@@ -251,7 +251,7 @@ func restoreBrokenTableE(t *testing.T) {
 	}
 }
 
-// callRerunEndpoint calls POST /schedules/{id}/rerun and asserts 202 Accepted.
+// callRerunEndpoint calls POST /api/schedulers/{id}/rerun and asserts 200 OK.
 func callRerunEndpoint(
 	t *testing.T,
 	ctx context.Context,
@@ -259,11 +259,10 @@ func callRerunEndpoint(
 	schemaName, tableName, serviceName string,
 ) {
 	t.Helper()
-	stateHost := getEnv("STATE_HOST", "state")
-	url := fmt.Sprintf("http://%s:8082/schedules/%s/rerun", stateHost, schedulerID)
+	uiBase := getEnv("UI_HTTP_BASE", "http://ui:8090")
+	url := fmt.Sprintf("%s/api/schedulers/%s/rerun", uiBase, schedulerID)
 
 	body, err := json.Marshal(map[string]string{
-		"scope":        "node",
 		"schema":       schemaName,
 		"table_name":   tableName,
 		"service_name": serviceName,
@@ -276,12 +275,12 @@ func callRerunEndpoint(
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := httpClient.Do(req)
-	require.NoError(t, err, "POST /schedules/%s/rerun failed", schedulerID)
+	require.NoError(t, err, "POST /api/schedulers/%s/rerun failed", schedulerID)
 	defer resp.Body.Close()
 
-	require.Equal(t, http.StatusAccepted, resp.StatusCode,
-		"Expected 202 Accepted from rerun endpoint, got %d", resp.StatusCode)
-	t.Logf("POST /rerun returned 202 Accepted for %s.%s", schemaName, tableName)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"Expected 200 OK from BFF rerun endpoint, got %d", resp.StatusCode)
+	t.Logf("POST /api/schedulers/%s/rerun returned 200 OK for %s.%s", schedulerID, schemaName, tableName)
 }
 
 // waitForRerunDispatched polls query.model:v1 until the target node appears
