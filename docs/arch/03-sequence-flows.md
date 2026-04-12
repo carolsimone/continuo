@@ -108,15 +108,19 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant U as user/API client
-  participant ST as state
+  participant UI as ui-service (BFF)
+  participant ST as state (gRPC)
   participant R as Redis
   participant SC as startup-controller
   participant GR as graph
   participant EC as executor-controller
 
-  U->>ST: POST /schedules/{id}/rerun
-  ST->>ST: reset scheduler + target task + write state_outbox
-  ST->>R: publish command.rerun:v1
+  U->>UI: POST /api/schedulers/{id}/rerun
+  UI->>ST: TriggerRerun(schedule_id, schema, table_name, service_name)
+  ST->>ST: reset scheduler + target task + write state_outbox (atomic tx)
+  ST-->>UI: TriggerRerunResponse{}
+  UI-->>U: 200 OK
+  ST->>R: publish command.rerun:v1 (via OutboxProcessor)
   R->>SC: consume command.rerun:v1
   SC->>ST: UpdateSchedulerInitStatus(in_progress)
   SC->>GR: GetTransitiveDownstream(target)

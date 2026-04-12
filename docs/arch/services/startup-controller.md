@@ -113,7 +113,7 @@ This service does **not** own scheduler or task state — it only owns durable d
 4. Fetch target task from state:
    GetTask(schedule_id, service, schema, table)
    → if status == FAILED: ResetTask(task_id)
-     (HTTP rerun handler already reset it atomically, but handles replay on crash)
+     (TriggerRerun gRPC handler already reset it atomically, but handles replay on crash)
 
 5. For each FAILED downstream node:
    - UpdateNodeStatus(node, → PENDING, run_id)

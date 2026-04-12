@@ -18,7 +18,7 @@ Legend:
 | `executor-controller` | `RW` | `-` | `RW` | `W` | `-` | `W` | `-` |
 | `k8s-controller` | `RW` | `-` | `RW` | `RW` | `-` | `R` | `W` |
 | `manifest-controller` | `-` | `-` | `RW` | `-` | `W` | `-` | `R` |
-| `ui-service` | `-` | `-` | `-` | `R` | `R` | `-` | `-` |
+| `ui-service` | `-` | `-` | `-` | `RW` | `R` | `-` | `-` |
 
 ## Redis Stream Matrix
 
@@ -45,7 +45,7 @@ Legend:
 | `dependency-controller` | `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler` |
 | `executor-controller` | `UpdateTask` |
 | `k8s-controller` | `GetTask`, `UpdateTask`, `CreateTaskExecution` |
-| `ui-service` | `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions` |
+| `ui-service` | `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `TriggerRerun` |
 
 ### Calls to `graph`
 

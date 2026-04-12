@@ -37,6 +37,7 @@ const (
 	StateService_ListTasks_FullMethodName                      = "/state.v1.StateService/ListTasks"
 	StateService_ResetTask_FullMethodName                      = "/state.v1.StateService/ResetTask"
 	StateService_GetSchedulerInitStatus_FullMethodName         = "/state.v1.StateService/GetSchedulerInitStatus"
+	StateService_TriggerRerun_FullMethodName                   = "/state.v1.StateService/TriggerRerun"
 	StateService_CreateTaskExecution_FullMethodName            = "/state.v1.StateService/CreateTaskExecution"
 	StateService_GetTaskExecution_FullMethodName               = "/state.v1.StateService/GetTaskExecution"
 	StateService_ListTaskExecutions_FullMethodName             = "/state.v1.StateService/ListTaskExecutions"
@@ -76,6 +77,9 @@ type StateServiceClient interface {
 	// GetSchedulerInitStatus returns initialization_status for a scheduler.
 	// Used by dependency-controller to guard premature finalization during re-run.
 	GetSchedulerInitStatus(ctx context.Context, in *GetSchedulerInitStatusRequest, opts ...grpc.CallOption) (*GetSchedulerInitStatusResponse, error)
+	// TriggerRerun atomically resets the scheduler + target task and enqueues a
+	// command.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+	TriggerRerun(ctx context.Context, in *TriggerRerunRequest, opts ...grpc.CallOption) (*TriggerRerunResponse, error)
 	// TaskExecution operations
 	CreateTaskExecution(ctx context.Context, in *CreateTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error)
 	GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error)
@@ -270,6 +274,16 @@ func (c *stateServiceClient) GetSchedulerInitStatus(ctx context.Context, in *Get
 	return out, nil
 }
 
+func (c *stateServiceClient) TriggerRerun(ctx context.Context, in *TriggerRerunRequest, opts ...grpc.CallOption) (*TriggerRerunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TriggerRerunResponse)
+	err := c.cc.Invoke(ctx, StateService_TriggerRerun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *stateServiceClient) CreateTaskExecution(ctx context.Context, in *CreateTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TaskExecutionResponse)
@@ -334,6 +348,9 @@ type StateServiceServer interface {
 	// GetSchedulerInitStatus returns initialization_status for a scheduler.
 	// Used by dependency-controller to guard premature finalization during re-run.
 	GetSchedulerInitStatus(context.Context, *GetSchedulerInitStatusRequest) (*GetSchedulerInitStatusResponse, error)
+	// TriggerRerun atomically resets the scheduler + target task and enqueues a
+	// command.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+	TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error)
 	// TaskExecution operations
 	CreateTaskExecution(context.Context, *CreateTaskExecutionRequest) (*TaskExecutionResponse, error)
 	GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error)
@@ -401,6 +418,9 @@ func (UnimplementedStateServiceServer) ResetTask(context.Context, *ResetTaskRequ
 }
 func (UnimplementedStateServiceServer) GetSchedulerInitStatus(context.Context, *GetSchedulerInitStatusRequest) (*GetSchedulerInitStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSchedulerInitStatus not implemented")
+}
+func (UnimplementedStateServiceServer) TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TriggerRerun not implemented")
 }
 func (UnimplementedStateServiceServer) CreateTaskExecution(context.Context, *CreateTaskExecutionRequest) (*TaskExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateTaskExecution not implemented")
@@ -756,6 +776,24 @@ func _StateService_GetSchedulerInitStatus_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_TriggerRerun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TriggerRerunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).TriggerRerun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_TriggerRerun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).TriggerRerun(ctx, req.(*TriggerRerunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StateService_CreateTaskExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreateTaskExecutionRequest)
 	if err := dec(in); err != nil {
@@ -888,6 +926,10 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSchedulerInitStatus",
 			Handler:    _StateService_GetSchedulerInitStatus_Handler,
+		},
+		{
+			MethodName: "TriggerRerun",
+			Handler:    _StateService_TriggerRerun_Handler,
 		},
 		{
 			MethodName: "CreateTaskExecution",

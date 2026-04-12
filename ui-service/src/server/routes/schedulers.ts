@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import * as grpc from '@grpc/grpc-js';
 import { GrpcClient } from '../grpc-client';
 
 interface ProtoTimestamp {
@@ -14,6 +15,19 @@ function toISO(ts: ProtoTimestamp | null | undefined): string | null {
 
 function normalizeStatus(status: string): string {
   return status.replace(/^(SCHEDULER_STATUS_|TASK_STATUS_)/, '').toLowerCase();
+}
+
+function grpcToHttpStatus(code: number): number {
+  switch (code) {
+    case grpc.status.INVALID_ARGUMENT:
+      return 400;
+    case grpc.status.NOT_FOUND:
+      return 404;
+    case grpc.status.FAILED_PRECONDITION:
+      return 409;
+    default:
+      return 500;
+  }
 }
 
 export function createSchedulersRouter(client: GrpcClient) {
@@ -57,6 +71,21 @@ export function createSchedulersRouter(client: GrpcClient) {
         cancelled_at: toISO(s.cancelled_at),
       });
     });
+  });
+
+  router.post('/:id/rerun', (req, res) => {
+    client.triggerRerun(
+      {
+        schedule_id: req.params.id,
+        schema: req.body.schema,
+        table_name: req.body.table_name,
+        service_name: req.body.service_name,
+      },
+      (err: any) => {
+        if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+        res.sendStatus(200);
+      }
+    );
   });
 
   return router;

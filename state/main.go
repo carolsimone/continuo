@@ -156,10 +156,11 @@ func main() {
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activationService, catalogRepo, schedulesConfig, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
+	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
 
 	// Create gRPC server
 	grpcPort := config.GetGRPCPort()
-	grpcServer, err := grpcserver.NewServer(grpcPort, schedulerHandler, taskHandler, taskExecutionHandler, logger)
+	grpcServer, err := grpcserver.NewServer(grpcPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, logger)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)
@@ -177,12 +178,9 @@ func main() {
 		}
 	}()
 
-	// Initialize rerun HTTP handler
-	rerunHandler := http.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-
-	// Start HTTP health server
+	// Start HTTP health server (health-only; rerun moved to gRPC)
 	healthPort := config.GetHealthPort()
-	healthServer := http.NewServer(healthPort, rerunHandler, logger)
+	healthServer := http.NewServer(healthPort, logger)
 
 	// Register health server cleanup
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {

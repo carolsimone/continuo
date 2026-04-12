@@ -83,7 +83,7 @@ func (h *RerunHandler) Handle(ctx context.Context, cmd command.RerunNode) error 
 	if err != nil {
 		return fmt.Errorf("invalid target task_id: %w", err)
 	}
-	// The HTTP rerun handler already resets the target task to PENDING atomically.
+	// The gRPC TriggerRerun handler already resets the target task to PENDING atomically.
 	// Only call ResetTask if the task is still FAILED (e.g. startup-controller
 	// is replaying a lost message after a crash).
 	if targetTask.Status == statev1.TaskStatus_TASK_STATUS_FAILED {
