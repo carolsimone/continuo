@@ -53,6 +53,7 @@ graphify-out/*
 
 ui-service/.superpowers*
 docs/superpowers/*
+docs/future-dev/*
 
 # Helm chart dependencies
 deploy/infra/charts/
