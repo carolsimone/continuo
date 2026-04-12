@@ -117,9 +117,10 @@ func TestMain(m *testing.M) {
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activator, nil, nil, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	execHandler := handlers.NewTaskExecutionHandler(execRepo, logger)
+	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, nil, logger)
 
 	// ---- Create gRPC server on a random port ----
-	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, execHandler, logger)
+	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, execHandler, rerunHandler, logger)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

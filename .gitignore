@@ -52,6 +52,7 @@ graphify-out/*
 .worktree/*
 
 ui-service/.superpowers*
+docs/superpowers/*
 
 # Helm chart dependencies
 deploy/infra/charts/
@@ -61,5 +62,6 @@ deploy/app/values.secret.yaml
 # CLAUDE
 .claude/settings.json
 .claude/settings.local.json
+.claude/settings.local.jsondocs/superpowers/*
 
 .rtk/*

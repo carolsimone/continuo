@@ -21,6 +21,7 @@ type Server struct {
 	schedulerHandler     *handlers.SchedulerHandler
 	taskHandler          *handlers.TaskHandler
 	taskExecutionHandler *handlers.TaskExecutionHandler
+	rerunHandler         *handlers.RerunHandler
 }
 
 // NewServer creates a new gRPC server
@@ -29,6 +30,7 @@ func NewServer(
 	schedulerHandler *handlers.SchedulerHandler,
 	taskHandler *handlers.TaskHandler,
 	taskExecutionHandler *handlers.TaskExecutionHandler,
+	rerunHandler *handlers.RerunHandler,
 	logger *slog.Logger,
 ) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -40,7 +42,6 @@ func NewServer(
 		grpc.UnaryInterceptor(loggingInterceptor(logger)),
 	)
 
-	// Register service implementation
 	server := &Server{
 		grpcServer:           grpcServer,
 		listener:             listener,
@@ -48,6 +49,7 @@ func NewServer(
 		schedulerHandler:     schedulerHandler,
 		taskHandler:          taskHandler,
 		taskExecutionHandler: taskExecutionHandler,
+		rerunHandler:         rerunHandler,
 	}
 
 	statev1.RegisterStateServiceServer(grpcServer, server)
@@ -186,6 +188,11 @@ func (s *Server) GetTaskExecution(ctx context.Context, req *statev1.GetTaskExecu
 // ListTaskExecutions delegates to task execution handler
 func (s *Server) ListTaskExecutions(ctx context.Context, req *statev1.ListTaskExecutionsRequest) (*statev1.ListTaskExecutionsResponse, error) {
 	return s.taskExecutionHandler.ListTaskExecutions(ctx, req)
+}
+
+// TriggerRerun delegates to rerun handler
+func (s *Server) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
+	return s.rerunHandler.TriggerRerun(ctx, req)
 }
 
 // ============================================================================

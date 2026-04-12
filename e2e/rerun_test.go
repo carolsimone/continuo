@@ -17,12 +17,12 @@ import (
 )
 
 // TestRerunFailedNode verifies that a FAILED mid-DAG node (table_e) can be re-run via
-// POST /schedules/{id}/rerun and the schedule recovers to SUCCEEDED.
+// POST /api/schedulers/{id}/rerun and the schedule recovers to SUCCEEDED.
 //
 // DAG: uses the failure DAG (e2e-schedule-failure).
 //   - table_e fails via service-3-broken after exhausting 3 retries.
 //   - The broken manifest is replaced with a working one and manifest-controller reloads.
-//   - POST /schedules/{id}/rerun is called for table_e.
+//   - POST /api/schedulers/{id}/rerun is called for table_e (BFF route → TriggerRerun gRPC).
 //   - The full downstream cascade (table_g, table_h, table_i, table_j) completes.
 //   - The schedule recovers to SUCCEEDED.
 func TestRerunFailedNode(t *testing.T) {
@@ -82,8 +82,8 @@ func TestRerunFailedNode(t *testing.T) {
 	t.Log("Phase 2: fixing table_e in service-3-broken and reloading graph...")
 	fixBrokenTableEAndReloadGraph(t, ctx, clients)
 
-	// Phase 3: POST /schedules/{id}/rerun for table_e
-	t.Log("Phase 3: calling POST /schedules/{id}/rerun for table_e...")
+	// Phase 3: POST /api/schedulers/{id}/rerun for table_e (BFF route → TriggerRerun gRPC)
+	t.Log("Phase 3: calling POST /api/schedulers/{id}/rerun for table_e...")
 	callRerunEndpoint(t, ctx, schedulerID, failureTestSchemaName, "table_e", "service-3-broken")
 
 	// Phase 4: Wait for table_e to be re-dispatched (second entry in query.model:v1)
@@ -251,7 +251,7 @@ func restoreBrokenTableE(t *testing.T) {
 	}
 }
 
-// callRerunEndpoint calls POST /schedules/{id}/rerun and asserts 202 Accepted.
+// callRerunEndpoint calls POST /api/schedulers/{id}/rerun and asserts 200 OK.
 func callRerunEndpoint(
 	t *testing.T,
 	ctx context.Context,
@@ -259,11 +259,10 @@ func callRerunEndpoint(
 	schemaName, tableName, serviceName string,
 ) {
 	t.Helper()
-	stateHost := getEnv("STATE_HOST", "state")
-	url := fmt.Sprintf("http://%s:8082/schedules/%s/rerun", stateHost, schedulerID)
+	uiBase := getEnv("UI_HTTP_BASE", "http://ui:8090")
+	url := fmt.Sprintf("%s/api/schedulers/%s/rerun", uiBase, schedulerID)
 
 	body, err := json.Marshal(map[string]string{
-		"scope":        "node",
 		"schema":       schemaName,
 		"table_name":   tableName,
 		"service_name": serviceName,
@@ -276,12 +275,12 @@ func callRerunEndpoint(
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := httpClient.Do(req)
-	require.NoError(t, err, "POST /schedules/%s/rerun failed", schedulerID)
+	require.NoError(t, err, "POST /api/schedulers/%s/rerun failed", schedulerID)
 	defer resp.Body.Close()
 
-	require.Equal(t, http.StatusAccepted, resp.StatusCode,
-		"Expected 202 Accepted from rerun endpoint, got %d", resp.StatusCode)
-	t.Logf("POST /rerun returned 202 Accepted for %s.%s", schemaName, tableName)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"Expected 200 OK from BFF rerun endpoint, got %d", resp.StatusCode)
+	t.Logf("POST /api/schedulers/%s/rerun returned 200 OK for %s.%s", schedulerID, schemaName, tableName)
 }
 
 // waitForRerunDispatched polls query.model:v1 until the target node appears

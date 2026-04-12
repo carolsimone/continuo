@@ -2,14 +2,15 @@
 
 ## Purpose
 
-`ui-service` is a read-only HTTP facade and React frontend for operators.
+`ui-service` is an HTTP facade and React frontend for operators.
 
 It provides:
 - a real-time dashboard of all schedules and their last-run status
 - a detail view per schedule run: DAG topology, node statuses, task list, execution history
 - S3 log proxying: fetches pod logs from S3 and streams them to the browser
+- rerun triggering: proxies `POST /api/schedulers/:id/rerun` to the `TriggerRerun` gRPC method on `state`
 
-It owns no storage and has no side effects on orchestration.
+It owns no storage.
 
 **Runtime**: Node.js / Express / TypeScript (port 8090).
 
@@ -37,6 +38,7 @@ None.
 | `/api/schedulers/:id` | GET | `GetScheduler` → state gRPC |
 | `/api/schedulers/:id/tasks` | GET | `ListTasks` → state gRPC (page_size=200) |
 | `/api/schedulers/:id/executions` | GET | `ListTaskExecutions` → state gRPC (page_size=500) |
+| `/api/schedulers/:id/rerun` | POST | `TriggerRerun` → state gRPC |
 
 #### Log proxy
 
@@ -58,6 +60,7 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 | `GetScheduler` | `GET /api/schedulers/:id` |
 | `ListTasks` | `GET /api/schedulers/:id/tasks` |
 | `ListTaskExecutions` | `GET /api/schedulers/:id/executions` |
+| `TriggerRerun` | `POST /api/schedulers/:id/rerun` |
 
 ### gRPC to `graph` (`GRAPH_GRPC_ADDR`, default `localhost:50052`)
 
@@ -90,7 +93,9 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 ## What It Writes
 
-Nothing. Read-only service.
+| Data | Target |
+|---|---|
+| Rerun trigger (reset failed task + downstream) | `state.TriggerRerun` via `POST /api/schedulers/:id/rerun` |
 
 ## Data Transformations
 
@@ -115,7 +120,7 @@ Nothing. Read-only service.
 
 ## Reliability Notes
 
-- Read-only; no side effects on orchestration state.
+- Mostly read-only; the only write-side effect is `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), which resets a failed task and its downstream in `state`.
 - gRPC errors are surfaced as HTTP 500 with the gRPC error message.
 - S3 errors are surfaced as HTTP 502.
 - `log_s3_key` is stored by `k8s-controller` on task execution records; the UI does not resolve or generate S3 keys itself.

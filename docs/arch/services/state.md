@@ -61,6 +61,7 @@ No other service owns or writes to these tables.
 | `DeleteTask` | Delete a task row |
 | `ListTasks` | Paginated list with filters |
 | `ResetTask` | Reset a task to PENDING for rerun |
+| `TriggerRerun` | Atomically reset scheduler + target task + write command.rerun:v1 outbox entry |
 
 #### Task execution management
 
@@ -74,10 +75,11 @@ No other service owns or writes to these tables.
 
 | Route | Method | Description |
 |---|---|---|
-| `/schedules/{schedule_id}/rerun` | POST | Node-level rerun: reset scheduler + target task + write outbox in one transaction |
 | `/health` | GET | Liveness probe |
 
-**Rerun preconditions (enforced atomically):**
+The rerun trigger was migrated from HTTP to gRPC (`TriggerRerun`). Port 8082 now serves health checks only.
+
+**TriggerRerun preconditions (enforced atomically):**
 1. Scheduler run must exist
 2. Target task must exist within that run
 3. No tasks currently RUNNING in that run
@@ -110,7 +112,7 @@ Effect: `startup-controller` begins task graph initialization.
 
 #### `command.rerun:v1`
 
-Emitted on: `POST /schedules/{schedule_id}/rerun`
+Emitted on: `TriggerRerun` gRPC call
 
 Payload fields:
 - `schedule_id`
@@ -145,7 +147,7 @@ Effect: `startup-controller` re-initializes the single failed node.
 | `OutboxProcessor` | Polls `state_outbox` for pending entries; publishes to Redis and marks processed |
 | `ScheduleCatalogConsumer` | Reads `schedules.loaded:v1` stream; calls `ScheduleCatalogHandler.Handle` |
 | gRPC server | Serves `StateService` on port 50051 |
-| HTTP server | Serves rerun and health endpoints on port 8082 |
+| HTTP server | Serves health endpoint on port 8082 |
 
 ### Cron scheduler config
 
@@ -195,11 +197,11 @@ Effects (all or nothing — transient errors are retried, not ACK'd):
 
 | Service | Methods used |
 |---|---|
-| `startup-controller` | `UpdateSchedulerInitStatus`, `CreateTask`, `UpdateTask`, `GetTask`, `ListTasks`, `GetSchedulerInitStatus` |
+| `startup-controller` | `UpdateSchedulerInitStatus`, `CreateTask`, `UpdateTask`, `GetTask`, `ListTasks`, `GetSchedulerInitStatus`, `ResetTask` |
 | `dependency-controller` | `GetTask`, `UpdateTask`, `GetSchedulerInitStatus`, `ListTasks` |
 | `executor-controller` | `GetTask`, `UpdateTask`, `CreateTaskExecution`, `GetTaskExecution` |
 | `k8s-controller` | `GetTask`, `UpdateTask`, `ListTaskExecutions` |
-| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions` |
+| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun` |
 
 State calls no external gRPC services.
 

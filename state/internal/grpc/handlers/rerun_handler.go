@@ -1,28 +1,22 @@
-package http
+package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/model"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-// RerunRequest is the body for POST /schedules/{schedule_id}/rerun.
-type RerunRequest struct {
-	Schema      string `json:"schema"`
-	TableName   string `json:"table_name"`
-	ServiceName string `json:"service_name"`
-}
-
-// RerunHandler handles POST /schedules/{schedule_id}/rerun.
-// It atomically resets the scheduler and target task in Postgres and writes an
-// outbox entry — all within a single transaction.
+// RerunHandler implements the TriggerRerun gRPC method.
 type RerunHandler struct {
 	db            *sqlx.DB
 	schedulerRepo postgres.SchedulerTrackerRepository
@@ -48,49 +42,38 @@ func NewRerunHandler(
 	}
 }
 
-func (h *RerunHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// TriggerRerun atomically resets the scheduler + target task and writes a
+// command.rerun:v1 outbox entry — all in a single Postgres transaction.
+func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
+	h.logger.Info("TriggerRerun called", "schedule_id", req.ScheduleId)
+
+	if req.ScheduleId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
 	}
 
-	scheduleIDStr := r.PathValue("schedule_id")
-	scheduleID, err := uuid.Parse(scheduleIDStr)
+	scheduleID, err := uuid.Parse(req.ScheduleId)
 	if err != nil {
-		http.Error(w, "invalid schedule_id", http.StatusBadRequest)
-		return
+		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
-
-	var req RerunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	ctx := r.Context()
 
 	// 1. Schedule must exist.
 	scheduler, err := h.schedulerRepo.GetByID(ctx, scheduleID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
-			http.Error(w, "schedule not found", http.StatusNotFound)
-			return
+			return nil, status.Errorf(codes.NotFound, "schedule not found")
 		}
 		h.logger.Error("failed to get scheduler", "schedule_id", scheduleID, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 
 	// 2. Target task must exist.
 	task, err := h.taskRepo.GetByScheduleAndNode(ctx, scheduleID, req.ServiceName, req.Schema, req.TableName)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
-			http.Error(w, "task not found", http.StatusNotFound)
-			return
+			return nil, status.Errorf(codes.NotFound, "task not found")
 		}
 		h.logger.Error("failed to get task", "schedule_id", scheduleID, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 
 	// 3. No tasks currently RUNNING.
@@ -103,26 +86,22 @@ func (h *RerunHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.logger.Error("failed to list running tasks", "schedule_id", scheduleID, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 	if len(runningTasks) > 0 {
-		http.Error(w, "schedule has running tasks", http.StatusConflict)
-		return
+		return nil, status.Errorf(codes.FailedPrecondition, "schedule has running tasks")
 	}
 
 	// 4. Target task must be FAILED.
 	if task.Status != model.TaskStatusFailed {
-		http.Error(w, "target task is not in FAILED state", http.StatusUnprocessableEntity)
-		return
+		return nil, status.Errorf(codes.FailedPrecondition, "target task is not in FAILED state")
 	}
 
 	// 5. Atomic transaction — reset scheduler, reset task, write outbox.
 	tx, err := h.db.BeginTxx(ctx, nil)
 	if err != nil {
 		h.logger.Error("failed to begin tx", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 	defer tx.Rollback()
 
@@ -132,24 +111,21 @@ func (h *RerunHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	scheduler.LastHeartbeatAt = &now
 	if err := h.schedulerRepo.UpdateTx(ctx, tx, scheduler); err != nil {
 		h.logger.Error("failed to reset scheduler", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 	if err := h.schedulerRepo.UpdateInitializationStatusTx(ctx, tx, scheduleID, "pending"); err != nil {
 		h.logger.Error("failed to reset init status", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 
 	task.Status = model.TaskStatusPending
 	task.RetryCount = 0
 	if err := h.taskRepo.UpdateTx(ctx, tx, task); err != nil {
 		h.logger.Error("failed to reset task", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, _ := json.Marshal(map[string]string{
 		"schedule_id":   scheduleID.String(),
 		"schedule_name": scheduler.ScheduleName,
 		"scope":         "node",
@@ -169,15 +145,13 @@ func (h *RerunHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:     time.Now(),
 	}); err != nil {
 		h.logger.Error("failed to write outbox", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 
 	if err := tx.Commit(); err != nil {
 		h.logger.Error("failed to commit tx", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 
-	w.WriteHeader(http.StatusAccepted)
+	return &statev1.TriggerRerunResponse{}, nil
 }
