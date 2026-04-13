@@ -8,7 +8,7 @@ global:
   postgres:
     host: continuo-infra-postgresql
     port: "5432"
-    user: runner
+    user: continuo_svc
     password: ""
 
   redis:

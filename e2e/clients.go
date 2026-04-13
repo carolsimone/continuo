@@ -97,7 +97,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 // connectPostgres establishes a PostgreSQL connection
 func connectPostgres(t *testing.T, host, database string) *sqlx.DB {
 	connStr := fmt.Sprintf(
-		"host=%s port=5432 dbname=%s user=runner password=runner sslmode=disable",
+		"host=%s port=5432 dbname=%s user=continuo_svc password=runner sslmode=disable",
 		host, database,
 	)
 	db, err := sqlx.Connect("postgres", connStr)

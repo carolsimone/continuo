@@ -8,7 +8,7 @@ services:
     tmpfs:
       - /var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=runner
+      - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=runner
       # POSTGRES_DB removed - databases created by init script
     ports:
@@ -18,7 +18,7 @@ services:
 
   flyway-state:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_state -user=runner -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_state -user=continuo_svc -password=runner -connectRetries=30
     volumes:
       - ./db/migration/state:/flyway/sql
     depends_on:
@@ -27,7 +27,7 @@ services:
 
   flyway-startup:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_startup -user=runner -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_startup -user=continuo_svc -password=runner -connectRetries=30
     volumes:
       - ./db/migration/startup:/flyway/sql
     depends_on:
@@ -36,7 +36,7 @@ services:
 
   flyway-executor:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_executor -user=runner -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_executor -user=continuo_svc -password=runner -connectRetries=30
     volumes:
       - ./db/migration/executor:/flyway/sql
     depends_on:
@@ -45,7 +45,7 @@ services:
 
   flyway-dependency:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_dependency -user=runner -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_dependency -user=continuo_svc -password=runner -connectRetries=30
     volumes:
       - ./db/migration/dependency:/flyway/sql
     depends_on:
@@ -54,7 +54,7 @@ services:
 
   flyway-k8s:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_k8s -user=runner -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_k8s -user=continuo_svc -password=runner -connectRetries=30
     volumes:
       - ./db/migration/k8s:/flyway/sql
     depends_on:
@@ -104,7 +104,7 @@ services:
       - redis
     environment:
       - POSTGRES_DB=continuo_state
-      - POSTGRES_USER=runner
+      - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=runner
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -164,7 +164,7 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_startup
-      - POSTGRES_USER=runner
+      - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=runner
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
@@ -217,7 +217,7 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_executor
-      - POSTGRES_USER=runner
+      - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=runner
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
@@ -275,7 +275,7 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_k8s
-      - POSTGRES_USER=runner
+      - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=runner
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
@@ -335,7 +335,7 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_dependency
-      - POSTGRES_USER=runner
+      - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=runner
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
@@ -536,7 +536,7 @@ services:
       - DBT_POSTGRES_HOST=postgres
       - DBT_POSTGRES_PORT=5432
       - DBT_POSTGRES_DB=continuo_dbt
-      - DBT_POSTGRES_USER=runner
+      - DBT_POSTGRES_USER=continuo_svc
       - DBT_POSTGRES_PASSWORD=runner
     volumes:
       - ./dbt/services:/app/services

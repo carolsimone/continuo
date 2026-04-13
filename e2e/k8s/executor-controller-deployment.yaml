@@ -74,7 +74,7 @@ spec:
             - name: POSTGRES_DB
               value: "continuo_executor"
             - name: POSTGRES_USER
-              value: "runner"
+              value: "continuo_svc"
             - name: POSTGRES_PASSWORD
               value: "runner"
             - name: STATE_SERVICE_GRPC_ADDR

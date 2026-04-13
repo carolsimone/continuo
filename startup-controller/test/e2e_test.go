@@ -77,7 +77,7 @@ func setupTestFixture(t *testing.T, redisDB int) *testFixture {
 
 	// Connect to PostgreSQL
 	pgDatabase := getEnvOrDefault("POSTGRES_DB", "continuo_startup")
-	pgConnStr := fmt.Sprintf("host=%s port=5432 dbname=%s user=runner password=runner sslmode=disable", pgHost, pgDatabase)
+	pgConnStr := fmt.Sprintf("host=%s port=5432 dbname=%s user=continuo_svc password=runner sslmode=disable", pgHost, pgDatabase)
 	pgDB, err := sqlx.Connect("postgres", pgConnStr)
 	require.NoError(t, err, "Failed to connect to PostgreSQL")
 

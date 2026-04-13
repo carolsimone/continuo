@@ -8,7 +8,7 @@ postgresql:
     repository: carolsimone/postgresql
     tag: "18.3.0"
   auth:
-    username: runner
+    username: continuo_svc
     password: changeme
     postgresPassword: changeme
   primary:
@@ -26,12 +26,12 @@ postgresql:
               CREATE DATABASE continuo_dependency;
               CREATE DATABASE continuo_k8s;
               CREATE DATABASE continuo_dbt;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_state TO runner;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_startup TO runner;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_executor TO runner;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_dependency TO runner;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_k8s TO runner;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_dbt TO runner;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_state TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_startup TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_executor TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_dependency TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_k8s TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_dbt TO $POSTGRESQL_USERNAME;
           EOSQL
     persistence:
       storageClass: hcloud-volumes
