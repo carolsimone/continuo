@@ -1,5 +1,5 @@
 # Build stage
-FROM continuo-base:latest AS builder
+FROM carolsimone/continuo-base:latest AS builder
 
 WORKDIR /app
 

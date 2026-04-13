@@ -44,6 +44,9 @@ services:
         secretKey: POSTGRES_USER
       - name: POSTGRES_PASSWORD
         secretKey: POSTGRES_PASSWORD
+      - name: REDIS_PASSWORD
+        secretName: continuo-infra-redis
+        key: redis-password
     env:
       POSTGRES_DB: continuo_state
       DB_SSLMODE: disable
@@ -90,6 +93,9 @@ services:
         secretKey: NEO4J_USER
       - name: NEO4J_PASSWORD
         secretKey: NEO4J_PASSWORD
+      - name: REDIS_PASSWORD
+        secretName: continuo-infra-redis
+        key: redis-password
     env:
       REDIS_CONSUMER_STREAM: scheduler.started:v1
       REDIS_CONSUMER_GROUP: startup_controller_consumers
@@ -106,6 +112,9 @@ services:
         secretKey: POSTGRES_USER
       - name: POSTGRES_PASSWORD
         secretKey: POSTGRES_PASSWORD
+      - name: REDIS_PASSWORD
+        secretName: continuo-infra-redis
+        key: redis-password
     rbac:
       enabled: true
       rules:
@@ -138,6 +147,9 @@ services:
         secretKey: AWS_ACCESS_KEY_ID
       - name: AWS_SECRET_ACCESS_KEY
         secretKey: AWS_SECRET_ACCESS_KEY
+      - name: REDIS_PASSWORD
+        secretName: continuo-infra-redis
+        key: redis-password
     rbac:
       enabled: true
       rules:
@@ -171,6 +183,9 @@ services:
         secretKey: POSTGRES_USER
       - name: POSTGRES_PASSWORD
         secretKey: POSTGRES_PASSWORD
+      - name: REDIS_PASSWORD
+        secretName: continuo-infra-redis
+        key: redis-password
     env:
       REDIS_CONSUMER_STREAM: update.table:v1
       REDIS_CONSUMER_GROUP: dependency_controller_consumers
