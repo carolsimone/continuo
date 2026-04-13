@@ -1,4 +1,12 @@
+global:
+  security:
+    allowInsecureImages: true
+
 postgresql:
+  image:
+    registry: docker.io
+    repository: carolsimone/postgresql
+    tag: "18.3.0"
   auth:
     username: runner
     password: changeme
@@ -6,25 +14,24 @@ postgresql:
   primary:
     initdb:
       user: postgres
-      password: changeme
       scripts:
         init-databases.sh: |
           #!/bin/bash
           set -e
-          export PGPASSWORD="$POSTGRES_INITSCRIPTS_PASSWORD"
-          psql -v ON_ERROR_STOP=1 --username "$POSTGRES_INITSCRIPTS_USERNAME" --dbname postgres <<-EOSQL
+          export PGPASSWORD="$POSTGRESQL_INITSCRIPTS_PASSWORD"
+          psql -v ON_ERROR_STOP=1 --username "$POSTGRESQL_INITSCRIPTS_USERNAME" --dbname postgres <<-EOSQL
               CREATE DATABASE continuo_state;
               CREATE DATABASE continuo_startup;
               CREATE DATABASE continuo_executor;
               CREATE DATABASE continuo_dependency;
               CREATE DATABASE continuo_k8s;
               CREATE DATABASE continuo_dbt;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_state TO $POSTGRES_USER;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_startup TO $POSTGRES_USER;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_executor TO $POSTGRES_USER;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_dependency TO $POSTGRES_USER;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_k8s TO $POSTGRES_USER;
-              GRANT ALL PRIVILEGES ON DATABASE continuo_dbt TO $POSTGRES_USER;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_state TO runner;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_startup TO runner;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_executor TO runner;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_dependency TO runner;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_k8s TO runner;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_dbt TO runner;
           EOSQL
     persistence:
       storageClass: hcloud-volumes
@@ -32,6 +39,10 @@ postgresql:
   sslmode: disable
 
 redis:
+  image:
+    registry: docker.io
+    repository: carolsimone/redis
+    tag: "8.6.2"
   architecture: standalone
   auth:
     enabled: true
@@ -42,6 +53,7 @@ redis:
       size: 2Gi
 
 neo4j:
+  fullnameOverride: continuo-infra-neo4j
   neo4j:
     name: neo4j
     password: changeme

@@ -5,11 +5,11 @@ type: application
 version: 0.1.0
 dependencies:
   - name: postgresql
-    version: "^16.0.0"
+    version: "18.5.17"
     repository: oci://registry-1.docker.io/bitnamicharts
   - name: redis
-    version: "^20.0.0"
+    version: "25.3.11"
     repository: oci://registry-1.docker.io/bitnamicharts
   - name: neo4j
-    version: "^5.0.0"
+    version: "5.26.24"
     repository: https://helm.neo4j.com/neo4j

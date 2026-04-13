@@ -59,6 +59,7 @@ docs/future-dev/*
 deploy/infra/charts/
 deploy/app/charts/
 deploy/app/values.secret.yaml
+deploy/infra/values.secret.yaml
 
 # CLAUDE
 .claude/settings.json
