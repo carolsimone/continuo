@@ -56,7 +56,7 @@ func GetPostgresDB() string {
 }
 
 func GetPostgresUser() string {
-	return getEnv("POSTGRES_USER", "runner")
+	return getEnv("POSTGRES_USER", "continuo_svc")
 }
 
 func GetPostgresPassword() string {

@@ -1,0 +1,75 @@
+global:
+  security:
+    allowInsecureImages: true
+
+postgresql:
+  image:
+    registry: docker.io
+    repository: carolsimone/postgresql
+    tag: "18.3.0"
+  auth:
+    username: continuo_svc
+    password: changeme
+    postgresPassword: changeme
+  primary:
+    initdb:
+      user: postgres
+      scripts:
+        init-databases.sh: |
+          #!/bin/bash
+          set -e
+          export PGPASSWORD="$POSTGRESQL_INITSCRIPTS_PASSWORD"
+          psql -v ON_ERROR_STOP=1 --username "$POSTGRESQL_INITSCRIPTS_USERNAME" --dbname postgres <<-EOSQL
+              CREATE DATABASE continuo_state;
+              CREATE DATABASE continuo_startup;
+              CREATE DATABASE continuo_executor;
+              CREATE DATABASE continuo_dependency;
+              CREATE DATABASE continuo_k8s;
+              CREATE DATABASE continuo_dbt;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_state TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_startup TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_executor TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_dependency TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_k8s TO $POSTGRESQL_USERNAME;
+              GRANT ALL PRIVILEGES ON DATABASE continuo_dbt TO $POSTGRESQL_USERNAME;
+          EOSQL
+    persistence:
+      storageClass: hcloud-volumes
+      size: 10Gi
+  sslmode: disable
+
+redis:
+  image:
+    registry: docker.io
+    repository: carolsimone/redis
+    tag: "8.6.2"
+  architecture: standalone
+  auth:
+    enabled: true
+    password: changeme
+  master:
+    persistence:
+      storageClass: hcloud-volumes
+      size: 2Gi
+
+neo4j:
+  fullnameOverride: continuo-infra-neo4j
+  neo4j:
+    name: neo4j
+    password: changeme
+  services:
+    neo4j:
+      enabled: false
+  config:
+    server.memory.pagecache.size: "512M"
+    server.memory.heap.initial_size: "512M"
+    server.memory.heap.max_size: "1G"
+  volumes:
+    data:
+      mode: dynamic
+      dynamic:
+        storageClassName: hcloud-volumes
+        accessModes:
+          - ReadWriteOnce
+        requests:
+          storage: 10Gi

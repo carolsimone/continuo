@@ -1,0 +1,26 @@
+{{- range $svc := .Values.services }}
+{{- if and ($svc.enabled | default true) $svc.httpPort }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "continuo-app.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $svc.name }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "continuo-app.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $svc.httpPort }}
+      targetPort: {{ $svc.httpPort }}
+    {{- if $svc.grpcPort }}
+    - name: grpc
+      port: {{ $svc.grpcPort }}
+      targetPort: {{ $svc.grpcPort }}
+    {{- end }}
+{{- end }}
+{{- end }}

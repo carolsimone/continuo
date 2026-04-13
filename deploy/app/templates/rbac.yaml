@@ -1,0 +1,41 @@
+{{- range $svc := .Values.services }}
+{{- if and ($svc.enabled | default true) $svc.rbac $svc.rbac.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $svc.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "continuo-app.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $svc.name }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $svc.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "continuo-app.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $svc.name }}
+rules:
+  {{- toYaml ($svc.rbac.rules | default (list)) | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $svc.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "continuo-app.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $svc.name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $svc.name }}
+    namespace: {{ $.Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $svc.name }}
+{{- end }}
+{{- end }}

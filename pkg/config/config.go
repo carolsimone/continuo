@@ -61,7 +61,7 @@ func GetPostgresPort() int {
 
 // GetPostgresUser returns the PostgreSQL user from environment or default
 func GetPostgresUser() string {
-	return getEnv("POSTGRES_USER", "runner")
+	return getEnv("POSTGRES_USER", "continuo_svc")
 }
 
 // GetPostgresPassword returns the PostgreSQL password from environment or default

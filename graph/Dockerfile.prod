@@ -1,0 +1,39 @@
+# Build stage
+FROM continuo-base:latest AS builder
+
+WORKDIR /app
+
+# Copy workspace and all go.mod files (required by go.work)
+COPY go.work go.work.sum* ./
+COPY state/go.mod state/go.sum ./state/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY graph/go.mod graph/go.sum ./graph/
+COPY startup-controller/go.mod startup-controller/go.sum ./startup-controller/
+COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
+COPY dependency-controller/go.mod dependency-controller/go.sum ./dependency-controller/
+COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY e2e/go.mod e2e/go.sum ./e2e/
+
+# Download dependencies with cache
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Copy source code
+COPY graph/ ./graph/
+COPY pkg/ ./pkg/
+
+# Build static binary
+WORKDIR /app/graph
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/bin/graph .
+
+# Runtime stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+COPY --from=builder /app/bin/graph /usr/local/bin/graph
+
+EXPOSE 8081 50052
+
+CMD ["graph"]

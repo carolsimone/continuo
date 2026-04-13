@@ -75,7 +75,7 @@ func TestIntegration_EndToEnd(t *testing.T) {
 	pgHost := getEnvOrDefault("POSTGRES_HOST", "localhost")
 
 	// Connect to PostgreSQL for UnitOfWork
-	pgDB, err := postgres.NewPostgresClient(pgHost, 5432, "runner", "runner", "runner", logger)
+	pgDB, err := postgres.NewPostgresClient(pgHost, 5432, "runner", "continuo_svc", "runner", logger)
 	if err != nil {
 		t.Skipf("PostgreSQL not available: %v", err)
 	}

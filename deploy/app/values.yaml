@@ -1,0 +1,226 @@
+global:
+  imageTag: latest
+  dockerHubUser: youruser
+
+  env: dev
+  logLevel: INFO
+
+  postgres:
+    host: continuo-infra-postgresql
+    port: "5432"
+    user: continuo_svc
+    password: ""
+
+  redis:
+    host: continuo-infra-redis-master
+    port: "6379"
+    existingSecretName: continuo-infra-redis
+    existingSecretKey: redis-password
+
+  neo4j:
+    uri: bolt://continuo-infra-neo4j:7687
+    user: neo4j
+    password: ""
+
+  stateGrpcAddr: state:50051
+  graphGrpcAddr: graph:50052
+
+  s3:
+    endpointUrl: https://fsn1.your-objectstorage.com
+    bucket: continuo
+    env: dev
+    region: eu-central-1
+    accessKeyId: ""
+    secretKey: ""
+
+services:
+  - name: state
+    enabled: true
+    replicas: 1
+    httpPort: 8082
+    grpcPort: 50051
+    secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
+    env:
+      POSTGRES_DB: continuo_state
+      DB_SSLMODE: disable
+      DB_POOL_SIZE: "10"
+      DB_MAX_OVERFLOW: "20"
+      HEALTH_PORT: "8082"
+      GRPC_PORT: "50051"
+      REDIS_STREAM_SCHEDULER_STARTED: scheduler.started:v1
+      REDIS_STREAM_SCHEDULES_LOADED: schedules.loaded:v1
+      SCHEDULES_CONFIG_PATH: /etc/continuo/schedules.yaml
+    volumeMounts:
+      - name: schedules
+        mountPath: /etc/continuo
+        readOnly: true
+    volumes:
+      - name: schedules
+        configMap:
+          name: ""
+
+  - name: graph
+    enabled: true
+    replicas: 1
+    httpPort: 8081
+    grpcPort: 50052
+    secretEnv:
+      - name: NEO4J_USER
+        secretKey: NEO4J_USER
+      - name: NEO4J_PASSWORD
+        secretKey: NEO4J_PASSWORD
+    env:
+      GRPC_PORT: "50052"
+      HEALTH_PORT: "8081"
+
+  - name: startup-controller
+    enabled: true
+    replicas: 1
+    httpPort: 8083
+    secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
+      - name: NEO4J_USER
+        secretKey: NEO4J_USER
+      - name: NEO4J_PASSWORD
+        secretKey: NEO4J_PASSWORD
+    env:
+      REDIS_CONSUMER_STREAM: scheduler.started:v1
+      REDIS_CONSUMER_GROUP: startup_controller_consumers
+      REDIS_PRODUCER_STREAM: query.model:v1
+      POSTGRES_DB: continuo_startup
+      HTTP_PORT: "8083"
+
+  - name: executor-controller
+    enabled: true
+    replicas: 1
+    httpPort: 8084
+    secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
+    rbac:
+      enabled: true
+      rules:
+        - apiGroups: ["batch"]
+          resources: ["jobs"]
+          verbs: ["create", "get", "list", "watch"]
+        - apiGroups: [""]
+          resources: ["pods"]
+          verbs: ["get", "list", "watch"]
+    env:
+      REDIS_CONSUMER_STREAM: query.model:v1
+      REDIS_CONSUMER_RETRY_STREAM: task.retry:v1
+      REDIS_CONSUMER_GROUP: executor_controller_consumers
+      REDIS_PRODUCER_STREAM: executor.deployed:v1
+      POSTGRES_DB: continuo_executor
+      K8S_NAMESPACE: __RELEASE_NAMESPACE__
+      DBT_POSTGRES_DB: continuo_dbt
+      HTTP_PORT: "8084"
+
+  - name: k8s-controller
+    enabled: true
+    replicas: 1
+    httpPort: 8085
+    secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
+      - name: AWS_ACCESS_KEY_ID
+        secretKey: AWS_ACCESS_KEY_ID
+      - name: AWS_SECRET_ACCESS_KEY
+        secretKey: AWS_SECRET_ACCESS_KEY
+    rbac:
+      enabled: true
+      rules:
+        - apiGroups: ["batch"]
+          resources: ["jobs"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: [""]
+          resources: ["pods", "pods/log"]
+          verbs: ["get", "list", "watch"]
+    env:
+      REDIS_CONSUMER_DEPLOYED_STREAM: executor.deployed:v1
+      REDIS_CONSUMER_CHECK_STREAM: k8s.check:v1
+      REDIS_CONSUMER_GROUP: k8s_controller_consumers
+      REDIS_PRODUCER_CHECK_STREAM: k8s.check:v1
+      REDIS_PRODUCER_RETRY_STREAM: task.retry:v1
+      REDIS_PRODUCER_FAILED_STREAM: task.failed:v1
+      REDIS_PRODUCER_UPDATE_TABLE_STREAM: update.table:v1
+      POSTGRES_DB: continuo_k8s
+      K8S_NAMESPACE: __RELEASE_NAMESPACE__
+      LOG_TAIL_LINES: "50"
+      K8S_CHECK_DELAY_SECONDS: "30"
+      ERROR_MESSAGE_MAX_LENGTH: "4096"
+      HTTP_PORT: "8085"
+
+  - name: dependency-controller
+    enabled: true
+    replicas: 1
+    httpPort: 8086
+    secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
+    env:
+      REDIS_CONSUMER_STREAM: update.table:v1
+      REDIS_CONSUMER_GROUP: dependency_controller_consumers
+      REDIS_PRODUCER_STREAM: query.model:v1
+      POSTGRES_DB: continuo_dependency
+      HTTP_PORT: "8086"
+
+  - name: ui-service
+    enabled: true
+    replicas: 1
+    httpPort: 8090
+    probePath: /
+    secretEnv:
+      - name: AWS_ACCESS_KEY_ID
+        secretKey: AWS_ACCESS_KEY_ID
+      - name: AWS_SECRET_ACCESS_KEY
+        secretKey: AWS_SECRET_ACCESS_KEY
+    ingress:
+      enabled: true
+      host: dev.yourdomain.com
+    env:
+      PORT: "8090"
+      NODE_ENV: production
+
+  - name: manifest-controller
+    enabled: true
+    replicas: 1
+    secretEnv:
+      - name: AWS_ACCESS_KEY_ID
+        secretKey: AWS_ACCESS_KEY_ID
+      - name: AWS_SECRET_ACCESS_KEY
+        secretKey: AWS_SECRET_ACCESS_KEY
+      - name: REDIS_PASSWORD
+        secretName: continuo-infra-redis
+        key: redis-password
+    env:
+      REDIS_URL: __REDIS_URL_FROM_AUTH__
+      GRAPH_GRPC_ADDR: graph:50052
+      REGISTRY_PATH: /data/registry.csv
+      MANIFESTS_BASE: /manifests
+    volumeMounts:
+      - name: manifests
+        mountPath: /manifests
+        readOnly: true
+    volumes:
+      - name: manifests
+        emptyDir: {}
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+    # The local compose setup mounts dbt manifests into /manifests. In-cluster this
+    # needs a follow-up source such as a PVC, baked-in artifacts, or S3-backed sync.

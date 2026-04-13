@@ -1,0 +1,132 @@
+{{- range $svc := .Values.services }}
+{{- if ($svc.enabled | default true) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svc.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "continuo-app.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $svc.name }}
+spec:
+  replicas: {{ default 1 $svc.replicas }}
+  selector:
+    matchLabels:
+      {{- include "continuo-app.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "continuo-app.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 8 }}
+    spec:
+      {{- if and $svc.rbac $svc.rbac.enabled }}
+      serviceAccountName: {{ $svc.name }}
+      {{- end }}
+      containers:
+        - name: {{ $svc.name }}
+          image: {{ printf "%s/continuo-%s:%s" $.Values.global.dockerHubUser $svc.name $.Values.global.imageTag | quote }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: {{ include "continuo-app.configMapName" $ }}
+          {{- if or $svc.secretEnv $svc.env }}
+          env:
+            {{- range $secret := ($svc.secretEnv | default (list)) }}
+            - name: {{ $secret.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "continuo-app.credentialsSecretName" $) $secret.secretName | quote }}
+                  key: {{ default $secret.secretKey $secret.key | quote }}
+            {{- end }}
+          {{- if $svc.env }}
+            {{- range $key, $val := $svc.env }}
+            - name: {{ $key }}
+              {{- if and (eq $key "K8S_NAMESPACE") (eq $val "__RELEASE_NAMESPACE__") }}
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+              {{- else if and (eq $key "REDIS_URL") (eq $val "__REDIS_URL_FROM_AUTH__") }}
+              value: {{ printf "redis://:$(REDIS_PASSWORD)@%s:%v" $.Values.global.redis.host $.Values.global.redis.port | quote }}
+              {{- else }}
+              value: {{ $val | quote }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- if or $svc.httpPort $svc.grpcPort }}
+          ports:
+            {{- if $svc.httpPort }}
+            - name: http
+              containerPort: {{ $svc.httpPort }}
+            {{- end }}
+            {{- if $svc.grpcPort }}
+            - name: grpc
+              containerPort: {{ $svc.grpcPort }}
+            {{- end }}
+          {{- end }}
+          {{- if $svc.httpPort }}
+          readinessProbe:
+            httpGet:
+              path: {{ default "/health" $svc.probePath }}
+              port: {{ $svc.httpPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: {{ default "/health" $svc.probePath }}
+              port: {{ $svc.httpPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          {{- else }}
+          readinessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - python
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - python
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+          {{- end }}
+          resources:
+            {{- if $svc.resources }}
+            {{- toYaml $svc.resources | nindent 12 }}
+            {{- else }}
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            {{- end }}
+          {{- if $svc.volumeMounts }}
+          volumeMounts:
+            {{- toYaml $svc.volumeMounts | nindent 12 }}
+          {{- end }}
+      {{- if $svc.volumes }}
+      volumes:
+        {{- if eq $svc.name "state" }}
+        {{- range $volume := $svc.volumes }}
+        - name: {{ $volume.name }}
+          {{- if $volume.configMap }}
+          configMap:
+            name: {{ default (include "continuo-app.schedulesConfigMapName" $) $volume.configMap.name }}
+          {{- else }}
+          {{- toYaml (omit $volume "name") | nindent 10 }}
+          {{- end }}
+        {{- end }}
+        {{- else }}
+        {{- toYaml $svc.volumes | nindent 8 }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}
