@@ -62,8 +62,9 @@ func main() {
 
 	// 2. Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
-		Addr: fmt.Sprintf("%s:%d", config.GetRedisHost(), config.GetRedisPort()),
-		DB:   0,
+		Addr:     fmt.Sprintf("%s:%d", config.GetRedisHost(), config.GetRedisPort()),
+		Password: config.GetRedisPassword(),
+		DB:       0,
 	})
 
 	if err := redisClient.Ping(ctx).Err(); err != nil {

@@ -49,6 +49,11 @@ func GetRedisPort() int {
 	return getEnvInt("REDIS_PORT", 6379)
 }
 
+// GetRedisPassword returns the Redis password from environment or empty string
+func GetRedisPassword() string {
+	return getEnv("REDIS_PASSWORD", "")
+}
+
 // GetPostgresHost returns the PostgreSQL host from environment or default
 func GetPostgresHost() string {
 	return getEnv("POSTGRES_HOST", "localhost")

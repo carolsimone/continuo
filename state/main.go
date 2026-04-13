@@ -58,7 +58,8 @@ func main() {
 
 	// Initialize Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
-		Addr: config.GetRedisAddr(),
+		Addr:     config.GetRedisAddr(),
+		Password: config.GetRedisPassword(),
 	})
 
 	// Test Redis connection

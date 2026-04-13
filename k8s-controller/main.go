@@ -42,7 +42,8 @@ func main() {
 	redisHost := config.GetRedisHost()
 	redisPort := config.GetRedisPort()
 	redisClient := goredis.NewClient(&goredis.Options{
-		Addr: fmt.Sprintf("%s:%d", redisHost, redisPort),
+		Addr:     fmt.Sprintf("%s:%d", redisHost, redisPort),
+		Password: config.GetRedisPassword(),
 	})
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		logger.Info("Closing Redis connection")
