@@ -216,6 +216,8 @@ services:
         secretKey: REDIS_PASSWORD
     env:
       REDIS_URL: __REDIS_URL_FROM_AUTH__
+      REDIS_STREAM: "update.graph:v1"
+      REDIS_GROUP: "manifest-controller"
       GRAPH_GRPC_ADDR: graph:50052
       REGISTRY_PATH: /data/registry.csv
       MANIFESTS_BASE: /manifests
