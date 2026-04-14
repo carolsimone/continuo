@@ -84,18 +84,18 @@ spec:
           readinessProbe:
             exec:
               command:
-                - pgrep
-                - -f
                 - python
+                - -c
+                - "import os; os.kill(1, 0)"
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 3
           livenessProbe:
             exec:
               command:
-                - pgrep
-                - -f
                 - python
+                - -c
+                - "import os; os.kill(1, 0)"
             initialDelaySeconds: 20
             periodSeconds: 30
             failureThreshold: 3
