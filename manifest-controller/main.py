@@ -7,6 +7,7 @@ from config.config import (
     GRAPH_GRPC_ADDR, REGISTRY_PATH, MANIFESTS_BASE,
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
     SCHEDULES_LOADED_STREAM,
+    validate,
 )
 from adapters.redis.publisher import SchedulesLoadedPublisher
 from adapters.filesystem.registry_repository import FilesystemRegistryRepository
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
+    validate()
     logger.info("manifest-controller starting")
 
     import boto3  # imported inside main() to avoid module-level side effects in tests

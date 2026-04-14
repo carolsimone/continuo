@@ -42,6 +42,7 @@ def test_main_propagates_manifest_versions_to_publisher(monkeypatch):
     fake_source = _FakeSource()
     fake_publisher = _FakePublisher(None, "schedules.loaded:v1")
 
+    monkeypatch.setattr(main, "validate", lambda: None)
     monkeypatch.setattr(main, "GRAPH_GRPC_ADDR", "localhost:9000")
     monkeypatch.setattr(main, "REGISTRY_PATH", "/tmp/registry.csv")
     monkeypatch.setattr(main, "MANIFESTS_BASE", "/tmp/manifests")
