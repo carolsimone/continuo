@@ -45,6 +45,7 @@ func TestE2E_DeploymentFlow(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 
@@ -150,6 +151,7 @@ func TestE2E_MultipleDeployments(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 
@@ -236,6 +238,7 @@ func TestE2E_RetryOnFailure(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 
@@ -327,6 +330,7 @@ func TestE2E_IdempotentDeployment(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 
@@ -421,6 +425,7 @@ func TestE2E_BackgroundProcessing(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 	// Set fast poll interval for test

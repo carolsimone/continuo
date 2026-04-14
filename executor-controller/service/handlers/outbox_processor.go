@@ -9,7 +9,6 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
-	"github.com/carolsimone/continuo/executor-controller/config"
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -43,6 +42,7 @@ type OutboxProcessor struct {
 	stateClient  StateUpdater
 	producer     EventPublisher
 	logger       *slog.Logger
+	k8sNamespace string
 	PollInterval time.Duration
 }
 
@@ -52,6 +52,7 @@ func NewOutboxProcessor(
 	k8sClient K8sDeployer,
 	stateClient StateUpdater,
 	producer EventPublisher,
+	k8sNamespace string,
 	logger *slog.Logger,
 ) *OutboxProcessor {
 	return &OutboxProcessor{
@@ -59,6 +60,7 @@ func NewOutboxProcessor(
 		k8sClient:    k8sClient,
 		stateClient:  stateClient,
 		producer:     producer,
+		k8sNamespace: k8sNamespace,
 		logger:       logger,
 		PollInterval: 5 * time.Second, // Default to 5s for production
 	}
@@ -176,7 +178,7 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.Deploym
 		ServiceName:  entry.ServiceName,
 		Schema:       entry.Schema,
 		TableName:    entry.TableName,
-		Namespace:    config.GetK8sNamespace(),
+		Namespace:    p.k8sNamespace,
 		NodeType:     nodeType,
 	}
 

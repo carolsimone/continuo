@@ -24,6 +24,8 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
+	cfg := config.Load()
+
 	logger.Info("Starting state service")
 
 	// Create context with cancellation
@@ -35,7 +37,7 @@ func main() {
 	lifecycleManager.SetupSignalHandlers(ctx, cancel)
 
 	// Initialize PostgreSQL connection
-	db, err := database.GetPostgresConnection()
+	db, err := database.NewConnection(cfg.Postgres)
 	if err != nil {
 		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
@@ -58,7 +60,8 @@ func main() {
 
 	// Initialize Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
-		Addr: config.GetRedisAddr(),
+		Addr:     cfg.Redis.Addr(),
+		Password: cfg.Redis.Password,
 	})
 
 	// Test Redis connection
@@ -87,7 +90,7 @@ func main() {
 	// Initialize schedule catalog consumer (consumes schedules.loaded:v1)
 	catalogConsumer, err := redis.NewScheduleCatalogConsumer(
 		redisClient,
-		config.GetRedisStreamSchedulesLoaded(),
+		cfg.RedisStreamSchedulesLoaded,
 		catalogRepo,
 		db,
 		logger,
@@ -119,13 +122,13 @@ func main() {
 		catalogRepo,
 		schedulerRepo,
 		outboxRepo,
-		config.GetRedisStreamSchedulerStarted(),
+		cfg.RedisStreamSchedulerStarted,
 		logger,
 	)
 	logger.Info("Schedule activator and activation service initialized")
 
 	// Load schedules config — fail fast if missing or malformed
-	schedulesConfig, err := scheduler.LoadSchedulesConfig(config.GetSchedulesConfigPath())
+	schedulesConfig, err := scheduler.LoadSchedulesConfig(cfg.SchedulesConfigPath)
 	if err != nil {
 		logger.Error("Failed to load schedules config", "error", err)
 		os.Exit(1)
@@ -159,8 +162,7 @@ func main() {
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
 
 	// Create gRPC server
-	grpcPort := config.GetGRPCPort()
-	grpcServer, err := grpcserver.NewServer(grpcPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, logger)
+	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, logger)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)
@@ -179,8 +181,7 @@ func main() {
 	}()
 
 	// Start HTTP health server (health-only; rerun moved to gRPC)
-	healthPort := config.GetHealthPort()
-	healthServer := http.NewServer(healthPort, logger)
+	healthServer := http.NewServer(cfg.HealthPort, logger)
 
 	// Register health server cleanup
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
@@ -194,8 +195,8 @@ func main() {
 	}()
 
 	logger.Info("State service started successfully",
-		"grpc_port", grpcPort,
-		"health_port", healthPort,
+		"grpc_port", cfg.GRPCPort,
+		"health_port", cfg.HealthPort,
 	)
 
 	// Wait for shutdown signal

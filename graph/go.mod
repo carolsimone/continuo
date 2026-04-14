@@ -3,12 +3,15 @@ module github.com/carolsimone/continuo/graph
 go 1.25.1
 
 require (
+	github.com/carolsimone/continuo/pkg v0.0.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.15.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.40.0
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
 )
+
+replace github.com/carolsimone/continuo/pkg => ../pkg
 
 require (
 	dario.cat/mergo v1.0.2 // indirect

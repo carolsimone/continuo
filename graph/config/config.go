@@ -1,73 +1,47 @@
 package config
 
 import (
-	"os"
-	"strconv"
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
-// GetGRPCPort returns the port for the gRPC server
-func GetGRPCPort() int {
-	return getEnvInt("GRPC_PORT", 50052)
+// Neo4jConfig holds Neo4j connection parameters.
+type Neo4jConfig struct {
+	URI      string
+	User     string
+	Password string
 }
 
-// GetHealthPort returns the port for the HTTP health check server
-func GetHealthPort() string {
-	return getEnv("HEALTH_PORT", "8081")
+// Config holds all configuration for the graph service.
+type Config struct {
+	Neo4j Neo4jConfig
+
+	GRPCPort   int
+	HealthPort string
+	LogLevel   string
+	Env        string
+
+	RunHistoryRetentionDays   int
+	RunSweeperIntervalMinutes int
 }
 
-// GetNeo4jURI returns the Neo4j connection URI
-func GetNeo4jURI() string {
-	return getEnv("NEO4J_URI", "bolt://localhost:7687")
-}
+// Load reads configuration from environment variables.
+func Load() Config {
+	return Config{
+		Neo4j: Neo4jConfig{
+			URI:      env("NEO4J_URI", "bolt://localhost:7687"),
+			User:     env("NEO4J_USER", "neo4j"),
+			Password: env("NEO4J_PASSWORD", "atlas_password"),
+		},
 
-// GetNeo4jUser returns the Neo4j username
-func GetNeo4jUser() string {
-	return getEnv("NEO4J_USER", "neo4j")
-}
+		GRPCPort:   envInt("GRPC_PORT", 50052),
+		HealthPort: env("HEALTH_PORT", "8081"),
+		LogLevel:   env("LOG_LEVEL", "INFO"),
+		Env:        env("ENV", "local"),
 
-// GetNeo4jPassword returns the Neo4j password
-func GetNeo4jPassword() string {
-	return getEnv("NEO4J_PASSWORD", "atlas_password")
-}
-
-// GetLogLevel returns the log level
-func GetLogLevel() string {
-	return getEnv("LOG_LEVEL", "INFO")
-}
-
-// GetEnv returns the environment (local, dev, prod)
-func GetEnv() string {
-	return getEnv("ENV", "local")
-}
-
-// getEnv retrieves an environment variable or returns a default value
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+		RunHistoryRetentionDays:   envInt("RUN_HISTORY_RETENTION_DAYS", 7),
+		RunSweeperIntervalMinutes: envInt("RUN_SWEEPER_INTERVAL_MINUTES", 60),
 	}
-	return defaultValue
 }
 
-// getEnvInt retrieves an integer environment variable or returns a default value
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if i, err := strconv.Atoi(value); err == nil {
-			return i
-		}
-	}
-	return defaultValue
-}
-
-// GetRunHistoryRetentionDays returns how many days completed Run nodes are
-// kept in Neo4j before the sweeper deletes them. Default: 7.
-// Override: RUN_HISTORY_RETENTION_DAYS env var.
-func GetRunHistoryRetentionDays() int {
-	return getEnvInt("RUN_HISTORY_RETENTION_DAYS", 7)
-}
-
-// GetRunSweeperIntervalMinutes returns how often the sweeper checks for
-// expired Run nodes. Default: 60 (hourly).
-// Override: RUN_SWEEPER_INTERVAL_MINUTES env var.
-func GetRunSweeperIntervalMinutes() int {
-	return getEnvInt("RUN_SWEEPER_INTERVAL_MINUTES", 60)
-}
+func env(key, fallback string) string    { return pkgconfig.EnvOrDefault(key, fallback) }
+func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

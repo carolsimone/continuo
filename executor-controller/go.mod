@@ -3,6 +3,7 @@ module github.com/carolsimone/continuo/executor-controller
 go 1.25.1
 
 require (
+	github.com/carolsimone/continuo/pkg v0.0.0
 	github.com/carolsimone/continuo/state v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
@@ -102,4 +103,7 @@ require (
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
 
-replace github.com/carolsimone/continuo/state => ../state
+replace (
+	github.com/carolsimone/continuo/pkg => ../pkg
+	github.com/carolsimone/continuo/state => ../state
+)
