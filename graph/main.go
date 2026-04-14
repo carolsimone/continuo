@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 
 	httpadapter "github.com/carolsimone/continuo/graph/adapters/http"
 	neo4jadapter "github.com/carolsimone/continuo/graph/adapters/neo4j"
@@ -12,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/graph/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/graph/internal/lifecycle"
 	"github.com/carolsimone/continuo/graph/internal/sweeper"
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
 func main() {
@@ -19,7 +21,12 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
-	cfg := config.Load()
+	v := &pkgconfig.Validator{}
+	cfg := config.Load(v)
+	if missing := v.Missing(); len(missing) > 0 {
+		logger.Error("missing required env vars", "vars", strings.Join(missing, ", "))
+		os.Exit(1)
+	}
 
 	logger.Info("Starting graph service")
 

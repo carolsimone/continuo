@@ -25,12 +25,13 @@ type Config struct {
 }
 
 // Load reads configuration from environment variables.
-func Load() Config {
+// v accumulates missing required vars; check v.Missing() after calling.
+func Load(v *pkgconfig.Validator) Config {
 	return Config{
 		Neo4j: Neo4jConfig{
-			URI:      env("NEO4J_URI", "bolt://localhost:7687"),
-			User:     env("NEO4J_USER", "neo4j"),
-			Password: env("NEO4J_PASSWORD", "atlas_password"),
+			URI:      v.Require("NEO4J_URI"),
+			User:     v.Require("NEO4J_USER"),
+			Password: v.Require("NEO4J_PASSWORD"),
 		},
 
 		GRPCPort:   envInt("GRPC_PORT", 50052),
