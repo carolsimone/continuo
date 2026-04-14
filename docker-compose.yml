@@ -500,6 +500,8 @@ services:
     container_name: manifest-controller
     environment:
       REDIS_URL: redis://:continuo@redis:6379
+      REDIS_STREAM: "update.graph:v1"
+      REDIS_GROUP: manifest-controller
       GRAPH_GRPC_ADDR: graph:50052
       REGISTRY_PATH: /data/registry.csv
       MANIFESTS_BASE: /manifests
