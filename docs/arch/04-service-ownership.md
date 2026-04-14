@@ -8,6 +8,30 @@ This sheet is the fastest way to answer three questions for each service:
 
 Use this before diving into the full service dossiers.
 
+## Startup Environment Validation
+
+All Go services use `pkg/config.Validator` to validate required environment variables before accepting any traffic or opening connections.
+
+Pattern (in every Go service `main.go`):
+```go
+v := &pkgconfig.Validator{}
+cfg := config.Load(v)
+if missing := v.Missing(); len(missing) > 0 {
+    logger.Error("missing required env vars", "vars", strings.Join(missing, ", "))
+    os.Exit(1)
+}
+```
+
+`LoadPostgres`, `LoadRedis`, `LoadRedisFromAddr`, and `LoadS3` all accept a `*Validator` and register any missing required key into it. Optional keys with safe defaults use the package-private `env`/`envInt` helpers instead.
+
+**Tiers:**
+- **Tier 1 (required)**: recorded via `v.Require` / `v.RequireInt`; missing → process exits with a single error listing all absent keys.
+- **Tier 2 (with default)**: read via `env` / `envInt`; missing → silently uses the default value.
+
+`manifest-controller` (Python) performs the equivalent check at startup: it reads required env vars and raises a descriptive `RuntimeError` listing all missing keys before the event loop starts.
+
+The process exits before any connection is attempted, so missing-config failures are immediately visible in `docker logs` or pod logs rather than surfacing as obscure connection errors.
+
 ## Bootstrap Migration Image
 
 The dedicated Flyway image artifact sequentially applies the SQL files under `db/migration/{state,startup,executor,dependency,k8s}` against the corresponding `continuo_*` databases. It owns no runtime state; it is only the packaging and entrypoint for those migrations.

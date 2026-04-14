@@ -23,21 +23,22 @@ type Config struct {
 }
 
 // Load reads configuration from environment variables.
-func Load() Config {
+// v accumulates missing required vars; check v.Missing() after calling.
+func Load(v *pkgconfig.Validator) Config {
 	return Config{
-		Redis:    pkgconfig.LoadRedis(),
-		Postgres: pkgconfig.LoadPostgres(),
+		Redis:    pkgconfig.LoadRedis(v),
+		Postgres: pkgconfig.LoadPostgres(v),
 
-		RedisConsumerStream: env("REDIS_CONSUMER_STREAM", "update.table:v1"),
-		RedisConsumerGroup:  env("REDIS_CONSUMER_GROUP", "dependency_controller_consumers"),
-		RedisProducerStream: env("REDIS_PRODUCER_STREAM", "query.model:v1"),
+		RedisConsumerStream: v.Require("REDIS_CONSUMER_STREAM"),
+		RedisConsumerGroup:  v.Require("REDIS_CONSUMER_GROUP"),
+		RedisProducerStream: v.Require("REDIS_PRODUCER_STREAM"),
 
-		StateGRPCAddr: env("STATE_SERVICE_GRPC_ADDR", "localhost:50051"),
-		GraphGRPCAddr: env("GRAPH_SERVICE_GRPC_ADDR", "localhost:50052"),
+		StateGRPCAddr: v.Require("STATE_SERVICE_GRPC_ADDR"),
+		GraphGRPCAddr: v.Require("GRAPH_SERVICE_GRPC_ADDR"),
 
 		HTTPPort: envInt("HTTP_PORT", 8086),
 	}
 }
 
-func env(key, fallback string) string    { return pkgconfig.EnvOrDefault(key, fallback) }
+func env(key, fallback string) string     { return pkgconfig.EnvOrDefault(key, fallback) }
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

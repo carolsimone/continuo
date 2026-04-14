@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -24,7 +26,12 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
-	cfg := config.Load()
+	v := &pkgconfig.Validator{}
+	cfg := config.Load(v)
+	if missing := v.Missing(); len(missing) > 0 {
+		logger.Error("missing required env vars", "vars", strings.Join(missing, ", "))
+		os.Exit(1)
+	}
 
 	logger.Info("Starting state service")
 

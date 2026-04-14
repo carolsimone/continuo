@@ -1,14 +1,29 @@
 import os
 
-REDIS_URL       = os.getenv("REDIS_URL", "redis://redis:6379")
-REDIS_STREAM    = os.getenv("REDIS_STREAM", "update.graph:v1")
-REDIS_GROUP     = os.getenv("REDIS_GROUP", "manifest-controller")
-GRAPH_GRPC_ADDR = os.getenv("GRAPH_GRPC_ADDR", "graph:50052")
-REGISTRY_PATH   = os.getenv("REGISTRY_PATH", "/data/registry.csv")
-MANIFESTS_BASE  = os.getenv("MANIFESTS_BASE", "/manifests")
+REDIS_URL       = os.environ.get("REDIS_URL", "")
+REDIS_STREAM    = os.environ.get("REDIS_STREAM", "")
+REDIS_GROUP     = os.environ.get("REDIS_GROUP", "")
+GRAPH_GRPC_ADDR = os.environ.get("GRAPH_GRPC_ADDR", "")
+REGISTRY_PATH   = os.environ.get("REGISTRY_PATH", "")
+MANIFESTS_BASE  = os.environ.get("MANIFESTS_BASE", "")
 
-S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "http://localstack:4566")
-S3_BUCKET       = os.getenv("S3_BUCKET", "continuo")
-S3_ENV          = os.getenv("S3_ENV", "local")
+S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "")
+S3_BUCKET       = os.environ.get("S3_BUCKET", "")
+S3_ENV          = os.environ.get("S3_ENV", "")
+
+AWS_DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION", "")
 
 SCHEDULES_LOADED_STREAM = os.getenv("SCHEDULES_LOADED_STREAM", "schedules.loaded:v1")
+
+_REQUIRED = [
+    "REDIS_URL", "REDIS_STREAM", "REDIS_GROUP",
+    "GRAPH_GRPC_ADDR", "REGISTRY_PATH", "MANIFESTS_BASE",
+    "S3_ENDPOINT_URL", "S3_BUCKET", "S3_ENV", "AWS_DEFAULT_REGION",
+]
+
+
+def validate() -> None:
+    """Raise RuntimeError listing all missing required env vars."""
+    missing = [key for key in _REQUIRED if not os.environ.get(key)]
+    if missing:
+        raise RuntimeError(f"missing required env vars: {', '.join(missing)}")

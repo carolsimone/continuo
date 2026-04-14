@@ -9,7 +9,7 @@ services:
       - /var/lib/postgresql/data
     environment:
       - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=runner
+      - POSTGRES_PASSWORD=continuo
       # POSTGRES_DB removed - databases created by init script
     ports:
       - "5432:5432"
@@ -18,7 +18,7 @@ services:
 
   flyway-state:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_state -user=continuo_svc -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_state -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
       - ./db/migration/state:/flyway/sql
     depends_on:
@@ -27,7 +27,7 @@ services:
 
   flyway-startup:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_startup -user=continuo_svc -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_startup -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
       - ./db/migration/startup:/flyway/sql
     depends_on:
@@ -36,7 +36,7 @@ services:
 
   flyway-executor:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_executor -user=continuo_svc -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_executor -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
       - ./db/migration/executor:/flyway/sql
     depends_on:
@@ -45,7 +45,7 @@ services:
 
   flyway-dependency:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_dependency -user=continuo_svc -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_dependency -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
       - ./db/migration/dependency:/flyway/sql
     depends_on:
@@ -54,7 +54,7 @@ services:
 
   flyway-k8s:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_k8s -user=continuo_svc -password=runner -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_k8s -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
       - ./db/migration/k8s:/flyway/sql
     depends_on:
@@ -67,9 +67,9 @@ services:
       - "6379:6379"
     # Disable all persistence (both RDB snapshots and AOF) to avoid
     # "No space left on device" errors when Colima's virtual disk is tight.
-    command: redis-server --appendonly no --save ""
+    command: redis-server --appendonly no --save "" --requirepass continuo
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "continuo", "ping"]
       interval: 10s
       timeout: 5s
 
@@ -105,7 +105,7 @@ services:
     environment:
       - POSTGRES_DB=continuo_state
       - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=runner
+      - POSTGRES_PASSWORD=continuo
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - DB_SSLMODE=disable
@@ -116,6 +116,7 @@ services:
       - HEALTH_PORT=8082
       - GRPC_PORT=50051
       - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=continuo
       - REDIS_STREAM_SCHEDULER_STARTED=scheduler.started:v1
       - REDIS_STREAM_SCHEDULES_LOADED=schedules.loaded:v1
       - SCHEDULES_CONFIG_PATH=/etc/continuo/schedules.yaml
@@ -153,6 +154,7 @@ services:
       # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=continuo
       - REDIS_CONSUMER_STREAM=scheduler.started:v1
       - REDIS_CONSUMER_GROUP=startup_controller_consumers
       - REDIS_PRODUCER_STREAM=query.model:v1
@@ -165,9 +167,11 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_startup
       - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=runner
+      - POSTGRES_PASSWORD=continuo
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
+      # Graph Service
+      - GRAPH_SERVICE_GRPC_ADDR=graph:50052
       # Kubernetes
       - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
       # Application
@@ -209,6 +213,7 @@ services:
       # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=continuo
       - REDIS_CONSUMER_STREAM=query.model:v1
       - REDIS_CONSUMER_RETRY_STREAM=task.retry:v1
       - REDIS_CONSUMER_GROUP=executor_controller_consumers
@@ -218,7 +223,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_executor
       - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=runner
+      - POSTGRES_PASSWORD=continuo
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
       # Kubernetes
@@ -264,6 +269,7 @@ services:
       # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=continuo
       - REDIS_CONSUMER_DEPLOYED_STREAM=executor.deployed:v1
       - REDIS_CONSUMER_CHECK_STREAM=k8s.check:v1
       - REDIS_CONSUMER_GROUP=k8s_controller_consumers
@@ -276,7 +282,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_k8s
       - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=runner
+      - POSTGRES_PASSWORD=continuo
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
       # Kubernetes
@@ -328,6 +334,7 @@ services:
       # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=continuo
       - REDIS_CONSUMER_STREAM=update.table:v1
       - REDIS_CONSUMER_GROUP=dependency_controller_consumers
       - REDIS_PRODUCER_STREAM=query.model:v1
@@ -336,7 +343,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_dependency
       - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=runner
+      - POSTGRES_PASSWORD=continuo
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
       # Graph Service
@@ -494,7 +501,9 @@ services:
       dockerfile: Dockerfile.dev
     container_name: manifest-controller
     environment:
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:continuo@redis:6379
+      REDIS_STREAM: "update.graph:v1"
+      REDIS_GROUP: manifest-controller
       GRAPH_GRPC_ADDR: graph:50052
       REGISTRY_PATH: /data/registry.csv
       MANIFESTS_BASE: /manifests
@@ -537,7 +546,7 @@ services:
       - DBT_POSTGRES_PORT=5432
       - DBT_POSTGRES_DB=continuo_dbt
       - DBT_POSTGRES_USER=continuo_svc
-      - DBT_POSTGRES_PASSWORD=runner
+      - DBT_POSTGRES_PASSWORD=continuo
     volumes:
       - ./dbt/services:/app/services
     profiles:

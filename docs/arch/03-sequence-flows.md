@@ -133,6 +133,31 @@ sequenceDiagram
   R->>EC: consume query.model:v1
 ```
 
+## 5. Service Process Startup (Pre-Flight)
+
+Before any service participates in the flows above, it runs an environment validation step:
+
+```mermaid
+sequenceDiagram
+  participant OS as OS / container env
+  participant M as main()
+  participant V as pkg/config.Validator
+  participant CFG as config.Load()
+  participant SVC as service components
+
+  M->>V: create Validator{}
+  M->>CFG: Load(v) — calls LoadPostgres/LoadRedis/LoadS3 with v
+  CFG->>V: v.Require(key) for each Tier-1 env var
+  M->>V: v.Missing()
+  alt any missing
+    M->>OS: log.Error("missing required env vars", keys...) + os.Exit(1)
+  else all present
+    M->>SVC: initialize connections, start goroutines
+  end
+```
+
+All Tier-1 required keys are accumulated before any `os.Exit(1)` so the operator sees the full list of missing vars in a single log line. The service will not attempt any DB or Redis connection until this check passes.
+
 ## Why These Diagrams Are Not Enough On Their Own
 
 These diagrams show timing and ordering well, but they do not fully show:
