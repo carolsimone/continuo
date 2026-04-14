@@ -77,14 +77,17 @@ func setupTestFixture(t *testing.T, redisDB int) *testFixture {
 
 	// Connect to PostgreSQL
 	pgDatabase := getEnvOrDefault("POSTGRES_DB", "continuo_startup")
-	pgConnStr := fmt.Sprintf("host=%s port=5432 dbname=%s user=continuo_svc password=runner sslmode=disable", pgHost, pgDatabase)
+	pgPassword := getEnvOrDefault("POSTGRES_PASSWORD", "continuo")
+	pgConnStr := fmt.Sprintf("host=%s port=5432 dbname=%s user=continuo_svc password=%s sslmode=disable", pgHost, pgDatabase, pgPassword)
 	pgDB, err := sqlx.Connect("postgres", pgConnStr)
 	require.NoError(t, err, "Failed to connect to PostgreSQL")
 
 	// Connect to Redis with isolated DB per test
+	redisPassword := getEnvOrDefault("REDIS_PASSWORD", "")
 	redisClient := goredis.NewClient(&goredis.Options{
-		Addr: fmt.Sprintf("%s:6379", redisHost),
-		DB:   redisDB, // Each test uses its own Redis DB for isolation
+		Addr:     fmt.Sprintf("%s:6379", redisHost),
+		Password: redisPassword,
+		DB:       redisDB, // Each test uses its own Redis DB for isolation
 	})
 	require.NoError(t, redisClient.Ping(ctx).Err(), "Failed to connect to Redis")
 

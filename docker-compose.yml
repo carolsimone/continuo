@@ -170,6 +170,8 @@ services:
       - POSTGRES_PASSWORD=continuo
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
+      # Graph Service
+      - GRAPH_SERVICE_GRPC_ADDR=graph:50052
       # Kubernetes
       - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
       # Application
