@@ -61,8 +61,9 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 
 	// Setup Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
-		Addr: fmt.Sprintf("%s:6379", redisHost),
-		DB:   0,
+		Addr:     fmt.Sprintf("%s:6379", redisHost),
+		Password: getEnv("REDIS_PASSWORD", ""),
+		DB:       0,
 	})
 	require.NoError(t, redisClient.Ping(ctx).Err(), "Failed to connect to Redis")
 
@@ -96,9 +97,10 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 
 // connectPostgres establishes a PostgreSQL connection
 func connectPostgres(t *testing.T, host, database string) *sqlx.DB {
+	pgPassword := getEnv("POSTGRES_PASSWORD", "continuo")
 	connStr := fmt.Sprintf(
-		"host=%s port=5432 dbname=%s user=continuo_svc password=runner sslmode=disable",
-		host, database,
+		"host=%s port=5432 dbname=%s user=continuo_svc password=%s sslmode=disable",
+		host, database, pgPassword,
 	)
 	db, err := sqlx.Connect("postgres", connStr)
 	require.NoError(t, err, "Failed to connect to PostgreSQL database: %s", database)

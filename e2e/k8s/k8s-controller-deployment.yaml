@@ -62,6 +62,8 @@ spec:
               value: "${DOCKER_BRIDGE_IP}"
             - name: REDIS_PORT
               value: "6379"
+            - name: REDIS_PASSWORD
+              value: "continuo"
             - name: REDIS_CONSUMER_DEPLOYED_STREAM
               value: "executor.deployed:v1"
             - name: REDIS_CONSUMER_CHECK_STREAM
@@ -85,9 +87,19 @@ spec:
             - name: POSTGRES_USER
               value: "continuo_svc"
             - name: POSTGRES_PASSWORD
-              value: "runner"
+              value: "continuo"
             - name: STATE_SERVICE_GRPC_ADDR
               value: "${DOCKER_BRIDGE_IP}:50051"
+            - name: S3_ENDPOINT_URL
+              value: "http://${DOCKER_BRIDGE_IP}:4566"
+            - name: S3_BUCKET
+              value: "continuo"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            - name: AWS_ACCESS_KEY_ID
+              value: "test"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "test"
             - name: K8S_NAMESPACE
               value: "default"
             - name: K8S_CHECK_DELAY_SECONDS

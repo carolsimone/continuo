@@ -59,6 +59,8 @@ spec:
               value: "${DOCKER_BRIDGE_IP}"
             - name: REDIS_PORT
               value: "6379"
+            - name: REDIS_PASSWORD
+              value: "continuo"
             - name: REDIS_CONSUMER_STREAM
               value: "query.model:v1"
             - name: REDIS_CONSUMER_RETRY_STREAM
@@ -76,7 +78,7 @@ spec:
             - name: POSTGRES_USER
               value: "continuo_svc"
             - name: POSTGRES_PASSWORD
-              value: "runner"
+              value: "continuo"
             - name: STATE_SERVICE_GRPC_ADDR
               value: "${DOCKER_BRIDGE_IP}:50051"
             - name: K8S_NAMESPACE
