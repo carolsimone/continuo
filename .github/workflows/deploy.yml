@@ -243,6 +243,8 @@ jobs:
 
             kubectl create namespace continuo --dry-run=client -o yaml | kubectl apply -f -
 
+            helm dependency build deploy/infra
+
             helm upgrade --install continuo-infra deploy/infra \
               -n continuo \
               --wait \
