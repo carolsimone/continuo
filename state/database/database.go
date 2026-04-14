@@ -31,5 +31,6 @@ func NewConnection(pg pkgconfig.PostgresConfig) (*sqlx.DB, error) {
 // GetPostgresConnection creates a PostgreSQL connection using env vars.
 // Prefer NewConnection with an explicit PostgresConfig in production code.
 func GetPostgresConnection() (*sqlx.DB, error) {
-	return NewConnection(pkgconfig.LoadPostgres())
+	v := &pkgconfig.Validator{}
+	return NewConnection(pkgconfig.LoadPostgres(v))
 }

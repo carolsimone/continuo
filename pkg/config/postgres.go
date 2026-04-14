@@ -25,13 +25,15 @@ func (c PostgresConfig) DSN() string {
 }
 
 // LoadPostgres reads PostgreSQL connection config from standard env vars.
-func LoadPostgres() PostgresConfig {
+// Tier 1 (required): POSTGRES_HOST, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD.
+// Tier 2 (defaults): POSTGRES_PORT=5432, DB_SSLMODE=disable.
+func LoadPostgres(v *Validator) PostgresConfig {
 	return PostgresConfig{
-		Host:     env("POSTGRES_HOST", "localhost"),
+		Host:     v.Require("POSTGRES_HOST"),
 		Port:     envInt("POSTGRES_PORT", 5432),
-		DB:       env("POSTGRES_DB", "continuo"),
-		User:     env("POSTGRES_USER", "continuo_svc"),
-		Password: env("POSTGRES_PASSWORD", ""),
+		DB:       v.Require("POSTGRES_DB"),
+		User:     v.Require("POSTGRES_USER"),
+		Password: v.Require("POSTGRES_PASSWORD"),
 		SSLMode:  env("DB_SSLMODE", "disable"),
 	}
 }

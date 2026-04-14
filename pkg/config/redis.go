@@ -18,20 +18,20 @@ func (c RedisConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
-// LoadRedis reads Redis connection config from standard env vars
-// (REDIS_HOST, REDIS_PORT, REDIS_PASSWORD).
-func LoadRedis() RedisConfig {
+// LoadRedis reads Redis connection config from standard env vars.
+// Tier 1 (required): REDIS_HOST, REDIS_PORT, REDIS_PASSWORD.
+func LoadRedis(v *Validator) RedisConfig {
 	return RedisConfig{
-		Host:     env("REDIS_HOST", "localhost"),
-		Port:     envInt("REDIS_PORT", 6379),
-		Password: env("REDIS_PASSWORD", ""),
+		Host:     v.Require("REDIS_HOST"),
+		Port:     v.RequireInt("REDIS_PORT"),
+		Password: v.Require("REDIS_PASSWORD"),
 	}
 }
 
-// LoadRedisFromAddr reads Redis config from REDIS_ADDR ("host:port" format)
-// and REDIS_PASSWORD. This supports the state service's env convention.
-func LoadRedisFromAddr() RedisConfig {
-	addr := env("REDIS_ADDR", "localhost:6379")
+// LoadRedisFromAddr reads Redis config from REDIS_ADDR ("host:port" format).
+// Tier 1 (required): REDIS_ADDR, REDIS_PASSWORD.
+func LoadRedisFromAddr(v *Validator) RedisConfig {
+	addr := v.Require("REDIS_ADDR")
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
@@ -41,6 +41,6 @@ func LoadRedisFromAddr() RedisConfig {
 	return RedisConfig{
 		Host:     host,
 		Port:     port,
-		Password: env("REDIS_PASSWORD", ""),
+		Password: v.Require("REDIS_PASSWORD"),
 	}
 }

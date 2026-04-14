@@ -24,20 +24,20 @@ type Config struct {
 }
 
 // Load reads configuration from environment variables.
-func Load() Config {
+// v accumulates missing required vars; check v.Missing() after calling.
+func Load(v *pkgconfig.Validator) Config {
 	return Config{
-		Redis:    pkgconfig.LoadRedisFromAddr(),
-		Postgres: pkgconfig.LoadPostgres(),
+		Redis:    pkgconfig.LoadRedisFromAddr(v),
+		Postgres: pkgconfig.LoadPostgres(v),
 
-		RedisStreamSchedulerStarted: env("REDIS_STREAM_SCHEDULER_STARTED", "scheduler.started:v1"),
-		RedisStreamSchedulesLoaded:  env("REDIS_STREAM_SCHEDULES_LOADED", "schedules.loaded:v1"),
+		RedisStreamSchedulerStarted: v.Require("REDIS_STREAM_SCHEDULER_STARTED"),
+		RedisStreamSchedulesLoaded:  v.Require("REDIS_STREAM_SCHEDULES_LOADED"),
 
-		GRPCPort:   envInt("GRPC_PORT", 50051),
-		HealthPort: env("HEALTH_PORT", "8082"),
-
+		GRPCPort:            envInt("GRPC_PORT", 50051),
+		HealthPort:          env("HEALTH_PORT", "8082"),
 		SchedulesConfigPath: env("SCHEDULES_CONFIG_PATH", "/etc/continuo/schedules.yaml"),
 	}
 }
 
-func env(key, fallback string) string    { return pkgconfig.EnvOrDefault(key, fallback) }
+func env(key, fallback string) string     { return pkgconfig.EnvOrDefault(key, fallback) }
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

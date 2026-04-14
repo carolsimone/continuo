@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/carolsimone/continuo/k8s-controller/adapters/grpc"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/http"
@@ -17,7 +18,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/messagebus"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
-
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -27,7 +28,12 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
-	cfg := config.Load()
+	v := &pkgconfig.Validator{}
+	cfg := config.Load(v)
+	if missing := v.Missing(); len(missing) > 0 {
+		logger.Error("missing required env vars", "vars", strings.Join(missing, ", "))
+		os.Exit(1)
+	}
 
 	logger.Info("Starting k8s-controller service")
 
