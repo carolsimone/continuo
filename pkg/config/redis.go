@@ -34,10 +34,15 @@ func LoadRedisFromAddr(v *Validator) RedisConfig {
 	addr := v.Require("REDIS_ADDR")
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
+		// addr has no port component — treat as host-only, default port
 		host = addr
 		portStr = "6379"
 	}
-	port, _ := strconv.Atoi(portStr)
+	port, atoiErr := strconv.Atoi(portStr)
+	if atoiErr != nil || port <= 0 {
+		v.missing = append(v.missing, "REDIS_ADDR")
+		port = 0
+	}
 	return RedisConfig{
 		Host:     host,
 		Port:     port,

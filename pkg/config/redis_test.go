@@ -50,3 +50,36 @@ func TestLoadRedisFromAddr_no_missing_when_all_set(t *testing.T) {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }
+
+func TestLoadRedisFromAddr_no_port_defaults(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "redishost")
+	t.Setenv("REDIS_PASSWORD", "secret")
+	v := &Validator{}
+	cfg := LoadRedisFromAddr(v)
+	if len(v.Missing()) != 0 {
+		t.Fatalf("want no missing for host-only addr (uses default port), got %v", v.Missing())
+	}
+	if cfg.Host != "redishost" || cfg.Port != 6379 {
+		t.Fatalf("unexpected config: host=%q port=%d", cfg.Host, cfg.Port)
+	}
+}
+
+func TestLoadRedisFromAddr_empty_port_records_invalid(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "redishost:")
+	t.Setenv("REDIS_PASSWORD", "secret")
+	v := &Validator{}
+	LoadRedisFromAddr(v)
+	missing := v.Missing()
+	if len(missing) == 0 {
+		t.Fatal("want REDIS_ADDR recorded as invalid when port component is empty")
+	}
+	found := false
+	for _, k := range missing {
+		if k == "REDIS_ADDR" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("want REDIS_ADDR in missing, got %v", missing)
+	}
+}
