@@ -67,3 +67,4 @@ deploy/infra/values.secret.yaml
 .claude/settings.local.jsondocs/superpowers/*
 
 .rtk/*
+.venv

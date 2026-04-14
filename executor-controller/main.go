@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -26,6 +25,8 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
+	cfg := config.Load()
+
 	logger.Info("Starting executor-controller service")
 
 	// Create context with cancellation
@@ -42,11 +43,11 @@ func main() {
 
 	// 1. PostgreSQL (for deployment_outbox table)
 	pgDB, err := postgres.NewPostgresClient(
-		config.GetPostgresHost(),
-		config.GetPostgresPort(),
-		config.GetPostgresDB(),
-		config.GetPostgresUser(),
-		config.GetPostgresPassword(),
+		cfg.Postgres.Host,
+		cfg.Postgres.Port,
+		cfg.Postgres.DB,
+		cfg.Postgres.User,
+		cfg.Postgres.Password,
 		logger,
 	)
 	if err != nil {
@@ -62,8 +63,8 @@ func main() {
 
 	// 2. Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
-		Addr:     fmt.Sprintf("%s:%d", config.GetRedisHost(), config.GetRedisPort()),
-		Password: config.GetRedisPassword(),
+		Addr:     cfg.Redis.Addr(),
+		Password: cfg.Redis.Password,
 		DB:       0,
 	})
 
@@ -87,7 +88,7 @@ func main() {
 	logger.Info("K8s client initialized")
 
 	// 4. gRPC client to state service
-	stateClient, err := grpc.NewStateClient(config.GetStateServiceGRPCAddr(), logger)
+	stateClient, err := grpc.NewStateClient(cfg.StateGRPCAddr, logger)
 	if err != nil {
 		logger.Error("Failed to create state service client", "error", err)
 		os.Exit(1)
@@ -136,9 +137,9 @@ func main() {
 	// Create dual-stream consumer for query.model:v1 and task.retry:v1 streams
 	consumer, err := redis.NewConsumer(
 		redisClient,
-		config.GetRedisConsumerStream(),      // query.model:v1
-		config.GetRedisConsumerRetryStream(), // task.retry:v1
-		config.GetRedisConsumerGroup(),
+		cfg.RedisConsumerStream,      // query.model:v1
+		cfg.RedisConsumerRetryStream, // task.retry:v1
+		cfg.RedisConsumerGroup,
 		messageBus,
 		pgDB,
 		logger,
@@ -149,14 +150,14 @@ func main() {
 	}
 
 	logger.Info("Redis consumer initialized",
-		"streams", []string{config.GetRedisConsumerStream(), config.GetRedisConsumerRetryStream()},
-		"consumer_group", config.GetRedisConsumerGroup(),
+		"streams", []string{cfg.RedisConsumerStream, cfg.RedisConsumerRetryStream},
+		"consumer_group", cfg.RedisConsumerGroup,
 	)
 
 	// Create producer for executor.deployed:v1 stream
 	producer := redis.NewProducer(
 		redisClient,
-		config.GetRedisProducerStream(),
+		cfg.RedisProducerStream,
 		logger,
 	)
 
@@ -169,6 +170,7 @@ func main() {
 		k8sClient,
 		stateClient,
 		producer,
+		cfg.K8sNamespace,
 		logger,
 	)
 
@@ -183,7 +185,7 @@ func main() {
 	// START HTTP HEALTH CHECK SERVER
 	// ========================================================================
 
-	healthServer := http.NewHealthServer(config.GetHTTPPort(), logger)
+	healthServer := http.NewHealthServer(cfg.HTTPPort, logger)
 
 	go func() {
 		if err := healthServer.Start(); err != nil {

@@ -37,6 +37,7 @@ func TestOutboxProcessor_ProcessBatch_Success(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 
@@ -111,6 +112,7 @@ func TestOutboxProcessor_ProcessBatch_Idempotent(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 
@@ -196,6 +198,7 @@ func TestOutboxProcessor_ProcessBatch_K8sFailure(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 
@@ -258,6 +261,7 @@ func TestOutboxProcessor_ProcessBatch_MaxRetriesExceeded(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 
@@ -322,7 +326,7 @@ func TestOutboxProcessor_PublishesOutboxEntryID(t *testing.T) {
 	stateClient := fakes.NewFakeStateClient()
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	processor := handlers.NewOutboxProcessor(outboxRepo, k8sClient, stateClient, publisher, logger)
+	processor := handlers.NewOutboxProcessor(outboxRepo, k8sClient, stateClient, publisher, "default", logger)
 
 	err = processor.ProcessBatch(ctx)
 	require.NoError(t, err)
@@ -355,6 +359,7 @@ func TestOutboxProcessor_ProcessBatch_StateUpdateFailure(t *testing.T) {
 		fakeK8s,
 		fakeState,
 		fakeProducer,
+		"default",
 		logger,
 	)
 

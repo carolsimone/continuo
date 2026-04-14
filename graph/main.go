@@ -19,6 +19,8 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
+	cfg := config.Load()
+
 	logger.Info("Starting graph service")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -29,9 +31,9 @@ func main() {
 
 	// Neo4j client
 	neo4jClient, err := neo4jadapter.NewNeo4jClient(
-		config.GetNeo4jURI(),
-		config.GetNeo4jUser(),
-		config.GetNeo4jPassword(),
+		cfg.Neo4j.URI,
+		cfg.Neo4j.User,
+		cfg.Neo4j.Password,
 		logger,
 	)
 	if err != nil {
@@ -49,7 +51,7 @@ func main() {
 	graphHandler := handlers.NewGraphHandler(graphRepo, logger)
 
 	// gRPC server
-	grpcSrv, err := grpcserver.NewServer(config.GetGRPCPort(), graphHandler, logger)
+	grpcSrv, err := grpcserver.NewServer(cfg.GRPCPort, graphHandler, logger)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)
@@ -60,7 +62,7 @@ func main() {
 	})
 
 	// HTTP health server
-	healthSrv := httpadapter.NewServer(config.GetHealthPort(), logger)
+	healthSrv := httpadapter.NewServer(cfg.HealthPort, logger)
 
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthSrv.Shutdown(ctx)
@@ -74,15 +76,15 @@ func main() {
 
 	runSweeper := sweeper.New(
 		graphRepo,
-		config.GetRunHistoryRetentionDays(),
-		config.GetRunSweeperIntervalMinutes(),
+		cfg.RunHistoryRetentionDays,
+		cfg.RunSweeperIntervalMinutes,
 		logger,
 	)
 	go runSweeper.Start(ctx)
 
 	logger.Info("Graph service initialized, starting gRPC server",
-		"grpc_port", config.GetGRPCPort(),
-		"health_port", config.GetHealthPort(),
+		"grpc_port", cfg.GRPCPort,
+		"health_port", cfg.HealthPort,
 	)
 
 	if err := grpcSrv.Start(); err != nil {

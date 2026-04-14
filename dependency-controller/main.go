@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -25,6 +24,8 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
+	cfg := config.Load()
+
 	logger.Info("Starting dependency-controller service")
 
 	// Create context with cancellation
@@ -41,11 +42,11 @@ func main() {
 
 	// 1. PostgreSQL (for outbox table)
 	pgDB, err := postgres.NewPostgresClient(
-		config.GetPostgresHost(),
-		config.GetPostgresPort(),
-		config.GetPostgresDB(),
-		config.GetPostgresUser(),
-		config.GetPostgresPassword(),
+		cfg.Postgres.Host,
+		cfg.Postgres.Port,
+		cfg.Postgres.DB,
+		cfg.Postgres.User,
+		cfg.Postgres.Password,
 		logger,
 	)
 	if err != nil {
@@ -61,8 +62,8 @@ func main() {
 
 	// 2. Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
-		Addr:     fmt.Sprintf("%s:%d", config.GetRedisHost(), config.GetRedisPort()),
-		Password: config.GetRedisPassword(),
+		Addr:     cfg.Redis.Addr(),
+		Password: cfg.Redis.Password,
 		DB:       0,
 	})
 
@@ -78,7 +79,7 @@ func main() {
 	})
 
 	// 3. gRPC client to state service
-	stateClient, err := grpcclient.NewStateClient(config.GetStateServiceGRPCAddr(), logger)
+	stateClient, err := grpcclient.NewStateClient(cfg.StateGRPCAddr, logger)
 	if err != nil {
 		logger.Error("Failed to create state service client", "error", err)
 		os.Exit(1)
@@ -91,7 +92,7 @@ func main() {
 	})
 
 	// 4. gRPC client to graph service
-	graphClient, err := grpcclient.NewGraphClient(config.GetGraphServiceGRPCAddr(), logger)
+	graphClient, err := grpcclient.NewGraphClient(cfg.GraphGRPCAddr, logger)
 	if err != nil {
 		logger.Error("Failed to create graph service client", "error", err)
 		os.Exit(1)
@@ -146,8 +147,8 @@ func main() {
 	// Create consumer for update.table:v1 stream
 	consumer, err := redis.NewConsumer(
 		redisClient,
-		config.GetRedisConsumerStream(),
-		config.GetRedisConsumerGroup(),
+		cfg.RedisConsumerStream,
+		cfg.RedisConsumerGroup,
 		messageBus,
 		pgDB,
 		logger,
@@ -160,7 +161,7 @@ func main() {
 	// Create producer for query.model:v1 stream
 	producer := redis.NewProducer(
 		redisClient,
-		config.GetRedisProducerStream(),
+		cfg.RedisProducerStream,
 		logger,
 	)
 
@@ -186,7 +187,7 @@ func main() {
 	// START HTTP HEALTH CHECK SERVER
 	// ========================================================================
 
-	healthServer := http.NewHealthServer(config.GetHTTPPort(), logger)
+	healthServer := http.NewHealthServer(cfg.HTTPPort, logger)
 
 	go func() {
 		if err := healthServer.Start(); err != nil {

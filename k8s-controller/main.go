@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -28,6 +27,8 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
+	cfg := config.Load()
+
 	logger.Info("Starting k8s-controller service")
 
 	// Step 2: Create context with cancellation
@@ -39,26 +40,24 @@ func main() {
 	lifecycleManager.SetupSignalHandlers(ctx, cancel)
 
 	// Step 4: Initialize Redis client
-	redisHost := config.GetRedisHost()
-	redisPort := config.GetRedisPort()
 	redisClient := goredis.NewClient(&goredis.Options{
-		Addr:     fmt.Sprintf("%s:%d", redisHost, redisPort),
-		Password: config.GetRedisPassword(),
+		Addr:     cfg.Redis.Addr(),
+		Password: cfg.Redis.Password,
 	})
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		logger.Info("Closing Redis connection")
 		return redisClient.Close()
 	})
 
-	logger.Info("Connected to Redis", "addr", fmt.Sprintf("%s:%d", redisHost, redisPort))
+	logger.Info("Connected to Redis", "addr", cfg.Redis.Addr())
 
 	// Step 5: Initialize PostgreSQL client
 	pgDB, err := postgres.NewPostgresClient(
-		config.GetPostgresHost(),
-		config.GetPostgresPort(),
-		config.GetPostgresDB(),
-		config.GetPostgresUser(),
-		config.GetPostgresPassword(),
+		cfg.Postgres.Host,
+		cfg.Postgres.Port,
+		cfg.Postgres.DB,
+		cfg.Postgres.User,
+		cfg.Postgres.Password,
 		logger,
 	)
 	if err != nil {
@@ -77,8 +76,7 @@ func main() {
 	logger.Info("PostgreSQL repositories initialized")
 
 	// Step 7: Initialize gRPC state client
-	stateGRPCAddr := config.GetStateServiceGRPCAddr()
-	stateClient, err := grpc.NewStateClient(stateGRPCAddr, logger)
+	stateClient, err := grpc.NewStateClient(cfg.StateGRPCAddr, logger)
 	if err != nil {
 		logger.Error("Failed to initialize state client", "error", err)
 		os.Exit(1)
@@ -95,58 +93,57 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Step 7: Initialize Redis producer
-	checkStream := config.GetRedisProducerCheckStream()
-	retryStream := config.GetRedisProducerRetryStream()
-	failedStream := config.GetRedisProducerFailedStream()
-	producer := redis.NewMultiProducer(redisClient, checkStream, retryStream, failedStream, logger)
+	// Step 9: Initialize Redis producer
+	producer := redis.NewMultiProducer(
+		redisClient,
+		cfg.RedisProducerCheckStream,
+		cfg.RedisProducerRetryStream,
+		cfg.RedisProducerFailedStream,
+		logger,
+	)
 
 	logger.Info("Redis producer initialized",
-		"check_stream", checkStream,
-		"retry_stream", retryStream,
-		"failed_stream", failedStream,
+		"check_stream", cfg.RedisProducerCheckStream,
+		"retry_stream", cfg.RedisProducerRetryStream,
+		"failed_stream", cfg.RedisProducerFailedStream,
 	)
 
 	// Step 10: Initialize S3 log uploader
 	s3Client := s3adapter.NewS3Client(
-		config.GetS3EndpointURL(),
-		config.GetS3Bucket(),
-		config.GetS3Region(),
-		config.GetS3AccessKeyID(),
-		config.GetS3SecretAccessKey(),
+		cfg.S3.EndpointURL,
+		cfg.S3.Bucket,
+		cfg.S3.Region,
+		cfg.S3.AccessKeyID,
+		cfg.S3.SecretAccessKey,
 	)
 
 	// Step 10b: Initialize check status handler with UoW
 	handlerConfig := &handlers.HandlerConfig{
-		K8sNamespace:       config.GetK8sNamespace(),
-		CheckDelaySeconds:  config.GetK8sCheckDelaySeconds(),
-		ErrorMessageMaxLen: config.GetErrorMessageMaxLength(),
-		LogTailLines:       int64(config.GetLogTailLines()),
+		K8sNamespace:       cfg.K8sNamespace,
+		CheckDelaySeconds:  cfg.K8sCheckDelaySeconds,
+		ErrorMessageMaxLen: cfg.ErrorMessageMaxLength,
+		LogTailLines:       int64(cfg.LogTailLines),
 	}
 	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, stateClient, unitOfWork, s3Client, handlerConfig, logger)
 
-	// Step 9: Create command handlers map (CQRS pattern)
+	// Step 11: Create command handlers map (CQRS pattern)
 	commandHandlers := map[string]messagebus.CommandHandler{
 		"command.CheckJobStatus": func(ctx context.Context, cmd command.Command) error {
 			return checkStatusHandler.Handle(ctx, cmd.(command.CheckJobStatus))
 		},
 	}
 
-	// Step 10: Create MessageBus
+	// Step 12: Create MessageBus
 	messageBus := messagebus.NewMessageBus(commandHandlers, logger)
 
 	logger.Info("Message bus initialized")
 
-	// Step 11: Initialize Redis dual-stream consumer
-	deployedStream := config.GetRedisConsumerDeployedStream()
-	checkStreamConsumer := config.GetRedisConsumerCheckStream()
-	consumerGroup := config.GetRedisConsumerGroup()
-
+	// Step 13: Initialize Redis dual-stream consumer
 	consumer, err := redis.NewDualStreamConsumer(
 		redisClient,
-		deployedStream,
-		checkStreamConsumer,
-		consumerGroup,
+		cfg.RedisConsumerDeployedStream,
+		cfg.RedisConsumerCheckStream,
+		cfg.RedisConsumerGroup,
 		messageBus,
 		logger,
 	)
@@ -156,12 +153,12 @@ func main() {
 	}
 
 	logger.Info("Redis consumer initialized",
-		"deployed_stream", deployedStream,
-		"check_stream", checkStreamConsumer,
-		"consumer_group", consumerGroup,
+		"deployed_stream", cfg.RedisConsumerDeployedStream,
+		"check_stream", cfg.RedisConsumerCheckStream,
+		"consumer_group", cfg.RedisConsumerGroup,
 	)
 
-	// Step 12: Initialize and start OutboxProcessor (background)
+	// Step 14: Initialize and start OutboxProcessor (background)
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		stateClient,
@@ -178,12 +175,12 @@ func main() {
 
 	logger.Info("Outbox processor started")
 
-	// Step 12b: Initialize and start StuckEntryResolver (background)
+	// Step 15: Initialize and start StuckEntryResolver (background)
 	resolverConfig := &handlers.ResolverConfig{
-		CheckIntervalSeconds:  config.GetResolverCheckIntervalSeconds(),
-		StuckThresholdSeconds: config.GetResolverStuckThresholdSeconds(),
-		BatchSize:             config.GetResolverBatchSize(),
-		MaxResolveAttempts:    config.GetResolverMaxAttempts(),
+		CheckIntervalSeconds:  cfg.Resolver.CheckIntervalSeconds,
+		StuckThresholdSeconds: cfg.Resolver.StuckThresholdSeconds,
+		BatchSize:             cfg.Resolver.BatchSize,
+		MaxResolveAttempts:    cfg.Resolver.MaxAttempts,
 	}
 
 	stuckEntryResolver := handlers.NewStuckEntryResolver(
@@ -204,9 +201,8 @@ func main() {
 		"stuck_threshold", resolverConfig.StuckThresholdSeconds,
 	)
 
-	// Step 13: Start HTTP Health Server (background)
-	httpPort := config.GetHTTPPort()
-	healthServer := http.NewHealthServer(httpPort, logger)
+	// Step 16: Start HTTP Health Server (background)
+	healthServer := http.NewHealthServer(cfg.HTTPPort, logger)
 	go func() {
 		if err := healthServer.Start(); err != nil {
 			logger.Error("Health server stopped", "error", err)
@@ -217,9 +213,9 @@ func main() {
 		return healthServer.Shutdown(ctx)
 	})
 
-	logger.Info("HTTP health server started", "port", httpPort)
+	logger.Info("HTTP health server started", "port", cfg.HTTPPort)
 
-	// Step 14: Start Redis Consumer (BLOCKING - main loop)
+	// Step 17: Start Redis Consumer (BLOCKING - main loop)
 	logger.Info("Starting Redis consumer (main loop)")
 	if err := consumer.Start(ctx); err != nil && err != context.Canceled {
 		logger.Error("Consumer stopped with error", "error", err)
