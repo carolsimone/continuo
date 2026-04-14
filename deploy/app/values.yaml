@@ -14,8 +14,7 @@ global:
   redis:
     host: continuo-infra-redis-master
     port: "6379"
-    existingSecretName: continuo-infra-redis
-    existingSecretKey: redis-password
+    password: ""
 
   neo4j:
     uri: bolt://continuo-infra-neo4j:7687
@@ -45,8 +44,7 @@ services:
       - name: POSTGRES_PASSWORD
         secretKey: POSTGRES_PASSWORD
       - name: REDIS_PASSWORD
-        secretName: continuo-infra-redis
-        key: redis-password
+        secretKey: REDIS_PASSWORD
     env:
       POSTGRES_DB: continuo_state
       DB_SSLMODE: disable
@@ -94,8 +92,7 @@ services:
       - name: NEO4J_PASSWORD
         secretKey: NEO4J_PASSWORD
       - name: REDIS_PASSWORD
-        secretName: continuo-infra-redis
-        key: redis-password
+        secretKey: REDIS_PASSWORD
     env:
       REDIS_CONSUMER_STREAM: scheduler.started:v1
       REDIS_CONSUMER_GROUP: startup_controller_consumers
@@ -113,8 +110,7 @@ services:
       - name: POSTGRES_PASSWORD
         secretKey: POSTGRES_PASSWORD
       - name: REDIS_PASSWORD
-        secretName: continuo-infra-redis
-        key: redis-password
+        secretKey: REDIS_PASSWORD
     rbac:
       enabled: true
       rules:
@@ -148,8 +144,7 @@ services:
       - name: AWS_SECRET_ACCESS_KEY
         secretKey: AWS_SECRET_ACCESS_KEY
       - name: REDIS_PASSWORD
-        secretName: continuo-infra-redis
-        key: redis-password
+        secretKey: REDIS_PASSWORD
     rbac:
       enabled: true
       rules:
@@ -184,8 +179,7 @@ services:
       - name: POSTGRES_PASSWORD
         secretKey: POSTGRES_PASSWORD
       - name: REDIS_PASSWORD
-        secretName: continuo-infra-redis
-        key: redis-password
+        secretKey: REDIS_PASSWORD
     env:
       REDIS_CONSUMER_STREAM: update.table:v1
       REDIS_CONSUMER_GROUP: dependency_controller_consumers
@@ -219,8 +213,7 @@ services:
       - name: AWS_SECRET_ACCESS_KEY
         secretKey: AWS_SECRET_ACCESS_KEY
       - name: REDIS_PASSWORD
-        secretName: continuo-infra-redis
-        key: redis-password
+        secretKey: REDIS_PASSWORD
     env:
       REDIS_URL: __REDIS_URL_FROM_AUTH__
       GRAPH_GRPC_ADDR: graph:50052
