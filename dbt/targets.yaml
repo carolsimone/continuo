@@ -1,0 +1,14 @@
+targets:
+  localstack:
+    endpoint_url: http://localstack:4566
+    bucket: continuo
+    region: us-east-1
+    env: local
+    access_key_id: test
+    secret_access_key: test
+
+  hetzner:
+    endpoint_url: https://nbg1.your-objectstorage.com
+    bucket: continuo-dev
+    region: eu-central-1
+    env: dev
