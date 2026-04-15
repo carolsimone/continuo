@@ -17,7 +17,8 @@ def compile_service(service_dir: str) -> bool:
         text=True,
     )
     if result.returncode != 0:
-        logger.error("dbt compile failed for %s: %s", name, result.stderr.strip())
+        output = result.stderr.strip() or result.stdout.strip()
+        logger.error("dbt compile failed for %s:\n%s", name, output)
         return False
     logger.info("Compiled %s successfully", name)
     return True
