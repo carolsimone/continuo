@@ -425,7 +425,7 @@ services:
         condition: service_started
       ui:
         condition: service_started
-      compile-and-upload:
+      dbt-compile-and-load:
         condition: service_completed_successfully
     environment:
       - GRAPH_HOST=graph
@@ -524,7 +524,7 @@ services:
       localstack:
         condition: service_healthy
 
-  compile-and-upload:
+  dbt-compile-and-load:
     build:
       context: ./dbt
       dockerfile: Dockerfile.upload
@@ -535,12 +535,6 @@ services:
       postgres:
         condition: service_started
     environment:
-      - S3_ENDPOINT_URL=http://localstack:4566
-      - S3_BUCKET=continuo
-      - S3_ENV=local
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
       # dbt PostgreSQL connection for dbt compile
       - DBT_POSTGRES_HOST=postgres
       - DBT_POSTGRES_PORT=5432
