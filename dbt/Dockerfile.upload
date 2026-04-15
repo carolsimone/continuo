@@ -8,12 +8,14 @@ WORKDIR /app
 # Install uv
 RUN pip install uv --quiet
 
-# Install dependencies (including dev/pytest — this image is only used in dev/e2e)
+# Install dependencies
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 
-# Copy upload script, compile-only script, and tests
-COPY upload_manifests.py compile_only.py .
+# Copy package, targets config, and tests
+COPY dbt_upload/ ./dbt_upload/
+COPY targets.yaml .
 COPY tests/ ./tests/
 
-CMD ["uv", "run", "python", "upload_manifests.py"]
+ENTRYPOINT ["uv", "run", "python", "-m", "dbt_upload"]
+CMD ["load", "--services-dir", "./services"]
