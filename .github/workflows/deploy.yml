@@ -119,9 +119,9 @@ jobs:
                   {service: "executor-controller", changed: $executor, dockerfile: "executor-controller/Dockerfile.prod", context: "."},
                   {service: "k8s-controller", changed: $k8s, dockerfile: "k8s-controller/Dockerfile.prod", context: "."},
                   {service: "dependency-controller", changed: $dependency, dockerfile: "dependency-controller/Dockerfile.prod", context: "."},
-                  {service: "ui-service", changed: $ui, dockerfile: "Dockerfile", context: "ui-service"},
-                  {service: "manifest-controller", changed: $manifest, dockerfile: "Dockerfile.prod", context: "manifest-controller"},
-                  {service: "migrations", changed: $migrations, dockerfile: "Dockerfile.migrate", context: "db"}
+                  {service: "ui-service", changed: $ui, dockerfile: "ui-service/Dockerfile", context: "ui-service"},
+                  {service: "manifest-controller", changed: $manifest, dockerfile: "manifest-controller/Dockerfile.prod", context: "manifest-controller"},
+                  {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"}
                 ]
               }'
           )"
