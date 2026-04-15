@@ -1,6 +1,5 @@
 """Target configuration loading and service directory resolution."""
 import os
-from pathlib import Path
 
 import yaml
 
