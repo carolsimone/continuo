@@ -14,7 +14,6 @@ jobs:
 
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Checkout
@@ -23,12 +22,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push continuo-base
         uses: docker/build-push-action@v6
@@ -36,6 +34,6 @@ jobs:
           context: .
           file: Dockerfile.base
           push: true
-          tags: ghcr.io/carolsimone/continuo/continuo-base:latest
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/continuo-base:latest
           cache-from: type=gha,scope=continuo-base
           cache-to: type=gha,scope=continuo-base,mode=max
