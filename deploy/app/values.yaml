@@ -25,8 +25,8 @@ global:
   graphGrpcAddr: graph:50052
 
   s3:
-    endpointUrl: https://fsn1.your-objectstorage.com
-    bucket: continuo
+    endpointUrl: https://nbg1.your-objectstorage.com
+    bucket: continuo-dev
     env: dev
     region: eu-central-1
     accessKeyId: ""
