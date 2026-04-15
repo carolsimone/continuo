@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import * as grpc from '@grpc/grpc-js';
 import { GrpcClient } from '../grpc-client';
 import { GrpcGraphClient } from '../grpc-graph-client';
 
@@ -11,6 +12,19 @@ function toISO(ts: ProtoTimestamp | null | undefined): string | null {
   if (!ts) return null;
   const ms = Number(ts.seconds) * 1000 + Math.floor(ts.nanos / 1_000_000);
   return new Date(ms).toISOString();
+}
+
+function grpcToHttpStatus(code: number): number {
+  switch (code) {
+    case grpc.status.INVALID_ARGUMENT:
+      return 400;
+    case grpc.status.NOT_FOUND:
+      return 404;
+    case grpc.status.FAILED_PRECONDITION:
+      return 409;
+    default:
+      return 500;
+  }
 }
 
 export function createSchedulesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
@@ -64,6 +78,17 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
       }));
       res.json({ runs });
     });
+  });
+
+  // POST /api/schedules/:name/trigger — trigger a full DAG run
+  router.post('/:name/trigger', (req, res) => {
+    stateClient.triggerSchedule(
+      { schedule_name: req.params.name },
+      (err: any, response: any) => {
+        if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+        res.json({ schedule_id: response.schedule_id });
+      }
+    );
   });
 
   return router;
