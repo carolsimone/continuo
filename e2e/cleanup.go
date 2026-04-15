@@ -27,41 +27,37 @@ func cleanupTestData(t *testing.T, ctx context.Context, clients *testClients, sc
 	t.Log("✅ Cleanup complete")
 }
 
-// cleanupNeo4j removes test nodes from Neo4j
+// cleanupNeo4j removes per-run snapshot data from Neo4j but preserves the Table
+// topology. Each schedule run creates its own Run node with EXECUTES edges via
+// SnapshotGraph, so the Table nodes (and their DEPENDS_ON edges) are shared
+// infrastructure that must persist across runs.
 func cleanupNeo4j(t *testing.T, ctx context.Context, clients *testClients, scheduleName string) {
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
 		AccessMode: neo4jdriver.AccessModeWrite,
 	})
 	defer session.Close(ctx)
 
+	// Delete Run snapshot nodes (and their EXECUTES edges) created by e2e tests.
 	_, err := session.Run(ctx, `
-		MATCH (t:Table {schedule_name: $schedule_name})
-		DETACH DELETE t
+		MATCH (run:Run {schedule_name: $schedule_name})
+		DETACH DELETE run
 	`, map[string]interface{}{
 		"schedule_name": scheduleName,
 	})
 	if err != nil {
-		t.Logf("Warning: Failed to cleanup Neo4j: %v", err)
+		t.Logf("Warning: Failed to cleanup Neo4j Run nodes: %v", err)
 	}
 
-	// The manifest reload in fixBrokenTableEAndReloadGraph causes the manifest-controller
-	// to overwrite failure DAG nodes' schedule_name from "e2e-schedule-failure" back to
-	// "e2e-schedule" (their value in the regular service manifests). The DETACH DELETE above
-	// misses those nodes because their schedule_name was changed. Reset their status to NULL
-	// so stale SUCCEEDED/FAILED values don't pollute subsequent test runs.
-	if scheduleName == failureTestScheduleName {
-		tableNames := make([]interface{}, 0, len(getDiamondDAG()))
-		for _, n := range getDiamondDAG() {
-			tableNames = append(tableNames, n.Name)
-		}
-		_, err = session.Run(ctx, `
-			MATCH (t:Table)
-			WHERE t.table_name IN $table_names
-			REMOVE t.status
-		`, map[string]interface{}{"table_names": tableNames})
-		if err != nil {
-			t.Logf("Warning: Failed to reset Neo4j node statuses for failure DAG: %v", err)
-		}
+	// Reset stale status properties on Table nodes so previous test results
+	// don't pollute subsequent runs.
+	_, err = session.Run(ctx, `
+		MATCH (t:Table {schedule_name: $schedule_name})
+		REMOVE t.status
+	`, map[string]interface{}{
+		"schedule_name": scheduleName,
+	})
+	if err != nil {
+		t.Logf("Warning: Failed to reset Neo4j node statuses: %v", err)
 	}
 }
 

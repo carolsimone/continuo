@@ -150,6 +150,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | File | Purpose |
 |------|---------|
 | `system_test.go` | `TestE2E_HappyPath_FullDAGExecution` |
+| `trigger_test.go` | `TestTriggerSchedule_SeedRunAndRerun` — trigger seed schedule via TriggerSchedule RPC, wait for completion, re-trigger |
 | `failure_test.go` | `TestE2E_FailurePath_NodeFailureDrainsSchedule` |
 | `ui_http_test.go` | HTTP assertions against the ui-service (`verifyUIService`) |
 | `verify.go` | DAG-level assertions (executor jobs, k8s jobs, dependency unlocking, failure helpers) |
@@ -186,6 +187,13 @@ This makes `dbt run --select table_e` exit non-zero on every attempt.
 8. **Verify Level 3** - Check 2 final jobs execute
 9. **Verify UI** - `GET /api/schedulers` and `/api/schedulers/:id/tasks` return `status: "succeeded"` and ISO-8601 timestamps (skipped if `UI_HTTP_BASE` unset)
 10. **Cleanup** - Remove all test data
+
+### TriggerSchedule Run-and-Rerun (seed schedule)
+1. **Setup** - Initialize clients, verify services healthy, cleanup seed schedule data
+2. **Graph Load** - Trigger manifest-controller, verify seed nodes and catalog
+3. **Run 1** - `TriggerSchedule("seed")` → wait for 3 seed tasks to succeed → scheduler SUCCEEDED
+4. **Run 2** - `TriggerSchedule("seed")` again → wait for second run to complete → scheduler SUCCEEDED
+5. **Cleanup** - Remove all seed schedule data
 
 ### Failure Path
 1. **Setup** - Initialize clients, verify services healthy
