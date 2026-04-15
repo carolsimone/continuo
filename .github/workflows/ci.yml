@@ -65,6 +65,8 @@ jobs:
         # in an isolated container and cannot see local daemon images.
         # The default docker driver shares the daemon's image store, so
         # "FROM continuo-base:latest" resolves correctly in docker compose build.
+        # Docker Engine 24+ (shipped on ubuntu-latest) supports type=gha cache
+        # with the default driver, so docker compose build still benefits.
         run: docker buildx use default
 
       - name: Set up infrastructure

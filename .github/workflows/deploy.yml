@@ -44,8 +44,6 @@ jobs:
               - 'dependency-controller/**'
               - 'ui-service/**'
               - 'manifest-controller/**'
-            base_image:
-              - 'Dockerfile.base'
             state:
               - 'Dockerfile.base'
               - 'go.work'
