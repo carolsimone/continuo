@@ -606,6 +606,7 @@ body {
 
 /* ---- Trigger run button ---- */
 .trigger-run-btn {
+  margin-left: auto;
   padding: 3px 10px;
   font-size: 12px;
   font-weight: 500;
@@ -624,4 +625,5 @@ body {
   font-size: 11px;
   color: #dc2626;
   margin-top: 4px;
+  padding: 0 16px 8px;
 }
