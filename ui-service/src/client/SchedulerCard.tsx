@@ -25,6 +25,8 @@ export default function SchedulerCard({ schedule }: Props) {
   const navigate = useNavigate();
   const neverRun = !schedule.last_run_id;
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [triggerLoading, setTriggerLoading] = useState(false);
+  const [triggerError, setTriggerError] = useState<string | null>(null);
 
   useEffect(() => {
     if (neverRun) return;
@@ -55,6 +57,21 @@ export default function SchedulerCard({ schedule }: Props) {
       state: { last_run_id: schedule.last_run_id },
     });
 
+  const handleTrigger = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTriggerLoading(true);
+    setTriggerError(null);
+    fetch(`/api/schedules/${schedule.schedule_name}/trigger`, { method: 'POST' })
+      .then(async r => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch(err => setTriggerError(err.message))
+      .finally(() => setTriggerLoading(false));
+  };
+
   return (
     <div
       className={`scheduler-card ${cardBorderClass(displayStatus)}`}
@@ -73,7 +90,16 @@ export default function SchedulerCard({ schedule }: Props) {
             {schedule.last_run_at && <>last run {formatTime(schedule.last_run_at)}</>}
           </span>
         )}
+        <button
+          className={`trigger-run-btn${triggerLoading ? ' loading' : ''}`}
+          disabled={schedule.is_running || triggerLoading}
+          onClick={handleTrigger}
+          title={schedule.is_running ? 'A run is already active' : 'Trigger a full DAG run'}
+        >
+          {triggerLoading ? 'Starting...' : 'Run'}
+        </button>
       </div>
+      {triggerError && <div className="trigger-error">{triggerError}</div>}
       {!neverRun && total > 0 && (
         <div className="scheduler-card-body">
           <div className="progress-row">
