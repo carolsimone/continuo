@@ -30,6 +30,13 @@ def load_target(targets_path: str, name: str) -> dict:
     if env_secret:
         target["secret_access_key"] = env_secret
 
+    if "access_key_id" not in target or "secret_access_key" not in target:
+        raise ValueError(
+            f"Target '{name}' requires credentials. "
+            "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY env vars "
+            "or add access_key_id/secret_access_key to targets.yaml."
+        )
+
     return target
 
 

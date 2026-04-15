@@ -4,7 +4,9 @@ from dbt_upload.config import load_target, resolve_service_dirs
 
 
 class TestLoadTarget:
-    def test_loads_localstack_target(self, tmp_path):
+    def test_loads_localstack_target(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
         yaml_content = (
             "targets:\n"
             "  localstack:\n"
@@ -76,6 +78,23 @@ class TestLoadTarget:
 
         with pytest.raises(ValueError, match="Unknown target 'nope'"):
             load_target(str(targets_file), "nope")
+
+    def test_missing_credentials_raises(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+        yaml_content = (
+            "targets:\n"
+            "  hetzner:\n"
+            "    endpoint_url: https://nbg1.your-objectstorage.com\n"
+            "    bucket: continuo-dev\n"
+            "    region: eu-central-1\n"
+            "    env: dev\n"
+        )
+        targets_file = tmp_path / "targets.yaml"
+        targets_file.write_text(yaml_content)
+
+        with pytest.raises(ValueError, match="requires credentials"):
+            load_target(str(targets_file), "hetzner")
 
 
 class TestResolveServiceDirs:

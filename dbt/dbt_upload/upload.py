@@ -37,7 +37,11 @@ def upload_manifest(
         return False
 
     key = f"{env}/manifest/{service_name}/manifest.json"
-    s3_client.upload_file(manifest_path, bucket, key)
+    try:
+        s3_client.upload_file(manifest_path, bucket, key)
+    except Exception:
+        logger.exception("S3 upload failed for %s", service_name)
+        return False
     logger.info("Uploaded %s -> s3://%s/%s", service_name, bucket, key)
     return True
 
