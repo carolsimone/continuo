@@ -24,6 +24,7 @@ export interface GrpcClient {
   getScheduler: (request: any, callback: (err: any, res: any) => void) => void;
   listTaskExecutions: (request: any, callback: (err: any, res: any) => void) => void;
   triggerRerun: (request: any, callback: (err: any) => void) => void;
+  triggerSchedule: (request: any, callback: (err: any, res: any) => void) => void;
 }
 
 export function createGrpcClient(address: string): GrpcClient {
