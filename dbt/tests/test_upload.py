@@ -3,12 +3,10 @@ Integration tests for dbt compile+upload pipeline.
 Requires localstack running at S3_ENDPOINT_URL (default: http://localstack:4566).
 Run from the repo root:
   docker run --rm --network continuo_default --workdir /app \
-    -e S3_ENDPOINT_URL=http://localstack:4566 \
-    -e S3_BUCKET=continuo -e S3_ENV=local \
     -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test \
     -e AWS_DEFAULT_REGION=us-east-1 \
     -v "$(pwd)/dbt/services:/app/services" \
-    dbt-upload:latest uv run pytest tests/ -v
+    dbt-compile-and-load:latest uv run pytest tests/ -v
 """
 import json
 import os
@@ -19,8 +17,8 @@ import pytest
 
 SERVICES_DIR = "/app/services"
 S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://localstack:4566")
-S3_BUCKET   = os.getenv("S3_BUCKET", "continuo")
-S3_ENV      = os.getenv("S3_ENV", "local")
+S3_BUCKET = os.getenv("S3_BUCKET", "continuo")
+S3_ENV = os.getenv("S3_ENV", "local")
 
 
 @pytest.fixture
@@ -50,7 +48,8 @@ def test_dbt_compile_service1_succeeds():
 
 def test_upload_and_read_back(s3):
     """compile + upload produces a readable manifest.json in S3."""
-    from upload_manifests import compile_service, upload_manifest
+    from dbt_upload.compile import compile_service
+    from dbt_upload.upload import upload_manifest
 
     service_dir = os.path.join(SERVICES_DIR, "service-1")
     assert compile_service(service_dir), "compile_service returned False"
@@ -67,7 +66,8 @@ def test_upload_and_read_back(s3):
 
 def test_all_valid_services_upload(s3):
     """service-1, service-2, service-3 all compile and upload; service-3-broken is skipped."""
-    from upload_manifests import compile_service, upload_manifest
+    from dbt_upload.compile import compile_service
+    from dbt_upload.upload import upload_manifest
 
     valid = ["service-1", "service-2", "service-3"]
     for name in valid:
@@ -84,7 +84,7 @@ def test_all_valid_services_upload(s3):
 
 def test_service3_broken_compile_fails():
     """service-3-broken fails dbt compile — compile_service returns False."""
-    from upload_manifests import compile_service
+    from dbt_upload.compile import compile_service
 
     service_dir = os.path.join(SERVICES_DIR, "service-3-broken")
     assert not compile_service(service_dir), "Expected compile to fail for broken service"
