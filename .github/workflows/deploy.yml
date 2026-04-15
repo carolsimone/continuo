@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.filter.outputs.release }}
-      base_image: ${{ steps.filter.outputs.base_image }}
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - name: Checkout
@@ -116,15 +115,15 @@ jobs:
               --arg migrations "$MIGRATIONS_CHANGED" \
               '{
                 include: [
-                  {service: "state", changed: $state, dockerfile: "state/Dockerfile.prod", context: ".", needs_base: "true"},
-                  {service: "graph", changed: $graph, dockerfile: "graph/Dockerfile.prod", context: ".", needs_base: "true"},
-                  {service: "startup-controller", changed: $startup, dockerfile: "startup-controller/Dockerfile.prod", context: ".", needs_base: "true"},
-                  {service: "executor-controller", changed: $executor, dockerfile: "executor-controller/Dockerfile.prod", context: ".", needs_base: "true"},
-                  {service: "k8s-controller", changed: $k8s, dockerfile: "k8s-controller/Dockerfile.prod", context: ".", needs_base: "true"},
-                  {service: "dependency-controller", changed: $dependency, dockerfile: "dependency-controller/Dockerfile.prod", context: ".", needs_base: "true"},
-                  {service: "ui-service", changed: $ui, dockerfile: "Dockerfile", context: "ui-service", needs_base: "false"},
-                  {service: "manifest-controller", changed: $manifest, dockerfile: "Dockerfile.prod", context: "manifest-controller", needs_base: "false"},
-                  {service: "migrations", changed: $migrations, dockerfile: "Dockerfile.migrate", context: "db", needs_base: "false"}
+                  {service: "state", changed: $state, dockerfile: "state/Dockerfile.prod", context: "."},
+                  {service: "graph", changed: $graph, dockerfile: "graph/Dockerfile.prod", context: "."},
+                  {service: "startup-controller", changed: $startup, dockerfile: "startup-controller/Dockerfile.prod", context: "."},
+                  {service: "executor-controller", changed: $executor, dockerfile: "executor-controller/Dockerfile.prod", context: "."},
+                  {service: "k8s-controller", changed: $k8s, dockerfile: "k8s-controller/Dockerfile.prod", context: "."},
+                  {service: "dependency-controller", changed: $dependency, dockerfile: "dependency-controller/Dockerfile.prod", context: "."},
+                  {service: "ui-service", changed: $ui, dockerfile: "Dockerfile", context: "ui-service"},
+                  {service: "manifest-controller", changed: $manifest, dockerfile: "Dockerfile.prod", context: "manifest-controller"},
+                  {service: "migrations", changed: $migrations, dockerfile: "Dockerfile.migrate", context: "db"}
                 ]
               }'
           )"
@@ -136,7 +135,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.detect-changes.outputs.matrix) }}
@@ -150,8 +148,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -168,28 +164,6 @@ jobs:
           docker buildx imagetools create \
             -t "${IMAGE_REPO}:${GITHUB_SHA}" \
             "${IMAGE_REPO}:latest"
-
-      - name: Log in to GHCR
-        if: matrix.needs_base == 'true' && (matrix.changed == 'true' || steps.reuse.outcome == 'failure')
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare continuo-base
-        if: matrix.needs_base == 'true' && (matrix.changed == 'true' || steps.reuse.outcome == 'failure')
-        run: |
-          if [ "${{ needs.detect-changes.outputs.base_image }}" = "true" ]; then
-            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
-            exit 0
-          fi
-
-          if docker pull ghcr.io/carolsimone/continuo/continuo-base:latest; then
-            docker tag ghcr.io/carolsimone/continuo/continuo-base:latest continuo-base:latest
-          else
-            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
-          fi
 
       - name: Build and push image
         if: matrix.changed == 'true' || steps.reuse.outcome == 'failure'
