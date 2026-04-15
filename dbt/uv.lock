@@ -40,7 +40,7 @@ wheels = [
 ]
 
 [[package]]
-name = "dbt-upload"
+name = "dbt-compile-and-load"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
