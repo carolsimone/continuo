@@ -9,6 +9,7 @@ It provides:
 - a detail view per schedule run: DAG topology, node statuses, task list, execution history
 - S3 log proxying: fetches pod logs from S3 and streams them to the browser
 - rerun triggering: proxies `POST /api/schedulers/:id/rerun` to the `TriggerRerun` gRPC method on `state`
+- schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`
 
 It owns no storage.
 
@@ -29,6 +30,7 @@ None.
 | `/api/schedules` | GET | `ListAllSchedules` → state gRPC |
 | `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → graph gRPC |
 | `/api/schedules/:name/runs` | GET | `ListRuns` → graph gRPC |
+| `/api/schedules/:name/trigger` | POST | `TriggerSchedule` → state gRPC |
 
 #### Run / scheduler API
 
@@ -61,6 +63,7 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 | `ListTasks` | `GET /api/schedulers/:id/tasks` |
 | `ListTaskExecutions` | `GET /api/schedulers/:id/executions` |
 | `TriggerRerun` | `POST /api/schedulers/:id/rerun` |
+| `TriggerSchedule` | `POST /api/schedules/:name/trigger` |
 
 ### gRPC to `graph` (`GRAPH_GRPC_ADDR`, default `localhost:50052`)
 
@@ -96,6 +99,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 | Data | Target |
 |---|---|
 | Rerun trigger (reset failed task + downstream) | `state.TriggerRerun` via `POST /api/schedulers/:id/rerun` |
+| Schedule trigger (start full DAG run) | `state.TriggerSchedule` via `POST /api/schedules/:name/trigger` |
 
 ## Data Transformations
 
@@ -113,14 +117,14 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 - React SPA (TypeScript + Vite)
 - `DashboardPage`: polls `/api/schedules` every 5 seconds; shows schedule cards
-- `SchedulerCard`: displays schedule name, running status, cron expression, last run time and progress
+- `SchedulerCard`: displays schedule name, running status, cron expression, last run time and progress; includes a "Run" button to trigger a full DAG run (disabled while a run is active)
 - `DetailPage`: shows DAG panel, nodes panel, past runs panel for a selected run
 - `DAGPanel`: renders graph topology using run graph or schedule graph
 - `PastRunsPanel`: lists historical runs from `graph.ListRuns`
 
 ## Reliability Notes
 
-- Mostly read-only; the only write-side effect is `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), which resets a failed task and its downstream in `state`.
+- Mostly read-only; write-side effects are `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), which resets a failed task and its downstream in `state`, and `TriggerSchedule` (via `POST /api/schedules/:name/trigger`), which starts a full DAG run.
 - gRPC errors are surfaced as HTTP 500 with the gRPC error message.
 - S3 errors are surfaced as HTTP 502.
 - `log_s3_key` is stored by `k8s-controller` on task execution records; the UI does not resolve or generate S3 keys itself.
