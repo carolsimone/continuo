@@ -3,7 +3,6 @@ module github.com/carolsimone/continuo/startup-controller
 go 1.25.1
 
 require (
-	github.com/carolsimone/continuo/graph v0.0.0
 	github.com/carolsimone/continuo/pkg v0.0.0
 	github.com/carolsimone/continuo/state v0.0.0
 	github.com/google/uuid v1.6.0
@@ -31,7 +30,5 @@ require (
 )
 
 replace github.com/carolsimone/continuo/state => ../state
-
-replace github.com/carolsimone/continuo/graph => ../graph
 
 replace github.com/carolsimone/continuo/pkg => ../pkg
