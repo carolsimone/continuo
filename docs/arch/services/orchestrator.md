@@ -21,6 +21,10 @@ It is responsible for:
 | `DEPENDS_ON` relationship | Directed edge from downstream to upstream `Table` |
 | `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status` |
 
+The `run.Repository` interface exposes the following Neo4j read methods used during rerun handling:
+- `GetNodeType(ctx, schema, tableName) (string, error)` — reads `node_type` from the current `Table` node
+- `GetNodeServiceName(ctx, schema, tableName) (string, error)` — reads `service_name` from the current `Table` node
+
 ### Postgres (`continuo_orchestrator`)
 
 | Table | Purpose |
@@ -37,7 +41,7 @@ It is responsible for:
 |---|---|---|
 | `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream, finalizes runs |
 | `manifest.loaded:v1` | `orchestrator_manifest_loaded` | `IngestTopology` — upserts Table nodes and DEPENDS_ON edges |
-| `initialize.run:v1` | `orchestrator_initialize_run` | `InitializeRun` — creates Run node and EXECUTES edges; handles rerun targets |
+| `initialize.run:v1` | `orchestrator_initialize_run` | `InitializeRun` — creates Run node and EXECUTES edges for normal startup; `HandleRerun` — resets target/downstream nodes and produces `rerun.ready:v1` when a rerun target is present |
 
 ### gRPC server — `OrchestratorQuery` (port 50052)
 
@@ -60,7 +64,7 @@ It is responsible for:
 | `query.model:v1` | One message per newly-ready downstream node after a SUCCEEDED node is processed |
 | `schedules.loaded:v1` | Produced by IngestTopology after successful topology load (schedule names list) |
 | `run.initialized:v1` | Produced by InitializeRun after run snapshot is created (run_id, schedule info, node lists) |
-| `rerun.ready:v1` | Produced by InitializeRun when handling a rerun target (rerun scope + target info) |
+| `rerun.ready:v1` | Produced by HandleRerun when handling a rerun target (rerun scope + target info, including `original_service_name` for task lookup) |
 
 ### gRPC to `state`
 
@@ -78,7 +82,22 @@ Receives a JSON payload of topology nodes. For each node, upserts the `Table` no
 
 ### On `initialize.run:v1` — InitializeRun
 
-Creates a `Run` node and `EXECUTES` edges (all initially PENDING) for a schedule run. If the message contains rerun target fields, resets the target and its failed downstream nodes to PENDING and produces `rerun.ready:v1`. Otherwise produces `run.initialized:v1` with root/seed node lists for `startup-controller` to dispatch.
+Creates a `Run` node and `EXECUTES` edges (all initially PENDING) for a schedule run. If the message contains rerun target fields, delegates to the `HandleRerun` handler (see below). Otherwise produces `run.initialized:v1` with root/seed node lists for `startup-controller` to dispatch.
+
+### On `initialize.run:v1` (rerun path) — HandleRerun
+
+When `initialize.run:v1` carries a `rerun_target`, the `HandleRerun` handler takes over:
+
+1. Gets transitive downstream nodes from Neo4j via `GetTransitiveDownstream`.
+2. Resets the target node and any FAILED downstream nodes to PENDING in Neo4j via `UpdateNodeStatus`.
+3. Reads `node_type` for the target from Neo4j via `GetNodeType` — uses the current graph value (reflects any fixes applied since the original run).
+4. Reads `service_name` for the target from Neo4j via `GetNodeServiceName` — uses the current graph value for K8s image dispatch.
+5. Builds the `rerun.ready:v1` payload with a `target_nodes` list. For the rerun target node:
+   - `service_name` = current graph value (for K8s job dispatch)
+   - `original_service_name` = value from the rerun command (for task lookup in `state`, in case the service was renamed/fixed since the original run)
+   - `schedule_name` = schedule name from the rerun command
+   - FAILED downstream nodes carry their current graph `service_name` only (no `original_service_name`).
+6. Writes the payload to the `rerun.ready:v1` outbox entry.
 
 ### On `node.updated:v1` — HandleNodeCompleted
 

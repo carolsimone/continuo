@@ -96,13 +96,20 @@ This service does **not** own scheduler or task state -- it only owns durable di
 ```
 1. Consume rerun.ready:v1 from orchestrator
    -> contains target node info + downstream FAILED nodes (already reset to PENDING in graph)
+   -> each NodePayload carries:
+      - service_name: current graph value — used for K8s job dispatch
+      - original_service_name (optional): original value from the rerun command — used for
+        task lookup in state (in case the service was renamed/fixed since the original run)
+      - schedule_name: schedule name for the run
 
 2. Fetch target task from state:
-   GetTask(schedule_id, service, schema, table)
+   GetTask(schedule_id, node.LookupServiceName(), schema, table)
+   -> LookupServiceName() returns original_service_name if set, else service_name
    -> if status == FAILED: ResetTask(task_id)
+   -> K8s job dispatch uses node.ServiceName (current graph value)
 
 3. For each FAILED downstream node:
-   - GetTask + ResetTask
+   - GetTask(using LookupServiceName()) + ResetTask
 
 4. Begin Postgres tx
    Write single outbox entry for target node only

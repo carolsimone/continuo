@@ -29,7 +29,7 @@ Legend:
 | `scheduler.started:v1` | `state` | `startup-controller` | Start schedule initialization |
 | `initialize.run:v1` | `startup-controller` | `orchestrator` | Request run snapshot creation |
 | `run.initialized:v1` | `orchestrator` | `startup-controller` | Run snapshot ready with root/seed node lists |
-| `rerun.ready:v1` | `orchestrator` | `startup-controller` | Rerun scope resolved, target ready for dispatch |
+| `rerun.ready:v1` | `orchestrator` | `startup-controller` | Rerun scope resolved; payload carries `service_name` (current graph, for K8s dispatch) and `original_service_name` (from rerun command, for task lookup in state) |
 | `query.model:v1` | `orchestrator` | `executor-controller` | Dispatch executable nodes |
 | `node.deployed:v1` | `executor-controller` | `k8s-controller` | Begin runtime monitoring |
 | `check.k8s:v1` | `k8s-controller` | `k8s-controller` | Delayed re-check queue |

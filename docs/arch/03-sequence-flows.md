@@ -127,10 +127,12 @@ sequenceDiagram
   R->>OR: consume initialize.run:v1
   OR->>OR: GetTransitiveDownstream(target)
   OR->>OR: UpdateNodeStatus(target/downstream FAILED nodes -> PENDING)
-  OR->>R: publish rerun.ready:v1 (target node info)
+  OR->>OR: GetNodeType(schema, table) from Neo4j
+  OR->>OR: GetNodeServiceName(schema, table) from Neo4j
+  OR->>R: publish rerun.ready:v1 (target_nodes: service_name=graph value, original_service_name=cmd value)
   R->>SC: consume rerun.ready:v1
-  SC->>ST: ResetTask(target/downstream FAILED tasks)
-  SC->>SC: write startup_outbox for target only
+  SC->>ST: ResetTask(target/downstream FAILED tasks, lookup by original_service_name if set)
+  SC->>SC: write startup_outbox for target only (dispatch uses service_name)
   SC->>R: publish query.model:v1
   SC->>ST: UpdateSchedulerInitStatus(completed)
   R->>EC: consume query.model:v1
