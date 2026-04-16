@@ -9,7 +9,7 @@ When a user modifies dbt repositories locally, compiles manifests, and loads the
 
 ## Solution Overview
 
-Two-step user workflow, each backed by a shell script:
+Two-step user workflow, available both via the UI and shell scripts:
 
 1. **Update graph** — `scripts/update-graph.sh` calls a new ui-service endpoint that publishes `update.graph:v1` to Redis with `source=s3`. The system follows its standard path: manifest-controller loads manifests from S3, resolves deps, populates Neo4j, publishes `schedules.loaded:v1`, and the state service reconciles the catalog.
 2. **Trigger DAG** — `scripts/trigger-dag.sh <schedule-name>` calls the existing `POST /api/schedules/:name/trigger` endpoint to run the full DAG.
@@ -153,7 +153,30 @@ Both scripts:
 - Accept `UI_BASE_URL` env var to override (e.g., for remote server)
 - Use `curl -sf` to fail on HTTP errors silently (no progress bar)
 
-### 6. Architecture Documentation Updates
+### 6. "Update Graph" Button in DashboardPage
+
+**Location:** `ui-service/src/client/DashboardPage.tsx`
+
+**Placement:** Top-right of the page header, next to the existing "live" badge. This positions it as a global action (it reloads the entire graph across all schedules), visually separate from per-schedule cards.
+
+**Behaviour:**
+- Sends `POST /api/graph/update` with `{ "source": "s3" }` on click.
+- Shows loading state ("Updating...") while the request is in-flight.
+- Disables while loading to prevent double-clicks.
+- On success: briefly shows a confirmation state (e.g., "Updated"), then reverts to default label.
+- On error: shows the error message inline near the button, auto-clears after a few seconds.
+
+**Implementation:** Follows the same pattern as the existing "Run" button in `SchedulerCard.tsx`:
+- `useState` for `graphLoading` and `graphError`
+- `fetch('/api/graph/update', { method: 'POST', ... })`
+- `e.stopPropagation()` not needed here (no parent click handler)
+- Button styled as `update-graph-btn` — same visual family as `trigger-run-btn` but slightly more prominent since it's a page-level action.
+
+**CSS:** Add `update-graph-btn` class to `styles.css`, following the existing button pattern (white background, gray border, hover darkening, disabled opacity, loading state).
+
+**Header layout change:** The `app-header` currently uses flexbox with `h1` and the live badge. The "Update Graph" button slots in between or after the live badge. Wrap the right side in a flex container to keep badge + button aligned.
+
+### 7. Architecture Documentation Updates
 
 **`docs/arch/services/ui-service.md`:** Add Redis as an infrastructure dependency. Document the new `POST /api/graph/update` endpoint.
 
@@ -164,9 +187,9 @@ Both scripts:
 ## Event Flow
 
 ```
-User (host)
+User (host or browser)
   │
-  ├─ scripts/update-graph.sh
+  ├─ scripts/update-graph.sh  OR  "Update Graph" button in UI
   │    └─ POST /api/graph/update {source: "s3"}
   │         └─ ui-service
   │              └─ XADD update.graph:v1 * source s3
@@ -194,6 +217,8 @@ User (host)
 | `ui-service/src/server/routes/graph.ts` | New file: `POST /api/graph/update` handler |
 | `ui-service/src/server/app.ts` | Accept Redis client, register graph router |
 | `ui-service/src/server/index.ts` | Create Redis client, pass to `createApp` |
+| `ui-service/src/client/DashboardPage.tsx` | Add "Update Graph" button in page header |
+| `ui-service/src/client/styles.css` | Add `update-graph-btn` styles |
 | `docker-compose.yml` | Add `REDIS_URL` and `redis` dependency to ui service |
 | `e2e/trigger.go` | Replace direct Redis XAdd with HTTP POST to ui-service |
 | `e2e/clients.go` | Make `UI_HTTP_BASE` a required field |
