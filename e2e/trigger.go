@@ -3,11 +3,13 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
-	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,18 +53,24 @@ func getServiceNameForTable(tableName string) string {
 	return svc
 }
 
-// triggerGraphLoad publishes an update.graph:v1 event and waits until all
-// expected nodes are visible in the Neo4j graph (30s timeout).
+// triggerGraphLoad triggers a graph update via the ui-service HTTP endpoint
+// and waits until all expected nodes are visible in the Neo4j graph.
 func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
 
-	err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{
-		Stream: "update.graph:v1",
-		Values: map[string]interface{}{"source": "local"},
-	}).Err()
-	require.NoError(t, err, "Failed to publish update.graph:v1 event")
+	resp, err := http.Post(
+		fmt.Sprintf("%s/api/graph/update", clients.uiBase),
+		"application/json",
+		strings.NewReader(`{"source":"local"}`),
+	)
+	require.NoError(t, err, "POST /api/graph/update: request failed")
+	defer resp.Body.Close()
 
-	t.Log("Published update.graph:v1 — waiting for manifest-controller to load nodes...")
+	body, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"POST /api/graph/update: expected 200, got %d: %s", resp.StatusCode, string(body))
+
+	t.Log("Published update.graph:v1 via ui-service — waiting for manifest-controller to load nodes...")
 
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{

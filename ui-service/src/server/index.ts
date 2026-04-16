@@ -2,6 +2,7 @@ import path from 'path';
 import express from 'express';
 import { createGrpcClient } from './grpc-client';
 import { createGrpcGraphClient } from './grpc-graph-client';
+import { createRedisClient } from './redis-client';
 import { createApp } from './app';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
@@ -10,7 +11,8 @@ const GRAPH_GRPC_ADDR = process.env.GRAPH_GRPC_ADDR || 'localhost:50052';
 
 const client = createGrpcClient(STATE_GRPC_ADDR);
 const graphClient = createGrpcGraphClient(GRAPH_GRPC_ADDR);
-const app = createApp(client, graphClient);
+const redisClient = createRedisClient();
+const app = createApp(client, graphClient, redisClient);
 
 if (process.env.NODE_ENV === 'production') {
   // dist/ is one level up from dist-server/ at runtime

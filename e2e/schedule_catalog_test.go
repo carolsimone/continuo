@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
-	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -49,14 +51,19 @@ func TestScheduleCatalog_FullChain(t *testing.T) {
 	)
 	require.NoError(t, err, "Failed to clean up scheduler_tracker")
 
-	// Step 1: Trigger a manifest load by publishing to update.graph:v1
-	t.Log("Step 1: Publishing update.graph:v1 to trigger manifest load")
-	msgID, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{
-		Stream: "update.graph:v1",
-		Values: map[string]interface{}{"source": "local"},
-	}).Result()
-	require.NoError(t, err, "Failed to publish to update.graph:v1")
-	t.Logf("Published trigger message: %s", msgID)
+	// Step 1: Trigger a manifest load via ui-service HTTP endpoint
+	t.Log("Step 1: Triggering graph update via ui-service HTTP")
+	resp, err := http.Post(
+		fmt.Sprintf("%s/api/graph/update", clients.uiBase),
+		"application/json",
+		strings.NewReader(`{"source":"local"}`),
+	)
+	require.NoError(t, err, "POST /api/graph/update: request failed")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"POST /api/graph/update: expected 200, got %d: %s", resp.StatusCode, string(body))
+	t.Log("Graph update triggered via ui-service")
 
 	// Step 2: Wait for schedules.loaded:v1 to appear in Redis.
 	t.Log("Step 2: Waiting for schedules.loaded:v1 in Redis")

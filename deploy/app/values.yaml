@@ -197,12 +197,15 @@ services:
         secretKey: AWS_ACCESS_KEY_ID
       - name: AWS_SECRET_ACCESS_KEY
         secretKey: AWS_SECRET_ACCESS_KEY
+      - name: REDIS_PASSWORD
+        secretKey: REDIS_PASSWORD
     ingress:
       enabled: true
       host: dev.yourdomain.com
     env:
       PORT: "8090"
       NODE_ENV: production
+      REDIS_URL: __REDIS_URL_FROM_AUTH__
 
   - name: manifest-controller
     enabled: true

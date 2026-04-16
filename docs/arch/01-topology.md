@@ -50,6 +50,7 @@ flowchart LR
   MC --> GR
   UI --> ST
   UI --> GR
+  UI --> R
 
   EC --> K8S
   KC --> K8S
@@ -111,7 +112,7 @@ flowchart TD
 | Deployment intents / inbound dedup | `executor-controller` | Postgres |
 | Runtime status / retry orchestration | `k8s-controller` | Postgres |
 | Manifest ingestion | `manifest-controller` | Redis + graph gRPC + filesystem/S3 |
-| Read-only UI/API facade | `ui-service` | none |
+| UI/API facade + graph update command | `ui-service` | none (publishes to Redis) |
 
 ## Key Architectural Rules
 
@@ -122,4 +123,4 @@ flowchart TD
 - The controller services use local Postgres outbox and dedup tables to make cross-service messaging reliable.
 - The `deploy/infra` Helm chart provisions the shared infrastructure stack (`Postgres`, `Redis`, `Neo4j`) as cluster-internal defaults and initializes the service databases in one Postgres instance. Local docker-compose uses `POSTGRES_PASSWORD=continuo` (superuser) and `REDIS_PASSWORD=continuo`.
 - `manifest-controller` is topology ingest, not execution orchestration.
-- `ui-service` should remain read-only.
+- `ui-service` is primarily read-only; its only write is publishing `update.graph:v1` commands to Redis.
