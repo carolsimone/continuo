@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -22,11 +21,6 @@ import (
 func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
-	}
-
-	uiBase := os.Getenv("UI_HTTP_BASE")
-	if uiBase == "" {
-		t.Skip("UI_HTTP_BASE not set — skipping trigger test (requires ui-service)")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -65,7 +59,7 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 
 	// === Run 1 ===
 	t.Log("=== Run 1: Triggering seed schedule via ui-service HTTP ===")
-	scheduleID1 := triggerScheduleHTTP(t, uiBase, scheduleName)
+	scheduleID1 := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 1 created: schedule_id=%s", scheduleID1)
 
 	id1, err := uuid.Parse(scheduleID1)
@@ -77,7 +71,7 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 
 	// === Run 2: Re-trigger ===
 	t.Log("=== Run 2: Re-triggering seed schedule ===")
-	scheduleID2 := triggerScheduleHTTP(t, uiBase, scheduleName)
+	scheduleID2 := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 2 created: schedule_id=%s", scheduleID2)
 
 	require.NotEqual(t, scheduleID1, scheduleID2, "Run 2 must have a different schedule_id")
