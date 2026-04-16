@@ -29,8 +29,8 @@ None.
 | Route | Method | Backend |
 |---|---|---|
 | `/api/schedules` | GET | `ListAllSchedules` → state gRPC |
-| `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → graph gRPC |
-| `/api/schedules/:name/runs` | GET | `ListRuns` → graph gRPC |
+| `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → orchestrator gRPC |
+| `/api/schedules/:name/runs` | GET | `ListRuns` → orchestrator gRPC |
 | `/api/schedules/:name/trigger` | POST | `TriggerSchedule` → state gRPC |
 | `/api/graph/update` | POST | `XADD update.graph:v1` → Redis |
 
@@ -38,7 +38,7 @@ None.
 
 | Route | Method | Backend |
 |---|---|---|
-| `/api/runs/:run_id/graph` | GET | `GetRunGraph` → graph gRPC |
+| `/api/runs/:run_id/graph` | GET | `GetRunGraph` → orchestrator gRPC |
 | `/api/schedulers/:id` | GET | `GetScheduler` → state gRPC |
 | `/api/schedulers/:id/tasks` | GET | `ListTasks` → state gRPC (page_size=200) |
 | `/api/schedulers/:id/executions` | GET | `ListTaskExecutions` → state gRPC (page_size=500) |
@@ -67,7 +67,7 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 | `TriggerRerun` | `POST /api/schedulers/:id/rerun` |
 | `TriggerSchedule` | `POST /api/schedules/:name/trigger` |
 
-### gRPC to `graph` (`GRAPH_GRPC_ADDR`, default `localhost:50052`)
+### gRPC to `orchestrator` (`ORCHESTRATOR_GRPC_ADDR`, default `localhost:50052`)
 
 | Method | Route that calls it |
 |---|---|
@@ -97,9 +97,9 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 | Scheduler run details | `state.GetScheduler` |
 | Task list for a run | `state.ListTasks` |
 | Task execution history | `state.ListTaskExecutions` |
-| Schedule topology (all nodes + edges) | `graph.GetScheduleGraph` |
-| Run list (historical) | `graph.ListRuns` |
-| Per-run graph with node statuses | `graph.GetRunGraph` |
+| Schedule topology (all nodes + edges) | `orchestrator.GetScheduleGraph` |
+| Run list (historical) | `orchestrator.ListRuns` |
+| Per-run graph with node statuses | `orchestrator.GetRunGraph` |
 | Pod logs | S3 (via `log_s3_key` from task execution records) |
 
 ## What It Writes
@@ -118,7 +118,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 ## DAG Panel Source
 
-- **Primary**: `/api/runs/:run_id/graph` — uses the run snapshot created by `startup-controller → graph.SnapshotGraph`; includes per-node `EXECUTES.status` from the live execution projection.
+- **Primary**: `/api/runs/:run_id/graph` — uses the run snapshot created by `orchestrator`; includes per-node `EXECUTES.status` from the live execution projection.
 - **Fallback**: `/api/schedules/:name/graph` — topology view without run status; used when no run snapshot exists yet.
 - When a run snapshot includes node statuses, the DAG renderer uses those directly and only falls back to `state` task rows for the same node when both are present.
 
@@ -129,7 +129,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 - `SchedulerCard`: displays schedule name, running status, cron expression, last run time and progress; includes a "Run" button to trigger a full DAG run (disabled while a run is active)
 - `DetailPage`: shows DAG panel, nodes panel, past runs panel for a selected run
 - `DAGPanel`: renders graph topology using run graph or schedule graph
-- `PastRunsPanel`: lists historical runs from `graph.ListRuns`
+- `PastRunsPanel`: lists historical runs from `orchestrator.ListRuns`
 
 ## Reliability Notes
 

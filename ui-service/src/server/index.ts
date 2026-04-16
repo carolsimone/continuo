@@ -7,10 +7,10 @@ import { createApp } from './app';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
 const STATE_GRPC_ADDR = process.env.STATE_GRPC_ADDR || 'localhost:50051';
-const GRAPH_GRPC_ADDR = process.env.GRAPH_GRPC_ADDR || 'localhost:50052';
+const ORCHESTRATOR_GRPC_ADDR = process.env.ORCHESTRATOR_GRPC_ADDR || 'localhost:50052';
 
 const client = createGrpcClient(STATE_GRPC_ADDR);
-const graphClient = createGrpcGraphClient(GRAPH_GRPC_ADDR);
+const graphClient = createGrpcGraphClient(ORCHESTRATOR_GRPC_ADDR);
 const redisClient = createRedisClient();
 const app = createApp(client, graphClient, redisClient);
 
