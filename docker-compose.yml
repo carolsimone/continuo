@@ -462,6 +462,7 @@ services:
     depends_on:
       - state
       - localstack
+      - redis
     environment:
       - STATE_GRPC_ADDR=state:50051
       - GRAPH_GRPC_ADDR=graph:50052
@@ -472,6 +473,7 @@ services:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
+      - REDIS_URL=redis://:continuo@redis:6379
     ports:
       - "8090:8090"
     networks:
