@@ -13,8 +13,8 @@ import (
 // MultiProducer publishes events to multiple Redis streams
 type MultiProducer struct {
 	client       *goredis.Client
-	checkStream  string // k8s.check:v1
-	retryStream  string // task.retry:v1
+	checkStream  string // check.k8s:v1
+	retryStream  string // retry.task:v1
 	failedStream string // task.failed:v1
 	logger       *slog.Logger
 }

@@ -43,7 +43,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | Durable state | `scheduler_tracker`, `task_tracker`, `task_execution`, `schedule_catalog`, `state_outbox`, `processed_events` |
 | gRPC server methods owned | `CreateScheduler`, `GetScheduler`, `UpdateScheduler`, `CancelScheduler`, `UpdateSchedulerInitStatus`, `ResetInProgressInitializations`, `ActivateSchedule`, `ListAllSchedules`, `TriggerSchedule`, `CancelSchedule`, `CreateTask`, `GetTask`, `GetTaskByScheduleAndNode`, `UpdateTask`, `DeleteTask`, `ListTasks`, `ResetTask`, `GetSchedulerInitStatus`, `CreateTaskExecution`, `GetTaskExecution`, `ListTaskExecutions` |
 | Redis consumes | `schedules.loaded:v1` |
-| Redis produces | `scheduler.started:v1`, `command.rerun:v1` |
+| Redis produces | `scheduler.started:v1`, `rerun:v1` |
 | Outbound gRPC calls | none |
 
 ## `graph`
@@ -62,7 +62,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | `startup_outbox` |
 | gRPC server methods owned | none |
-| Redis consumes | `scheduler.started:v1`, `command.rerun:v1` |
+| Redis consumes | `scheduler.started:v1`, `rerun:v1` |
 | Redis produces | `query.model:v1` |
 | Outbound gRPC calls | `state`: `GetTaskByScheduleAndNode`, `CreateTask`, `UpdateTask`, `UpdateSchedulerInitStatus`, `GetScheduler`, `ResetInProgressInitializations`, `ResetTask`, `GetSchedulerInitStatus`; `graph`: `SnapshotGraph`, `GetScheduleInitNodes`, `GetTransitiveDownstream`, `UpdateNodeStatus` |
 
@@ -72,7 +72,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | `message_processing`, `outbox`, `published_messages` |
 | gRPC server methods owned | none |
-| Redis consumes | `update.table:v1` |
+| Redis consumes | `node.updated:v1` |
 | Redis produces | `query.model:v1` |
 | Outbound gRPC calls | `state`: `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler`; `graph`: `UpdateNodeStatus`, `GetReadyDownstream`, `CheckScheduleCompletion`, `FinalizeRun` |
 
@@ -82,8 +82,8 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | `deployment_outbox`, `processed_events` |
 | gRPC server methods owned | none |
-| Redis consumes | `query.model:v1`, `task.retry:v1` |
-| Redis produces | `executor.deployed:v1` |
+| Redis consumes | `query.model:v1`, `retry.task:v1` |
+| Redis produces | `node.deployed:v1` |
 | Outbound gRPC calls | `state`: `UpdateTask` |
 
 ## `k8s-controller`
@@ -92,8 +92,8 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | `k8s_status_outbox`, `processed_events` |
 | gRPC server methods owned | none |
-| Redis consumes | `executor.deployed:v1`, `k8s.check:v1` |
-| Redis produces | `k8s.check:v1`, `task.retry:v1`, `task.failed:v1`, `update.table:v1` |
+| Redis consumes | `node.deployed:v1`, `check.k8s:v1` |
+| Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `node.updated:v1` |
 | Outbound gRPC calls | `state`: `GetTask`, `UpdateTask`, `CreateTaskExecution` |
 
 ## `manifest-controller`

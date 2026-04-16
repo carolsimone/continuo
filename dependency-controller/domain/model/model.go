@@ -53,7 +53,7 @@ const (
 type MessageProcessing struct {
 	ID         uuid.UUID              `db:"id"`
 	MessageID  string                 `db:"message_id"`  // Redis Stream message ID
-	StreamName string                 `db:"stream_name"` // e.g., "update.table:v1"
+	StreamName string                 `db:"stream_name"` // e.g., "node.updated:v1"
 	State      MessageProcessingState `db:"state"`       // processing, completed, acked
 	Payload    []byte                 `db:"payload"`     // JSONB - full message for debugging
 	Error      *string                `db:"error"`       // Error message if processing failed

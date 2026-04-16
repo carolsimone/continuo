@@ -139,7 +139,7 @@ func TestInsertIfNotExists_NewMessage(t *testing.T) {
 
 	msgProc := &model.MessageProcessing{
 		MessageID:  "1738756432123-0",
-		StreamName: "update.table:v1",
+		StreamName: "node.updated:v1",
 		State:      model.MessageProcessingStateProcessing,
 		Payload:    payloadJSON,
 	}
@@ -169,7 +169,7 @@ func TestInsertIfNotExists_DuplicateMessage(t *testing.T) {
 
 	msgProc := &model.MessageProcessing{
 		MessageID:  "1738756432123-1",
-		StreamName: "update.table:v1",
+		StreamName: "node.updated:v1",
 		State:      model.MessageProcessingStateProcessing,
 		Payload:    payloadJSON,
 	}

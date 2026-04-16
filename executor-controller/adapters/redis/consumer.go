@@ -19,7 +19,7 @@ import (
 type Consumer struct {
 	client        *goredis.Client
 	streamName    string
-	retryStream   string // New: task.retry:v1
+	retryStream   string // New: retry.task:v1
 	consumerGroup string
 	consumerName  string
 	messageBus    *messagebus.MessageBus

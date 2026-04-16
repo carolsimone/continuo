@@ -55,7 +55,7 @@ func createStuckEntryWithService(t *testing.T, db *sqlx.DB, serviceName string, 
 	`
 
 	_, err := db.Exec(query,
-		entryID, "task_retry", "task.retry:v1",
+		entryID, "task_retry", "retry.task:v1",
 		taskID, scheduleID, "test-schedule", serviceName, "public",
 		"test-table", "test-job",
 		string(model.OutboxStatusPending), createdAt, retryCount, maxRetries, "Original test error",
@@ -517,7 +517,7 @@ func TestStuckEntryResolver_EdgeCases(t *testing.T) {
 
 		processedTime := time.Now()
 		_, err := db.Exec(query,
-			entryID, "task_retry", "task.retry:v1",
+			entryID, "task_retry", "retry.task:v1",
 			taskID, scheduleID, "test-schedule", "test-stuck-resolver", "public",
 			"test-table", "test-job",
 			string(model.OutboxStatusFailed), time.Now().Add(-2*time.Minute), processedTime, 5, 3,

@@ -65,13 +65,13 @@ flowchart TD
   UG[update.graph:v1]
   SL[schedules.loaded:v1]
   SS[scheduler.started:v1]
-  CR[command.rerun:v1]
+  CR[rerun:v1]
   QM[query.model:v1]
-  ED[executor.deployed:v1]
-  KCV[k8s.check:v1]
-  TR[task.retry:v1]
+  ED[node.deployed:v1]
+  KCV[check.k8s:v1]
+  TR[retry.task:v1]
   TF[task.failed:v1]
-  UT[update.table:v1]
+  UT[node.updated:v1]
 
   UG --> MC[manifest-controller]
   MC --> SL

@@ -19,7 +19,7 @@ type K8sStatusOutboxEntry struct {
 
 	// Event identification
 	EventType  string `db:"event_type"`  // 'task_succeeded', 'task_failed', 'task_retry', 'check_delayed'
-	StreamName string `db:"stream_name"` // 'task.retry:v1', 'task.failed:v1', 'k8s.check:v1'
+	StreamName string `db:"stream_name"` // 'retry.task:v1', 'task.failed:v1', 'check.k8s:v1'
 
 	// Task context
 	TaskID       uuid.UUID `db:"task_id"`

@@ -27,13 +27,13 @@ Legend:
 | `update.graph:v1` | `ui-service` | `manifest-controller` | Trigger manifest reload from `local` or `s3` source |
 | `schedules.loaded:v1` | `manifest-controller` | `state` | Reconcile `schedule_catalog` |
 | `scheduler.started:v1` | `state` | `startup-controller` | Start schedule initialization |
-| `command.rerun:v1` | `state` | `startup-controller` | Start rerun/reset flow |
+| `rerun:v1` | `state` | `startup-controller` | Start rerun/reset flow |
 | `query.model:v1` | `startup-controller`, `dependency-controller` | `executor-controller` | Dispatch executable nodes |
-| `executor.deployed:v1` | `executor-controller` | `k8s-controller` | Begin runtime monitoring |
-| `k8s.check:v1` | `k8s-controller` | `k8s-controller` | Delayed re-check queue |
-| `task.retry:v1` | `k8s-controller` | `executor-controller` | Re-dispatch retry deployment |
+| `node.deployed:v1` | `executor-controller` | `k8s-controller` | Begin runtime monitoring |
+| `check.k8s:v1` | `k8s-controller` | `k8s-controller` | Delayed re-check queue |
+| `retry.task:v1` | `k8s-controller` | `executor-controller` | Re-dispatch retry deployment |
 | `task.failed:v1` | `k8s-controller` | not found in repo | Terminal failure event |
-| `update.table:v1` | `k8s-controller` | `dependency-controller` | Node terminal status projection |
+| `node.updated:v1` | `k8s-controller` | `dependency-controller` | Node terminal status projection |
 
 ## Outbound gRPC Calls by Service
 

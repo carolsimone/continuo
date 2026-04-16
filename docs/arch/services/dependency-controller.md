@@ -14,7 +14,7 @@ It connects:
 
 | Table | Purpose |
 |---|---|
-| `message_processing` | Inbound dedup: one row per `update.table:v1` message ID; tracks state (`processing` → `completed` → `acked`) |
+| `message_processing` | Inbound dedup: one row per `node.updated:v1` message ID; tracks state (`processing` → `completed` → `acked`) |
 | `outbox` | Outbound dispatch intents: one row per downstream node ready for execution |
 | `published_messages` | Outbound idempotency: records `(outbox_entry_id, redis_message_id)` after successful publish |
 
@@ -24,7 +24,7 @@ It connects:
 
 | Stream | Description |
 |---|---|
-| `update.table:v1` | Terminal node status updates; consumed per message; fields: `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `status` |
+| `node.updated:v1` | Terminal node status updates; consumed per message; fields: `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `status` |
 
 ### HTTP (port 8086)
 
@@ -61,14 +61,14 @@ It connects:
 
 | Method | When called |
 |---|---|
-| `UpdateNodeStatus` | On every `update.table:v1` message; sets `EXECUTES.status` |
+| `UpdateNodeStatus` | On every `node.updated:v1` message; sets `EXECUTES.status` |
 | `GetReadyDownstream` | After a SUCCEEDED node; returns downstream nodes whose all upstreams are now SUCCEEDED |
 | `CheckScheduleCompletion` | After any terminal node (SUCCEEDED or FAILED); checks whether all run nodes are terminal |
 | `FinalizeRun` | On schedule completion; writes `Run.completed_at` and `Run.terminal_status` in Neo4j |
 
 ## Processing Logic
 
-### On `update.table:v1` — per message
+### On `node.updated:v1` — per message
 
 ```
 1. Dedup check: insert into message_processing (INSERT IF NOT EXISTS)
@@ -104,7 +104,7 @@ It connects:
 
 | Loop | Description |
 |---|---|
-| Redis consumer | Reads `update.table:v1`; dispatches to `ProcessStatusHandler` |
+| Redis consumer | Reads `node.updated:v1`; dispatches to `ProcessStatusHandler` |
 | Outbox processor | Polls `outbox` for pending entries; publishes to `query.model:v1`; records in `published_messages` |
 
 ## Reliability Patterns

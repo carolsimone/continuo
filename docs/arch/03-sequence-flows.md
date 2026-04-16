@@ -27,8 +27,8 @@ sequenceDiagram
   R->>EC: consume query.model:v1
   EC->>EC: write deployment_outbox
   EC->>KC: create K8s job and mark task RUNNING
-  EC->>R: publish executor.deployed:v1
-  R->>KC: consume executor.deployed:v1
+  EC->>R: publish node.deployed:v1
+  R->>KC: consume node.deployed:v1
   KC->>KC: start runtime monitoring loop
 ```
 
@@ -43,15 +43,15 @@ sequenceDiagram
   participant GR as graph
   participant EC as executor-controller
 
-  R->>KC: executor.deployed:v1
+  R->>KC: node.deployed:v1
   KC->>KC: GetJobStatus
   KC->>ST: GetTask(task_id)
   KC->>KC: write k8s_status_outbox(task_succeeded + node_status_updated)
   KC->>ST: UpdateTask(status=succeeded)
   KC->>ST: CreateTaskExecution(...)
-  KC->>R: publish update.table:v1
+  KC->>R: publish node.updated:v1
 
-  R->>DC: consume update.table:v1
+  R->>DC: consume node.updated:v1
   DC->>GR: UpdateNodeStatus(SUCCEEDED)
   DC->>GR: GetReadyDownstream(...)
   DC->>ST: ensure downstream tasks exist
@@ -61,7 +61,7 @@ sequenceDiagram
   R->>EC: consume query.model:v1
   EC->>EC: write deployment_outbox
   EC->>ST: UpdateTask(status=RUNNING)
-  EC->>R: publish executor.deployed:v1
+  EC->>R: publish node.deployed:v1
 ```
 
 ## 3. Retry and Terminal Failure Path
@@ -76,7 +76,7 @@ sequenceDiagram
   participant DC as dependency-controller
   participant GR as graph
 
-  R->>KC: executor.deployed:v1 or k8s.check:v1
+  R->>KC: node.deployed:v1 or check.k8s:v1
   KC->>KC: GetJobStatus -> FAILED
   KC->>ST: GetTask(task_id)
   alt retries remain
@@ -84,18 +84,18 @@ sequenceDiagram
     KC->>ST: UpdateTask(status=failed, retry_count+1)
     KC->>ST: CreateTaskExecution(...)
     KC->>S3: upload pod logs
-    KC->>R: publish task.retry:v1
-    R->>EC: consume task.retry:v1
+    KC->>R: publish retry.task:v1
+    R->>EC: consume retry.task:v1
     EC->>ST: UpdateTask(status=RUNNING)
-    EC->>R: publish executor.deployed:v1
+    EC->>R: publish node.deployed:v1
   else retries exhausted
     KC->>KC: write k8s_status_outbox(task_failed + node_status_updated)
     KC->>ST: UpdateTask(status=failed)
     KC->>ST: CreateTaskExecution(...)
     KC->>S3: upload pod logs
     KC->>R: publish task.failed:v1
-    KC->>R: publish update.table:v1
-    R->>DC: consume update.table:v1
+    KC->>R: publish node.updated:v1
+    R->>DC: consume node.updated:v1
     DC->>GR: UpdateNodeStatus(FAILED)
     DC->>GR: CheckScheduleCompletion(...)
     DC->>ST: UpdateScheduler(FAILED) when drained
@@ -120,8 +120,8 @@ sequenceDiagram
   ST->>ST: reset scheduler + target task + write state_outbox (atomic tx)
   ST-->>UI: TriggerRerunResponse{}
   UI-->>U: 200 OK
-  ST->>R: publish command.rerun:v1 (via OutboxProcessor)
-  R->>SC: consume command.rerun:v1
+  ST->>R: publish rerun:v1 (via OutboxProcessor)
+  R->>SC: consume rerun:v1
   SC->>ST: UpdateSchedulerInitStatus(in_progress)
   SC->>GR: GetTransitiveDownstream(target)
   SC->>GR: UpdateNodeStatus(target/downstream FAILED nodes -> PENDING)

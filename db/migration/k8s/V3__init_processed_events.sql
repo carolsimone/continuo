@@ -1,6 +1,6 @@
 -- Processed Events Table
--- Deduplication table to prevent duplicate processing of executor.deployed:v1
--- and k8s.check:v1 messages (mirrors executor-controller's processed_events table).
+-- Deduplication table to prevent duplicate processing of node.deployed:v1
+-- and check.k8s:v1 messages (mirrors executor-controller's processed_events table).
 
 CREATE TABLE IF NOT EXISTS processed_events (
     outbox_entry_id UUID        PRIMARY KEY,

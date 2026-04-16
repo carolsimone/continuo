@@ -78,7 +78,7 @@ type StateServiceClient interface {
 	// Used by dependency-controller to guard premature finalization during re-run.
 	GetSchedulerInitStatus(ctx context.Context, in *GetSchedulerInitStatusRequest, opts ...grpc.CallOption) (*GetSchedulerInitStatusResponse, error)
 	// TriggerRerun atomically resets the scheduler + target task and enqueues a
-	// command.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+	// rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
 	TriggerRerun(ctx context.Context, in *TriggerRerunRequest, opts ...grpc.CallOption) (*TriggerRerunResponse, error)
 	// TaskExecution operations
 	CreateTaskExecution(ctx context.Context, in *CreateTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error)
@@ -349,7 +349,7 @@ type StateServiceServer interface {
 	// Used by dependency-controller to guard premature finalization during re-run.
 	GetSchedulerInitStatus(context.Context, *GetSchedulerInitStatusRequest) (*GetSchedulerInitStatusResponse, error)
 	// TriggerRerun atomically resets the scheduler + target task and enqueues a
-	// command.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+	// rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
 	TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error)
 	// TaskExecution operations
 	CreateTaskExecution(context.Context, *CreateTaskExecutionRequest) (*TaskExecutionResponse, error)

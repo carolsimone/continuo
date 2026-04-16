@@ -74,7 +74,7 @@ func TestMessageDeduplication_SameMessageTwice(t *testing.T) {
 	msgProc, err := uow.MessageProcessingRepo().GetByMessageID(ctx, messageID)
 	require.NoError(t, err)
 	assert.Equal(t, messageID, msgProc.MessageID)
-	assert.Equal(t, "update.table:v1", msgProc.StreamName)
+	assert.Equal(t, "node.updated:v1", msgProc.StreamName)
 	assert.Equal(t, model.MessageProcessingStateCompleted, msgProc.State)
 
 	// Reset outbox to track second attempt
@@ -128,7 +128,7 @@ func TestMessageDeduplication_ConcurrentProcessing(t *testing.T) {
 	// Pre-insert message as 'processing' to simulate concurrent processing
 	existingMsgProc := &model.MessageProcessing{
 		MessageID:  messageID,
-		StreamName: "update.table:v1",
+		StreamName: "node.updated:v1",
 		State:      model.MessageProcessingStateProcessing,
 		Payload:    []byte(`{"test": "payload"}`),
 	}

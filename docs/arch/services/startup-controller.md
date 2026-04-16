@@ -6,7 +6,7 @@
 
 It is responsible for:
 - initializing a run after `scheduler.started:v1` (snapshot graph, pre-register tasks, dispatch roots/seeds)
-- orchestrating rerun scope after `command.rerun:v1` (reset target + failed downstream, dispatch target)
+- orchestrating rerun scope after `rerun:v1` (reset target + failed downstream, dispatch target)
 
 This service does **not** own scheduler or task state — it only owns durable dispatch intents (`startup_outbox`).
 
@@ -23,7 +23,7 @@ This service does **not** own scheduler or task state — it only owns durable d
 | Stream | Handler |
 |---|---|
 | `scheduler.started:v1` | `InitializeSchedulerHandler` — initializes a new run |
-| `command.rerun:v1` | `RerunHandler` — resets scope and re-dispatches target node |
+| `rerun:v1` | `RerunHandler` — resets scope and re-dispatches target node |
 
 ### HTTP (port 8083)
 
@@ -98,7 +98,7 @@ This service does **not** own scheduler or task state — it only owns durable d
 
 > **Init status ordering**: `"completed"` is set via gRPC **before** the Postgres commit. This is intentional — it gates `dependency-controller`'s finalization check. If the commit fails, the state service records `"completed"` but the outbox entries are lost; a retry of the message will hit the idempotency skip at step 1 and will not re-dispatch.
 
-## Rerun Flow (`command.rerun:v1`)
+## Rerun Flow (`rerun:v1`)
 
 ```
 1. UpdateSchedulerInitStatus → "in_progress"
@@ -140,7 +140,7 @@ This service does **not** own scheduler or task state — it only owns durable d
 | Loop | Description |
 |---|---|
 | Redis consumer (`scheduler.started:v1`) | Reads and dispatches to `InitializeSchedulerHandler` |
-| Redis consumer (`command.rerun:v1`) | Reads and dispatches to `RerunHandler` |
+| Redis consumer (`rerun:v1`) | Reads and dispatches to `RerunHandler` |
 | Outbox processor | Polls `startup_outbox`; publishes pending entries to `query.model:v1`; marks processed |
 | Startup recovery | `ResetInProgressInitializations` called at boot; resets stale `in_progress` to `pending` |
 

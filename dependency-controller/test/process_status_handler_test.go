@@ -70,7 +70,7 @@ func TestHandleSucceeded_NoDownstream(t *testing.T) {
 	msgProc, err := uow.MessageProcessingRepo().GetByMessageID(ctx, "test-msg-1")
 	require.NoError(t, err)
 	assert.Equal(t, "test-msg-1", msgProc.MessageID)
-	assert.Equal(t, "update.table:v1", msgProc.StreamName)
+	assert.Equal(t, "node.updated:v1", msgProc.StreamName)
 	assert.Equal(t, model.MessageProcessingStateCompleted, msgProc.State)
 }
 

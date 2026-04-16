@@ -122,9 +122,9 @@ services:
           verbs: ["get", "list", "watch"]
     env:
       REDIS_CONSUMER_STREAM: query.model:v1
-      REDIS_CONSUMER_RETRY_STREAM: task.retry:v1
+      REDIS_CONSUMER_RETRY_STREAM: retry.task:v1
       REDIS_CONSUMER_GROUP: executor_controller_consumers
-      REDIS_PRODUCER_STREAM: executor.deployed:v1
+      REDIS_PRODUCER_STREAM: node.deployed:v1
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       DBT_POSTGRES_DB: continuo_dbt
@@ -155,13 +155,13 @@ services:
           resources: ["pods", "pods/log"]
           verbs: ["get", "list", "watch"]
     env:
-      REDIS_CONSUMER_DEPLOYED_STREAM: executor.deployed:v1
-      REDIS_CONSUMER_CHECK_STREAM: k8s.check:v1
+      REDIS_CONSUMER_DEPLOYED_STREAM: node.deployed:v1
+      REDIS_CONSUMER_CHECK_STREAM: check.k8s:v1
       REDIS_CONSUMER_GROUP: k8s_controller_consumers
-      REDIS_PRODUCER_CHECK_STREAM: k8s.check:v1
-      REDIS_PRODUCER_RETRY_STREAM: task.retry:v1
+      REDIS_PRODUCER_CHECK_STREAM: check.k8s:v1
+      REDIS_PRODUCER_RETRY_STREAM: retry.task:v1
       REDIS_PRODUCER_FAILED_STREAM: task.failed:v1
-      REDIS_PRODUCER_UPDATE_TABLE_STREAM: update.table:v1
+      REDIS_PRODUCER_UPDATE_TABLE_STREAM: node.updated:v1
       POSTGRES_DB: continuo_k8s
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       LOG_TAIL_LINES: "50"
@@ -181,7 +181,7 @@ services:
       - name: REDIS_PASSWORD
         secretKey: REDIS_PASSWORD
     env:
-      REDIS_CONSUMER_STREAM: update.table:v1
+      REDIS_CONSUMER_STREAM: node.updated:v1
       REDIS_CONSUMER_GROUP: dependency_controller_consumers
       REDIS_PRODUCER_STREAM: query.model:v1
       POSTGRES_DB: continuo_dependency

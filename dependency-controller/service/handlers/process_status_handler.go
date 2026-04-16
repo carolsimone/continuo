@@ -67,7 +67,7 @@ func (h *ProcessStatusHandler) handleMessageDeduplication(
 	// Try to insert message processing record
 	msgProc := &model.MessageProcessing{
 		MessageID:  messageID,
-		StreamName: "update.table:v1",
+		StreamName: "node.updated:v1",
 		State:      model.MessageProcessingStateProcessing,
 		Payload:    messagePayload,
 	}

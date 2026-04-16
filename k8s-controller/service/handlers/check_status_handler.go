@@ -173,7 +173,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, cmd command.Ch
 	// Second outbox entry: notify dependency-controller of node status change
 	notifyEntry := &model.K8sStatusOutboxEntry{
 		EventType:        "node_status_updated",
-		StreamName:       "update.table:v1",
+		StreamName:       "node.updated:v1",
 		TaskID:           cmd.TaskID,
 		ScheduleID:       cmd.ScheduleID,
 		ScheduleName:     cmd.ScheduleName,
@@ -283,7 +283,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, cmd comm
 	// Second outbox entry: notify dependency-controller
 	notifyEntry := &model.K8sStatusOutboxEntry{
 		EventType:        "node_status_updated",
-		StreamName:       "update.table:v1",
+		StreamName:       "node.updated:v1",
 		TaskID:           cmd.TaskID,
 		ScheduleID:       cmd.ScheduleID,
 		ScheduleName:     cmd.ScheduleName,
@@ -334,7 +334,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd comm
 
 	entry := &model.K8sStatusOutboxEntry{
 		EventType:    "task_retry",
-		StreamName:   "task.retry:v1",
+		StreamName:   "retry.task:v1",
 		TaskID:       cmd.TaskID,
 		ScheduleID:   cmd.ScheduleID,
 		ScheduleName: cmd.ScheduleName,
@@ -379,7 +379,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, cmd command.Chec
 	// Create outbox entry for delayed check
 	entry := &model.K8sStatusOutboxEntry{
 		EventType:    "check_delayed",
-		StreamName:   "k8s.check:v1", // Publish back to check stream for re-check
+		StreamName:   "check.k8s:v1", // Publish back to check stream for re-check
 		TaskID:       cmd.TaskID,
 		ScheduleID:   cmd.ScheduleID,
 		ScheduleName: cmd.ScheduleName,

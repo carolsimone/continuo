@@ -151,7 +151,7 @@ func main() {
 	// INITIALIZE REDIS CONSUMER & PRODUCER
 	// ========================================================================
 
-	// Create consumer for update.table:v1 stream
+	// Create consumer for node.updated:v1 stream
 	consumer, err := redis.NewConsumer(
 		redisClient,
 		cfg.RedisConsumerStream,

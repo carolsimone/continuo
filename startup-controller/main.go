@@ -173,10 +173,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create consumer for command.rerun:v1 stream
+	// Create consumer for rerun:v1 stream
 	rerunConsumer, err := redis.NewRerunConsumer(
 		redisClient,
-		"command.rerun:v1",
+		"rerun:v1",
 		"startup-controller-rerun",
 		messageBus,
 		logger,

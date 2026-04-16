@@ -42,7 +42,7 @@ service StateService {
   rpc GetSchedulerInitStatus(GetSchedulerInitStatusRequest) returns (GetSchedulerInitStatusResponse);
 
   // TriggerRerun atomically resets the scheduler + target task and enqueues a
-  // command.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+  // rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
   rpc TriggerRerun(TriggerRerunRequest) returns (TriggerRerunResponse);
 
   // TaskExecution operations

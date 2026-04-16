@@ -13,7 +13,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// RerunConsumer consumes command.rerun:v1 events from Redis Streams.
+// RerunConsumer consumes rerun:v1 events from Redis Streams.
 type RerunConsumer struct {
 	client        *goredis.Client
 	streamName    string

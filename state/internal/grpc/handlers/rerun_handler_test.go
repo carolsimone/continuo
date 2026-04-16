@@ -230,9 +230,9 @@ func TestTriggerRerun_Success(t *testing.T) {
 	assert.Equal(t, model.TaskStatusPending, task.updated.Status)
 	assert.Equal(t, 0, task.updated.RetryCount)
 
-	// Outbox entry written to command.rerun:v1
+	// Outbox entry written to rerun:v1
 	require.NotNil(t, outbox.created)
-	assert.Equal(t, "command.rerun:v1", outbox.created.StreamName)
+	assert.Equal(t, "rerun:v1", outbox.created.StreamName)
 	assert.Equal(t, "rerun_node", outbox.created.EventType)
 	assert.Equal(t, scheduleID, outbox.created.AggregateID)
 }

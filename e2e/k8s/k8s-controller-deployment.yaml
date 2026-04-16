@@ -65,19 +65,19 @@ spec:
             - name: REDIS_PASSWORD
               value: "continuo"
             - name: REDIS_CONSUMER_DEPLOYED_STREAM
-              value: "executor.deployed:v1"
+              value: "node.deployed:v1"
             - name: REDIS_CONSUMER_CHECK_STREAM
-              value: "k8s.check:v1"
+              value: "check.k8s:v1"
             - name: REDIS_CONSUMER_GROUP
               value: "k8s_controller_consumers"
             - name: REDIS_PRODUCER_CHECK_STREAM
-              value: "k8s.check:v1"
+              value: "check.k8s:v1"
             - name: REDIS_PRODUCER_RETRY_STREAM
-              value: "task.retry:v1"
+              value: "retry.task:v1"
             - name: REDIS_PRODUCER_FAILED_STREAM
               value: "task.failed:v1"
             - name: REDIS_PRODUCER_UPDATE_TABLE_STREAM
-              value: "update.table:v1"
+              value: "node.updated:v1"
             - name: POSTGRES_HOST
               value: "${DOCKER_BRIDGE_IP}"
             - name: POSTGRES_PORT
