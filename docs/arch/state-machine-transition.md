@@ -96,8 +96,8 @@ These are separate concerns. `initialization_status` tracks whether `startup-con
 | From | To | Owner | Trigger |
 |---|---|---|---|
 | `pending` | `running` | `state` service (internal) | Side effect of `initialization_status` reaching `"completed"` — see below |
-| `running` | `succeeded` | `dependency-controller` | `UpdateScheduler` gRPC call after `CheckScheduleCompletion` |
-| `running` | `failed` | `dependency-controller` | `UpdateScheduler` gRPC call after `CheckScheduleCompletion` |
+| `running` | `succeeded` | `orchestrator` | `UpdateScheduler` gRPC call after `CheckScheduleCompletion` |
+| `running` | `failed` | `orchestrator` | `UpdateScheduler` gRPC call after `CheckScheduleCompletion` |
 | `pending` or `running` | `cancelled` | `CancelScheduler` endpoint | `repo.Cancel()` — separate path, not through `Transition()` |
 
 #### Service Ownership
@@ -105,7 +105,7 @@ These are separate concerns. `initialization_status` tracks whether `startup-con
 **`state` service**
 - `pending → running`: never called directly by any external service. Fires automatically inside `UpdateSchedulerInitStatus` when `initialization_status` is set to `"completed"` and `status` is still `pending`.
 
-**`dependency-controller`**
+**`orchestrator`**
 - `running → succeeded`: after `CheckScheduleCompletion` confirms all tasks finished successfully.
 - `running → failed`: after `CheckScheduleCompletion` confirms a task failed with no remaining retries.
 

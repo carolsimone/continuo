@@ -127,10 +127,9 @@ services:
       - ./state:/app/state
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
+      - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./graph:/app/graph
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
@@ -183,10 +182,9 @@ services:
       - ./state:/app/state
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
+      - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./graph:/app/graph
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
       - ./kubeconfig:/app/kubeconfig
@@ -240,10 +238,9 @@ services:
       - ./state:/app/state
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
+      - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./graph:/app/graph
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
       - ./kubeconfig:/app/kubeconfig
@@ -306,10 +303,9 @@ services:
       - ./state:/app/state
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
+      - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./graph:/app/graph
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
       - ./kubeconfig:/app/kubeconfig

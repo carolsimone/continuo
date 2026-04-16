@@ -63,8 +63,7 @@ start_service "state" "state" "state"
 check_health "state" 8082 || exit 1
 
 start_service "startup-controller" "startup-controller" "startup-controller"
-start_service "dependency-controller" "dependency-controller" "dependency-controller"
-start_service "graph" "graph" "graph"
+start_service "orchestrator" "orchestrator" "orchestrator"
 
 # Note: executor-controller and k8s-controller will run in kind for E2E tests,
 # but we can start them in docker-compose too for development flexibility
@@ -74,8 +73,7 @@ start_service "graph" "graph" "graph"
 
 # Check health of all started services
 check_health "startup-controller" 8083 || exit 1
-check_health "dependency-controller" 8086 || exit 1
-check_health "graph" 8081 || exit 1
+check_health "orchestrator" 8087 || exit 1
 
 # Uncomment if you started executor/k8s controllers:
 # check_health "executor-controller" 8084 || exit 1

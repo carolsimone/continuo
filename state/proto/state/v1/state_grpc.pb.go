@@ -75,7 +75,7 @@ type StateServiceClient interface {
 	// Required because UpdateTask ignores retry_count=0 (proto3 zero-value).
 	ResetTask(ctx context.Context, in *ResetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	// GetSchedulerInitStatus returns initialization_status for a scheduler.
-	// Used by dependency-controller to guard premature finalization during re-run.
+	// Used by orchestrator to guard premature finalization during re-run.
 	GetSchedulerInitStatus(ctx context.Context, in *GetSchedulerInitStatusRequest, opts ...grpc.CallOption) (*GetSchedulerInitStatusResponse, error)
 	// TriggerRerun atomically resets the scheduler + target task and enqueues a
 	// rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
@@ -346,7 +346,7 @@ type StateServiceServer interface {
 	// Required because UpdateTask ignores retry_count=0 (proto3 zero-value).
 	ResetTask(context.Context, *ResetTaskRequest) (*TaskResponse, error)
 	// GetSchedulerInitStatus returns initialization_status for a scheduler.
-	// Used by dependency-controller to guard premature finalization during re-run.
+	// Used by orchestrator to guard premature finalization during re-run.
 	GetSchedulerInitStatus(context.Context, *GetSchedulerInitStatusRequest) (*GetSchedulerInitStatusResponse, error)
 	// TriggerRerun atomically resets the scheduler + target task and enqueues a
 	// rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.

@@ -3,12 +3,12 @@ module github.com/carolsimone/continuo/e2e
 go 1.25.1
 
 replace (
-	github.com/carolsimone/continuo/graph => ../graph
+	github.com/carolsimone/continuo/orchestrator => ../orchestrator
 	github.com/carolsimone/continuo/state => ../state
 )
 
 require (
-	github.com/carolsimone/continuo/graph v0.0.0-00010101000000-000000000000
+	github.com/carolsimone/continuo/orchestrator v0.0.0-00010101000000-000000000000
 	github.com/carolsimone/continuo/state v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0

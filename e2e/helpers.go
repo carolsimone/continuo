@@ -18,8 +18,7 @@ func verifyServicesHealthy(t *testing.T) {
 	dockerComposeServices := []string{
 		"http://state:8082/health",
 		"http://startup-controller:8083/health",
-		"http://dependency-controller:8086/health",
-		"http://graph:8081/health",
+		"http://orchestrator:8087/health",
 	}
 
 	for _, url := range dockerComposeServices {

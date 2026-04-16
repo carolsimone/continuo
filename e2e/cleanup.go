@@ -80,9 +80,9 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	// Clean processed_events (deduplication table) - must be cleared so re-runs can process the same outbox IDs
 	_, _ = clients.executorDB.Exec("DELETE FROM processed_events")
 
-	// Clean dependency outbox
+	// Clean orchestrator outbox
 	if schedulerID != "" {
-		_, _ = clients.dependencyDB.Exec("DELETE FROM outbox WHERE aggregate_id = $1", schedulerID)
+		_, _ = clients.orchestratorDB.Exec("DELETE FROM outbox WHERE aggregate_id = $1", schedulerID)
 	}
 
 	// Clean k8s_status_outbox

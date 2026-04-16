@@ -5,16 +5,16 @@
 `startup-controller` converts schedule-start and rerun commands into executable node dispatches.
 
 It is responsible for:
-- initializing a run after `scheduler.started:v1` (snapshot graph, pre-register tasks, dispatch roots/seeds)
-- orchestrating rerun scope after `rerun:v1` (reset target + failed downstream, dispatch target)
+- initializing a run after `scheduler.started:v1` (request run snapshot via `initialize.run:v1`, pre-register tasks, dispatch roots/seeds)
+- orchestrating rerun dispatch after `rerun.ready:v1` (reset target/downstream tasks, dispatch target)
 
-This service does **not** own scheduler or task state — it only owns durable dispatch intents (`startup_outbox`).
+This service does **not** own scheduler or task state -- it only owns durable dispatch intents (`startup_outbox`).
 
 ## Owned Storage (Postgres: `continuo_startup`)
 
 | Table | Purpose |
 |---|---|
-| `startup_outbox` | Dispatch intents; one row per node to be queued for execution; processed by outbox processor → `query.model:v1` |
+| `startup_outbox` | Dispatch intents; one row per node to be queued for execution; processed by outbox processor -> `query.model:v1` |
 
 ## Inbound Interfaces
 
@@ -22,12 +22,13 @@ This service does **not** own scheduler or task state — it only owns durable d
 
 | Stream | Handler |
 |---|---|
-| `scheduler.started:v1` | `InitializeSchedulerHandler` — initializes a new run |
-| `rerun:v1` | `RerunHandler` — resets scope and re-dispatches target node |
+| `scheduler.started:v1` | `InitializeSchedulerHandler` -- initiates a new run by publishing `initialize.run:v1` |
+| `run.initialized:v1` | `RunInitializedHandler` -- receives run snapshot from orchestrator, pre-registers tasks, dispatches roots/seeds |
+| `rerun.ready:v1` | `RerunReadyHandler` -- receives rerun scope from orchestrator, resets tasks, dispatches target |
 
 ### HTTP (port 8083)
 
-- `GET /health` — liveness probe only
+- `GET /health` -- liveness probe only
 
 ## Outbound Interfaces
 
@@ -35,6 +36,7 @@ This service does **not** own scheduler or task state — it only owns durable d
 
 | Stream | Description |
 |---|---|
+| `initialize.run:v1` | Request to orchestrator for run snapshot creation (with optional rerun target) |
 | `query.model:v1` | One message per node to execute; consumed by `executor-controller` |
 
 `query.model:v1` payload fields:
@@ -45,108 +47,86 @@ This service does **not** own scheduler or task state — it only owns durable d
 
 | Method | Used by |
 |---|---|
-| `UpdateSchedulerInitStatus` | Both handlers: gates idempotency and signals dependency-controller |
+| `UpdateSchedulerInitStatus` | Both handlers: gates idempotency and signals orchestrator |
 | `GetTask` (by schedule + node) | Both handlers: check task existence / fetch task_id |
 | `CreateTask` | Init handler: pre-register all nodes with `max_retries=3` |
-| `UpdateTask` (status → PENDING) | Init handler: ensure seed/root tasks are PENDING before dispatch |
+| `UpdateTask` (status -> PENDING) | Init handler: ensure seed/root tasks are PENDING before dispatch |
 | `ResetTask` | Rerun handler: reset target + FAILED downstream tasks |
 | `ResetInProgressInitializations` | On service startup: recover `in_progress` init statuses left by a crash |
 | `GetScheduler` | (used in internal checks) |
 | `GetSchedulerInitStatus` | (available via adapter; used in startup recovery) |
 
-### gRPC to `graph`
-
-| Method | Used by |
-|---|---|
-| `SnapshotGraph` | Init handler: create `Run` node and `EXECUTES` edges (all PENDING) |
-| `GetScheduleInitNodes` | Both handlers: get `allNodes`, `rootNodes`, `seedNodes` in one call |
-| `GetTransitiveDownstream` | Rerun handler: get all non-SUCCEEDED downstream nodes |
-| `UpdateNodeStatus` | Rerun handler: reset target + FAILED downstream nodes to PENDING in graph |
-
 ## Initialization Flow (`scheduler.started:v1`)
 
 ```
-1. UpdateSchedulerInitStatus → "in_progress"
-   → if already "completed": idempotency skip (message replay safety)
+1. UpdateSchedulerInitStatus -> "in_progress"
+   -> if already "completed": idempotency skip (message replay safety)
 
-2. SnapshotGraph(run_id, schedule_name)
-   → creates Run node + EXECUTES edges for all nodes (initial status: PENDING)
+2. Publish initialize.run:v1 (schedule_name, run_id)
+   -> orchestrator consumes, creates Run node + EXECUTES edges
 
-3. GetScheduleInitNodes(schedule_name, run_id)
-   → returns: allNodes, rootNodes, seedNodes
+3. Consume run.initialized:v1 from orchestrator
+   -> returns: allNodes, rootNodes, seedNodes
 
 4. Pre-register all tasks:
    For each node in allNodes:
      GetTask(schedule_id, service, schema, table)
-     → if not found: CreateTask(new UUID, schedule_id, ..., max_retries=3)
-     → if found: leave untouched (idempotent on retry)
+     -> if not found: CreateTask(new UUID, schedule_id, ..., max_retries=3)
+     -> if found: leave untouched (idempotent on retry)
 
 5. Dispatch selection:
-   - if seedNodes present → dispatch seeds only
-     (model root nodes will be dispatched by dependency-controller after seeds complete)
-   - if no seeds → dispatch root nodes directly
+   - if seedNodes present -> dispatch seeds only
+     (model root nodes will be dispatched by orchestrator after seeds complete)
+   - if no seeds -> dispatch root nodes directly
 
 6. For each node to dispatch:
-   - GetTask → ensure PENDING (UpdateTaskStatus if not)
+   - GetTask -> ensure PENDING (UpdateTaskStatus if not)
    - ComputeJobName
    - Write outbox entry to startup_outbox (inside Postgres tx)
 
-7. UpdateSchedulerInitStatus → "completed" (gRPC to state)
+7. UpdateSchedulerInitStatus -> "completed" (gRPC to state)
 
 8. Commit Postgres tx (outbox entries land atomically)
 ```
 
-> **Init status ordering**: `"completed"` is set via gRPC **before** the Postgres commit. This is intentional — it gates `dependency-controller`'s finalization check. If the commit fails, the state service records `"completed"` but the outbox entries are lost; a retry of the message will hit the idempotency skip at step 1 and will not re-dispatch.
+> **Init status ordering**: `"completed"` is set via gRPC **before** the Postgres commit. This is intentional -- it gates `orchestrator`'s finalization check. If the commit fails, the state service records `"completed"` but the outbox entries are lost; a retry of the message will hit the idempotency skip at step 1 and will not re-dispatch.
 
-## Rerun Flow (`rerun:v1`)
+## Rerun Flow (`rerun.ready:v1`)
 
 ```
-1. UpdateSchedulerInitStatus → "in_progress"
-   → if already "completed": idempotency skip
+1. Consume rerun.ready:v1 from orchestrator
+   -> contains target node info + downstream FAILED nodes (already reset to PENDING in graph)
 
-2. GetTransitiveDownstream(schedule_name, schema, table_name)
-   → returns all non-SUCCEEDED downstream nodes (may include PENDING and FAILED)
-
-3. Reset target node in graph:
-   UpdateNodeStatus(target, → PENDING, run_id)
-
-4. Fetch target task from state:
+2. Fetch target task from state:
    GetTask(schedule_id, service, schema, table)
-   → if status == FAILED: ResetTask(task_id)
-     (TriggerRerun gRPC handler already reset it atomically, but handles replay on crash)
+   -> if status == FAILED: ResetTask(task_id)
 
-5. For each FAILED downstream node:
-   - UpdateNodeStatus(node, → PENDING, run_id)
+3. For each FAILED downstream node:
    - GetTask + ResetTask
 
-6. GetScheduleInitNodes(schedule_name, run_id)
-   → to look up target node's NodeType and effective service_name from graph
-   (service_name may differ if node was re-pointed to a different service during the fix)
-
-7. Begin Postgres tx
+4. Begin Postgres tx
    Write single outbox entry for target node only
    Commit
 
-8. UpdateSchedulerInitStatus → "completed" (gRPC to state)
-   AFTER outbox commit — allows dependency-controller to resume finalization
+5. UpdateSchedulerInitStatus -> "completed" (gRPC to state)
+   AFTER outbox commit -- allows orchestrator to resume finalization
 ```
 
-> **Rerun init status ordering**: `"completed"` is set **after** the Postgres commit, unlike the init flow. This is critical: `dependency-controller` skips schedule finalization while `init_status != "completed"`, preventing it from writing a terminal status while nodes are still being reset.
-
-> **PENDING nodes not reset**: `GetTransitiveDownstream` may return PENDING nodes (never run). Only FAILED nodes are reset; PENDING ones are left as-is to avoid unnecessary churn.
+> **Rerun init status ordering**: `"completed"` is set **after** the Postgres commit, unlike the init flow. This is critical: `orchestrator` skips schedule finalization while `init_status != "completed"`, preventing it from writing a terminal status while nodes are still being reset.
 
 ## Background Loops
 
 | Loop | Description |
 |---|---|
 | Redis consumer (`scheduler.started:v1`) | Reads and dispatches to `InitializeSchedulerHandler` |
-| Redis consumer (`rerun:v1`) | Reads and dispatches to `RerunHandler` |
+| Redis consumer (`run.initialized:v1`) | Reads and dispatches to `RunInitializedHandler` |
+| Redis consumer (`rerun.ready:v1`) | Reads and dispatches to `RerunReadyHandler` |
 | Outbox processor | Polls `startup_outbox`; publishes pending entries to `query.model:v1`; marks processed |
 | Startup recovery | `ResetInProgressInitializations` called at boot; resets stale `in_progress` to `pending` |
 
 ## Reliability Patterns
 
-- **Idempotency gate**: both handlers call `UpdateSchedulerInitStatus("in_progress")` first; if already `"completed"`, they skip without re-dispatching (replay safety)
+- **Idempotency gate**: handlers call `UpdateSchedulerInitStatus("in_progress")` first; if already `"completed"`, they skip without re-dispatching (replay safety)
 - **Transactional outbox**: outbox entries are committed in Postgres before the outbox processor publishes to Redis
 - **Task pre-registration idempotency**: `GetTask` before `CreateTask`; existing tasks are left untouched
 - **Crash recovery on startup**: `ResetInProgressInitializations` reverts any run left in `"in_progress"` init state to `"pending"`, allowing the message consumer to replay and re-initialize

@@ -24,9 +24,8 @@ This pack is based on:
 Service dossiers:
 
 - [state.md](docs/arch/services/state.md)
-- [graph.md](docs/arch/services/graph.md)
+- [orchestrator.md](docs/arch/services/orchestrator.md)
 - [startup-controller.md](docs/arch/services/startup-controller.md)
-- [dependency-controller.md](docs/arch/services/dependency-controller.md)
 - [executor-controller.md](docs/arch/services/executor-controller.md)
 - [k8s-controller.md](docs/arch/services/k8s-controller.md)
 - [manifest-controller.md](docs/arch/services/manifest-controller.md)

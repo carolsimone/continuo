@@ -36,7 +36,7 @@ No other service owns or writes to these tables.
 | `UpdateScheduler` | Update status, timestamps, heartbeat |
 | `CancelScheduler` | Cancel a run by UUID |
 | `UpdateSchedulerInitStatus` | Set `initialization_status`; auto-transitions to RUNNING when set to `completed` |
-| `GetSchedulerInitStatus` | Read `initialization_status` for a run (used by `dependency-controller` to guard premature finalization) |
+| `GetSchedulerInitStatus` | Read `initialization_status` for a run (used by `orchestrator` to guard premature finalization) |
 | `ResetInProgressInitializations` | On startup, reset stale `in_progress` init statuses to `pending` |
 
 #### Schedule activation and control (by `schedule_name` string)
@@ -198,7 +198,7 @@ Effects (all or nothing — transient errors are retried, not ACK'd):
 | Service | Methods used |
 |---|---|
 | `startup-controller` | `UpdateSchedulerInitStatus`, `CreateTask`, `UpdateTask`, `GetTask`, `ListTasks`, `GetSchedulerInitStatus`, `ResetTask` |
-| `dependency-controller` | `GetTask`, `UpdateTask`, `GetSchedulerInitStatus`, `ListTasks` |
+| `orchestrator` | `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler` |
 | `executor-controller` | `GetTask`, `UpdateTask`, `CreateTaskExecution`, `GetTaskExecution` |
 | `k8s-controller` | `GetTask`, `UpdateTask`, `ListTaskExecutions` |
 | `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun` |

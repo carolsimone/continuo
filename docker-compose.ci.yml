@@ -9,13 +9,6 @@ services:
       cache_to:
         - "type=gha,scope=state,mode=max"
 
-  graph:
-    build:
-      cache_from:
-        - "type=gha,scope=graph"
-      cache_to:
-        - "type=gha,scope=graph,mode=max"
-
   startup-controller:
     build:
       cache_from:
@@ -30,12 +23,12 @@ services:
       cache_to:
         - "type=gha,scope=executor-controller,mode=max"
 
-  dependency-controller:
+  orchestrator:
     build:
       cache_from:
-        - "type=gha,scope=dependency-controller"
+        - "type=gha,scope=orchestrator"
       cache_to:
-        - "type=gha,scope=dependency-controller,mode=max"
+        - "type=gha,scope=orchestrator,mode=max"
 
   k8s-controller:
     build:

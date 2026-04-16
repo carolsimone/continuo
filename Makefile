@@ -32,8 +32,8 @@ build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-state:prod -f state/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-executor-controller:prod -f executor-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-startup-controller:prod -f startup-controller/Dockerfile.prod .
-	DOCKER_BUILDKIT=1 docker build -t continuo-dependency-controller:prod -f dependency-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-k8s-controller:prod -f k8s-controller/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
 
 # Build single production service
 .PHONY: build-prod-service
@@ -102,7 +102,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@docker wait continuo-flyway-state-1 continuo-flyway-startup-1 continuo-flyway-executor-1 continuo-flyway-dependency-1 continuo-flyway-k8s-1 2>/dev/null || true
+	@docker wait continuo-flyway-state-1 continuo-flyway-startup-1 continuo-flyway-executor-1 continuo-flyway-orchestrator-1 continuo-flyway-k8s-1 2>/dev/null || true
 	@echo "Flyway migrations done."
 	@$(MAKE) e2e-start-services
 	@echo "Building dbt-base image (required for e2e-setup)..."

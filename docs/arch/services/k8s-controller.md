@@ -10,7 +10,7 @@ It is responsible for:
 - deciding: still running → re-check, failed → retry or permanent failure, succeeded → complete
 - recording task execution history in `state`
 - uploading full pod logs to S3
-- publishing terminal status updates to `dependency-controller` (via `node.updated:v1`)
+- publishing terminal status updates to `orchestrator` (via `node.updated:v1`)
 
 ## Owned Storage (Postgres: `continuo_k8s`)
 
@@ -43,7 +43,7 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
 | `check.k8s:v1` | Job still running; re-enqueue with `check_after` delay |
 | `retry.task:v1` | Job failed, retryable; `executor-controller` will re-deploy |
 | `task.failed:v1` | Job failed permanently; currently has no in-repo consumer |
-| `node.updated:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `dependency-controller` |
+| `node.updated:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `orchestrator` |
 
 ### gRPC to `state`
 

@@ -170,7 +170,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, cmd command.Ch
 		return fmt.Errorf("failed to create outbox entry: %w", err)
 	}
 
-	// Second outbox entry: notify dependency-controller of node status change
+	// Second outbox entry: notify orchestrator of node status change
 	notifyEntry := &model.K8sStatusOutboxEntry{
 		EventType:        "node_status_updated",
 		StreamName:       "node.updated:v1",
@@ -280,7 +280,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, cmd comm
 		return fmt.Errorf("failed to create outbox entry: %w", err)
 	}
 
-	// Second outbox entry: notify dependency-controller
+	// Second outbox entry: notify orchestrator
 	notifyEntry := &model.K8sStatusOutboxEntry{
 		EventType:        "node_status_updated",
 		StreamName:       "node.updated:v1",

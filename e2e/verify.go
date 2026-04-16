@@ -126,9 +126,9 @@ func verifyDependencyControllerUnlockedNextLevel(
 		}
 
 		return matchCount >= len(nextLevelTables), nil
-	}, fmt.Sprintf("Timeout waiting for dependency-controller to unlock %d nodes", len(nextLevelTables)))
+	}, fmt.Sprintf("Timeout waiting for orchestrator to unlock %d nodes", len(nextLevelTables)))
 
-	t.Logf("✅ dependency-controller unlocked %d nodes", len(nextLevelTables))
+	t.Logf("✅ orchestrator unlocked %d nodes", len(nextLevelTables))
 }
 
 // verifyFullDAGExecution verifies all 4 levels execute in order
@@ -149,7 +149,7 @@ func verifyFullDAGExecution(
 		// Wait for jobs to complete
 		verifyJobsCompleted(t, ctx, clients, level, testScheduleName)
 
-		// If not last level, verify dependency-controller published next level
+		// If not last level, verify orchestrator published next level
 		if i < len(levels)-1 {
 			verifyDependencyControllerUnlockedNextLevel(t, ctx, clients, levels[i+1], scheduleID)
 		}
@@ -305,7 +305,7 @@ func verifyNoJobsDeployed(
 }
 
 // verifySchedulerSucceeded polls scheduler_tracker until the schedule reaches
-// 'succeeded' status, confirming dependency-controller finalised the run correctly.
+// 'succeeded' status, confirming orchestrator finalised the run correctly.
 func verifySchedulerSucceeded(
 	t *testing.T,
 	ctx context.Context,
@@ -328,7 +328,7 @@ func verifySchedulerSucceeded(
 }
 
 // verifySchedulerFailed polls scheduler_tracker until the schedule reaches
-// 'failed' status, confirming dependency-controller finalised the run correctly.
+// 'failed' status, confirming orchestrator finalised the run correctly.
 func verifySchedulerFailed(
 	t *testing.T,
 	ctx context.Context,

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	graphv1 "github.com/carolsimone/continuo/graph/api/graph/v1"
+	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,16 +58,16 @@ func getFailureDAG() []dagNode {
 	return nodes
 }
 
-// seedNodes creates the given DAG nodes in Neo4j using the graph gRPC service
+// seedNodes creates the given DAG nodes directly in Neo4j.
+// This bypasses the orchestrator event path (manifest.loaded:v1) and writes
+// Table nodes + DEPENDS_ON edges directly for test setup.
 func seedNodes(t *testing.T, ctx context.Context, clients *testClients, nodes []dagNode, scheduleName, schemaName string) {
+	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeWrite,
+	})
+	defer session.Close(ctx)
+
 	for _, node := range nodes {
-		upstreamDeps := make([]*graphv1.UpstreamDependency, len(node.Dependencies))
-		for i, dep := range node.Dependencies {
-			upstreamDeps[i] = &graphv1.UpstreamDependency{
-				SchemaName: schemaName,
-				TableName:  dep,
-			}
-		}
 		nodeType := node.NodeType
 		if nodeType == "" {
 			nodeType = "dbt-model"
@@ -76,25 +76,48 @@ func seedNodes(t *testing.T, ctx context.Context, clients *testClients, nodes []
 		if nodeType == "dbt-seed" {
 			nodeScheduleName = "seed"
 		}
-		req := &graphv1.CreateNodeRequest{
-			TableName:            node.Name,
-			SchemaName:           schemaName,
-			ServiceName:          node.ServiceName,
-			Owner:                failureTestOwner,
-			ScheduleName:         nodeScheduleName,
-			Criticality:          graphv1.Criticality_CRITICALITY_CORE,
-			UpstreamDependencies: upstreamDeps,
-			NodeType:             nodeType,
-		}
-		_, err := clients.graphClient.CreateNode(ctx, req)
+
+		// Upsert the Table node
+		_, err := session.Run(ctx, `
+			MERGE (t:Table {table_name: $table_name, schema_name: $schema_name})
+			SET t.service_name = $service_name,
+			    t.owner = $owner,
+			    t.schedule_name = $schedule_name,
+			    t.criticality = $criticality,
+			    t.node_type = $node_type,
+			    t.created_at = datetime()
+		`, map[string]interface{}{
+			"table_name":    node.Name,
+			"schema_name":   schemaName,
+			"service_name":  node.ServiceName,
+			"owner":         failureTestOwner,
+			"schedule_name": nodeScheduleName,
+			"criticality":   "CORE",
+			"node_type":     nodeType,
+		})
 		require.NoError(t, err, "Failed to create node: %s", node.Name)
+
+		// Create DEPENDS_ON edges
+		for _, dep := range node.Dependencies {
+			_, err := session.Run(ctx, `
+				MERGE (upstream:Table {table_name: $upstream_name, schema_name: $schema_name})
+				WITH upstream
+				MATCH (downstream:Table {table_name: $downstream_name, schema_name: $schema_name})
+				MERGE (downstream)-[:DEPENDS_ON]->(upstream)
+			`, map[string]interface{}{
+				"upstream_name":   dep,
+				"downstream_name": node.Name,
+				"schema_name":     schemaName,
+			})
+			require.NoError(t, err, "Failed to create DEPENDS_ON edge: %s -> %s", node.Name, dep)
+		}
 	}
 	t.Logf("Seeded %d nodes in Neo4j for schedule %s", len(nodes), scheduleName)
 }
 
 // seedFailureDAG seeds the failure DAG (table_e uses service-3-broken) and
 // inserts the schedule into schedule_catalog so ActivateSchedule can proceed.
-// The failure tests bypass manifest-controller (direct gRPC seeding), so the
+// The failure tests bypass manifest-controller (direct Neo4j seeding), so the
 // catalog must be populated manually.
 func seedFailureDAG(t *testing.T, ctx context.Context, clients *testClients) {
 	seedNodes(t, ctx, clients, getFailureDAG(), failureTestScheduleName, failureTestSchemaName)
