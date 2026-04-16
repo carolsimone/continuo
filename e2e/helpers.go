@@ -187,7 +187,7 @@ func verifyStartupOutboxProcessed(
 		err := clients.startupDB.Get(&processedCount, `
 			SELECT COUNT(*)
 			FROM startup_outbox
-			WHERE aggregate_id = $1 AND status = 'processed'
+			WHERE aggregate_id = $1 AND status = 'processed' AND stream_name = 'query.model:v1'
 		`, schedulerID)
 
 		if err != nil {

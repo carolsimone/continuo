@@ -79,6 +79,12 @@ func (f *fakeRunRepository) ListRuns(ctx context.Context, scheduleName string) (
 func (f *fakeRunRepository) GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
 	return nil, nil, nil
 }
+func (f *fakeRunRepository) GetNodeType(ctx context.Context, schema, tableName string) (string, error) {
+	return "dbt-model", nil
+}
+func (f *fakeRunRepository) GetNodeServiceName(ctx context.Context, schema, tableName string) (string, error) {
+	return "test-service", nil
+}
 
 // ── fakes: StateTaskClient ────────────────────────────────────────────────────
 
@@ -248,8 +254,8 @@ func TestHandleNodeCompleted_SucceededWithDownstream(t *testing.T) {
 	runRepo := &fakeRunRepository{
 		getReadyDownstreamFn: func(_ context.Context, runID, scheduleName, schema, tableName string) ([]*run.DownstreamNode, error) {
 			return []*run.DownstreamNode{
-				{ServiceName: "warehouse", SchemaName: "analytics", TableName: "daily_summary", NodeType: "dbt-model"},
-				{ServiceName: "warehouse", SchemaName: "analytics", TableName: "daily_metrics", NodeType: "dbt-model"},
+				{ServiceName: "warehouse", SchemaName: "analytics", TableName: "daily_summary", NodeType: "dbt-model", ScheduleName: "daily"},
+				{ServiceName: "warehouse", SchemaName: "analytics", TableName: "daily_metrics", NodeType: "dbt-model", ScheduleName: "daily"},
 			}, nil
 		},
 	}

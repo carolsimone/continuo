@@ -116,28 +116,26 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.OutboxE
 	}
 
 	// Build the Redis message values from the raw JSON payload.
-	// For node_ready_for_execution events, unpack individual fields.
-	// For other event types, publish the raw payload as a single "payload" field.
-	var values map[string]interface{}
-
-	switch entry.EventType {
-	case "node_ready_for_execution":
-		var fields map[string]interface{}
-		if err := json.Unmarshal(entry.Payload, &fields); err != nil {
-			return fmt.Errorf("failed to unmarshal payload: %w", err)
-		}
-		values = map[string]interface{}{
-			"outbox_entry_id": entry.ID.String(),
-		}
-		for k, v := range fields {
-			values[k] = v
-		}
-	default:
-		// For initialize.run events (and others), publish the payload as-is
-		values = map[string]interface{}{
-			"outbox_entry_id": entry.ID.String(),
-			"event_type":      entry.EventType,
-			"payload":         string(entry.Payload),
+	// Always unpack the JSON payload into top-level Redis message fields
+	// so consumers can read them directly (e.g. msg.Values["schedule_name"]).
+	var fields map[string]interface{}
+	if err := json.Unmarshal(entry.Payload, &fields); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+	values := map[string]interface{}{
+		"outbox_entry_id": entry.ID.String(),
+	}
+	for k, v := range fields {
+		switch tv := v.(type) {
+		case string, bool, float64:
+			values[k] = tv
+		default:
+			// Complex values (maps, arrays) → serialize to JSON string
+			b, err := json.Marshal(tv)
+			if err != nil {
+				return fmt.Errorf("failed to marshal field %q: %w", k, err)
+			}
+			values[k] = string(b)
 		}
 	}
 

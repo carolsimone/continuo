@@ -15,6 +15,8 @@ type Repository interface {
 	FinalizeRun(ctx context.Context, runID, terminalStatus string) error
 	GetScheduleInitNodes(ctx context.Context, scheduleName, runID string) (*ScheduleInitNodes, error)
 	GetTransitiveDownstream(ctx context.Context, scheduleName, schema, tableName string) ([]*domain.TableNode, error)
+	GetNodeType(ctx context.Context, schema, tableName string) (string, error)
+	GetNodeServiceName(ctx context.Context, schema, tableName string) (string, error)
 
 	// Read-side: queries (CQRS — called directly, not through aggregate)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)

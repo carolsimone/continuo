@@ -28,14 +28,15 @@ type RerunTarget struct {
 
 // NodePayload is the serialized form of a TableNode in the outbox payload.
 type NodePayload struct {
-	TableName    string `json:"table_name"`
-	SchemaName   string `json:"schema_name"`
-	ServiceName  string `json:"service_name"`
-	Owner        string `json:"owner"`
-	ScheduleName string `json:"schedule_name"`
-	Criticality  string `json:"criticality"`
-	NodeType     string `json:"node_type"`
-	Status       string `json:"status"`
+	TableName           string `json:"table_name"`
+	SchemaName          string `json:"schema_name"`
+	ServiceName         string `json:"service_name"`
+	Owner               string `json:"owner"`
+	ScheduleName        string `json:"schedule_name"`
+	Criticality         string `json:"criticality"`
+	NodeType            string `json:"node_type"`
+	Status              string `json:"status"`
+	OriginalServiceName string `json:"original_service_name,omitempty"`
 }
 
 // InitializeRunHandler handles the InitializeRun command.

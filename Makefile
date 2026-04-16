@@ -102,7 +102,10 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@docker wait continuo-flyway-state-1 continuo-flyway-startup-1 continuo-flyway-executor-1 continuo-flyway-orchestrator-1 continuo-flyway-k8s-1 2>/dev/null || true
+	@for svc in flyway-state flyway-startup flyway-executor flyway-orchestrator flyway-k8s; do \
+		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
+		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
+	done
 	@echo "Flyway migrations done."
 	@$(MAKE) e2e-start-services
 	@echo "Building dbt-base image (required for e2e-setup)..."

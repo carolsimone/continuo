@@ -21,8 +21,9 @@ type ScheduleInitNodes struct {
 }
 
 type DownstreamNode struct {
-	ServiceName string
-	SchemaName  string
-	TableName   string
-	NodeType    string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	NodeType     string
+	ScheduleName string
 }

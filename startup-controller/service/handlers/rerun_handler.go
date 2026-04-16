@@ -67,15 +67,14 @@ func (h *RerunHandler) Handle(ctx context.Context, cmd command.RerunNode) error 
 	}
 	defer h.uow.Rollback()
 
-	// Write initialize.run:v1 event with rerun_target fields
+	// Write initialize.run:v1 event with flat rerun_* fields so the
+	// orchestrator consumer can read them directly from message values.
 	payload, err := json.Marshal(map[string]interface{}{
-		"schedule_name": cmd.ScheduleName,
-		"run_id":        cmd.ScheduleID.String(),
-		"rerun_target": map[string]string{
-			"service_name": cmd.ServiceName,
-			"schema_name":  cmd.Schema,
-			"table_name":   cmd.TableName,
-		},
+		"schedule_name":      cmd.ScheduleName,
+		"run_id":             cmd.ScheduleID.String(),
+		"rerun_service_name": cmd.ServiceName,
+		"rerun_schema_name":  cmd.Schema,
+		"rerun_table_name":   cmd.TableName,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal event payload: %w", err)

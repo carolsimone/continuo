@@ -141,7 +141,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd HandleNodeC
 
 			evt := domain.NodeReadyForExecution{
 				ScheduleID:   cmd.ScheduleID.String(),
-				ScheduleName: cmd.ScheduleName,
+				ScheduleName: node.ScheduleName,
 				ServiceName:  node.ServiceName,
 				Schema:       node.SchemaName,
 				TableName:    node.TableName,

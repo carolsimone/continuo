@@ -92,8 +92,19 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd HandleRerunCmd, mes
 		}
 	}
 
+	// Look up the rerun target's node_type and service_name from the graph
+	// (the graph reflects the current state after any fixes).
+	targetNodeType, err := h.runRepo.GetNodeType(ctx, cmd.SchemaName, cmd.TableName)
+	if err != nil {
+		return fmt.Errorf("failed to get node_type for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
+	}
+	targetServiceName, err := h.runRepo.GetNodeServiceName(ctx, cmd.SchemaName, cmd.TableName)
+	if err != nil {
+		return fmt.Errorf("failed to get service_name for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
+	}
+
 	// Build target nodes list for the outbox payload (target + FAILED downstream).
-	targetNodes := buildTargetNodePayloads(cmd, downstream)
+	targetNodes := buildTargetNodePayloads(cmd, targetNodeType, targetServiceName, downstream)
 
 	// Build outbox payload.
 	outboxPayload, err := json.Marshal(map[string]interface{}{
@@ -181,13 +192,19 @@ func (h *HandleRerunHandler) handleRerunDedup(
 }
 
 // buildTargetNodePayloads builds the list of target nodes (rerun target + FAILED downstream).
-func buildTargetNodePayloads(cmd HandleRerunCmd, downstream []*domain.TableNode) []NodePayload {
+func buildTargetNodePayloads(cmd HandleRerunCmd, targetNodeType, targetServiceName string, downstream []*domain.TableNode) []NodePayload {
 	// Start with the rerun target itself.
+	// ServiceName is the current graph value (used for K8s image dispatch).
+	// OriginalServiceName is the value from the rerun command (used for task lookup
+	// in case the service was renamed/fixed between the original run and the rerun).
 	targets := []NodePayload{
 		{
-			TableName:   cmd.TableName,
-			SchemaName:  cmd.SchemaName,
-			ServiceName: cmd.ServiceName,
+			TableName:           cmd.TableName,
+			SchemaName:          cmd.SchemaName,
+			ServiceName:         targetServiceName,
+			ScheduleName:        cmd.ScheduleName,
+			NodeType:            targetNodeType,
+			OriginalServiceName: cmd.ServiceName,
 		},
 	}
 

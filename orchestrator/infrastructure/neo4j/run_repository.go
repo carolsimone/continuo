@@ -68,20 +68,20 @@ func (r *RunRepository) UpdateNodeStatus(ctx context.Context, runID, scheduleNam
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
+	// Scope by Run EXECUTES edges + schema + table_name. No need to filter
+	// by schedule_name since the run_id already identifies the run scope.
 	query := `
 		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table)
 		WHERE t.schema = $schema
 		  AND t.table_name = $table_name
-		  AND (t.schedule_name = $schedule_name OR t.node_type = 'dbt-seed')
 		SET e.status = $status
 	`
 
 	result, err := session.Run(ctx, query, map[string]interface{}{
-		"run_id":        runID,
-		"schedule_name": scheduleName,
-		"schema":        schema,
-		"table_name":    tableName,
-		"status":        status,
+		"run_id":     runID,
+		"schema":     schema,
+		"table_name": tableName,
+		"status":     status,
 	})
 	if err != nil {
 		r.logger.Error("Failed to update node status via EXECUTES",
@@ -111,12 +111,15 @@ func (r *RunRepository) UpdateNodeStatus(ctx context.Context, runID, scheduleNam
 
 // GetReadyDownstream finds downstream nodes where ALL upstream dependencies have SUCCEEDED
 // and the downstream node itself is PENDING or has no status yet.
+// The query scopes by Run EXECUTES edges (not schedule_name) so that cross-schedule
+// dependencies (e.g. seeds with schedule_name="seed" → models with a different schedule)
+// are correctly resolved within the same run.
 func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleName, schema, tableName string) ([]*run.DownstreamNode, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
 	query := `
-		MATCH (:Run {run_id: $run_id})-[snap:EXECUTES]->(downstream:Table {schedule_name: $schedule_name})
+		MATCH (:Run {run_id: $run_id})-[snap:EXECUTES]->(downstream:Table)
 		WHERE (snap.status IS NULL OR snap.status = 'PENDING')
 		  AND EXISTS {
 			MATCH (downstream)-[:DEPENDS_ON]->(completed:Table)
@@ -132,7 +135,8 @@ func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleN
 		RETURN downstream.service_name AS service_name,
 		       downstream.schema AS schema_name,
 		       downstream.table_name AS table_name,
-		       COALESCE(downstream.node_type, "") AS node_type
+		       COALESCE(downstream.node_type, "") AS node_type,
+		       downstream.schedule_name AS schedule_name
 	`
 
 	result, err := session.Run(ctx, query, map[string]interface{}{
@@ -160,6 +164,7 @@ func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleN
 		schemaVal, _ := record.Get("schema_name")
 		tblName, _ := record.Get("table_name")
 		nodeTypeRaw, _ := record.Get("node_type")
+		schedNameRaw, _ := record.Get("schedule_name")
 
 		nodeTypeStr := ""
 		if s, ok := nodeTypeRaw.(string); ok {
@@ -167,10 +172,11 @@ func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleN
 		}
 
 		nodes = append(nodes, &run.DownstreamNode{
-			ServiceName: svcName.(string),
-			SchemaName:  schemaVal.(string),
-			TableName:   tblName.(string),
-			NodeType:    nodeTypeStr,
+			ServiceName:  safeString(svcName),
+			SchemaName:   safeString(schemaVal),
+			TableName:    safeString(tblName),
+			NodeType:     nodeTypeStr,
+			ScheduleName: safeString(schedNameRaw),
 		})
 	}
 
@@ -200,8 +206,10 @@ func (r *RunRepository) CheckScheduleCompletion(ctx context.Context, runID, sche
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
+	// Scope by Run EXECUTES edges (not schedule_name) so seeds and models
+	// within the same run are both considered when deciding drain status.
 	query := `
-		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(n:Table {schedule_name: $schedule_name})
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(n:Table)
 		RETURN
 			count(CASE
 				WHEN e.status = 'RUNNING'
@@ -220,8 +228,7 @@ func (r *RunRepository) CheckScheduleCompletion(ctx context.Context, runID, sche
 	`
 
 	result, err := session.Run(ctx, query, map[string]interface{}{
-		"run_id":        runID,
-		"schedule_name": scheduleName,
+		"run_id": runID,
 	})
 	if err != nil {
 		return false, false, fmt.Errorf("failed to check schedule completion: %w", err)
@@ -454,6 +461,54 @@ func (r *RunRepository) GetTransitiveDownstream(ctx context.Context, scheduleNam
 	return nodes, nil
 }
 
+// GetNodeType returns the node_type property for a Table node.
+func (r *RunRepository) GetNodeType(ctx context.Context, schema, tableName string) (string, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (t:Table {schema: $schema, table_name: $table_name})
+		RETURN COALESCE(t.node_type, '') AS node_type
+		LIMIT 1
+	`, map[string]interface{}{
+		"schema":     schema,
+		"table_name": tableName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("GetNodeType query failed: %w", err)
+	}
+	if result.Next(ctx) {
+		if v, _ := result.Record().Get("node_type"); v != nil {
+			return safeString(v), nil
+		}
+	}
+	return "", fmt.Errorf("node not found: %s.%s", schema, tableName)
+}
+
+// GetNodeServiceName returns the service_name property for a Table node.
+func (r *RunRepository) GetNodeServiceName(ctx context.Context, schema, tableName string) (string, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (t:Table {schema: $schema, table_name: $table_name})
+		RETURN COALESCE(t.service_name, '') AS service_name
+		LIMIT 1
+	`, map[string]interface{}{
+		"schema":     schema,
+		"table_name": tableName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("GetNodeServiceName query failed: %w", err)
+	}
+	if result.Next(ctx) {
+		if v, _ := result.Record().Get("service_name"); v != nil {
+			return safeString(v), nil
+		}
+	}
+	return "", fmt.Errorf("node not found: %s.%s", schema, tableName)
+}
+
 // DeleteExpiredRuns removes Run nodes (and their EXECUTES edges) older than retentionDays.
 func (r *RunRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
@@ -508,12 +563,12 @@ func recordToTableNode(record *neo4j.Record) (*domain.TableNode, error) {
 	nodeType, _ := record.Get("node_type")
 
 	node := &domain.TableNode{
-		TableName:    tableName.(string),
-		SchemaName:   schemaName.(string),
-		ServiceName:  serviceName.(string),
-		Owner:        owner.(string),
-		ScheduleName: scheduleName.(string),
-		Criticality:  domain.Criticality(criticality.(string)),
+		TableName:    safeString(tableName),
+		SchemaName:   safeString(schemaName),
+		ServiceName:  safeString(serviceName),
+		Owner:        safeString(owner),
+		ScheduleName: safeString(scheduleName),
+		Criticality:  domain.Criticality(safeString(criticality)),
 		NodeType:     safeString(nodeType),
 	}
 

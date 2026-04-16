@@ -90,15 +90,12 @@ func TestRerunHandler_EmitsInitializeRunEventWithRerunTarget(t *testing.T) {
 	assert.Equal(t, "initialize.run:v1", entry.StreamName)
 	assert.Equal(t, "rerun_requested", entry.EventType)
 
-	// Verify payload contents include rerun_target
+	// Verify payload contents include flat rerun_* fields
 	var payload map[string]interface{}
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, cmd.ScheduleName, payload["schedule_name"])
 	assert.Equal(t, cmd.ScheduleID.String(), payload["run_id"])
-
-	target, ok := payload["rerun_target"].(map[string]interface{})
-	require.True(t, ok, "rerun_target should be a map")
-	assert.Equal(t, cmd.ServiceName, target["service_name"])
-	assert.Equal(t, cmd.Schema, target["schema_name"])
-	assert.Equal(t, cmd.TableName, target["table_name"])
+	assert.Equal(t, cmd.ServiceName, payload["rerun_service_name"])
+	assert.Equal(t, cmd.Schema, payload["rerun_schema_name"])
+	assert.Equal(t, cmd.TableName, payload["rerun_table_name"])
 }

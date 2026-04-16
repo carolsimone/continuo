@@ -60,8 +60,12 @@ func (h *HandleRerunReadyHandler) Handle(ctx context.Context, cmd command.RerunR
 	defer h.uow.Rollback()
 
 	for _, node := range cmd.TargetNodes {
-		// Reset the task in state
-		task, err := h.stateClient.GetTask(ctx, scheduleID, node.ServiceName, node.SchemaName, node.TableName)
+		// Reset the task in state.
+		// Use LookupServiceName() for the lookup: during reruns the service may
+		// have been renamed/fixed, so OriginalServiceName (the value the task was
+		// created with) is used when present.
+		lookupSvc := node.LookupServiceName()
+		task, err := h.stateClient.GetTask(ctx, scheduleID, lookupSvc, node.SchemaName, node.TableName)
 		if err != nil {
 			return fmt.Errorf("failed to get task for %s.%s: %w", node.SchemaName, node.TableName, err)
 		}

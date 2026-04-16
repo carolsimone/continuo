@@ -14,8 +14,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"os"
+
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // K8sClient provides methods to interact with Kubernetes
@@ -24,12 +27,19 @@ type K8sClient struct {
 	logger    *slog.Logger
 }
 
-// NewK8sClient creates a new K8sClient using in-cluster configuration
+// NewK8sClient creates a new K8sClient using in-cluster or kubeconfig configuration
 func NewK8sClient(logger *slog.Logger) (*K8sClient, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		logger.Error("Failed to get in-cluster K8s config", "error", err)
-		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
+		logger.Info("In-cluster config not available, trying KUBECONFIG", "error", err)
+		kubeconfigPath := os.Getenv("KUBECONFIG")
+		if kubeconfigPath == "" {
+			return nil, fmt.Errorf("no in-cluster config and KUBECONFIG not set")
+		}
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
+		}
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
