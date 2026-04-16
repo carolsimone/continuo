@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
-	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
