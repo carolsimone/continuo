@@ -112,7 +112,9 @@ The `triggerGraphLoad` signature must change to accept `uiBase string`. Tests th
 
 ### 5. Host-side Scripts
 
-#### `scripts/update-graph.sh`
+Both scripts live in `dbt/` alongside the existing compile/upload workflow. The user's workflow becomes: compile manifests (`dbt_upload load`) -> update graph (`update-graph.sh`) -> trigger DAG (`trigger-dag.sh`). All three steps live in the same directory.
+
+#### `dbt/update-graph.sh`
 
 ```bash
 #!/usr/bin/env bash
@@ -128,7 +130,7 @@ resp=$(curl -sf -X POST "$UI_BASE/api/graph/update" \
 echo "Graph update triggered: $resp"
 ```
 
-#### `scripts/trigger-dag.sh`
+#### `dbt/trigger-dag.sh`
 
 ```bash
 #!/usr/bin/env bash
@@ -189,7 +191,7 @@ Both scripts:
 ```
 User (host or browser)
   │
-  ├─ scripts/update-graph.sh  OR  "Update Graph" button in UI
+  ├─ dbt/update-graph.sh  OR  "Update Graph" button in UI
   │    └─ POST /api/graph/update {source: "s3"}
   │         └─ ui-service
   │              └─ XADD update.graph:v1 * source s3
@@ -201,7 +203,7 @@ User (host or browser)
   │                             └─ state service consumes
   │                                  └─ upserts schedule_catalog
   │
-  └─ scripts/trigger-dag.sh <schedule-name>
+  └─ dbt/trigger-dag.sh <schedule-name>
        └─ POST /api/schedules/<name>/trigger
             └─ ui-service
                  └─ gRPC TriggerSchedule → state
@@ -224,8 +226,8 @@ User (host or browser)
 | `e2e/clients.go` | Make `UI_HTTP_BASE` a required field |
 | `e2e/system_test.go` | Pass `uiBase` to `triggerGraphLoad` |
 | `e2e/schedule_catalog_test.go` | Pass `uiBase` to `triggerGraphLoad` |
-| `scripts/update-graph.sh` | New file: host-side graph update script |
-| `scripts/trigger-dag.sh` | New file: host-side DAG trigger script |
+| `dbt/update-graph.sh` | New file: host-side graph update script |
+| `dbt/trigger-dag.sh` | New file: host-side DAG trigger script |
 | `docs/arch/services/ui-service.md` | Document Redis dependency and new endpoint |
 | `docs/arch/02-interaction-matrix.md` | Add ui-service → Redis row |
 | `docs/arch/01-topology.md` | Update ui-service topology |
