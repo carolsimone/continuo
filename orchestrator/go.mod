@@ -8,3 +8,5 @@ replace (
 )
 
 require github.com/google/uuid v1.6.0
+
+require github.com/neo4j/neo4j-go-driver/v5 v5.15.0 // indirect
