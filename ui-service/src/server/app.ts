@@ -8,7 +8,7 @@ import { createExecutionsRouter } from './routes/executions';
 import { createTaskExecutionRouter } from './routes/task-execution';
 import { createGraphRouter } from './routes/graph';
 
-export function createApp(client: GrpcClient, graphClient: GrpcGraphClient, redisClient: Redis) {
+export function createApp(client: GrpcClient, graphClient: GrpcGraphClient, redisClient: Redis | null) {
   const app = express();
   app.use(express.json());
   app.use('/api/schedulers', createSchedulersRouter(client));
