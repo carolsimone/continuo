@@ -18,13 +18,13 @@ Legend:
 | `executor-controller` | `RW` | `-` | `RW` | `W` | `-` | `W` | `-` |
 | `k8s-controller` | `RW` | `-` | `RW` | `RW` | `-` | `R` | `W` |
 | `manifest-controller` | `-` | `-` | `RW` | `-` | `W` | `-` | `R` |
-| `ui-service` | `-` | `-` | `-` | `RW` | `R` | `-` | `-` |
+| `ui-service` | `-` | `-` | `W` | `RW` | `R` | `-` | `-` |
 
 ## Redis Stream Matrix
 
 | Stream | Producer(s) | Consumer(s) | Purpose |
 |---|---|---|---|
-| `update.graph:v1` | not found in repo | `manifest-controller` | Trigger manifest reload from `local` or `s3` source |
+| `update.graph:v1` | `ui-service` | `manifest-controller` | Trigger manifest reload from `local` or `s3` source |
 | `schedules.loaded:v1` | `manifest-controller` | `state` | Reconcile `schedule_catalog` |
 | `scheduler.started:v1` | `state` | `startup-controller` | Start schedule initialization |
 | `command.rerun:v1` | `state` | `startup-controller` | Start rerun/reset flow |

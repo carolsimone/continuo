@@ -10,6 +10,7 @@ It provides:
 - S3 log proxying: fetches pod logs from S3 and streams them to the browser
 - rerun triggering: proxies `POST /api/schedulers/:id/rerun` to the `TriggerRerun` gRPC method on `state`
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`
+- graph update triggering: publishes `update.graph:v1` to Redis via `POST /api/graph/update`
 
 It owns no storage.
 
@@ -31,6 +32,7 @@ None.
 | `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → graph gRPC |
 | `/api/schedules/:name/runs` | GET | `ListRuns` → graph gRPC |
 | `/api/schedules/:name/trigger` | POST | `TriggerSchedule` → state gRPC |
+| `/api/graph/update` | POST | `XADD update.graph:v1` → Redis |
 
 #### Run / scheduler API
 
@@ -81,6 +83,12 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 
 On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" }`.
 
+### Redis (`REDIS_URL`)
+
+| Operation | Route | Description |
+|---|---|---|
+| `XADD update.graph:v1` | `POST /api/graph/update` | Publishes graph reload command with `source` field (`s3` or `local`) |
+
 ## What It Reads
 
 | Data | Source |
@@ -100,6 +108,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 |---|---|
 | Rerun trigger (reset failed task + downstream) | `state.TriggerRerun` via `POST /api/schedulers/:id/rerun` |
 | Schedule trigger (start full DAG run) | `state.TriggerSchedule` via `POST /api/schedules/:name/trigger` |
+| Graph update command | Redis `update.graph:v1` stream via `POST /api/graph/update` |
 
 ## Data Transformations
 
@@ -124,7 +133,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 ## Reliability Notes
 
-- Mostly read-only; write-side effects are `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), which resets a failed task and its downstream in `state`, and `TriggerSchedule` (via `POST /api/schedules/:name/trigger`), which starts a full DAG run.
+- Mostly read-only; write-side effects are `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), which resets a failed task and its downstream in `state`, `TriggerSchedule` (via `POST /api/schedules/:name/trigger`), which starts a full DAG run, and `POST /api/graph/update`, which publishes `update.graph:v1` to Redis.
 - gRPC errors are surfaced as HTTP 500 with the gRPC error message.
 - S3 errors are surfaced as HTTP 502.
 - `log_s3_key` is stored by `k8s-controller` on task execution records; the UI does not resolve or generate S3 keys itself.
