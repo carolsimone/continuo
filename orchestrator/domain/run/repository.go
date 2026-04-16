@@ -1,0 +1,23 @@
+package run
+
+import (
+	"context"
+
+	"github.com/carolsimone/continuo/orchestrator/domain"
+)
+
+type Repository interface {
+	// Write-side: snapshot and mutation
+	SnapshotGraph(ctx context.Context, runID, scheduleName string) error
+	UpdateNodeStatus(ctx context.Context, runID, scheduleName, schema, tableName, status string) error
+	GetReadyDownstream(ctx context.Context, runID, scheduleName, schema, tableName string) ([]*DownstreamNode, error)
+	CheckScheduleCompletion(ctx context.Context, runID, scheduleName string) (isComplete bool, hasFailed bool, err error)
+	FinalizeRun(ctx context.Context, runID, terminalStatus string) error
+	GetScheduleInitNodes(ctx context.Context, scheduleName, runID string) (*ScheduleInitNodes, error)
+	GetTransitiveDownstream(ctx context.Context, scheduleName, schema, tableName string) ([]*domain.TableNode, error)
+
+	// Read-side: queries (CQRS — called directly, not through aggregate)
+	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
+	ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error)
+	GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error)
+}
