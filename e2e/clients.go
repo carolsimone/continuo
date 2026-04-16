@@ -30,6 +30,7 @@ type testClients struct {
 	k8sDB        *sqlx.DB
 	stateDB      *sqlx.DB
 	logger       *slog.Logger
+	uiBase       string
 }
 
 // setupClients initializes all client connections
@@ -44,6 +45,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	redisHost := getEnv("REDIS_HOST", "redis")
 	neo4jHost := getEnv("NEO4J_HOST", "neo4j")
 	pgHost := getEnv("POSTGRES_HOST", "postgres")
+	uiBase := getEnv("UI_HTTP_BASE", "http://ui:8090")
 
 	// Setup Graph gRPC client
 	graphConn, err := grpc.NewClient(
@@ -92,6 +94,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		k8sDB:        k8sDB,
 		stateDB:      stateDB,
 		logger:       logger,
+		uiBase:       uiBase,
 	}
 }
 
