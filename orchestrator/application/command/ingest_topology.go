@@ -1,0 +1,220 @@
+package command
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+
+	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/topology"
+	"github.com/carolsimone/continuo/orchestrator/service/uow"
+	"github.com/google/uuid"
+)
+
+// IngestTopologyCmd carries the data for a topology ingestion command.
+type IngestTopologyCmd struct {
+	Nodes []TopologyNodePayload
+}
+
+// TopologyNodePayload is the inbound representation of a single topology node.
+type TopologyNodePayload struct {
+	ServiceName     string             `json:"service_name"`
+	SchemaName      string             `json:"schema_name"`
+	TableName       string             `json:"table_name"`
+	Owner           string             `json:"owner"`
+	ScheduleName    string             `json:"schedule_name"`
+	Criticality     string             `json:"criticality"`
+	NodeType        string             `json:"node_type"`
+	ManifestVersion string             `json:"manifest_version"`
+	Dependencies    []DependencyPayload `json:"dependencies"`
+}
+
+// DependencyPayload is the inbound representation of an upstream dependency.
+type DependencyPayload struct {
+	ServiceName string `json:"service_name"`
+	SchemaName  string `json:"schema_name"`
+	TableName   string `json:"table_name"`
+}
+
+// IngestTopologyHandler handles the IngestTopology command.
+type IngestTopologyHandler struct {
+	uow          uow.UnitOfWork
+	topologyRepo topology.Repository
+	logger       *slog.Logger
+}
+
+// NewIngestTopologyHandler creates a new IngestTopologyHandler.
+func NewIngestTopologyHandler(
+	u uow.UnitOfWork,
+	topologyRepo topology.Repository,
+	logger *slog.Logger,
+) *IngestTopologyHandler {
+	return &IngestTopologyHandler{
+		uow:          u,
+		topologyRepo: topologyRepo,
+		logger:       logger,
+	}
+}
+
+// Handle processes the IngestTopology command.
+func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd IngestTopologyCmd, messageID string) error {
+	h.logger.Info("Processing topology ingestion",
+		"message_id", messageID,
+		"node_count", len(cmd.Nodes),
+	)
+
+	// Marshal command payload for message_processing record.
+	payload, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to marshal command: %w", err)
+	}
+
+	// Begin transaction.
+	if err := h.uow.Begin(ctx); err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer h.uow.Rollback() //nolint:errcheck
+
+	// Check for duplicate message.
+	msgProcessingID, shouldSkip, err := h.handleTopologyDedup(ctx, messageID, payload)
+	if err != nil {
+		return fmt.Errorf("message deduplication failed: %w", err)
+	}
+	if shouldSkip {
+		return nil
+	}
+
+	// Upsert each node outside the transaction (idempotent MERGE).
+	// Collect unique schedule names and manifest versions while iterating.
+	scheduleNamesSet := make(map[string]struct{})
+	manifestVersions := make(map[string]string)
+
+	for _, n := range cmd.Nodes {
+		node := toTopologyNode(n)
+		if err := h.topologyRepo.UpsertNode(ctx, node); err != nil {
+			return fmt.Errorf("failed to upsert node %s.%s: %w", n.SchemaName, n.TableName, err)
+		}
+
+		if n.ScheduleName != "" {
+			scheduleNamesSet[n.ScheduleName] = struct{}{}
+		}
+		if n.ServiceName != "" && n.ManifestVersion != "" {
+			manifestVersions[n.ServiceName] = n.ManifestVersion
+		}
+	}
+
+	// Build unique sorted schedule names slice.
+	scheduleNames := make([]string, 0, len(scheduleNamesSet))
+	for name := range scheduleNamesSet {
+		scheduleNames = append(scheduleNames, name)
+	}
+
+	// Build outbox payload.
+	outboxPayload, err := json.Marshal(map[string]interface{}{
+		"schedule_names":    scheduleNames,
+		"manifest_versions": manifestVersions,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal outbox payload: %w", err)
+	}
+
+	outboxEntry := &domain.OutboxEntry{
+		ID:                  uuid.New(),
+		MessageProcessingID: &msgProcessingID,
+		AggregateType:       "orchestrator",
+		AggregateID:         uuid.New(),
+		EventType:           "topology_ingested",
+		Payload:             outboxPayload,
+		StreamName:          "schedules.loaded:v1",
+		Status:              "pending",
+		MaxRetries:          3,
+	}
+
+	if err := h.uow.OutboxRepo().Create(ctx, outboxEntry); err != nil {
+		return fmt.Errorf("failed to write to outbox: %w", err)
+	}
+
+	// Mark message processing as completed.
+	if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
+		return fmt.Errorf("failed to update message state: %w", err)
+	}
+
+	// Commit the Postgres transaction.
+	if err := h.uow.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	h.logger.Info("Topology ingestion processing finished",
+		"node_count", len(cmd.Nodes),
+		"schedule_count", len(scheduleNames),
+	)
+
+	return nil
+}
+
+// handleTopologyDedup checks if message was already processed.
+// Returns (messageProcessingID, shouldSkip, error).
+func (h *IngestTopologyHandler) handleTopologyDedup(
+	ctx context.Context,
+	messageID string,
+	messagePayload []byte,
+) (uuid.UUID, bool, error) {
+	msgProc := &domain.MessageProcessing{
+		MessageID:  messageID,
+		StreamName: "manifest.loaded:v1",
+		State:      "processing",
+		Payload:    messagePayload,
+	}
+
+	id, inserted, err := h.uow.MessageProcessingRepo().InsertIfNotExists(ctx, msgProc)
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("failed to insert message processing: %w", err)
+	}
+
+	if !inserted {
+		existing, err := h.uow.MessageProcessingRepo().GetByMessageID(ctx, messageID)
+		if err != nil {
+			return uuid.Nil, false, fmt.Errorf("failed to get existing message: %w", err)
+		}
+
+		if existing.State == "completed" || existing.State == "acked" {
+			h.logger.Info("Message already processed, skipping",
+				"message_id", messageID,
+				"state", existing.State,
+			)
+			return existing.ID, true, nil
+		}
+
+		h.logger.Warn("Message being processed by another instance",
+			"message_id", messageID,
+		)
+		return existing.ID, true, nil
+	}
+
+	return id, false, nil
+}
+
+// toTopologyNode converts a TopologyNodePayload to a topology.TopologyNode.
+func toTopologyNode(p TopologyNodePayload) *topology.TopologyNode {
+	deps := make([]topology.UpstreamDependency, 0, len(p.Dependencies))
+	for _, d := range p.Dependencies {
+		deps = append(deps, topology.UpstreamDependency{
+			ServiceName: d.ServiceName,
+			SchemaName:  d.SchemaName,
+			TableName:   d.TableName,
+		})
+	}
+
+	return &topology.TopologyNode{
+		ServiceName:     p.ServiceName,
+		SchemaName:      p.SchemaName,
+		TableName:       p.TableName,
+		Owner:           p.Owner,
+		ScheduleName:    p.ScheduleName,
+		Criticality:     p.Criticality,
+		NodeType:        p.NodeType,
+		ManifestVersion: p.ManifestVersion,
+		Dependencies:    deps,
+	}
+}
