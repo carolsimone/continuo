@@ -32,7 +32,6 @@ body {
 .live-badge {
   font-size: 12px;
   color: #22c55e;
-  margin-left: auto;
 }
 
 .error-banner {
@@ -627,3 +626,28 @@ body {
   margin-top: 4px;
   padding: 0 16px 8px;
 }
+
+/* Header actions container */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+/* Update Graph button */
+.update-graph-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.update-graph-btn:hover:not(:disabled) { background: #f3f4f6; border-color: #9ca3af; }
+.update-graph-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.update-graph-btn.loading { opacity: 0.6; }
+.update-graph-btn.success { color: #16a34a; border-color: #86efac; }
