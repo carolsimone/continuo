@@ -476,6 +476,7 @@ services:
       REDIS_URL: redis://:continuo@redis:6379
       REDIS_STREAM: "update.graph:v1"
       REDIS_GROUP: manifest-controller
+      REDIS_OUTPUT_STREAM: "manifest.loaded:v1"
       REGISTRY_PATH: /data/registry.csv
       MANIFESTS_BASE: /manifests
       S3_ENDPOINT_URL: http://localstack:4566

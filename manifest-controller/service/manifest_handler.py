@@ -1,6 +1,6 @@
 import logging
 from adapters.filesystem.registry_repository import RegistryRepository
-from adapters.grpc.graph_client import GraphClient
+from adapters.redis.publisher import ManifestLoadedPublisher
 from adapters.sources import ManifestSource
 from domain.model import NodeRegistry, NodeRegistryEntry
 from service.parser import parse_manifest
@@ -13,11 +13,11 @@ class ManifestHandler:
     def __init__(
         self,
         source: ManifestSource,
-        graph_client: GraphClient,
+        manifest_publisher: ManifestLoadedPublisher,
         registry_repo: RegistryRepository,
     ) -> None:
         self._source = source
-        self._graph_client = graph_client
+        self._manifest_publisher = manifest_publisher
         self._registry_repo = registry_repo
 
     def handle(self) -> tuple[list[str], dict[str, str]]:
@@ -49,26 +49,36 @@ class ManifestHandler:
 
         lookup = registry.to_lookup()
 
-        # Pass 3: resolve deps and load each node; collect manifest_versions
+        # Pass 3: resolve deps and collect node dicts for publishing
         manifest_versions: dict[str, str] = {}
-        loaded = 0
-        failed = 0
+        node_dicts: list[dict] = []
         for node in all_nodes:
-            try:
-                node.upstream_deps = resolve_upstream_deps(node, lookup)
-                self._graph_client.create_node(node)
-                manifest_versions[node.service_name] = node.manifest_version
-                loaded += 1
-            except Exception as e:
-                logger.error(
-                    "Failed to load node",
-                    extra={"table": node.table_name, "error": str(e)},
-                )
-                failed += 1
+            node.upstream_deps = resolve_upstream_deps(node, lookup)
+            manifest_versions[node.service_name] = node.manifest_version
+            node_dicts.append({
+                "service_name": node.service_name,
+                "schema_name": node.schema_name,
+                "table_name": node.table_name,
+                "owner": node.owner,
+                "schedule_name": node.schedule_name,
+                "criticality": node.criticality,
+                "node_type": node.node_type,
+                "manifest_version": node.manifest_version,
+                "dependencies": [
+                    {
+                        "service_name": dep.service_name,
+                        "schema_name": dep.schema_name,
+                        "table_name": dep.table_name,
+                    }
+                    for dep in node.upstream_deps
+                ],
+            })
 
+        # Publish all nodes as a single manifest.loaded:v1 event
+        self._manifest_publisher.publish(node_dicts)
         logger.info(
             "Manifest load complete",
-            extra={"loaded": loaded, "failed": failed},
+            extra={"published": len(node_dicts)},
         )
 
         schedule_names = list({n.schedule_name for n in all_nodes if n.schedule_name})
