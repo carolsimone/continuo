@@ -1,17 +1,15 @@
 import logging
 import os
-import uuid
 import redis
 from config.config import (
     REDIS_URL, REDIS_STREAM, REDIS_GROUP,
-    GRAPH_GRPC_ADDR, REGISTRY_PATH, MANIFESTS_BASE,
+    REGISTRY_PATH, MANIFESTS_BASE,
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
-    SCHEDULES_LOADED_STREAM,
+    MANIFEST_LOADED_STREAM,
     validate,
 )
-from adapters.redis.publisher import SchedulesLoadedPublisher
+from adapters.redis.publisher import ManifestLoadedPublisher
 from adapters.filesystem.registry_repository import FilesystemRegistryRepository
-from adapters.grpc.graph_client import GraphClient
 from adapters.redis.consumer import Consumer
 from adapters.sources.local import LocalFilesystemSource
 from adapters.sources.s3 import S3Source
@@ -30,7 +28,6 @@ def main() -> None:
 
     import boto3  # imported inside main() to avoid module-level side effects in tests
 
-    graph_client = GraphClient(GRAPH_GRPC_ADDR)
     registry_repo = FilesystemRegistryRepository(REGISTRY_PATH)
 
     s3_client = boto3.client(
@@ -48,25 +45,16 @@ def main() -> None:
 
     redis_client = redis.from_url(REDIS_URL, decode_responses=False)
 
-    publisher = SchedulesLoadedPublisher(redis_client, SCHEDULES_LOADED_STREAM)
+    manifest_publisher = ManifestLoadedPublisher(redis_client, MANIFEST_LOADED_STREAM)
 
     def handle_event(source_name: str) -> None:
         source = sources[source_name]()
         try:
-            # Step 1: load manifests to Neo4j graph; returns distinct schedule names
-            schedule_names, manifest_versions = ManifestHandler(
+            ManifestHandler(
                 source=source,
-                graph_client=graph_client,
+                manifest_publisher=manifest_publisher,
                 registry_repo=registry_repo,
             ).handle()
-
-            # Step 2: publish schedules.loaded:v1
-            # Both steps must succeed before the consumer ACKs the trigger message.
-            publisher.publish(
-                event_id=str(uuid.uuid4()),
-                schedule_names=schedule_names,
-                manifest_versions=manifest_versions,
-            )
         finally:
             source.cleanup()
 

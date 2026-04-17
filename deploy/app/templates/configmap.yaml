@@ -13,9 +13,8 @@ data:
   REDIS_ADDR: {{ printf "%s:%v" .Values.global.redis.host .Values.global.redis.port | quote }}
   NEO4J_URI: {{ required "global.neo4j.uri is required" .Values.global.neo4j.uri | quote }}
   STATE_GRPC_ADDR: {{ required "global.stateGrpcAddr is required" .Values.global.stateGrpcAddr | quote }}
-  GRAPH_GRPC_ADDR: {{ required "global.graphGrpcAddr is required" .Values.global.graphGrpcAddr | quote }}
+  ORCHESTRATOR_GRPC_ADDR: {{ required "global.orchestratorGrpcAddr is required" .Values.global.orchestratorGrpcAddr | quote }}
   STATE_SERVICE_GRPC_ADDR: {{ .Values.global.stateGrpcAddr | quote }}
-  GRAPH_SERVICE_GRPC_ADDR: {{ .Values.global.graphGrpcAddr | quote }}
   S3_ENDPOINT_URL: {{ required "global.s3.endpointUrl is required" .Values.global.s3.endpointUrl | quote }}
   S3_BUCKET: {{ required "global.s3.bucket is required" .Values.global.s3.bucket | quote }}
   S3_ENV: {{ required "global.s3.env is required" .Values.global.s3.env | quote }}

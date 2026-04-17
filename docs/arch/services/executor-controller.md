@@ -10,7 +10,7 @@ It is responsible for:
 - durably recording deployment intent in its own outbox
 - creating K8s Jobs via the Kubernetes API
 - marking tasks `RUNNING` in `state`
-- publishing `executor.deployed:v1` so `k8s-controller` can begin monitoring
+- publishing `node.deployed:v1` so `k8s-controller` can begin monitoring
 
 ## Owned Storage (Postgres: `continuo_executor`)
 
@@ -26,12 +26,12 @@ It is responsible for:
 | Stream | Description |
 |---|---|
 | `query.model:v1` | Primary dispatch: new node ready for execution |
-| `task.retry:v1` | Retry dispatch: re-attempt a previously-failed node |
+| `retry.task:v1` | Retry dispatch: re-attempt a previously-failed node |
 
 Both streams carry the same fields:
 - `outbox_entry_id` (used for dedup in `processed_events`)
 - `task_id`, `schedule_id`, `schedule_name`
-- `service_name`, `schema`, `table_name`, `job_name`
+- `service_name`, `schema_name`, `table_name`, `job_name`
 - `node_type`
 
 ### HTTP (port 8084)
@@ -44,27 +44,31 @@ Both streams carry the same fields:
 
 | Stream | Description |
 |---|---|
-| `executor.deployed:v1` | Published after K8s job creation succeeds; triggers `k8s-controller` monitoring |
+| `node.deployed:v1` | Published after K8s job creation succeeds; triggers `k8s-controller` monitoring |
 
-`executor.deployed:v1` payload fields:
+`node.deployed:v1` payload fields:
 - `outbox_entry_id`
 - `task_id`, `schedule_id`, `schedule_name`
-- `service_name`, `schema`, `table_name`, `job_name`
+- `service_name`, `schema_name`, `table_name`, `job_name`
 - `node_type`
 
 ### gRPC to `state`
 
 | Method | When |
 |---|---|
-| `UpdateTask` (status → RUNNING) | After K8s job is created successfully, before publishing `executor.deployed:v1` |
+| `UpdateTask` (status → RUNNING) | After K8s job is created successfully, before publishing `node.deployed:v1` |
 
 ### Kubernetes API
 
-- `CreateQueryJob` — creates a K8s batch Job in the configured namespace; treated as idempotent (already-exists is not an error on retry)
+- `CreateQueryJob` — creates a K8s batch Job in the configured namespace with label `app=dbt-job`; container name is `dbt-job`; treated as idempotent (already-exists is not an error on retry)
+
+### K8s client configuration
+
+`NewK8sClient` uses `KUBECONFIG` when set (local / docker-compose). If `KUBECONFIG` is not set it falls back to `rest.InClusterConfig()` for pod deployments with a ServiceAccount.
 
 ## Processing Logic
 
-### On `query.model:v1` or `task.retry:v1`
+### On `query.model:v1` or `retry.task:v1`
 
 ```
 1. If outbox_entry_id present: check processed_events
@@ -81,7 +85,7 @@ For each pending deployment_outbox entry:
   2. CreateQueryJob (K8s) — idempotent; failure → retry up to MaxRetries
   3. UpdateTask → RUNNING (state gRPC)
      → if fails after K8s job exists: retry (K8s create is idempotent)
-  4. Publish executor.deployed:v1 (Redis)
+  4. Publish node.deployed:v1 (Redis)
   5. MarkProcessed
 
 On failure:
@@ -93,7 +97,7 @@ On failure:
 
 | Loop | Description |
 |---|---|
-| Redis consumer (dual-stream) | Reads `query.model:v1` and `task.retry:v1`; crash-recovery for pending messages on startup |
+| Redis consumer (dual-stream) | Reads `query.model:v1` and `retry.task:v1`; crash-recovery for pending messages on startup |
 | Outbox processor | Polls `deployment_outbox` every 5 seconds; processes up to 100 entries per batch |
 
 ## Reliability Patterns

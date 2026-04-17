@@ -36,7 +36,7 @@ No other service owns or writes to these tables.
 | `UpdateScheduler` | Update status, timestamps, heartbeat |
 | `CancelScheduler` | Cancel a run by UUID |
 | `UpdateSchedulerInitStatus` | Set `initialization_status`; auto-transitions to RUNNING when set to `completed` |
-| `GetSchedulerInitStatus` | Read `initialization_status` for a run (used by `dependency-controller` to guard premature finalization) |
+| `GetSchedulerInitStatus` | Read `initialization_status` for a run (used by `orchestrator` to guard premature finalization) |
 | `ResetInProgressInitializations` | On startup, reset stale `in_progress` init statuses to `pending` |
 
 #### Schedule activation and control (by `schedule_name` string)
@@ -56,7 +56,7 @@ No other service owns or writes to these tables.
 |---|---|
 | `CreateTask` | Create a task row |
 | `GetTask` | Fetch by UUID |
-| `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema, table_name)` |
+| `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema_name, table_name)` |
 | `UpdateTask` | Update status, retry count |
 | `DeleteTask` | Delete a task row |
 | `ListTasks` | Paginated list with filters |
@@ -85,7 +85,7 @@ The rerun trigger was migrated from HTTP to gRPC (`TriggerRerun`). Port 8082 now
 3. No tasks currently RUNNING in that run
 4. Target task must be in FAILED state
 
-On success: scheduler is reset to RUNNING, `initialization_status` reset to `pending`, target task reset to PENDING, `command.rerun:v1` outbox entry written — all in one transaction.
+On success: scheduler is reset to RUNNING, `initialization_status` reset to `pending`, target task reset to PENDING, `rerun:v1` outbox entry written — all in one transaction.
 
 ### Redis consumers
 
@@ -110,7 +110,7 @@ Payload fields:
 
 Effect: `startup-controller` begins task graph initialization.
 
-#### `command.rerun:v1`
+#### `rerun:v1`
 
 Emitted on: `TriggerRerun` gRPC call
 
@@ -118,7 +118,7 @@ Payload fields:
 - `schedule_id`
 - `schedule_name`
 - `scope` — always `"node"`
-- `schema`
+- `schema_name`
 - `table_name`
 - `service_name`
 
@@ -198,7 +198,7 @@ Effects (all or nothing — transient errors are retried, not ACK'd):
 | Service | Methods used |
 |---|---|
 | `startup-controller` | `UpdateSchedulerInitStatus`, `CreateTask`, `UpdateTask`, `GetTask`, `ListTasks`, `GetSchedulerInitStatus`, `ResetTask` |
-| `dependency-controller` | `GetTask`, `UpdateTask`, `GetSchedulerInitStatus`, `ListTasks` |
+| `orchestrator` | `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler` |
 | `executor-controller` | `GetTask`, `UpdateTask`, `CreateTaskExecution`, `GetTaskExecution` |
 | `k8s-controller` | `GetTask`, `UpdateTask`, `ListTaskExecutions` |
 | `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun` |

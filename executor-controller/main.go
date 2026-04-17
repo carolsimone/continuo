@@ -141,11 +141,11 @@ func main() {
 	// INITIALIZE REDIS CONSUMER & PRODUCER
 	// ========================================================================
 
-	// Create dual-stream consumer for query.model:v1 and task.retry:v1 streams
+	// Create dual-stream consumer for query.model:v1 and retry.task:v1 streams
 	consumer, err := redis.NewConsumer(
 		redisClient,
 		cfg.RedisConsumerStream,      // query.model:v1
-		cfg.RedisConsumerRetryStream, // task.retry:v1
+		cfg.RedisConsumerRetryStream, // retry.task:v1
 		cfg.RedisConsumerGroup,
 		messageBus,
 		pgDB,
@@ -161,7 +161,7 @@ func main() {
 		"consumer_group", cfg.RedisConsumerGroup,
 	)
 
-	// Create producer for executor.deployed:v1 stream
+	// Create producer for node.deployed:v1 stream
 	producer := redis.NewProducer(
 		redisClient,
 		cfg.RedisProducerStream,

@@ -8,18 +8,20 @@ sequenceDiagram
   participant ST as state
   participant R as Redis
   participant SC as startup-controller
-  participant GR as graph
+  participant OR as orchestrator
   participant EC as executor-controller
   participant KC as k8s-controller
-  participant DC as dependency-controller
 
   Cron->>ST: activate schedule
   ST->>ST: create scheduler_tracker + state_outbox
   ST->>R: publish scheduler.started:v1
   R->>SC: consume scheduler.started:v1
   SC->>ST: UpdateSchedulerInitStatus(in_progress)
-  SC->>GR: SnapshotGraph(run_id, schedule_name)
-  SC->>GR: GetScheduleInitNodes(schedule_name, run_id)
+  SC->>R: publish initialize.run:v1 (schedule_name, run_id)
+  R->>OR: consume initialize.run:v1
+  OR->>OR: SnapshotGraph (Run node + EXECUTES edges)
+  OR->>R: publish run.initialized:v1 (root/seed nodes, all nodes)
+  R->>SC: consume run.initialized:v1
   SC->>ST: pre-register tasks for all nodes
   SC->>SC: write startup_outbox for roots/seeds
   SC->>ST: UpdateSchedulerInitStatus(completed)
@@ -27,8 +29,8 @@ sequenceDiagram
   R->>EC: consume query.model:v1
   EC->>EC: write deployment_outbox
   EC->>KC: create K8s job and mark task RUNNING
-  EC->>R: publish executor.deployed:v1
-  R->>KC: consume executor.deployed:v1
+  EC->>R: publish node.deployed:v1
+  R->>KC: consume node.deployed:v1
   KC->>KC: start runtime monitoring loop
 ```
 
@@ -39,29 +41,28 @@ sequenceDiagram
   participant R as Redis
   participant KC as k8s-controller
   participant ST as state
-  participant DC as dependency-controller
-  participant GR as graph
+  participant OR as orchestrator
   participant EC as executor-controller
 
-  R->>KC: executor.deployed:v1
+  R->>KC: node.deployed:v1
   KC->>KC: GetJobStatus
   KC->>ST: GetTask(task_id)
   KC->>KC: write k8s_status_outbox(task_succeeded + node_status_updated)
   KC->>ST: UpdateTask(status=succeeded)
   KC->>ST: CreateTaskExecution(...)
-  KC->>R: publish update.table:v1
+  KC->>R: publish node.updated:v1
 
-  R->>DC: consume update.table:v1
-  DC->>GR: UpdateNodeStatus(SUCCEEDED)
-  DC->>GR: GetReadyDownstream(...)
-  DC->>ST: ensure downstream tasks exist
-  DC->>DC: write outbox
-  DC->>R: publish query.model:v1
+  R->>OR: consume node.updated:v1
+  OR->>OR: UpdateNodeStatus(SUCCEEDED) in Neo4j
+  OR->>OR: GetReadyDownstream(...)
+  OR->>ST: ensure downstream tasks exist (GetTaskByScheduleAndNode)
+  OR->>OR: write outbox
+  OR->>R: publish query.model:v1
 
   R->>EC: consume query.model:v1
   EC->>EC: write deployment_outbox
   EC->>ST: UpdateTask(status=RUNNING)
-  EC->>R: publish executor.deployed:v1
+  EC->>R: publish node.deployed:v1
 ```
 
 ## 3. Retry and Terminal Failure Path
@@ -73,10 +74,9 @@ sequenceDiagram
   participant ST as state
   participant S3 as S3
   participant EC as executor-controller
-  participant DC as dependency-controller
-  participant GR as graph
+  participant OR as orchestrator
 
-  R->>KC: executor.deployed:v1 or k8s.check:v1
+  R->>KC: node.deployed:v1 or check.k8s:v1
   KC->>KC: GetJobStatus -> FAILED
   KC->>ST: GetTask(task_id)
   alt retries remain
@@ -84,22 +84,22 @@ sequenceDiagram
     KC->>ST: UpdateTask(status=failed, retry_count+1)
     KC->>ST: CreateTaskExecution(...)
     KC->>S3: upload pod logs
-    KC->>R: publish task.retry:v1
-    R->>EC: consume task.retry:v1
+    KC->>R: publish retry.task:v1
+    R->>EC: consume retry.task:v1
     EC->>ST: UpdateTask(status=RUNNING)
-    EC->>R: publish executor.deployed:v1
+    EC->>R: publish node.deployed:v1
   else retries exhausted
     KC->>KC: write k8s_status_outbox(task_failed + node_status_updated)
     KC->>ST: UpdateTask(status=failed)
     KC->>ST: CreateTaskExecution(...)
     KC->>S3: upload pod logs
     KC->>R: publish task.failed:v1
-    KC->>R: publish update.table:v1
-    R->>DC: consume update.table:v1
-    DC->>GR: UpdateNodeStatus(FAILED)
-    DC->>GR: CheckScheduleCompletion(...)
-    DC->>ST: UpdateScheduler(FAILED) when drained
-    DC->>GR: FinalizeRun(FAILED)
+    KC->>R: publish node.updated:v1
+    R->>OR: consume node.updated:v1
+    OR->>OR: UpdateNodeStatus(FAILED) in Neo4j
+    OR->>OR: CheckScheduleCompletion(...)
+    OR->>ST: UpdateScheduler(FAILED) when drained
+    OR->>OR: FinalizeRun(FAILED) in Neo4j
   end
 ```
 
@@ -112,7 +112,7 @@ sequenceDiagram
   participant ST as state (gRPC)
   participant R as Redis
   participant SC as startup-controller
-  participant GR as graph
+  participant OR as orchestrator
   participant EC as executor-controller
 
   U->>UI: POST /api/schedulers/{id}/rerun
@@ -120,14 +120,19 @@ sequenceDiagram
   ST->>ST: reset scheduler + target task + write state_outbox (atomic tx)
   ST-->>UI: TriggerRerunResponse{}
   UI-->>U: 200 OK
-  ST->>R: publish command.rerun:v1 (via OutboxProcessor)
-  R->>SC: consume command.rerun:v1
+  ST->>R: publish scheduler.started:v1 (via OutboxProcessor)
+  R->>SC: consume scheduler.started:v1
   SC->>ST: UpdateSchedulerInitStatus(in_progress)
-  SC->>GR: GetTransitiveDownstream(target)
-  SC->>GR: UpdateNodeStatus(target/downstream FAILED nodes -> PENDING)
-  SC->>ST: ResetTask(target/downstream FAILED tasks)
-  SC->>GR: GetScheduleInitNodes(... ) for node_type/service lookup
-  SC->>SC: write startup_outbox for target only
+  SC->>R: publish initialize.run:v1 (with rerun target fields)
+  R->>OR: consume initialize.run:v1
+  OR->>OR: GetTransitiveDownstream(target)
+  OR->>OR: UpdateNodeStatus(target/downstream FAILED nodes -> PENDING)
+  OR->>OR: GetNodeType(schema_name, table_name) from Neo4j
+  OR->>OR: GetNodeServiceName(schema_name, table_name) from Neo4j
+  OR->>R: publish rerun.ready:v1 (target_nodes: service_name=current graph value)
+  R->>SC: consume rerun.ready:v1
+  SC->>ST: ResetTask(target/downstream FAILED tasks, lookup by service_name, schema_name, table_name)
+  SC->>SC: write startup_outbox for target only (dispatch uses service_name)
   SC->>R: publish query.model:v1
   SC->>ST: UpdateSchedulerInitStatus(completed)
   R->>EC: consume query.model:v1

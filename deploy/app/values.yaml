@@ -22,7 +22,7 @@ global:
     password: ""
 
   stateGrpcAddr: state:50051
-  graphGrpcAddr: graph:50052
+  orchestratorGrpcAddr: orchestrator:50052
 
   s3:
     endpointUrl: https://nbg1.your-objectstorage.com
@@ -64,19 +64,32 @@ services:
         configMap:
           name: ""
 
-  - name: graph
+  - name: orchestrator
     enabled: true
     replicas: 1
-    httpPort: 8081
+    httpPort: 8087
     grpcPort: 50052
     secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
       - name: NEO4J_USER
         secretKey: NEO4J_USER
       - name: NEO4J_PASSWORD
         secretKey: NEO4J_PASSWORD
+      - name: REDIS_PASSWORD
+        secretKey: REDIS_PASSWORD
     env:
+      NODE_UPDATED_STREAM: node.updated:v1
+      NODE_UPDATED_GROUP: orchestrator_node_updated
+      MANIFEST_LOADED_STREAM: manifest.loaded:v1
+      MANIFEST_LOADED_GROUP: orchestrator_manifest_loaded
+      INITIALIZE_RUN_STREAM: initialize.run:v1
+      INITIALIZE_RUN_GROUP: orchestrator_initialize_run
+      POSTGRES_DB: continuo_orchestrator
       GRPC_PORT: "50052"
-      HEALTH_PORT: "8081"
+      HTTP_PORT: "8087"
 
   - name: startup-controller
     enabled: true
@@ -122,9 +135,9 @@ services:
           verbs: ["get", "list", "watch"]
     env:
       REDIS_CONSUMER_STREAM: query.model:v1
-      REDIS_CONSUMER_RETRY_STREAM: task.retry:v1
+      REDIS_CONSUMER_RETRY_STREAM: retry.task:v1
       REDIS_CONSUMER_GROUP: executor_controller_consumers
-      REDIS_PRODUCER_STREAM: executor.deployed:v1
+      REDIS_PRODUCER_STREAM: node.deployed:v1
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       DBT_POSTGRES_DB: continuo_dbt
@@ -155,37 +168,19 @@ services:
           resources: ["pods", "pods/log"]
           verbs: ["get", "list", "watch"]
     env:
-      REDIS_CONSUMER_DEPLOYED_STREAM: executor.deployed:v1
-      REDIS_CONSUMER_CHECK_STREAM: k8s.check:v1
+      REDIS_CONSUMER_DEPLOYED_STREAM: node.deployed:v1
+      REDIS_CONSUMER_CHECK_STREAM: check.k8s:v1
       REDIS_CONSUMER_GROUP: k8s_controller_consumers
-      REDIS_PRODUCER_CHECK_STREAM: k8s.check:v1
-      REDIS_PRODUCER_RETRY_STREAM: task.retry:v1
+      REDIS_PRODUCER_CHECK_STREAM: check.k8s:v1
+      REDIS_PRODUCER_RETRY_STREAM: retry.task:v1
       REDIS_PRODUCER_FAILED_STREAM: task.failed:v1
-      REDIS_PRODUCER_UPDATE_TABLE_STREAM: update.table:v1
+      REDIS_PRODUCER_UPDATE_TABLE_STREAM: node.updated:v1
       POSTGRES_DB: continuo_k8s
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       LOG_TAIL_LINES: "50"
       K8S_CHECK_DELAY_SECONDS: "30"
       ERROR_MESSAGE_MAX_LENGTH: "4096"
       HTTP_PORT: "8085"
-
-  - name: dependency-controller
-    enabled: true
-    replicas: 1
-    httpPort: 8086
-    secretEnv:
-      - name: POSTGRES_USER
-        secretKey: POSTGRES_USER
-      - name: POSTGRES_PASSWORD
-        secretKey: POSTGRES_PASSWORD
-      - name: REDIS_PASSWORD
-        secretKey: REDIS_PASSWORD
-    env:
-      REDIS_CONSUMER_STREAM: update.table:v1
-      REDIS_CONSUMER_GROUP: dependency_controller_consumers
-      REDIS_PRODUCER_STREAM: query.model:v1
-      POSTGRES_DB: continuo_dependency
-      HTTP_PORT: "8086"
 
   - name: ui-service
     enabled: true
@@ -221,7 +216,7 @@ services:
       REDIS_URL: __REDIS_URL_FROM_AUTH__
       REDIS_STREAM: "update.graph:v1"
       REDIS_GROUP: "manifest-controller"
-      GRAPH_GRPC_ADDR: graph:50052
+      REDIS_OUTPUT_STREAM: "manifest.loaded:v1"
       REGISTRY_PATH: /data/registry.csv
       MANIFESTS_BASE: /manifests
     volumeMounts:

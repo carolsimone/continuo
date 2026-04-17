@@ -153,7 +153,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, cmd command.Ch
 		ScheduleID:   cmd.ScheduleID,
 		ScheduleName: cmd.ScheduleName,
 		ServiceName:  cmd.ServiceName,
-		Schema:       cmd.Schema,
+		SchemaName:   cmd.SchemaName,
 		TableName:    cmd.TableName,
 		JobName:      cmd.JobName,
 
@@ -170,15 +170,15 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, cmd command.Ch
 		return fmt.Errorf("failed to create outbox entry: %w", err)
 	}
 
-	// Second outbox entry: notify dependency-controller of node status change
+	// Second outbox entry: notify orchestrator of node status change
 	notifyEntry := &model.K8sStatusOutboxEntry{
 		EventType:        "node_status_updated",
-		StreamName:       "update.table:v1",
+		StreamName:       "node.updated:v1",
 		TaskID:           cmd.TaskID,
 		ScheduleID:       cmd.ScheduleID,
 		ScheduleName:     cmd.ScheduleName,
 		ServiceName:      cmd.ServiceName,
-		Schema:           cmd.Schema,
+		SchemaName:       cmd.SchemaName,
 		TableName:        cmd.TableName,
 		JobName:          cmd.JobName,
 		NewTaskStatus:    "SUCCEEDED",
@@ -225,7 +225,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	}
 
 	key := fmt.Sprintf("logs/task-executions/%s/%s/%s/%s.log",
-		cmd.ServiceName, cmd.Schema, cmd.TableName, executionID.String())
+		cmd.ServiceName, cmd.SchemaName, cmd.TableName, executionID.String())
 
 	if err := h.logUploader.UploadLog(ctx, key, fullLog); err != nil {
 		h.logger.Warn("Failed to upload pod log to S3 — continuing without full log",
@@ -258,7 +258,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, cmd comm
 		ScheduleID:   cmd.ScheduleID,
 		ScheduleName: cmd.ScheduleName,
 		ServiceName:  cmd.ServiceName,
-		Schema:       cmd.Schema,
+		SchemaName:   cmd.SchemaName,
 		TableName:    cmd.TableName,
 		JobName:      cmd.JobName,
 
@@ -280,15 +280,15 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, cmd comm
 		return fmt.Errorf("failed to create outbox entry: %w", err)
 	}
 
-	// Second outbox entry: notify dependency-controller
+	// Second outbox entry: notify orchestrator
 	notifyEntry := &model.K8sStatusOutboxEntry{
 		EventType:        "node_status_updated",
-		StreamName:       "update.table:v1",
+		StreamName:       "node.updated:v1",
 		TaskID:           cmd.TaskID,
 		ScheduleID:       cmd.ScheduleID,
 		ScheduleName:     cmd.ScheduleName,
 		ServiceName:      cmd.ServiceName,
-		Schema:           cmd.Schema,
+		SchemaName:       cmd.SchemaName,
 		TableName:        cmd.TableName,
 		JobName:          cmd.JobName,
 		NewTaskStatus:    "FAILED",
@@ -334,12 +334,12 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd comm
 
 	entry := &model.K8sStatusOutboxEntry{
 		EventType:    "task_retry",
-		StreamName:   "task.retry:v1",
+		StreamName:   "retry.task:v1",
 		TaskID:       cmd.TaskID,
 		ScheduleID:   cmd.ScheduleID,
 		ScheduleName: cmd.ScheduleName,
 		ServiceName:  cmd.ServiceName,
-		Schema:       cmd.Schema,
+		SchemaName:   cmd.SchemaName,
 		TableName:    cmd.TableName,
 		JobName:      newJobName,
 		NodeType:     cmd.NodeType,
@@ -379,12 +379,12 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, cmd command.Chec
 	// Create outbox entry for delayed check
 	entry := &model.K8sStatusOutboxEntry{
 		EventType:    "check_delayed",
-		StreamName:   "k8s.check:v1", // Publish back to check stream for re-check
+		StreamName:   "check.k8s:v1", // Publish back to check stream for re-check
 		TaskID:       cmd.TaskID,
 		ScheduleID:   cmd.ScheduleID,
 		ScheduleName: cmd.ScheduleName,
 		ServiceName:  cmd.ServiceName,
-		Schema:       cmd.Schema,
+		SchemaName:   cmd.SchemaName,
 		TableName:    cmd.TableName,
 		JobName:      cmd.JobName,
 		NodeType:     cmd.NodeType,
@@ -431,7 +431,7 @@ func (h *CheckStatusHandler) handleUnknown(ctx context.Context, cmd command.Chec
 		ScheduleID:   cmd.ScheduleID,
 		ScheduleName: cmd.ScheduleName,
 		ServiceName:  cmd.ServiceName,
-		Schema:       cmd.Schema,
+		SchemaName:   cmd.SchemaName,
 		TableName:    cmd.TableName,
 		JobName:      cmd.JobName,
 

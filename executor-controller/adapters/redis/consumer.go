@@ -19,7 +19,7 @@ import (
 type Consumer struct {
 	client        *goredis.Client
 	streamName    string
-	retryStream   string // New: task.retry:v1
+	retryStream   string // New: retry.task:v1
 	consumerGroup string
 	consumerName  string
 	messageBus    *messagebus.MessageBus
@@ -228,7 +228,7 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 	c.logger.Info("Processing message", "stream", streamName, "message_id", msg.ID)
 
 	// Parse message into DeployJob command
-	// Expected fields: schedule_id, schedule_name, service_name, schema, table_name, task_id, job_name, outbox_entry_id
+	// Expected fields: schedule_id, schedule_name, service_name, schema_name, table_name, task_id, job_name, outbox_entry_id
 	taskIDStr := getString(msg.Values, "task_id")
 	scheduleIDStr := getString(msg.Values, "schedule_id")
 
@@ -314,7 +314,7 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 		ScheduleID:   scheduleID,
 		ScheduleName: getString(msg.Values, "schedule_name"),
 		ServiceName:  getString(msg.Values, "service_name"),
-		Schema:       getString(msg.Values, "schema"),
+		SchemaName:   getString(msg.Values, "schema_name"),
 		TableName:    getString(msg.Values, "table_name"),
 		JobName:      getString(msg.Values, "job_name"),
 		NodeType:     nodeType,

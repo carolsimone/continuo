@@ -43,7 +43,7 @@ func NewRerunHandler(
 }
 
 // TriggerRerun atomically resets the scheduler + target task and writes a
-// command.rerun:v1 outbox entry — all in a single Postgres transaction.
+// rerun:v1 outbox entry — all in a single Postgres transaction.
 func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
 	h.logger.Info("TriggerRerun called", "schedule_id", req.ScheduleId)
 
@@ -129,7 +129,7 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 		"schedule_id":   scheduleID.String(),
 		"schedule_name": scheduler.ScheduleName,
 		"scope":         "node",
-		"schema":        req.Schema,
+		"schema_name":   req.Schema,
 		"table_name":    req.TableName,
 		"service_name":  req.ServiceName,
 	})
@@ -139,7 +139,7 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 		AggregateID:   scheduleID,
 		EventType:     "rerun_node",
 		Payload:       payload,
-		StreamName:    "command.rerun:v1",
+		StreamName:    "rerun:v1",
 		Status:        "pending",
 		MaxRetries:    3,
 		CreatedAt:     time.Now(),

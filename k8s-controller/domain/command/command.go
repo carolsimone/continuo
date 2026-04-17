@@ -14,7 +14,7 @@ type CheckJobStatus struct {
 	ScheduleID    uuid.UUID
 	ScheduleName  string
 	ServiceName   string
-	Schema        string
+	SchemaName    string
 	TableName     string
 	JobName       string
 	NodeType      string

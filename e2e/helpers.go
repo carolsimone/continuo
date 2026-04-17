@@ -18,8 +18,7 @@ func verifyServicesHealthy(t *testing.T) {
 	dockerComposeServices := []string{
 		"http://state:8082/health",
 		"http://startup-controller:8083/health",
-		"http://dependency-controller:8086/health",
-		"http://graph:8081/health",
+		"http://orchestrator:8087/health",
 	}
 
 	for _, url := range dockerComposeServices {
@@ -188,7 +187,7 @@ func verifyStartupOutboxProcessed(
 		err := clients.startupDB.Get(&processedCount, `
 			SELECT COUNT(*)
 			FROM startup_outbox
-			WHERE aggregate_id = $1 AND status = 'processed'
+			WHERE aggregate_id = $1 AND status = 'processed' AND stream_name = 'query.model:v1'
 		`, schedulerID)
 
 		if err != nil {

@@ -6,7 +6,7 @@ CREATE TABLE k8s_status_outbox (
 
     -- Event identification
     event_type VARCHAR(50) NOT NULL,  -- 'task_succeeded', 'task_failed', 'task_retry', 'check_delayed'
-    stream_name VARCHAR(100) NOT NULL, -- Target stream: task.retry:v1, task.failed:v1, k8s.check:v1
+    stream_name VARCHAR(100) NOT NULL, -- Target stream: retry.task:v1, task.failed:v1, check.k8s:v1
 
     -- Task context (copied from consumed message)
     task_id UUID NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE k8s_status_outbox (
     -- Event-specific data
     error_message TEXT,
     task_retry_count INT DEFAULT 0,  -- Renamed to avoid confusion with outbox_retry_count
-    check_after BIGINT,  -- Unix timestamp for delayed k8s.check:v1 events
+    check_after BIGINT,  -- Unix timestamp for delayed check.k8s:v1 events
 
     -- State update flags (what gRPC calls to make in OutboxProcessor)
     update_task_status BOOLEAN DEFAULT false,

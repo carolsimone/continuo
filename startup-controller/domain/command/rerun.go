@@ -7,7 +7,7 @@ import "github.com/google/uuid"
 type RerunNode struct {
 	ScheduleID   uuid.UUID
 	ScheduleName string
-	Schema       string
+	SchemaName   string
 	TableName    string
 	ServiceName  string
 }

@@ -9,26 +9,26 @@ import (
 
 	"github.com/carolsimone/continuo/startup-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/startup-controller/adapters/redis"
-	"github.com/carolsimone/continuo/startup-controller/domain/event"
 	"github.com/carolsimone/continuo/startup-controller/domain/model"
 )
 
 // OutboxProcessor processes pending outbox entries and publishes them to Redis
 type OutboxProcessor struct {
 	outboxRepo postgres.OutboxRepository
-	producer   *redis.Producer
+	producers  map[string]*redis.Producer // keyed by stream name
 	logger     *slog.Logger
 }
 
-// NewOutboxProcessor creates a new OutboxProcessor
+// NewOutboxProcessor creates a new OutboxProcessor.
+// producers maps stream names to their respective Redis producers.
 func NewOutboxProcessor(
 	outboxRepo postgres.OutboxRepository,
-	producer *redis.Producer,
+	producers map[string]*redis.Producer,
 	logger *slog.Logger,
 ) *OutboxProcessor {
 	return &OutboxProcessor{
 		outboxRepo: outboxRepo,
-		producer:   producer,
+		producers:  producers,
 		logger:     logger,
 	}
 }
@@ -107,28 +107,39 @@ func (p *OutboxProcessor) ProcessBatch(ctx context.Context) error {
 	return nil
 }
 
-// processEntry processes a single outbox entry
+// processEntry processes a single outbox entry, routing it to the correct
+// Redis producer based on the entry's StreamName.
 func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.OutboxEntry) error {
-	// Unmarshal payload to get event data
-	var evt event.NodeReadyForExecution
-	if err := json.Unmarshal(entry.Payload, &evt); err != nil {
+	producer, ok := p.producers[entry.StreamName]
+	if !ok {
+		return fmt.Errorf("no producer registered for stream %q", entry.StreamName)
+	}
+
+	// Build the Redis message values from the raw JSON payload.
+	// Always unpack the JSON payload into top-level Redis message fields
+	// so consumers can read them directly (e.g. msg.Values["schedule_name"]).
+	var fields map[string]interface{}
+	if err := json.Unmarshal(entry.Payload, &fields); err != nil {
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
-
-	// Publish to Redis stream
 	values := map[string]interface{}{
 		"outbox_entry_id": entry.ID.String(),
-		"schedule_id":     evt.ScheduleID,
-		"schedule_name":   evt.ScheduleName,
-		"service_name":    evt.ServiceName,
-		"schema":          evt.Schema,
-		"table_name":      evt.TableName,
-		"task_id":         evt.TaskID,
-		"job_name":        evt.JobName,
-		"node_type":       evt.NodeType,
+	}
+	for k, v := range fields {
+		switch tv := v.(type) {
+		case string, bool, float64:
+			values[k] = tv
+		default:
+			// Complex values (maps, arrays) → serialize to JSON string
+			b, err := json.Marshal(tv)
+			if err != nil {
+				return fmt.Errorf("failed to marshal field %q: %w", k, err)
+			}
+			values[k] = string(b)
+		}
 	}
 
-	messageID, err := p.producer.Publish(ctx, values)
+	messageID, err := producer.Publish(ctx, values)
 	if err != nil {
 		return fmt.Errorf("failed to publish to Redis: %w", err)
 	}
@@ -136,7 +147,7 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.OutboxE
 	p.logger.Info("Published event to Redis",
 		"stream", entry.StreamName,
 		"message_id", messageID,
-		"table", evt.TableName,
+		"event_type", entry.EventType,
 	)
 
 	return nil

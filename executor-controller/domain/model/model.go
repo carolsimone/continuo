@@ -14,7 +14,7 @@ type DeploymentOutboxEntry struct {
 	ScheduleID   uuid.UUID  `db:"schedule_id"`
 	ScheduleName string     `db:"schedule_name"`
 	ServiceName  string     `db:"service_name"`
-	Schema       string     `db:"schema_name"`
+	SchemaName   string     `db:"schema_name"`
 	TableName    string     `db:"table_name"`
 	JobName      string     `db:"job_name"`
 	NodeType     string     `db:"node_type"`

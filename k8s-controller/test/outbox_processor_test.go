@@ -31,7 +31,7 @@ func TestOutboxProcessor_CheckDelayed_PublishesOutboxEntryID(t *testing.T) {
 			 task_id, schedule_id, schedule_name, service_name,
 			 schema_name, table_name, job_name,
 			 check_after, status)
-		VALUES ($1, 'check_delayed', 'k8s.check:v1',
+		VALUES ($1, 'check_delayed', 'check.k8s:v1',
 			$2, $3, 'sched', 'svc',
 			'pub', 'tbl', 'job',
 			0, 'pending')

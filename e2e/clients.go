@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	graphv1 "github.com/carolsimone/continuo/graph/api/graph/v1"
+	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -20,17 +20,17 @@ import (
 
 // testClients holds all client connections
 type testClients struct {
-	graphClient  graphv1.GraphServiceClient
-	stateClient  statev1.StateServiceClient
-	redisClient  *goredis.Client
-	neo4jDriver  neo4jdriver.DriverWithContext
-	startupDB    *sqlx.DB
-	executorDB   *sqlx.DB
-	dependencyDB *sqlx.DB
-	k8sDB        *sqlx.DB
-	stateDB      *sqlx.DB
-	logger       *slog.Logger
-	uiBase       string
+	orchestratorClient orchestratorv1.OrchestratorQueryClient
+	stateClient        statev1.StateServiceClient
+	redisClient        *goredis.Client
+	neo4jDriver        neo4jdriver.DriverWithContext
+	startupDB          *sqlx.DB
+	executorDB         *sqlx.DB
+	orchestratorDB     *sqlx.DB
+	k8sDB              *sqlx.DB
+	stateDB            *sqlx.DB
+	logger             *slog.Logger
+	uiBase             string
 }
 
 // setupClients initializes all client connections
@@ -40,19 +40,19 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	}))
 
 	// Get hosts from environment (use service names for docker-compose)
-	graphHost := getEnv("GRAPH_HOST", "graph")
+	orchestratorHost := getEnv("ORCHESTRATOR_HOST", "orchestrator")
 	stateHost := getEnv("STATE_HOST", "state")
 	redisHost := getEnv("REDIS_HOST", "redis")
 	neo4jHost := getEnv("NEO4J_HOST", "neo4j")
 	pgHost := getEnv("POSTGRES_HOST", "postgres")
 	uiBase := getEnv("UI_HTTP_BASE", "http://ui:8090")
 
-	// Setup Graph gRPC client
-	graphConn, err := grpc.NewClient(
-		fmt.Sprintf("%s:50052", graphHost),
+	// Setup Orchestrator gRPC client
+	orchestratorConn, err := grpc.NewClient(
+		fmt.Sprintf("%s:50052", orchestratorHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to graph service")
+	require.NoError(t, err, "Failed to connect to orchestrator service")
 
 	// Setup State gRPC client
 	stateConn, err := grpc.NewClient(
@@ -79,22 +79,22 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	// Setup PostgreSQL connections for each database
 	startupDB := connectPostgres(t, pgHost, "continuo_startup")
 	executorDB := connectPostgres(t, pgHost, "continuo_executor")
-	dependencyDB := connectPostgres(t, pgHost, "continuo_dependency")
+	orchestratorDB := connectPostgres(t, pgHost, "continuo_orchestrator")
 	k8sDB := connectPostgres(t, pgHost, "continuo_k8s")
 	stateDB := connectPostgres(t, pgHost, "continuo_state")
 
 	return &testClients{
-		graphClient:  graphv1.NewGraphServiceClient(graphConn),
-		stateClient:  statev1.NewStateServiceClient(stateConn),
-		redisClient:  redisClient,
-		neo4jDriver:  neo4jDriver,
-		startupDB:    startupDB,
-		executorDB:   executorDB,
-		dependencyDB: dependencyDB,
-		k8sDB:        k8sDB,
-		stateDB:      stateDB,
-		logger:       logger,
-		uiBase:       uiBase,
+		orchestratorClient: orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
+		stateClient:        statev1.NewStateServiceClient(stateConn),
+		redisClient:        redisClient,
+		neo4jDriver:        neo4jDriver,
+		startupDB:          startupDB,
+		executorDB:         executorDB,
+		orchestratorDB:     orchestratorDB,
+		k8sDB:              k8sDB,
+		stateDB:            stateDB,
+		logger:             logger,
+		uiBase:             uiBase,
 	}
 }
 
@@ -116,7 +116,7 @@ func (c *testClients) close(ctx context.Context) {
 	c.neo4jDriver.Close(ctx)
 	c.startupDB.Close()
 	c.executorDB.Close()
-	c.dependencyDB.Close()
+	c.orchestratorDB.Close()
 	c.k8sDB.Close()
 	c.stateDB.Close()
 }

@@ -93,13 +93,13 @@ echo "✓ All images loaded into kind"
 # full dependency graph at runtime.  dbt compile requires a live Postgres
 # connection to resolve source references; run on the continuo_default network
 # with DBT_POSTGRES_HOST pointing at the postgres container.
-# Start postgres now so the continuo_default network exists and postgres is
+# Start postgres now so the compose network exists and postgres is
 # reachable before we try to compile.
 echo "Starting postgres for dbt manifest compilation..."
 docker compose up -d postgres
 echo "Waiting for postgres to be ready..."
 for i in $(seq 1 30); do
-    if docker exec continuo-postgres-1 pg_isready -U runner > /dev/null 2>&1; then
+    if docker compose exec -T postgres pg_isready -U runner > /dev/null 2>&1; then
         echo "✓ postgres ready"
         break
     fi
@@ -109,10 +109,17 @@ for i in $(seq 1 30); do
     fi
     sleep 2
 done
+# Detect the compose network name (varies by directory/project name)
+COMPOSE_NETWORK=$(docker compose config --format json 2>/dev/null | python3 -c "import sys,json; nets=json.load(sys.stdin).get('networks',{}); print(list(nets.values())[0].get('name','') if nets else '')" 2>/dev/null || true)
+if [ -z "$COMPOSE_NETWORK" ]; then
+    # Fallback: inspect the postgres container's networks
+    COMPOSE_NETWORK=$(docker inspect --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q postgres)")
+fi
+echo "Using compose network: $COMPOSE_NETWORK"
 echo "Compiling dbt manifests..."
 for svc in service-1 service-2 service-3; do
     echo "  Compiling ${svc}..."
-    CID=$(docker run -d --network continuo_default \
+    CID=$(docker run -d --network "$COMPOSE_NETWORK" \
         -e DBT_POSTGRES_HOST=postgres \
         --entrypoint dbt "${svc}:latest" compile --profiles-dir /project)
     docker wait "$CID"
@@ -156,10 +163,6 @@ echo "✓ Copied kubeconfig to executor-controller/"
 mkdir -p startup-controller/kubeconfig
 cp kubeconfig/kubeconfig.yaml startup-controller/kubeconfig/kubeconfig.yaml
 echo "✓ Copied kubeconfig to startup-controller/"
-
-mkdir -p dependency-controller/kubeconfig
-cp kubeconfig/kubeconfig.yaml dependency-controller/kubeconfig/kubeconfig.yaml
-echo "✓ Copied kubeconfig to dependency-controller/"
 
 rm kubeconfig.yaml.tmp
 echo "Kubeconfig created at: kubeconfig/kubeconfig.yaml"

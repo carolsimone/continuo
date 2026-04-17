@@ -37,11 +37,10 @@ jobs:
               - 'db/**'
               - 'deploy/**'
               - 'state/**'
-              - 'graph/**'
+              - 'orchestrator/**'
               - 'startup-controller/**'
               - 'executor-controller/**'
               - 'k8s-controller/**'
-              - 'dependency-controller/**'
               - 'ui-service/**'
               - 'manifest-controller/**'
             state:
@@ -50,12 +49,12 @@ jobs:
               - 'go.work.sum'
               - 'pkg/**'
               - 'state/**'
-            graph:
+            orchestrator:
               - 'Dockerfile.base'
               - 'go.work'
               - 'go.work.sum'
               - 'pkg/**'
-              - 'graph/**'
+              - 'orchestrator/**'
             startup_controller:
               - 'Dockerfile.base'
               - 'go.work'
@@ -74,12 +73,6 @@ jobs:
               - 'go.work.sum'
               - 'pkg/**'
               - 'k8s-controller/**'
-            dependency_controller:
-              - 'Dockerfile.base'
-              - 'go.work'
-              - 'go.work.sum'
-              - 'pkg/**'
-              - 'dependency-controller/**'
             ui_service:
               - 'ui-service/**'
             manifest_controller:
@@ -91,11 +84,10 @@ jobs:
         id: matrix
         env:
           STATE_CHANGED: ${{ steps.filter.outputs.state }}
-          GRAPH_CHANGED: ${{ steps.filter.outputs.graph }}
+          ORCHESTRATOR_CHANGED: ${{ steps.filter.outputs.orchestrator }}
           STARTUP_CHANGED: ${{ steps.filter.outputs.startup_controller }}
           EXECUTOR_CHANGED: ${{ steps.filter.outputs.executor_controller }}
           K8S_CHANGED: ${{ steps.filter.outputs.k8s_controller }}
-          DEPENDENCY_CHANGED: ${{ steps.filter.outputs.dependency_controller }}
           UI_CHANGED: ${{ steps.filter.outputs.ui_service }}
           MANIFEST_CHANGED: ${{ steps.filter.outputs.manifest_controller }}
           MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations }}
@@ -103,22 +95,20 @@ jobs:
           matrix="$(
             jq -cn \
               --arg state "$STATE_CHANGED" \
-              --arg graph "$GRAPH_CHANGED" \
+              --arg orchestrator "$ORCHESTRATOR_CHANGED" \
               --arg startup "$STARTUP_CHANGED" \
               --arg executor "$EXECUTOR_CHANGED" \
               --arg k8s "$K8S_CHANGED" \
-              --arg dependency "$DEPENDENCY_CHANGED" \
               --arg ui "$UI_CHANGED" \
               --arg manifest "$MANIFEST_CHANGED" \
               --arg migrations "$MIGRATIONS_CHANGED" \
               '{
                 include: [
                   {service: "state", changed: $state, dockerfile: "state/Dockerfile.prod", context: "."},
-                  {service: "graph", changed: $graph, dockerfile: "graph/Dockerfile.prod", context: "."},
+                  {service: "orchestrator", changed: $orchestrator, dockerfile: "orchestrator/Dockerfile.prod", context: "."},
                   {service: "startup-controller", changed: $startup, dockerfile: "startup-controller/Dockerfile.prod", context: "."},
                   {service: "executor-controller", changed: $executor, dockerfile: "executor-controller/Dockerfile.prod", context: "."},
                   {service: "k8s-controller", changed: $k8s, dockerfile: "k8s-controller/Dockerfile.prod", context: "."},
-                  {service: "dependency-controller", changed: $dependency, dockerfile: "dependency-controller/Dockerfile.prod", context: "."},
                   {service: "ui-service", changed: $ui, dockerfile: "ui-service/Dockerfile", context: "ui-service"},
                   {service: "manifest-controller", changed: $manifest, dockerfile: "manifest-controller/Dockerfile.prod", context: "manifest-controller"},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"}

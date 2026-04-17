@@ -21,8 +21,12 @@ func verifyExecutorDeployedJobs(
 	expectedTables []string,
 	scheduleName string,
 ) {
+	// Use app=dbt-job rather than schedule=<name> because seed nodes
+	// carry schedule_name="seed" in Neo4j regardless of the parent schedule,
+	// so their K8s jobs get label schedule=seed.  Filtering by the executor
+	// app label and then checking table_name labels avoids this mismatch.
 	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
-		jobList, err := getK8sJobs(ctx, fmt.Sprintf("schedule=%s", scheduleName))
+		jobList, err := getK8sJobs(ctx, "app=dbt-job")
 		if err != nil {
 			return false, err
 		}
@@ -126,9 +130,9 @@ func verifyDependencyControllerUnlockedNextLevel(
 		}
 
 		return matchCount >= len(nextLevelTables), nil
-	}, fmt.Sprintf("Timeout waiting for dependency-controller to unlock %d nodes", len(nextLevelTables)))
+	}, fmt.Sprintf("Timeout waiting for orchestrator to unlock %d nodes", len(nextLevelTables)))
 
-	t.Logf("✅ dependency-controller unlocked %d nodes", len(nextLevelTables))
+	t.Logf("✅ orchestrator unlocked %d nodes", len(nextLevelTables))
 }
 
 // verifyFullDAGExecution verifies all 4 levels execute in order
@@ -149,7 +153,7 @@ func verifyFullDAGExecution(
 		// Wait for jobs to complete
 		verifyJobsCompleted(t, ctx, clients, level, testScheduleName)
 
-		// If not last level, verify dependency-controller published next level
+		// If not last level, verify orchestrator published next level
 		if i < len(levels)-1 {
 			verifyDependencyControllerUnlockedNextLevel(t, ctx, clients, levels[i+1], scheduleID)
 		}
@@ -171,13 +175,14 @@ func verifyStartupController(
 	t.Helper()
 	expectedCount := len(expectedRootNodes)
 
-	// 1. Wait for all outbox entries to be processed
+	// 1. Wait for all root-node outbox entries to be processed.
+	// Filter by stream_name = 'query.model:v1' to exclude the initialize.run:v1 entry.
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var processedCount int
 		err := clients.startupDB.Get(&processedCount, `
 			SELECT COUNT(*)
 			FROM startup_outbox
-			WHERE aggregate_id = $1 AND status = 'processed'
+			WHERE aggregate_id = $1 AND status = 'processed' AND stream_name = 'query.model:v1'
 		`, schedulerID)
 		if err != nil {
 			return false, err
@@ -192,7 +197,7 @@ func verifyStartupController(
 	}
 	err := clients.startupDB.Select(&outboxEntries, `
 		SELECT payload, status FROM startup_outbox
-		WHERE aggregate_id = $1
+		WHERE aggregate_id = $1 AND stream_name = 'query.model:v1'
 		ORDER BY created_at
 	`, schedulerID)
 	require.NoError(t, err, "Failed to query startup_outbox")
@@ -305,7 +310,7 @@ func verifyNoJobsDeployed(
 }
 
 // verifySchedulerSucceeded polls scheduler_tracker until the schedule reaches
-// 'succeeded' status, confirming dependency-controller finalised the run correctly.
+// 'succeeded' status, confirming orchestrator finalised the run correctly.
 func verifySchedulerSucceeded(
 	t *testing.T,
 	ctx context.Context,
@@ -328,7 +333,7 @@ func verifySchedulerSucceeded(
 }
 
 // verifySchedulerFailed polls scheduler_tracker until the schedule reaches
-// 'failed' status, confirming dependency-controller finalised the run correctly.
+// 'failed' status, confirming orchestrator finalised the run correctly.
 func verifySchedulerFailed(
 	t *testing.T,
 	ctx context.Context,

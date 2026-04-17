@@ -14,11 +14,11 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// DualStreamConsumer consumes from both executor.deployed:v1 and k8s.check:v1 streams
+// DualStreamConsumer consumes from both node.deployed:v1 and check.k8s:v1 streams
 type DualStreamConsumer struct {
 	client         *goredis.Client
-	deployedStream string // executor.deployed:v1
-	checkStream    string // k8s.check:v1
+	deployedStream string // node.deployed:v1
+	checkStream    string // check.k8s:v1
 	consumerGroup  string
 	consumerName   string
 	messageBus     *messagebus.MessageBus
@@ -176,7 +176,7 @@ func (c *DualStreamConsumer) processPendingMessages(ctx context.Context, stream 
 // readAndProcess reads messages from both streams and processes them
 func (c *DualStreamConsumer) readAndProcess(ctx context.Context) error {
 	// XREADGROUP GROUP group consumer BLOCK 1000 COUNT 10
-	//   STREAMS executor.deployed:v1 k8s.check:v1 > >
+	//   STREAMS node.deployed:v1 check.k8s:v1 > >
 	streams, err := c.client.XReadGroup(ctx, &goredis.XReadGroupArgs{
 		Group:    c.consumerGroup,
 		Consumer: c.consumerName,
@@ -205,7 +205,7 @@ func (c *DualStreamConsumer) readAndProcess(ctx context.Context) error {
 
 	for _, stream := range streams {
 		for _, msg := range stream.Messages {
-			// For k8s.check:v1 messages, check if ready for processing
+			// For check.k8s:v1 messages, check if ready for processing
 			if stream.Stream == c.checkStream {
 				if !c.isReadyForProcessing(msg) {
 					// Not ready yet: re-publish to the end of the stream so it gets
@@ -310,7 +310,7 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 
 	scheduleName, _ := msg.Values["schedule_name"].(string)
 	serviceName, _ := msg.Values["service_name"].(string)
-	schema, _ := msg.Values["schema"].(string)
+	schema, _ := msg.Values["schema_name"].(string)
 	tableName, _ := msg.Values["table_name"].(string)
 	jobName, _ := msg.Values["job_name"].(string)
 	nodeType, _ := msg.Values["node_type"].(string)
@@ -320,7 +320,7 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 		ScheduleID:   scheduleID,
 		ScheduleName: scheduleName,
 		ServiceName:  serviceName,
-		Schema:       schema,
+		SchemaName:   schema,
 		TableName:    tableName,
 		JobName:      jobName,
 		NodeType:     nodeType,

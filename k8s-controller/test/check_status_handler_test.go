@@ -78,7 +78,7 @@ func TestCheckStatusHandler_HandleSucceeded(t *testing.T) {
 		ScheduleID:   scheduleID,
 		ScheduleName: "test-schedule",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      jobName,
 	}
@@ -192,7 +192,7 @@ func TestCheckStatusHandler_HandleFailedWithRetry(t *testing.T) {
 		ScheduleID:   scheduleID,
 		ScheduleName: "test-schedule",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      jobName,
 	}
@@ -306,7 +306,7 @@ func TestCheckStatusHandler_HandleFailedPermanent(t *testing.T) {
 		ScheduleID:   scheduleID,
 		ScheduleName: "test-schedule",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      jobName,
 	}
@@ -409,7 +409,7 @@ func TestCheckStatusHandler_HandleRunning(t *testing.T) {
 		ScheduleID:   scheduleID,
 		ScheduleName: "test-schedule",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      jobName,
 	}
@@ -494,7 +494,7 @@ func TestCheckStatusHandler_ErrorMessageTruncation(t *testing.T) {
 		ScheduleID:   scheduleID,
 		ScheduleName: "test-schedule",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      jobName,
 	}
@@ -547,7 +547,7 @@ func TestCheckStatusHandler_WritesProcessedEvent(t *testing.T) {
 		ScheduleID:    scheduleID,
 		ScheduleName:  "test-schedule",
 		ServiceName:   "dbt",
-		Schema:        "public",
+		SchemaName:    "public",
 		TableName:     "users",
 		JobName:       "test-job",
 	}
@@ -604,7 +604,7 @@ func TestCheckStatusHandler_Dedup_SecondCallIsSkipped(t *testing.T) {
 		ScheduleID:    scheduleID,
 		ScheduleName:  "test-schedule",
 		ServiceName:   "dbt",
-		Schema:        "public",
+		SchemaName:    "public",
 		TableName:     "users",
 		JobName:       "test-job",
 	}
@@ -669,7 +669,7 @@ func TestCheckStatusHandler_Dedup_NilOutboxEntryID(t *testing.T) {
 		ScheduleID:    scheduleID,
 		ScheduleName:  "test-schedule",
 		ServiceName:   "dbt",
-		Schema:        "public",
+		SchemaName:    "public",
 		TableName:     "users",
 		JobName:       "test-job",
 	}
@@ -737,7 +737,7 @@ func TestCheckStatusHandler_HandleFailedPermanent_LogsUploadedToS3(t *testing.T)
 		ScheduleID:   scheduleID,
 		ScheduleName: "test-schedule",
 		ServiceName:  "my-service",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "orders",
 		JobName:      "test-job",
 	}
@@ -804,7 +804,7 @@ func TestCheckStatusHandler_HandleFailedPermanent_S3FailIsSoft(t *testing.T) {
 
 	cmd := command.CheckJobStatus{
 		TaskID: taskID, ScheduleID: scheduleID, ScheduleName: "s", ServiceName: "svc",
-		Schema: "sc", TableName: "t", JobName: "job",
+		SchemaName: "sc", TableName: "t", JobName: "job",
 	}
 
 	// Must not return error even when S3 fails

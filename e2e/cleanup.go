@@ -80,9 +80,9 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	// Clean processed_events (deduplication table) - must be cleared so re-runs can process the same outbox IDs
 	_, _ = clients.executorDB.Exec("DELETE FROM processed_events")
 
-	// Clean dependency outbox
+	// Clean orchestrator outbox
 	if schedulerID != "" {
-		_, _ = clients.dependencyDB.Exec("DELETE FROM outbox WHERE aggregate_id = $1", schedulerID)
+		_, _ = clients.orchestratorDB.Exec("DELETE FROM outbox WHERE aggregate_id = $1", schedulerID)
 	}
 
 	// Clean k8s_status_outbox
@@ -104,12 +104,18 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 	streams := []string{
 		"scheduler.started:v1",
 		"query.model:v1",
-		"executor.deployed:v1",
-		"k8s.check:v1",
-		"task.retry:v1",
+		"node.deployed:v1",
+		"check.k8s:v1",
+		"retry.task:v1",
 		"task.failed:v1",
-		"update.table:v1",
-		"command.rerun:v1",
+		"node.updated:v1",
+		"rerun:v1",
+		"initialize.run:v1",
+		"run.initialized:v1",
+		"manifest.loaded:v1",
+		"rerun.ready:v1",
+		"schedules.loaded:v1",
+		"update.graph:v1",
 	}
 
 	for _, stream := range streams {
@@ -122,7 +128,7 @@ func cleanupK8s(t *testing.T, ctx context.Context) {
 	// Use the schedule-id label to match what executor-controller actually creates
 	cmd := exec.CommandContext(ctx, "kubectl", "delete", "jobs",
 		"-n", "default",
-		"-l", "app=query-executor",
+		"-l", "app=dbt-job",
 		"--ignore-not-found=true")
 	if err := cmd.Run(); err != nil {
 		t.Logf("Warning: Failed to cleanup k8s jobs: %v", err)

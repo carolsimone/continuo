@@ -1,0 +1,85 @@
+package command
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
+
+// StateTaskClient defines the interface for task and scheduler operations on the state service.
+type StateTaskClient interface {
+	GetTask(ctx context.Context, scheduleID uuid.UUID, serviceName, schema, tableName string) (taskID string, err error)
+	GetSchedulerInitStatus(ctx context.Context, scheduleID uuid.UUID) (string, error)
+	UpdateSchedulerStatus(ctx context.Context, scheduleID uuid.UUID, status string) error
+}
+
+// HandleNodeCompletedCmd carries the data for a node-completed event.
+type HandleNodeCompletedCmd struct {
+	TaskID       uuid.UUID
+	ScheduleID   uuid.UUID
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	Status       string
+}
+
+// InitializeRunCmd carries the data for a run initialization command.
+type InitializeRunCmd struct {
+	ScheduleName string       `json:"schedule_name"`
+	RunID        string       `json:"run_id"`
+	RerunTarget  *RerunTarget `json:"rerun_target,omitempty"`
+}
+
+// RerunTarget specifies the node to rerun from.
+type RerunTarget struct {
+	ServiceName string `json:"service_name"`
+	SchemaName  string `json:"schema_name"`
+	TableName   string `json:"table_name"`
+}
+
+// HandleRerunCmd carries the data for a rerun command.
+type HandleRerunCmd struct {
+	ScheduleName string
+	RunID        string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+}
+
+// NodePayload is the serialized form of a TableNode in the outbox payload.
+type NodePayload struct {
+	TableName    string `json:"table_name"`
+	SchemaName   string `json:"schema_name"`
+	ServiceName  string `json:"service_name"`
+	Owner        string `json:"owner"`
+	ScheduleName string `json:"schedule_name"`
+	Criticality  string `json:"criticality"`
+	NodeType     string `json:"node_type"`
+	Status       string `json:"status"`
+}
+
+// IngestTopologyCmd carries the data for a topology ingestion command.
+type IngestTopologyCmd struct {
+	Nodes []TopologyNodePayload
+}
+
+// TopologyNodePayload is the inbound representation of a single topology node.
+type TopologyNodePayload struct {
+	ServiceName     string              `json:"service_name"`
+	SchemaName      string              `json:"schema_name"`
+	TableName       string              `json:"table_name"`
+	Owner           string              `json:"owner"`
+	ScheduleName    string              `json:"schedule_name"`
+	Criticality     string              `json:"criticality"`
+	NodeType        string              `json:"node_type"`
+	ManifestVersion string              `json:"manifest_version"`
+	Dependencies    []DependencyPayload `json:"dependencies"`
+}
+
+// DependencyPayload is the inbound representation of an upstream dependency.
+type DependencyPayload struct {
+	ServiceName string `json:"service_name"`
+	SchemaName  string `json:"schema_name"`
+	TableName   string `json:"table_name"`
+}

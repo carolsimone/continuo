@@ -16,23 +16,21 @@ import (
 	"github.com/carolsimone/continuo/startup-controller/service/handlers"
 	"github.com/carolsimone/continuo/startup-controller/service/messagebus"
 	"github.com/carolsimone/continuo/startup-controller/service/uow"
-	graphv1 "github.com/carolsimone/continuo/graph/api/graph/v1"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Test configuration
 const (
-	testScheduleName = "hourly"
-	redisStream      = "scheduler.started:v1"
-	outputStream     = "query.model:v1"
-	consumerGroup    = "test_consumers"
+	testScheduleName    = "hourly"
+	redisStream         = "scheduler.started:v1"
+	outputStream        = "query.model:v1"
+	initializeRunStream = "initialize.run:v1"
+	consumerGroup       = "test_consumers"
 )
 
 // getEnvOrDefault returns the value of an environment variable or a default value
@@ -45,21 +43,18 @@ func getEnvOrDefault(key, defaultValue string) string {
 
 // testFixture holds all test dependencies
 type testFixture struct {
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	logger              *slog.Logger
-	pgDB                *sqlx.DB
-	redisClient         *goredis.Client
-	stateClient         *grpcAdapter.StateClient
-	graphServiceClient  graphv1.GraphServiceClient
-	graphConn           *grpc.ClientConn
-	graphAdapter        *grpcAdapter.GraphClient
-	outboxRepo          postgres.OutboxRepository
-	unitOfWork          uow.UnitOfWork
-	messageBus          *messagebus.MessageBus
-	producer            *redis.Producer
-	outboxProc          *handlers.OutboxProcessor
-	scheduleID          uuid.UUID
+	ctx         context.Context
+	cancel      context.CancelFunc
+	logger      *slog.Logger
+	pgDB        *sqlx.DB
+	redisClient *goredis.Client
+	stateClient *grpcAdapter.StateClient
+	outboxRepo  postgres.OutboxRepository
+	unitOfWork  uow.UnitOfWork
+	messageBus  *messagebus.MessageBus
+	producers   map[string]*redis.Producer
+	outboxProc  *handlers.OutboxProcessor
+	scheduleID  uuid.UUID
 }
 
 // setupTestFixture initializes all test dependencies
@@ -70,7 +65,7 @@ func setupTestFixture(t *testing.T, redisDB int) *testFixture {
 		Level: slog.LevelDebug,
 	}))
 
-	// Get connection hosts (use service names for docker-compose, allow override for host testing)
+	// Get connection hosts
 	pgHost := getEnvOrDefault("POSTGRES_HOST", "postgres")
 	redisHost := getEnvOrDefault("REDIS_HOST", "redis")
 	stateHost := getEnvOrDefault("STATE_HOST", "state")
@@ -87,7 +82,7 @@ func setupTestFixture(t *testing.T, redisDB int) *testFixture {
 	redisClient := goredis.NewClient(&goredis.Options{
 		Addr:     fmt.Sprintf("%s:6379", redisHost),
 		Password: redisPassword,
-		DB:       redisDB, // Each test uses its own Redis DB for isolation
+		DB:       redisDB,
 	})
 	require.NoError(t, redisClient.Ping(ctx).Err(), "Failed to connect to Redis")
 
@@ -95,16 +90,6 @@ func setupTestFixture(t *testing.T, redisDB int) *testFixture {
 	stateAddr := fmt.Sprintf("%s:50051", stateHost)
 	stateClient, err := grpcAdapter.NewStateClient(stateAddr, logger)
 	require.NoError(t, err, "Failed to connect to state service")
-
-	// Connect to graph service
-	graphAddr := fmt.Sprintf("%s:50052", getEnvOrDefault("GRAPH_HOST", "graph"))
-	graphConn, err := grpc.NewClient(graphAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err, "Failed to connect to graph service")
-	graphServiceClient := graphv1.NewGraphServiceClient(graphConn)
-
-	// Create graph client adapter for the handler
-	graphClientAdapter, err := grpcAdapter.NewGraphClient(graphAddr, logger)
-	require.NoError(t, err, "Failed to create graph client adapter")
 
 	// Initialize repositories
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
@@ -115,11 +100,11 @@ func setupTestFixture(t *testing.T, redisDB int) *testFixture {
 	// Create schedule ID for this test
 	scheduleID := uuid.New()
 
-	// Create handler
+	// Create handler (now emits events instead of calling graph gRPC)
 	initHandler := handlers.NewInitializeSchedulerHandler(
 		unitOfWork,
-		graphClientAdapter,
 		stateClient,
+		initializeRunStream,
 		logger,
 	)
 
@@ -138,32 +123,35 @@ func setupTestFixture(t *testing.T, redisDB int) *testFixture {
 		logger,
 	)
 
-	// Flush Redis streams at setup to ensure clean state regardless of prior runs
+	// Flush Redis streams at setup
 	redisClient.Del(ctx, redisStream)
 	redisClient.Del(ctx, outputStream)
+	redisClient.Del(ctx, initializeRunStream)
 
-	// Create Redis producer
-	producer := redis.NewProducer(redisClient, outputStream, logger)
+	// Create Redis producers keyed by stream name
+	queryModelProducer := redis.NewProducer(redisClient, outputStream, logger)
+	initRunProducer := redis.NewProducer(redisClient, initializeRunStream, logger)
+	producers := map[string]*redis.Producer{
+		outputStream:        queryModelProducer,
+		initializeRunStream: initRunProducer,
+	}
 
 	// Create outbox processor
-	outboxProc := handlers.NewOutboxProcessor(outboxRepo, producer, logger)
+	outboxProc := handlers.NewOutboxProcessor(outboxRepo, producers, logger)
 
 	return &testFixture{
-		ctx:                ctx,
-		cancel:             cancel,
-		logger:             logger,
-		pgDB:               pgDB,
-		redisClient:        redisClient,
-		stateClient:        stateClient,
-		graphServiceClient: graphServiceClient,
-		graphConn:          graphConn,
-		graphAdapter:       graphClientAdapter,
-		outboxRepo:         outboxRepo,
-		unitOfWork:         unitOfWork,
-		messageBus:         messageBus,
-		producer:           producer,
-		outboxProc:         outboxProc,
-		scheduleID:         scheduleID,
+		ctx:         ctx,
+		cancel:      cancel,
+		logger:      logger,
+		pgDB:        pgDB,
+		redisClient: redisClient,
+		stateClient: stateClient,
+		outboxRepo:  outboxRepo,
+		unitOfWork:  unitOfWork,
+		messageBus:  messageBus,
+		producers:   producers,
+		outboxProc:  outboxProc,
+		scheduleID:  scheduleID,
 	}
 }
 
@@ -179,8 +167,6 @@ func teardownTestFixture(t *testing.T, f *testFixture) {
 
 	// Close connections
 	f.pgDB.Close()
-	f.graphConn.Close()
-	f.graphAdapter.Close()
 	f.redisClient.Close()
 	f.stateClient.Close()
 }
@@ -197,81 +183,10 @@ func cleanupPostgres(t *testing.T, f *testFixture) {
 func cleanupRedis(t *testing.T, f *testFixture) {
 	f.redisClient.Del(f.ctx, redisStream)
 	f.redisClient.Del(f.ctx, outputStream)
+	f.redisClient.Del(f.ctx, initializeRunStream)
 
 	// Delete consumer group if it exists
 	f.redisClient.XGroupDestroy(f.ctx, redisStream, consumerGroup)
-}
-
-// setupGraphTestData creates test nodes in the graph service via gRPC
-func setupGraphTestData(t *testing.T, f *testFixture) []string {
-	// Create 3 root nodes (no upstream dependencies)
-	rootNodes := []struct {
-		serviceName string
-		schema      string
-		tableName   string
-		nodeType    string
-	}{
-		{"analytics", "public", "users", "dbt-model"},
-		{"analytics", "public", "orders", "dbt-model"},
-		{"analytics", "public", "products", "dbt-model"},
-	}
-
-	// Create 2 downstream nodes (with dependencies)
-	downstreamNodes := []struct {
-		serviceName string
-		schema      string
-		tableName   string
-		dependsOn   string
-		nodeType    string
-	}{
-		{"analytics", "public", "user_stats", "users", "dbt-model"},
-		{"analytics", "public", "order_stats", "orders", "dbt-model"},
-	}
-
-	// Create root nodes
-	for _, node := range rootNodes {
-		_, err := f.graphServiceClient.CreateNode(f.ctx, &graphv1.CreateNodeRequest{
-			TableName:    node.tableName,
-			SchemaName:   node.schema,
-			ServiceName:  node.serviceName,
-			ScheduleName: testScheduleName,
-			NodeType:     node.nodeType,
-			Criticality:  graphv1.Criticality_CRITICALITY_CORE,
-			Owner:        "test_owner",
-		})
-		require.NoError(t, err, "Failed to create root node: %s", node.tableName)
-	}
-
-	// Create downstream nodes with dependencies
-	for _, node := range downstreamNodes {
-		_, err := f.graphServiceClient.CreateNode(f.ctx, &graphv1.CreateNodeRequest{
-			TableName:    node.tableName,
-			SchemaName:   node.schema,
-			ServiceName:  node.serviceName,
-			ScheduleName: testScheduleName,
-			NodeType:     node.nodeType,
-			Criticality:  graphv1.Criticality_CRITICALITY_CORE,
-			Owner:        "test_owner",
-			UpstreamDependencies: []*graphv1.UpstreamDependency{
-				{
-					TableName:   node.dependsOn,
-					SchemaName:  node.schema,
-					ServiceName: node.serviceName,
-				},
-			},
-		})
-		require.NoError(t, err, "Failed to create downstream node: %s", node.tableName)
-	}
-
-	// Return only root node table names
-	var rootNodeNames []string
-	for _, node := range rootNodes {
-		rootNodeNames = append(rootNodeNames, node.tableName)
-	}
-
-	t.Logf("Created %d root nodes and %d downstream nodes in graph service", len(rootNodes), len(downstreamNodes))
-
-	return rootNodeNames
 }
 
 // setupSchedulerInStateService creates a scheduler entry in state service
@@ -281,116 +196,78 @@ func setupSchedulerInStateService(t *testing.T, f *testFixture) {
 	t.Logf("Scheduler %s created for schedule_name %s", f.scheduleID, testScheduleName)
 }
 
-// TestE2E_StartupController_ConsumeFromStream tests the main flow
-func TestE2E_StartupController_ConsumeFromStream(t *testing.T) {
+// TestE2E_StartupController_EmitsInitializeRunEvent tests the event-driven flow.
+// InitializeScheduler now emits an initialize.run:v1 event instead of calling graph gRPC.
+func TestE2E_StartupController_EmitsInitializeRunEvent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	f := setupTestFixture(t, 1) // Use Redis DB 1 for test isolation
+	f := setupTestFixture(t, 1)
 	defer teardownTestFixture(t, f)
-
-	// Setup: Add test data to graph service
-	expectedRootNodes := setupGraphTestData(t, f)
 
 	// Setup: Create scheduler in state service
 	setupSchedulerInStateService(t, f)
 
-	// Step 1: Publish scheduler.started event to Redis
-	t.Log("Publishing scheduler.started event to Redis")
-	event := map[string]interface{}{
-		"runner_id":     f.scheduleID.String(),
-		"schedule_name": testScheduleName,
-	}
-
-	_, err := f.redisClient.XAdd(f.ctx, &goredis.XAddArgs{
-		Stream: redisStream,
-		Values: event,
-	}).Result()
-	require.NoError(t, err, "Failed to publish event to Redis")
-
-	// Step 2: Manually trigger the handler (simulating consumer processing)
+	// Step 1: Process the InitializeScheduler command
 	t.Log("Processing scheduler.started event")
 	cmd := command.InitializeScheduler{
 		RunnerID:     f.scheduleID,
 		ScheduleName: testScheduleName,
 	}
 
-	err = f.messageBus.Handle(f.ctx, cmd)
+	err := f.messageBus.Handle(f.ctx, cmd)
 	require.NoError(t, err, "Failed to handle InitializeScheduler command")
 
-	// Step 3: Verify outbox entries were created
-	t.Log("Verifying outbox entries")
-	time.Sleep(100 * time.Millisecond) // Give it a moment
+	// Step 2: Verify outbox entry was created with initialize.run:v1 target
+	t.Log("Verifying outbox entry")
+	time.Sleep(100 * time.Millisecond)
 
 	var outboxEntries []struct {
-		ID      string `db:"id"`
-		Payload []byte `db:"payload"`
-		Status  string `db:"status"`
+		ID         string `db:"id"`
+		Payload    []byte `db:"payload"`
+		Status     string `db:"status"`
+		StreamName string `db:"stream_name"`
+		EventType  string `db:"event_type"`
 	}
 
-	err = f.pgDB.Select(&outboxEntries, "SELECT id, payload, status FROM startup_outbox WHERE aggregate_id = $1 ORDER BY created_at", f.scheduleID)
+	err = f.pgDB.Select(&outboxEntries, "SELECT id, payload, status, stream_name, event_type FROM startup_outbox WHERE aggregate_id = $1 ORDER BY created_at", f.scheduleID)
 	require.NoError(t, err, "Failed to query outbox")
 
-	assert.Equal(t, len(expectedRootNodes), len(outboxEntries), "Expected %d outbox entries", len(expectedRootNodes))
+	require.Len(t, outboxEntries, 1, "Expected exactly 1 outbox entry")
+	entry := outboxEntries[0]
+	assert.Equal(t, "pending", entry.Status)
+	assert.Equal(t, initializeRunStream, entry.StreamName)
+	assert.Equal(t, "run_initialization_requested", entry.EventType)
 
-	// Verify all entries are pending
-	for _, entry := range outboxEntries {
-		assert.Equal(t, "pending", entry.Status, "Outbox entry should be pending")
+	// Verify payload contents
+	var payload map[string]string
+	err = json.Unmarshal(entry.Payload, &payload)
+	require.NoError(t, err, "Failed to unmarshal payload")
+	assert.Equal(t, f.scheduleID.String(), payload["run_id"])
+	assert.Equal(t, testScheduleName, payload["schedule_name"])
 
-		// Verify payload contains correct data
-		var payload struct {
-			ScheduleID   string `json:"schedule_id"`
-			ScheduleName string `json:"schedule_name"`
-			TableName    string `json:"table_name"`
-			TaskID       string `json:"task_id"`
-			JobName      string `json:"job_name"`
-		}
-		err = json.Unmarshal(entry.Payload, &payload)
-		require.NoError(t, err, "Failed to unmarshal payload")
-
-		assert.Equal(t, f.scheduleID.String(), payload.ScheduleID)
-		assert.Equal(t, testScheduleName, payload.ScheduleName)
-		assert.Contains(t, expectedRootNodes, payload.TableName, "Table name should be one of the root nodes")
-		assert.NotEmpty(t, payload.TaskID, "TaskID should not be empty")
-		assert.NotEmpty(t, payload.JobName, "JobName should not be empty")
-		assert.Regexp(t, `^[a-z0-9-]+$`, payload.JobName, "JobName should be k8s compliant")
-	}
-
-	// Step 4: Run outbox processor to publish to Redis
+	// Step 3: Run outbox processor to publish to Redis
 	t.Log("Running outbox processor")
 	err = f.outboxProc.ProcessBatch(f.ctx)
 	require.NoError(t, err, "Failed to process outbox batch")
 
-	// Step 5: Verify events were published to output stream
-	t.Log("Verifying events in output stream")
+	// Step 4: Verify event was published to initialize.run:v1 stream
+	t.Log("Verifying event in initialize.run:v1 stream")
 	time.Sleep(100 * time.Millisecond)
 
-	messages, err := f.redisClient.XRange(f.ctx, outputStream, "-", "+").Result()
-	require.NoError(t, err, "Failed to read from output stream")
+	messages, err := f.redisClient.XRange(f.ctx, initializeRunStream, "-", "+").Result()
+	require.NoError(t, err, "Failed to read from initialize.run:v1 stream")
 
-	assert.Equal(t, len(expectedRootNodes), len(messages), "Expected %d messages in output stream", len(expectedRootNodes))
+	require.Len(t, messages, 1, "Expected 1 message in initialize.run:v1 stream")
+	msg := messages[0]
+	assert.NotEmpty(t, msg.Values["outbox_entry_id"])
 
-	// Verify message content
-	for _, msg := range messages {
-		assert.Equal(t, f.scheduleID.String(), msg.Values["schedule_id"])
-		assert.Equal(t, testScheduleName, msg.Values["schedule_name"])
-		assert.Contains(t, expectedRootNodes, msg.Values["table_name"], "Table name should be one of the root nodes")
-		assert.NotEmpty(t, msg.Values["task_id"], "TaskID should be present in Redis message")
-		assert.NotEmpty(t, msg.Values["job_name"], "JobName should be present in Redis message")
-		assert.NotEmpty(t, msg.Values["outbox_entry_id"], "outbox_entry_id should be present in Redis message")
-	}
+	// The outbox processor unpacks the JSON payload into top-level Redis fields.
+	assert.Equal(t, f.scheduleID.String(), msg.Values["run_id"])
+	assert.Equal(t, testScheduleName, msg.Values["schedule_name"])
 
-	// Step 6: Verify all outbox entries marked as processed
-	t.Log("Verifying outbox entries marked as processed")
-	err = f.pgDB.Select(&outboxEntries, "SELECT id, status FROM startup_outbox WHERE aggregate_id = $1", f.scheduleID)
-	require.NoError(t, err, "Failed to query outbox")
-
-	for _, entry := range outboxEntries {
-		assert.Equal(t, "processed", entry.Status, "Outbox entry should be marked as processed")
-	}
-
-	t.Log("✅ Test passed: startup-controller successfully consumed from stream and published events")
+	t.Log("Test passed: startup-controller emits initialize.run:v1 event via outbox")
 }
 
 // TestE2E_OutboxPattern_CrashRecovery tests outbox pattern with interruption
@@ -399,11 +276,8 @@ func TestE2E_OutboxPattern_CrashRecovery(t *testing.T) {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	f := setupTestFixture(t, 2) // Use Redis DB 2 for test isolation
+	f := setupTestFixture(t, 2)
 	defer teardownTestFixture(t, f)
-
-	// Setup: Add test data to graph service
-	expectedRootNodes := setupGraphTestData(t, f)
 
 	// Setup: Create scheduler in state service
 	setupSchedulerInStateService(t, f)
@@ -418,99 +292,34 @@ func TestE2E_OutboxPattern_CrashRecovery(t *testing.T) {
 	err := f.messageBus.Handle(f.ctx, cmd)
 	require.NoError(t, err, "Failed to handle InitializeScheduler command")
 
-	// Step 2: Verify outbox entries exist and are pending
+	// Step 2: Verify outbox entry exists and is pending
 	var pendingCount int
 	err = f.pgDB.Get(&pendingCount, "SELECT COUNT(*) FROM startup_outbox WHERE aggregate_id = $1 AND status = 'pending'", f.scheduleID)
 	require.NoError(t, err, "Failed to count pending outbox entries")
+	assert.Equal(t, 1, pendingCount, "Expected 1 pending outbox entry")
 
-	assert.Equal(t, len(expectedRootNodes), pendingCount, "Expected %d pending outbox entries", len(expectedRootNodes))
-
-	t.Logf("✅ Created %d pending outbox entries", pendingCount)
-
-	// Step 3: Process ONLY HALF of the outbox entries (simulate partial success before crash)
-	t.Log("Processing half of outbox entries (simulating partial processing before crash)")
-
-	var outboxIDs []string
-	err = f.pgDB.Select(&outboxIDs, "SELECT id FROM startup_outbox WHERE aggregate_id = $1 AND status = 'pending' ORDER BY created_at LIMIT $2", f.scheduleID, len(expectedRootNodes)/2)
-	require.NoError(t, err, "Failed to query outbox IDs")
-
-	// Manually process half of the entries
-	for _, outboxID := range outboxIDs {
-		outboxUUID, _ := uuid.Parse(outboxID)
-
-		// Get the entry
-		var entry struct {
-			Payload []byte `db:"payload"`
-		}
-		err = f.pgDB.Get(&entry, "SELECT payload FROM startup_outbox WHERE id = $1", outboxUUID)
-		require.NoError(t, err)
-
-		// Unmarshal and publish
-		var payload map[string]interface{}
-		json.Unmarshal(entry.Payload, &payload)
-
-		_, err = f.producer.Publish(f.ctx, payload)
-		require.NoError(t, err, "Failed to publish to Redis")
-
-		// Mark as processed
-		err = f.outboxRepo.MarkProcessed(f.ctx, outboxUUID)
-		require.NoError(t, err, "Failed to mark as processed")
-	}
-
-	t.Logf("✅ Processed %d entries, simulating crash before completing rest", len(outboxIDs))
-
-	// Step 4: Verify partial state (some processed, some pending)
-	var processedCount, stillPendingCount int
-	err = f.pgDB.Get(&processedCount, "SELECT COUNT(*) FROM startup_outbox WHERE aggregate_id = $1 AND status = 'processed'", f.scheduleID)
-	require.NoError(t, err)
-
-	err = f.pgDB.Get(&stillPendingCount, "SELECT COUNT(*) FROM startup_outbox WHERE aggregate_id = $1 AND status = 'pending'", f.scheduleID)
-	require.NoError(t, err)
-
-	assert.Equal(t, len(outboxIDs), processedCount, "Expected %d processed entries", len(outboxIDs))
-	assert.Equal(t, len(expectedRootNodes)-len(outboxIDs), stillPendingCount, "Expected %d pending entries", len(expectedRootNodes)-len(outboxIDs))
-
-	t.Logf("✅ Before recovery: %d processed, %d pending", processedCount, stillPendingCount)
-
-	// Step 5: SIMULATE SERVICE RESTART - run outbox processor again
-	t.Log("Simulating service restart - running outbox processor for recovery")
-
-	// Create a new outbox processor (simulating fresh instance after restart)
-	newOutboxProc := handlers.NewOutboxProcessor(f.outboxRepo, f.producer, f.logger)
+	// Step 3: Simulate crash before outbox processing completes
+	t.Log("Simulating crash - creating fresh outbox processor")
+	newOutboxProc := handlers.NewOutboxProcessor(f.outboxRepo, f.producers, f.logger)
 
 	err = newOutboxProc.ProcessBatch(f.ctx)
 	require.NoError(t, err, "Failed to process outbox batch after recovery")
 
-	// Step 6: Verify ALL entries are now processed
-	t.Log("Verifying all outbox entries are processed after recovery")
-	time.Sleep(100 * time.Millisecond)
-
+	// Step 4: Verify all entries are now processed
+	var processedCount int
 	err = f.pgDB.Get(&processedCount, "SELECT COUNT(*) FROM startup_outbox WHERE aggregate_id = $1 AND status = 'processed'", f.scheduleID)
 	require.NoError(t, err)
+	assert.Equal(t, 1, processedCount, "Expected 1 processed entry")
 
+	var stillPendingCount int
 	err = f.pgDB.Get(&stillPendingCount, "SELECT COUNT(*) FROM startup_outbox WHERE aggregate_id = $1 AND status = 'pending'", f.scheduleID)
 	require.NoError(t, err)
-
-	assert.Equal(t, len(expectedRootNodes), processedCount, "Expected all %d entries to be processed", len(expectedRootNodes))
 	assert.Equal(t, 0, stillPendingCount, "Expected no pending entries")
 
-	t.Logf("✅ After recovery: %d processed, %d pending", processedCount, stillPendingCount)
+	// Step 5: Verify event in Redis stream
+	messages, err := f.redisClient.XRange(f.ctx, initializeRunStream, "-", "+").Result()
+	require.NoError(t, err, "Failed to read from initialize.run:v1 stream")
+	assert.Len(t, messages, 1, "Expected 1 message in initialize.run:v1 stream after recovery")
 
-	// Step 7: Verify ALL events are in Redis output stream
-	t.Log("Verifying all events in output stream after recovery")
-
-	messages, err := f.redisClient.XRange(f.ctx, outputStream, "-", "+").Result()
-	require.NoError(t, err, "Failed to read from output stream")
-
-	assert.Equal(t, len(expectedRootNodes), len(messages), "Expected all %d messages in output stream", len(expectedRootNodes))
-
-	// Verify no duplicate messages
-	seenTables := make(map[string]bool)
-	for _, msg := range messages {
-		tableName := msg.Values["table_name"].(string)
-		assert.False(t, seenTables[tableName], "Duplicate message found for table: %s", tableName)
-		seenTables[tableName] = true
-	}
-
-	t.Log("✅ Test passed: outbox pattern successfully recovered from crash and published all missing messages")
+	t.Log("Test passed: outbox pattern recovered from crash and published missing message")
 }

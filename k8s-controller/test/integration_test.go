@@ -137,7 +137,7 @@ func TestIntegration_EndToEnd(t *testing.T) {
 			ScheduleID:   scheduleID,
 			ScheduleName: "test-schedule",
 			ServiceName:  "test-service",
-			Schema:       "test-schema",
+			SchemaName:   "test-schema",
 			TableName:    "test-table",
 			JobName:      "non-existent-job-" + uuid.New().String(),
 		}
@@ -182,8 +182,8 @@ func TestIntegration_RedisStreams(t *testing.T) {
 	}
 
 	// Create producer
-	testCheckStream := fmt.Sprintf("k8s.check:v1.test.%d", time.Now().Unix())
-	testRetryStream := fmt.Sprintf("task.retry:v1.test.%d", time.Now().Unix())
+	testCheckStream := fmt.Sprintf("check.k8s:v1.test.%d", time.Now().Unix())
+	testRetryStream := fmt.Sprintf("retry.task:v1.test.%d", time.Now().Unix())
 	testFailedStream := fmt.Sprintf("task.failed:v1.test.%d", time.Now().Unix())
 
 	// Clean up streams after test

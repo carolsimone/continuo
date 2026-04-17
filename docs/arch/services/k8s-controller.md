@@ -10,7 +10,7 @@ It is responsible for:
 - deciding: still running → re-check, failed → retry or permanent failure, succeeded → complete
 - recording task execution history in `state`
 - uploading full pod logs to S3
-- publishing terminal status updates to `dependency-controller` (via `update.table:v1`)
+- publishing terminal status updates to `orchestrator` (via `node.updated:v1`)
 
 ## Owned Storage (Postgres: `continuo_k8s`)
 
@@ -25,10 +25,10 @@ It is responsible for:
 
 | Stream | Description |
 |---|---|
-| `executor.deployed:v1` | New job deployed; triggers first status check |
-| `k8s.check:v1` | Delayed re-check for still-running jobs |
+| `node.deployed:v1` | New job deployed; triggers first status check |
+| `check.k8s:v1` | Delayed re-check for still-running jobs |
 
-Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `job_name`, `node_type` (plus `check_after` on `k8s.check:v1`).
+Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type` (plus `check_after` on `check.k8s:v1`).
 
 ### HTTP (port 8085)
 
@@ -40,10 +40,10 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
 
 | Stream | Trigger |
 |---|---|
-| `k8s.check:v1` | Job still running; re-enqueue with `check_after` delay |
-| `task.retry:v1` | Job failed, retryable; `executor-controller` will re-deploy |
+| `check.k8s:v1` | Job still running; re-enqueue with `check_after` delay |
+| `retry.task:v1` | Job failed, retryable; `executor-controller` will re-deploy |
 | `task.failed:v1` | Job failed permanently; currently has no in-repo consumer |
-| `update.table:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `dependency-controller` |
+| `node.updated:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `orchestrator` |
 
 ### gRPC to `state`
 
@@ -59,11 +59,15 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
 |---|---|
 | Kubernetes API | `GetJobStatus` — read job/pod status and termination message |
 | Kubernetes API | `GetPodLogs` — fetch full log + configurable tail (default configured) |
-| S3 | `PutObject` — upload full pod log; key format: `logs/task-executions/{service}/{schema}/{table}/{execution_id}.log` |
+| S3 | `PutObject` — upload full pod log; key format: `logs/task-executions/{service_name}/{schema_name}/{table_name}/{execution_id}.log` |
+
+### K8s client configuration
+
+`NewK8sClient` uses `KUBECONFIG` when set (local / docker-compose). If `KUBECONFIG` is not set it falls back to `rest.InClusterConfig()` for pod deployments with a ServiceAccount.
 
 ## Processing Logic
 
-### On `executor.deployed:v1` or `k8s.check:v1`
+### On `node.deployed:v1` or `check.k8s:v1`
 
 ```
 1. GetJobStatus (K8s) — query current pod status
@@ -73,7 +77,7 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
    → if duplicate: rollback + XACK
 5. Write outbox entries (two entries per outcome):
    - Entry A: internal task update (UpdateTask + CreateTaskExecution)
-   - Entry B: external Redis notification (update.table:v1 or k8s.check:v1 etc.)
+   - Entry B: external Redis notification (node.updated:v1 or check.k8s:v1 etc.)
 6. Commit (outbox entries + processed_events land atomically)
 ```
 
@@ -81,10 +85,10 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
 
 | Status | Action |
 |---|---|
-| **Running** | Write `check_delayed` outbox entry → re-enqueue to `k8s.check:v1` with `check_after` |
-| **Failed, retryable** (`retry_count < max_retries`) | Fetch+upload logs (soft-fail) → entry A: update task status=failed, increment retry; entry B: publish `task.retry:v1` |
-| **Failed, permanent** (`retry_count >= max_retries`) | Fetch+upload logs (soft-fail) → entry A: update task status=failed; entry B: publish `task.failed:v1` + `update.table:v1` FAILED |
-| **Succeeded** | Entry A: update task status=succeeded, create execution record; entry B: publish `update.table:v1` SUCCEEDED |
+| **Running** | Write `check_delayed` outbox entry → re-enqueue to `check.k8s:v1` with `check_after` |
+| **Failed, retryable** (`retry_count < max_retries`) | Fetch+upload logs (soft-fail) → entry A: update task status=failed, increment retry; entry B: publish `retry.task:v1` |
+| **Failed, permanent** (`retry_count >= max_retries`) | Fetch+upload logs (soft-fail) → entry A: update task status=failed; entry B: publish `task.failed:v1` + `node.updated:v1` FAILED |
+| **Succeeded** | Entry A: update task status=succeeded, create execution record; entry B: publish `node.updated:v1` SUCCEEDED |
 | **Unknown** | Treated as transient; entry written to stage further investigation |
 
 ### Outbox processor
@@ -105,24 +109,24 @@ Reads `k8s_status_outbox` entries and executes the staged side effects:
 
 | Loop | Description |
 |---|---|
-| Redis consumer (dual-stream) | Reads `executor.deployed:v1` and `k8s.check:v1`; includes crash-recovery for pending messages |
-| Delayed requeue | Holds `k8s.check:v1` messages until `check_after` time before dispatching to handler |
+| Redis consumer (dual-stream) | Reads `node.deployed:v1` and `check.k8s:v1`; includes crash-recovery for pending messages |
+| Delayed requeue | Holds `check.k8s:v1` messages until `check_after` time before dispatching to handler |
 | Outbox processor | Polls `k8s_status_outbox`; executes staged state updates, executions, and Redis publishes |
 | Stuck entry resolver | Periodically finds `k8s_status_outbox` entries stuck in pending beyond `stuck_threshold_seconds`; force-marks them failed; tracks resolve attempts in memory; escalates with CRITICAL log if `max_resolve_attempts` exceeded |
 
 ## Redis Payload Reference
 
-### `k8s.check:v1`
-`outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `job_name`, `check_after`, `node_type`
+### `check.k8s:v1`
+`outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`
 
-### `task.retry:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `job_name`, `retry_count`, `node_type`
+### `retry.task:v1`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `retry_count`, `node_type`
 
 ### `task.failed:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `job_name`, `error_message`, `retry_count`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `error_message`, `retry_count`
 
-### `update.table:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `status`
+### `node.updated:v1`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `status`
 
 ## Reliability Patterns
 

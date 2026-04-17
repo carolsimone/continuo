@@ -13,7 +13,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// RerunConsumer consumes command.rerun:v1 events from Redis Streams.
+// RerunConsumer consumes rerun:v1 events from Redis Streams.
 type RerunConsumer struct {
 	client        *goredis.Client
 	streamName    string
@@ -60,6 +60,9 @@ func (c *RerunConsumer) Start(ctx context.Context) error {
 		"group", c.consumerGroup,
 		"name", c.consumerName,
 	)
+	if err := c.reclaimPending(ctx); err != nil {
+		c.logger.Error("Failed to reclaim pending messages", "stream", c.streamName, "error", err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -71,6 +74,49 @@ func (c *RerunConsumer) Start(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (c *RerunConsumer) reclaimPending(ctx context.Context) error {
+	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: c.streamName,
+		Group:  c.consumerGroup,
+		Start:  "-",
+		End:    "+",
+		Count:  100,
+	}).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get pending messages: %w", err)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	c.logger.Warn("Reclaiming pending messages from previous consumers",
+		"stream", c.streamName,
+		"count", len(pending),
+	)
+	for _, p := range pending {
+		msgs, err := c.client.XClaim(ctx, &goredis.XClaimArgs{
+			Stream:   c.streamName,
+			Group:    c.consumerGroup,
+			Consumer: c.consumerName,
+			MinIdle:  0,
+			Messages: []string{p.ID},
+		}).Result()
+		if err != nil {
+			c.logger.Error("Failed to claim message", "message_id", p.ID, "error", err)
+			continue
+		}
+		for _, msg := range msgs {
+			if err := c.processMessage(ctx, msg); err != nil {
+				c.logger.Error("Failed to process reclaimed message", "message_id", msg.ID, "error", err)
+				continue
+			}
+			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {
+				c.logger.Error("Failed to ACK reclaimed message", "message_id", msg.ID, "error", err)
+			}
+		}
+	}
+	return nil
 }
 
 func (c *RerunConsumer) readAndProcess(ctx context.Context) error {
@@ -109,7 +155,7 @@ func (c *RerunConsumer) readAndProcess(ctx context.Context) error {
 func (c *RerunConsumer) processMessage(ctx context.Context, msg goredis.XMessage) error {
 	scheduleIDStr, _ := msg.Values["schedule_id"].(string)
 	scheduleName, _ := msg.Values["schedule_name"].(string)
-	schema, _ := msg.Values["schema"].(string)
+	schema, _ := msg.Values["schema_name"].(string)
 	tableName, _ := msg.Values["table_name"].(string)
 	serviceName, _ := msg.Values["service_name"].(string)
 
@@ -121,7 +167,7 @@ func (c *RerunConsumer) processMessage(ctx context.Context, msg goredis.XMessage
 	return c.messageBus.Handle(ctx, command.RerunNode{
 		ScheduleID:   scheduleID,
 		ScheduleName: scheduleName,
-		Schema:       schema,
+		SchemaName:   schema,
 		TableName:    tableName,
 		ServiceName:  serviceName,
 	})

@@ -100,7 +100,7 @@ kubectl config view --raw \
     | sed "s|server: https://[^:]*:[0-9]*|server: https://${KUBE_IP}:${KUBE_PORT}|g" \
     > "${SCRIPT_DIR}/../kubeconfig/kubeconfig.yaml"
 
-for svc in executor-controller startup-controller dependency-controller; do
+for svc in executor-controller startup-controller; do
     mkdir -p "${SCRIPT_DIR}/../${svc}/kubeconfig"
     cp "${SCRIPT_DIR}/../kubeconfig/kubeconfig.yaml" "${SCRIPT_DIR}/../${svc}/kubeconfig/kubeconfig.yaml"
     log_info "Kubeconfig copied to ${svc}/"

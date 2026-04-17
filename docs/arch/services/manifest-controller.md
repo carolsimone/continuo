@@ -2,9 +2,9 @@
 
 ## Purpose
 
-`manifest-controller` is the topology ingestion service. It loads dbt `manifest.json` files into the graph and tells `state` which schedule names currently exist.
+`manifest-controller` is the topology ingestion service. It loads dbt `manifest.json` files, resolves cross-service dependencies, and publishes the topology to `orchestrator` via `manifest.loaded:v1`.
 
-It is the only service that writes topology to `graph` (`CreateNode`).
+It is the only service that writes topology (via `manifest.loaded:v1` events consumed by `orchestrator`).
 
 **Runtime**: Python 3.12 / uv. Not a Go service.
 
@@ -37,22 +37,11 @@ None (no HTTP interface; runs as `tail -f /dev/null` in dev; started manually or
 
 | Stream | Description |
 |---|---|
-| `schedules.loaded:v1` | Published after every successful manifest load; consumed by `state` |
+| `manifest.loaded:v1` | Published after every successful manifest load; consumed by `orchestrator` |
 
-`schedules.loaded:v1` is a single Redis field `payload` containing JSON:
-- `event_id` — UUID generated per load
-- `schedule_names` — deduplicated list of `schedule_name` values across all loaded nodes
-- `manifest_versions` — `{ service_name: manifest_version }` map (last version per service wins)
+`manifest.loaded:v1` is a single Redis field `payload` containing JSON: a list of topology node objects with their resolved upstream dependencies. The `orchestrator` consumes this and upserts `Table` nodes and `DEPENDS_ON` edges in Neo4j, then publishes `schedules.loaded:v1` to `state` with the schedule names list.
 
-> **Empty schedule list**: if no manifests are found or no nodes have a `schedule_name`, an empty list is published. `state`'s `SoftDeleteAbsent([])` will soft-delete **all** active catalog entries. The manifest source must always return nodes with schedule names populated.
-
-### gRPC to `graph`
-
-| Method | Description |
-|---|---|
-| `CreateNode` | One call per node; upserts `Table` node and rewrites `DEPENDS_ON` edges |
-
-Calls no other gRPC services.
+Calls no gRPC services.
 
 ## Processing Logic
 
@@ -69,9 +58,9 @@ Pass 1 — Parse
 Pass 2 — Build registry
   Construct NodeRegistry from all_nodes (table_name, schema_name, service_name, owner)
   Save registry to local filesystem CSV (for cross-service dep lookup)
-  Build lookup dict: (schema, table) → NodeRegistryEntry
+  Build lookup dict: (schema_name, table_name) → NodeRegistryEntry
 
-Pass 3 — Resolve deps + load
+Pass 3 — Resolve deps
   For each node in all_nodes:
     resolve_upstream_deps(node, lookup):
       - parse compiled_sql via sqlglot
@@ -79,12 +68,9 @@ Pass 3 — Resolve deps + load
       - skip qualified self-references
       - raise UnqualifiedTableReferenceError on unqualified references
       - skip tables not in registry (external/source tables)
-      - dbt seeds ARE in registry → seed refs resolve as upstream deps
-    graph_client.create_node(node)  ← gRPC CreateNode
-    collect manifest_versions[service_name] = manifest_version
+      - dbt seeds ARE in registry -> seed refs resolve as upstream deps
 
-Collect schedule_names = deduplicated {n.schedule_name for n in all_nodes if n.schedule_name}
-Publish schedules.loaded:v1
+Publish manifest.loaded:v1 (all nodes with resolved deps as JSON payload)
 
 ACK message
 ```
@@ -126,10 +112,10 @@ No S3 writes.
 
 ## gRPC Callers
 
-None — manifest-controller is not called via gRPC by any service.
+None -- manifest-controller is not called via gRPC by any service.
 
 ## Reliability Notes
 
-- No local outbox — if the gRPC calls to `graph` succeed but Redis publish of `schedules.loaded:v1` fails, the message is not ACKed and the entire load is replayed. `CreateNode` is idempotent (upsert).
+- No local outbox -- if the Redis publish of `manifest.loaded:v1` fails, the message is not ACKed and the entire load is replayed.
 - Per-node failures in pass 3 are logged and counted but do not abort the load — other nodes continue. The failed node will not appear in the graph.
 - `update.graph:v1` producer is external to the repo in production (typically a CI/deploy pipeline or e2e test trigger).

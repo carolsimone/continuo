@@ -80,7 +80,7 @@ func TestE2E_DeploymentFlow(t *testing.T) {
 		ScheduleID:   scheduleID,
 		ScheduleName: scheduleName,
 		ServiceName:  serviceName,
-		Schema:       schema,
+		SchemaName:   schema,
 		TableName:    tableName,
 		JobName:      jobName,
 		NodeType:     pkg_model.NodeTypeDbtModel,
@@ -118,7 +118,7 @@ func TestE2E_DeploymentFlow(t *testing.T) {
 	assert.Equal(t, scheduleID.String(), msg.Values["schedule_id"])
 	assert.Equal(t, scheduleName, msg.Values["schedule_name"])
 	assert.Equal(t, serviceName, msg.Values["service_name"])
-	assert.Equal(t, schema, msg.Values["schema"])
+	assert.Equal(t, schema, msg.Values["schema_name"])
 	assert.Equal(t, tableName, msg.Values["table_name"])
 	assert.Equal(t, jobName, msg.Values["job_name"])
 
@@ -183,7 +183,7 @@ func TestE2E_MultipleDeployments(t *testing.T) {
 			ScheduleID:   uuid.New(),
 			ScheduleName: "hourly",
 			ServiceName:  "dbt",
-			Schema:       "public",
+			SchemaName:   "public",
 			TableName:    "users",
 			JobName:      "dbt-public-users-" + taskID.String()[:8],
 			NodeType:     pkg_model.NodeTypeDbtModel,
@@ -264,7 +264,7 @@ func TestE2E_RetryOnFailure(t *testing.T) {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
 		NodeType:     pkg_model.NodeTypeDbtModel,
@@ -355,7 +355,7 @@ func TestE2E_IdempotentDeployment(t *testing.T) {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users", // Same job name
 		NodeType:     pkg_model.NodeTypeDbtModel,
@@ -373,7 +373,7 @@ func TestE2E_IdempotentDeployment(t *testing.T) {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users", // Same job name
 		NodeType:     pkg_model.NodeTypeDbtModel,
@@ -459,7 +459,7 @@ func TestE2E_BackgroundProcessing(t *testing.T) {
 			ScheduleID:   uuid.New(),
 			ScheduleName: "hourly",
 			ServiceName:  "dbt",
-			Schema:       "public",
+			SchemaName:   "public",
 			TableName:    "users",
 			JobName:      "dbt-public-users-" + uuid.New().String()[:8],
 			NodeType:     pkg_model.NodeTypeDbtModel,

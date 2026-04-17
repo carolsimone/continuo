@@ -43,11 +43,11 @@ services:
       - postgres
     tty: true
 
-  flyway-dependency:
+  flyway-orchestrator:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_dependency -user=continuo_svc -password=continuo -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_orchestrator -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
-      - ./db/migration/dependency:/flyway/sql
+      - ./db/migration/orchestrator:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -127,10 +127,9 @@ services:
       - ./state:/app/state
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
+      - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./graph:/app/graph
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
@@ -158,10 +157,11 @@ services:
       - REDIS_CONSUMER_STREAM=scheduler.started:v1
       - REDIS_CONSUMER_GROUP=startup_controller_consumers
       - REDIS_PRODUCER_STREAM=query.model:v1
-      # Neo4j
-      - NEO4J_URI=bolt://neo4j:7687
-      - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=atlas_password
+      - REDIS_PRODUCER_INIT_STREAM=initialize.run:v1
+      - REDIS_CONSUMER_RUN_INITIALIZED_STREAM=run.initialized:v1
+      - REDIS_CONSUMER_RUN_INITIALIZED_GROUP=startup_run_initialized
+      - REDIS_CONSUMER_RERUN_READY_STREAM=rerun.ready:v1
+      - REDIS_CONSUMER_RERUN_READY_GROUP=startup_rerun_ready
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -170,8 +170,6 @@ services:
       - POSTGRES_PASSWORD=continuo
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
-      # Graph Service
-      - GRAPH_SERVICE_GRPC_ADDR=graph:50052
       # Kubernetes
       - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
       # Application
@@ -184,10 +182,9 @@ services:
       - ./state:/app/state
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
+      - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./graph:/app/graph
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
       - ./kubeconfig:/app/kubeconfig
@@ -215,9 +212,9 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
       - REDIS_CONSUMER_STREAM=query.model:v1
-      - REDIS_CONSUMER_RETRY_STREAM=task.retry:v1
+      - REDIS_CONSUMER_RETRY_STREAM=retry.task:v1
       - REDIS_CONSUMER_GROUP=executor_controller_consumers
-      - REDIS_PRODUCER_STREAM=executor.deployed:v1
+      - REDIS_PRODUCER_STREAM=node.deployed:v1
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -241,10 +238,9 @@ services:
       - ./state:/app/state
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
+      - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./graph:/app/graph
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
       - ./kubeconfig:/app/kubeconfig
@@ -270,13 +266,13 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      - REDIS_CONSUMER_DEPLOYED_STREAM=executor.deployed:v1
-      - REDIS_CONSUMER_CHECK_STREAM=k8s.check:v1
+      - REDIS_CONSUMER_DEPLOYED_STREAM=node.deployed:v1
+      - REDIS_CONSUMER_CHECK_STREAM=check.k8s:v1
       - REDIS_CONSUMER_GROUP=k8s_controller_consumers
-      - REDIS_PRODUCER_CHECK_STREAM=k8s.check:v1
-      - REDIS_PRODUCER_RETRY_STREAM=task.retry:v1
+      - REDIS_PRODUCER_CHECK_STREAM=check.k8s:v1
+      - REDIS_PRODUCER_RETRY_STREAM=retry.task:v1
       - REDIS_PRODUCER_FAILED_STREAM=task.failed:v1
-      - REDIS_PRODUCER_UPDATE_TABLE_STREAM=update.table:v1
+      - REDIS_PRODUCER_UPDATE_TABLE_STREAM=node.updated:v1
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -307,10 +303,9 @@ services:
       - ./state:/app/state
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
+      - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./graph:/app/graph
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
       - ./kubeconfig:/app/kubeconfig
@@ -320,82 +315,56 @@ services:
       - kind
     tty: true
 
-  dependency-controller:
+  orchestrator:
     build:
       context: .
-      dockerfile: dependency-controller/Dockerfile.dev
-    container_name: dependency-controller
+      dockerfile: orchestrator/Dockerfile.dev
+    container_name: orchestrator
     depends_on:
       - postgres
       - redis
       - state
-      - graph
+      - flyway-orchestrator
+      - neo4j
     environment:
+      # Neo4j
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=atlas_password
       # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      - REDIS_CONSUMER_STREAM=update.table:v1
-      - REDIS_CONSUMER_GROUP=dependency_controller_consumers
-      - REDIS_PRODUCER_STREAM=query.model:v1
+      # Consumer streams
+      - NODE_UPDATED_STREAM=node.updated:v1
+      - NODE_UPDATED_GROUP=orchestrator_node_updated
+      - MANIFEST_LOADED_STREAM=manifest.loaded:v1
+      - MANIFEST_LOADED_GROUP=orchestrator_manifest_loaded
+      - INITIALIZE_RUN_STREAM=initialize.run:v1
+      - INITIALIZE_RUN_GROUP=orchestrator_initialize_run
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=continuo_dependency
+      - POSTGRES_DB=continuo_orchestrator
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
       # State Service
       - STATE_SERVICE_GRPC_ADDR=state:50051
-      # Graph Service
-      - GRAPH_SERVICE_GRPC_ADDR=graph:50052
       # Application
-      - HTTP_PORT=8086
-      - ENV=local
-      - LOG_LEVEL=INFO
-    ports:
-      - "8086:8086"   # Health check HTTP
-    volumes:
-      - ./state:/app/state
-      - ./startup-controller:/app/startup-controller
-      - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
-      - ./k8s-controller:/app/k8s-controller
-      - ./pkg:/app/pkg
-      - ./graph:/app/graph
-      - ./e2e:/app/e2e
-      - ./go.work:/app/go.work
-      - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
-    networks:
-      - default
-    tty: true
-
-  graph:
-    build:
-      context: .
-      dockerfile: graph/Dockerfile.dev
-    container_name: graph
-    depends_on:
-      neo4j:
-        condition: service_healthy
-    environment:
-      - NEO4J_URI=bolt://neo4j:7687
-      - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=atlas_password
       - GRPC_PORT=50052
-      - HEALTH_PORT=8081
-      - LOG_LEVEL=INFO
+      - HTTP_PORT=8087
       - ENV=local
+      - LOG_LEVEL=INFO
     ports:
-      - "8081:8081"   # Health check HTTP
+      - "8087:8087"   # Health check HTTP
       - "50052:50052" # gRPC
     volumes:
       - ./state:/app/state
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
       - ./pkg:/app/pkg
-      - ./graph:/app/graph
+      - ./orchestrator:/app/orchestrator
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
       - /var/run/docker.sock:/var/run/docker.sock
@@ -413,9 +382,7 @@ services:
         condition: service_started
       startup-controller:
         condition: service_started
-      dependency-controller:
-        condition: service_started
-      graph:
+      orchestrator:
         condition: service_started
       postgres:
         condition: service_started
@@ -428,7 +395,7 @@ services:
       dbt-compile-and-load:
         condition: service_completed_successfully
     environment:
-      - GRAPH_HOST=graph
+      - ORCHESTRATOR_HOST=orchestrator
       - STATE_HOST=state
       - REDIS_HOST=redis
       - NEO4J_HOST=neo4j
@@ -439,10 +406,9 @@ services:
       - ./kubeconfig:/app/kubeconfig
       - ./e2e:/app/e2e
       - ./state:/app/state
-      - ./graph:/app/graph
+      - ./orchestrator:/app/orchestrator
       - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
-      - ./dependency-controller:/app/dependency-controller
       - ./k8s-controller:/app/k8s-controller
       - ./pkg:/app/pkg
       - ./go.work:/app/go.work
@@ -465,7 +431,7 @@ services:
       - redis
     environment:
       - STATE_GRPC_ADDR=state:50051
-      - GRAPH_GRPC_ADDR=graph:50052
+      - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
       - PORT=8090
       - NODE_ENV=production
       - S3_ENDPOINT_URL=http://localstack:4566
@@ -506,7 +472,7 @@ services:
       REDIS_URL: redis://:continuo@redis:6379
       REDIS_STREAM: "update.graph:v1"
       REDIS_GROUP: manifest-controller
-      GRAPH_GRPC_ADDR: graph:50052
+      REDIS_OUTPUT_STREAM: "manifest.loaded:v1"
       REGISTRY_PATH: /data/registry.csv
       MANIFESTS_BASE: /manifests
       S3_ENDPOINT_URL: http://localstack:4566
@@ -520,8 +486,6 @@ services:
       - manifest-registry:/data
     depends_on:
       redis:
-        condition: service_started
-      graph:
         condition: service_started
       localstack:
         condition: service_healthy
