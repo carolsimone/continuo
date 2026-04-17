@@ -48,6 +48,13 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 		return err
 	}
 	c.logger.Info("Starting consumer", "stream", c.streamName, "group", c.consumerGroup)
+
+	// Reclaim pending messages left by previous consumer instances that
+	// crashed before ACKing (crash recovery).
+	if err := c.reclaimPending(ctx); err != nil {
+		c.logger.Error("Failed to reclaim pending messages", "stream", c.streamName, "error", err)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -66,6 +73,66 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
 		return fmt.Errorf("failed to create consumer group: %w", err)
 	}
+	return nil
+}
+
+// reclaimPending claims and reprocesses messages left in the pending entry list
+// (PEL) by any consumer in the group. This covers messages delivered to a
+// previous ephemeral consumer name that crashed before ACKing.
+func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
+	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: c.streamName,
+		Group:  c.consumerGroup,
+		Start:  "-",
+		End:    "+",
+		Count:  100,
+	}).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get pending messages: %w", err)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	c.logger.Warn("Reclaiming pending messages from previous consumers",
+		"stream", c.streamName,
+		"count", len(pending),
+	)
+
+	for _, p := range pending {
+		msgs, err := c.client.XClaim(ctx, &goredis.XClaimArgs{
+			Stream:   c.streamName,
+			Group:    c.consumerGroup,
+			Consumer: c.consumerName,
+			MinIdle:  0,
+			Messages: []string{p.ID},
+		}).Result()
+		if err != nil {
+			c.logger.Error("Failed to claim message",
+				"stream", c.streamName,
+				"message_id", p.ID,
+				"error", err,
+			)
+			continue
+		}
+
+		for _, msg := range msgs {
+			if err := c.handler(ctx, msg); err != nil {
+				c.logger.Error("Failed to process reclaimed message",
+					"message_id", msg.ID,
+					"error", err,
+				)
+				continue
+			}
+			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {
+				c.logger.Error("Failed to ACK reclaimed message",
+					"message_id", msg.ID,
+					"error", err,
+				)
+			}
+		}
+	}
+
 	return nil
 }
 
