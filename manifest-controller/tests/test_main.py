@@ -13,9 +13,9 @@ class _FakeSource:
 
 
 class _FakeManifestHandler:
-    def __init__(self, source, graph_client, registry_repo) -> None:
+    def __init__(self, source, manifest_publisher, registry_repo) -> None:
         self.source = source
-        self.graph_client = graph_client
+        self.manifest_publisher = manifest_publisher
         self.registry_repo = registry_repo
 
     def handle(self):
@@ -43,7 +43,6 @@ def test_main_propagates_manifest_versions_to_publisher(monkeypatch):
     fake_publisher = _FakePublisher(None, "schedules.loaded:v1")
 
     monkeypatch.setattr(main, "validate", lambda: None)
-    monkeypatch.setattr(main, "GRAPH_GRPC_ADDR", "localhost:9000")
     monkeypatch.setattr(main, "REGISTRY_PATH", "/tmp/registry.csv")
     monkeypatch.setattr(main, "MANIFESTS_BASE", "/tmp/manifests")
     monkeypatch.setattr(main, "S3_ENDPOINT_URL", "http://localhost:9000")
@@ -53,11 +52,12 @@ def test_main_propagates_manifest_versions_to_publisher(monkeypatch):
     monkeypatch.setattr(main, "REDIS_STREAM", "trigger")
     monkeypatch.setattr(main, "REDIS_GROUP", "group")
     monkeypatch.setattr(main, "SCHEDULES_LOADED_STREAM", "schedules.loaded:v1")
-    monkeypatch.setattr(main, "GraphClient", lambda address: object())
+    monkeypatch.setattr(main, "MANIFEST_LOADED_STREAM", "manifest.loaded:v1")
     monkeypatch.setattr(main, "FilesystemRegistryRepository", lambda path: object())
     monkeypatch.setattr(main, "LocalFilesystemSource", lambda base_path: fake_source)
     monkeypatch.setattr(main, "S3Source", lambda **kwargs: fake_source)
     monkeypatch.setattr(main, "ManifestHandler", _FakeManifestHandler)
+    monkeypatch.setattr(main, "ManifestLoadedPublisher", lambda redis_client, stream_name: object())
     monkeypatch.setattr(main, "SchedulesLoadedPublisher", lambda redis_client, stream_name: fake_publisher)
     monkeypatch.setattr(main, "Consumer", _FakeConsumer)
     monkeypatch.setattr(main.redis, "from_url", lambda *args, **kwargs: object())

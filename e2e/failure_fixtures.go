@@ -77,7 +77,6 @@ func seedNodes(t *testing.T, ctx context.Context, clients *testClients, nodes []
 			nodeScheduleName = "seed"
 		}
 
-		// Upsert the Table node (use "schema" not "schema_name" to match orchestrator)
 		_, err := session.Run(ctx, `
 			MERGE (t:Table {table_name: $table_name, schema: $schema})
 			SET t.service_name = $service_name,

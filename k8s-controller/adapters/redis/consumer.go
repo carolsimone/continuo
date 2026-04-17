@@ -310,7 +310,7 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 
 	scheduleName, _ := msg.Values["schedule_name"].(string)
 	serviceName, _ := msg.Values["service_name"].(string)
-	schema, _ := msg.Values["schema"].(string)
+	schema, _ := msg.Values["schema_name"].(string)
 	tableName, _ := msg.Values["table_name"].(string)
 	jobName, _ := msg.Values["job_name"].(string)
 	nodeType, _ := msg.Values["node_type"].(string)
@@ -320,7 +320,7 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 		ScheduleID:   scheduleID,
 		ScheduleName: scheduleName,
 		ServiceName:  serviceName,
-		Schema:       schema,
+		SchemaName:   schema,
 		TableName:    tableName,
 		JobName:      jobName,
 		NodeType:     nodeType,

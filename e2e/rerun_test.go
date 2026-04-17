@@ -82,9 +82,20 @@ func TestRerunFailedNode(t *testing.T) {
 	t.Log("Phase 2: fixing table_e in service-3-broken and reloading graph...")
 	fixBrokenTableEAndReloadGraph(t, ctx, clients)
 
+	// Update task_tracker to reflect the fixed service name. In production the
+	// service_name never changes (it's the dbt project name), so the task and
+	// graph always agree. The e2e test uses separate Docker images
+	// (service-3-broken → service-3), so we align the task_tracker explicitly.
+	_, err = clients.stateDB.ExecContext(ctx,
+		`UPDATE task_tracker SET service_name = $1 WHERE schedule_id = $2 AND table_name = $3`,
+		"service-3", schedulerID, "table_e",
+	)
+	require.NoError(t, err, "failed to update task_tracker service_name")
+	t.Log("Updated task_tracker service_name: service-3-broken → service-3")
+
 	// Phase 3: POST /api/schedulers/{id}/rerun for table_e (BFF route → TriggerRerun gRPC)
 	t.Log("Phase 3: calling POST /api/schedulers/{id}/rerun for table_e...")
-	callRerunEndpoint(t, ctx, schedulerID, failureTestSchemaName, "table_e", "service-3-broken")
+	callRerunEndpoint(t, ctx, schedulerID, failureTestSchemaName, "table_e", "service-3")
 
 	// Phase 4: Wait for table_e to be re-dispatched (second entry in query.model:v1)
 	t.Log("Phase 4: waiting for table_e re-dispatch...")

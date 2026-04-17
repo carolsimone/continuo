@@ -39,7 +39,7 @@ func TestDeployHandler_Handle_Success(t *testing.T) {
 		ScheduleID:   scheduleID,
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
 		NodeType:     pkg_model.NodeTypeDbtModel,
@@ -62,7 +62,7 @@ func TestDeployHandler_Handle_Success(t *testing.T) {
 	assert.Equal(t, scheduleID, entry.ScheduleID)
 	assert.Equal(t, "hourly", entry.ScheduleName)
 	assert.Equal(t, "dbt", entry.ServiceName)
-	assert.Equal(t, "public", entry.Schema)
+	assert.Equal(t, "public", entry.SchemaName)
 	assert.Equal(t, "users", entry.TableName)
 	assert.Equal(t, "dbt-public-users", entry.JobName)
 	assert.Equal(t, "dbt-model", entry.NodeType)
@@ -100,7 +100,7 @@ func TestDeployHandler_Handle_MultipleCommands(t *testing.T) {
 			ScheduleID:   uuid.New(),
 			ScheduleName: "hourly",
 			ServiceName:  "dbt",
-			Schema:       "public",
+			SchemaName:   "public",
 			TableName:    "users",
 			JobName:      "dbt-public-users",
 		}
@@ -152,7 +152,7 @@ func TestDeployHandler_Handle_TransactionRollback(t *testing.T) {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
 	}

@@ -30,7 +30,7 @@ func TestOutboxRepository_Create(t *testing.T) {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
 	}
@@ -65,7 +65,7 @@ func TestOutboxRepository_GetPendingBatch(t *testing.T) {
 			ScheduleID:   uuid.New(),
 			ScheduleName: "hourly",
 			ServiceName:  "dbt",
-			Schema:       "public",
+			SchemaName:   "public",
 			TableName:    "users",
 			JobName:      "dbt-public-users",
 			CreatedAt:    time.Now().Add(time.Duration(i) * time.Second), // Different timestamps
@@ -103,7 +103,7 @@ func TestOutboxRepository_GetPendingBatch_Limit(t *testing.T) {
 			ScheduleID:   uuid.New(),
 			ScheduleName: "hourly",
 			ServiceName:  "dbt",
-			Schema:       "public",
+			SchemaName:   "public",
 			TableName:    "users",
 			JobName:      "dbt-public-users",
 		}
@@ -138,7 +138,7 @@ func TestOutboxRepository_GetPendingBatch_SkipLocked(t *testing.T) {
 			ScheduleID:   uuid.New(),
 			ScheduleName: "hourly",
 			ServiceName:  "dbt",
-			Schema:       "public",
+			SchemaName:   "public",
 			TableName:    "users",
 			JobName:      "dbt-public-users",
 		}
@@ -177,7 +177,7 @@ func TestOutboxRepository_MarkProcessed(t *testing.T) {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
 	}
@@ -212,7 +212,7 @@ func TestOutboxRepository_MarkFailed(t *testing.T) {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
 	}
@@ -248,7 +248,7 @@ func TestOutboxRepository_IncrementRetry(t *testing.T) {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
 		RetryCount:   0,
@@ -295,7 +295,7 @@ func TestOutboxRepository_MaxRetriesFilter(t *testing.T) {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "hourly",
 		ServiceName:  "dbt",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
 		RetryCount:   3,

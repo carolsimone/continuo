@@ -118,8 +118,6 @@ func TestHandleRerun_WithFailedDownstream(t *testing.T) {
 	assert.Equal(t, "daily", payload.TargetNodes[0].ScheduleName, "rerun target must carry schedule_name")
 	// Verify service_name comes from the graph (mock returns "test-service"), not from cmd
 	assert.Equal(t, "test-service", payload.TargetNodes[0].ServiceName, "rerun target service_name should come from graph")
-	// Verify original_service_name carries the command's value for task lookup
-	assert.Equal(t, "svc1", payload.TargetNodes[0].OriginalServiceName, "rerun target original_service_name should come from cmd")
 }
 
 // 2. Duplicate message → skip processing.

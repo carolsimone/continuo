@@ -196,7 +196,7 @@ func (p *OutboxProcessor) payloadToValues(entry *domain.OutboxEntry) (map[string
 			"schedule_id":     evt.ScheduleID,
 			"schedule_name":   evt.ScheduleName,
 			"service_name":    evt.ServiceName,
-			"schema":          evt.Schema,
+			"schema_name":     evt.SchemaName,
 			"table_name":      evt.TableName,
 			"task_id":         evt.TaskID,
 			"job_name":        evt.JobName,

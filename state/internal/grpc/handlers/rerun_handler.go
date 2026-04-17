@@ -129,7 +129,7 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 		"schedule_id":   scheduleID.String(),
 		"schedule_name": scheduler.ScheduleName,
 		"scope":         "node",
-		"schema":        req.Schema,
+		"schema_name":   req.Schema,
 		"table_name":    req.TableName,
 		"service_name":  req.ServiceName,
 	})

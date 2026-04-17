@@ -262,15 +262,10 @@ func TestE2E_StartupController_EmitsInitializeRunEvent(t *testing.T) {
 	require.Len(t, messages, 1, "Expected 1 message in initialize.run:v1 stream")
 	msg := messages[0]
 	assert.NotEmpty(t, msg.Values["outbox_entry_id"])
-	assert.Equal(t, "run_initialization_requested", msg.Values["event_type"])
 
-	// Verify payload is valid JSON
-	payloadStr, ok := msg.Values["payload"].(string)
-	require.True(t, ok, "payload should be a string")
-	var parsedPayload map[string]string
-	require.NoError(t, json.Unmarshal([]byte(payloadStr), &parsedPayload))
-	assert.Equal(t, f.scheduleID.String(), parsedPayload["run_id"])
-	assert.Equal(t, testScheduleName, parsedPayload["schedule_name"])
+	// The outbox processor unpacks the JSON payload into top-level Redis fields.
+	assert.Equal(t, f.scheduleID.String(), msg.Values["run_id"])
+	assert.Equal(t, testScheduleName, msg.Values["schedule_name"])
 
 	t.Log("Test passed: startup-controller emits initialize.run:v1 event via outbox")
 }

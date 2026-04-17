@@ -137,7 +137,7 @@ func TestIntegration_EndToEnd(t *testing.T) {
 			ScheduleID:   scheduleID,
 			ScheduleName: "test-schedule",
 			ServiceName:  "test-service",
-			Schema:       "test-schema",
+			SchemaName:   "test-schema",
 			TableName:    "test-table",
 			JobName:      "non-existent-job-" + uuid.New().String(),
 		}

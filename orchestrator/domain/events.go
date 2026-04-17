@@ -20,7 +20,7 @@ type RerunReady struct {
 type NodeCompleted struct {
 	RunID           string
 	ScheduleName    string
-	Schema          string
+	SchemaName      string
 	TableName       string
 	Status          NodeStatus
 	ReadyDownstream []*DownstreamInfo

@@ -109,7 +109,7 @@ func (c *RerunConsumer) readAndProcess(ctx context.Context) error {
 func (c *RerunConsumer) processMessage(ctx context.Context, msg goredis.XMessage) error {
 	scheduleIDStr, _ := msg.Values["schedule_id"].(string)
 	scheduleName, _ := msg.Values["schedule_name"].(string)
-	schema, _ := msg.Values["schema"].(string)
+	schema, _ := msg.Values["schema_name"].(string)
 	tableName, _ := msg.Values["table_name"].(string)
 	serviceName, _ := msg.Values["service_name"].(string)
 
@@ -121,7 +121,7 @@ func (c *RerunConsumer) processMessage(ctx context.Context, msg goredis.XMessage
 	return c.messageBus.Handle(ctx, command.RerunNode{
 		ScheduleID:   scheduleID,
 		ScheduleName: scheduleName,
-		Schema:       schema,
+		SchemaName:   schema,
 		TableName:    tableName,
 		ServiceName:  serviceName,
 	})

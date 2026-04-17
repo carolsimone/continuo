@@ -47,7 +47,7 @@ func (h *DeployHandler) Handle(ctx context.Context, cmd command.DeployJob) error
 		ScheduleID:   cmd.ScheduleID,
 		ScheduleName: cmd.ScheduleName,
 		ServiceName:  cmd.ServiceName,
-		Schema:       cmd.Schema,
+		SchemaName:   cmd.SchemaName,
 		TableName:    cmd.TableName,
 		JobName:      cmd.JobName,
 		NodeType:     string(cmd.NodeType),

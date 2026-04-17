@@ -217,7 +217,7 @@ func baseCmd() command.HandleNodeCompletedCmd {
 		ScheduleID:   uuid.New(),
 		ScheduleName: "daily",
 		ServiceName:  "warehouse",
-		Schema:       "public",
+		SchemaName:   "public",
 		TableName:    "orders",
 		Status:       "SUCCEEDED",
 	}

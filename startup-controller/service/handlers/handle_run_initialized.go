@@ -133,7 +133,7 @@ func (h *HandleRunInitializedHandler) Handle(ctx context.Context, cmd command.Ru
 			ScheduleID:   scheduleID.String(),
 			ScheduleName: scheduleName,
 			ServiceName:  node.ServiceName,
-			Schema:       node.SchemaName,
+			SchemaName:   node.SchemaName,
 			TableName:    node.TableName,
 			TaskID:       task.TaskId,
 			JobName:      jobName,

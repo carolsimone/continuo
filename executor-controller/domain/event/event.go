@@ -12,7 +12,7 @@ type JobDeployed struct {
 	ScheduleID    string `json:"schedule_id"`
 	ScheduleName  string `json:"schedule_name"`
 	ServiceName   string `json:"service_name"`
-	Schema        string `json:"schema"`
+	SchemaName    string `json:"schema_name"`
 	TableName     string `json:"table_name"`
 	JobName       string `json:"job_name"`
 	NodeType      string `json:"node_type"`
@@ -28,7 +28,7 @@ func (e JobDeployed) ToMap() map[string]interface{} {
 		"schedule_id":     e.ScheduleID,
 		"schedule_name":   e.ScheduleName,
 		"service_name":    e.ServiceName,
-		"schema":          e.Schema,
+		"schema_name":     e.SchemaName,
 		"table_name":      e.TableName,
 		"job_name":        e.JobName,
 		"node_type":       e.NodeType,

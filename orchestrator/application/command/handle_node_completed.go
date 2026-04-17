@@ -30,7 +30,7 @@ type HandleNodeCompletedCmd struct {
 	ScheduleID   uuid.UUID
 	ScheduleName string
 	ServiceName  string
-	Schema       string
+	SchemaName   string
 	TableName    string
 	Status       string
 }
@@ -65,7 +65,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd HandleNodeC
 		"task_id", cmd.TaskID,
 		"schedule_id", cmd.ScheduleID,
 		"schedule_name", cmd.ScheduleName,
-		"schema", cmd.Schema,
+		"schema", cmd.SchemaName,
 		"table_name", cmd.TableName,
 		"status", cmd.Status,
 	)
@@ -96,7 +96,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd HandleNodeC
 		ctx,
 		cmd.ScheduleID.String(),
 		cmd.ScheduleName,
-		cmd.Schema,
+		cmd.SchemaName,
 		cmd.TableName,
 		cmd.Status,
 	); err != nil {
@@ -109,7 +109,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd HandleNodeC
 			ctx,
 			cmd.ScheduleID.String(),
 			cmd.ScheduleName,
-			cmd.Schema,
+			cmd.SchemaName,
 			cmd.TableName,
 		)
 		if err != nil {
@@ -143,7 +143,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd HandleNodeC
 				ScheduleID:   cmd.ScheduleID.String(),
 				ScheduleName: node.ScheduleName,
 				ServiceName:  node.ServiceName,
-				Schema:       node.SchemaName,
+				SchemaName:   node.SchemaName,
 				TableName:    node.TableName,
 				TaskID:       taskID,
 				JobName:      jobName,

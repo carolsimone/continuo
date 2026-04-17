@@ -194,17 +194,15 @@ func (h *HandleRerunHandler) handleRerunDedup(
 // buildTargetNodePayloads builds the list of target nodes (rerun target + FAILED downstream).
 func buildTargetNodePayloads(cmd HandleRerunCmd, targetNodeType, targetServiceName string, downstream []*domain.TableNode) []NodePayload {
 	// Start with the rerun target itself.
-	// ServiceName is the current graph value (used for K8s image dispatch).
-	// OriginalServiceName is the value from the rerun command (used for task lookup
-	// in case the service was renamed/fixed between the original run and the rerun).
+	// ServiceName comes from the graph (current state) — this is the Docker
+	// image the K8s job will run.
 	targets := []NodePayload{
 		{
-			TableName:           cmd.TableName,
-			SchemaName:          cmd.SchemaName,
-			ServiceName:         targetServiceName,
-			ScheduleName:        cmd.ScheduleName,
-			NodeType:            targetNodeType,
-			OriginalServiceName: cmd.ServiceName,
+			TableName:    cmd.TableName,
+			SchemaName:   cmd.SchemaName,
+			ServiceName:  targetServiceName,
+			ScheduleName: cmd.ScheduleName,
+			NodeType:     targetNodeType,
 		},
 	}
 

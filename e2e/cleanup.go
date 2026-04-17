@@ -128,7 +128,7 @@ func cleanupK8s(t *testing.T, ctx context.Context) {
 	// Use the schedule-id label to match what executor-controller actually creates
 	cmd := exec.CommandContext(ctx, "kubectl", "delete", "jobs",
 		"-n", "default",
-		"-l", "app=query-executor",
+		"-l", "app=dbt-job",
 		"--ignore-not-found=true")
 	if err := cmd.Run(); err != nil {
 		t.Logf("Warning: Failed to cleanup k8s jobs: %v", err)

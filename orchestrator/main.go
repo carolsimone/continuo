@@ -187,7 +187,7 @@ func main() {
 			ScheduleID:   uuid.MustParse(msg.Values["schedule_id"].(string)),
 			ScheduleName: msg.Values["schedule_name"].(string),
 			ServiceName:  msg.Values["service_name"].(string),
-			Schema:       msg.Values["schema"].(string),
+			SchemaName:   msg.Values["schema_name"].(string),
 			TableName:    msg.Values["table_name"].(string),
 			Status:       msg.Values["status"].(string),
 		}

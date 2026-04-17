@@ -23,7 +23,7 @@ type JobParams struct {
 	ScheduleID   string
 	ScheduleName string // used for the schedule label
 	ServiceName  string
-	Schema       string
+	SchemaName   string
 	TableName    string
 	Namespace    string
 	NodeType     pkg_model.NodeType
@@ -35,18 +35,22 @@ type K8sClient struct {
 	logger    *slog.Logger
 }
 
-// NewK8sClient creates a new K8sClient using in-cluster or kubeconfig configuration
+// NewK8sClient creates a new K8sClient.
+// Uses KUBECONFIG when set (local/docker-compose), otherwise falls back to
+// in-cluster config (K8s pod with a ServiceAccount).
 func NewK8sClient(logger *slog.Logger) (*K8sClient, error) {
-	restConfig, err := rest.InClusterConfig()
-	if err != nil {
-		logger.Info("In-cluster config not available, trying KUBECONFIG", "error", err)
-		kubeconfigPath := os.Getenv("KUBECONFIG")
-		if kubeconfigPath == "" {
-			return nil, fmt.Errorf("no in-cluster config and KUBECONFIG not set")
-		}
+	var restConfig *rest.Config
+	var err error
+
+	if kubeconfigPath := os.Getenv("KUBECONFIG"); kubeconfigPath != "" {
 		restConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
+		}
+	} else {
+		restConfig, err = rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build in-cluster config: %w", err)
 		}
 	}
 
@@ -125,12 +129,12 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 			Name:      params.JobName,
 			Namespace: params.Namespace,
 			Labels: map[string]string{
-				"app":          "query-executor",
+				"app":          "dbt-job",
 				"task-id":      params.TaskID,
 				"schedule-id":  params.ScheduleID,
 				"schedule":     params.ScheduleName,
 				"table_name":   params.TableName,
-				"schema_name":  params.Schema,
+				"schema_name":  params.SchemaName,
 				"service_name": params.ServiceName,
 			},
 		},
@@ -139,12 +143,12 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"app":          "query-executor",
+						"app":          "dbt-job",
 						"task-id":      params.TaskID,
 						"schedule-id":  params.ScheduleID,
 						"schedule":     params.ScheduleName,
 						"table_name":   params.TableName,
-						"schema_name":  params.Schema,
+						"schema_name":  params.SchemaName,
 						"service_name": params.ServiceName,
 					},
 				},
@@ -166,7 +170,7 @@ func buildPodSpec(params JobParams) corev1.PodSpec {
 		{Name: "SCHEDULE_ID", Value: params.ScheduleID},
 		{Name: "SCHEDULE_NAME", Value: params.ScheduleName},
 		{Name: "SERVICE_NAME", Value: params.ServiceName},
-		{Name: "SCHEMA", Value: params.Schema},
+		{Name: "SCHEMA", Value: params.SchemaName},
 		{Name: "TABLE_NAME", Value: params.TableName},
 		{Name: "JOB_NAME", Value: params.JobName},
 		// dbt profile connection — forwarded from executor-controller environment
@@ -181,7 +185,7 @@ func buildPodSpec(params JobParams) corev1.PodSpec {
 		RestartPolicy: corev1.RestartPolicyNever,
 		Containers: []corev1.Container{
 			{
-				Name:            "query-executor",
+				Name:            "dbt-job",
 				Image:           params.ServiceName,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         params.NodeType.Command(params.TableName),

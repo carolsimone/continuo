@@ -9,7 +9,7 @@ import (
 
 // NodeInfo represents a Neo4j node (table) information
 type NodeInfo struct {
-	Schema      string
+	SchemaName  string
 	TableName   string
 	ServiceName string
 	TaskID      string           // UUID from task_tracker table

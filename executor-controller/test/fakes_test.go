@@ -23,7 +23,7 @@ func TestFakeK8sClient_CreateQueryJob(t *testing.T) {
 		TaskID:      uuid.New().String(),
 		ScheduleID:  uuid.New().String(),
 		ServiceName: "dbt",
-		Schema:      "public",
+		SchemaName:  "public",
 		TableName:   "users",
 		Namespace:   "default",
 	}

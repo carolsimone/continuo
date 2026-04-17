@@ -48,7 +48,7 @@ func (h *RerunHandler) Handle(ctx context.Context, cmd command.RerunNode) error 
 	h.logger.Info("Processing rerun request",
 		"schedule_id", cmd.ScheduleID,
 		"schedule_name", cmd.ScheduleName,
-		"target", fmt.Sprintf("%s.%s", cmd.Schema, cmd.TableName),
+		"target", fmt.Sprintf("%s.%s", cmd.SchemaName, cmd.TableName),
 	)
 
 	// Idempotency gate: skip if already completed.
@@ -73,7 +73,7 @@ func (h *RerunHandler) Handle(ctx context.Context, cmd command.RerunNode) error 
 		"schedule_name":      cmd.ScheduleName,
 		"run_id":             cmd.ScheduleID.String(),
 		"rerun_service_name": cmd.ServiceName,
-		"rerun_schema_name":  cmd.Schema,
+		"rerun_schema_name":  cmd.SchemaName,
 		"rerun_table_name":   cmd.TableName,
 	})
 	if err != nil {

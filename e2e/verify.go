@@ -21,12 +21,12 @@ func verifyExecutorDeployedJobs(
 	expectedTables []string,
 	scheduleName string,
 ) {
-	// Use app=query-executor rather than schedule=<name> because seed nodes
+	// Use app=dbt-job rather than schedule=<name> because seed nodes
 	// carry schedule_name="seed" in Neo4j regardless of the parent schedule,
 	// so their K8s jobs get label schedule=seed.  Filtering by the executor
 	// app label and then checking table_name labels avoids this mismatch.
 	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
-		jobList, err := getK8sJobs(ctx, "app=query-executor")
+		jobList, err := getK8sJobs(ctx, "app=dbt-job")
 		if err != nil {
 			return false, err
 		}

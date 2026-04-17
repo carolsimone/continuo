@@ -27,18 +27,22 @@ type K8sClient struct {
 	logger    *slog.Logger
 }
 
-// NewK8sClient creates a new K8sClient using in-cluster or kubeconfig configuration
+// NewK8sClient creates a new K8sClient.
+// Uses KUBECONFIG when set (local/docker-compose), otherwise falls back to
+// in-cluster config (K8s pod with a ServiceAccount).
 func NewK8sClient(logger *slog.Logger) (*K8sClient, error) {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		logger.Info("In-cluster config not available, trying KUBECONFIG", "error", err)
-		kubeconfigPath := os.Getenv("KUBECONFIG")
-		if kubeconfigPath == "" {
-			return nil, fmt.Errorf("no in-cluster config and KUBECONFIG not set")
-		}
+	var config *rest.Config
+	var err error
+
+	if kubeconfigPath := os.Getenv("KUBECONFIG"); kubeconfigPath != "" {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
+		}
+	} else {
+		config, err = rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build in-cluster config: %w", err)
 		}
 	}
 

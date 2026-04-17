@@ -12,7 +12,7 @@ type JobCheckRequest struct {
 	ScheduleID    string `json:"schedule_id"`
 	ScheduleName  string `json:"schedule_name"`
 	ServiceName   string `json:"service_name"`
-	Schema        string `json:"schema"`
+	SchemaName    string `json:"schema_name"`
 	TableName     string `json:"table_name"`
 	JobName       string `json:"job_name"`
 	CheckAfter    int64  `json:"check_after"` // Unix timestamp for delayed processing
@@ -29,7 +29,7 @@ func (e JobCheckRequest) ToMap() map[string]interface{} {
 		"schedule_id":     e.ScheduleID,
 		"schedule_name":   e.ScheduleName,
 		"service_name":    e.ServiceName,
-		"schema":          e.Schema,
+		"schema_name":     e.SchemaName,
 		"table_name":      e.TableName,
 		"job_name":        e.JobName,
 		"check_after":     e.CheckAfter,
@@ -43,7 +43,7 @@ type TaskFailed struct {
 	ScheduleID   string `json:"schedule_id"`
 	ScheduleName string `json:"schedule_name"`
 	ServiceName  string `json:"service_name"`
-	Schema       string `json:"schema"`
+	SchemaName   string `json:"schema_name"`
 	TableName    string `json:"table_name"`
 	JobName      string `json:"job_name"`
 	ErrorMessage string `json:"error_message"`
@@ -59,7 +59,7 @@ func (e TaskFailed) ToMap() map[string]interface{} {
 		"schedule_id":   e.ScheduleID,
 		"schedule_name": e.ScheduleName,
 		"service_name":  e.ServiceName,
-		"schema":        e.Schema,
+		"schema_name":   e.SchemaName,
 		"table_name":    e.TableName,
 		"job_name":      e.JobName,
 		"error_message": e.ErrorMessage,
@@ -73,7 +73,7 @@ type TaskRetry struct {
 	ScheduleID   string `json:"schedule_id"`
 	ScheduleName string `json:"schedule_name"`
 	ServiceName  string `json:"service_name"`
-	Schema       string `json:"schema"`
+	SchemaName   string `json:"schema_name"`
 	TableName    string `json:"table_name"`
 	JobName      string `json:"job_name"`
 	RetryCount   int    `json:"retry_count"`
@@ -89,7 +89,7 @@ func (e TaskRetry) ToMap() map[string]interface{} {
 		"schedule_id":   e.ScheduleID,
 		"schedule_name": e.ScheduleName,
 		"service_name":  e.ServiceName,
-		"schema":        e.Schema,
+		"schema_name":   e.SchemaName,
 		"table_name":    e.TableName,
 		"job_name":      e.JobName,
 		"retry_count":   e.RetryCount,
@@ -103,7 +103,7 @@ type NodeStatusUpdated struct {
 	ScheduleID   string `json:"schedule_id"`
 	ScheduleName string `json:"schedule_name"`
 	ServiceName  string `json:"service_name"`
-	Schema       string `json:"schema"`
+	SchemaName   string `json:"schema_name"`
 	TableName    string `json:"table_name"`
 	Status       string `json:"status"`
 }
@@ -117,7 +117,7 @@ func (e NodeStatusUpdated) ToMap() map[string]interface{} {
 		"schedule_id":   e.ScheduleID,
 		"schedule_name": e.ScheduleName,
 		"service_name":  e.ServiceName,
-		"schema":        e.Schema,
+		"schema_name":   e.SchemaName,
 		"table_name":    e.TableName,
 		"status":        e.Status,
 	}

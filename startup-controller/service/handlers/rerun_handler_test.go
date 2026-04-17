@@ -35,7 +35,7 @@ func newRerunCmd() command.RerunNode {
 	return command.RerunNode{
 		ScheduleID:   uuid.New(),
 		ScheduleName: "test-schedule",
-		Schema:       "s",
+		SchemaName:   "s",
 		TableName:    "A",
 		ServiceName:  "svc",
 	}
@@ -96,6 +96,6 @@ func TestRerunHandler_EmitsInitializeRunEventWithRerunTarget(t *testing.T) {
 	assert.Equal(t, cmd.ScheduleName, payload["schedule_name"])
 	assert.Equal(t, cmd.ScheduleID.String(), payload["run_id"])
 	assert.Equal(t, cmd.ServiceName, payload["rerun_service_name"])
-	assert.Equal(t, cmd.Schema, payload["rerun_schema_name"])
+	assert.Equal(t, cmd.SchemaName, payload["rerun_schema_name"])
 	assert.Equal(t, cmd.TableName, payload["rerun_table_name"])
 }

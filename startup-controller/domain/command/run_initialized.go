@@ -16,24 +16,12 @@ func (RunInitialized) isCommand() {}
 // NodePayload is the wire-format of a single node inside the
 // run.initialized:v1 and rerun.ready:v1 event payloads.
 type NodePayload struct {
-	TableName           string `json:"table_name"`
-	SchemaName          string `json:"schema_name"`
-	ServiceName         string `json:"service_name"`
-	Owner               string `json:"owner"`
-	ScheduleName        string `json:"schedule_name"`
-	Criticality         string `json:"criticality"`
-	NodeType            string `json:"node_type"`
-	Status              string `json:"status"`
-	OriginalServiceName string `json:"original_service_name,omitempty"`
-}
-
-// LookupServiceName returns the service name to use for task lookups.
-// During reruns, the service may have been renamed/fixed — OriginalServiceName
-// holds the value the task was originally created with, while ServiceName
-// holds the current graph value for K8s dispatch.
-func (n NodePayload) LookupServiceName() string {
-	if n.OriginalServiceName != "" {
-		return n.OriginalServiceName
-	}
-	return n.ServiceName
+	TableName    string `json:"table_name"`
+	SchemaName   string `json:"schema_name"`
+	ServiceName  string `json:"service_name"`
+	Owner        string `json:"owner"`
+	ScheduleName string `json:"schedule_name"`
+	Criticality  string `json:"criticality"`
+	NodeType     string `json:"node_type"`
+	Status       string `json:"status"`
 }
