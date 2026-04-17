@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	"github.com/carolsimone/continuo/orchestrator/infrastructure/postgres"
+	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	goredis "github.com/redis/go-redis/v9"
 )
 

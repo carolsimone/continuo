@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/application/command"
+	"github.com/carolsimone/continuo/orchestrator/service/command"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"

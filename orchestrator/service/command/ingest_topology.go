@@ -87,7 +87,10 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 	}
 
 	// Build outbox payload.
+	// event_id is required by the state service's ScheduleCatalogHandler for
+	// deduplication — without it the message is discarded on consumption.
 	outboxPayload, err := json.Marshal(map[string]interface{}{
+		"event_id":          uuid.New().String(),
 		"schedule_names":    scheduleNames,
 		"manifest_versions": manifestVersions,
 	})

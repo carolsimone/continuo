@@ -7,11 +7,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/application/command"
+	"github.com/carolsimone/continuo/orchestrator/service/command"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
-	"github.com/carolsimone/continuo/orchestrator/infrastructure/postgres"
+	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

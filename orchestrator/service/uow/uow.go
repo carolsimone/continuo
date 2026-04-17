@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/infrastructure/postgres"
+	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/jmoiron/sqlx"
 )
 
