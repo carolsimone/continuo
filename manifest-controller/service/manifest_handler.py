@@ -23,7 +23,8 @@ class ManifestHandler:
     def handle(self) -> None:
         manifests = self._source.list_manifests()
         if not manifests:
-            logger.warning("No manifest files found — nothing to load")
+            logger.warning("No manifest files found — publishing empty topology")
+            self._manifest_publisher.publish([])
             return
 
         logger.info("Loading manifests", extra={"count": len(manifests)})

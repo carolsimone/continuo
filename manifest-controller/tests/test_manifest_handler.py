@@ -80,7 +80,7 @@ def test_handle_persists_combined_registry(tmp_path):
     assert names == {"users", "orders"}
 
 
-def test_handle_does_nothing_when_no_manifests(tmp_path):
+def test_handle_publishes_empty_list_when_no_manifests(tmp_path):
     source = create_autospec(ManifestSource)
     source.list_manifests.return_value = []
     mock_publisher = MagicMock()
@@ -89,7 +89,7 @@ def test_handle_does_nothing_when_no_manifests(tmp_path):
     handler = ManifestHandler(source=source, manifest_publisher=mock_publisher, registry_repo=repo)
     handler.handle()
 
-    mock_publisher.publish.assert_not_called()
+    mock_publisher.publish.assert_called_once_with([])
 
 
 def test_handle_publishes_correct_node_structure(tmp_path):
