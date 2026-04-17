@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`manifest-controller` is the topology ingestion service. It loads dbt `manifest.json` files into the graph and tells `state` which schedule names currently exist.
+`manifest-controller` is the topology ingestion service. It loads dbt `manifest.json` files, resolves cross-service dependencies, and publishes the topology to `orchestrator` via `manifest.loaded:v1`.
 
 It is the only service that writes topology (via `manifest.loaded:v1` events consumed by `orchestrator`).
 
@@ -69,7 +69,6 @@ Pass 3 — Resolve deps
       - raise UnqualifiedTableReferenceError on unqualified references
       - skip tables not in registry (external/source tables)
       - dbt seeds ARE in registry -> seed refs resolve as upstream deps
-    collect manifest_versions[service_name] = manifest_version
 
 Publish manifest.loaded:v1 (all nodes with resolved deps as JSON payload)
 

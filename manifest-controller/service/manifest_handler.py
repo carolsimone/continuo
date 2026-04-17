@@ -20,11 +20,11 @@ class ManifestHandler:
         self._manifest_publisher = manifest_publisher
         self._registry_repo = registry_repo
 
-    def handle(self) -> tuple[list[str], dict[str, str]]:
+    def handle(self) -> None:
         manifests = self._source.list_manifests()
         if not manifests:
             logger.warning("No manifest files found — nothing to load")
-            return [], {}
+            return
 
         logger.info("Loading manifests", extra={"count": len(manifests)})
 
@@ -50,11 +50,9 @@ class ManifestHandler:
         lookup = registry.to_lookup()
 
         # Pass 3: resolve deps and collect node dicts for publishing
-        manifest_versions: dict[str, str] = {}
         node_dicts: list[dict] = []
         for node in all_nodes:
             node.upstream_deps = resolve_upstream_deps(node, lookup)
-            manifest_versions[node.service_name] = node.manifest_version
             node_dicts.append({
                 "service_name": node.service_name,
                 "schema_name": node.schema_name,
@@ -80,6 +78,3 @@ class ManifestHandler:
             "Manifest load complete",
             extra={"published": len(node_dicts)},
         )
-
-        schedule_names = list({n.schedule_name for n in all_nodes if n.schedule_name})
-        return schedule_names, manifest_versions

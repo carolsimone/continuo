@@ -19,15 +19,7 @@ class _FakeManifestHandler:
         self.registry_repo = registry_repo
 
     def handle(self):
-        return ["daily"], {"service-a": "v3"}
-
-
-class _FakePublisher:
-    def __init__(self, redis_client, stream_name: str) -> None:
-        self.calls = []
-
-    def publish(self, event_id: str, schedule_names: list[str], manifest_versions: dict[str, str]) -> None:
-        self.calls.append((event_id, schedule_names, manifest_versions))
+        pass
 
 
 class _FakeConsumer:
@@ -38,9 +30,8 @@ class _FakeConsumer:
         self.handler_factory("local")
 
 
-def test_main_propagates_manifest_versions_to_publisher(monkeypatch):
+def test_main_handles_event_and_cleans_up(monkeypatch):
     fake_source = _FakeSource()
-    fake_publisher = _FakePublisher(None, "schedules.loaded:v1")
 
     monkeypatch.setattr(main, "validate", lambda: None)
     monkeypatch.setattr(main, "REGISTRY_PATH", "/tmp/registry.csv")
@@ -51,17 +42,14 @@ def test_main_propagates_manifest_versions_to_publisher(monkeypatch):
     monkeypatch.setattr(main, "REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setattr(main, "REDIS_STREAM", "trigger")
     monkeypatch.setattr(main, "REDIS_GROUP", "group")
-    monkeypatch.setattr(main, "SCHEDULES_LOADED_STREAM", "schedules.loaded:v1")
     monkeypatch.setattr(main, "MANIFEST_LOADED_STREAM", "manifest.loaded:v1")
     monkeypatch.setattr(main, "FilesystemRegistryRepository", lambda path: object())
     monkeypatch.setattr(main, "LocalFilesystemSource", lambda base_path: fake_source)
     monkeypatch.setattr(main, "S3Source", lambda **kwargs: fake_source)
     monkeypatch.setattr(main, "ManifestHandler", _FakeManifestHandler)
     monkeypatch.setattr(main, "ManifestLoadedPublisher", lambda redis_client, stream_name: object())
-    monkeypatch.setattr(main, "SchedulesLoadedPublisher", lambda redis_client, stream_name: fake_publisher)
     monkeypatch.setattr(main, "Consumer", _FakeConsumer)
     monkeypatch.setattr(main.redis, "from_url", lambda *args, **kwargs: object())
-    monkeypatch.setattr(main.uuid, "uuid4", lambda: "evt-1")
     monkeypatch.setitem(
         sys.modules,
         "boto3",
@@ -70,5 +58,4 @@ def test_main_propagates_manifest_versions_to_publisher(monkeypatch):
 
     main.main()
 
-    assert fake_publisher.calls == [("evt-1", ["daily"], {"service-a": "v3"})]
     assert fake_source.cleaned_up is True

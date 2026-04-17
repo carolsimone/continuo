@@ -87,44 +87,9 @@ def test_handle_does_nothing_when_no_manifests(tmp_path):
     repo = FilesystemRegistryRepository(str(tmp_path / "registry.csv"))
 
     handler = ManifestHandler(source=source, manifest_publisher=mock_publisher, registry_repo=repo)
-    schedule_names, manifest_versions = handler.handle()
+    handler.handle()
 
     mock_publisher.publish.assert_not_called()
-    assert schedule_names == []
-    assert manifest_versions == {}
-
-
-def test_handle_returns_distinct_schedule_names(mock_manifest_publisher, mock_registry_repo):
-    source = _make_source(
-        ("manifest_service1.json", "v1"),
-        ("manifest_service2.json", "v5"),
-    )
-    handler = ManifestHandler(
-        source=source,
-        manifest_publisher=mock_manifest_publisher,
-        registry_repo=mock_registry_repo,
-    )
-    schedule_names, _ = handler.handle()
-    assert isinstance(schedule_names, list)
-    assert len(schedule_names) == len(set(schedule_names))
-    assert all(isinstance(n, str) and n for n in schedule_names)
-
-
-def test_handle_returns_manifest_versions_map(mock_manifest_publisher, mock_registry_repo):
-    source = _make_source(
-        ("manifest_service1.json", "v1"),
-        ("manifest_service2.json", "v5"),
-    )
-    handler = ManifestHandler(
-        source=source,
-        manifest_publisher=mock_manifest_publisher,
-        registry_repo=mock_registry_repo,
-    )
-    _, manifest_versions = handler.handle()
-    # manifest_service1.json has service_name "service-1" (from fqn)
-    # manifest_service2.json has service_name "service-2" (from fqn)
-    assert manifest_versions.get("service-1") == "v1"
-    assert manifest_versions.get("service-2") == "v5"
 
 
 def test_handle_publishes_correct_node_structure(tmp_path):

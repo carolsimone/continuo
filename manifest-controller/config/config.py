@@ -12,7 +12,6 @@ S3_ENV          = os.environ.get("S3_ENV", "")
 
 AWS_DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION", "")
 
-SCHEDULES_LOADED_STREAM = os.getenv("SCHEDULES_LOADED_STREAM", "schedules.loaded:v1")
 MANIFEST_LOADED_STREAM  = os.getenv("REDIS_OUTPUT_STREAM", "manifest.loaded:v1")
 
 _REQUIRED = [
