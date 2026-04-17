@@ -7,7 +7,7 @@ RUN chmod +x /migrate-all.sh
 COPY migration/state /flyway/sql/state
 COPY migration/startup /flyway/sql/startup
 COPY migration/executor /flyway/sql/executor
-COPY migration/dependency /flyway/sql/dependency
+COPY migration/orchestrator /flyway/sql/orchestrator
 COPY migration/k8s /flyway/sql/k8s
 
 ENTRYPOINT ["/bin/sh", "/migrate-all.sh"]
