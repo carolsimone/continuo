@@ -72,14 +72,14 @@ func (r *RunRepository) UpdateNodeStatus(ctx context.Context, runID, scheduleNam
 	// by schedule_name since the run_id already identifies the run scope.
 	query := `
 		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table)
-		WHERE t.schema = $schema
+		WHERE t.schema_name = $schema_name
 		  AND t.table_name = $table_name
 		SET e.status = $status
 	`
 
 	result, err := session.Run(ctx, query, map[string]interface{}{
 		"run_id":     runID,
-		"schema":     schema,
+		"schema_name": schema,
 		"table_name": tableName,
 		"status":     status,
 	})
@@ -123,7 +123,7 @@ func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleN
 		WHERE (snap.status IS NULL OR snap.status = 'PENDING')
 		  AND EXISTS {
 			MATCH (downstream)-[:DEPENDS_ON]->(completed:Table)
-			WHERE completed.schema = $schema AND completed.table_name = $table_name
+			WHERE completed.schema_name = $schema_name AND completed.table_name = $table_name
 		  }
 		  AND NOT EXISTS {
 			MATCH (downstream)-[:DEPENDS_ON]->(upstream:Table)
@@ -133,7 +133,7 @@ func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleN
 			}
 		  }
 		RETURN downstream.service_name AS service_name,
-		       downstream.schema AS schema_name,
+		       downstream.schema_name AS schema_name,
 		       downstream.table_name AS table_name,
 		       COALESCE(downstream.node_type, "") AS node_type,
 		       downstream.schedule_name AS schedule_name
@@ -142,7 +142,7 @@ func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleN
 	result, err := session.Run(ctx, query, map[string]interface{}{
 		"run_id":        runID,
 		"schedule_name": scheduleName,
-		"schema":        schema,
+		"schema_name":   schema,
 		"table_name":    tableName,
 	})
 	if err != nil {
@@ -316,7 +316,7 @@ func (r *RunRepository) getRootNodesInRun(ctx context.Context, tx neo4j.Explicit
 		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(t:Table {schedule_name: $schedule_name})
 		WHERE NOT (t)-[:DEPENDS_ON]->(:Table {schedule_name: $schedule_name})
 		RETURN
-			t.schema AS schema_name,
+			t.schema_name AS schema_name,
 			t.table_name AS table_name,
 			t.service_name AS service_name,
 			COALESCE(t.owner, "") AS owner,
@@ -343,7 +343,7 @@ func (r *RunRepository) getUpstreamSeedNodesInRun(ctx context.Context, tx neo4j.
 		MATCH (t)-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
 		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(s)
 		RETURN DISTINCT
-			s.schema AS schema_name,
+			s.schema_name AS schema_name,
 			s.table_name AS table_name,
 			s.service_name AS service_name,
 			COALESCE(s.owner, "") AS owner,
@@ -369,7 +369,7 @@ func (r *RunRepository) getAllNodesInRun(ctx context.Context, tx neo4j.ExplicitT
 		CALL {
 		    MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(t:Table {schedule_name: $schedule_name})
 		    RETURN
-		        t.schema        AS schema_name,
+		        t.schema_name   AS schema_name,
 		        t.table_name    AS table_name,
 		        t.service_name  AS service_name,
 		        COALESCE(t.owner, "") AS owner,
@@ -385,7 +385,7 @@ func (r *RunRepository) getAllNodesInRun(ctx context.Context, tx neo4j.ExplicitT
 		    MATCH (t)-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
 		    MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(s)
 		    RETURN
-		        s.schema        AS schema_name,
+		        s.schema_name   AS schema_name,
 		        s.table_name    AS table_name,
 		        s.service_name  AS service_name,
 		        COALESCE(s.owner, "") AS owner,
@@ -415,19 +415,19 @@ func (r *RunRepository) GetTransitiveDownstream(ctx context.Context, scheduleNam
 	defer session.Close(ctx)
 
 	query := `
-		MATCH (start:Table {schedule_name: $schedule_name, schema: $schema, table_name: $table_name})
+		MATCH (start:Table {schedule_name: $schedule_name, schema_name: $schema_name, table_name: $table_name})
 		MATCH (downstream:Table {schedule_name: $schedule_name})-[:DEPENDS_ON*1..]->(start)
 		WHERE downstream.status IS NULL OR downstream.status <> 'SUCCEEDED'
 		RETURN DISTINCT
 			downstream.table_name    AS table_name,
-			downstream.schema        AS schema_name,
+			downstream.schema_name   AS schema_name,
 			coalesce(downstream.service_name, '')  AS service_name,
 			downstream.node_type     AS node_type,
 			downstream.status        AS status
 	`
 	result, err := session.Run(ctx, query, map[string]interface{}{
 		"schedule_name": scheduleName,
-		"schema":        schema,
+		"schema_name":   schema,
 		"table_name":    tableName,
 	})
 	if err != nil {
@@ -467,11 +467,11 @@ func (r *RunRepository) GetNodeType(ctx context.Context, schema, tableName strin
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx, `
-		MATCH (t:Table {schema: $schema, table_name: $table_name})
+		MATCH (t:Table {schema_name: $schema_name, table_name: $table_name})
 		RETURN COALESCE(t.node_type, '') AS node_type
 		LIMIT 1
 	`, map[string]interface{}{
-		"schema":     schema,
+		"schema_name": schema,
 		"table_name": tableName,
 	})
 	if err != nil {
@@ -491,11 +491,11 @@ func (r *RunRepository) GetNodeServiceName(ctx context.Context, schema, tableNam
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx, `
-		MATCH (t:Table {schema: $schema, table_name: $table_name})
+		MATCH (t:Table {schema_name: $schema_name, table_name: $table_name})
 		RETURN COALESCE(t.service_name, '') AS service_name
 		LIMIT 1
 	`, map[string]interface{}{
-		"schema":     schema,
+		"schema_name": schema,
 		"table_name": tableName,
 	})
 	if err != nil {

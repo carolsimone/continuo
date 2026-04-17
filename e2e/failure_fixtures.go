@@ -78,7 +78,7 @@ func seedNodes(t *testing.T, ctx context.Context, clients *testClients, nodes []
 		}
 
 		_, err := session.Run(ctx, `
-			MERGE (t:Table {table_name: $table_name, schema: $schema})
+			MERGE (t:Table {table_name: $table_name, schema_name: $schema_name})
 			SET t.service_name = $service_name,
 			    t.owner = $owner,
 			    t.schedule_name = $schedule_name,
@@ -87,7 +87,7 @@ func seedNodes(t *testing.T, ctx context.Context, clients *testClients, nodes []
 			    t.created_at = datetime()
 		`, map[string]interface{}{
 			"table_name":    node.Name,
-			"schema":        schemaName,
+			"schema_name":   schemaName,
 			"service_name":  node.ServiceName,
 			"owner":         failureTestOwner,
 			"schedule_name": nodeScheduleName,
@@ -99,14 +99,14 @@ func seedNodes(t *testing.T, ctx context.Context, clients *testClients, nodes []
 		// Create DEPENDS_ON edges
 		for _, dep := range node.Dependencies {
 			_, err := session.Run(ctx, `
-				MERGE (upstream:Table {table_name: $upstream_name, schema: $schema})
+				MERGE (upstream:Table {table_name: $upstream_name, schema_name: $schema_name})
 				WITH upstream
-				MATCH (downstream:Table {table_name: $downstream_name, schema: $schema})
+				MATCH (downstream:Table {table_name: $downstream_name, schema_name: $schema_name})
 				MERGE (downstream)-[:DEPENDS_ON]->(upstream)
 			`, map[string]interface{}{
 				"upstream_name":   dep,
 				"downstream_name": node.Name,
-				"schema":          schemaName,
+				"schema_name":     schemaName,
 			})
 			require.NoError(t, err, "Failed to create DEPENDS_ON edge: %s -> %s", node.Name, dep)
 		}

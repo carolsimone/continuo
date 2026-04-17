@@ -29,7 +29,7 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 	if len(node.Dependencies) == 0 {
 		// No upstream dependencies - simpler query
 		query = `
-			MERGE (t:Table {schema: $schema, table_name: $table_name})
+			MERGE (t:Table {schema_name: $schema_name, table_name: $table_name})
 			ON CREATE SET
 				t.service_name = $service_name,
 				t.owner = $owner,
@@ -55,7 +55,7 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 	} else {
 		// Has upstream dependencies
 		query = `
-			MERGE (t:Table {schema: $schema, table_name: $table_name})
+			MERGE (t:Table {schema_name: $schema_name, table_name: $table_name})
 			ON CREATE SET
 				t.service_name = $service_name,
 				t.owner = $owner,
@@ -78,7 +78,7 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 			DELETE old
 			WITH t
 			UNWIND $upstream_dependencies AS dep
-			MERGE (upstream:Table {schema: dep.schema_name, table_name: dep.table_name})
+			MERGE (upstream:Table {schema_name: dep.schema_name, table_name: dep.table_name})
 			ON CREATE SET upstream.service_name = dep.service_name
 			MERGE (t)-[:DEPENDS_ON]->(upstream)
 			RETURN t.table_name AS table_name
@@ -102,7 +102,7 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 
 	params := map[string]interface{}{
 		"table_name":            node.TableName,
-		"schema":                node.SchemaName,
+		"schema_name":           node.SchemaName,
 		"service_name":          node.ServiceName,
 		"owner":                 node.Owner,
 		"schedule_name":         node.ScheduleName,
@@ -135,7 +135,7 @@ func (r *TopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName 
 	nodeQuery := `
 		MATCH (n:Table {schedule_name: $schedule_name})
 		RETURN n.table_name AS table_name,
-		       n.schema AS schema_name,
+		       n.schema_name AS schema_name,
 		       n.service_name AS service_name,
 		       COALESCE(n.owner, "") AS owner,
 		       n.schedule_name AS schedule_name,
@@ -178,8 +178,8 @@ func (r *TopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName 
 
 	depQuery := `
 		MATCH (n:Table {schedule_name: $schedule_name})-[:DEPENDS_ON]->(u:Table)
-		RETURN n.table_name AS from_table, n.schema AS from_schema,
-		       u.table_name AS to_table, u.schema AS to_schema,
+		RETURN n.table_name AS from_table, n.schema_name AS from_schema,
+		       u.table_name AS to_table, u.schema_name AS to_schema,
 		       COALESCE(u.service_name, "") AS to_service
 	`
 	depResult, err := session.Run(ctx, depQuery, map[string]interface{}{

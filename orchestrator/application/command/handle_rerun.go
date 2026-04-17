@@ -7,19 +7,11 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
-
-// HandleRerunCmd carries the data for a rerun command.
-type HandleRerunCmd struct {
-	ScheduleName string
-	RunID        string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-}
 
 // HandleRerunHandler handles the HandleRerun command.
 type HandleRerunHandler struct {
@@ -42,7 +34,7 @@ func NewHandleRerunHandler(
 }
 
 // Handle processes the HandleRerun command.
-func (h *HandleRerunHandler) Handle(ctx context.Context, cmd HandleRerunCmd, messageID string) error {
+func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRerunCmd, messageID string) error {
 	h.logger.Info("Processing rerun",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
@@ -192,11 +184,11 @@ func (h *HandleRerunHandler) handleRerunDedup(
 }
 
 // buildTargetNodePayloads builds the list of target nodes (rerun target + FAILED downstream).
-func buildTargetNodePayloads(cmd HandleRerunCmd, targetNodeType, targetServiceName string, downstream []*domain.TableNode) []NodePayload {
+func buildTargetNodePayloads(cmd domainCmd.HandleRerunCmd, targetNodeType, targetServiceName string, downstream []*domain.TableNode) []domainCmd.NodePayload {
 	// Start with the rerun target itself.
 	// ServiceName comes from the graph (current state) — this is the Docker
 	// image the K8s job will run.
-	targets := []NodePayload{
+	targets := []domainCmd.NodePayload{
 		{
 			TableName:    cmd.TableName,
 			SchemaName:   cmd.SchemaName,
@@ -209,7 +201,7 @@ func buildTargetNodePayloads(cmd HandleRerunCmd, targetNodeType, targetServiceNa
 	// Add FAILED downstream nodes.
 	for _, node := range downstream {
 		if node.Status == string(domain.NodeStatusFailed) {
-			targets = append(targets, NodePayload{
+			targets = append(targets, domainCmd.NodePayload{
 				TableName:    node.TableName,
 				SchemaName:   node.SchemaName,
 				ServiceName:  node.ServiceName,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/application/command"
 	"github.com/carolsimone/continuo/orchestrator/config"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/infrastructure/grpc"
 	httpinfra "github.com/carolsimone/continuo/orchestrator/infrastructure/http"
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/infrastructure/neo4j"
@@ -182,7 +183,7 @@ func main() {
 
 	// Consumer 1: node.updated:v1 -> HandleNodeCompleted
 	nodeUpdatedHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		cmd := command.HandleNodeCompletedCmd{
+		cmd := domainCmd.HandleNodeCompletedCmd{
 			TaskID:       uuid.MustParse(msg.Values["task_id"].(string)),
 			ScheduleID:   uuid.MustParse(msg.Values["schedule_id"].(string)),
 			ScheduleName: msg.Values["schedule_name"].(string),
@@ -207,11 +208,11 @@ func main() {
 		if !ok {
 			return fmt.Errorf("missing or invalid payload in manifest.loaded message %s", msg.ID)
 		}
-		var nodes []command.TopologyNodePayload
+		var nodes []domainCmd.TopologyNodePayload
 		if err := json.Unmarshal([]byte(payloadStr), &nodes); err != nil {
 			return fmt.Errorf("failed to unmarshal manifest.loaded payload: %w", err)
 		}
-		cmd := command.IngestTopologyCmd{Nodes: nodes}
+		cmd := domainCmd.IngestTopologyCmd{Nodes: nodes}
 		return ingestTopologyHandler.Handle(ctx, cmd, msg.ID)
 	}
 	manifestLoadedConsumer := redis.NewStreamConsumer(
@@ -226,13 +227,13 @@ func main() {
 	initRunHandler := func(ctx context.Context, msg goredis.XMessage) error {
 		scheduleName, _ := msg.Values["schedule_name"].(string)
 		runID, _ := msg.Values["run_id"].(string)
-		cmd := command.InitializeRunCmd{
+		cmd := domainCmd.InitializeRunCmd{
 			ScheduleName: scheduleName,
 			RunID:        runID,
 		}
 		// Check for rerun target fields
 		if svc, ok := msg.Values["rerun_service_name"].(string); ok && svc != "" {
-			cmd.RerunTarget = &command.RerunTarget{
+			cmd.RerunTarget = &domainCmd.RerunTarget{
 				ServiceName: svc,
 				SchemaName:  msg.Values["rerun_schema_name"].(string),
 				TableName:   msg.Values["rerun_table_name"].(string),

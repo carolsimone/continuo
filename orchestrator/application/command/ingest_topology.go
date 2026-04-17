@@ -7,35 +7,11 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
-
-// IngestTopologyCmd carries the data for a topology ingestion command.
-type IngestTopologyCmd struct {
-	Nodes []TopologyNodePayload
-}
-
-// TopologyNodePayload is the inbound representation of a single topology node.
-type TopologyNodePayload struct {
-	ServiceName     string             `json:"service_name"`
-	SchemaName      string             `json:"schema_name"`
-	TableName       string             `json:"table_name"`
-	Owner           string             `json:"owner"`
-	ScheduleName    string             `json:"schedule_name"`
-	Criticality     string             `json:"criticality"`
-	NodeType        string             `json:"node_type"`
-	ManifestVersion string             `json:"manifest_version"`
-	Dependencies    []DependencyPayload `json:"dependencies"`
-}
-
-// DependencyPayload is the inbound representation of an upstream dependency.
-type DependencyPayload struct {
-	ServiceName string `json:"service_name"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
-}
 
 // IngestTopologyHandler handles the IngestTopology command.
 type IngestTopologyHandler struct {
@@ -58,7 +34,7 @@ func NewIngestTopologyHandler(
 }
 
 // Handle processes the IngestTopology command.
-func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd IngestTopologyCmd, messageID string) error {
+func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.IngestTopologyCmd, messageID string) error {
 	h.logger.Info("Processing topology ingestion",
 		"message_id", messageID,
 		"node_count", len(cmd.Nodes),
@@ -195,8 +171,8 @@ func (h *IngestTopologyHandler) handleTopologyDedup(
 	return id, false, nil
 }
 
-// toTopologyNode converts a TopologyNodePayload to a topology.TopologyNode.
-func toTopologyNode(p TopologyNodePayload) *topology.TopologyNode {
+// toTopologyNode converts a domainCmd.TopologyNodePayload to a topology.TopologyNode.
+func toTopologyNode(p domainCmd.TopologyNodePayload) *topology.TopologyNode {
 	deps := make([]topology.UpstreamDependency, 0, len(p.Dependencies))
 	for _, d := range p.Dependencies {
 		deps = append(deps, topology.UpstreamDependency{

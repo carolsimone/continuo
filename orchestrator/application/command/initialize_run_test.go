@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/application/command"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,7 +82,7 @@ func TestInitializeRun_FreshInit(t *testing.T) {
 	}
 
 	h := command.NewInitializeRunHandler(uow, runRepo, newTestLogger())
-	cmd := command.InitializeRunCmd{
+	cmd := domainCmd.InitializeRunCmd{
 		ScheduleName: "daily",
 		RunID:        "run-123",
 	}
@@ -109,16 +110,16 @@ func TestInitializeRun_FreshInit(t *testing.T) {
 	require.NoError(t, json.Unmarshal(payload["run_id"], &runID))
 	assert.Equal(t, "run-123", runID)
 
-	var allNodes []command.NodePayload
+	var allNodes []domainCmd.NodePayload
 	require.NoError(t, json.Unmarshal(payload["all_nodes"], &allNodes))
 	assert.Len(t, allNodes, 3, "all_nodes should have 3 entries")
 
-	var rootNodes []command.NodePayload
+	var rootNodes []domainCmd.NodePayload
 	require.NoError(t, json.Unmarshal(payload["root_nodes"], &rootNodes))
 	assert.Len(t, rootNodes, 1, "root_nodes should have 1 entry")
 	assert.Equal(t, "orders", rootNodes[0].TableName)
 
-	var seedNodes []command.NodePayload
+	var seedNodes []domainCmd.NodePayload
 	require.NoError(t, json.Unmarshal(payload["seed_nodes"], &seedNodes))
 	assert.Len(t, seedNodes, 1, "seed_nodes should have 1 entry")
 	assert.Equal(t, "seeds_data", seedNodes[0].TableName)
@@ -131,7 +132,7 @@ func TestInitializeRun_DuplicateMessage(t *testing.T) {
 	runRepo := &extendedFakeRunRepository{}
 
 	h := command.NewInitializeRunHandler(uow, runRepo, newTestLogger())
-	cmd := command.InitializeRunCmd{
+	cmd := domainCmd.InitializeRunCmd{
 		ScheduleName: "daily",
 		RunID:        "run-456",
 	}

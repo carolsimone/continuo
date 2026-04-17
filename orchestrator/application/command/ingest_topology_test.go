@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/application/command"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,9 +33,9 @@ func (f *fakeTopologyRepository) GetScheduleGraph(ctx context.Context, scheduleN
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func makeIngestTopologyCmd() command.IngestTopologyCmd {
-	return command.IngestTopologyCmd{
-		Nodes: []command.TopologyNodePayload{
+func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
+	return domainCmd.IngestTopologyCmd{
+		Nodes: []domainCmd.TopologyNodePayload{
 			{
 				ServiceName:     "svc1",
 				SchemaName:      "public",
@@ -44,7 +45,7 @@ func makeIngestTopologyCmd() command.IngestTopologyCmd {
 				Criticality:     "CORE",
 				NodeType:        "dbt-model",
 				ManifestVersion: "v1",
-				Dependencies:    []command.DependencyPayload{},
+				Dependencies:    []domainCmd.DependencyPayload{},
 			},
 			{
 				ServiceName:     "svc1",
@@ -55,7 +56,7 @@ func makeIngestTopologyCmd() command.IngestTopologyCmd {
 				Criticality:     "CORE",
 				NodeType:        "dbt-model",
 				ManifestVersion: "v1",
-				Dependencies: []command.DependencyPayload{
+				Dependencies: []domainCmd.DependencyPayload{
 					{ServiceName: "svc1", SchemaName: "public", TableName: "orders"},
 				},
 			},
@@ -68,7 +69,7 @@ func makeIngestTopologyCmd() command.IngestTopologyCmd {
 				Criticality:     "REGULATORY",
 				NodeType:        "dbt-model",
 				ManifestVersion: "v2",
-				Dependencies:    []command.DependencyPayload{},
+				Dependencies:    []domainCmd.DependencyPayload{},
 			},
 		},
 	}

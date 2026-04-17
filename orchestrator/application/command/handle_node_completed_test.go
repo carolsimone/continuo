@@ -9,6 +9,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/application/command"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/infrastructure/postgres"
 	"github.com/google/uuid"
@@ -211,8 +212,8 @@ func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
-func baseCmd() command.HandleNodeCompletedCmd {
-	return command.HandleNodeCompletedCmd{
+func baseCmd() domainCmd.HandleNodeCompletedCmd {
+	return domainCmd.HandleNodeCompletedCmd{
 		TaskID:       uuid.New(),
 		ScheduleID:   uuid.New(),
 		ScheduleName: "daily",

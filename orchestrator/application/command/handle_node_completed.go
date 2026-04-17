@@ -10,36 +10,17 @@ import (
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
 
-// StateTaskClient defines the interface for task and scheduler operations on the state service.
-// GetTask returns just the task ID string (not the full proto Task object).
-// UpdateSchedulerStatus takes a plain string status ("SUCCEEDED"/"FAILED").
-type StateTaskClient interface {
-	GetTask(ctx context.Context, scheduleID uuid.UUID, serviceName, schema, tableName string) (taskID string, err error)
-	GetSchedulerInitStatus(ctx context.Context, scheduleID uuid.UUID) (string, error)
-	UpdateSchedulerStatus(ctx context.Context, scheduleID uuid.UUID, status string) error
-}
-
-// HandleNodeCompletedCmd carries the data for a node-completed event.
-type HandleNodeCompletedCmd struct {
-	TaskID       uuid.UUID
-	ScheduleID   uuid.UUID
-	ScheduleName string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	Status       string
-}
-
 // HandleNodeCompletedHandler handles the HandleNodeCompleted command.
 type HandleNodeCompletedHandler struct {
 	uow         uow.UnitOfWork
 	runRepo     run.Repository
-	stateClient StateTaskClient
+	stateClient domainCmd.StateTaskClient
 	logger      *slog.Logger
 }
 
@@ -47,7 +28,7 @@ type HandleNodeCompletedHandler struct {
 func NewHandleNodeCompletedHandler(
 	u uow.UnitOfWork,
 	runRepo run.Repository,
-	stateClient StateTaskClient,
+	stateClient domainCmd.StateTaskClient,
 	logger *slog.Logger,
 ) *HandleNodeCompletedHandler {
 	return &HandleNodeCompletedHandler{
@@ -59,7 +40,7 @@ func NewHandleNodeCompletedHandler(
 }
 
 // Handle processes the HandleNodeCompleted command.
-func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd HandleNodeCompletedCmd, messageID string) error {
+func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.HandleNodeCompletedCmd, messageID string) error {
 	h.logger.Info("Processing node completed",
 		"message_id", messageID,
 		"task_id", cmd.TaskID,
@@ -212,7 +193,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd HandleNodeC
 
 // checkAndFinalizeSchedule queries the graph for drain status and, if complete,
 // updates scheduler_tracker status and finalizes the run snapshot.
-func (h *HandleNodeCompletedHandler) checkAndFinalizeSchedule(ctx context.Context, cmd HandleNodeCompletedCmd) error {
+func (h *HandleNodeCompletedHandler) checkAndFinalizeSchedule(ctx context.Context, cmd domainCmd.HandleNodeCompletedCmd) error {
 	// Guard: skip finalization while a re-run is being set up.
 	// Prevents overwriting RUNNING status with FAILED/SUCCEEDED before
 	// startup-controller has finished resetting graph nodes.

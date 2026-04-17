@@ -34,15 +34,15 @@ func (r *QueryRepository) GetScheduleGraph(ctx context.Context, scheduleName str
 		WITH collect(DISTINCT n) AS scheduleNodes,
 		     collect(DISTINCT u) AS externalNodes,
 		     collect(DISTINCT CASE WHEN u IS NOT NULL THEN {
-		       from_id: n.service_name + '.' + n.schema + '.' + n.table_name,
-		       to_id:   u.service_name + '.' + u.schema + '.' + u.table_name
+		       from_id: n.service_name + '.' + n.schema_name + '.' + n.table_name,
+		       to_id:   u.service_name + '.' + u.schema_name + '.' + u.table_name
 		     } END) AS crossEdges
 		UNWIND scheduleNodes AS n
 		OPTIONAL MATCH (n)-[:DEPENDS_ON]->(m:Table {schedule_name: $schedule_name})
 		WITH scheduleNodes, externalNodes, crossEdges,
 		     collect(DISTINCT CASE WHEN m IS NOT NULL THEN {
-		       from_id: n.service_name + '.' + n.schema + '.' + n.table_name,
-		       to_id:   m.service_name + '.' + m.schema + '.' + m.table_name
+		       from_id: n.service_name + '.' + n.schema_name + '.' + n.table_name,
+		       to_id:   m.service_name + '.' + m.schema_name + '.' + m.table_name
 		     } END) AS internalEdges
 		RETURN scheduleNodes + externalNodes AS allNodes,
 		       crossEdges + internalEdges AS allEdges
@@ -80,7 +80,7 @@ func (r *QueryRepository) GetScheduleGraph(ctx context.Context, scheduleName str
 			props := nodeMap.Props
 			node := &domain.TableNode{
 				TableName:    safeString(props["table_name"]),
-				SchemaName:   safeString(props["schema"]),
+				SchemaName:   safeString(props["schema_name"]),
 				ServiceName:  safeString(props["service_name"]),
 				Owner:        safeString(props["owner"]),
 				ScheduleName: safeString(props["schedule_name"]),
@@ -169,7 +169,7 @@ func (r *QueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*dom
 	nodeQuery := `
 		MATCH (:Run {run_id: $run_id})-[exec:EXECUTES]->(n:Table)
 		RETURN n.table_name AS table_name,
-		       n.schema AS schema_name,
+		       n.schema_name AS schema_name,
 		       n.service_name AS service_name,
 		       COALESCE(n.owner, "") AS owner,
 		       COALESCE(n.schedule_name, "") AS schedule_name,
@@ -201,8 +201,8 @@ func (r *QueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*dom
 	edgeQuery := `
 		MATCH (run:Run {run_id: $run_id})-[:EXECUTES]->(from_n:Table)-[:DEPENDS_ON]->(to_n:Table)
 		WHERE EXISTS { MATCH (run)-[:EXECUTES]->(to_n) }
-		RETURN from_n.service_name + '.' + from_n.schema + '.' + from_n.table_name AS from_node_id,
-		       to_n.service_name + '.' + to_n.schema + '.' + to_n.table_name AS to_node_id
+		RETURN from_n.service_name + '.' + from_n.schema_name + '.' + from_n.table_name AS from_node_id,
+		       to_n.service_name + '.' + to_n.schema_name + '.' + to_n.table_name AS to_node_id
 	`
 	edgeResult, err := session.Run(ctx, edgeQuery, map[string]interface{}{"run_id": runID})
 	if err != nil {

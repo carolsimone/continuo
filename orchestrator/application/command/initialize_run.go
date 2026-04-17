@@ -7,36 +7,11 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
-
-// InitializeRunCmd carries the data for a run initialization command.
-type InitializeRunCmd struct {
-	ScheduleName string       `json:"schedule_name"`
-	RunID        string       `json:"run_id"`
-	RerunTarget  *RerunTarget `json:"rerun_target,omitempty"`
-}
-
-// RerunTarget specifies the node to rerun from.
-type RerunTarget struct {
-	ServiceName string `json:"service_name"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
-}
-
-// NodePayload is the serialized form of a TableNode in the outbox payload.
-type NodePayload struct {
-	TableName    string `json:"table_name"`
-	SchemaName   string `json:"schema_name"`
-	ServiceName  string `json:"service_name"`
-	Owner        string `json:"owner"`
-	ScheduleName string `json:"schedule_name"`
-	Criticality  string `json:"criticality"`
-	NodeType     string `json:"node_type"`
-	Status       string `json:"status"`
-}
 
 // InitializeRunHandler handles the InitializeRun command.
 type InitializeRunHandler struct {
@@ -61,7 +36,7 @@ func NewInitializeRunHandler(
 }
 
 // Handle processes the InitializeRun command.
-func (h *InitializeRunHandler) Handle(ctx context.Context, cmd InitializeRunCmd, messageID string) error {
+func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainCmd.InitializeRunCmd, messageID string) error {
 	h.logger.Info("Processing run initialization",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
@@ -70,7 +45,7 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd InitializeRunCmd,
 
 	// Delegate to rerun handler if a rerun target is provided.
 	if cmd.RerunTarget != nil {
-		return h.rerunHandler.Handle(ctx, HandleRerunCmd{
+		return h.rerunHandler.Handle(ctx, domainCmd.HandleRerunCmd{
 			ScheduleName: cmd.ScheduleName,
 			RunID:        cmd.RunID,
 			ServiceName:  cmd.RerunTarget.ServiceName,
@@ -195,10 +170,10 @@ func (h *InitializeRunHandler) handleInitRunDedup(
 
 // buildRunInitializedPayload serializes run init nodes into the outbox JSON payload.
 func buildRunInitializedPayload(runID string, initNodes *run.ScheduleInitNodes) ([]byte, error) {
-	toNodePayloads := func(nodes []*domain.TableNode) []NodePayload {
-		out := make([]NodePayload, 0, len(nodes))
+	toNodePayloads := func(nodes []*domain.TableNode) []domainCmd.NodePayload {
+		out := make([]domainCmd.NodePayload, 0, len(nodes))
 		for _, n := range nodes {
-			out = append(out, NodePayload{
+			out = append(out, domainCmd.NodePayload{
 				TableName:    n.TableName,
 				SchemaName:   n.SchemaName,
 				ServiceName:  n.ServiceName,
@@ -212,7 +187,7 @@ func buildRunInitializedPayload(runID string, initNodes *run.ScheduleInitNodes) 
 		return out
 	}
 
-	var allNodes, rootNodes, seedNodes []NodePayload
+	var allNodes, rootNodes, seedNodes []domainCmd.NodePayload
 	if initNodes != nil {
 		allNodes = toNodePayloads(initNodes.AllNodes)
 		rootNodes = toNodePayloads(initNodes.RootNodes)

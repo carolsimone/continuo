@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/application/command"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,7 +73,7 @@ func TestHandleRerun_WithFailedDownstream(t *testing.T) {
 	}
 
 	h := command.NewHandleRerunHandler(uow, runRepo, newTestLogger())
-	cmd := command.HandleRerunCmd{
+	cmd := domainCmd.HandleRerunCmd{
 		ScheduleName: "daily",
 		RunID:        "run-rerun-1",
 		ServiceName:  "svc1",
@@ -108,7 +109,7 @@ func TestHandleRerun_WithFailedDownstream(t *testing.T) {
 	// Verify payload
 	var payload struct {
 		RunID       string               `json:"run_id"`
-		TargetNodes []command.NodePayload `json:"target_nodes"`
+		TargetNodes []domainCmd.NodePayload `json:"target_nodes"`
 	}
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, "run-rerun-1", payload.RunID)
@@ -127,7 +128,7 @@ func TestHandleRerun_DuplicateMessage(t *testing.T) {
 	runRepo := &rerunFakeRunRepository{}
 
 	h := command.NewHandleRerunHandler(uow, runRepo, newTestLogger())
-	cmd := command.HandleRerunCmd{
+	cmd := domainCmd.HandleRerunCmd{
 		ScheduleName: "daily",
 		RunID:        "run-rerun-2",
 		ServiceName:  "svc1",

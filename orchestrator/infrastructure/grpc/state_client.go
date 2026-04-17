@@ -20,7 +20,7 @@ var (
 )
 
 // StateClient wraps the gRPC client for state service.
-// It satisfies the command.StateTaskClient interface.
+// It satisfies the domain/command.StateTaskClient interface.
 type StateClient struct {
 	client statev1.StateServiceClient
 	conn   *grpc.ClientConn
