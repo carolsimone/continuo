@@ -127,8 +127,8 @@ sequenceDiagram
   R->>OR: consume initialize.run:v1
   OR->>OR: GetTransitiveDownstream(target)
   OR->>OR: UpdateNodeStatus(target/downstream FAILED nodes -> PENDING)
-  OR->>OR: GetNodeType(schema, table) from Neo4j
-  OR->>OR: GetNodeServiceName(schema, table) from Neo4j
+  OR->>OR: GetNodeType(schema_name, table_name) from Neo4j
+  OR->>OR: GetNodeServiceName(schema_name, table_name) from Neo4j
   OR->>R: publish rerun.ready:v1 (target_nodes: service_name=current graph value)
   R->>SC: consume rerun.ready:v1
   SC->>ST: ResetTask(target/downstream FAILED tasks, lookup by service_name, schema_name, table_name)

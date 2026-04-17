@@ -59,7 +59,7 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
 |---|---|
 | Kubernetes API | `GetJobStatus` — read job/pod status and termination message |
 | Kubernetes API | `GetPodLogs` — fetch full log + configurable tail (default configured) |
-| S3 | `PutObject` — upload full pod log; key format: `logs/task-executions/{service}/{schema}/{table}/{execution_id}.log` |
+| S3 | `PutObject` — upload full pod log; key format: `logs/task-executions/{service_name}/{schema_name}/{table_name}/{execution_id}.log` |
 
 ### K8s client configuration
 

@@ -58,7 +58,7 @@ Pass 1 — Parse
 Pass 2 — Build registry
   Construct NodeRegistry from all_nodes (table_name, schema_name, service_name, owner)
   Save registry to local filesystem CSV (for cross-service dep lookup)
-  Build lookup dict: (schema, table) → NodeRegistryEntry
+  Build lookup dict: (schema_name, table_name) → NodeRegistryEntry
 
 Pass 3 — Resolve deps
   For each node in all_nodes:

@@ -22,8 +22,8 @@ It is responsible for:
 | `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status` |
 
 The `run.Repository` interface exposes the following Neo4j read methods used during rerun handling:
-- `GetNodeType(ctx, schema, tableName) (string, error)` — reads `node_type` from the current `Table` node
-- `GetNodeServiceName(ctx, schema, tableName) (string, error)` — reads `service_name` from the current `Table` node
+- `GetNodeType(ctx, schemaName, tableName) (string, error)` — reads `node_type` from the current `Table` node (queries by `schema_name` property)
+- `GetNodeServiceName(ctx, schemaName, tableName) (string, error)` — reads `service_name` from the current `Table` node (queries by `schema_name` property)
 
 ### Postgres (`continuo_orchestrator`)
 
