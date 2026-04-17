@@ -31,7 +31,7 @@ It is responsible for:
 Both streams carry the same fields:
 - `outbox_entry_id` (used for dedup in `processed_events`)
 - `task_id`, `schedule_id`, `schedule_name`
-- `service_name`, `schema`, `table_name`, `job_name`
+- `service_name`, `schema_name`, `table_name`, `job_name`
 - `node_type`
 
 ### HTTP (port 8084)
@@ -49,7 +49,7 @@ Both streams carry the same fields:
 `node.deployed:v1` payload fields:
 - `outbox_entry_id`
 - `task_id`, `schedule_id`, `schedule_name`
-- `service_name`, `schema`, `table_name`, `job_name`
+- `service_name`, `schema_name`, `table_name`, `job_name`
 - `node_type`
 
 ### gRPC to `state`
@@ -60,7 +60,11 @@ Both streams carry the same fields:
 
 ### Kubernetes API
 
-- `CreateQueryJob` — creates a K8s batch Job in the configured namespace; treated as idempotent (already-exists is not an error on retry)
+- `CreateQueryJob` — creates a K8s batch Job in the configured namespace with label `app=dbt-job`; container name is `dbt-job`; treated as idempotent (already-exists is not an error on retry)
+
+### K8s client configuration
+
+`NewK8sClient` uses `KUBECONFIG` when set (local / docker-compose). If `KUBECONFIG` is not set it falls back to `rest.InClusterConfig()` for pod deployments with a ServiceAccount.
 
 ## Processing Logic
 

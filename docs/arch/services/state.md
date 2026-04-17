@@ -56,7 +56,7 @@ No other service owns or writes to these tables.
 |---|---|
 | `CreateTask` | Create a task row |
 | `GetTask` | Fetch by UUID |
-| `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema, table_name)` |
+| `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema_name, table_name)` |
 | `UpdateTask` | Update status, retry count |
 | `DeleteTask` | Delete a task row |
 | `ListTasks` | Paginated list with filters |
@@ -118,7 +118,7 @@ Payload fields:
 - `schedule_id`
 - `schedule_name`
 - `scope` — always `"node"`
-- `schema`
+- `schema_name`
 - `table_name`
 - `service_name`
 

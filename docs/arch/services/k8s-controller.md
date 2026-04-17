@@ -28,7 +28,7 @@ It is responsible for:
 | `node.deployed:v1` | New job deployed; triggers first status check |
 | `check.k8s:v1` | Delayed re-check for still-running jobs |
 
-Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `job_name`, `node_type` (plus `check_after` on `check.k8s:v1`).
+Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type` (plus `check_after` on `check.k8s:v1`).
 
 ### HTTP (port 8085)
 
@@ -60,6 +60,10 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
 | Kubernetes API | `GetJobStatus` — read job/pod status and termination message |
 | Kubernetes API | `GetPodLogs` — fetch full log + configurable tail (default configured) |
 | S3 | `PutObject` — upload full pod log; key format: `logs/task-executions/{service}/{schema}/{table}/{execution_id}.log` |
+
+### K8s client configuration
+
+`NewK8sClient` uses `KUBECONFIG` when set (local / docker-compose). If `KUBECONFIG` is not set it falls back to `rest.InClusterConfig()` for pod deployments with a ServiceAccount.
 
 ## Processing Logic
 
@@ -113,16 +117,16 @@ Reads `k8s_status_outbox` entries and executes the staged side effects:
 ## Redis Payload Reference
 
 ### `check.k8s:v1`
-`outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `job_name`, `check_after`, `node_type`
+`outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`
 
 ### `retry.task:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `job_name`, `retry_count`, `node_type`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `retry_count`, `node_type`
 
 ### `task.failed:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `job_name`, `error_message`, `retry_count`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `error_message`, `retry_count`
 
 ### `node.updated:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema`, `table_name`, `status`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `status`
 
 ## Reliability Patterns
 

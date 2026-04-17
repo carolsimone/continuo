@@ -41,7 +41,7 @@ This service does **not** own scheduler or task state -- it only owns durable di
 
 `query.model:v1` payload fields:
 - `outbox_entry_id`, `schedule_id`, `schedule_name`
-- `service_name`, `schema`, `table_name`, `task_id`, `job_name`, `node_type`
+- `service_name`, `schema_name`, `table_name`, `task_id`, `job_name`, `node_type`
 
 ### gRPC to `state`
 
@@ -70,7 +70,7 @@ This service does **not** own scheduler or task state -- it only owns durable di
 
 4. Pre-register all tasks:
    For each node in allNodes:
-     GetTask(schedule_id, service, schema, table)
+     GetTask(schedule_id, service_name, schema_name, table_name)
      -> if not found: CreateTask(new UUID, schedule_id, ..., max_retries=3)
      -> if found: leave untouched (idempotent on retry)
 
@@ -97,25 +97,18 @@ This service does **not** own scheduler or task state -- it only owns durable di
 1. Consume rerun.ready:v1 from orchestrator
    -> contains target node info + downstream FAILED nodes (already reset to PENDING in graph)
    -> each NodePayload carries:
-      - service_name: current graph value — used for K8s job dispatch
-      - original_service_name (optional): original value from the rerun command — used for
-        task lookup in state (in case the service was renamed/fixed since the original run)
+      - service_name: current graph value — used for both K8s job dispatch and task lookup
       - schedule_name: schedule name for the run
 
-2. Fetch target task from state:
-   GetTask(schedule_id, node.LookupServiceName(), schema, table)
-   -> LookupServiceName() returns original_service_name if set, else service_name
-   -> if status == FAILED: ResetTask(task_id)
-   -> K8s job dispatch uses node.ServiceName (current graph value)
+2. For each target/downstream node:
+   GetTask(schedule_id, service_name, schema_name, table_name)
+   -> if status != PENDING: ResetTask(task_id)
 
-3. For each FAILED downstream node:
-   - GetTask(using LookupServiceName()) + ResetTask
-
-4. Begin Postgres tx
+3. Begin Postgres tx
    Write single outbox entry for target node only
    Commit
 
-5. UpdateSchedulerInitStatus -> "completed" (gRPC to state)
+4. UpdateSchedulerInitStatus -> "completed" (gRPC to state)
    AFTER outbox commit -- allows orchestrator to resume finalization
 ```
 

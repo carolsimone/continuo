@@ -64,7 +64,7 @@ The `run.Repository` interface exposes the following Neo4j read methods used dur
 | `query.model:v1` | One message per newly-ready downstream node after a SUCCEEDED node is processed |
 | `schedules.loaded:v1` | Produced by IngestTopology after successful topology load (schedule names list) |
 | `run.initialized:v1` | Produced by InitializeRun after run snapshot is created (run_id, schedule info, node lists) |
-| `rerun.ready:v1` | Produced by HandleRerun when handling a rerun target (rerun scope + target info, including `original_service_name` for task lookup) |
+| `rerun.ready:v1` | Produced by HandleRerun when handling a rerun target (rerun scope + target info; `service_name` comes from the current graph for K8s dispatch) |
 
 ### gRPC to `state`
 
@@ -93,10 +93,9 @@ When `initialize.run:v1` carries a `rerun_target`, the `HandleRerun` handler tak
 3. Reads `node_type` for the target from Neo4j via `GetNodeType` — uses the current graph value (reflects any fixes applied since the original run).
 4. Reads `service_name` for the target from Neo4j via `GetNodeServiceName` — uses the current graph value for K8s image dispatch.
 5. Builds the `rerun.ready:v1` payload with a `target_nodes` list. For the rerun target node:
-   - `service_name` = current graph value (for K8s job dispatch)
-   - `original_service_name` = value from the rerun command (for task lookup in `state`, in case the service was renamed/fixed since the original run)
+   - `service_name` = current graph value (used for both K8s job dispatch and task lookup in `state`)
    - `schedule_name` = schedule name from the rerun command
-   - FAILED downstream nodes carry their current graph `service_name` only (no `original_service_name`).
+   - FAILED downstream nodes carry their current graph `service_name`.
 6. Writes the payload to the `rerun.ready:v1` outbox entry.
 
 ### On `node.updated:v1` — HandleNodeCompleted
