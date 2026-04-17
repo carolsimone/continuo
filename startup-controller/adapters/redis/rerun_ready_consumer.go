@@ -61,6 +61,9 @@ func (c *RerunReadyConsumer) Start(ctx context.Context) error {
 		"group", c.consumerGroup,
 		"name", c.consumerName,
 	)
+	if err := c.reclaimPending(ctx); err != nil {
+		c.logger.Error("Failed to reclaim pending messages", "stream", c.streamName, "error", err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -72,6 +75,49 @@ func (c *RerunReadyConsumer) Start(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (c *RerunReadyConsumer) reclaimPending(ctx context.Context) error {
+	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: c.streamName,
+		Group:  c.consumerGroup,
+		Start:  "-",
+		End:    "+",
+		Count:  100,
+	}).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get pending messages: %w", err)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	c.logger.Warn("Reclaiming pending messages from previous consumers",
+		"stream", c.streamName,
+		"count", len(pending),
+	)
+	for _, p := range pending {
+		msgs, err := c.client.XClaim(ctx, &goredis.XClaimArgs{
+			Stream:   c.streamName,
+			Group:    c.consumerGroup,
+			Consumer: c.consumerName,
+			MinIdle:  0,
+			Messages: []string{p.ID},
+		}).Result()
+		if err != nil {
+			c.logger.Error("Failed to claim message", "message_id", p.ID, "error", err)
+			continue
+		}
+		for _, msg := range msgs {
+			if err := c.processMessage(ctx, msg); err != nil {
+				c.logger.Error("Failed to process reclaimed message", "message_id", msg.ID, "error", err)
+				continue
+			}
+			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {
+				c.logger.Error("Failed to ACK reclaimed message", "message_id", msg.ID, "error", err)
+			}
+		}
+	}
+	return nil
 }
 
 func (c *RerunReadyConsumer) readAndProcess(ctx context.Context) error {
