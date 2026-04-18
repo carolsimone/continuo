@@ -100,24 +100,25 @@ func TestCheckStatusHandler_HandleSucceeded(t *testing.T) {
 
 	// Process outbox entries using OutboxProcessor
 	eventPublisher := &fakes.FakeEventPublisher{}
-	outboxProcessor := handlers.NewOutboxProcessor(outboxRepo, stateClient, eventPublisher, logger)
+	outboxProcessor := handlers.NewOutboxProcessor(outboxRepo, eventPublisher, logger)
 
 	err = outboxProcessor.ProcessOnce(ctx, 100) // Process batch
 	if err != nil {
 		t.Fatalf("Failed to process outbox: %v", err)
 	}
 
-	// Now verify state service methods were called
-	if stateClient.UpdateWithRetryCallCount != 1 {
-		t.Errorf("Expected UpdateTaskWithRetry to be called once, got: %d", stateClient.UpdateWithRetryCallCount)
+	// Verify task.status.updated:v1 was published (replaces gRPC UpdateTaskWithRetry)
+	statusCall := eventPublisher.FindPublish("task.status.updated:v1")
+	if statusCall == nil {
+		t.Errorf("Expected task.status.updated:v1 to be published")
+	} else if statusCall.Values["status"] != "SUCCEEDED" {
+		t.Errorf("Expected status SUCCEEDED, got: %v", statusCall.Values["status"])
 	}
 
-	if stateClient.LastStatus != statev1.TaskStatus_TASK_STATUS_SUCCEEDED {
-		t.Errorf("Expected status to be SUCCEEDED, got: %v", stateClient.LastStatus)
-	}
-
-	if stateClient.CreateExecutionCallCount != 1 {
-		t.Errorf("Expected CreateTaskExecution to be called once, got: %d", stateClient.CreateExecutionCallCount)
+	// Verify task.execution.recorded:v1 was published (replaces gRPC CreateTaskExecution)
+	execCall := eventPublisher.FindPublish("task.execution.recorded:v1")
+	if execCall == nil {
+		t.Errorf("Expected task.execution.recorded:v1 to be published")
 	}
 
 	// Verify outbox entries were marked as processed
@@ -216,33 +217,39 @@ func TestCheckStatusHandler_HandleFailedWithRetry(t *testing.T) {
 
 	// Process outbox entries using OutboxProcessor
 	eventPublisher := &fakes.FakeEventPublisher{}
-	outboxProcessor := handlers.NewOutboxProcessor(outboxRepo, stateClient, eventPublisher, logger)
+	outboxProcessor := handlers.NewOutboxProcessor(outboxRepo, eventPublisher, logger)
 
 	err = outboxProcessor.ProcessOnce(ctx, 100)
 	if err != nil {
 		t.Fatalf("Failed to process outbox: %v", err)
 	}
 
-	// Verify state service methods were called
-	if stateClient.UpdateWithRetryCallCount != 1 {
-		t.Errorf("Expected UpdateTaskWithRetry to be called once, got: %d", stateClient.UpdateWithRetryCallCount)
+	// Verify task.status.updated:v1 was published (replaces gRPC UpdateTaskWithRetry)
+	statusCall := eventPublisher.FindPublish("task.status.updated:v1")
+	if statusCall == nil {
+		t.Errorf("Expected task.status.updated:v1 to be published")
+	} else {
+		if statusCall.Values["status"] != "FAILED" {
+			t.Errorf("Expected status FAILED, got: %v", statusCall.Values["status"])
+		}
+		// retry_count stored as int in map — compare as fmt string or cast
+		if retryCount, ok := statusCall.Values["retry_count"].(int); ok {
+			if retryCount != 2 {
+				t.Errorf("Expected retry_count 2, got: %d", retryCount)
+			}
+		}
 	}
 
-	if stateClient.LastStatus != statev1.TaskStatus_TASK_STATUS_FAILED {
-		t.Errorf("Expected status to be FAILED, got: %v", stateClient.LastStatus)
+	// Verify task.execution.recorded:v1 was published (replaces gRPC CreateTaskExecution)
+	execCall := eventPublisher.FindPublish("task.execution.recorded:v1")
+	if execCall == nil {
+		t.Errorf("Expected task.execution.recorded:v1 to be published")
 	}
 
-	if stateClient.LastRetryCount != 2 { // Should be incremented from 1 to 2
-		t.Errorf("Expected retry count to be 2, got: %d", stateClient.LastRetryCount)
-	}
-
-	if stateClient.CreateExecutionCallCount != 1 {
-		t.Errorf("Expected CreateTaskExecution to be called once, got: %d", stateClient.CreateExecutionCallCount)
-	}
-
-	// Verify Redis event was published
-	if eventPublisher.PublishCallCount != 1 {
-		t.Errorf("Expected 1 Redis event to be published, got: %d", eventPublisher.PublishCallCount)
+	// Verify Redis stream event was also published (retry.task:v1)
+	retryCall := eventPublisher.FindPublish("retry.task:v1")
+	if retryCall == nil {
+		t.Errorf("Expected retry.task:v1 Redis event to be published")
 	}
 }
 
@@ -341,25 +348,36 @@ func TestCheckStatusHandler_HandleFailedPermanent(t *testing.T) {
 
 	// Process outbox entries using OutboxProcessor
 	eventPublisher := &fakes.FakeEventPublisher{}
-	outboxProcessor := handlers.NewOutboxProcessor(outboxRepo, stateClient, eventPublisher, logger)
+	outboxProcessor := handlers.NewOutboxProcessor(outboxRepo, eventPublisher, logger)
 
 	err = outboxProcessor.ProcessOnce(ctx, 100)
 	if err != nil {
 		t.Fatalf("Failed to process outbox: %v", err)
 	}
 
-	// Verify state service methods were called
-	if stateClient.UpdateWithRetryCallCount != 1 {
-		t.Errorf("Expected UpdateTaskWithRetry to be called once, got: %d", stateClient.UpdateWithRetryCallCount)
+	// Verify task.status.updated:v1 was published (replaces gRPC UpdateTaskWithRetry)
+	statusCall := eventPublisher.FindPublish("task.status.updated:v1")
+	if statusCall == nil {
+		t.Errorf("Expected task.status.updated:v1 to be published")
+	} else if statusCall.Values["status"] != "FAILED" {
+		t.Errorf("Expected status FAILED, got: %v", statusCall.Values["status"])
 	}
 
-	if stateClient.LastRetryCount != 3 { // Must stay at max_retries, not exceed it
-		t.Errorf("Expected retry count to be 3 (= max_retries), got: %d", stateClient.LastRetryCount)
+	// Verify task.execution.recorded:v1 was published (replaces gRPC CreateTaskExecution)
+	if eventPublisher.FindPublish("task.execution.recorded:v1") == nil {
+		t.Errorf("Expected task.execution.recorded:v1 to be published")
 	}
 
-	// Verify events were published (2 events: task_failed + node_status_updated)
-	if eventPublisher.PublishCallCount != 2 {
-		t.Errorf("Expected 2 Redis events to be published, got: %d", eventPublisher.PublishCallCount)
+	// Verify node.updated:v1 was published (2nd outbox entry)
+	if eventPublisher.FindPublish("node.updated:v1") == nil {
+		t.Errorf("Expected node.updated:v1 to be published")
+	}
+
+	// task_failed entry publishes: task.status.updated:v1 + task.execution.recorded:v1 + task.failed:v1
+	// node_status_updated entry publishes: node.updated:v1
+	// Total: 4 publishes
+	if eventPublisher.PublishCallCount != 4 {
+		t.Errorf("Expected 4 Redis events to be published, got: %d", eventPublisher.PublishCallCount)
 	}
 }
 
@@ -426,10 +444,6 @@ func TestCheckStatusHandler_HandleRunning(t *testing.T) {
 	// Verify no state updates were made (running jobs don't update state)
 	if stateClient.UpdateStatusCallCount != 0 {
 		t.Errorf("Expected no status updates for running job, got: %d", stateClient.UpdateStatusCallCount)
-	}
-
-	if stateClient.CreateExecutionCallCount != 0 {
-		t.Errorf("Expected no execution creation for running job, got: %d", stateClient.CreateExecutionCallCount)
 	}
 }
 

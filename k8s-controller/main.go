@@ -167,7 +167,6 @@ func main() {
 	// Step 14: Initialize and start OutboxProcessor (background)
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
-		stateClient,
 		producer,
 		logger,
 	)

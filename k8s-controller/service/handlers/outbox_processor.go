@@ -6,19 +6,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/grpc"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
-	"github.com/google/uuid"
 )
-
-// StateUpdater defines the interface for updating task status via gRPC
-type StateUpdater interface {
-	UpdateTaskWithRetry(ctx context.Context, taskID uuid.UUID, status statev1.TaskStatus, retryCount int32) error
-	CreateTaskExecution(ctx context.Context, params *grpc.TaskExecutionParams) error
-}
 
 // EventPublisher defines the interface for publishing events to specific Redis streams
 type EventPublisher interface {
@@ -27,24 +18,21 @@ type EventPublisher interface {
 
 // OutboxProcessor processes pending k8s status outbox entries
 type OutboxProcessor struct {
-	outboxRepo  postgres.OutboxRepository
-	stateClient StateUpdater
-	producer    EventPublisher
-	logger      *slog.Logger
+	outboxRepo postgres.OutboxRepository
+	producer   EventPublisher
+	logger     *slog.Logger
 }
 
 // NewOutboxProcessor creates a new OutboxProcessor
 func NewOutboxProcessor(
 	outboxRepo postgres.OutboxRepository,
-	stateClient StateUpdater,
 	producer EventPublisher,
 	logger *slog.Logger,
 ) *OutboxProcessor {
 	return &OutboxProcessor{
-		outboxRepo:  outboxRepo,
-		stateClient: stateClient,
-		producer:    producer,
-		logger:      logger,
+		outboxRepo: outboxRepo,
+		producer:   producer,
+		logger:     logger,
 	}
 }
 
@@ -134,39 +122,44 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.K8sStat
 		"stream_name", entry.StreamName,
 	)
 
-	// Step 1: Update task status via gRPC if flagged
+	// Step 1: Publish task.status.updated:v1 if flagged
 	if entry.UpdateTaskStatus {
-		status := p.parseTaskStatus(entry.NewTaskStatus)
-		if err := p.stateClient.UpdateTaskWithRetry(ctx, entry.TaskID, status, int32(entry.NewRetryCount)); err != nil {
-			return fmt.Errorf("failed to update task status: %w", err)
+		statusMsg := map[string]interface{}{
+			"task_id":     entry.TaskID.String(),
+			"schedule_id": entry.ScheduleID.String(),
+			"status":      statusString(entry.NewTaskStatus),
+			"retry_count": entry.NewRetryCount,
 		}
-		p.logger.Debug("Updated task status",
+		if _, err := p.producer.PublishToStream(ctx, "task.status.updated:v1", statusMsg); err != nil {
+			return fmt.Errorf("failed to publish task.status.updated:v1: %w", err)
+		}
+		p.logger.Debug("Published task.status.updated:v1",
 			"task_id", entry.TaskID,
 			"status", entry.NewTaskStatus,
 			"retry_count", entry.NewRetryCount,
 		)
 	}
 
-	// Step 2: Create task execution via gRPC if flagged
+	// Step 2: Publish task.execution.recorded:v1 if flagged
 	if entry.CreateExecution {
-		executionIDStr := ""
-		if entry.ExecutionID != uuid.Nil {
-			executionIDStr = entry.ExecutionID.String()
+		execMsg := map[string]interface{}{
+			"execution_id":      entry.ExecutionID.String(),
+			"task_id":           entry.TaskID.String(),
+			"job_name":          entry.JobName,
+			"execution_seconds": entry.ExecutionSeconds,
+			"error_message":     entry.ErrorMessage,
+			"log_s3_key":        entry.LogS3Key,
 		}
-		params := &grpc.TaskExecutionParams{
-			TaskID:           entry.TaskID.String(),
-			StartedAt:        entry.ExecutionStartedAt,
-			CompletedAt:      entry.ExecutionCompletedAt,
-			ExecutionSeconds: entry.ExecutionSeconds,
-			K8sJobName:       entry.JobName,
-			ErrorMessage:     entry.ErrorMessage,
-			ExecutionID:      executionIDStr,
-			LogS3Key:         entry.LogS3Key,
+		if entry.ExecutionStartedAt != nil {
+			execMsg["started_at"] = entry.ExecutionStartedAt.UTC().Format(time.RFC3339)
 		}
-		if err := p.stateClient.CreateTaskExecution(ctx, params); err != nil {
-			return fmt.Errorf("failed to create task execution: %w", err)
+		if entry.ExecutionCompletedAt != nil {
+			execMsg["completed_at"] = entry.ExecutionCompletedAt.UTC().Format(time.RFC3339)
 		}
-		p.logger.Debug("Created task execution",
+		if _, err := p.producer.PublishToStream(ctx, "task.execution.recorded:v1", execMsg); err != nil {
+			return fmt.Errorf("failed to publish task.execution.recorded:v1: %w", err)
+		}
+		p.logger.Debug("Published task.execution.recorded:v1",
 			"task_id", entry.TaskID,
 			"job_name", entry.JobName,
 		)
@@ -243,18 +236,17 @@ func (p *OutboxProcessor) ProcessOnce(ctx context.Context, batchSize int) error 
 	return nil
 }
 
-// parseTaskStatus converts string status to protobuf TaskStatus
-func (p *OutboxProcessor) parseTaskStatus(status string) statev1.TaskStatus {
-	switch status {
+// statusString normalises a task status string to uppercase for the event payload.
+func statusString(s string) string {
+	switch s {
 	case "running":
-		return statev1.TaskStatus_TASK_STATUS_RUNNING
+		return "RUNNING"
 	case "succeeded":
-		return statev1.TaskStatus_TASK_STATUS_SUCCEEDED
+		return "SUCCEEDED"
 	case "failed":
-		return statev1.TaskStatus_TASK_STATUS_FAILED
+		return "FAILED"
 	default:
-		p.logger.Warn("Unknown task status", "status", status)
-		return statev1.TaskStatus_TASK_STATUS_PENDING
+		return s
 	}
 }
 

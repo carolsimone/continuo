@@ -236,7 +236,6 @@ func TestIntegration_StateServiceGRPC(t *testing.T) {
 	defer stateClient.Close()
 
 	taskID := uuid.New()
-	task2ID := uuid.New() // used for UpdateTaskWithRetry (needs its own RUNNING task)
 	scheduleID := uuid.New()
 
 	// Create scheduler first (task_tracker has FK to scheduler_tracker)
@@ -249,24 +248,6 @@ func TestIntegration_StateServiceGRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test scheduler: %v", err)
 	}
-
-	// Create task2 upfront (RUNNING) so UpdateTaskWithRetry can transition it to FAILED.
-	// k8s-controller is only authorised for RUNNING→SUCCEEDED and RUNNING→FAILED.
-	_, err = stateClient.CreateTask(ctx, &statev1.CreateTaskRequest{
-		TaskId:      task2ID.String(),
-		ScheduleId:  scheduleID.String(),
-		ServiceName: "test-service",
-		SchemaName:  "test-schema",
-		TableName:   "test-table2",
-		MaxRetries:  3,
-		Status:      statev1.TaskStatus_TASK_STATUS_RUNNING,
-	})
-	if err != nil {
-		t.Fatalf("Failed to create task2: %v", err)
-	}
-	defer func() {
-		stateClient.DeleteTask(ctx, &statev1.DeleteTaskRequest{TaskId: task2ID.String()})
-	}()
 
 	t.Run("CreateAndGetTask", func(t *testing.T) {
 		// Create task with RUNNING status — k8s-controller acts on running K8s jobs.
@@ -319,46 +300,6 @@ func TestIntegration_StateServiceGRPC(t *testing.T) {
 
 		if task.Status != statev1.TaskStatus_TASK_STATUS_SUCCEEDED {
 			t.Errorf("Expected status SUCCEEDED, got: %v", task.Status)
-		}
-	})
-
-	t.Run("UpdateTaskWithRetry", func(t *testing.T) {
-		// k8s-controller transitions RUNNING → FAILED and increments retry_count.
-		// Uses task2 which is in RUNNING state; taskID is already SUCCEEDED.
-		err := stateClient.UpdateTaskWithRetry(ctx, task2ID, statev1.TaskStatus_TASK_STATUS_FAILED, 1)
-		if err != nil {
-			t.Errorf("Failed to update task with retry: %v", err)
-		}
-
-		// Verify update
-		task, err := stateClient.GetTask(ctx, task2ID)
-		if err != nil {
-			t.Fatalf("Failed to get task: %v", err)
-		}
-
-		if task.Status != statev1.TaskStatus_TASK_STATUS_FAILED {
-			t.Errorf("Expected status FAILED, got: %v", task.Status)
-		}
-
-		if task.RetryCount != 1 {
-			t.Errorf("Expected retry count 1, got: %d", task.RetryCount)
-		}
-	})
-
-	t.Run("CreateTaskExecution", func(t *testing.T) {
-		now := time.Now()
-		params := &grpc.TaskExecutionParams{
-			TaskID:           taskID.String(),
-			StartedAt:        &now,
-			CompletedAt:      &now,
-			ExecutionSeconds: 10.5,
-			K8sJobName:       "test-job",
-			ErrorMessage:     "test error",
-		}
-
-		err := stateClient.CreateTaskExecution(ctx, params)
-		if err != nil {
-			t.Errorf("Failed to create task execution: %v", err)
 		}
 	})
 

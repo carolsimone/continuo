@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // StateClient wraps the gRPC client for state service
@@ -91,83 +89,6 @@ func (c *StateClient) UpdateTaskStatus(ctx context.Context, taskID uuid.UUID, ta
 	c.logger.Info("Updated task status",
 		"task_id", taskID,
 		"status", taskStatus,
-	)
-
-	return nil
-}
-
-// UpdateTaskWithRetry updates task status and retry_count
-func (c *StateClient) UpdateTaskWithRetry(ctx context.Context, taskID uuid.UUID, status statev1.TaskStatus, retryCount int32) error {
-	req := &statev1.UpdateTaskRequest{
-		TaskId:     taskID.String(),
-		Status:     status,
-		RetryCount: retryCount,
-	}
-
-	_, err := c.client.UpdateTask(c.outgoingCtx(ctx), req)
-	if err != nil {
-		c.logger.Error("Failed to update task with retry count",
-			"task_id", taskID,
-			"status", status,
-			"retry_count", retryCount,
-			"error", err,
-		)
-		return fmt.Errorf("failed to update task with retry count: %w", err)
-	}
-
-	c.logger.Info("Updated task with retry count",
-		"task_id", taskID,
-		"status", status,
-		"retry_count", retryCount,
-	)
-
-	return nil
-}
-
-// TaskExecutionParams contains parameters for creating a task execution
-type TaskExecutionParams struct {
-	TaskID           string
-	StartedAt        *time.Time
-	CompletedAt      *time.Time
-	ExecutionSeconds float64
-	K8sJobName       string
-	ErrorMessage     string
-	ExecutionID      string // pre-generated UUID; used as PK in task_execution
-	LogS3Key         string // S3 object key for full pod log; empty if upload failed
-}
-
-// CreateTaskExecution creates a task execution record
-func (c *StateClient) CreateTaskExecution(ctx context.Context, params *TaskExecutionParams) error {
-	req := &statev1.CreateTaskExecutionRequest{
-		Id:                   params.ExecutionID,
-		TaskId:               params.TaskID,
-		K8SJobName:           params.K8sJobName,
-		ExecutionTimeSeconds: params.ExecutionSeconds,
-		ErrorMessage:         params.ErrorMessage,
-		LogS3Key:             params.LogS3Key,
-	}
-
-	if params.StartedAt != nil {
-		req.StartedAt = timestamppb.New(*params.StartedAt)
-	}
-
-	if params.CompletedAt != nil {
-		req.CompletedAt = timestamppb.New(*params.CompletedAt)
-	}
-
-	_, err := c.client.CreateTaskExecution(ctx, req)
-	if err != nil {
-		c.logger.Error("Failed to create task execution",
-			"task_id", params.TaskID,
-			"job_name", params.K8sJobName,
-			"error", err,
-		)
-		return fmt.Errorf("failed to create task execution: %w", err)
-	}
-
-	c.logger.Info("Created task execution",
-		"task_id", params.TaskID,
-		"job_name", params.K8sJobName,
 	)
 
 	return nil
