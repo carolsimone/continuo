@@ -87,19 +87,20 @@ type TaskRetry struct {
 
 func (TaskRetry) isEvent() {}
 
-// ToMap converts TaskRetry event to a map for Redis publishing
+// ToMap converts TaskRetry event to a map for Redis publishing.
+// Uses task_retry_count (not retry_count) to match executor-controller's consumer key.
 func (e TaskRetry) ToMap() map[string]interface{} {
 	return map[string]interface{}{
-		"task_id":       e.TaskID,
-		"schedule_id":   e.ScheduleID,
-		"schedule_name": e.ScheduleName,
-		"service_name":  e.ServiceName,
-		"schema_name":   e.SchemaName,
-		"table_name":    e.TableName,
-		"job_name":      e.JobName,
-		"retry_count":   e.RetryCount,
-		"max_retries":   e.MaxRetries,
-		"node_type":     e.NodeType,
+		"task_id":          e.TaskID,
+		"schedule_id":      e.ScheduleID,
+		"schedule_name":    e.ScheduleName,
+		"service_name":     e.ServiceName,
+		"schema_name":      e.SchemaName,
+		"table_name":       e.TableName,
+		"job_name":         e.JobName,
+		"task_retry_count": e.RetryCount,
+		"max_retries":      e.MaxRetries,
+		"node_type":        e.NodeType,
 	}
 }
 
