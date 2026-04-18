@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/service/command"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
@@ -39,6 +40,12 @@ func (f *rerunFakeRunRepository) GetFailedDownstreamTaskIDs(ctx context.Context,
 		return f.getFailedDownstreamTaskIDsFn(ctx, runID, schemaName, tableName)
 	}
 	return nil, nil
+}
+func (f *rerunFakeRunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
+	return nil, nil
+}
+func (f *rerunFakeRunRepository) ResetFailedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
+	return nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
