@@ -142,6 +142,9 @@ func (h *TaskExecutionRecordedHandler) Handle(ctx context.Context, messageID, pa
 		K8sJobName:           jobName,
 		ErrorMessage:         errMsg,
 		LogS3Key:             logS3Key,
+		// ExecutorID is intentionally not set: events.TaskExecutionRecorded does not
+		// carry an executor identifier. If a future event version adds this field,
+		// add it to the events struct and map it here.
 	}
 
 	if txErr := h.execRepo.CreateTx(ctx, tx, execution); txErr != nil {
