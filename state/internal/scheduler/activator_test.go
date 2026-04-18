@@ -66,6 +66,12 @@ func (r *stubRepo) DecrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uui
 func (r *stubRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
 	return nil
 }
+func (r *stubRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (r *stubRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
+	return nil, nil
+}
 
 func TestPrepareActivation_ReturnsTracker_WhenNoActiveSchedule(t *testing.T) {
 	a := scheduler.NewScheduleActivator(&stubRepo{hasActive: false}, testLogger())

@@ -1,0 +1,230 @@
+package redis_test
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/carolsimone/continuo/pkg/events"
+	redisadapter "github.com/carolsimone/continuo/state/adapters/redis"
+	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/database"
+	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func setupTaskStatusTestDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	db, err := database.GetPostgresConnection()
+	if err != nil {
+		t.Skip("no test DB available:", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// seedSchedulerForTaskStatus seeds a scheduler_tracker row ready to receive task status events.
+func seedSchedulerForTaskStatus(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, totalCount, terminalCount int32) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO scheduler_tracker (
+			schedule_id, schedule_name, status, created_at,
+			initialization_status, manifest_versions, total_task_count, terminal_task_count
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`,
+		scheduleID,
+		"test-schedule-"+scheduleID.String(),
+		string(model.SchedulerStatusRunning),
+		time.Now(),
+		"completed",
+		json.RawMessage(`{}`),
+		totalCount,
+		terminalCount,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
+		db.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, scheduleID)
+		db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		db.Exec(`DELETE FROM processed_events`)
+	})
+}
+
+// seedTaskForStatus inserts a task_tracker row.
+func seedTaskForStatus(t *testing.T, db *sqlx.DB, taskID, scheduleID uuid.UUID, status model.TaskStatus) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO task_tracker (
+			task_id, schedule_id, created_at, service_name, schema_name,
+			table_name, job_name, status, retry_count, max_retries
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`,
+		taskID, scheduleID, time.Now(),
+		"svc-test", "public", "table_"+taskID.String()[:8],
+		"job_"+taskID.String()[:8],
+		string(status), 0, 3,
+	)
+	require.NoError(t, err)
+}
+
+// buildTaskStatusPayload builds a JSON payload for a task.status.updated:v1 event.
+func buildTaskStatusPayload(t *testing.T, taskID, scheduleID uuid.UUID, status string, retryCount int32) string {
+	t.Helper()
+	evt := events.TaskStatusUpdated{
+		TaskID:     taskID.String(),
+		ScheduleID: scheduleID.String(),
+		Status:     status,
+		RetryCount: retryCount,
+	}
+	b, err := json.Marshal(evt)
+	require.NoError(t, err)
+	return string(b)
+}
+
+// getOutboxCountForSchedule returns the number of state_outbox rows for the given aggregate_id and event_type.
+func getOutboxCountForSchedule(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, eventType string) int {
+	t.Helper()
+	var count int
+	err := db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM state_outbox WHERE aggregate_id = $1 AND event_type = $2`,
+		scheduleID, eventType,
+	).Scan(&count)
+	require.NoError(t, err)
+	return count
+}
+
+func newTaskStatusHandler(db *sqlx.DB, logger *slog.Logger) *redisadapter.TaskStatusUpdatedHandler {
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	outboxRepo := postgres.NewOutboxRepository(db, logger)
+	return redisadapter.NewTaskStatusUpdatedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
+}
+
+// TestTaskStatusUpdatedHandler_TerminalCountAndFinalization verifies that processing two
+// SUCCEEDED events increments terminal_task_count and finalizes the run as succeeded.
+func TestTaskStatusUpdatedHandler_TerminalCountAndFinalization(t *testing.T) {
+	db := setupTaskStatusTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	scheduleID := uuid.New()
+	tA := uuid.New()
+	tB := uuid.New()
+
+	seedSchedulerForTaskStatus(t, db, scheduleID, 2, 0)
+	seedTaskForStatus(t, db, tA, scheduleID, model.TaskStatusRunning)
+	seedTaskForStatus(t, db, tB, scheduleID, model.TaskStatusRunning)
+
+	handler := newTaskStatusHandler(db, logger)
+
+	// Process tA SUCCEEDED
+	payloadA := buildTaskStatusPayload(t, tA, scheduleID, "SUCCEEDED", 0)
+	shouldACK, err := handler.Handle(context.Background(), "msg-tA-1", payloadA)
+	require.NoError(t, err)
+	assert.True(t, shouldACK)
+
+	// Assert terminal=1, still RUNNING
+	assert.Equal(t, int32(1), getTerminalTaskCount(t, db, scheduleID))
+	assert.Equal(t, model.SchedulerStatusRunning, getSchedulerStatus(t, db, scheduleID))
+	assert.Equal(t, 0, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
+
+	// Process tB SUCCEEDED
+	payloadB := buildTaskStatusPayload(t, tB, scheduleID, "SUCCEEDED", 0)
+	shouldACK, err = handler.Handle(context.Background(), "msg-tB-1", payloadB)
+	require.NoError(t, err)
+	assert.True(t, shouldACK)
+
+	// Assert terminal=2, status=succeeded, outbox entry written
+	assert.Equal(t, int32(2), getTerminalTaskCount(t, db, scheduleID))
+	assert.Equal(t, model.SchedulerStatusSucceeded, getSchedulerStatus(t, db, scheduleID))
+	assert.Equal(t, 1, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
+}
+
+// TestTaskStatusUpdatedHandler_AnyFailedMarksRunFailed verifies that a single FAILED task
+// causes the run to finalize as failed.
+func TestTaskStatusUpdatedHandler_AnyFailedMarksRunFailed(t *testing.T) {
+	db := setupTaskStatusTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	scheduleID := uuid.New()
+	tA := uuid.New()
+	tB := uuid.New()
+
+	seedSchedulerForTaskStatus(t, db, scheduleID, 2, 0)
+	seedTaskForStatus(t, db, tA, scheduleID, model.TaskStatusRunning)
+	seedTaskForStatus(t, db, tB, scheduleID, model.TaskStatusRunning)
+
+	handler := newTaskStatusHandler(db, logger)
+
+	// Process tA SUCCEEDED
+	shouldACK, err := handler.Handle(context.Background(), "msg-fail-tA",
+		buildTaskStatusPayload(t, tA, scheduleID, "SUCCEEDED", 0))
+	require.NoError(t, err)
+	assert.True(t, shouldACK)
+
+	// Process tB FAILED
+	shouldACK, err = handler.Handle(context.Background(), "msg-fail-tB",
+		buildTaskStatusPayload(t, tB, scheduleID, "FAILED", 1))
+	require.NoError(t, err)
+	assert.True(t, shouldACK)
+
+	assert.Equal(t, int32(2), getTerminalTaskCount(t, db, scheduleID))
+	assert.Equal(t, model.SchedulerStatusFailed, getSchedulerStatus(t, db, scheduleID))
+	assert.Equal(t, 1, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
+}
+
+// TestTaskStatusUpdatedHandler_RetriesWhenTaskRowMissing verifies that handling an event
+// for a non-existent task_id returns an error (triggering Redis redelivery).
+func TestTaskStatusUpdatedHandler_RetriesWhenTaskRowMissing(t *testing.T) {
+	db := setupTaskStatusTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	scheduleID := uuid.New()
+	unknownTaskID := uuid.New()
+
+	seedSchedulerForTaskStatus(t, db, scheduleID, 2, 0)
+	// no task rows seeded
+
+	handler := newTaskStatusHandler(db, logger)
+
+	payload := buildTaskStatusPayload(t, unknownTaskID, scheduleID, "SUCCEEDED", 0)
+	shouldACK, err := handler.Handle(context.Background(), "msg-missing-task", payload)
+	assert.Error(t, err, "expected error for missing task row")
+	assert.False(t, shouldACK, "should not ACK when task row is missing")
+}
+
+// TestTaskStatusUpdatedHandler_Idempotent verifies that processing the same message twice
+// does not double-increment the terminal count.
+func TestTaskStatusUpdatedHandler_Idempotent(t *testing.T) {
+	db := setupTaskStatusTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	scheduleID := uuid.New()
+	tA := uuid.New()
+
+	seedSchedulerForTaskStatus(t, db, scheduleID, 2, 0)
+	seedTaskForStatus(t, db, tA, scheduleID, model.TaskStatusRunning)
+
+	handler := newTaskStatusHandler(db, logger)
+
+	payload := buildTaskStatusPayload(t, tA, scheduleID, "SUCCEEDED", 0)
+
+	shouldACK, err := handler.Handle(context.Background(), "msg-idem-tA", payload)
+	require.NoError(t, err)
+	assert.True(t, shouldACK)
+
+	// Second call with same message ID — must be a no-op
+	shouldACK, err = handler.Handle(context.Background(), "msg-idem-tA", payload)
+	require.NoError(t, err)
+	assert.True(t, shouldACK)
+
+	// terminal_task_count must NOT be double-incremented
+	assert.Equal(t, int32(1), getTerminalTaskCount(t, db, scheduleID))
+	// run still running (total=2, terminal=1)
+	assert.Equal(t, model.SchedulerStatusRunning, getSchedulerStatus(t, db, scheduleID))
+}

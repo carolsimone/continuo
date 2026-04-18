@@ -166,6 +166,21 @@ func (s *stubSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *s
 func (s *stubSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *model.SchedulerTracker) error {
 	return nil
 }
+func (s *stubSchedulerRepo) IncrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (int32, int32, error) {
+	return 0, 0, nil
+}
+func (s *stubSchedulerRepo) DecrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
+func (s *stubSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
+func (s *stubSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (s *stubSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
+	return s.getByIDResult, s.getByIDErr
+}
 
 // ---- TriggerSchedule tests ----
 
@@ -414,6 +429,21 @@ func (f *fakeSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *s
 }
 func (f *fakeSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *model.SchedulerTracker) error {
 	return nil
+}
+func (f *fakeSchedulerRepo) IncrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (int32, int32, error) {
+	return 0, 0, nil
+}
+func (f *fakeSchedulerRepo) DecrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
+func (f *fakeSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
+func (f *fakeSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (f *fakeSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
+	return f.tracker, nil
 }
 
 // ---- UpdateScheduler transition tests ----

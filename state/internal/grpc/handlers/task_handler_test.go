@@ -78,6 +78,24 @@ func (s *stubTaskRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, task *model.TaskT
 	s.tasks[task.TaskID] = task
 	return nil
 }
+func (s *stubTaskRepo) BulkCreateTx(_ context.Context, _ *sqlx.Tx, _ []*model.TaskTracker) error {
+	return nil
+}
+func (s *stubTaskRepo) ListAllByScheduleID(_ context.Context, _ uuid.UUID) ([]*model.TaskTracker, error) {
+	return nil, nil
+}
+func (s *stubTaskRepo) ResetTasksTx(_ context.Context, _ *sqlx.Tx, _ []uuid.UUID) (int32, error) {
+	return 0, nil
+}
+func (s *stubTaskRepo) UpdateStatusIfChangedTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string, _ int32) (int32, error) {
+	return 0, nil
+}
+func (s *stubTaskRepo) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (s *stubTaskRepo) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
 
 func ctxWithCaller(caller model.CallerID) context.Context {
 	md := metadata.Pairs("x-caller-id", string(caller))

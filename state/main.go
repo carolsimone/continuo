@@ -177,6 +177,35 @@ func main() {
 		}
 	}()
 
+	// Initialize task.status.updated:v1 consumer
+	taskStatusConsumer, err := redis.NewTaskStatusUpdatedConsumer(
+		redisClient,
+		cfg.RedisStreamTaskStatusUpdated,
+		db,
+		schedulerRepo,
+		taskRepo,
+		outboxRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create task status updated consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Task status updated consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping task status updated consumer")
+		taskStatusConsumer.Stop()
+		return nil
+	})
+
+	// Start task status updated consumer in background
+	go func() {
+		if err := taskStatusConsumer.Start(ctx); err != nil {
+			logger.Error("Task status updated consumer error", "error", err)
+		}
+	}()
+
 	// Initialize schedule activator and activation service
 	activator := scheduler.NewScheduleActivator(schedulerRepo, logger)
 	activationService := scheduler.NewScheduleActivationService(

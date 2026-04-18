@@ -14,6 +14,7 @@ type Config struct {
 	RedisStreamSchedulesLoaded      string
 	RedisStreamRunEntriesDispatched string
 	RedisStreamRunRerunDispatched   string
+	RedisStreamTaskStatusUpdated    string
 
 	// gRPC
 	GRPCPort int
@@ -36,6 +37,7 @@ func Load(v *pkgconfig.Validator) Config {
 		RedisStreamSchedulesLoaded:      v.Require("REDIS_STREAM_SCHEDULES_LOADED"),
 		RedisStreamRunEntriesDispatched: v.Require("REDIS_STREAM_RUN_ENTRIES_DISPATCHED"),
 		RedisStreamRunRerunDispatched:   v.Require("REDIS_STREAM_RUN_RERUN_DISPATCHED"),
+		RedisStreamTaskStatusUpdated:    v.Require("REDIS_STREAM_TASK_STATUS_UPDATED"),
 
 		GRPCPort:            envInt("GRPC_PORT", 50051),
 		HealthPort:          env("HEALTH_PORT", "8082"),

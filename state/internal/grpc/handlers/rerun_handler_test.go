@@ -61,6 +61,21 @@ func (s *rerunSchedStub) UpdateInitializationStatusTx(_ context.Context, _ *sqlx
 func (s *rerunSchedStub) CreateTx(_ context.Context, _ *sqlx.Tx, _ *model.SchedulerTracker) error {
 	return nil
 }
+func (s *rerunSchedStub) IncrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (int32, int32, error) {
+	return 0, 0, nil
+}
+func (s *rerunSchedStub) DecrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
+func (s *rerunSchedStub) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
+func (s *rerunSchedStub) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (s *rerunSchedStub) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
+	return s.scheduler, s.getErr
+}
 
 type rerunTaskStub struct {
 	task         *model.TaskTracker
@@ -88,6 +103,24 @@ func (s *rerunTaskStub) List(_ context.Context, _ postgres.TaskFilters) ([]*mode
 func (s *rerunTaskStub) UpdateTx(_ context.Context, _ *sqlx.Tx, t *model.TaskTracker) error {
 	s.updated = t
 	return s.updateTxErr
+}
+func (s *rerunTaskStub) BulkCreateTx(_ context.Context, _ *sqlx.Tx, _ []*model.TaskTracker) error {
+	return nil
+}
+func (s *rerunTaskStub) ListAllByScheduleID(_ context.Context, _ uuid.UUID) ([]*model.TaskTracker, error) {
+	return nil, nil
+}
+func (s *rerunTaskStub) ResetTasksTx(_ context.Context, _ *sqlx.Tx, _ []uuid.UUID) (int32, error) {
+	return 0, nil
+}
+func (s *rerunTaskStub) UpdateStatusIfChangedTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string, _ int32) (int32, error) {
+	return 0, nil
+}
+func (s *rerunTaskStub) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (s *rerunTaskStub) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
 }
 
 type rerunOutboxStub struct {

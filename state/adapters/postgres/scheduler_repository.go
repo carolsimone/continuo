@@ -50,6 +50,9 @@ type SchedulerTrackerRepository interface {
 	SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error
 	// UpdateStatusTx updates the status column within an existing transaction.
 	UpdateStatusTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
+	// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row for the given id
+	// using SELECT ... FOR UPDATE. Must be called within a transaction.
+	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*model.SchedulerTracker, error)
 }
 
 // LastRunData holds the summary of the most recent run for a schedule.
@@ -595,6 +598,31 @@ func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx
 		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
 	}
 	return nil
+}
+
+// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row using SELECT ... FOR UPDATE.
+// Returns ErrNotFound when no row exists for the given id.
+func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*model.SchedulerTracker, error) {
+	var tracker model.SchedulerTracker
+	err := tx.QueryRowxContext(ctx, `
+		SELECT
+			schedule_id, schedule_name, status, created_at,
+			started_at, completed_at, last_heartbeat_at,
+			cancelled_at, cancelled_by, cancellation_reason,
+			initialization_status, manifest_versions,
+			total_task_count, terminal_task_count
+		FROM scheduler_tracker
+		WHERE schedule_id = $1
+		FOR UPDATE
+	`, id).StructScan(&tracker)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get scheduler_tracker for update: %w", err)
+	}
+	tracker.ManifestVersions = tracker.GetManifestVersions()
+	return &tracker, nil
 }
 
 // UpdateStatusTx updates the status column for the given schedule within a transaction.

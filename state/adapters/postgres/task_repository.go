@@ -30,6 +30,13 @@ type TaskTrackerRepository interface {
 	// ResetTasksTx sets the given tasks to PENDING and returns the number of rows actually
 	// modified (already-PENDING rows are excluded from the count).
 	ResetTasksTx(ctx context.Context, tx *sqlx.Tx, ids []uuid.UUID) (int32, error)
+	// UpdateStatusIfChangedTx updates status and retry_count for the given task only when
+	// either field differs from the stored value. Returns the number of rows actually modified.
+	UpdateStatusIfChangedTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error)
+	// ExistsTx reports whether a task_tracker row with the given task_id exists.
+	ExistsTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (bool, error)
+	// HasFailedTaskTx reports whether any task for the given schedule has status = 'failed'.
+	HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
 }
 
 // TaskFilters defines query filters for List operation
@@ -353,6 +360,52 @@ func (r *taskTrackerRepository) ListAllByScheduleID(ctx context.Context, schedul
 		return nil, fmt.Errorf("list all tasks by schedule_id: %w", err)
 	}
 	return tasks, nil
+}
+
+// UpdateStatusIfChangedTx updates status and retry_count for the given task only when
+// either value differs from what is currently stored. Returns the number of rows modified
+// (0 means the row exists but nothing changed; use ExistsTx to distinguish from missing).
+func (r *taskTrackerRepository) UpdateStatusIfChangedTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error) {
+	res, err := tx.ExecContext(ctx, `
+		UPDATE task_tracker
+		SET status = $2, retry_count = $3
+		WHERE task_id = $1
+		  AND (status != $2 OR retry_count != $3)
+	`, taskID, status, retryCount)
+	if err != nil {
+		return 0, fmt.Errorf("update task status if changed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int32(n), nil
+}
+
+// ExistsTx reports whether a task_tracker row exists for the given task_id.
+func (r *taskTrackerRepository) ExistsTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (bool, error) {
+	var exists bool
+	err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM task_tracker WHERE task_id = $1)`,
+		taskID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("exists check for task_id %s: %w", taskID, err)
+	}
+	return exists, nil
+}
+
+// HasFailedTaskTx reports whether any task_tracker row for the given schedule has status = 'failed'.
+func (r *taskTrackerRepository) HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error) {
+	var exists bool
+	err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM task_tracker WHERE schedule_id = $1 AND status = 'failed' LIMIT 1)`,
+		scheduleID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("has failed task check for schedule_id %s: %w", scheduleID, err)
+	}
+	return exists, nil
 }
 
 // ResetTasksTx moves the given tasks to PENDING and returns the number of rows
