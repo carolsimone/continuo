@@ -41,6 +41,11 @@ func (h *DeployHandler) Handle(ctx context.Context, cmd command.DeployJob) error
 	defer h.uow.Rollback()
 
 	// Step 2: Write deployment intent to outbox table
+	taskMaxRetries := cmd.MaxRetries
+	if taskMaxRetries <= 0 {
+		taskMaxRetries = 3
+	}
+
 	entry := &model.DeploymentOutboxEntry{
 		ID:             uuid.New(),
 		TaskID:         cmd.TaskID,
@@ -52,6 +57,7 @@ func (h *DeployHandler) Handle(ctx context.Context, cmd command.DeployJob) error
 		JobName:        cmd.JobName,
 		NodeType:       string(cmd.NodeType),
 		TaskRetryCount: cmd.TaskRetryCount,
+		TaskMaxRetries: taskMaxRetries,
 		Status:         string(model.OutboxStatusPending),
 		CreatedAt:      time.Now(),
 		RetryCount:     0,

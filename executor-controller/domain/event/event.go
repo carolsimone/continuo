@@ -17,6 +17,7 @@ type JobDeployed struct {
 	JobName        string `json:"job_name"`
 	NodeType       string `json:"node_type"`
 	TaskRetryCount int    `json:"task_retry_count"` // task-level retry count (not outbox delivery retries)
+	MaxRetries     int    `json:"max_retries"`      // maximum task retries allowed
 }
 
 func (JobDeployed) isEvent() {}
@@ -34,5 +35,6 @@ func (e JobDeployed) ToMap() map[string]interface{} {
 		"job_name":         e.JobName,
 		"node_type":        e.NodeType,
 		"task_retry_count": e.TaskRetryCount,
+		"max_retries":      e.MaxRetries,
 	}
 }

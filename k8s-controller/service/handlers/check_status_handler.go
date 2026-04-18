@@ -111,7 +111,7 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, cmd command.CheckJobSta
 				return err
 			}
 		} else {
-			if err := h.handleFailedWithRetry(ctx, cmd, result, retryCount); err != nil {
+			if err := h.handleFailedWithRetry(ctx, cmd, result, retryCount, maxRetries); err != nil {
 				return err
 			}
 		}
@@ -313,7 +313,7 @@ func retryJobName(baseJobName string, retryCount int32) string {
 }
 
 // handleFailedWithRetry handles failed jobs that can be retried
-func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount int32) error {
+func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount, maxRetries int32) error {
 	newRetryCount := retryCount + 1
 
 	executionID, logS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
@@ -338,6 +338,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd comm
 
 		ErrorMessage:   errorMsg,
 		TaskRetryCount: int(retryCount),
+		TaskMaxRetries: int(maxRetries),
 		ExecutionID:    executionID,
 		LogS3Key:       logS3Key,
 
@@ -414,7 +415,7 @@ func (h *CheckStatusHandler) handleUnknown(ctx context.Context, cmd command.Chec
 		errorMsg = "Job not found or unknown status"
 	}
 
-	newRetryCount := cmd.RetryCount + 1
+	newRetryCount := cmd.RetryCount
 
 	// Create outbox entry for unknown status (treat as failed permanently)
 	entry := &model.K8sStatusOutboxEntry{

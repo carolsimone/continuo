@@ -318,6 +318,15 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 		}
 	}
 
+	// Parse max_retries; present on retry.task:v1 messages that carry it.
+	// 0 means "use service default" — deploy_handler applies the fallback.
+	maxRetries := 0
+	if s := getString(msg.Values, "max_retries"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			maxRetries = n
+		}
+	}
+
 	cmd := command.DeployJob{
 		TaskID:         taskID,
 		ScheduleID:     scheduleID,
@@ -328,6 +337,7 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 		JobName:        getString(msg.Values, "job_name"),
 		NodeType:       nodeType,
 		TaskRetryCount: taskRetryCount,
+		MaxRetries:     maxRetries,
 	}
 
 	// Handle via message bus (same handler works for both initial deploy and retry)

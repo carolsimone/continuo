@@ -81,6 +81,7 @@ type TaskRetry struct {
 	TableName    string `json:"table_name"`
 	JobName      string `json:"job_name"`
 	RetryCount   int    `json:"retry_count"`
+	MaxRetries   int    `json:"max_retries"`
 	NodeType     string `json:"node_type"`
 }
 
@@ -97,6 +98,7 @@ func (e TaskRetry) ToMap() map[string]interface{} {
 		"table_name":    e.TableName,
 		"job_name":      e.JobName,
 		"retry_count":   e.RetryCount,
+		"max_retries":   e.MaxRetries,
 		"node_type":     e.NodeType,
 	}
 }

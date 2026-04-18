@@ -22,6 +22,7 @@ type DeployJob struct {
 	JobName        string
 	NodeType       pkg_model.NodeType
 	TaskRetryCount int // task-level retry count carried through from the orchestrator
+	MaxRetries     int // maximum task retries allowed; 0 means use service default
 }
 
 func (DeployJob) isCommand() {}

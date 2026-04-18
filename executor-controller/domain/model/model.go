@@ -19,6 +19,7 @@ type DeploymentOutboxEntry struct {
 	JobName        string     `db:"job_name"`
 	NodeType       string     `db:"node_type"`
 	TaskRetryCount int        `db:"task_retry_count"` // task-level retry count (not outbox delivery retries)
+	TaskMaxRetries int        `db:"task_max_retries"` // maximum task retries allowed
 	Status         string     `db:"status"`           // 'pending', 'processed', 'failed'
 	CreatedAt      time.Time  `db:"created_at"`
 	ProcessedAt    *time.Time `db:"processed_at"`

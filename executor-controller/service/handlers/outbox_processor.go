@@ -205,6 +205,7 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.Deploym
 		JobName:        entry.JobName,
 		NodeType:       entry.NodeType,
 		TaskRetryCount: entry.TaskRetryCount,
+		MaxRetries:     entry.TaskMaxRetries,
 	}
 
 	if _, err := p.producer.Publish(ctx, evt.ToMap()); err != nil {
