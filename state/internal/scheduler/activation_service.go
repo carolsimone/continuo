@@ -86,6 +86,11 @@ func (s *ScheduleActivationService) ActivateSchedule(ctx context.Context, schedu
 		return uuid.Nil, fmt.Errorf("failed to create scheduler_tracker: %w", err)
 	}
 
+	if err := s.schedulerRepo.UpdateInitializationStatusTx(ctx, tx, tracker.ScheduleID, "in_progress"); err != nil {
+		return uuid.Nil, fmt.Errorf("failed to transition init_status to in_progress: %w", err)
+	}
+	tracker.InitializationStatus = "in_progress"
+
 	payload, err := json.Marshal(map[string]interface{}{
 		"runner_id":         tracker.ScheduleID.String(),
 		"schedule_name":     tracker.ScheduleName,

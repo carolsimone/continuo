@@ -111,6 +111,56 @@ func TestScheduleActivationService_PropagatesPrepareError(t *testing.T) {
 	assert.Contains(t, err.Error(), "db check error")
 }
 
+func TestActivationService_TransitionsInitStatusAtomically(t *testing.T) {
+	db := getActivationTestDB(t)
+	ctx := context.Background()
+
+	scheduleID := uuid.New()
+	tracker := &model.SchedulerTracker{
+		ScheduleID:           scheduleID,
+		ScheduleName:         "atomic-init-test",
+		Status:               model.SchedulerStatusPending,
+		CreatedAt:            time.Now(),
+		InitializationStatus: "pending",
+	}
+
+	activator := &fakeActivator{tracker: tracker}
+	logger := testLogger()
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	outboxRepo := postgres.NewOutboxRepository(db, logger)
+	catalog := &fakeCatalogRepoSvc{}
+
+	svc := scheduler.NewScheduleActivationService(
+		db, activator, catalog, schedulerRepo, outboxRepo, "scheduler.started:v1", logger,
+	)
+
+	id, err := svc.ActivateSchedule(ctx, "atomic-init-test")
+	require.NoError(t, err)
+	assert.Equal(t, scheduleID, id)
+
+	// Verify initialization_status was set to 'in_progress' in the DB.
+	var initStatus string
+	err = db.QueryRowContext(ctx,
+		`SELECT initialization_status FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID,
+	).Scan(&initStatus)
+	require.NoError(t, err, "scheduler_tracker row must exist after ActivateSchedule")
+	assert.Equal(t, "in_progress", initStatus, "initialization_status must be 'in_progress' after commit")
+
+	// Verify outbox entry exists.
+	var outboxCount int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM state_outbox WHERE aggregate_id = $1 AND stream_name = 'scheduler.started:v1'`, scheduleID,
+	).Scan(&outboxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, outboxCount, "outbox entry must exist for scheduler.started:v1")
+
+	// Cleanup.
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
+		db.ExecContext(ctx, `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+	})
+}
+
 func TestScheduleActivationService_AtomicallyWritesTrackerAndOutbox(t *testing.T) {
 	db := getActivationTestDB(t)
 	tracker := &model.SchedulerTracker{
