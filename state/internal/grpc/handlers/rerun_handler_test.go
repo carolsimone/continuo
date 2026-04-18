@@ -261,10 +261,8 @@ func TestTriggerRerun_Success(t *testing.T) {
 	assert.Equal(t, model.SchedulerStatusRunning, sched.updated.Status)
 	assert.Nil(t, sched.updated.CompletedAt)
 
-	// Task was reset to PENDING with retry_count=0
-	require.NotNil(t, task.updated)
-	assert.Equal(t, model.TaskStatusPending, task.updated.Status)
-	assert.Equal(t, 0, task.updated.RetryCount)
+	// Task reset is handled by run_rerun_dispatched_handler, not here.
+	assert.Nil(t, task.updated)
 
 	// Outbox entry written to rerun:v1
 	require.NotNil(t, outbox.created)

@@ -182,6 +182,8 @@ CREATE TABLE IF NOT EXISTS scheduler_tracker (
 							'pending','in_progress','completed','failed'
 						)),
 	manifest_versions   JSONB NOT NULL DEFAULT '{}',
+	total_task_count    INTEGER,
+	terminal_task_count INTEGER NOT NULL DEFAULT 0,
 	CONSTRAINT valid_timestamps CHECK (
 		(started_at IS NULL OR started_at >= created_at) AND
 		(completed_at IS NULL OR completed_at >= started_at)
