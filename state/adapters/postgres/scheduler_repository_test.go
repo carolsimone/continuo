@@ -118,6 +118,83 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 	assert.Equal(t, map[string]string{"svc-a": "v3"}, got.GetManifestVersions())
 }
 
+func TestSchedulerRepository_IncrementTerminalCountTx(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	id := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), &model.SchedulerTracker{
+		ScheduleID:           id,
+		ScheduleName:         "s1-" + id.String(),
+		Status:               model.SchedulerStatusPending,
+		InitializationStatus: "pending",
+		TotalTaskCount:       sql.NullInt32{Int32: 3, Valid: true},
+		CreatedAt:            time.Now(),
+	}))
+	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+
+	tx, err := db.BeginTxx(context.Background(), nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	terminal, total, err := repo.IncrementTerminalCountTx(context.Background(), tx, id)
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), terminal)
+	assert.Equal(t, int32(3), total)
+	require.NoError(t, tx.Commit())
+}
+
+func TestSchedulerRepository_DecrementTerminalCountTx(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	id := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), &model.SchedulerTracker{
+		ScheduleID:           id,
+		ScheduleName:         "s1-" + id.String(),
+		Status:               model.SchedulerStatusPending,
+		InitializationStatus: "pending",
+		TerminalTaskCount:    3,
+		CreatedAt:            time.Now(),
+	}))
+	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+
+	tx, err := db.BeginTxx(context.Background(), nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	require.NoError(t, repo.DecrementTerminalCountTx(context.Background(), tx, id, 2))
+	require.NoError(t, tx.Commit())
+
+	got, err := repo.GetByID(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), got.TerminalTaskCount)
+}
+
+func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	id := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), &model.SchedulerTracker{
+		ScheduleID:           id,
+		ScheduleName:         "s1-" + id.String(),
+		Status:               model.SchedulerStatusPending,
+		InitializationStatus: "pending",
+		CreatedAt:            time.Now(),
+	}))
+	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+
+	tx, err := db.BeginTxx(context.Background(), nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	require.NoError(t, repo.SetTotalTaskCountTx(context.Background(), tx, id, 7))
+	require.NoError(t, tx.Commit())
+
+	got, err := repo.GetByID(context.Background(), id)
+	require.NoError(t, err)
+	assert.True(t, got.TotalTaskCount.Valid)
+	assert.Equal(t, int32(7), got.TotalTaskCount.Int32)
+}
+
 func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 	db := newTestDB(t)
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
@@ -130,6 +207,7 @@ func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 		InitializationStatus: "pending",
 		TotalTaskCount:       sql.NullInt32{Int32: 5, Valid: true},
 		TerminalTaskCount:    2,
+		CreatedAt:            time.Now(),
 	}
 	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
 	require.NoError(t, repo.Create(context.Background(), tracker))

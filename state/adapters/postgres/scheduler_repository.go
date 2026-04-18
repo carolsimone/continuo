@@ -549,27 +549,50 @@ func (r *schedulerTrackerRepository) IncrementTerminalCountTx(ctx context.Contex
 		WHERE schedule_id = $1
 		RETURNING terminal_task_count, COALESCE(total_task_count, -1)
 	`, id).Scan(&terminal, &total)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+	}
 	return
 }
 
 // DecrementTerminalCountTx decrements terminal_task_count by n, floor 0.
 func (r *schedulerTrackerRepository) DecrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, n int32) error {
-	_, err := tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
 		SET terminal_task_count = GREATEST(terminal_task_count - $2, 0)
 		WHERE schedule_id = $1
 	`, id, n)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+	}
+	return nil
 }
 
 // SetTotalTaskCountTx sets total_task_count for the given schedule.
 func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error {
-	_, err := tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
 		SET total_task_count = $2
 		WHERE schedule_id = $1
 	`, id, total)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+	}
+	return nil
 }
 
 // GetLastRunPerSchedule returns the most recent row per schedule_name.
