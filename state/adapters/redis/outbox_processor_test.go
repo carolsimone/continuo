@@ -140,3 +140,37 @@ func TestOutboxProcessor_StringifiesNestedManifestVersionsForRedis(t *testing.T)
 	require.NotNil(t, publishedFields)
 	assert.Equal(t, `{"svc-a":"v3","svc-b":"v5"}`, publishedFields["manifest_versions"])
 }
+
+func TestOutboxProcessor_PublishesRunFinalized(t *testing.T) {
+	entry := &postgres.OutboxEntry{
+		ID:            uuid.New(),
+		AggregateType: "scheduler_tracker",
+		AggregateID:   uuid.New(),
+		EventType:     "run.finalized:v1",
+		StreamName:    "run.finalized:v1",
+		Payload:       []byte(`{"schedule_id":"abc-123","schedule_name":"daily","status":"succeeded"}`),
+		Status:        "pending",
+		MaxRetries:    5,
+		RetryCount:    0,
+		CreatedAt:     time.Now(),
+	}
+	repo := &fakeOutboxRepo{entries: []*postgres.OutboxEntry{entry}}
+
+	var (
+		publishedStream string
+		publishedFields map[string]interface{}
+	)
+	processor := stateRedis.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, stream string, fields map[string]interface{}) error {
+		publishedStream = stream
+		publishedFields = fields
+		return nil
+	}, discardLogger())
+
+	require.NoError(t, processor.ProcessBatch(context.Background()))
+	assert.Equal(t, "run.finalized:v1", publishedStream)
+	assert.Equal(t, "abc-123", publishedFields["schedule_id"])
+	assert.Equal(t, "daily", publishedFields["schedule_name"])
+	assert.Equal(t, "succeeded", publishedFields["status"])
+	require.Len(t, repo.markPublished, 1)
+	assert.Equal(t, entry.ID, repo.markPublished[0])
+}
