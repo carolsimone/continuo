@@ -149,6 +149,34 @@ func main() {
 		}
 	}()
 
+	// Initialize run.rerun.dispatched:v1 consumer
+	runRerunConsumer, err := redis.NewRunRerunDispatchedConsumer(
+		redisClient,
+		cfg.RedisStreamRunRerunDispatched,
+		db,
+		schedulerRepo,
+		taskRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create run rerun dispatched consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Run rerun dispatched consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping run rerun dispatched consumer")
+		runRerunConsumer.Stop()
+		return nil
+	})
+
+	// Start run rerun dispatched consumer in background
+	go func() {
+		if err := runRerunConsumer.Start(ctx); err != nil {
+			logger.Error("Run rerun dispatched consumer error", "error", err)
+		}
+	}()
+
 	// Initialize schedule activator and activation service
 	activator := scheduler.NewScheduleActivator(schedulerRepo, logger)
 	activationService := scheduler.NewScheduleActivationService(

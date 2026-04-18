@@ -27,6 +27,9 @@ type TaskTrackerRepository interface {
 	BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*model.TaskTracker) error
 	// ListAllByScheduleID returns all task rows for a schedule (no pagination, no status filter).
 	ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*model.TaskTracker, error)
+	// ResetTasksTx sets the given tasks to PENDING and returns the number of rows actually
+	// modified (already-PENDING rows are excluded from the count).
+	ResetTasksTx(ctx context.Context, tx *sqlx.Tx, ids []uuid.UUID) (int32, error)
 }
 
 // TaskFilters defines query filters for List operation
@@ -350,6 +353,42 @@ func (r *taskTrackerRepository) ListAllByScheduleID(ctx context.Context, schedul
 		return nil, fmt.Errorf("list all tasks by schedule_id: %w", err)
 	}
 	return tasks, nil
+}
+
+// ResetTasksTx moves the given tasks to PENDING and returns the number of rows
+// actually modified (already-PENDING rows are excluded).
+func (r *taskTrackerRepository) ResetTasksTx(ctx context.Context, tx *sqlx.Tx, ids []uuid.UUID) (int32, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	// Build a string slice for PostgreSQL ANY with ::uuid cast
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = id.String()
+	}
+	// sqlx doesn't have a built-in array binder without pq, so use a manual IN clause
+	placeholders := make([]string, len(idStrs))
+	args := make([]interface{}, len(idStrs)+1)
+	args[0] = string(model.TaskStatusPending)
+	for i, idStr := range idStrs {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args[i+1] = idStr
+	}
+	query := fmt.Sprintf(`
+		UPDATE task_tracker
+		SET status = $1
+		WHERE task_id::text IN (%s) AND status != $1
+	`, strings.Join(placeholders, ", "))
+
+	res, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("reset tasks: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int32(n), nil
 }
 
 // List queries tasks with flexible filters and pagination
