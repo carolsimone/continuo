@@ -182,8 +182,8 @@ func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID string,
 
 	outcome := finalization.Decide(terminal, total, anyFailed, initCompleted, string(scheduler.Status))
 	if outcome != "" {
-		if txErr := h.schedulerRepo.UpdateStatusTx(ctx, tx, scheduleID, outcome); txErr != nil {
-			return false, fmt.Errorf("update scheduler status to %s: %w", outcome, txErr)
+		if txErr := h.schedulerRepo.FinalizeRunTx(ctx, tx, scheduleID, outcome); txErr != nil {
+			return false, fmt.Errorf("finalize scheduler status to %s: %w", outcome, txErr)
 		}
 
 		finalizedEvt := events.RunFinalized{

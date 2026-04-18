@@ -129,6 +129,7 @@ func main() {
 	initializeRunHandler := command.NewInitializeRunHandler(unitOfWork, runRepo, logger)
 	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, logger)
 	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(unitOfWork, runRepo, logger)
+	handleRerunHandler := command.NewHandleRerunHandler(unitOfWork, runRepo, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -265,6 +266,33 @@ func main() {
 		logger,
 	)
 
+	// Consumer 5: rerun:v1 -> HandleRerun
+	rerunHandler := func(ctx context.Context, msg goredis.XMessage) error {
+		scheduleID, _ := msg.Values["schedule_id"].(string)
+		scheduleName, _ := msg.Values["schedule_name"].(string)
+		schemaName, _ := msg.Values["schema_name"].(string)
+		tableName, _ := msg.Values["table_name"].(string)
+		serviceName, _ := msg.Values["service_name"].(string)
+		if scheduleID == "" || scheduleName == "" || schemaName == "" || tableName == "" {
+			return fmt.Errorf("missing required fields in rerun message %s", msg.ID)
+		}
+		cmd := domainCmd.HandleRerunCmd{
+			RunID:        scheduleID,
+			ScheduleName: scheduleName,
+			ServiceName:  serviceName,
+			SchemaName:   schemaName,
+			TableName:    tableName,
+		}
+		return handleRerunHandler.Handle(ctx, cmd, msg.ID)
+	}
+	rerunConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.RerunStream,
+		cfg.RerunGroup,
+		rerunHandler,
+		logger,
+	)
+
 	// Start all consumers in goroutines
 	go func() {
 		if err := nodeUpdatedConsumer.Start(ctx); err != nil {
@@ -287,6 +315,12 @@ func main() {
 	go func() {
 		if err := schedulerStartedConsumer.Start(ctx); err != nil {
 			logger.Error("Scheduler started consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := rerunConsumer.Start(ctx); err != nil {
+			logger.Error("Rerun consumer error", "error", err)
 		}
 	}()
 

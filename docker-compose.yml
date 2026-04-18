@@ -277,6 +277,8 @@ services:
       - INITIALIZE_RUN_GROUP=orchestrator_initialize_run
       - SCHEDULER_STARTED_STREAM=scheduler.started:v1
       - SCHEDULER_STARTED_GROUP=orchestrator_scheduler_started
+      - RERUN_STREAM=rerun:v1
+      - RERUN_GROUP=orchestrator_rerun
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432

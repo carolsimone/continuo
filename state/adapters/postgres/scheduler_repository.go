@@ -50,6 +50,8 @@ type SchedulerTrackerRepository interface {
 	SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error
 	// UpdateStatusTx updates the status column within an existing transaction.
 	UpdateStatusTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
+	// FinalizeRunTx sets status and completed_at = NOW() for terminal-state transitions.
+	FinalizeRunTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
 	// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row for the given id
 	// using SELECT ... FOR UPDATE. Must be called within a transaction.
 	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*model.SchedulerTracker, error)
@@ -633,6 +635,25 @@ func (r *schedulerTrackerRepository) UpdateStatusTx(ctx context.Context, tx *sql
 	)
 	if err != nil {
 		return fmt.Errorf("update scheduler_tracker status: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// FinalizeRunTx sets status and completed_at for a terminal-state transition.
+func (r *schedulerTrackerRepository) FinalizeRunTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE scheduler_tracker SET status = $2, completed_at = NOW() WHERE schedule_id = $1`,
+		id, status,
+	)
+	if err != nil {
+		return fmt.Errorf("finalize scheduler_tracker status: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
