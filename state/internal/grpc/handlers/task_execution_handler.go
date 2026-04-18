@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/model"
@@ -26,89 +25,6 @@ func NewTaskExecutionHandler(repo postgres.TaskExecutionRepository, logger *slog
 		repo:   repo,
 		logger: logger,
 	}
-}
-
-// CreateTaskExecution creates a new task execution record
-func (h *TaskExecutionHandler) CreateTaskExecution(ctx context.Context, req *statev1.CreateTaskExecutionRequest) (*statev1.TaskExecutionResponse, error) {
-	h.logger.Info("Creating task execution",
-		"task_id", req.TaskId,
-	)
-
-	// Validate required fields
-	if req.TaskId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")
-	}
-
-	// Parse task_id UUID
-	taskID, err := uuid.Parse(req.TaskId)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format: %v", err)
-	}
-
-	// Parse or generate execution ID
-	var executionID uuid.UUID
-	if req.Id != "" {
-		executionID, err = uuid.Parse(req.Id)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid id format: %v", err)
-		}
-	} else {
-		executionID = uuid.New()
-	}
-
-	// Build domain model
-	execution := &model.TaskExecution{
-		ID:        executionID,
-		TaskID:    taskID,
-		CreatedAt: time.Now(),
-	}
-
-	// Optional fields
-	if req.StartedAt != nil {
-		t := req.StartedAt.AsTime()
-		execution.StartedAt = &t
-	}
-
-	if req.CompletedAt != nil {
-		t := req.CompletedAt.AsTime()
-		execution.CompletedAt = &t
-	}
-
-	if req.ExecutionTimeSeconds > 0 {
-		execution.ExecutionTimeSeconds = &req.ExecutionTimeSeconds
-	}
-
-	if req.ExecutorId != "" {
-		execution.ExecutorID = &req.ExecutorId
-	}
-
-	if req.K8SJobName != "" {
-		execution.K8sJobName = &req.K8SJobName
-	}
-
-	if req.ErrorMessage != "" {
-		execution.ErrorMessage = &req.ErrorMessage
-	}
-
-	if req.LogS3Key != "" {
-		execution.LogS3Key = &req.LogS3Key
-	}
-
-	// Create in database
-	if err := h.repo.Create(ctx, execution); err != nil {
-		if err == postgres.ErrDuplicateKey {
-			return nil, status.Errorf(codes.AlreadyExists, "task_execution with id %s already exists", executionID)
-		}
-		if err == postgres.ErrNotFound {
-			return nil, status.Errorf(codes.NotFound, "task_id %s not found", taskID)
-		}
-		h.logger.Error("Failed to create task_execution", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to create task_execution")
-	}
-
-	return &statev1.TaskExecutionResponse{
-		TaskExecution: domainToProtoTaskExecution(execution),
-	}, nil
 }
 
 // ListTaskExecutions lists task executions for a given schedule

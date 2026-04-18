@@ -239,52 +239,6 @@ CREATE INDEX IF NOT EXISTS idx_int_task_execution_created_at ON task_execution(c
 // ============================================================================
 
 func TestStateService(t *testing.T) {
-	t.Run("ListTaskExecutions by schedule", func(t *testing.T) {
-		ctx := context.Background()
-
-		// Create a scheduler
-		schedID := uuid.NewString()
-		_, err := stateClient.CreateScheduler(ctx, &statev1.CreateSchedulerRequest{
-			ScheduleId:   schedID,
-			ScheduleName: "test-list-exec",
-		})
-		require.NoError(t, err)
-
-		// Create a task
-		taskID := uuid.NewString()
-		_, err = stateClient.CreateTask(ctx, &statev1.CreateTaskRequest{
-			TaskId:      taskID,
-			ScheduleId:  schedID,
-			ServiceName: "svc",
-			SchemaName:  "schema",
-			TableName:   "tbl",
-			MaxRetries:  3,
-		})
-		require.NoError(t, err)
-
-		// Create a task execution with error message
-		execID := uuid.NewString()
-		_, err = stateClient.CreateTaskExecution(ctx, &statev1.CreateTaskExecutionRequest{
-			Id:           execID,
-			TaskId:       taskID,
-			ErrorMessage: "something went wrong",
-		})
-		require.NoError(t, err)
-
-		// List executions for the schedule
-		resp, err := stateClient.ListTaskExecutions(ctx, &statev1.ListTaskExecutionsRequest{
-			ScheduleId: schedID,
-			PageSize:   500,
-			PageOffset: 0,
-		})
-		require.NoError(t, err)
-		require.Len(t, resp.TaskExecutions, 1)
-		assert.Equal(t, execID, resp.TaskExecutions[0].Id)
-		assert.Equal(t, taskID, resp.TaskExecutions[0].TaskId)
-		assert.Equal(t, "something went wrong", resp.TaskExecutions[0].ErrorMessage)
-		assert.Equal(t, int32(1), resp.TotalCount)
-	})
-
 	t.Run("CancelSchedule/success", func(t *testing.T) {
 		ctx := context.Background()
 
@@ -329,47 +283,3 @@ func TestStateService(t *testing.T) {
 	})
 }
 
-func TestCreateTaskExecution(t *testing.T) {
-	ctx := context.Background()
-
-	// Create a scheduler
-	schedID := uuid.NewString()
-	_, err := stateClient.CreateScheduler(ctx, &statev1.CreateSchedulerRequest{
-		ScheduleId:   schedID,
-		ScheduleName: "test-create-exec-log-s3-key",
-	})
-	require.NoError(t, err)
-
-	// Create a task
-	taskID := uuid.NewString()
-	_, err = stateClient.CreateTask(ctx, &statev1.CreateTaskRequest{
-		TaskId:      taskID,
-		ScheduleId:  schedID,
-		ServiceName: "svc",
-		SchemaName:  "schema",
-		TableName:   "table",
-		MaxRetries:  3,
-	})
-	require.NoError(t, err)
-
-	// Create a task execution with log_s3_key
-	execID := uuid.NewString()
-	_, err = stateClient.CreateTaskExecution(ctx, &statev1.CreateTaskExecutionRequest{
-		Id:        execID,
-		TaskId:    taskID,
-		LogS3Key:  "logs/task-executions/svc/schema/table/some-uuid.log",
-	})
-	require.NoError(t, err)
-
-	// List executions and assert log_s3_key round-trips
-	resp, err := stateClient.ListTaskExecutions(ctx, &statev1.ListTaskExecutionsRequest{
-		ScheduleId: schedID,
-		PageSize:   500,
-		PageOffset: 0,
-	})
-	require.NoError(t, err)
-	require.Len(t, resp.TaskExecutions, 1)
-	assert.Equal(t, execID, resp.TaskExecutions[0].Id)
-	assert.Equal(t, taskID, resp.TaskExecutions[0].TaskId)
-	assert.Equal(t, "logs/task-executions/svc/schema/table/some-uuid.log", resp.TaskExecutions[0].LogS3Key)
-}

@@ -165,75 +165,6 @@ func (h *TaskHandler) GetTaskByScheduleAndNode(ctx context.Context, req *statev1
 	}, nil
 }
 
-// UpdateTask updates task status and retry count
-func (h *TaskHandler) UpdateTask(ctx context.Context, req *statev1.UpdateTaskRequest) (*statev1.TaskResponse, error) {
-	h.logger.Info("Updating task", "task_id", req.TaskId)
-
-	if req.TaskId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")
-	}
-
-	taskID, err := uuid.Parse(req.TaskId)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
-	}
-
-	// Get existing task
-	task, err := h.repo.GetByID(ctx, taskID)
-	if err != nil {
-		if err == postgres.ErrNotFound {
-			return nil, status.Errorf(codes.NotFound, "task not found")
-		}
-		h.logger.Error("Failed to get task for update", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to get task")
-	}
-
-	// Update fields if provided
-	if req.Status != statev1.TaskStatus_TASK_STATUS_UNSPECIFIED {
-		caller, err := callerFromContext(ctx)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "missing caller identity: set x-caller-id metadata")
-		}
-		to := protoToDomainTaskStatus(req.Status)
-		if err := task.Transition(caller, to); err != nil {
-			if errors.Is(err, model.ErrInvalidTransition) {
-				return nil, status.Errorf(codes.FailedPrecondition,
-					"invalid transition %s → %s", task.Status, to)
-			}
-			if errors.Is(err, model.ErrUnauthorizedTransition) {
-				return nil, status.Errorf(codes.PermissionDenied,
-					"caller %q is not authorized to move task to %s", caller, to)
-			}
-			return nil, status.Errorf(codes.Internal, "transition error: %v", err)
-		}
-	}
-
-	if req.RetryCount > 0 {
-		task.RetryCount = int(req.RetryCount)
-	}
-
-	if req.CancelledAt != nil {
-		t := req.CancelledAt.AsTime()
-		task.CancelledAt = &t
-	}
-
-	if req.CancelledBy != "" {
-		task.CancelledBy = &req.CancelledBy
-	}
-
-	if err := h.repo.Update(ctx, task); err != nil {
-		if err == postgres.ErrNotFound {
-			return nil, status.Errorf(codes.NotFound, "task not found")
-		}
-		h.logger.Error("Failed to update task", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to update task")
-	}
-
-	return &statev1.TaskResponse{
-		Task: domainToProtoTask(task),
-	}, nil
-}
-
 // DeleteTask deletes a task
 func (h *TaskHandler) DeleteTask(ctx context.Context, req *statev1.DeleteTaskRequest) (*statev1.DeleteTaskResponse, error) {
 	h.logger.Info("Deleting task", "task_id", req.TaskId)
@@ -310,7 +241,6 @@ func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksReque
 }
 
 // ResetTask unconditionally resets a task to PENDING with retry_count=0.
-// This is required because UpdateTask ignores retry_count=0 (proto3 zero-value ambiguity).
 func (h *TaskHandler) ResetTask(ctx context.Context, req *statev1.ResetTaskRequest) (*statev1.TaskResponse, error) {
 	if req.TaskId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")

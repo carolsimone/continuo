@@ -117,66 +117,6 @@ func (h *SchedulerHandler) GetScheduler(ctx context.Context, req *statev1.GetSch
 	}, nil
 }
 
-// UpdateScheduler updates scheduler status and timestamps
-func (h *SchedulerHandler) UpdateScheduler(ctx context.Context, req *statev1.UpdateSchedulerRequest) (*statev1.SchedulerResponse, error) {
-	h.logger.Info("Updating scheduler", "schedule_id", req.ScheduleId)
-
-	if req.ScheduleId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
-	}
-
-	scheduleID, err := uuid.Parse(req.ScheduleId)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
-	}
-
-	// Get existing scheduler
-	tracker, err := h.repo.GetByID(ctx, scheduleID)
-	if err != nil {
-		if err == postgres.ErrNotFound {
-			return nil, status.Errorf(codes.NotFound, "scheduler not found")
-		}
-		h.logger.Error("Failed to get scheduler for update", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to get scheduler")
-	}
-
-	// Update fields if provided
-	if req.Status != statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED {
-		newStatus := protoToDomainSchedulerStatus(req.Status)
-		if err := tracker.Transition(newStatus); err != nil {
-			return nil, status.Errorf(codes.FailedPrecondition,
-				"invalid scheduler status transition from %s to %s", tracker.Status, newStatus)
-		}
-	}
-
-	if req.StartedAt != nil {
-		t := req.StartedAt.AsTime()
-		tracker.StartedAt = &t
-	}
-
-	if req.CompletedAt != nil {
-		t := req.CompletedAt.AsTime()
-		tracker.CompletedAt = &t
-	}
-
-	if req.LastHeartbeatAt != nil {
-		t := req.LastHeartbeatAt.AsTime()
-		tracker.LastHeartbeatAt = &t
-	}
-
-	if err := h.repo.Update(ctx, tracker); err != nil {
-		if err == postgres.ErrNotFound {
-			return nil, status.Errorf(codes.NotFound, "scheduler not found")
-		}
-		h.logger.Error("Failed to update scheduler", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to update scheduler")
-	}
-
-	return &statev1.SchedulerResponse{
-		Scheduler: domainToProtoScheduler(tracker),
-	}, nil
-}
-
 // CancelScheduler cancels a scheduler
 func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.CancelSchedulerRequest) (*statev1.SchedulerResponse, error) {
 	h.logger.Info("Cancelling scheduler", "schedule_id", req.ScheduleId, "cancelled_by", req.CancelledBy)
@@ -288,70 +228,6 @@ func domainToProtoScheduler(t *model.SchedulerTracker) *statev1.Scheduler {
 	return s
 }
 
-// UpdateSchedulerInitStatus updates the initialization_status for a scheduler
-func (h *SchedulerHandler) UpdateSchedulerInitStatus(ctx context.Context, req *statev1.UpdateSchedulerInitStatusRequest) (*statev1.SchedulerResponse, error) {
-	h.logger.Info("Updating scheduler initialization status",
-		"schedule_id", req.ScheduleId,
-		"status", req.InitializationStatus)
-
-	if req.ScheduleId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
-	}
-
-	if req.InitializationStatus == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "initialization_status is required")
-	}
-
-	scheduleID, err := uuid.Parse(req.ScheduleId)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
-	}
-
-	// Validate initialization_status value
-	validStatuses := map[string]bool{
-		"pending":     true,
-		"in_progress": true,
-		"completed":   true,
-		"failed":      true,
-	}
-	if !validStatuses[req.InitializationStatus] {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid initialization_status: must be one of pending, in_progress, completed, failed")
-	}
-
-	// Update initialization status
-	if err := h.repo.UpdateInitializationStatus(ctx, scheduleID, req.InitializationStatus); err != nil {
-		if err == postgres.ErrNotFound {
-			return nil, status.Errorf(codes.NotFound, "scheduler not found")
-		}
-		h.logger.Error("Failed to update initialization status", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to update initialization status")
-	}
-
-	// Fetch and return updated scheduler
-	tracker, err := h.repo.GetByID(ctx, scheduleID)
-	if err != nil {
-		h.logger.Error("Failed to fetch updated scheduler", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to fetch updated scheduler")
-	}
-
-	// When initialization completes, auto-transition the scheduler from pending to running.
-	// Guard with status check for idempotency: if already running (e.g. crash+retry), skip.
-	if req.InitializationStatus == "completed" && tracker.Status == model.SchedulerStatusPending {
-		if err := tracker.Transition(model.SchedulerStatusRunning); err != nil {
-			h.logger.Error("Unexpected error transitioning scheduler to running", "error", err)
-			return nil, status.Errorf(codes.Internal, "failed to transition scheduler to running")
-		}
-		if err := h.repo.Update(ctx, tracker); err != nil {
-			h.logger.Error("Failed to persist scheduler running status", "error", err)
-			return nil, status.Errorf(codes.Internal, "failed to persist scheduler status")
-		}
-	}
-
-	return &statev1.SchedulerResponse{
-		Scheduler: domainToProtoScheduler(tracker),
-	}, nil
-}
-
 // ActivateSchedule triggers a schedule run via the standard activator path.
 // Returns the new schedule_id, or an empty string if a run was already active.
 func (h *SchedulerHandler) ActivateSchedule(
@@ -380,27 +256,6 @@ func (h *SchedulerHandler) ActivateSchedule(
 
 	return &statev1.ActivateScheduleResponse{
 		ScheduleId: scheduleID.String(),
-	}, nil
-}
-
-// ResetInProgressInitializations resets all 'in_progress' initialization statuses to 'pending'
-func (h *SchedulerHandler) ResetInProgressInitializations(ctx context.Context, req *statev1.ResetInProgressInitializationsRequest) (*statev1.ResetInProgressInitializationsResponse, error) {
-	h.logger.Info("Resetting in_progress initializations")
-
-	count, err := h.repo.ResetInProgressInitializations(ctx)
-	if err != nil {
-		h.logger.Error("Failed to reset in_progress initializations", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to reset in_progress initializations")
-	}
-
-	if count > 0 {
-		h.logger.Warn("Reset in_progress initializations",
-			"count", count,
-			"reason", "service startup recovery")
-	}
-
-	return &statev1.ResetInProgressInitializationsResponse{
-		Count: int32(count),
 	}, nil
 }
 

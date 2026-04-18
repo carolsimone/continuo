@@ -446,48 +446,6 @@ func (f *fakeSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ 
 	return f.tracker, nil
 }
 
-// ---- UpdateScheduler transition tests ----
-
-func TestUpdateScheduler_RejectsInvalidTransition(t *testing.T) {
-	id := uuid.New()
-	repo := &fakeSchedulerRepo{
-		tracker: &model.SchedulerTracker{
-			ScheduleID: id,
-			Status:     model.SchedulerStatusPending,
-		},
-	}
-	h := NewSchedulerHandler(repo, &stubActivator{}, nil, nil, newTestLogger())
-
-	_, err := h.UpdateScheduler(context.Background(), &statev1.UpdateSchedulerRequest{
-		ScheduleId: id.String(),
-		Status:     statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED, // pending → succeeded is not allowed
-	})
-
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-	assert.Equal(t, model.SchedulerStatusPending, repo.tracker.Status, "status must not change on invalid transition")
-}
-
-func TestUpdateScheduler_AllowsValidTransition(t *testing.T) {
-	id := uuid.New()
-	repo := &fakeSchedulerRepo{
-		tracker: &model.SchedulerTracker{
-			ScheduleID: id,
-			Status:     model.SchedulerStatusRunning,
-		},
-	}
-	h := NewSchedulerHandler(repo, &stubActivator{}, nil, nil, newTestLogger())
-
-	resp, err := h.UpdateScheduler(context.Background(), &statev1.UpdateSchedulerRequest{
-		ScheduleId: id.String(),
-		Status:     statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED,
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED, resp.Scheduler.Status)
-}
-
 // ---- GetSchedulerInitStatus tests ----
 
 func TestGetSchedulerInitStatus_ReturnsStatus(t *testing.T) {
@@ -544,44 +502,3 @@ func TestGetSchedulerInitStatus_InvalidScheduleIDFormat(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
-func TestUpdateSchedulerInitStatus_AutoTransitionsToRunningOnCompleted(t *testing.T) {
-	id := uuid.New()
-	repo := &fakeSchedulerRepo{
-		tracker: &model.SchedulerTracker{
-			ScheduleID:           id,
-			Status:               model.SchedulerStatusPending,
-			InitializationStatus: "in_progress",
-		},
-	}
-	h := NewSchedulerHandler(repo, &stubActivator{}, nil, nil, newTestLogger())
-
-	resp, err := h.UpdateSchedulerInitStatus(context.Background(), &statev1.UpdateSchedulerInitStatusRequest{
-		ScheduleId:           id.String(),
-		InitializationStatus: "completed",
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING, resp.Scheduler.Status)
-	assert.Equal(t, model.SchedulerStatusRunning, repo.tracker.Status)
-}
-
-func TestUpdateSchedulerInitStatus_NoAutoTransitionWhenAlreadyRunning(t *testing.T) {
-	// Idempotency: if scheduler is already running, calling completed again must not error.
-	id := uuid.New()
-	repo := &fakeSchedulerRepo{
-		tracker: &model.SchedulerTracker{
-			ScheduleID:           id,
-			Status:               model.SchedulerStatusRunning,
-			InitializationStatus: "completed",
-		},
-	}
-	h := NewSchedulerHandler(repo, &stubActivator{}, nil, nil, newTestLogger())
-
-	resp, err := h.UpdateSchedulerInitStatus(context.Background(), &statev1.UpdateSchedulerInitStatusRequest{
-		ScheduleId:           id.String(),
-		InitializationStatus: "completed",
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING, resp.Scheduler.Status)
-}
