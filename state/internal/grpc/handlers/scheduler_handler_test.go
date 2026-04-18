@@ -181,6 +181,9 @@ func (s *stubSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid
 func (s *stubSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
 	return s.getByIDResult, s.getByIDErr
 }
+func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
 
 // ---- TriggerSchedule tests ----
 
@@ -444,6 +447,9 @@ func (f *fakeSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid
 }
 func (f *fakeSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
 	return f.tracker, nil
+}
+func (f *fakeSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
 }
 
 // ---- GetSchedulerInitStatus tests ----

@@ -76,6 +76,9 @@ func (s *rerunSchedStub) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UU
 func (s *rerunSchedStub) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
 	return s.scheduler, s.getErr
 }
+func (s *rerunSchedStub) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
 
 type rerunTaskStub struct {
 	task         *model.TaskTracker
