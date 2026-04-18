@@ -141,6 +141,7 @@ func main() {
 	ingestTopologyHandler := command.NewIngestTopologyHandler(unitOfWork, topologyRepo, logger)
 	initializeRunHandler := command.NewInitializeRunHandler(unitOfWork, runRepo, logger)
 	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, stateClient, logger)
+	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(unitOfWork, runRepo, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -249,6 +250,31 @@ func main() {
 		logger,
 	)
 
+	// Consumer 4: scheduler.started:v1 -> HandleSchedulerStarted
+	schedulerStartedHandler := func(ctx context.Context, msg goredis.XMessage) error {
+		runnerID, ok := msg.Values["runner_id"].(string)
+		if !ok || runnerID == "" {
+			return fmt.Errorf("missing or invalid runner_id in scheduler.started message %s", msg.ID)
+		}
+		schedulerID, err := uuid.Parse(runnerID)
+		if err != nil {
+			return fmt.Errorf("invalid runner_id UUID %q in message %s: %w", runnerID, msg.ID, err)
+		}
+		scheduleName, _ := msg.Values["schedule_name"].(string)
+		cmd := command.SchedulerStartedCmd{
+			ScheduleID:   schedulerID,
+			ScheduleName: scheduleName,
+		}
+		return handleSchedulerStartedHandler.Handle(ctx, cmd, msg.ID)
+	}
+	schedulerStartedConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.SchedulerStartedStream,
+		cfg.SchedulerStartedGroup,
+		schedulerStartedHandler,
+		logger,
+	)
+
 	// Start all consumers in goroutines
 	go func() {
 		if err := nodeUpdatedConsumer.Start(ctx); err != nil {
@@ -265,6 +291,12 @@ func main() {
 	go func() {
 		if err := initRunConsumer.Start(ctx); err != nil {
 			logger.Error("Initialize run consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := schedulerStartedConsumer.Start(ctx); err != nil {
+			logger.Error("Scheduler started consumer error", "error", err)
 		}
 	}()
 

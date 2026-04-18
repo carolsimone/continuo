@@ -17,13 +17,15 @@ type Config struct {
 	Postgres pkgconfig.PostgresConfig
 	Neo4j    Neo4jConfig
 
-	// Consumer streams (3 streams the orchestrator consumes)
-	NodeUpdatedStream    string
-	NodeUpdatedGroup     string
-	ManifestLoadedStream string
-	ManifestLoadedGroup  string
-	InitializeRunStream  string
-	InitializeRunGroup   string
+	// Consumer streams
+	NodeUpdatedStream       string
+	NodeUpdatedGroup        string
+	ManifestLoadedStream    string
+	ManifestLoadedGroup     string
+	InitializeRunStream     string
+	InitializeRunGroup      string
+	SchedulerStartedStream  string
+	SchedulerStartedGroup   string
 
 	// gRPC
 	StateGRPCAddr string
@@ -47,12 +49,14 @@ func Load(v *pkgconfig.Validator) Config {
 			Password: v.Require("NEO4J_PASSWORD"),
 		},
 
-		NodeUpdatedStream:    v.Require("NODE_UPDATED_STREAM"),
-		NodeUpdatedGroup:     v.Require("NODE_UPDATED_GROUP"),
-		ManifestLoadedStream: v.Require("MANIFEST_LOADED_STREAM"),
-		ManifestLoadedGroup:  v.Require("MANIFEST_LOADED_GROUP"),
-		InitializeRunStream:  v.Require("INITIALIZE_RUN_STREAM"),
-		InitializeRunGroup:   v.Require("INITIALIZE_RUN_GROUP"),
+		NodeUpdatedStream:      v.Require("NODE_UPDATED_STREAM"),
+		NodeUpdatedGroup:       v.Require("NODE_UPDATED_GROUP"),
+		ManifestLoadedStream:   v.Require("MANIFEST_LOADED_STREAM"),
+		ManifestLoadedGroup:    v.Require("MANIFEST_LOADED_GROUP"),
+		InitializeRunStream:    v.Require("INITIALIZE_RUN_STREAM"),
+		InitializeRunGroup:     v.Require("INITIALIZE_RUN_GROUP"),
+		SchedulerStartedStream: v.Require("SCHEDULER_STARTED_STREAM"),
+		SchedulerStartedGroup:  v.Require("SCHEDULER_STARTED_GROUP"),
 
 		StateGRPCAddr: v.Require("STATE_SERVICE_GRPC_ADDR"),
 		GRPCPort:      envInt("GRPC_PORT", 50052),
