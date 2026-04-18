@@ -6,7 +6,7 @@ Comprehensive end-to-end test validating the complete Continuo orchestration pip
 
 Tests a 10-node diamond DAG executing through all services:
 - `state` - Creates scheduler
-- `startup-controller` - Identifies root nodes
+- `orchestrator` - Identifies root nodes, publishes to query.model:v1
 - `executor-controller` - Deploys k8s jobs
 - `k8s-controller` - Monitors job status
 - `dependency-controller` - Unlocks downstream dependencies
@@ -42,7 +42,7 @@ docker compose up -d ui
 bash e2e/deploy-k8s-controllers.sh
 
 # 7. Run the tests
-docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller \
+docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
   go test -v -count=1 -timeout 25m /app/e2e/...
 
 # 8. Clean up k8s resources
@@ -74,7 +74,7 @@ bash e2e/provision-k8s-test-env.sh
 # bash e2e/deploy-k8s-controllers.sh
 
 # Run the tests
-docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller \
+docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
   go test -v -count=1 -timeout 25m /app/e2e/...
 
 # Clean up k8s resources
@@ -106,12 +106,12 @@ CI mirrors the blank-state flow above:
 
 1. `bash scripts/setup.sh` (with `CI=true` set automatically by GitHub Actions)
 2. Wait for containers to be running
-3. Build + start `state` and `graph` binaries (gRPC health check)
+3. Build + start `state` and `orchestrator` binaries (gRPC health check)
 4. Run per-service unit tests
-5. Build + start `startup-controller`, `dependency-controller`, `manifest-controller`
+5. Build + start `manifest-controller`
 6. `docker compose up -d ui`
 7. `bash e2e/deploy-k8s-controllers.sh` (images pre-loaded by setup.sh)
-8. `docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller go test -v -timeout 25m /app/e2e/...`
+8. `docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 25m /app/e2e/...`
 9. `bash e2e/cleanup-k8s-controllers.sh`
 
 CI uses `deploy-k8s-controllers.sh` (not `provision-k8s-test-env.sh`) because
@@ -136,7 +136,7 @@ The E2E test uses a hybrid setup:
 
 **In docker-compose:**
 - PostgreSQL, Redis, Neo4j (data stores)
-- state, startup-controller, dependency-controller, graph (services)
+- state, orchestrator, manifest-controller (services)
 
 **In kind cluster (Kubernetes):**
 - executor-controller (Deployment)
@@ -249,14 +249,14 @@ colima start --disk 100  # 100GB
 - Re-run provisioning: `bash e2e/provision-k8s-test-env.sh`
 
 **Test fails with "table does not exist":**
-- Verify flyway migrations completed: `docker compose logs flyway-startup`
-- Check startup_outbox table exists: `docker exec continuo-postgres-1 psql -U runner -d continuo_startup -c "\dt"`
+- Verify flyway migrations completed: `docker compose logs flyway-orchestrator`
+- Check outbox table exists: `docker exec continuo-postgres-1 psql -U runner -d continuo_orchestrator -c "\dt"`
 
 **Services not starting:**
 ```bash
 docker compose ps
-docker logs startup-controller --tail 50
-docker compose restart startup-controller dependency-controller state
+docker logs orchestrator --tail 50
+docker compose restart orchestrator state
 bash e2e/start-services.sh
 ```
 
@@ -268,7 +268,7 @@ DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
 **Kubeconfig not accessible:**
 ```bash
 bash scripts/setup.sh
-docker exec startup-controller ls -la /root/.kube/
+docker exec executor-controller ls -la /root/.kube/
 ```
 
 **Controllers not starting:**

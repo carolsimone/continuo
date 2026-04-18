@@ -6,6 +6,5 @@ use (
 	./k8s-controller
 	./orchestrator
 	./pkg
-	./startup-controller
 	./state
 )

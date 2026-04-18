@@ -54,9 +54,9 @@ func TestE2E_FailurePath_NodeFailureDrainsSchedule(t *testing.T) {
 	schedulerID, err := uuid.Parse(schedulerIDStr)
 	require.NoError(t, err, "Invalid schedule_id returned from ActivateSchedule")
 
-	// Verify startup-controller initialised the 3 root nodes
-	t.Log("Verifying startup-controller...")
-	verifyStartupController(t, ctx, clients, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	// Verify orchestrator published root node messages to query.model:v1
+	t.Log("Verifying orchestrator published root node messages...")
+	verifyOrchestratorPublishedRootNodes(t, ctx, clients, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	// Level 0: seeds run first
 	t.Log("Verifying Level 0 (seeds) execute successfully...")

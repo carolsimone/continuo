@@ -25,15 +25,6 @@ services:
       - postgres
     tty: true
 
-  flyway-startup:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_startup -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/startup:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
   flyway-executor:
     image: flyway/flyway
     command: migrate -url=jdbc:postgresql://postgres:5432/continuo_executor -user=continuo_svc -password=continuo -connectRetries=30
@@ -129,7 +120,6 @@ services:
       - "50051:50051" # gRPC
     volumes:
       - ./state:/app/state
-      - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
       - ./k8s-controller:/app/k8s-controller
       - ./orchestrator:/app/orchestrator
@@ -140,63 +130,6 @@ services:
       - ./config/schedules.yaml:/etc/continuo/schedules.yaml:ro
     networks:
       - default
-    tty: true
-
-  startup-controller:
-    build:
-      context: .
-      dockerfile: startup-controller/Dockerfile.dev
-    container_name: startup-controller
-    depends_on:
-      - postgres
-      - redis
-      - neo4j
-      - state
-      - flyway-startup
-    environment:
-      # Redis
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=continuo
-      - REDIS_CONSUMER_STREAM=scheduler.started:v1
-      - REDIS_CONSUMER_GROUP=startup_controller_consumers
-      - REDIS_PRODUCER_STREAM=query.model:v1
-      - REDIS_PRODUCER_INIT_STREAM=initialize.run:v1
-      - REDIS_CONSUMER_RUN_INITIALIZED_STREAM=run.initialized:v1
-      - REDIS_CONSUMER_RUN_INITIALIZED_GROUP=startup_run_initialized
-      - REDIS_CONSUMER_RERUN_READY_STREAM=rerun.ready:v1
-      - REDIS_CONSUMER_RERUN_READY_GROUP=startup_rerun_ready
-      # PostgreSQL
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=continuo_startup
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
-      # State Service
-      - STATE_SERVICE_GRPC_ADDR=state:50051
-      # Kubernetes
-      - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
-      # Application
-      - HTTP_PORT=8083
-      - ENV=local
-      - LOG_LEVEL=INFO
-    ports:
-      - "8083:8083"   # Health check HTTP
-    volumes:
-      - ./state:/app/state
-      - ./startup-controller:/app/startup-controller
-      - ./executor-controller:/app/executor-controller
-      - ./k8s-controller:/app/k8s-controller
-      - ./orchestrator:/app/orchestrator
-      - ./pkg:/app/pkg
-      - ./e2e:/app/e2e
-      - ./go.work:/app/go.work
-      - ./kubeconfig:/app/kubeconfig
-      - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
-      - ./startup-controller/kubeconfig:/root/.kube  # kubectl default location
-    networks:
-      - default
-      - kind
     tty: true
 
   executor-controller:
@@ -238,7 +171,6 @@ services:
       - "8084:8084"   # Health check HTTP
     volumes:
       - ./state:/app/state
-      - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
       - ./k8s-controller:/app/k8s-controller
       - ./orchestrator:/app/orchestrator
@@ -303,7 +235,6 @@ services:
       - "8085:8085"   # Health check HTTP
     volumes:
       - ./state:/app/state
-      - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
       - ./k8s-controller:/app/k8s-controller
       - ./orchestrator:/app/orchestrator
@@ -362,7 +293,6 @@ services:
       - "50052:50052" # gRPC
     volumes:
       - ./state:/app/state
-      - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
       - ./k8s-controller:/app/k8s-controller
       - ./pkg:/app/pkg
@@ -381,8 +311,6 @@ services:
     container_name: e2e
     depends_on:
       state:
-        condition: service_started
-      startup-controller:
         condition: service_started
       orchestrator:
         condition: service_started
@@ -409,7 +337,6 @@ services:
       - ./e2e:/app/e2e
       - ./state:/app/state
       - ./orchestrator:/app/orchestrator
-      - ./startup-controller:/app/startup-controller
       - ./executor-controller:/app/executor-controller
       - ./k8s-controller:/app/k8s-controller
       - ./pkg:/app/pkg

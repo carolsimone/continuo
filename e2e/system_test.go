@@ -46,9 +46,9 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	schedulerID, err := uuid.Parse(schedulerIDStr)
 	require.NoError(t, err, "Invalid schedule_id returned from ActivateSchedule")
 
-	// Verify startup-controller processed event
-	t.Log("Verifying startup-controller processed event correctly...")
-	verifyStartupController(t, ctx, clients, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	// Verify orchestrator published root node messages to query.model:v1
+	t.Log("Verifying orchestrator published root node messages...")
+	verifyOrchestratorPublishedRootNodes(t, ctx, clients, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	// Verify complete DAG execution
 	t.Log("Verifying full DAG execution...")

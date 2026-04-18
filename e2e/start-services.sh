@@ -62,7 +62,6 @@ log_info "Starting all services..."
 start_service "state" "state" "state"
 check_health "state" 8082 || exit 1
 
-start_service "startup-controller" "startup-controller" "startup-controller"
 start_service "orchestrator" "orchestrator" "orchestrator"
 
 # Note: executor-controller and k8s-controller will run in kind for E2E tests,
@@ -72,7 +71,6 @@ start_service "orchestrator" "orchestrator" "orchestrator"
 # start_service "k8s-controller" "k8s-controller" "k8s-controller"
 
 # Check health of all started services
-check_health "startup-controller" 8083 || exit 1
 check_health "orchestrator" 8087 || exit 1
 
 # Uncomment if you started executor/k8s controllers:

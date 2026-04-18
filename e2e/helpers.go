@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +16,6 @@ import (
 func verifyServicesHealthy(t *testing.T) {
 	dockerComposeServices := []string{
 		"http://state:8082/health",
-		"http://startup-controller:8083/health",
 		"http://orchestrator:8087/health",
 	}
 
@@ -172,32 +170,6 @@ func getK8sJobLogs(ctx context.Context, t *testing.T, tableName string) string {
 	require.NoError(t, err, "Failed to get logs for pod: %s", string(podName))
 
 	return string(logs)
-}
-
-// verifyStartupOutboxProcessed checks startup_outbox table
-func verifyStartupOutboxProcessed(
-	t *testing.T,
-	ctx context.Context,
-	clients *testClients,
-	schedulerID uuid.UUID,
-	expectedCount int,
-) {
-	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
-		var processedCount int
-		err := clients.startupDB.Get(&processedCount, `
-			SELECT COUNT(*)
-			FROM startup_outbox
-			WHERE aggregate_id = $1 AND status = 'processed' AND stream_name = 'query.model:v1'
-		`, schedulerID)
-
-		if err != nil {
-			return false, err
-		}
-
-		return processedCount == expectedCount, nil
-	}, fmt.Sprintf("Timeout waiting for startup-controller to process %d outbox entries", expectedCount))
-
-	t.Logf("✅ startup-controller processed %d outbox entries", expectedCount)
 }
 
 // verifyRedisStreamHasMessages checks Redis stream message count
