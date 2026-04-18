@@ -553,6 +553,74 @@ func (r *RunRepository) GetNodeServiceName(ctx context.Context, schema, tableNam
 	return "", fmt.Errorf("node not found: %s.%s", schema, tableName)
 }
 
+// GetTaskIDForNode returns the task_id assigned on the EXECUTES edge for a specific
+// Table node within a run.
+func (r *RunRepository) GetTaskIDForNode(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table)
+		WHERE t.schema_name = $schema_name AND t.table_name = $table_name
+		RETURN COALESCE(e.task_id, '') AS task_id
+		LIMIT 1
+	`, map[string]interface{}{
+		"run_id":      runID,
+		"schema_name": schemaName,
+		"table_name":  tableName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("GetTaskIDForNode query failed: %w", err)
+	}
+	if result.Next(ctx) {
+		if v, _ := result.Record().Get("task_id"); v != nil {
+			return safeString(v), nil
+		}
+	}
+	if err := result.Err(); err != nil {
+		return "", fmt.Errorf("GetTaskIDForNode result error: %w", err)
+	}
+	return "", fmt.Errorf("GetTaskIDForNode: no EXECUTES edge found for run=%s schema=%s table=%s", runID, schemaName, tableName)
+}
+
+// GetFailedDownstreamTaskIDs returns the task_ids of all transitively downstream
+// Table nodes that currently have status=FAILED within the given run.
+func (r *RunRepository) GetFailedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	// Traverse from the target node *downstream* (nodes that DEPENDS_ON* the target)
+	// and return task_ids of those whose EXECUTES edge status is FAILED.
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(target:Table)
+		WHERE target.schema_name = $schema_name AND target.table_name = $table_name
+		MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
+		MATCH (:Run {run_id: $run_id})-[de:EXECUTES]->(downstream)
+		WHERE de.status = 'FAILED'
+		RETURN COALESCE(de.task_id, '') AS task_id
+	`, map[string]interface{}{
+		"run_id":      runID,
+		"schema_name": schemaName,
+		"table_name":  tableName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetFailedDownstreamTaskIDs query failed: %w", err)
+	}
+
+	var taskIDs []string
+	for result.Next(ctx) {
+		if v, _ := result.Record().Get("task_id"); v != nil {
+			if id := safeString(v); id != "" {
+				taskIDs = append(taskIDs, id)
+			}
+		}
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("GetFailedDownstreamTaskIDs result error: %w", err)
+	}
+	return taskIDs, nil
+}
+
 // DeleteExpiredRuns removes Run nodes (and their EXECUTES edges) older than retentionDays.
 func (r *RunRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)

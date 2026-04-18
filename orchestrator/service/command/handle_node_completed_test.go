@@ -86,6 +86,12 @@ func (f *fakeRunRepository) GetNodeType(ctx context.Context, schema, tableName s
 func (f *fakeRunRepository) GetNodeServiceName(ctx context.Context, schema, tableName string) (string, error) {
 	return "test-service", nil
 }
+func (f *fakeRunRepository) GetTaskIDForNode(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error) {
+	return "task-id-stub", nil
+}
+func (f *fakeRunRepository) GetFailedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
+	return nil, nil
+}
 
 // ── fakes: StateTaskClient ────────────────────────────────────────────────────
 
