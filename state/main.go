@@ -206,6 +206,33 @@ func main() {
 		}
 	}()
 
+	// Initialize task.execution.recorded:v1 consumer
+	taskExecutionRecordedConsumer, err := redis.NewTaskExecutionRecordedConsumer(
+		redisClient,
+		cfg.RedisStreamTaskExecutionRecorded,
+		db,
+		taskExecutionRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create task execution recorded consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Task execution recorded consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping task execution recorded consumer")
+		taskExecutionRecordedConsumer.Stop()
+		return nil
+	})
+
+	// Start task execution recorded consumer in background
+	go func() {
+		if err := taskExecutionRecordedConsumer.Start(ctx); err != nil {
+			logger.Error("Task execution recorded consumer error", "error", err)
+		}
+	}()
+
 	// Initialize schedule activator and activation service
 	activator := scheduler.NewScheduleActivator(schedulerRepo, logger)
 	activationService := scheduler.NewScheduleActivationService(
