@@ -49,7 +49,6 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 		return fmt.Errorf("SnapshotGraph: failed to list nodes: %w", err)
 	}
 
-	type nodeKey struct{ schema, table string }
 	assignments := make([]map[string]interface{}, 0)
 	for listResult.Next(ctx) {
 		record := listResult.Record()
@@ -63,6 +62,12 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 	}
 	if err := listResult.Err(); err != nil {
 		return fmt.Errorf("SnapshotGraph: error iterating nodes: %w", err)
+	}
+
+	if len(assignments) == 0 {
+		r.logger.Warn("SnapshotGraph: no nodes found for schedule, run will have no EXECUTES edges",
+			"schedule_name", scheduleName, "run_id", runID)
+		return nil
 	}
 
 	// Step 2: MERGE Run node and EXECUTES edges; ON CREATE sets task_id so
