@@ -326,13 +326,17 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 	jobName, _ := msg.Values["job_name"].(string)
 	nodeType, _ := msg.Values["node_type"].(string)
 
-	// Parse task_retry_count; present on node.deployed:v1 and check.k8s:v1,
-	// absent on legacy messages (defaults to 0).
-	var retryCount int32
-	if s, _ := msg.Values["task_retry_count"].(string); s != "" {
-		if n, err := strconv.ParseInt(s, 10, 32); err == nil {
-			retryCount = int32(n)
-		}
+	// Parse retry count. check.k8s:v1 re-circulating messages carry "retry_count"
+	// (from JobCheckRequest.ToMap()); node.deployed:v1 from executor-controller
+	// carries "task_retry_count". Try "retry_count" first, fall back to
+	// "task_retry_count" for backward compatibility.
+	retryCountStr, _ := msg.Values["retry_count"].(string)
+	if retryCountStr == "" {
+		retryCountStr, _ = msg.Values["task_retry_count"].(string)
+	}
+	retryCount := int32(0)
+	if n, err := strconv.ParseInt(retryCountStr, 10, 32); err == nil {
+		retryCount = int32(n)
 	}
 
 	// Parse max_retries; fall back to the consumer's configured default when absent.

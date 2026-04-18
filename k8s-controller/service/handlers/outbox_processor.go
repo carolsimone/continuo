@@ -291,6 +291,8 @@ func (p *OutboxProcessor) buildEvent(entry *model.K8sStatusOutboxEntry) map[stri
 			JobName:       entry.JobName,
 			CheckAfter:    entry.CheckAfter,
 			NodeType:      entry.NodeType,
+			RetryCount:    entry.TaskRetryCount,
+			MaxRetries:    entry.TaskMaxRetries,
 		}.ToMap()
 
 	case "node_status_updated":
