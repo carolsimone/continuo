@@ -260,7 +260,10 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("invalid runner_id UUID %q in message %s: %w", runnerID, msg.ID, err)
 		}
-		scheduleName, _ := msg.Values["schedule_name"].(string)
+		scheduleName, ok2 := msg.Values["schedule_name"].(string)
+		if !ok2 || scheduleName == "" {
+			return fmt.Errorf("missing or invalid schedule_name in scheduler.started message %s", msg.ID)
+		}
 		cmd := command.SchedulerStartedCmd{
 			ScheduleID:   schedulerID,
 			ScheduleName: scheduleName,
