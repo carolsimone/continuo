@@ -361,23 +361,17 @@ func (r *taskTrackerRepository) ResetTasksTx(ctx context.Context, tx *sqlx.Tx, i
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	// Build a string slice for PostgreSQL ANY with ::uuid cast
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = id.String()
-	}
-	// sqlx doesn't have a built-in array binder without pq, so use a manual IN clause
-	placeholders := make([]string, len(idStrs))
-	args := make([]interface{}, len(idStrs)+1)
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids)+1)
 	args[0] = string(model.TaskStatusPending)
-	for i, idStr := range idStrs {
+	for i, id := range ids {
 		placeholders[i] = fmt.Sprintf("$%d", i+2)
-		args[i+1] = idStr
+		args[i+1] = id // bind as uuid.UUID so the PK index is used
 	}
 	query := fmt.Sprintf(`
 		UPDATE task_tracker
 		SET status = $1
-		WHERE task_id::text IN (%s) AND status != $1
+		WHERE task_id IN (%s) AND status != $1
 	`, strings.Join(placeholders, ", "))
 
 	res, err := tx.ExecContext(ctx, query, args...)
