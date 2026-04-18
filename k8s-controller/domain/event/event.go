@@ -17,6 +17,8 @@ type JobCheckRequest struct {
 	JobName       string `json:"job_name"`
 	CheckAfter    int64  `json:"check_after"` // Unix timestamp for delayed processing
 	NodeType      string `json:"node_type"`
+	RetryCount    int    `json:"retry_count"`  // current task retry count
+	MaxRetries    int    `json:"max_retries"`  // maximum task retries allowed
 }
 
 func (JobCheckRequest) isEvent() {}
@@ -34,6 +36,8 @@ func (e JobCheckRequest) ToMap() map[string]interface{} {
 		"job_name":        e.JobName,
 		"check_after":     e.CheckAfter,
 		"node_type":       e.NodeType,
+		"retry_count":     e.RetryCount,
+		"max_retries":     e.MaxRetries,
 	}
 }
 

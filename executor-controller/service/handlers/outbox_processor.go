@@ -185,24 +185,26 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.Deploym
 		TaskID:     entry.TaskID.String(),
 		ScheduleID: entry.ScheduleID.String(),
 		Status:     "RUNNING",
-		RetryCount: int32(entry.RetryCount),
+		RetryCount: int32(entry.TaskRetryCount), // task-level retry count, not outbox delivery count
 	}
 	if _, err := p.statusProducer.Publish(ctx, statusEvt.ToMap()); err != nil {
 		// K8s job created but status event failed — will retry; K8s creation is idempotent.
 		return fmt.Errorf("failed to publish task status event: %w", err)
 	}
 
-	// Step 3: Publish event for k8s-controller
+	// Step 3: Publish event for k8s-controller (includes task_retry_count so k8s-controller
+	// does not need to call state gRPC to discover the current retry count)
 	evt := event.JobDeployed{
-		OutboxEntryID: entry.ID.String(),
-		TaskID:        entry.TaskID.String(),
-		ScheduleID:    entry.ScheduleID.String(),
-		ScheduleName:  entry.ScheduleName,
-		ServiceName:   entry.ServiceName,
-		SchemaName:    entry.SchemaName,
-		TableName:     entry.TableName,
-		JobName:       entry.JobName,
-		NodeType:      entry.NodeType,
+		OutboxEntryID:  entry.ID.String(),
+		TaskID:         entry.TaskID.String(),
+		ScheduleID:     entry.ScheduleID.String(),
+		ScheduleName:   entry.ScheduleName,
+		ServiceName:    entry.ServiceName,
+		SchemaName:     entry.SchemaName,
+		TableName:      entry.TableName,
+		JobName:        entry.JobName,
+		NodeType:       entry.NodeType,
+		TaskRetryCount: entry.TaskRetryCount,
 	}
 
 	if _, err := p.producer.Publish(ctx, evt.ToMap()); err != nil {

@@ -10,7 +10,6 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 )
 
@@ -20,23 +19,18 @@ type K8sStatusChecker interface {
 	GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (fullLog, tail string, err error)
 }
 
-// TaskGetter defines interface for getting task details
-type TaskGetter interface {
-	GetTask(ctx context.Context, taskID uuid.UUID) (*statev1.Task, error)
-}
-
 // HandlerConfig contains handler configuration
 type HandlerConfig struct {
-	K8sNamespace       string
-	CheckDelaySeconds  int
-	ErrorMessageMaxLen int
-	LogTailLines       int64
+	K8sNamespace          string
+	CheckDelaySeconds     int
+	ErrorMessageMaxLen    int
+	LogTailLines          int64
+	DefaultTaskMaxRetries int // used when max_retries is absent from the inbound message
 }
 
 // CheckStatusHandler handles CheckJobStatus commands
 type CheckStatusHandler struct {
 	k8sClient   K8sStatusChecker
-	stateClient TaskGetter
 	uow         uow.UnitOfWork
 	logUploader s3adapter.LogUploader
 	config      *HandlerConfig
@@ -46,7 +40,6 @@ type CheckStatusHandler struct {
 // NewCheckStatusHandler creates a new CheckStatusHandler
 func NewCheckStatusHandler(
 	k8sClient K8sStatusChecker,
-	stateClient TaskGetter,
 	uow uow.UnitOfWork,
 	logUploader s3adapter.LogUploader,
 	config *HandlerConfig,
@@ -54,7 +47,6 @@ func NewCheckStatusHandler(
 ) *CheckStatusHandler {
 	return &CheckStatusHandler{
 		k8sClient:   k8sClient,
-		stateClient: stateClient,
 		uow:         uow,
 		logUploader: logUploader,
 		config:      config,
@@ -75,14 +67,14 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, cmd command.CheckJobSta
 		return fmt.Errorf("failed to get job status: %w", err)
 	}
 
-	// Step 2: Get current task state from gRPC (for retry_count, max_retries)
-	task, err := h.stateClient.GetTask(ctx, cmd.TaskID)
-	if err != nil {
-		return fmt.Errorf("failed to get task: %w", err)
+	// Step 2: Use retry_count and max_retries carried in the command (no gRPC needed).
+	// max_retries defaults to the configured value when absent from the inbound message
+	// (backward-compat: old executor-controller messages won't have it).
+	retryCount := cmd.RetryCount
+	maxRetries := cmd.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = int32(h.config.DefaultTaskMaxRetries)
 	}
-
-	retryCount := task.RetryCount
-	maxRetries := task.MaxRetries
 
 	// Step 3: Begin transaction (wraps outbox writes + processed_events insert)
 	if err := h.uow.Begin(ctx); err != nil {
@@ -376,6 +368,11 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd comm
 func (h *CheckStatusHandler) handleRunning(ctx context.Context, cmd command.CheckJobStatus) error {
 	checkAfter := time.Now().Add(time.Duration(h.config.CheckDelaySeconds) * time.Second)
 
+	maxRetries := cmd.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = int32(h.config.DefaultTaskMaxRetries)
+	}
+
 	// Create outbox entry for delayed check
 	entry := &model.K8sStatusOutboxEntry{
 		EventType:    "check_delayed",
@@ -389,7 +386,9 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, cmd command.Chec
 		JobName:      cmd.JobName,
 		NodeType:     cmd.NodeType,
 
-		CheckAfter: checkAfter.Unix(),
+		TaskRetryCount: int(cmd.RetryCount),
+		TaskMaxRetries: int(maxRetries),
+		CheckAfter:     checkAfter.Unix(),
 
 		UpdateTaskStatus: false, // Don't update task status for running jobs
 		CreateExecution:  false, // Don't create execution for running jobs
@@ -415,13 +414,7 @@ func (h *CheckStatusHandler) handleUnknown(ctx context.Context, cmd command.Chec
 		errorMsg = "Job not found or unknown status"
 	}
 
-	// Get task to retrieve retry_count
-	task, err := h.stateClient.GetTask(ctx, cmd.TaskID)
-	if err != nil {
-		return fmt.Errorf("failed to get task: %w", err)
-	}
-
-	newRetryCount := task.RetryCount + 1
+	newRetryCount := cmd.RetryCount + 1
 
 	// Create outbox entry for unknown status (treat as failed permanently)
 	entry := &model.K8sStatusOutboxEntry{

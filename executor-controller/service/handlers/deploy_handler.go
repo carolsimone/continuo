@@ -42,19 +42,20 @@ func (h *DeployHandler) Handle(ctx context.Context, cmd command.DeployJob) error
 
 	// Step 2: Write deployment intent to outbox table
 	entry := &model.DeploymentOutboxEntry{
-		ID:           uuid.New(),
-		TaskID:       cmd.TaskID,
-		ScheduleID:   cmd.ScheduleID,
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  cmd.ServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		JobName:      cmd.JobName,
-		NodeType:     string(cmd.NodeType),
-		Status:       string(model.OutboxStatusPending),
-		CreatedAt:    time.Now(),
-		RetryCount:   0,
-		MaxRetries:   3,
+		ID:             uuid.New(),
+		TaskID:         cmd.TaskID,
+		ScheduleID:     cmd.ScheduleID,
+		ScheduleName:   cmd.ScheduleName,
+		ServiceName:    cmd.ServiceName,
+		SchemaName:     cmd.SchemaName,
+		TableName:      cmd.TableName,
+		JobName:        cmd.JobName,
+		NodeType:       string(cmd.NodeType),
+		TaskRetryCount: cmd.TaskRetryCount,
+		Status:         string(model.OutboxStatusPending),
+		CreatedAt:      time.Now(),
+		RetryCount:     0,
+		MaxRetries:     3,
 	}
 
 	if err := h.uow.OutboxRepo().Create(ctx, entry); err != nil {

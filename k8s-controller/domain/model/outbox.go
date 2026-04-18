@@ -33,8 +33,9 @@ type K8sStatusOutboxEntry struct {
 
 	// Event-specific data
 	ErrorMessage   string `db:"error_message"`
-	TaskRetryCount int    `db:"task_retry_count"`
-	CheckAfter     int64  `db:"check_after"` // Unix timestamp
+	TaskRetryCount int    `db:"task_retry_count"` // current task-level retry count
+	TaskMaxRetries int    `db:"task_max_retries"` // maximum task retries allowed
+	CheckAfter     int64  `db:"check_after"`      // Unix timestamp
 
 	// State update flags
 	UpdateTaskStatus     bool       `db:"update_task_status"`

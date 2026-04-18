@@ -1,0 +1,234 @@
+package handlers_test
+
+import (
+	"context"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
+	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
+	"github.com/carolsimone/continuo/k8s-controller/domain/command"
+	"github.com/carolsimone/continuo/k8s-controller/domain/model"
+	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
+	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	"github.com/google/uuid"
+)
+
+// --- fakes ---
+
+type fakeK8sClient struct {
+	status *model.K8sPodResult
+	err    error
+}
+
+func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
+	return f.status, f.err
+}
+
+func (f *fakeK8sClient) GetPodLogs(_ context.Context, _, _ string, _ int64) (string, string, error) {
+	return "", "", nil
+}
+
+type fakeLogUploader struct{}
+
+func (f *fakeLogUploader) UploadLog(_ context.Context, _ string, _ string) error { return nil }
+
+// fakeOutboxRepo records Create calls.
+type fakeOutboxRepo struct {
+	entries []*model.K8sStatusOutboxEntry
+}
+
+func (r *fakeOutboxRepo) Create(_ context.Context, e *model.K8sStatusOutboxEntry) error {
+	r.entries = append(r.entries, e)
+	return nil
+}
+func (r *fakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*model.K8sStatusOutboxEntry, error) {
+	return nil, nil
+}
+func (r *fakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *fakeOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (r *fakeOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *fakeOutboxRepo) GetStuckEntries(_ context.Context, _ int, _ int) ([]*model.K8sStatusOutboxEntry, error) {
+	return nil, nil
+}
+func (r *fakeOutboxRepo) ForceMarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+
+// Verify at compile time.
+var _ postgres.OutboxRepository = (*fakeOutboxRepo)(nil)
+
+type fakeProcessedEventsRepo struct{}
+
+func (r *fakeProcessedEventsRepo) TryMarkProcessed(_ context.Context, _ uuid.UUID) (bool, error) {
+	return false, nil // always "not yet processed" → proceed
+}
+
+var _ postgres.ProcessedEventsRepository = (*fakeProcessedEventsRepo)(nil)
+
+// fakeUoW is an in-memory unit of work backed by the fakes above.
+type fakeUoW struct {
+	outboxRepo *fakeOutboxRepo
+}
+
+func newFakeUoW() *fakeUoW {
+	return &fakeUoW{outboxRepo: &fakeOutboxRepo{}}
+}
+
+func (u *fakeUoW) Begin(_ context.Context) error                              { return nil }
+func (u *fakeUoW) Commit() error                                              { return nil }
+func (u *fakeUoW) Rollback() error                                            { return nil }
+func (u *fakeUoW) OutboxRepo() postgres.OutboxRepository                      { return u.outboxRepo }
+func (u *fakeUoW) ProcessedEventsRepo() postgres.ProcessedEventsRepository    { return &fakeProcessedEventsRepo{} }
+
+var _ uow.UnitOfWork = (*fakeUoW)(nil)
+
+// --- helpers ---
+
+func failedResult() *model.K8sPodResult {
+	now := time.Now()
+	return &model.K8sPodResult{
+		Status:           model.JobStatusFailed,
+		TerminationMsg:   "OOMKilled",
+		StartedAt:        &now,
+		CompletedAt:      &now,
+		ExecutionSeconds: 1.0,
+	}
+}
+
+func newHandler(k8s handlers.K8sStatusChecker, unitOfWork uow.UnitOfWork, defaultMaxRetries int) *handlers.CheckStatusHandler {
+	cfg := &handlers.HandlerConfig{
+		K8sNamespace:          "default",
+		CheckDelaySeconds:     30,
+		ErrorMessageMaxLen:    4096,
+		LogTailLines:          50,
+		DefaultTaskMaxRetries: defaultMaxRetries,
+	}
+	return handlers.NewCheckStatusHandler(k8s, unitOfWork, &fakeLogUploader{}, cfg, slog.Default())
+}
+
+// --- tests ---
+
+// TestHandleFailedWithRetry verifies that a failed job whose retryCount < maxRetries
+// produces a "task_retry" outbox entry — using cmd fields, no gRPC.
+func TestHandleFailedWithRetry(t *testing.T) {
+	fw := newFakeUoW()
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-abc",
+		RetryCount: 0, // first failure
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), cmd); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(fw.outboxRepo.entries) == 0 {
+		t.Fatal("expected outbox entries, got none")
+	}
+	if got := fw.outboxRepo.entries[0].EventType; got != "task_retry" {
+		t.Errorf("expected event_type=task_retry, got %q", got)
+	}
+}
+
+// TestHandleFailedPermanent verifies that a failed job whose retryCount >= maxRetries
+// produces a "task_failed" outbox entry — using cmd fields, no gRPC.
+func TestHandleFailedPermanent(t *testing.T) {
+	fw := newFakeUoW()
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-abc",
+		RetryCount: 3, // exhausted
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), cmd); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(fw.outboxRepo.entries) == 0 {
+		t.Fatal("expected outbox entries, got none")
+	}
+	if got := fw.outboxRepo.entries[0].EventType; got != "task_failed" {
+		t.Errorf("expected event_type=task_failed, got %q", got)
+	}
+}
+
+// TestHandleRunningCarriesRetryInfo verifies that a running job's check_delayed entry
+// carries TaskRetryCount and TaskMaxRetries forward so the next check cycle
+// doesn't need to call state gRPC.
+func TestHandleRunningCarriesRetryInfo(t *testing.T) {
+	fw := newFakeUoW()
+	handler := newHandler(
+		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}},
+		fw, 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-running",
+		RetryCount: 1,
+		MaxRetries: 5,
+	}
+
+	if err := handler.Handle(context.Background(), cmd); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(fw.outboxRepo.entries) == 0 {
+		t.Fatal("expected outbox entry, got none")
+	}
+	entry := fw.outboxRepo.entries[0]
+	if entry.EventType != "check_delayed" {
+		t.Errorf("expected event_type=check_delayed, got %q", entry.EventType)
+	}
+	if entry.TaskRetryCount != 1 {
+		t.Errorf("expected TaskRetryCount=1, got %d", entry.TaskRetryCount)
+	}
+	if entry.TaskMaxRetries != 5 {
+		t.Errorf("expected TaskMaxRetries=5, got %d", entry.TaskMaxRetries)
+	}
+}
+
+// TestDefaultMaxRetriesAppliedWhenZero verifies backward-compat: when cmd.MaxRetries==0
+// (old executor-controller message with no max_retries field), the handler falls back to
+// config.DefaultTaskMaxRetries.  With RetryCount=0 and default=3 the job should be retried.
+func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
+	fw := newFakeUoW()
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-legacy",
+		RetryCount: 0,
+		MaxRetries: 0, // absent from message
+	}
+
+	if err := handler.Handle(context.Background(), cmd); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(fw.outboxRepo.entries) == 0 {
+		t.Fatal("expected outbox entry, got none")
+	}
+	// RetryCount(0) < defaultMaxRetries(3) → should retry, not permanent fail
+	if got := fw.outboxRepo.entries[0].EventType; got != "task_retry" {
+		t.Errorf("expected event_type=task_retry (default max_retries applied), got %q", got)
+	}
+}
+
+// Compile-time interface checks.
+var _ s3adapter.LogUploader = (*fakeLogUploader)(nil)
+var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)

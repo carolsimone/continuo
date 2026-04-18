@@ -28,15 +28,15 @@ type Config struct {
 	RedisProducerFailedStream      string
 	RedisProducerUpdateTableStream string
 
-	// gRPC clients
-	StateGRPCAddr string
-
 	// HTTP
 	HTTPPort int
 
 	// K8s
 	K8sNamespace         string
 	K8sCheckDelaySeconds int
+
+	// Retry configuration
+	DefaultTaskMaxRetries int
 
 	// Log extraction
 	LogTailLines          int
@@ -66,11 +66,10 @@ func Load(v *pkgconfig.Validator) Config {
 		RedisProducerFailedStream:      v.Require("REDIS_PRODUCER_FAILED_STREAM"),
 		RedisProducerUpdateTableStream: v.Require("REDIS_PRODUCER_UPDATE_TABLE_STREAM"),
 
-		StateGRPCAddr: v.Require("STATE_SERVICE_GRPC_ADDR"),
-
 		HTTPPort:              envInt("HTTP_PORT", 8085),
 		K8sNamespace:          v.Require("K8S_NAMESPACE"),
 		K8sCheckDelaySeconds:  envInt("K8S_CHECK_DELAY_SECONDS", 30),
+		DefaultTaskMaxRetries: envInt("DEFAULT_TASK_MAX_RETRIES", 3),
 		LogTailLines:          envInt("LOG_TAIL_LINES", 50),
 		ErrorMessageMaxLength: envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
 	}

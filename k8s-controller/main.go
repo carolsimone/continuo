@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/grpc"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/http"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
@@ -81,17 +80,6 @@ func main() {
 
 	logger.Info("PostgreSQL repositories initialized")
 
-	// Step 7: Initialize gRPC state client
-	stateClient, err := grpc.NewStateClient(cfg.StateGRPCAddr, logger)
-	if err != nil {
-		logger.Error("Failed to initialize state client", "error", err)
-		os.Exit(1)
-	}
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Closing state gRPC connection")
-		return stateClient.Close()
-	})
-
 	// Step 8: Initialize K8s client
 	k8sClient, err := k8s.NewK8sClient(logger)
 	if err != nil {
@@ -125,12 +113,13 @@ func main() {
 
 	// Step 10b: Initialize check status handler with UoW
 	handlerConfig := &handlers.HandlerConfig{
-		K8sNamespace:       cfg.K8sNamespace,
-		CheckDelaySeconds:  cfg.K8sCheckDelaySeconds,
-		ErrorMessageMaxLen: cfg.ErrorMessageMaxLength,
-		LogTailLines:       int64(cfg.LogTailLines),
+		K8sNamespace:          cfg.K8sNamespace,
+		CheckDelaySeconds:     cfg.K8sCheckDelaySeconds,
+		ErrorMessageMaxLen:    cfg.ErrorMessageMaxLength,
+		LogTailLines:          int64(cfg.LogTailLines),
+		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
 	}
-	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, stateClient, unitOfWork, s3Client, handlerConfig, logger)
+	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, unitOfWork, s3Client, handlerConfig, logger)
 
 	// Step 11: Create command handlers map (CQRS pattern)
 	commandHandlers := map[string]messagebus.CommandHandler{
@@ -151,6 +140,7 @@ func main() {
 		cfg.RedisConsumerCheckStream,
 		cfg.RedisConsumerGroup,
 		messageBus,
+		cfg.DefaultTaskMaxRetries,
 		logger,
 	)
 	if err != nil {
