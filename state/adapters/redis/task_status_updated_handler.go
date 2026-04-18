@@ -115,6 +115,14 @@ func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID string,
 		return false, fmt.Errorf("get scheduler for update: %w", txErr)
 	}
 
+	// Capture the previous task status before updating so we can track bidirectional
+	// terminal transitions (e.g. FAILED→RUNNING on retry must decrement terminal_count).
+	var prevTaskStatus string
+	_ = tx.QueryRowContext(ctx,
+		`SELECT COALESCE(status, '') FROM task_tracker WHERE task_id = $1`,
+		taskID,
+	).Scan(&prevTaskStatus)
+
 	// Update the task status only when something actually changed.
 	affected, txErr := h.taskRepo.UpdateStatusIfChangedTx(ctx, tx, taskID, normalizedStatus, retryCount)
 	if txErr != nil {
@@ -148,8 +156,19 @@ func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID string,
 
 	// Only terminal statuses count towards run finalization.
 	isTerminal := normalizedStatus == "succeeded" || normalizedStatus == "failed"
+	prevWasTerminal := prevTaskStatus == "succeeded" || prevTaskStatus == "failed"
+
 	if !isTerminal {
-		// Non-terminal update (e.g. RUNNING) — just record dedup and commit.
+		// Non-terminal update (e.g. RUNNING on retry).
+		// If the task was previously terminal, decrement the counter so terminal_count
+		// stays accurate across k8s retries (FAILED→RUNNING must un-fill the slot).
+		if prevWasTerminal {
+			if txErr := h.schedulerRepo.DecrementTerminalCountTx(ctx, tx, scheduleID, 1); txErr != nil {
+				return false, fmt.Errorf("decrement terminal count on retry: %w", txErr)
+			}
+			h.logger.Info("task.status.updated: retry detected — decremented terminal count",
+				"task_id", taskID, "prev_status", prevTaskStatus, "new_status", normalizedStatus)
+		}
 		if _, dbErr := tx.ExecContext(ctx,
 			`INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING`,
 			dedupID,
