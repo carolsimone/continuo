@@ -36,5 +36,5 @@ type RunRerunDispatched struct {
 type RunFinalized struct {
 	ScheduleID   string `json:"schedule_id"`
 	ScheduleName string `json:"schedule_name"`
-	Status       string `json:"status"` // COMPLETED | FAILED
+	Status       string `json:"status"` // succeeded | failed
 }

@@ -362,15 +362,18 @@ func (r *taskTrackerRepository) ListAllByScheduleID(ctx context.Context, schedul
 	return tasks, nil
 }
 
-// UpdateStatusIfChangedTx updates status and retry_count for the given task only when
-// either value differs from what is currently stored. Returns the number of rows modified
-// (0 means the row exists but nothing changed; use ExistsTx to distinguish from missing).
+// UpdateStatusIfChangedTx updates status and retry_count only when the status differs
+// from the stored value. Returns 1 if the row was updated, 0 if status was already equal
+// (use ExistsTx to distinguish 0-rows-updated from row-not-found).
+// Gating solely on status change (not retry_count) prevents double-incrementing
+// terminal_task_count when two messages with the same terminal status but different
+// retry_count arrive for the same task.
 func (r *taskTrackerRepository) UpdateStatusIfChangedTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error) {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE task_tracker
 		SET status = $2, retry_count = $3
 		WHERE task_id = $1
-		  AND (status != $2 OR retry_count != $3)
+		  AND status != $2
 	`, taskID, status, retryCount)
 	if err != nil {
 		return 0, fmt.Errorf("update task status if changed: %w", err)
