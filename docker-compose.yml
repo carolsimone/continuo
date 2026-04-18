@@ -290,6 +290,7 @@ services:
       - HTTP_PORT=8087
       - ENV=local
       - LOG_LEVEL=INFO
+      - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
     ports:
       - "8087:8087"   # Health check HTTP
       - "50052:50052" # gRPC
@@ -301,9 +302,11 @@ services:
       - ./orchestrator:/app/orchestrator
       - ./e2e:/app/e2e
       - ./go.work:/app/go.work
+      - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - default
+      - kind
     tty: true
 
   e2e:
