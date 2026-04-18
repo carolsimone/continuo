@@ -56,7 +56,7 @@ func TestRerunFailedNode(t *testing.T) {
 	schedulerID, err := uuid.Parse(schedulerIDStr)
 	require.NoError(t, err)
 
-	verifyStartupController(t, ctx, clients, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyOrchestratorPublishedRootNodes(t, ctx, clients, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	// Levels 0 and 1 succeed
 	level0 := []string{"seed_table_1", "seed_table_2", "seed_table_3"}
