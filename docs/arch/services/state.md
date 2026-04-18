@@ -9,35 +9,31 @@
 - task execution records (`task_execution`)
 - schedule catalog (`schedule_catalog`)
 
-All other services mutate these records exclusively through the state gRPC API.
-No other service owns or writes to these tables.
+State mutates these records in two ways: via gRPC for UI-facing reads and user-initiated commands, and via Redis event consumers for all internal pipeline writes. No other service writes to these tables directly.
 
 ## Owned Storage
 
 | Table | Purpose |
 |---|---|
-| `scheduler_tracker` | One row per schedule run; owns status and init lifecycle |
+| `scheduler_tracker` | One row per schedule run; owns status and init lifecycle; includes `total_task_count` and `terminal_task_count` columns |
 | `task_tracker` | One row per task within a run |
 | `task_execution` | One row per execution attempt of a task |
 | `schedule_catalog` | Active schedule names derived from manifests; soft-delete by `removed_at` |
 | `state_outbox` | Transactional outbox for Redis publication |
-| `processed_events` | Deduplication of consumed `schedules.loaded:v1` events |
+| `processed_events` | Deduplication of consumed Redis events |
+
+### New columns on `scheduler_tracker`
+
+| Column | Purpose |
+|---|---|
+| `total_task_count` | Set when `run.entries.dispatched:v1` is consumed; total number of tasks in the run |
+| `terminal_task_count` | Incremented by the finalization state machine each time a task reaches a terminal state |
 
 ## Inbound Interfaces
 
 ### gRPC — `StateService` (port 50051)
 
-#### Scheduler run management (by `schedule_id` UUID)
-
-| Method | Description |
-|---|---|
-| `CreateScheduler` | Create a tracker row directly (used internally and in tests) |
-| `GetScheduler` | Fetch a run by UUID |
-| `UpdateScheduler` | Update status, timestamps, heartbeat |
-| `CancelScheduler` | Cancel a run by UUID |
-| `UpdateSchedulerInitStatus` | Set `initialization_status`; auto-transitions to RUNNING when set to `completed` |
-| `GetSchedulerInitStatus` | Read `initialization_status` for a run (used by `orchestrator` to guard premature finalization) |
-| `ResetInProgressInitializations` | On startup, reset stale `in_progress` init statuses to `pending` |
+gRPC is now the interface for UI reads and user-initiated commands only. All internal pipeline writes flow through Redis consumers.
 
 #### Schedule activation and control (by `schedule_name` string)
 
@@ -50,24 +46,29 @@ No other service owns or writes to these tables.
 
 > **`ActivateSchedule` vs `TriggerSchedule`**: Both go through `ScheduleActivationService` (transactional outbox) and both require the schedule to exist in `schedule_catalog` (NotFound if absent). The key difference is the concurrent-run guard: `TriggerSchedule` returns `FailedPrecondition` if a run is active; `ActivateSchedule` silently skips (idempotent for the cron loop). `ActivateSchedule` is used by the cron loop and e2e tests; `TriggerSchedule` is the UI-exposed manual trigger.
 
-#### Task management
+#### Scheduler run reads
 
 | Method | Description |
 |---|---|
-| `CreateTask` | Create a task row |
+| `CreateScheduler` | Create a tracker row directly (used internally and in tests) |
+| `GetScheduler` | Fetch a run by UUID |
+| `CancelScheduler` | Cancel a run by UUID |
+| `GetSchedulerInitStatus` | Read `initialization_status` for a run |
+
+#### Task reads and user commands
+
+| Method | Description |
+|---|---|
 | `GetTask` | Fetch by UUID |
 | `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema_name, table_name)` |
-| `UpdateTask` | Update status, retry count |
 | `DeleteTask` | Delete a task row |
 | `ListTasks` | Paginated list with filters |
-| `ResetTask` | Reset a task to PENDING for rerun |
-| `TriggerRerun` | Atomically reset scheduler + target task + write command.rerun:v1 outbox entry |
+| `TriggerRerun` | Atomically reset scheduler + target task + write `rerun:v1` outbox entry |
 
-#### Task execution management
+#### Task execution reads
 
 | Method | Description |
 |---|---|
-| `CreateTaskExecution` | Record a new execution attempt |
 | `GetTaskExecution` | Fetch by UUID |
 | `ListTaskExecutions` | List executions, optionally filtered by task |
 
@@ -91,7 +92,11 @@ On success: scheduler is reset to RUNNING, `initialization_status` reset to `pen
 
 | Stream | Consumer group | Handler |
 |---|---|---|
-| `schedules.loaded:v1` | state service | `ScheduleCatalogHandler` |
+| `schedules.loaded:v1` | state service | `ScheduleCatalogHandler` — reconciles `schedule_catalog` |
+| `run.entries.dispatched:v1` | state service | `RunEntriesDispatchedHandler` — creates tasks, sets `total_task_count`, marks `init_status=completed`, `status=running` |
+| `run.rerun.dispatched:v1` | state service | `RunRerunDispatchedHandler` — resets tasks for rerun |
+| `task.status.updated:v1` | state service | `TaskStatusUpdatedHandler` — updates task status, drives finalization state machine |
+| `task.execution.recorded:v1` | state service | `TaskExecutionRecordedHandler` — persists task execution records |
 
 ## Outbound Interfaces
 
@@ -108,7 +113,7 @@ Payload fields:
 - `schedule_name`
 - `manifest_versions` — map of service → manifest hash read from `schedule_catalog`
 
-Effect: `startup-controller` begins task graph initialization.
+Effect: `orchestrator` begins task graph initialization.
 
 #### `rerun:v1`
 
@@ -122,22 +127,43 @@ Payload fields:
 - `table_name`
 - `service_name`
 
-Effect: `startup-controller` re-initializes the single failed node.
+Effect: `orchestrator` re-initializes the single failed node.
+
+#### `run.finalized:v1`
+
+Emitted on: finalization state machine trigger (see below)
+
+Payload fields:
+- `schedule_id`
+- `schedule_name`
+- `status` — `SUCCEEDED` or `FAILED`
+
+Effect: signals downstream consumers that the run is complete.
+
+## Finalization State Machine
+
+When `task.status.updated:v1` is processed and the new status is terminal (SUCCEEDED or FAILED):
+
+1. Increment `terminal_task_count` on `scheduler_tracker`.
+2. Check: `terminal_task_count == total_task_count && init_status == 'completed' && status == 'running'`
+3. If true: transition scheduler to terminal status, emit `run.finalized:v1` via outbox.
+
+The check is performed atomically within the same transaction as the task status update and the `terminal_task_count` increment.
 
 ## What It Reads
 
 - All owned tables for every gRPC read/write
 - `schedule_catalog.manifest_versions` during activation (passes to outbox payload)
-- `schedules.loaded:v1` payloads from Redis
+- `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1`, `task.status.updated:v1`, `task.execution.recorded:v1` payloads from Redis
 
 ## What It Writes
 
-- `scheduler_tracker` — on activation, status transitions, rerun reset
-- `task_tracker` — on task create/update/reset
-- `task_execution` — on execution create/update
+- `scheduler_tracker` — on activation, status transitions, rerun reset, finalization
+- `task_tracker` — on task create/update/reset (via events)
+- `task_execution` — on execution create/update (via events)
 - `schedule_catalog` — on `schedules.loaded:v1` consumption (upsert active, soft-delete absent)
-- `state_outbox` — atomically with every activation or rerun
-- `processed_events` — after processing each `schedules.loaded:v1` (deduplication)
+- `state_outbox` — atomically with every activation, rerun, or finalization
+- `processed_events` — after processing each consumed Redis event (deduplication)
 
 ## Background Loops
 
@@ -145,7 +171,11 @@ Effect: `startup-controller` re-initializes the single failed node.
 |---|---|
 | `CronScheduler` | Fires on schedule per `schedules.yaml`; calls `ActivateSchedule` via `ScheduleActivationService` |
 | `OutboxProcessor` | Polls `state_outbox` for pending entries; publishes to Redis and marks processed |
-| `ScheduleCatalogConsumer` | Reads `schedules.loaded:v1` stream; calls `ScheduleCatalogHandler.Handle` |
+| `ScheduleCatalogConsumer` | Reads `schedules.loaded:v1` stream |
+| `RunEntriesDispatchedConsumer` | Reads `run.entries.dispatched:v1` stream |
+| `RunRerunDispatchedConsumer` | Reads `run.rerun.dispatched:v1` stream |
+| `TaskStatusUpdatedConsumer` | Reads `task.status.updated:v1` stream |
+| `TaskExecutionRecordedConsumer` | Reads `task.execution.recorded:v1` stream |
 | gRPC server | Serves `StateService` on port 50051 |
 | HTTP server | Serves health endpoint on port 8082 |
 
@@ -193,27 +223,61 @@ Effects (all or nothing — transient errors are retried, not ACK'd):
 
 > **Warning**: if `schedule_names` is empty, `SoftDeleteAbsent([])` will soft-delete all active catalog entries. The manifest-controller must never publish an empty list.
 
+### Consumes: `run.entries.dispatched:v1`
+
+Published by: `orchestrator`
+
+Effects:
+1. Create task rows in `task_tracker` for all dispatched entries
+2. Set `total_task_count` on `scheduler_tracker`
+3. Set `init_status = completed` and `status = running` on `scheduler_tracker`
+4. Record event ID in `processed_events`
+
+### Consumes: `run.rerun.dispatched:v1`
+
+Published by: `orchestrator`
+
+Effects:
+1. Reset target task(s) to PENDING in `task_tracker`
+2. Record event ID in `processed_events`
+
+### Consumes: `task.status.updated:v1`
+
+Published by: `executor-controller` (RUNNING) and `k8s-controller` (SUCCEEDED/FAILED)
+
+Effects:
+1. Update task status in `task_tracker`
+2. If status is terminal: increment `terminal_task_count`, check finalization condition
+3. If finalization condition met: transition scheduler to terminal, emit `run.finalized:v1` via outbox
+4. Record event ID in `processed_events`
+
+### Consumes: `task.execution.recorded:v1`
+
+Published by: `k8s-controller`
+
+Effects:
+1. Insert row in `task_execution`
+2. Record event ID in `processed_events`
+
 ## gRPC Callers
 
 | Service | Methods used |
 |---|---|
-| `startup-controller` | `UpdateSchedulerInitStatus`, `CreateTask`, `UpdateTask`, `GetTask`, `ListTasks`, `GetSchedulerInitStatus`, `ResetTask` |
-| `orchestrator` | `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler` |
-| `executor-controller` | `GetTask`, `UpdateTask`, `CreateTaskExecution`, `GetTaskExecution` |
-| `k8s-controller` | `GetTask`, `UpdateTask`, `ListTaskExecutions` |
-| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun` |
+| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule` |
 
 State calls no external gRPC services.
 
 ## Reliability Patterns
 
 - **Transactional outbox**: every Redis publish is backed by a `state_outbox` row committed in the same transaction as the state mutation — no partial writes
-- **`schedules.loaded:v1` deduplication**: `event_id` stored in `processed_events`; duplicate messages are ACK'd without re-processing
+- **Event deduplication**: `event_id` stored in `processed_events`; duplicate messages are ACK'd without re-processing
 - **Rerun atomicity**: scheduler reset + task reset + outbox write are a single SQL transaction
-- **Initialization recovery**: `ResetInProgressInitializations` is called at startup to recover any runs left in `in_progress` init state from a prior crash
+- **Finalization atomicity**: `terminal_task_count` increment + finalization check + `run.finalized:v1` outbox write are a single SQL transaction
+- **At-least-once consumers**: all Redis consumers retry on transient errors; idempotency is enforced via `processed_events`
 
 ## Source-of-Truth Notes
 
 - Scheduler and task status are owned exclusively by `state` — no other service updates these rows directly
-- `graph` holds only an execution projection (for dependency evaluation and historical run views); it is not the authority on run status
+- Internal pipeline writes reach `state` via Redis events (`run.entries.dispatched:v1`, `run.rerun.dispatched:v1`, `task.status.updated:v1`, `task.execution.recorded:v1`)
+- gRPC write surface is limited to user-initiated commands (`TriggerRerun`, `CancelScheduler`, etc.) and schedule activation
 - `schedule_catalog` is the authoritative list of known schedules; `ListAllSchedules` reads from it — a running schedule not yet in the catalog will not appear in the UI

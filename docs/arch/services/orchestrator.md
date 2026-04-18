@@ -2,12 +2,13 @@
 
 ## Purpose
 
-`orchestrator` is the merged replacement for the former `graph` and `dependency-controller` services. It owns the dependency topology in Neo4j, handles run initialization and node completion events, and serves gRPC queries for the UI.
+`orchestrator` is the merged replacement for the former `graph`, `dependency-controller`, and `startup-controller` services. It owns the dependency topology in Neo4j, handles run initialization and node completion events, and serves gRPC queries for the UI.
 
 It is responsible for:
 - ingesting topology from manifest-controller (via `manifest.loaded:v1`)
-- initializing run snapshots (via `initialize.run:v1`)
-- processing node completion events, unlocking downstream nodes, and finalizing schedule runs (via `node.updated:v1`)
+- initializing run snapshots on scheduler start (via `scheduler.started:v1`)
+- processing node completion events, unlocking downstream nodes (via `node.updated:v1`)
+- producing task dispatch events for the executor pipeline
 - serving read queries for schedule graphs, run listings, and run graphs (gRPC `OrchestratorQuery` service)
 
 ## Owned Storage
@@ -19,7 +20,9 @@ It is responsible for:
 | `Table` node | One per model/seed; carries topology metadata and `last_updated_at` |
 | `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at` |
 | `DEPENDS_ON` relationship | Directed edge from downstream to upstream `Table` |
-| `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status` |
+| `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status` and pre-assigned `task_id` UUID |
+
+Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run snapshot initialization. This allows `run.entries.dispatched:v1` to carry canonical task IDs without a round-trip to `state`.
 
 The `run.Repository` interface exposes the following Neo4j read methods used during rerun handling:
 - `GetNodeType(ctx, schemaName, tableName) (string, error)` — reads `node_type` from the current `Table` node (queries by `schema_name` property)
@@ -39,9 +42,10 @@ The `run.Repository` interface exposes the following Neo4j read methods used dur
 
 | Stream | Group | Handler |
 |---|---|---|
-| `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream, finalizes runs |
+| `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — initializes run snapshot, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` |
+| `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes |
 | `manifest.loaded:v1` | `orchestrator_manifest_loaded` | `IngestTopology` — upserts Table nodes and DEPENDS_ON edges |
-| `initialize.run:v1` | `orchestrator_initialize_run` | `InitializeRun` — creates Run node and EXECUTES edges for normal startup; `HandleRerun` — resets target/downstream nodes and produces `rerun.ready:v1` when a rerun target is present |
+| `initialize.run:v1` | `orchestrator_initialize_run` | `HandleRerun` — resets target/downstream nodes and produces `run.rerun.dispatched:v1` when a rerun target is present |
 
 ### gRPC server — `OrchestratorQuery` (port 50052)
 
@@ -63,40 +67,43 @@ The `run.Repository` interface exposes the following Neo4j read methods used dur
 |---|---|
 | `query.model:v1` | One message per newly-ready downstream node after a SUCCEEDED node is processed |
 | `schedules.loaded:v1` | Produced by IngestTopology after successful topology load (schedule names list) |
-| `run.initialized:v1` | Produced by InitializeRun after run snapshot is created (run_id, schedule info, node lists) |
-| `rerun.ready:v1` | Produced by HandleRerun when handling a rerun target (rerun scope + target info; `service_name` comes from the current graph for K8s dispatch) |
+| `run.entries.dispatched:v1` | Produced by HandleSchedulerStarted after run snapshot is created; carries all task entries with pre-assigned UUIDs, root/seed node lists |
+| `run.rerun.dispatched:v1` | Produced by HandleRerun; carries the rerun scope and target task IDs for state to reset |
 
-### gRPC to `state`
+### No gRPC calls to `state`
 
-| Method | When called |
-|---|---|
-| `GetTaskByScheduleAndNode` | For each ready downstream node, to retrieve pre-registered task ID |
-| `GetSchedulerInitStatus` | Before finalization, to guard against premature terminal write during rerun setup |
-| `UpdateScheduler` | To write SUCCEEDED or FAILED on the scheduler run when the graph drains |
+Orchestrator no longer calls `state` gRPC for any internal writes. All state mutations flow through the Redis event pipeline.
 
 ## Processing Logic
+
+### On `scheduler.started:v1` — HandleSchedulerStarted
+
+1. Creates a `Run` node in Neo4j.
+2. Creates `EXECUTES` edges (all initially PENDING) with pre-assigned task UUIDs stored on the edge.
+3. Identifies root and seed nodes.
+4. Produces `run.entries.dispatched:v1` via outbox with: `run_id`, `schedule_name`, `manifest_versions`, full task entry list (each with `task_id`, node coordinates, `node_type`, `service_name`).
+
+`state` consumes `run.entries.dispatched:v1` to create task rows, set `total_task_count`, and mark the run as initialized.
 
 ### On `manifest.loaded:v1` — IngestTopology
 
 Receives a JSON payload of topology nodes. For each node, upserts the `Table` node and rewrites `DEPENDS_ON` edges in Neo4j. Deduplicates by Redis message ID via `message_processing` table.
 
-### On `initialize.run:v1` — InitializeRun
-
-Creates a `Run` node and `EXECUTES` edges (all initially PENDING) for a schedule run. If the message contains rerun target fields, delegates to the `HandleRerun` handler (see below). Otherwise produces `run.initialized:v1` with root/seed node lists for `startup-controller` to dispatch.
-
 ### On `initialize.run:v1` (rerun path) — HandleRerun
 
-When `initialize.run:v1` carries a `rerun_target`, the `HandleRerun` handler takes over:
+When `initialize.run:v1` carries a `rerun_target`:
 
 1. Gets transitive downstream nodes from Neo4j via `GetTransitiveDownstream`.
 2. Resets the target node and any FAILED downstream nodes to PENDING in Neo4j via `UpdateNodeStatus`.
-3. Reads `node_type` for the target from Neo4j via `GetNodeType` — uses the current graph value (reflects any fixes applied since the original run).
-4. Reads `service_name` for the target from Neo4j via `GetNodeServiceName` — uses the current graph value for K8s image dispatch.
-5. Builds the `rerun.ready:v1` payload with a `target_nodes` list. For the rerun target node:
-   - `service_name` = current graph value (used for both K8s job dispatch and task lookup in `state`)
+3. Reads `node_type` for the target from Neo4j via `GetNodeType`.
+4. Reads `service_name` for the target from Neo4j via `GetNodeServiceName`.
+5. Builds the `run.rerun.dispatched:v1` payload with a `target_nodes` list. For the rerun target node:
+   - `service_name` = current graph value
    - `schedule_name` = schedule name from the rerun command
    - FAILED downstream nodes carry their current graph `service_name`.
-6. Writes the payload to the `rerun.ready:v1` outbox entry.
+6. Writes the payload to the `run.rerun.dispatched:v1` outbox entry.
+
+`state` consumes `run.rerun.dispatched:v1` to reset the target task(s) to PENDING.
 
 ### On `node.updated:v1` — HandleNodeCompleted
 
@@ -109,29 +116,22 @@ When `initialize.run:v1` carries a `rerun_target`, the `HandleRerun` handler tak
    b. If status == SUCCEEDED:
       - GetReadyDownstream from Neo4j
       - For each ready node:
-          - GetTaskByScheduleAndNode from state
+          - Read pre-assigned task_id from EXECUTES edge in Neo4j
           - ComputeJobName
-          - Write outbox entry
+          - Write outbox entry (query.model:v1)
       - Update message_processing state -> completed
    c. Commit transaction
-
-3. After commit, if status is terminal (SUCCEEDED or FAILED):
-   a. GetSchedulerInitStatus from state
-      -> if not "completed": skip finalization (rerun guard)
-   b. CheckScheduleCompletion from Neo4j
-      -> if not complete: return
-   c. UpdateScheduler in state -> SUCCEEDED or FAILED
-   d. FinalizeRun in Neo4j -> stamp Run node with terminal status and timestamp
 ```
 
 ## Background Loops
 
 | Loop | Description |
 |---|---|
+| Redis consumer (`scheduler.started:v1`) | Reads and dispatches to HandleSchedulerStarted handler |
 | Redis consumer (`node.updated:v1`) | Reads and dispatches to HandleNodeCompleted handler |
 | Redis consumer (`manifest.loaded:v1`) | Reads and dispatches to IngestTopology handler |
-| Redis consumer (`initialize.run:v1`) | Reads and dispatches to InitializeRun handler |
-| Outbox processor | Polls outbox for pending entries; publishes to `query.model:v1`; records in `published_messages` |
+| Redis consumer (`initialize.run:v1`) | Reads and dispatches to HandleRerun handler |
+| Outbox processor | Polls outbox for pending entries; publishes to `query.model:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1`; records in `published_messages` |
 | RunSweeper | Periodically deletes expired `Run` nodes (and their `EXECUTES` edges) older than `retention_days` |
 
 ## gRPC Callers
@@ -140,13 +140,13 @@ When `initialize.run:v1` carries a `rerun_target`, the `HandleRerun` handler tak
 |---|---|
 | `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
 
-Orchestrator calls no external gRPC services except `state`.
+Orchestrator calls no external gRPC services.
 
 ## Reliability Patterns
 
 - **Inbound dedup**: `message_processing` keyed by Redis message ID; INSERT IF NOT EXISTS prevents double-processing
 - **Outbound idempotency**: `published_messages` tracks published outbox entries; republishing is safe
 - **Neo4j updates are outside the Postgres tx**: topology and status writes are idempotent; if the tx fails the message will be redelivered
-- **Finalization is post-commit and best-effort**: if `checkAndFinalizeSchedule` fails, the error is logged but the message is still ACKed
-- **Rerun guard**: finalization is skipped if `initialization_status != "completed"` to prevent overwriting RUNNING with FAILED while a rerun is in progress
+- **Pre-assigned task UUIDs**: task IDs are committed to Neo4j EXECUTES edges before `run.entries.dispatched:v1` is produced; the outbox processor reads them at publish time, ensuring consistent IDs across retries
+- **No state gRPC dependency**: orchestrator is fully decoupled from the state write path; all state mutations go through events
 - **RunSweeper**: deletion is best-effort; a sweep failure is logged and retried on the next tick
