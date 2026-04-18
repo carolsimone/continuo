@@ -155,8 +155,7 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 
 	scheduleUUID, err := uuid.Parse(cmd.RunID)
 	if err != nil {
-		// RunID should always be a valid UUID; fall back to a new UUID if not.
-		scheduleUUID = uuid.New()
+		return fmt.Errorf("invalid run_id %q: %w", cmd.RunID, err)
 	}
 
 	queryModelEntry := &domain.OutboxEntry{

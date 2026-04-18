@@ -561,26 +561,29 @@ func (r *RunRepository) GetTaskIDForNode(ctx context.Context, runID, serviceName
 
 	result, err := session.Run(ctx, `
 		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table)
-		WHERE t.schema_name = $schema_name AND t.table_name = $table_name
-		RETURN COALESCE(e.task_id, '') AS task_id
+		WHERE t.service_name = $service_name AND t.schema_name = $schema_name AND t.table_name = $table_name
+		RETURN e.task_id AS task_id
 		LIMIT 1
 	`, map[string]interface{}{
-		"run_id":      runID,
-		"schema_name": schemaName,
-		"table_name":  tableName,
+		"run_id":       runID,
+		"service_name": serviceName,
+		"schema_name":  schemaName,
+		"table_name":   tableName,
 	})
 	if err != nil {
 		return "", fmt.Errorf("GetTaskIDForNode query failed: %w", err)
 	}
 	if result.Next(ctx) {
 		if v, _ := result.Record().Get("task_id"); v != nil {
-			return safeString(v), nil
+			if id := safeString(v); id != "" {
+				return id, nil
+			}
 		}
 	}
 	if err := result.Err(); err != nil {
 		return "", fmt.Errorf("GetTaskIDForNode result error: %w", err)
 	}
-	return "", fmt.Errorf("GetTaskIDForNode: no EXECUTES edge found for run=%s schema=%s table=%s", runID, schemaName, tableName)
+	return "", fmt.Errorf("GetTaskIDForNode: no task_id on EXECUTES edge for run=%s service=%s schema=%s table=%s", runID, serviceName, schemaName, tableName)
 }
 
 // GetFailedDownstreamTaskIDs returns the task_ids of all transitively downstream
