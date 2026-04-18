@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"testing"
@@ -115,4 +116,27 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 	assert.Equal(t, model.SchedulerStatusPending, got.Status)
 	assert.Equal(t, "pending", got.InitializationStatus)
 	assert.Equal(t, map[string]string{"svc-a": "v3"}, got.GetManifestVersions())
+}
+
+func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+
+	id := uuid.New()
+	tracker := &model.SchedulerTracker{
+		ScheduleID:           id,
+		ScheduleName:         "test_schedule",
+		Status:               model.SchedulerStatusPending,
+		InitializationStatus: "pending",
+		TotalTaskCount:       sql.NullInt32{Int32: 5, Valid: true},
+		TerminalTaskCount:    2,
+	}
+	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	require.NoError(t, repo.Create(context.Background(), tracker))
+
+	got, err := repo.GetByID(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, int32(5), got.TotalTaskCount.Int32)
+	assert.True(t, got.TotalTaskCount.Valid)
+	assert.Equal(t, int32(2), got.TerminalTaskCount)
 }

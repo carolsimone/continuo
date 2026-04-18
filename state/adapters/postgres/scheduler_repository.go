@@ -44,6 +44,10 @@ type SchedulerTrackerRepository interface {
 	UpdateTx(ctx context.Context, tx *sqlx.Tx, tracker *model.SchedulerTracker) error
 	UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status string) error
 	CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *model.SchedulerTracker) error
+	// Task count helpers for event-driven run finalization
+	IncrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (terminal, total int32, err error)
+	DecrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, n int32) error
+	SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error
 }
 
 // LastRunData holds the summary of the most recent run for a schedule.
@@ -88,12 +92,14 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, manifest_versions
+			initialization_status, manifest_versions,
+			total_task_count, terminal_task_count
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11, $12
+			$11, $12,
+			$13, $14
 		)
 	`
 
@@ -102,6 +108,7 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.
 		tracker.StartedAt, tracker.CompletedAt, tracker.LastHeartbeatAt,
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
 		tracker.InitializationStatus, versionsJSON,
+		tracker.TotalTaskCount, tracker.TerminalTaskCount,
 	)
 	if err != nil {
 		// Check for duplicate key error (PostgreSQL error code 23505)
@@ -141,18 +148,21 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, manifest_versions
+			initialization_status, manifest_versions,
+			total_task_count, terminal_task_count
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11, $12
+			$11, $12,
+			$13, $14
 		)
 	`,
 		tracker.ScheduleID, tracker.ScheduleName, tracker.Status, tracker.CreatedAt,
 		tracker.StartedAt, tracker.CompletedAt, tracker.LastHeartbeatAt,
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
 		tracker.InitializationStatus, versionsJSON,
+		tracker.TotalTaskCount, tracker.TerminalTaskCount,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505") {
@@ -170,7 +180,8 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, manifest_versions
+			initialization_status, manifest_versions,
+			total_task_count, terminal_task_count
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 	`
@@ -328,7 +339,8 @@ func (r *schedulerTrackerRepository) List(ctx context.Context, filters Scheduler
 	query := fmt.Sprintf(`
 		SELECT schedule_id, schedule_name, status, created_at, started_at,
 		       completed_at, last_heartbeat_at, cancelled_at, cancelled_by,
-		       cancellation_reason, initialization_status, manifest_versions
+		       cancellation_reason, initialization_status, manifest_versions,
+		       total_task_count, terminal_task_count
 		FROM scheduler_tracker
 		%s
 		ORDER BY created_at DESC
@@ -458,7 +470,8 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, manifest_versions
+			initialization_status, manifest_versions,
+			total_task_count, terminal_task_count
 		FROM scheduler_tracker
 		WHERE schedule_name = $1
 		  AND status IN ('pending', 'running')
@@ -525,6 +538,38 @@ func (r *schedulerTrackerRepository) UpdateInitializationStatusTx(ctx context.Co
 		return ErrNotFound
 	}
 	return nil
+}
+
+// IncrementTerminalCountTx atomically increments terminal_task_count and returns
+// the new terminal count and the current total_task_count (-1 if NULL).
+func (r *schedulerTrackerRepository) IncrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (terminal, total int32, err error) {
+	err = tx.QueryRowxContext(ctx, `
+		UPDATE scheduler_tracker
+		SET terminal_task_count = terminal_task_count + 1
+		WHERE schedule_id = $1
+		RETURNING terminal_task_count, COALESCE(total_task_count, -1)
+	`, id).Scan(&terminal, &total)
+	return
+}
+
+// DecrementTerminalCountTx decrements terminal_task_count by n, floor 0.
+func (r *schedulerTrackerRepository) DecrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, n int32) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE scheduler_tracker
+		SET terminal_task_count = GREATEST(terminal_task_count - $2, 0)
+		WHERE schedule_id = $1
+	`, id, n)
+	return err
+}
+
+// SetTotalTaskCountTx sets total_task_count for the given schedule.
+func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE scheduler_tracker
+		SET total_task_count = $2
+		WHERE schedule_id = $1
+	`, id, total)
+	return err
 }
 
 // GetLastRunPerSchedule returns the most recent row per schedule_name.
