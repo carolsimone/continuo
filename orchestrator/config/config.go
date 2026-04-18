@@ -28,9 +28,8 @@ type Config struct {
 	SchedulerStartedGroup   string
 
 	// gRPC
-	StateGRPCAddr string
-	GRPCPort      int
-	HTTPPort      int
+	GRPCPort int
+	HTTPPort int
 
 	// Sweeper
 	RunHistoryRetentionDays   int
@@ -58,8 +57,7 @@ func Load(v *pkgconfig.Validator) Config {
 		SchedulerStartedStream: v.Require("SCHEDULER_STARTED_STREAM"),
 		SchedulerStartedGroup:  v.Require("SCHEDULER_STARTED_GROUP"),
 
-		StateGRPCAddr: v.Require("STATE_SERVICE_GRPC_ADDR"),
-		GRPCPort:      envInt("GRPC_PORT", 50052),
+		GRPCPort: envInt("GRPC_PORT", 50052),
 		HTTPPort:      envInt("HTTP_PORT", 8087),
 
 		RunHistoryRetentionDays:   envInt("RUN_HISTORY_RETENTION_DAYS", 7),

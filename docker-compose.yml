@@ -354,8 +354,6 @@ services:
       - POSTGRES_DB=continuo_orchestrator
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
-      # State Service
-      - STATE_SERVICE_GRPC_ADDR=state:50051
       # Application
       - GRPC_PORT=50052
       - HTTP_PORT=8087

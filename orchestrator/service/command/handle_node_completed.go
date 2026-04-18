@@ -18,24 +18,21 @@ import (
 
 // HandleNodeCompletedHandler handles the HandleNodeCompleted command.
 type HandleNodeCompletedHandler struct {
-	uow         uow.UnitOfWork
-	runRepo     run.Repository
-	stateClient domainCmd.StateTaskClient
-	logger      *slog.Logger
+	uow     uow.UnitOfWork
+	runRepo run.Repository
+	logger  *slog.Logger
 }
 
 // NewHandleNodeCompletedHandler creates a new HandleNodeCompletedHandler.
 func NewHandleNodeCompletedHandler(
 	u uow.UnitOfWork,
 	runRepo run.Repository,
-	stateClient domainCmd.StateTaskClient,
 	logger *slog.Logger,
 ) *HandleNodeCompletedHandler {
 	return &HandleNodeCompletedHandler{
-		uow:         u,
-		runRepo:     runRepo,
-		stateClient: stateClient,
-		logger:      logger,
+		uow:     u,
+		runRepo: runRepo,
+		logger:  logger,
 	}
 }
 
@@ -110,7 +107,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.H
 				continue
 			}
 
-			taskID, err := h.stateClient.GetTask(ctx, cmd.ScheduleID, node.ServiceName, node.SchemaName, node.TableName)
+			taskID, err := h.runRepo.GetTaskIDForNode(ctx, cmd.ScheduleID.String(), node.ServiceName, node.SchemaName, node.TableName)
 			if err != nil {
 				return fmt.Errorf("failed to get task for %s.%s: %w", node.SchemaName, node.TableName, err)
 			}
@@ -175,71 +172,6 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.H
 	}
 
 	h.logger.Info("Node completed processing finished", "trigger_table", cmd.TableName)
-
-	// Post-commit: for terminal statuses, check if the entire schedule is drained.
-	if cmd.Status == "SUCCEEDED" || cmd.Status == "FAILED" {
-		if err := h.checkAndFinalizeSchedule(ctx, cmd); err != nil {
-			// Non-fatal: main work is committed. A future reconciliation job recovers stale records.
-			h.logger.Error("Failed to finalize schedule completion",
-				"schedule_id", cmd.ScheduleID,
-				"schedule_name", cmd.ScheduleName,
-				"error", err,
-			)
-		}
-	}
-
-	return nil
-}
-
-// checkAndFinalizeSchedule queries the graph for drain status and, if complete,
-// updates scheduler_tracker status and finalizes the run snapshot.
-func (h *HandleNodeCompletedHandler) checkAndFinalizeSchedule(ctx context.Context, cmd domainCmd.HandleNodeCompletedCmd) error {
-	// Guard: skip finalization while a re-run is being set up.
-	// Prevents overwriting RUNNING status with FAILED/SUCCEEDED before
-	// startup-controller has finished resetting graph nodes.
-	initStatus, err := h.stateClient.GetSchedulerInitStatus(ctx, cmd.ScheduleID)
-	if err != nil {
-		return fmt.Errorf("failed to get scheduler init status: %w", err)
-	}
-	if initStatus != "completed" {
-		h.logger.Debug("Skipping finalization: init status not completed",
-			"schedule_id", cmd.ScheduleID,
-			"init_status", initStatus,
-		)
-		return nil
-	}
-
-	isComplete, hasFailed, err := h.runRepo.CheckScheduleCompletion(ctx, cmd.ScheduleID.String(), cmd.ScheduleName)
-	if err != nil {
-		return fmt.Errorf("failed to check schedule completion: %w", err)
-	}
-
-	if !isComplete {
-		h.logger.Debug("Schedule not yet complete", "schedule_name", cmd.ScheduleName)
-		return nil
-	}
-
-	status := "SUCCEEDED"
-	if hasFailed {
-		status = "FAILED"
-	}
-
-	if err := h.stateClient.UpdateSchedulerStatus(ctx, cmd.ScheduleID, status); err != nil {
-		return fmt.Errorf("failed to update scheduler status: %w", err)
-	}
-
-	if err := h.runRepo.FinalizeRun(ctx, cmd.ScheduleID.String(), status); err != nil {
-		h.logger.Error("Failed to finalize run snapshot",
-			"run_id", cmd.ScheduleID,
-			"error", err,
-		)
-	}
-
-	h.logger.Info("Schedule finalized and run stamped",
-		"schedule_id", cmd.ScheduleID,
-		"schedule_name", cmd.ScheduleName,
-		"status", status,
-	)
 
 	return nil
 }

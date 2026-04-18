@@ -108,19 +108,6 @@ func main() {
 		return redisClient.Close()
 	})
 
-	// 4. State gRPC client
-	stateClient, err := grpcinfra.NewStateClient(cfg.StateGRPCAddr, logger)
-	if err != nil {
-		logger.Error("Failed to create state service client", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("State service gRPC client initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Closing state service gRPC client")
-		return stateClient.Close()
-	})
-
 	// ========================================================================
 	// INITIALIZE REPOSITORIES
 	// ========================================================================
@@ -140,7 +127,7 @@ func main() {
 
 	ingestTopologyHandler := command.NewIngestTopologyHandler(unitOfWork, topologyRepo, logger)
 	initializeRunHandler := command.NewInitializeRunHandler(unitOfWork, runRepo, logger)
-	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, stateClient, logger)
+	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, logger)
 	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(unitOfWork, runRepo, logger)
 
 	// ========================================================================
