@@ -57,6 +57,7 @@ type NodePayload struct {
 	Criticality  string `json:"criticality"`
 	NodeType     string `json:"node_type"`
 	Status       string `json:"status"`
+	TaskID       string `json:"task_id"`
 }
 
 // IngestTopologyCmd carries the data for a topology ingestion command.

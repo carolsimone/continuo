@@ -52,6 +52,7 @@ type TableNode struct {
 	CreatedAt     time.Time
 	NodeType      string
 	Status        string
+	TaskID        string
 }
 
 type ScheduleGraph struct {
