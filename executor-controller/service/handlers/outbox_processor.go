@@ -12,8 +12,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
-	"github.com/google/uuid"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 )
 
 // errPermanentFailure signals that processEntry already called MarkFailed.
@@ -25,11 +24,6 @@ type K8sDeployer interface {
 	CreateQueryJob(ctx context.Context, params k8s.JobParams) error
 }
 
-// StateUpdater defines the interface for updating task status
-type StateUpdater interface {
-	UpdateTaskStatus(ctx context.Context, taskID uuid.UUID, status statev1.TaskStatus) error
-}
-
 // EventPublisher defines the interface for publishing events to Redis
 type EventPublisher interface {
 	Publish(ctx context.Context, values map[string]interface{}) (string, error)
@@ -37,32 +31,32 @@ type EventPublisher interface {
 
 // OutboxProcessor processes pending outbox entries and deploys K8s Jobs
 type OutboxProcessor struct {
-	outboxRepo   postgres.OutboxRepository
-	k8sClient    K8sDeployer
-	stateClient  StateUpdater
-	producer     EventPublisher
-	logger       *slog.Logger
-	k8sNamespace string
-	PollInterval time.Duration
+	outboxRepo     postgres.OutboxRepository
+	k8sClient      K8sDeployer
+	producer       EventPublisher
+	statusProducer EventPublisher
+	logger         *slog.Logger
+	k8sNamespace   string
+	PollInterval   time.Duration
 }
 
 // NewOutboxProcessor creates a new OutboxProcessor
 func NewOutboxProcessor(
 	outboxRepo postgres.OutboxRepository,
 	k8sClient K8sDeployer,
-	stateClient StateUpdater,
 	producer EventPublisher,
+	statusProducer EventPublisher,
 	k8sNamespace string,
 	logger *slog.Logger,
 ) *OutboxProcessor {
 	return &OutboxProcessor{
-		outboxRepo:   outboxRepo,
-		k8sClient:    k8sClient,
-		stateClient:  stateClient,
-		producer:     producer,
-		k8sNamespace: k8sNamespace,
-		logger:       logger,
-		PollInterval: 5 * time.Second, // Default to 5s for production
+		outboxRepo:     outboxRepo,
+		k8sClient:      k8sClient,
+		producer:       producer,
+		statusProducer: statusProducer,
+		k8sNamespace:   k8sNamespace,
+		logger:         logger,
+		PollInterval:   5 * time.Second, // Default to 5s for production
 	}
 }
 
@@ -186,11 +180,16 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.Deploym
 		return fmt.Errorf("k8s deployment failed: %w", err)
 	}
 
-	// Step 2: Update task_tracker to "running" via gRPC
-	if err := p.stateClient.UpdateTaskStatus(ctx, entry.TaskID, statev1.TaskStatus_TASK_STATUS_RUNNING); err != nil {
-		// K8s job created but DB update failed - will retry
-		// On retry, K8s job creation will be idempotent (already exists)
-		return fmt.Errorf("failed to update task status: %w", err)
+	// Step 2: Publish task.status.updated:v1 (RUNNING) for state service
+	statusEvt := pkgevents.TaskStatusUpdated{
+		TaskID:     entry.TaskID.String(),
+		ScheduleID: entry.ScheduleID.String(),
+		Status:     "RUNNING",
+		RetryCount: int32(entry.RetryCount),
+	}
+	if _, err := p.statusProducer.Publish(ctx, statusEvt.ToMap()); err != nil {
+		// K8s job created but status event failed — will retry; K8s creation is idempotent.
+		return fmt.Errorf("failed to publish task status event: %w", err)
 	}
 
 	// Step 3: Publish event for k8s-controller

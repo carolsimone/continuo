@@ -10,6 +10,16 @@ type TaskStatusUpdated struct {
 	RetryCount int32  `json:"retry_count"`
 }
 
+// ToMap converts TaskStatusUpdated to a flat map for Redis stream publishing.
+func (e TaskStatusUpdated) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"task_id":     e.TaskID,
+		"schedule_id": e.ScheduleID,
+		"status":      e.Status,
+		"retry_count": e.RetryCount,
+	}
+}
+
 // TaskExecutionRecorded — stream: task.execution.recorded:v1
 // Published by: k8s-controller
 // Consumed by: state

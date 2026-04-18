@@ -12,7 +12,6 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/test/fakes"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,14 +28,14 @@ func TestOutboxProcessor_ProcessBatch_Success(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeState := fakes.NewFakeStateClient()
 	fakeProducer := fakes.NewFakeRedisProducer()
+	fakeStatusProducer := fakes.NewFakeRedisProducer()
 
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeState,
 		fakeProducer,
+		fakeStatusProducer,
 		"default",
 		logger,
 	)
@@ -74,13 +73,14 @@ func TestOutboxProcessor_ProcessBatch_Success(t *testing.T) {
 	assert.Len(t, jobs, 1, "Should have created one K8s job")
 	assert.Contains(t, jobs, "default/dbt-public-users")
 
-	// Verify task status was updated to running
-	updates := fakeState.GetTaskUpdates()
-	require.Len(t, updates, 1, "Should have one task update")
-	assert.Equal(t, taskID, updates[0].TaskID)
-	assert.Equal(t, statev1.TaskStatus_TASK_STATUS_RUNNING, updates[0].Status)
+	// Verify task.status.updated:v1 event was published with RUNNING status
+	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	require.Len(t, statusMsgs, 1, "Should have published one task status event")
+	assert.Equal(t, taskID.String(), statusMsgs[0].Values["task_id"])
+	assert.Equal(t, scheduleID.String(), statusMsgs[0].Values["schedule_id"])
+	assert.Equal(t, "RUNNING", statusMsgs[0].Values["status"])
 
-	// Verify event was published
+	// Verify job-deployed event was published
 	msgs := fakeProducer.GetPublishedMessages()
 	require.Len(t, msgs, 1, "Should have published one message")
 	assert.Equal(t, taskID.String(), msgs[0].Values["task_id"])
@@ -104,14 +104,14 @@ func TestOutboxProcessor_ProcessBatch_Idempotent(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeState := fakes.NewFakeStateClient()
 	fakeProducer := fakes.NewFakeRedisProducer()
+	fakeStatusProducer := fakes.NewFakeRedisProducer()
 
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeState,
 		fakeProducer,
+		fakeStatusProducer,
 		"default",
 		logger,
 	)
@@ -171,9 +171,9 @@ func TestOutboxProcessor_ProcessBatch_Idempotent(t *testing.T) {
 	jobs := fakeK8s.GetCreatedJobs()
 	assert.Len(t, jobs, 1, "Should still have only one K8s job (idempotent)")
 
-	// But both tasks should have been updated
-	updates := fakeState.GetTaskUpdates()
-	assert.Len(t, updates, 2, "Both tasks should have been updated")
+	// Both tasks should have published status events
+	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	assert.Len(t, statusMsgs, 2, "Both tasks should have published status events")
 }
 
 func TestOutboxProcessor_ProcessBatch_K8sFailure(t *testing.T) {
@@ -187,8 +187,8 @@ func TestOutboxProcessor_ProcessBatch_K8sFailure(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeState := fakes.NewFakeStateClient()
 	fakeProducer := fakes.NewFakeRedisProducer()
+	fakeStatusProducer := fakes.NewFakeRedisProducer()
 
 	// Set K8s to fail
 	fakeK8s.SetCreateJobError(errors.New("k8s error"))
@@ -196,8 +196,8 @@ func TestOutboxProcessor_ProcessBatch_K8sFailure(t *testing.T) {
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeState,
 		fakeProducer,
+		fakeStatusProducer,
 		"default",
 		logger,
 	)
@@ -234,8 +234,8 @@ func TestOutboxProcessor_ProcessBatch_K8sFailure(t *testing.T) {
 	require.Len(t, entries, 1)
 	assert.Equal(t, 1, entries[0].RetryCount, "Retry count should be incremented")
 
-	// Verify no state updates or Redis messages
-	assert.Len(t, fakeState.GetTaskUpdates(), 0, "No task updates on failure")
+	// Verify no status events or job-deployed messages published on failure
+	assert.Len(t, fakeStatusProducer.GetPublishedMessages(), 0, "No status events on K8s failure")
 	assert.Len(t, fakeProducer.GetPublishedMessages(), 0, "No messages published on failure")
 }
 
@@ -250,8 +250,8 @@ func TestOutboxProcessor_ProcessBatch_MaxRetriesExceeded(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeState := fakes.NewFakeStateClient()
 	fakeProducer := fakes.NewFakeRedisProducer()
+	fakeStatusProducer := fakes.NewFakeRedisProducer()
 
 	// Set K8s to always fail
 	fakeK8s.SetCreateJobError(errors.New("persistent k8s error"))
@@ -259,8 +259,8 @@ func TestOutboxProcessor_ProcessBatch_MaxRetriesExceeded(t *testing.T) {
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeState,
 		fakeProducer,
+		fakeStatusProducer,
 		"default",
 		logger,
 	)
@@ -322,11 +322,11 @@ func TestOutboxProcessor_PublishesOutboxEntryID(t *testing.T) {
 	require.NoError(t, err)
 
 	publisher := fakes.NewFakeRedisProducer()
+	statusPublisher := fakes.NewFakeRedisProducer()
 	k8sClient := fakes.NewFakeK8sClient()
-	stateClient := fakes.NewFakeStateClient()
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	processor := handlers.NewOutboxProcessor(outboxRepo, k8sClient, stateClient, publisher, "default", logger)
+	processor := handlers.NewOutboxProcessor(outboxRepo, k8sClient, publisher, statusPublisher, "default", logger)
 
 	err = processor.ProcessBatch(ctx)
 	require.NoError(t, err)
@@ -337,8 +337,8 @@ func TestOutboxProcessor_PublishesOutboxEntryID(t *testing.T) {
 		"outbox_entry_id must equal the deployment_outbox entry ID")
 }
 
-func TestOutboxProcessor_ProcessBatch_StateUpdateFailure(t *testing.T) {
-	// Test that if state update fails, the entry can be retried
+func TestOutboxProcessor_ProcessBatch_StatusPublishFailure(t *testing.T) {
+	// Test that if status event publish fails, the entry can be retried
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
@@ -348,17 +348,17 @@ func TestOutboxProcessor_ProcessBatch_StateUpdateFailure(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeState := fakes.NewFakeStateClient()
 	fakeProducer := fakes.NewFakeRedisProducer()
+	fakeStatusProducer := fakes.NewFakeRedisProducer()
 
-	// Set state client to fail
-	fakeState.SetUpdateTaskStatusError(errors.New("state service error"))
+	// Set status producer to fail
+	fakeStatusProducer.SetPublishError(errors.New("redis publish error"))
 
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeState,
 		fakeProducer,
+		fakeStatusProducer,
 		"default",
 		logger,
 	)
@@ -385,7 +385,7 @@ func TestOutboxProcessor_ProcessBatch_StateUpdateFailure(t *testing.T) {
 	err := outboxRepo.Create(ctx, entry)
 	require.NoError(t, err)
 
-	// Process - K8s succeeds but state update fails
+	// Process - K8s succeeds but status publish fails
 	err = processor.ProcessBatch(ctx)
 	require.NoError(t, err)
 
@@ -399,8 +399,8 @@ func TestOutboxProcessor_ProcessBatch_StateUpdateFailure(t *testing.T) {
 	require.Len(t, entries, 1)
 	assert.Equal(t, 1, entries[0].RetryCount, "Retry count should be incremented")
 
-	// Fix state client and retry
-	fakeState.SetUpdateTaskStatusError(nil)
+	// Fix status producer and retry
+	fakeStatusProducer.SetPublishError(nil)
 
 	err = processor.ProcessBatch(ctx)
 	require.NoError(t, err)
@@ -410,7 +410,8 @@ func TestOutboxProcessor_ProcessBatch_StateUpdateFailure(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, entries, 0, "Entry should be processed after retry")
 
-	// Verify state was eventually updated
-	updates := fakeState.GetTaskUpdates()
-	assert.Len(t, updates, 1, "State should be updated on retry")
+	// Verify status event was eventually published
+	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	assert.Len(t, statusMsgs, 1, "Status event should be published on retry")
+	assert.Equal(t, "RUNNING", statusMsgs[0].Values["status"])
 }

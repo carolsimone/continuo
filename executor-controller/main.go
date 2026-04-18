@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/carolsimone/continuo/executor-controller/adapters/grpc"
 	"github.com/carolsimone/continuo/executor-controller/adapters/http"
 	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
@@ -94,19 +93,6 @@ func main() {
 	}
 	logger.Info("K8s client initialized")
 
-	// 4. gRPC client to state service
-	stateClient, err := grpc.NewStateClient(cfg.StateGRPCAddr, logger)
-	if err != nil {
-		logger.Error("Failed to create state service client", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("State service gRPC client initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Closing state service gRPC client")
-		return stateClient.Close()
-	})
-
 	// ========================================================================
 	// INITIALIZE REPOSITORIES
 	// ========================================================================
@@ -161,10 +147,17 @@ func main() {
 		"consumer_group", cfg.RedisConsumerGroup,
 	)
 
-	// Create producer for node.deployed:v1 stream
+	// Create producer for job-deployed event stream (consumed by k8s-controller)
 	producer := redis.NewProducer(
 		redisClient,
 		cfg.RedisProducerStream,
+		logger,
+	)
+
+	// Create producer for task.status.updated:v1 stream (consumed by state)
+	statusProducer := redis.NewProducer(
+		redisClient,
+		cfg.RedisStatusStream,
 		logger,
 	)
 
@@ -175,8 +168,8 @@ func main() {
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		k8sClient,
-		stateClient,
 		producer,
+		statusProducer,
 		cfg.K8sNamespace,
 		logger,
 	)

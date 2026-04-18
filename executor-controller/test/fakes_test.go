@@ -7,7 +7,6 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/executor-controller/test/fakes"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,69 +62,6 @@ func TestFakeK8sClient_CreateJobError(t *testing.T) {
 	// No jobs should be created
 	jobs := fakeK8s.GetCreatedJobs()
 	assert.Len(t, jobs, 0)
-}
-
-// TestFakeStateClient_UpdateTaskStatus tests the fake state client
-func TestFakeStateClient_UpdateTaskStatus(t *testing.T) {
-	ctx := context.Background()
-	fakeState := fakes.NewFakeStateClient()
-
-	taskID := uuid.New()
-
-	// Update task status
-	err := fakeState.UpdateTaskStatus(ctx, taskID, statev1.TaskStatus_TASK_STATUS_RUNNING)
-	require.NoError(t, err)
-
-	// Verify update was recorded
-	updates := fakeState.GetTaskUpdates()
-	require.Len(t, updates, 1)
-	assert.Equal(t, taskID, updates[0].TaskID)
-	assert.Equal(t, statev1.TaskStatus_TASK_STATUS_RUNNING, updates[0].Status)
-
-	// Get last update
-	status, err := fakeState.GetLastTaskUpdate(taskID)
-	require.NoError(t, err)
-	assert.Equal(t, statev1.TaskStatus_TASK_STATUS_RUNNING, status)
-}
-
-// TestFakeStateClient_MultipleUpdates tests multiple status updates
-func TestFakeStateClient_MultipleUpdates(t *testing.T) {
-	ctx := context.Background()
-	fakeState := fakes.NewFakeStateClient()
-
-	taskID1 := uuid.New()
-	taskID2 := uuid.New()
-
-	// Update multiple tasks
-	_ = fakeState.UpdateTaskStatus(ctx, taskID1, statev1.TaskStatus_TASK_STATUS_RUNNING)
-	_ = fakeState.UpdateTaskStatus(ctx, taskID2, statev1.TaskStatus_TASK_STATUS_RUNNING)
-	_ = fakeState.UpdateTaskStatus(ctx, taskID1, statev1.TaskStatus_TASK_STATUS_SUCCEEDED)
-
-	// Verify all updates
-	updates := fakeState.GetTaskUpdates()
-	assert.Len(t, updates, 3)
-
-	// Get last update for taskID1
-	status, err := fakeState.GetLastTaskUpdate(taskID1)
-	require.NoError(t, err)
-	assert.Equal(t, statev1.TaskStatus_TASK_STATUS_SUCCEEDED, status)
-}
-
-// TestFakeStateClient_Error tests error handling
-func TestFakeStateClient_Error(t *testing.T) {
-	ctx := context.Background()
-	fakeState := fakes.NewFakeStateClient()
-
-	expectedErr := errors.New("state service error")
-	fakeState.SetUpdateTaskStatusError(expectedErr)
-
-	taskID := uuid.New()
-	err := fakeState.UpdateTaskStatus(ctx, taskID, statev1.TaskStatus_TASK_STATUS_RUNNING)
-	assert.Equal(t, expectedErr, err)
-
-	// No updates should be recorded
-	updates := fakeState.GetTaskUpdates()
-	assert.Len(t, updates, 0)
 }
 
 // TestFakeRedisProducer_Publish tests the fake Redis producer
@@ -203,27 +139,22 @@ func TestFakes_Reset(t *testing.T) {
 
 	// Setup fakes with some state
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeState := fakes.NewFakeStateClient()
 	fakeProducer := fakes.NewFakeRedisProducer()
 
 	// Add some state
 	params := k8s.JobParams{JobName: "test", Namespace: "default"}
 	_ = fakeK8s.CreateQueryJob(ctx, params)
-	_ = fakeState.UpdateTaskStatus(ctx, uuid.New(), statev1.TaskStatus_TASK_STATUS_RUNNING)
 	_, _ = fakeProducer.Publish(ctx, map[string]interface{}{"test": "value"})
 
 	// Verify state exists
 	assert.Len(t, fakeK8s.GetCreatedJobs(), 1)
-	assert.Len(t, fakeState.GetTaskUpdates(), 1)
 	assert.Len(t, fakeProducer.GetPublishedMessages(), 1)
 
 	// Reset
 	fakeK8s.Reset()
-	fakeState.Reset()
 	fakeProducer.Reset()
 
 	// Verify state is cleared
 	assert.Len(t, fakeK8s.GetCreatedJobs(), 0)
-	assert.Len(t, fakeState.GetTaskUpdates(), 0)
 	assert.Len(t, fakeProducer.GetPublishedMessages(), 0)
 }

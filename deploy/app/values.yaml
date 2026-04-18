@@ -138,6 +138,7 @@ services:
       REDIS_CONSUMER_RETRY_STREAM: retry.task:v1
       REDIS_CONSUMER_GROUP: executor_controller_consumers
       REDIS_PRODUCER_STREAM: node.deployed:v1
+      REDIS_STATUS_STREAM: task.status.updated:v1
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       DBT_POSTGRES_DB: continuo_dbt

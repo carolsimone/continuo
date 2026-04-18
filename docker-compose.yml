@@ -209,7 +209,6 @@ services:
       - postgres
       - redis
       - neo4j
-      - state
     environment:
       # Redis
       - REDIS_HOST=redis
@@ -219,14 +218,13 @@ services:
       - REDIS_CONSUMER_RETRY_STREAM=retry.task:v1
       - REDIS_CONSUMER_GROUP=executor_controller_consumers
       - REDIS_PRODUCER_STREAM=node.deployed:v1
+      - REDIS_STATUS_STREAM=task.status.updated:v1
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_executor
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
-      # State Service
-      - STATE_SERVICE_GRPC_ADDR=state:50051
       # Kubernetes
       - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
       - K8S_NAMESPACE=default
