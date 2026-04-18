@@ -624,6 +624,65 @@ func (r *RunRepository) GetFailedDownstreamTaskIDs(ctx context.Context, runID, s
 	return taskIDs, nil
 }
 
+// MarkPendingDownstreamFailed finds all transitively downstream nodes in the run that
+// are still PENDING, atomically marks them FAILED, and returns their identifying info.
+func (r *RunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(target:Table)
+		WHERE target.schema_name = $schema_name AND target.table_name = $table_name
+		MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
+		MATCH (:Run {run_id: $run_id})-[de:EXECUTES]->(downstream)
+		WHERE de.status = 'PENDING' OR de.status IS NULL
+		SET de.status = 'FAILED'
+		RETURN
+			COALESCE(de.task_id, '')           AS task_id,
+			downstream.schema_name              AS schema_name,
+			downstream.table_name               AS table_name,
+			COALESCE(downstream.service_name, '') AS service_name
+	`, map[string]interface{}{
+		"run_id":      runID,
+		"schema_name": schemaName,
+		"table_name":  tableName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("MarkPendingDownstreamFailed query failed: %w", err)
+	}
+
+	var nodes []*run.CascadedFailureNode
+	for result.Next(ctx) {
+		record := result.Record()
+		n := &run.CascadedFailureNode{}
+		if v, _ := record.Get("task_id"); v != nil {
+			n.TaskID = safeString(v)
+		}
+		if v, _ := record.Get("schema_name"); v != nil {
+			n.SchemaName = safeString(v)
+		}
+		if v, _ := record.Get("table_name"); v != nil {
+			n.TableName = safeString(v)
+		}
+		if v, _ := record.Get("service_name"); v != nil {
+			n.ServiceName = safeString(v)
+		}
+		nodes = append(nodes, n)
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("MarkPendingDownstreamFailed result error: %w", err)
+	}
+
+	if len(nodes) > 0 {
+		r.logger.Info("Marked pending downstream nodes as FAILED",
+			"run_id", runID,
+			"failed_table", tableName,
+			"cascaded_count", len(nodes),
+		)
+	}
+	return nodes, nil
+}
+
 // DeleteExpiredRuns removes Run nodes (and their EXECUTES edges) older than retentionDays.
 func (r *RunRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)

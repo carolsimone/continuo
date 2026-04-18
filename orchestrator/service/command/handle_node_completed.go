@@ -154,6 +154,62 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.H
 				"downstream_table", node.TableName,
 			)
 		}
+	} else if cmd.Status == string(domain.NodeStatusFailed) {
+		// Cascade failure: mark all still-PENDING downstream nodes as FAILED in Neo4j
+		// and write outbox entries so the state service increments terminal_task_count.
+		cascaded, err := h.runRepo.MarkPendingDownstreamFailed(
+			ctx,
+			cmd.ScheduleID.String(),
+			cmd.ScheduleName,
+			cmd.SchemaName,
+			cmd.TableName,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to cascade downstream failures: %w", err)
+		}
+
+		for _, node := range cascaded {
+			if node.TaskID == "" {
+				h.logger.Warn("Cascaded failure node has no task_id, skipping outbox entry",
+					"schema", node.SchemaName, "table", node.TableName)
+				continue
+			}
+
+			evtPayload, err := json.Marshal(domain.CascadeTaskFailed{
+				TaskID:     node.TaskID,
+				ScheduleID: cmd.ScheduleID.String(),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to marshal cascade_task_failed event: %w", err)
+			}
+
+			outboxEntry := &domain.OutboxEntry{
+				ID:                  uuid.New(),
+				MessageProcessingID: &msgProcessingID,
+				AggregateType:       "orchestrator",
+				AggregateID:         cmd.ScheduleID,
+				EventType:           "cascade_task_failed",
+				Payload:             evtPayload,
+				StreamName:          "task.status.updated:v1",
+				Status:              "pending",
+				MaxRetries:          3,
+			}
+
+			if err := h.uow.OutboxRepo().Create(ctx, outboxEntry); err != nil {
+				return fmt.Errorf("failed to write cascade outbox entry for %s.%s: %w", node.SchemaName, node.TableName, err)
+			}
+
+			h.logger.Debug("Wrote cascade_task_failed outbox entry",
+				"task_id", node.TaskID,
+				"schema", node.SchemaName,
+				"table", node.TableName,
+			)
+		}
+
+		h.logger.Info("Cascaded failure to downstream nodes",
+			"table_name", cmd.TableName,
+			"cascaded_count", len(cascaded),
+		)
 	} else {
 		h.logger.Info("Node did not succeed, skipping downstream check",
 			"table_name", cmd.TableName,

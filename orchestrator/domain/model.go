@@ -97,6 +97,13 @@ type PublishedMessage struct {
 	PublishedAt    time.Time `db:"published_at"`
 }
 
+// CascadeTaskFailed is the event payload written to task.status.updated:v1 outbox entries
+// for downstream nodes that become unreachable due to an upstream failure.
+type CascadeTaskFailed struct {
+	TaskID     string `json:"task_id"`
+	ScheduleID string `json:"schedule_id"`
+}
+
 // NodeReadyForExecution is the event payload written to query.model:v1 outbox entries
 type NodeReadyForExecution struct {
 	ScheduleID   string `json:"schedule_id"`

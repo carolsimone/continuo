@@ -203,6 +203,19 @@ func (p *OutboxProcessor) payloadToValues(entry *domain.OutboxEntry) (map[string
 			"node_type":       evt.NodeType,
 		}, nil
 
+	case "cascade_task_failed":
+		var evt domain.CascadeTaskFailed
+		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal cascade_task_failed payload: %w", err)
+		}
+		return map[string]interface{}{
+			"outbox_entry_id": entry.ID.String(),
+			"task_id":         evt.TaskID,
+			"schedule_id":     evt.ScheduleID,
+			"status":          "failed",
+			"retry_count":     "0",
+		}, nil
+
 	case "topology_ingested", "run_initialized", "rerun_ready",
 		"run_entries_dispatched", "run_rerun_dispatched":
 		// These event types use a generic payload field consumed by state
