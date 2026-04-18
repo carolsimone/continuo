@@ -9,13 +9,6 @@ services:
       cache_to:
         - "type=gha,scope=state,mode=max"
 
-  startup-controller:
-    build:
-      cache_from:
-        - "type=gha,scope=startup-controller"
-      cache_to:
-        - "type=gha,scope=startup-controller,mode=max"
-
   executor-controller:
     build:
       cache_from:
