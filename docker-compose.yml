@@ -119,6 +119,7 @@ services:
       - REDIS_PASSWORD=continuo
       - REDIS_STREAM_SCHEDULER_STARTED=scheduler.started:v1
       - REDIS_STREAM_SCHEDULES_LOADED=schedules.loaded:v1
+      - REDIS_STREAM_RUN_ENTRIES_DISPATCHED=run.entries.dispatched:v1
       - SCHEDULES_CONFIG_PATH=/etc/continuo/schedules.yaml
     ports:
       - "8082:8082"   # Health check HTTP

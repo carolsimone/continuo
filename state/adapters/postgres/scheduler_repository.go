@@ -48,6 +48,8 @@ type SchedulerTrackerRepository interface {
 	IncrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (terminal, total int32, err error)
 	DecrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, n int32) error
 	SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error
+	// UpdateStatusTx updates the status column within an existing transaction.
+	UpdateStatusTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
 }
 
 // LastRunData holds the summary of the most recent run for a schedule.
@@ -584,6 +586,25 @@ func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx
 	`, id, total)
 	if err != nil {
 		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// UpdateStatusTx updates the status column for the given schedule within a transaction.
+func (r *schedulerTrackerRepository) UpdateStatusTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE scheduler_tracker SET status = $2 WHERE schedule_id = $1`,
+		id, status,
+	)
+	if err != nil {
+		return fmt.Errorf("update scheduler_tracker status: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {

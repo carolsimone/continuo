@@ -23,6 +23,10 @@ type TaskTrackerRepository interface {
 	List(ctx context.Context, filters TaskFilters) ([]*model.TaskTracker, int, error)
 	// New: tx-accepting variant for atomic HTTP handler
 	UpdateTx(ctx context.Context, tx *sqlx.Tx, task *model.TaskTracker) error
+	// BulkCreateTx inserts multiple task_tracker rows within a transaction (ON CONFLICT DO NOTHING).
+	BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*model.TaskTracker) error
+	// ListAllByScheduleID returns all task rows for a schedule (no pagination, no status filter).
+	ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*model.TaskTracker, error)
 }
 
 // TaskFilters defines query filters for List operation
@@ -307,6 +311,45 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 	)
 
 	return tasks, total, nil
+}
+
+// BulkCreateTx inserts multiple task_tracker rows within a transaction.
+// Uses ON CONFLICT (task_id) DO NOTHING for idempotent bulk inserts.
+func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*model.TaskTracker) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	query := `
+		INSERT INTO task_tracker (
+			task_id, schedule_id, created_at, service_name, schema_name,
+			table_name, job_name, status, retry_count, max_retries
+		) VALUES (
+			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
+			:table_name, :job_name, :status, :retry_count, :max_retries
+		)
+		ON CONFLICT (task_id) DO NOTHING
+	`
+	_, err := tx.NamedExecContext(ctx, query, tasks)
+	if err != nil {
+		return fmt.Errorf("bulk create task_tracker: %w", err)
+	}
+	return nil
+}
+
+// ListAllByScheduleID returns all task_tracker rows for a schedule without pagination.
+func (r *taskTrackerRepository) ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*model.TaskTracker, error) {
+	var tasks []*model.TaskTracker
+	err := r.db.SelectContext(ctx, &tasks, `
+		SELECT task_id, schedule_id, created_at, service_name, schema_name,
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		FROM task_tracker
+		WHERE schedule_id = $1
+		ORDER BY created_at ASC
+	`, scheduleID)
+	if err != nil {
+		return nil, fmt.Errorf("list all tasks by schedule_id: %w", err)
+	}
+	return tasks, nil
 }
 
 // List queries tasks with flexible filters and pagination

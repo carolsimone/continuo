@@ -121,6 +121,34 @@ func main() {
 		}
 	}()
 
+	// Initialize run.entries.dispatched:v1 consumer
+	runEntriesConsumer, err := redis.NewRunEntriesDispatchedConsumer(
+		redisClient,
+		cfg.RedisStreamRunEntriesDispatched,
+		db,
+		schedulerRepo,
+		taskRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create run entries dispatched consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Run entries dispatched consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping run entries dispatched consumer")
+		runEntriesConsumer.Stop()
+		return nil
+	})
+
+	// Start run entries dispatched consumer in background
+	go func() {
+		if err := runEntriesConsumer.Start(ctx); err != nil {
+			logger.Error("Run entries dispatched consumer error", "error", err)
+		}
+	}()
+
 	// Initialize schedule activator and activation service
 	activator := scheduler.NewScheduleActivator(schedulerRepo, logger)
 	activationService := scheduler.NewScheduleActivationService(

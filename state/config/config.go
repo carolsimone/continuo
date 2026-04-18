@@ -10,8 +10,9 @@ type Config struct {
 	Postgres pkgconfig.PostgresConfig
 
 	// Redis streams
-	RedisStreamSchedulerStarted string
-	RedisStreamSchedulesLoaded  string
+	RedisStreamSchedulerStarted    string
+	RedisStreamSchedulesLoaded     string
+	RedisStreamRunEntriesDispatched string
 
 	// gRPC
 	GRPCPort int
@@ -30,8 +31,9 @@ func Load(v *pkgconfig.Validator) Config {
 		Redis:    pkgconfig.LoadRedisFromAddr(v),
 		Postgres: pkgconfig.LoadPostgres(v),
 
-		RedisStreamSchedulerStarted: v.Require("REDIS_STREAM_SCHEDULER_STARTED"),
-		RedisStreamSchedulesLoaded:  v.Require("REDIS_STREAM_SCHEDULES_LOADED"),
+		RedisStreamSchedulerStarted:    v.Require("REDIS_STREAM_SCHEDULER_STARTED"),
+		RedisStreamSchedulesLoaded:     v.Require("REDIS_STREAM_SCHEDULES_LOADED"),
+		RedisStreamRunEntriesDispatched: v.Require("REDIS_STREAM_RUN_ENTRIES_DISPATCHED"),
 
 		GRPCPort:            envInt("GRPC_PORT", 50051),
 		HealthPort:          env("HEALTH_PORT", "8082"),
