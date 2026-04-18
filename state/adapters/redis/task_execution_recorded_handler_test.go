@@ -3,12 +3,12 @@ package redis_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/pkg/events"
 	redisadapter "github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
@@ -69,19 +69,16 @@ func seedSchedulerAndTaskForExecution(t *testing.T, db *sqlx.DB, scheduleID, tas
 	})
 }
 
-func buildTaskExecutionRecordedPayload(t *testing.T, executionID, taskID uuid.UUID, jobName string, execSeconds float64, startedAt, completedAt time.Time) string {
+func buildTaskExecutionRecordedPayload(t *testing.T, executionID, taskID uuid.UUID, jobName string, execSeconds float64, startedAt, completedAt time.Time) map[string]interface{} {
 	t.Helper()
-	evt := events.TaskExecutionRecorded{
-		ExecutionID:      executionID.String(),
-		TaskID:           taskID.String(),
-		JobName:          jobName,
-		StartedAt:        startedAt.Format(time.RFC3339),
-		CompletedAt:      completedAt.Format(time.RFC3339),
-		ExecutionSeconds: execSeconds,
+	return map[string]interface{}{
+		"execution_id":      executionID.String(),
+		"task_id":           taskID.String(),
+		"job_name":          jobName,
+		"started_at":        startedAt.Format(time.RFC3339),
+		"completed_at":      completedAt.Format(time.RFC3339),
+		"execution_seconds": fmt.Sprintf("%f", execSeconds),
 	}
-	b, err := json.Marshal(evt)
-	require.NoError(t, err)
-	return string(b)
 }
 
 func TestTaskExecutionRecordedHandler_InsertsRecord(t *testing.T) {

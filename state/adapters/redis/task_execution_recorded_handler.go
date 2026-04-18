@@ -2,12 +2,11 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
-	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
@@ -35,37 +34,41 @@ func NewTaskExecutionRecordedHandler(
 	}
 }
 
-// Handle processes a raw payload string from a task.execution.recorded:v1 Redis message.
+// Handle processes flat-field values from a task.execution.recorded:v1 Redis stream message.
 // Returns (shouldACK bool, err error).
 // shouldACK=true means ACK regardless of err (permanent/unprocessable message).
 // shouldACK=false + err means transient failure — do NOT ACK.
-func (h *TaskExecutionRecordedHandler) Handle(ctx context.Context, messageID, payloadStr string) (shouldACK bool, err error) {
-	if payloadStr == "" {
-		h.logger.Error("task.execution.recorded: missing payload field — discarding")
+func (h *TaskExecutionRecordedHandler) Handle(ctx context.Context, messageID string, values map[string]interface{}) (shouldACK bool, err error) {
+	executionIDStr, _ := values["execution_id"].(string)
+	taskIDStr, _ := values["task_id"].(string)
+	jobNameStr, _ := values["job_name"].(string)
+	startedAtStr, _ := values["started_at"].(string)
+	completedAtStr, _ := values["completed_at"].(string)
+	execSecondsStr, _ := values["execution_seconds"].(string)
+	errorMessageStr, _ := values["error_message"].(string)
+	logS3KeyStr, _ := values["log_s3_key"].(string)
+
+	if executionIDStr == "" || taskIDStr == "" {
+		h.logger.Error("task.execution.recorded: missing required fields — discarding",
+			"execution_id", executionIDStr, "task_id", taskIDStr)
 		return true, nil
 	}
 
-	var evt events.TaskExecutionRecorded
-	if err := json.Unmarshal([]byte(payloadStr), &evt); err != nil {
-		h.logger.Error("task.execution.recorded: invalid JSON payload — discarding", "error", err)
-		return true, nil
-	}
-
-	executionID, err := uuid.Parse(evt.ExecutionID)
+	executionID, err := uuid.Parse(executionIDStr)
 	if err != nil {
 		h.logger.Error("task.execution.recorded: invalid execution_id UUID — discarding", "error", err)
 		return true, nil
 	}
 
-	taskID, err := uuid.Parse(evt.TaskID)
+	taskID, err := uuid.Parse(taskIDStr)
 	if err != nil {
 		h.logger.Error("task.execution.recorded: invalid task_id UUID — discarding", "error", err)
 		return true, nil
 	}
 
 	var startedAt *time.Time
-	if evt.StartedAt != "" {
-		t, parseErr := time.Parse(time.RFC3339, evt.StartedAt)
+	if startedAtStr != "" {
+		t, parseErr := time.Parse(time.RFC3339, startedAtStr)
 		if parseErr != nil {
 			h.logger.Error("task.execution.recorded: invalid started_at — discarding", "error", parseErr)
 			return true, nil
@@ -74,8 +77,8 @@ func (h *TaskExecutionRecordedHandler) Handle(ctx context.Context, messageID, pa
 	}
 
 	var completedAt *time.Time
-	if evt.CompletedAt != "" {
-		t, parseErr := time.Parse(time.RFC3339, evt.CompletedAt)
+	if completedAtStr != "" {
+		t, parseErr := time.Parse(time.RFC3339, completedAtStr)
 		if parseErr != nil {
 			h.logger.Error("task.execution.recorded: invalid completed_at — discarding", "error", parseErr)
 			return true, nil
@@ -84,27 +87,26 @@ func (h *TaskExecutionRecordedHandler) Handle(ctx context.Context, messageID, pa
 	}
 
 	var execSeconds *float64
-	if evt.ExecutionSeconds > 0 {
-		v := evt.ExecutionSeconds
-		execSeconds = &v
+	if execSecondsStr != "" {
+		v, parseErr := strconv.ParseFloat(execSecondsStr, 64)
+		if parseErr == nil && v > 0 {
+			execSeconds = &v
+		}
 	}
 
 	var jobName *string
-	if evt.JobName != "" {
-		v := evt.JobName
-		jobName = &v
+	if jobNameStr != "" {
+		jobName = &jobNameStr
 	}
 
 	var errMsg *string
-	if evt.ErrorMessage != "" {
-		v := evt.ErrorMessage
-		errMsg = &v
+	if errorMessageStr != "" {
+		errMsg = &errorMessageStr
 	}
 
 	var logS3Key *string
-	if evt.LogS3Key != "" {
-		v := evt.LogS3Key
-		logS3Key = &v
+	if logS3KeyStr != "" {
+		logS3Key = &logS3KeyStr
 	}
 
 	tx, err := h.db.BeginTxx(ctx, nil)

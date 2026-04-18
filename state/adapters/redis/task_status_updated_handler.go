@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,36 +45,44 @@ func NewTaskStatusUpdatedHandler(
 	}
 }
 
-// Handle processes a raw payload string from a task.status.updated:v1 Redis message.
+// Handle processes flat-field values from a task.status.updated:v1 Redis stream message.
 // Returns (shouldACK bool, err error).
 // shouldACK=true means ACK regardless of err (permanent/unprocessable message).
 // shouldACK=false + err means transient failure — do NOT ACK.
-func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID, payloadStr string) (shouldACK bool, err error) {
-	if payloadStr == "" {
-		h.logger.Error("task.status.updated: missing payload field — discarding")
+func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID string, values map[string]interface{}) (shouldACK bool, err error) {
+	taskIDStr, _ := values["task_id"].(string)
+	scheduleIDStr, _ := values["schedule_id"].(string)
+	statusStr, _ := values["status"].(string)
+	retryCountStr, _ := values["retry_count"].(string)
+
+	if taskIDStr == "" || scheduleIDStr == "" || statusStr == "" {
+		h.logger.Error("task.status.updated: missing required fields — discarding",
+			"task_id", taskIDStr, "schedule_id", scheduleIDStr, "status", statusStr)
 		return true, nil
 	}
 
-	var evt events.TaskStatusUpdated
-	if err := json.Unmarshal([]byte(payloadStr), &evt); err != nil {
-		h.logger.Error("task.status.updated: invalid JSON payload — discarding", "error", err)
-		return true, nil
-	}
-
-	taskID, err := uuid.Parse(evt.TaskID)
+	taskID, err := uuid.Parse(taskIDStr)
 	if err != nil {
 		h.logger.Error("task.status.updated: invalid task_id UUID — discarding", "error", err)
 		return true, nil
 	}
 
-	scheduleID, err := uuid.Parse(evt.ScheduleID)
+	scheduleID, err := uuid.Parse(scheduleIDStr)
 	if err != nil {
 		h.logger.Error("task.status.updated: invalid schedule_id UUID — discarding", "error", err)
 		return true, nil
 	}
 
+	var retryCount int32
+	if retryCountStr != "" {
+		n, parseErr := strconv.ParseInt(retryCountStr, 10, 32)
+		if parseErr == nil {
+			retryCount = int32(n)
+		}
+	}
+
 	// Normalize status to lowercase to match TaskStatus constants ("succeeded", "failed", "running").
-	normalizedStatus := strings.ToLower(evt.Status)
+	normalizedStatus := strings.ToLower(statusStr)
 
 	tx, err := h.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -107,7 +116,7 @@ func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID, payloa
 	}
 
 	// Update the task status only when something actually changed.
-	affected, txErr := h.taskRepo.UpdateStatusIfChangedTx(ctx, tx, taskID, normalizedStatus, evt.RetryCount)
+	affected, txErr := h.taskRepo.UpdateStatusIfChangedTx(ctx, tx, taskID, normalizedStatus, retryCount)
 	if txErr != nil {
 		return false, fmt.Errorf("update task status: %w", txErr)
 	}

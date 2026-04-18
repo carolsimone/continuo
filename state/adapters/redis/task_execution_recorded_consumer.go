@@ -131,8 +131,7 @@ func (c *TaskExecutionRecordedConsumer) readAndProcess(ctx context.Context) erro
 
 // processMessage delegates to handler and ACKs only when handler says so.
 func (c *TaskExecutionRecordedConsumer) processMessage(ctx context.Context, msg goredis.XMessage) error {
-	payloadStr, _ := msg.Values["payload"].(string)
-	shouldACK, err := c.handler.Handle(ctx, msg.ID, payloadStr)
+	shouldACK, err := c.handler.Handle(ctx, msg.ID, msg.Values)
 	if err != nil {
 		// Transient error — do NOT ACK; message stays pending for retry
 		return fmt.Errorf("handle message %s: %w", msg.ID, err)

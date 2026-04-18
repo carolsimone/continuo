@@ -102,7 +102,6 @@ func (r *outboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*d
 		       retry_count, max_retries, error_message
 		FROM outbox
 		WHERE status = $1
-		  AND retry_count < max_retries
 		ORDER BY created_at ASC
 		LIMIT $2
 		FOR UPDATE SKIP LOCKED

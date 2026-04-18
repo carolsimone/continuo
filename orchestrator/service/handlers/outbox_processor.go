@@ -203,8 +203,9 @@ func (p *OutboxProcessor) payloadToValues(entry *domain.OutboxEntry) (map[string
 			"node_type":       evt.NodeType,
 		}, nil
 
-	case "topology_ingested", "run_initialized", "rerun_ready":
-		// These event types use a generic payload field
+	case "topology_ingested", "run_initialized", "rerun_ready",
+		"run_entries_dispatched", "run_rerun_dispatched":
+		// These event types use a generic payload field consumed by state
 		return map[string]interface{}{
 			"outbox_entry_id": entry.ID.String(),
 			"payload":         string(entry.Payload),

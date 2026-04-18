@@ -3,12 +3,12 @@ package redis_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/pkg/events"
 	redisadapter "github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
@@ -73,18 +73,15 @@ func seedTaskForStatus(t *testing.T, db *sqlx.DB, taskID, scheduleID uuid.UUID, 
 	require.NoError(t, err)
 }
 
-// buildTaskStatusPayload builds a JSON payload for a task.status.updated:v1 event.
-func buildTaskStatusPayload(t *testing.T, taskID, scheduleID uuid.UUID, status string, retryCount int32) string {
+// buildTaskStatusPayload builds a flat-field map for a task.status.updated:v1 event (Redis format).
+func buildTaskStatusPayload(t *testing.T, taskID, scheduleID uuid.UUID, status string, retryCount int32) map[string]interface{} {
 	t.Helper()
-	evt := events.TaskStatusUpdated{
-		TaskID:     taskID.String(),
-		ScheduleID: scheduleID.String(),
-		Status:     status,
-		RetryCount: retryCount,
+	return map[string]interface{}{
+		"task_id":     taskID.String(),
+		"schedule_id": scheduleID.String(),
+		"status":      status,
+		"retry_count": fmt.Sprintf("%d", retryCount),
 	}
-	b, err := json.Marshal(evt)
-	require.NoError(t, err)
-	return string(b)
 }
 
 // getOutboxCountForSchedule returns the number of state_outbox rows for the given aggregate_id and event_type.

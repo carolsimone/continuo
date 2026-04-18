@@ -1,5 +1,10 @@
 FROM continuo-base:latest
 
+# Install kubectl for e2e test port-forwarding
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/${ARCH}/kubectl" && \
+    chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
+
 WORKDIR /app
 
 # Layer 1: Workspace (rarely changes)
