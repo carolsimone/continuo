@@ -184,6 +184,14 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	_, err = db.ExecContext(ctx, migrationV5)
 	require.NoError(t, err, "Failed to run migration V5")
 
+	// Run migration V6: add task_max_retries to k8s_status_outbox
+	migrationV6 := `
+		ALTER TABLE k8s_status_outbox
+		    ADD COLUMN task_max_retries INT;
+	`
+	_, err = db.ExecContext(ctx, migrationV6)
+	require.NoError(t, err, "Failed to run migration V6")
+
 	// Cleanup function
 	cleanup := func() {
 		db.Close()
