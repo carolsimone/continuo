@@ -87,6 +87,12 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 		return fmt.Errorf("failed to get failed downstream task IDs for %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}
 
+	// Reset cascade-failed downstream EXECUTES edges back to PENDING so that
+	// when the target node succeeds, GetReadyDownstream can dispatch them.
+	if err := h.runRepo.ResetFailedDownstreamToPending(ctx, cmd.RunID, cmd.SchemaName, cmd.TableName); err != nil {
+		return fmt.Errorf("failed to reset cascade-failed downstream nodes for %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
+	}
+
 	tasksToReset := append([]string{targetTaskID}, downstreamTaskIDs...)
 
 	// ── Outbox entry 1: run.rerun.dispatched:v1 ──────────────────────────────

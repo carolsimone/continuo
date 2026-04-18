@@ -20,6 +20,7 @@ type Repository interface {
 	GetTaskIDForNode(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error)
 	GetFailedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error)
 	MarkPendingDownstreamFailed(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*CascadedFailureNode, error)
+	ResetFailedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error
 
 	// Read-side: queries (CQRS — called directly, not through aggregate)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)

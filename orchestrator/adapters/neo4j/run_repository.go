@@ -683,6 +683,47 @@ func (r *RunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, 
 	return nodes, nil
 }
 
+// ResetFailedDownstreamToPending resets all transitively downstream nodes that were
+// cascade-failed back to PENDING so they can be dispatched after a successful rerun.
+func (r *RunRepository) ResetFailedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(target:Table)
+		WHERE target.schema_name = $schema_name AND target.table_name = $table_name
+		MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
+		MATCH (:Run {run_id: $run_id})-[de:EXECUTES]->(downstream)
+		WHERE de.status = 'FAILED'
+		SET de.status = 'PENDING'
+		RETURN count(de) AS reset_count
+	`, map[string]interface{}{
+		"run_id":      runID,
+		"schema_name": schemaName,
+		"table_name":  tableName,
+	})
+	if err != nil {
+		return fmt.Errorf("ResetFailedDownstreamToPending query failed: %w", err)
+	}
+
+	var resetCount int64
+	if result.Next(ctx) {
+		if v, _ := result.Record().Get("reset_count"); v != nil {
+			resetCount, _ = v.(int64)
+		}
+	}
+	if err := result.Err(); err != nil {
+		return fmt.Errorf("ResetFailedDownstreamToPending result error: %w", err)
+	}
+
+	r.logger.Info("Reset cascade-failed downstream nodes to PENDING",
+		"run_id", runID,
+		"table_name", tableName,
+		"reset_count", resetCount,
+	)
+	return nil
+}
+
 // DeleteExpiredRuns removes Run nodes (and their EXECUTES edges) older than retentionDays.
 func (r *RunRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
