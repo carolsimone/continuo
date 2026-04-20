@@ -1,4 +1,4 @@
-package redis_test
+package handlers_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	redisadapter "github.com/carolsimone/continuo/state/adapters/redis"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -58,7 +58,7 @@ func getScheduleCatalogHandlerTestDB(t *testing.T) *sqlx.DB {
 func TestScheduleCatalogHandler_Handle_PassesManifestVersionsToRepository(t *testing.T) {
 	db := getScheduleCatalogHandlerTestDB(t)
 	repo := &fakeCatalogRepo{}
-	handler := redisadapter.NewScheduleCatalogHandler(
+	handler := statehandlers.NewScheduleCatalogHandler(
 		repo,
 		db,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),

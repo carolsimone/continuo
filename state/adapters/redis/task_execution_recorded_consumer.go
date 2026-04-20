@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -20,7 +21,7 @@ type TaskExecutionRecordedConsumer struct {
 	streamName    string
 	consumerGroup string
 	consumerName  string
-	handler       *TaskExecutionRecordedHandler
+	handler       *statehandlers.TaskExecutionRecordedHandler
 	logger        *slog.Logger
 	stopCh        chan struct{}
 }
@@ -33,7 +34,7 @@ func NewTaskExecutionRecordedConsumer(
 	execRepo postgres.TaskExecutionRepository,
 	logger *slog.Logger,
 ) (*TaskExecutionRecordedConsumer, error) {
-	handler := NewTaskExecutionRecordedHandler(db, execRepo, logger)
+	handler := statehandlers.NewTaskExecutionRecordedHandler(db, execRepo, logger)
 	c := &TaskExecutionRecordedConsumer{
 		client:        client,
 		streamName:    streamName,

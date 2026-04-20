@@ -1,4 +1,4 @@
-package redis_test
+package handlers_test
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	redisadapter "github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
@@ -96,11 +96,11 @@ func getOutboxCountForSchedule(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, 
 	return count
 }
 
-func newTaskStatusHandler(db *sqlx.DB, logger *slog.Logger) *redisadapter.TaskStatusUpdatedHandler {
+func newTaskStatusHandler(db *sqlx.DB, logger *slog.Logger) *statehandlers.TaskStatusUpdatedHandler {
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	return redisadapter.NewTaskStatusUpdatedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	return statehandlers.NewTaskStatusUpdatedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
 }
 
 // TestTaskStatusUpdatedHandler_TerminalCountAndFinalization verifies that processing two

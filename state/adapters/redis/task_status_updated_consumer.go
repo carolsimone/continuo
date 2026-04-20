@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -20,7 +21,7 @@ type TaskStatusUpdatedConsumer struct {
 	streamName    string
 	consumerGroup string
 	consumerName  string
-	handler       *TaskStatusUpdatedHandler
+	handler       *statehandlers.TaskStatusUpdatedHandler
 	logger        *slog.Logger
 	stopCh        chan struct{}
 }
@@ -35,7 +36,7 @@ func NewTaskStatusUpdatedConsumer(
 	outboxRepo postgres.OutboxRepository,
 	logger *slog.Logger,
 ) (*TaskStatusUpdatedConsumer, error) {
-	handler := NewTaskStatusUpdatedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	handler := statehandlers.NewTaskStatusUpdatedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
 	c := &TaskStatusUpdatedConsumer{
 		client:        client,
 		streamName:    streamName,

@@ -1,4 +1,4 @@
-package redis_test
+package handlers_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	stateRedis "github.com/carolsimone/continuo/state/adapters/redis"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -63,7 +63,7 @@ func TestOutboxProcessor_PublishesAndMarksPublished(t *testing.T) {
 	repo := &fakeOutboxRepo{entries: []*postgres.OutboxEntry{entry}}
 
 	published := false
-	processor := stateRedis.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, stream string, _ map[string]interface{}) error {
+	processor := statehandlers.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, stream string, _ map[string]interface{}) error {
 		assert.Equal(t, "rerun:v1", stream)
 		published = true
 		return nil
@@ -82,7 +82,7 @@ func TestOutboxProcessor_IncrementsRetryOnRedisFailure(t *testing.T) {
 	entry := pendingEntry()
 	repo := &fakeOutboxRepo{entries: []*postgres.OutboxEntry{entry}}
 
-	processor := stateRedis.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, _ string, _ map[string]interface{}) error {
+	processor := statehandlers.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, _ string, _ map[string]interface{}) error {
 		return errors.New("redis unavailable")
 	}, discardLogger())
 
@@ -106,7 +106,7 @@ func TestOutboxProcessor_UsesStreamNameFromEntry(t *testing.T) {
 	repo := &fakeOutboxRepo{entries: []*postgres.OutboxEntry{entry}}
 
 	var publishedStream string
-	processor := stateRedis.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, stream string, _ map[string]interface{}) error {
+	processor := statehandlers.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, stream string, _ map[string]interface{}) error {
 		publishedStream = stream
 		return nil
 	}, discardLogger())
@@ -131,7 +131,7 @@ func TestOutboxProcessor_StringifiesNestedManifestVersionsForRedis(t *testing.T)
 	repo := &fakeOutboxRepo{entries: []*postgres.OutboxEntry{entry}}
 
 	var publishedFields map[string]interface{}
-	processor := stateRedis.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, _ string, fields map[string]interface{}) error {
+	processor := statehandlers.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, _ string, fields map[string]interface{}) error {
 		publishedFields = fields
 		return nil
 	}, discardLogger())
@@ -160,7 +160,7 @@ func TestOutboxProcessor_PublishesRunFinalized(t *testing.T) {
 		publishedStream string
 		publishedFields map[string]interface{}
 	)
-	processor := stateRedis.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, stream string, fields map[string]interface{}) error {
+	processor := statehandlers.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, stream string, fields map[string]interface{}) error {
 		publishedStream = stream
 		publishedFields = fields
 		return nil

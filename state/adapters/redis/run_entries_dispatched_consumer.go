@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -20,7 +21,7 @@ type RunEntriesDispatchedConsumer struct {
 	streamName    string
 	consumerGroup string
 	consumerName  string
-	handler       *RunEntriesDispatchedHandler
+	handler       *statehandlers.RunEntriesDispatchedHandler
 	logger        *slog.Logger
 	stopCh        chan struct{}
 }
@@ -34,7 +35,7 @@ func NewRunEntriesDispatchedConsumer(
 	taskRepo postgres.TaskTrackerRepository,
 	logger *slog.Logger,
 ) (*RunEntriesDispatchedConsumer, error) {
-	handler := NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+	handler := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
 	c := &RunEntriesDispatchedConsumer{
 		client:        client,
 		streamName:    streamName,

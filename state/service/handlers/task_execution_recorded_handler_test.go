@@ -1,4 +1,4 @@
-package redis_test
+package handlers_test
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	redisadapter "github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
@@ -92,7 +92,7 @@ func TestTaskExecutionRecordedHandler_InsertsRecord(t *testing.T) {
 	seedSchedulerAndTaskForExecution(t, db, scheduleID, taskID)
 
 	execRepo := postgres.NewTaskExecutionRepository(db, logger)
-	handler := redisadapter.NewTaskExecutionRecordedHandler(db, execRepo, logger)
+	handler := statehandlers.NewTaskExecutionRecordedHandler(db, execRepo, logger)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	startedAt := now.Add(-10 * time.Second)
@@ -128,7 +128,7 @@ func TestTaskExecutionRecordedHandler_Idempotent(t *testing.T) {
 	seedSchedulerAndTaskForExecution(t, db, scheduleID, taskID)
 
 	execRepo := postgres.NewTaskExecutionRepository(db, logger)
-	handler := redisadapter.NewTaskExecutionRecordedHandler(db, execRepo, logger)
+	handler := statehandlers.NewTaskExecutionRecordedHandler(db, execRepo, logger)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	payload := buildTaskExecutionRecordedPayload(t, executionID, taskID, "test-job", 5.0, now.Add(-5*time.Second), now)

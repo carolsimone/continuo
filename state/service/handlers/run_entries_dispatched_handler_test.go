@@ -1,4 +1,4 @@
-package redis_test
+package handlers_test
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/events"
-	redisadapter "github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
@@ -79,7 +79,7 @@ func TestRunEntriesDispatchedHandler_BulkCreatesTasksAndTransitionsInitStatus(t 
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 
-	handler := redisadapter.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+	handler := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
 
 	tasks := []events.DispatchedTask{
 		{TaskID: uuid.New().String(), ServiceName: "svc-a", SchemaName: "public", TableName: "orders", NodeType: "model", MaxRetries: 3},
@@ -118,7 +118,7 @@ func TestRunEntriesDispatchedHandler_Idempotent(t *testing.T) {
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 
-	handler := redisadapter.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+	handler := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
 
 	taskID := uuid.New().String()
 	tasks := []events.DispatchedTask{

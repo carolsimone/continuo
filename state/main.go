@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -87,7 +88,7 @@ func main() {
 	})
 
 	// Start outbox processor
-	outboxProcessor := redis.NewOutboxProcessor(outboxRepo, redisClient, logger)
+	outboxProcessor := svchandlers.NewOutboxProcessor(outboxRepo, redisClient, logger)
 	go func() {
 		if err := outboxProcessor.Run(ctx); err != nil {
 			logger.Error("Outbox processor error", "error", err)

@@ -1,4 +1,4 @@
-package redis_test
+package handlers_test
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/events"
-	redisadapter "github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
@@ -137,7 +137,7 @@ func TestRunRerunDispatchedHandler_ResetsTasksAndRevivesRun(t *testing.T) {
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 
-	handler := redisadapter.NewRunRerunDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+	handler := statehandlers.NewRunRerunDispatchedHandler(db, schedulerRepo, taskRepo, logger)
 
 	payload := buildRerunPayload(t, scheduleID, []string{tC.String(), tB.String()}, tC.String())
 	messageID := scheduleID.String() + "-test-rerun"
@@ -171,7 +171,7 @@ func TestRunRerunDispatchedHandler_Idempotent(t *testing.T) {
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 
-	handler := redisadapter.NewRunRerunDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+	handler := statehandlers.NewRunRerunDispatchedHandler(db, schedulerRepo, taskRepo, logger)
 
 	payload := buildRerunPayload(t, scheduleID, []string{tA.String()}, tA.String())
 	messageID := scheduleID.String() + "-test-rerun-idem"
