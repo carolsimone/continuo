@@ -269,9 +269,11 @@ func TestTaskStatusUpdatedHandler_RetryRevivesRun(t *testing.T) {
 	handler := newTaskStatusHandler(db, logger)
 
 	// 1. FAILED (retry_count=0, max_retries=3) — retryable, must NOT finalize
-	_, err := handler.Handle(context.Background(), "msg-retry-1-fail",
+	shouldACK, err := handler.Handle(context.Background(), "msg-retry-1-fail",
 		buildTaskStatusPayload(t, tA, scheduleID, "FAILED", 0))
 	require.NoError(t, err)
+	assert.True(t, shouldACK)
+	assert.Equal(t, 0, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
 	assert.Equal(t, int32(1), getTerminalTaskCount(t, db, scheduleID))
 	assert.Equal(t, model.SchedulerStatusRunning, getSchedulerStatus(t, db, scheduleID))
 
@@ -283,9 +285,10 @@ func TestTaskStatusUpdatedHandler_RetryRevivesRun(t *testing.T) {
 	assert.Equal(t, model.SchedulerStatusRunning, getSchedulerStatus(t, db, scheduleID))
 
 	// 3. SUCCEEDED on retry — should finalize as succeeded
-	_, err = handler.Handle(context.Background(), "msg-retry-1-succeeded",
+	shouldACK, err = handler.Handle(context.Background(), "msg-retry-1-succeeded",
 		buildTaskStatusPayload(t, tA, scheduleID, "SUCCEEDED", 1))
 	require.NoError(t, err)
+	assert.True(t, shouldACK)
 	assert.Equal(t, int32(1), getTerminalTaskCount(t, db, scheduleID))
 	assert.Equal(t, model.SchedulerStatusSucceeded, getSchedulerStatus(t, db, scheduleID))
 	assert.Equal(t, 1, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))

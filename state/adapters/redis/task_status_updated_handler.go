@@ -192,6 +192,7 @@ func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID string,
 	// Decide whether to finalize the run.
 	initCompleted := scheduler.InitializationStatus == "completed"
 	var anyFailed bool
+	// anyFailed stays false when skipFinalize=true; finalization.Decide is skipped in that case.
 	var skipFinalize bool
 	if terminal == total {
 		// If any failed task still has retries left, the RUNNING retry event will
