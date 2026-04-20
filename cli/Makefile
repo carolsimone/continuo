@@ -1,5 +1,10 @@
 .PHONY: build test test-unit test-integration install fmt vet clean
 
+# cli is deliberately outside the parent go.work so service Docker builds
+# don't need to COPY cli/ into their contexts. GOWORK=off keeps these
+# targets working from inside cli/ regardless of the parent workspace.
+export GOWORK=off
+
 # Build the static binary.
 build:
 	CGO_ENABLED=0 go build -o bin/continuo ./cmd/continuo
