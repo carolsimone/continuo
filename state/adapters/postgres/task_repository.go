@@ -37,6 +37,9 @@ type TaskTrackerRepository interface {
 	ExistsTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (bool, error)
 	// HasFailedTaskTx reports whether any task for the given schedule has status = 'failed'.
 	HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
+	// HasRetryableFailedTaskTx reports whether any task for the given schedule has
+	// status = 'failed' AND retry_count < max_retries (i.e. k8s will retry it).
+	HasRetryableFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
 }
 
 // TaskFilters defines query filters for List operation
@@ -407,6 +410,26 @@ func (r *taskTrackerRepository) HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("has failed task check for schedule_id %s: %w", scheduleID, err)
+	}
+	return exists, nil
+}
+
+// HasRetryableFailedTaskTx reports whether any task_tracker row for the given schedule
+// has status = 'failed' AND retry_count < max_retries (a retry is still pending).
+func (r *taskTrackerRepository) HasRetryableFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error) {
+	var exists bool
+	err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM task_tracker
+			WHERE schedule_id = $1
+			  AND status = 'failed'
+			  AND retry_count < max_retries
+			LIMIT 1
+		)`,
+		scheduleID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("has retryable failed task check for schedule_id %s: %w", scheduleID, err)
 	}
 	return exists, nil
 }
