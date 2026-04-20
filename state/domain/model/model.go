@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
@@ -38,13 +39,14 @@ const (
 	TaskStatusSucceeded TaskStatus = "succeeded"
 	TaskStatusFailed    TaskStatus = "failed"
 	TaskStatusCancelled TaskStatus = "cancelled"
+	TaskStatusSkipped   TaskStatus = "skipped"
 )
 
 // IsValid checks if the TaskStatus is valid
 func (t TaskStatus) IsValid() bool {
 	switch t {
 	case TaskStatusPending, TaskStatusRunning, TaskStatusSucceeded,
-		TaskStatusFailed, TaskStatusCancelled:
+		TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped:
 		return true
 	}
 	return false
@@ -134,6 +136,8 @@ type SchedulerTracker struct {
 	CancelledBy          *string           `json:"cancelled_by,omitempty" db:"cancelled_by"`
 	CancellationReason   *string           `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
 	InitializationStatus string            `json:"initialization_status" db:"initialization_status"`
+	TotalTaskCount       sql.NullInt32     `json:"total_task_count,omitempty" db:"total_task_count"`
+	TerminalTaskCount    int32             `json:"terminal_task_count" db:"terminal_task_count"`
 	ManifestVersions     map[string]string `json:"manifest_versions"`
 	ManifestVersionsRaw  json.RawMessage   `json:"-" db:"manifest_versions"`
 }

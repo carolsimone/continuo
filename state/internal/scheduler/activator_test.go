@@ -57,6 +57,24 @@ func (r *stubRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _
 func (r *stubRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *model.SchedulerTracker) error {
 	return nil
 }
+func (r *stubRepo) IncrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (int32, int32, error) {
+	return 0, 0, nil
+}
+func (r *stubRepo) DecrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
+func (r *stubRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
+func (r *stubRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (r *stubRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
+	return nil, nil
+}
+func (r *stubRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
 
 func TestPrepareActivation_ReturnsTracker_WhenNoActiveSchedule(t *testing.T) {
 	a := scheduler.NewScheduleActivator(&stubRepo{hasActive: false}, testLogger())

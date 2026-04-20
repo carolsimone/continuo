@@ -15,6 +15,7 @@ import (
 // TaskExecutionRepository defines all operations for task_execution table
 type TaskExecutionRepository interface {
 	Create(ctx context.Context, execution *model.TaskExecution) error
+	CreateTx(ctx context.Context, tx *sqlx.Tx, execution *model.TaskExecution) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.TaskExecution, error)
 	ListByScheduleID(ctx context.Context, scheduleID string, pageSize, pageOffset int) ([]*model.TaskExecution, int, error)
 }
@@ -77,6 +78,38 @@ func (r *taskExecutionRepository) Create(ctx context.Context, execution *model.T
 		"task_id", execution.TaskID,
 	)
 
+	return nil
+}
+
+// CreateTx inserts a new task_execution record within an existing transaction.
+// Uses ON CONFLICT (id) DO NOTHING for idempotency.
+func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, execution *model.TaskExecution) error {
+	_, err := tx.NamedExecContext(ctx, `
+		INSERT INTO task_execution (
+			id, task_id, created_at, started_at, completed_at,
+			execution_time_seconds, executor_id, k8s_job_name,
+			error_message, cancelled_at, cancelled_by, cancellation_reason,
+			log_s3_key
+		) VALUES (
+			:id, :task_id, :created_at, :started_at, :completed_at,
+			:execution_time_seconds, :executor_id, :k8s_job_name,
+			:error_message, :cancelled_at, :cancelled_by, :cancellation_reason,
+			:log_s3_key
+		)
+		ON CONFLICT (id) DO NOTHING
+	`, execution)
+	if err != nil {
+		r.logger.Error("Failed to create task_execution in tx",
+			"id", execution.ID,
+			"task_id", execution.TaskID,
+			"error", err,
+		)
+		return fmt.Errorf("failed to create task_execution in tx: %w", err)
+	}
+	r.logger.Info("Created task_execution in tx",
+		"id", execution.ID,
+		"task_id", execution.TaskID,
+	)
 	return nil
 }
 

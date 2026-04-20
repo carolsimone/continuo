@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -19,7 +20,7 @@ type ScheduleCatalogConsumer struct {
 	streamName    string
 	consumerGroup string
 	consumerName  string
-	handler       *ScheduleCatalogHandler
+	handler       *statehandlers.ScheduleCatalogHandler
 	logger        *slog.Logger
 	stopCh        chan struct{}
 }
@@ -32,7 +33,7 @@ func NewScheduleCatalogConsumer(
 	db *sqlx.DB,
 	logger *slog.Logger,
 ) (*ScheduleCatalogConsumer, error) {
-	handler := NewScheduleCatalogHandler(catalogRepo, db, logger)
+	handler := statehandlers.NewScheduleCatalogHandler(catalogRepo, db, logger)
 	c := &ScheduleCatalogConsumer{
 		client:        client,
 		streamName:    streamName,

@@ -17,6 +17,8 @@ type JobCheckRequest struct {
 	JobName       string `json:"job_name"`
 	CheckAfter    int64  `json:"check_after"` // Unix timestamp for delayed processing
 	NodeType      string `json:"node_type"`
+	RetryCount    int    `json:"retry_count"`  // current task retry count
+	MaxRetries    int    `json:"max_retries"`  // maximum task retries allowed
 }
 
 func (JobCheckRequest) isEvent() {}
@@ -34,6 +36,8 @@ func (e JobCheckRequest) ToMap() map[string]interface{} {
 		"job_name":        e.JobName,
 		"check_after":     e.CheckAfter,
 		"node_type":       e.NodeType,
+		"retry_count":     e.RetryCount,
+		"max_retries":     e.MaxRetries,
 	}
 }
 
@@ -77,23 +81,26 @@ type TaskRetry struct {
 	TableName    string `json:"table_name"`
 	JobName      string `json:"job_name"`
 	RetryCount   int    `json:"retry_count"`
+	MaxRetries   int    `json:"max_retries"`
 	NodeType     string `json:"node_type"`
 }
 
 func (TaskRetry) isEvent() {}
 
-// ToMap converts TaskRetry event to a map for Redis publishing
+// ToMap converts TaskRetry event to a map for Redis publishing.
+// Uses task_retry_count (not retry_count) to match executor-controller's consumer key.
 func (e TaskRetry) ToMap() map[string]interface{} {
 	return map[string]interface{}{
-		"task_id":       e.TaskID,
-		"schedule_id":   e.ScheduleID,
-		"schedule_name": e.ScheduleName,
-		"service_name":  e.ServiceName,
-		"schema_name":   e.SchemaName,
-		"table_name":    e.TableName,
-		"job_name":      e.JobName,
-		"retry_count":   e.RetryCount,
-		"node_type":     e.NodeType,
+		"task_id":          e.TaskID,
+		"schedule_id":      e.ScheduleID,
+		"schedule_name":    e.ScheduleName,
+		"service_name":     e.ServiceName,
+		"schema_name":      e.SchemaName,
+		"table_name":       e.TableName,
+		"job_name":         e.JobName,
+		"task_retry_count": e.RetryCount,
+		"max_retries":      e.MaxRetries,
+		"node_type":        e.NodeType,
 	}
 }
 

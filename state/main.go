@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -87,7 +88,7 @@ func main() {
 	})
 
 	// Start outbox processor
-	outboxProcessor := redis.NewOutboxProcessor(outboxRepo, redisClient, logger)
+	outboxProcessor := svchandlers.NewOutboxProcessor(outboxRepo, redisClient, logger)
 	go func() {
 		if err := outboxProcessor.Run(ctx); err != nil {
 			logger.Error("Outbox processor error", "error", err)
@@ -118,6 +119,118 @@ func main() {
 	go func() {
 		if err := catalogConsumer.Start(ctx); err != nil {
 			logger.Error("Schedule catalog consumer error", "error", err)
+		}
+	}()
+
+	// Initialize run.entries.dispatched:v1 consumer
+	runEntriesConsumer, err := redis.NewRunEntriesDispatchedConsumer(
+		redisClient,
+		cfg.RedisStreamRunEntriesDispatched,
+		db,
+		schedulerRepo,
+		taskRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create run entries dispatched consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Run entries dispatched consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping run entries dispatched consumer")
+		runEntriesConsumer.Stop()
+		return nil
+	})
+
+	// Start run entries dispatched consumer in background
+	go func() {
+		if err := runEntriesConsumer.Start(ctx); err != nil {
+			logger.Error("Run entries dispatched consumer error", "error", err)
+		}
+	}()
+
+	// Initialize run.rerun.dispatched:v1 consumer
+	runRerunConsumer, err := redis.NewRunRerunDispatchedConsumer(
+		redisClient,
+		cfg.RedisStreamRunRerunDispatched,
+		db,
+		schedulerRepo,
+		taskRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create run rerun dispatched consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Run rerun dispatched consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping run rerun dispatched consumer")
+		runRerunConsumer.Stop()
+		return nil
+	})
+
+	// Start run rerun dispatched consumer in background
+	go func() {
+		if err := runRerunConsumer.Start(ctx); err != nil {
+			logger.Error("Run rerun dispatched consumer error", "error", err)
+		}
+	}()
+
+	// Initialize task.status.updated:v1 consumer
+	taskStatusConsumer, err := redis.NewTaskStatusUpdatedConsumer(
+		redisClient,
+		cfg.RedisStreamTaskStatusUpdated,
+		db,
+		schedulerRepo,
+		taskRepo,
+		outboxRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create task status updated consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Task status updated consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping task status updated consumer")
+		taskStatusConsumer.Stop()
+		return nil
+	})
+
+	// Start task status updated consumer in background
+	go func() {
+		if err := taskStatusConsumer.Start(ctx); err != nil {
+			logger.Error("Task status updated consumer error", "error", err)
+		}
+	}()
+
+	// Initialize task.execution.recorded:v1 consumer
+	taskExecutionRecordedConsumer, err := redis.NewTaskExecutionRecordedConsumer(
+		redisClient,
+		cfg.RedisStreamTaskExecutionRecorded,
+		db,
+		taskExecutionRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create task execution recorded consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Task execution recorded consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping task execution recorded consumer")
+		taskExecutionRecordedConsumer.Stop()
+		return nil
+	})
+
+	// Start task execution recorded consumer in background
+	go func() {
+		if err := taskExecutionRecordedConsumer.Start(ctx); err != nil {
+			logger.Error("Task execution recorded consumer error", "error", err)
 		}
 	}()
 

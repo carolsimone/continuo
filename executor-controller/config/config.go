@@ -14,9 +14,7 @@ type Config struct {
 	RedisConsumerRetryStream string
 	RedisConsumerGroup       string
 	RedisProducerStream      string
-
-	// gRPC clients
-	StateGRPCAddr string
+	RedisStatusStream        string // task.status.updated:v1
 
 	// HTTP
 	HTTPPort int
@@ -36,8 +34,7 @@ func Load(v *pkgconfig.Validator) Config {
 		RedisConsumerRetryStream: v.Require("REDIS_CONSUMER_RETRY_STREAM"),
 		RedisConsumerGroup:       v.Require("REDIS_CONSUMER_GROUP"),
 		RedisProducerStream:      v.Require("REDIS_PRODUCER_STREAM"),
-
-		StateGRPCAddr: v.Require("STATE_SERVICE_GRPC_ADDR"),
+		RedisStatusStream:        v.Require("REDIS_STATUS_STREAM"),
 
 		HTTPPort:     envInt("HTTP_PORT", 8084),
 		K8sNamespace: v.Require("K8S_NAMESPACE"),

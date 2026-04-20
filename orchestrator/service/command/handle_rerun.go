@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
@@ -34,6 +38,13 @@ func NewHandleRerunHandler(
 }
 
 // Handle processes the HandleRerun command.
+//
+// It emits two outbox entries:
+//  1. run.rerun.dispatched:v1 — consumed by state to reset task counters
+//  2. query.model:v1          — triggers execution of the entry (target) node
+//
+// State gRPC is NOT called; task resets are handled by the state service
+// when it consumes run.rerun.dispatched:v1.
 func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRerunCmd, messageID string) error {
 	h.logger.Info("Processing rerun",
 		"message_id", messageID,
@@ -64,63 +75,109 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 		return nil
 	}
 
-	// Get transitive downstream nodes from the rerun target.
-	downstream, err := h.runRepo.GetTransitiveDownstream(ctx, cmd.ScheduleName, cmd.SchemaName, cmd.TableName)
+	// ── Resolve target task ID from Neo4j ────────────────────────────────────
+	targetTaskID, err := h.runRepo.GetTaskIDForNode(ctx, cmd.RunID, cmd.ServiceName, cmd.SchemaName, cmd.TableName)
 	if err != nil {
-		return fmt.Errorf("failed to get transitive downstream: %w", err)
+		return fmt.Errorf("failed to get task_id for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}
 
-	// Reset the rerun target node to PENDING.
-	if err := h.runRepo.UpdateNodeStatus(ctx, cmd.RunID, cmd.ScheduleName, cmd.SchemaName, cmd.TableName, "PENDING"); err != nil {
-		return fmt.Errorf("failed to reset rerun target node status: %w", err)
+	// ── Resolve skipped downstream task IDs ──────────────────────────────────
+	downstreamTaskIDs, err := h.runRepo.GetSkippedDownstreamTaskIDs(ctx, cmd.RunID, cmd.SchemaName, cmd.TableName)
+	if err != nil {
+		return fmt.Errorf("failed to get skipped downstream task IDs for %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}
 
-	// Reset any FAILED downstream nodes to PENDING.
-	for _, node := range downstream {
-		if node.Status == string(domain.NodeStatusFailed) {
-			if err := h.runRepo.UpdateNodeStatus(ctx, cmd.RunID, cmd.ScheduleName, node.SchemaName, node.TableName, "PENDING"); err != nil {
-				return fmt.Errorf("failed to reset downstream node %s.%s status: %w", node.SchemaName, node.TableName, err)
-			}
-		}
+	// Reset cascade-skipped downstream EXECUTES edges back to PENDING so that
+	// when the target node succeeds, GetReadyDownstream can dispatch them.
+	if err := h.runRepo.ResetSkippedDownstreamToPending(ctx, cmd.RunID, cmd.SchemaName, cmd.TableName); err != nil {
+		return fmt.Errorf("failed to reset cascade-skipped downstream nodes for %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}
 
-	// Look up the rerun target's node_type and service_name from the graph
-	// (the graph reflects the current state after any fixes).
+	tasksToReset := append([]string{targetTaskID}, downstreamTaskIDs...)
+
+	// ── Outbox entry 1: run.rerun.dispatched:v1 ──────────────────────────────
+	dispatchedEvt := pkgEvents.RunRerunDispatched{
+		ScheduleID:   cmd.RunID, // RunID == ScheduleID.String() in this domain
+		ScheduleName: cmd.ScheduleName,
+		TasksToReset: tasksToReset,
+		EntryTaskID:  targetTaskID,
+	}
+	dispatchedPayload, err := json.Marshal(dispatchedEvt)
+	if err != nil {
+		return fmt.Errorf("failed to marshal run.rerun.dispatched payload: %w", err)
+	}
+
+	dispatchedEntry := &domain.OutboxEntry{
+		ID:                  uuid.New(),
+		MessageProcessingID: &msgProcessingID,
+		AggregateType:       "orchestrator",
+		AggregateID:         uuid.New(),
+		EventType:           "run_rerun_dispatched",
+		Payload:             dispatchedPayload,
+		StreamName:          "run.rerun.dispatched:v1",
+		Status:              "pending",
+		MaxRetries:          3,
+	}
+
+	if err := h.uow.OutboxRepo().Create(ctx, dispatchedEntry); err != nil {
+		return fmt.Errorf("failed to write run.rerun.dispatched to outbox: %w", err)
+	}
+
+	// ── Outbox entry 2: query.model:v1 for the target node ───────────────────
 	targetNodeType, err := h.runRepo.GetNodeType(ctx, cmd.SchemaName, cmd.TableName)
 	if err != nil {
 		return fmt.Errorf("failed to get node_type for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}
+
+	parsedNodeType, err := pkgModel.ParseNodeType(targetNodeType)
+	if err != nil {
+		return fmt.Errorf("invalid node_type %q for rerun target %s.%s: %w", targetNodeType, cmd.SchemaName, cmd.TableName, err)
+	}
+
 	targetServiceName, err := h.runRepo.GetNodeServiceName(ctx, cmd.SchemaName, cmd.TableName)
 	if err != nil {
 		return fmt.Errorf("failed to get service_name for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}
 
-	// Build target nodes list for the outbox payload (target + FAILED downstream).
-	targetNodes := buildTargetNodePayloads(cmd, targetNodeType, targetServiceName, downstream)
-
-	// Build outbox payload.
-	outboxPayload, err := json.Marshal(map[string]interface{}{
-		"run_id":       cmd.RunID,
-		"target_nodes": targetNodes,
-	})
+	jobName, err := pkgDomain.ComputeJobName(targetServiceName, cmd.SchemaName, cmd.TableName)
 	if err != nil {
-		return fmt.Errorf("failed to marshal outbox payload: %w", err)
+		return fmt.Errorf("failed to compute job_name for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}
 
-	outboxEntry := &domain.OutboxEntry{
+	queryModelEvt := domain.NodeReadyForExecution{
+		ScheduleID:   cmd.RunID,
+		ScheduleName: cmd.ScheduleName,
+		ServiceName:  targetServiceName,
+		SchemaName:   cmd.SchemaName,
+		TableName:    cmd.TableName,
+		TaskID:       targetTaskID,
+		JobName:      jobName,
+		NodeType:     string(parsedNodeType),
+	}
+	queryModelPayload, err := json.Marshal(queryModelEvt)
+	if err != nil {
+		return fmt.Errorf("failed to marshal query.model payload: %w", err)
+	}
+
+	scheduleUUID, err := uuid.Parse(cmd.RunID)
+	if err != nil {
+		return fmt.Errorf("invalid run_id %q: %w", cmd.RunID, err)
+	}
+
+	queryModelEntry := &domain.OutboxEntry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
-		AggregateID:         uuid.New(),
-		EventType:           "rerun_ready",
-		Payload:             outboxPayload,
-		StreamName:          "rerun.ready:v1",
+		AggregateID:         scheduleUUID,
+		EventType:           "node_ready_for_execution",
+		Payload:             queryModelPayload,
+		StreamName:          "query.model:v1",
 		Status:              "pending",
 		MaxRetries:          3,
 	}
 
-	if err := h.uow.OutboxRepo().Create(ctx, outboxEntry); err != nil {
-		return fmt.Errorf("failed to write to outbox: %w", err)
+	if err := h.uow.OutboxRepo().Create(ctx, queryModelEntry); err != nil {
+		return fmt.Errorf("failed to write query.model to outbox: %w", err)
 	}
 
 	// Mark message processing as completed.
@@ -136,6 +193,8 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 	h.logger.Info("Rerun processing finished",
 		"run_id", cmd.RunID,
 		"target", fmt.Sprintf("%s.%s", cmd.SchemaName, cmd.TableName),
+		"target_task_id", targetTaskID,
+		"tasks_to_reset", len(tasksToReset),
 	)
 
 	return nil
@@ -150,7 +209,7 @@ func (h *HandleRerunHandler) handleRerunDedup(
 ) (uuid.UUID, bool, error) {
 	msgProc := &domain.MessageProcessing{
 		MessageID:  messageID,
-		StreamName: "initialize.run:v1",
+		StreamName: "rerun.ready:v1",
 		State:      "processing",
 		Payload:    messagePayload,
 	}
@@ -181,38 +240,4 @@ func (h *HandleRerunHandler) handleRerunDedup(
 	}
 
 	return id, false, nil
-}
-
-// buildTargetNodePayloads builds the list of target nodes (rerun target + FAILED downstream).
-func buildTargetNodePayloads(cmd domainCmd.HandleRerunCmd, targetNodeType, targetServiceName string, downstream []*domain.TableNode) []domainCmd.NodePayload {
-	// Start with the rerun target itself.
-	// ServiceName comes from the graph (current state) — this is the Docker
-	// image the K8s job will run.
-	targets := []domainCmd.NodePayload{
-		{
-			TableName:    cmd.TableName,
-			SchemaName:   cmd.SchemaName,
-			ServiceName:  targetServiceName,
-			ScheduleName: cmd.ScheduleName,
-			NodeType:     targetNodeType,
-		},
-	}
-
-	// Add FAILED downstream nodes.
-	for _, node := range downstream {
-		if node.Status == string(domain.NodeStatusFailed) {
-			targets = append(targets, domainCmd.NodePayload{
-				TableName:    node.TableName,
-				SchemaName:   node.SchemaName,
-				ServiceName:  node.ServiceName,
-				Owner:        node.Owner,
-				ScheduleName: node.ScheduleName,
-				Criticality:  string(node.Criticality),
-				NodeType:     node.NodeType,
-				Status:       node.Status,
-			})
-		}
-	}
-
-	return targets
 }

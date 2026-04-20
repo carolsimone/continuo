@@ -67,8 +67,8 @@ func TestDeployHandler_Handle_Success(t *testing.T) {
 	assert.Equal(t, "dbt-public-users", entry.JobName)
 	assert.Equal(t, "dbt-model", entry.NodeType)
 	assert.Equal(t, string(model.OutboxStatusPending), entry.Status)
-	assert.Equal(t, 0, entry.RetryCount)
-	assert.Equal(t, 3, entry.MaxRetries)
+	assert.Equal(t, 0, entry.OutboxRetryCount)
+	assert.Equal(t, 3, entry.OutboxMaxRetries)
 }
 
 func TestDeployHandler_Handle_MultipleCommands(t *testing.T) {

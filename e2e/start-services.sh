@@ -62,7 +62,11 @@ log_info "Starting all services..."
 start_service "state" "state" "state"
 check_health "state" 8082 || exit 1
 
-start_service "startup-controller" "startup-controller" "startup-controller"
+# Copy kubeconfig so orchestrator can run kubectl during e2e tests
+docker exec orchestrator mkdir -p /root/.kube
+docker cp kubeconfig/kubeconfig.yaml orchestrator:/root/.kube/config 2>/dev/null || log_warn "No kubeconfig found — orchestrator kubectl will not work"
+docker network connect kind orchestrator 2>/dev/null || true
+
 start_service "orchestrator" "orchestrator" "orchestrator"
 
 # Note: executor-controller and k8s-controller will run in kind for E2E tests,
@@ -72,7 +76,6 @@ start_service "orchestrator" "orchestrator" "orchestrator"
 # start_service "k8s-controller" "k8s-controller" "k8s-controller"
 
 # Check health of all started services
-check_health "startup-controller" 8083 || exit 1
 check_health "orchestrator" 8087 || exit 1
 
 # Uncomment if you started executor/k8s controllers:

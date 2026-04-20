@@ -14,16 +14,21 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// defaultMaxRetries is used when a message does not carry a max_retries field
+// (backward-compat: old executor-controller versions did not publish it).
+const defaultConsumerMaxRetries = 3
+
 // DualStreamConsumer consumes from both node.deployed:v1 and check.k8s:v1 streams
 type DualStreamConsumer struct {
-	client         *goredis.Client
-	deployedStream string // node.deployed:v1
-	checkStream    string // check.k8s:v1
-	consumerGroup  string
-	consumerName   string
-	messageBus     *messagebus.MessageBus
-	logger         *slog.Logger
-	stopCh         chan struct{}
+	client            *goredis.Client
+	deployedStream    string // node.deployed:v1
+	checkStream       string // check.k8s:v1
+	consumerGroup     string
+	consumerName      string
+	messageBus        *messagebus.MessageBus
+	defaultMaxRetries int // fallback when message does not carry max_retries
+	logger            *slog.Logger
+	stopCh            chan struct{}
 }
 
 // NewDualStreamConsumer creates a new dual-stream consumer
@@ -33,19 +38,25 @@ func NewDualStreamConsumer(
 	checkStream string,
 	consumerGroup string,
 	messageBus *messagebus.MessageBus,
+	defaultMaxRetries int,
 	logger *slog.Logger,
 ) (*DualStreamConsumer, error) {
 	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String()[:8])
 
+	if defaultMaxRetries <= 0 {
+		defaultMaxRetries = defaultConsumerMaxRetries
+	}
+
 	consumer := &DualStreamConsumer{
-		client:         client,
-		deployedStream: deployedStream,
-		checkStream:    checkStream,
-		consumerGroup:  consumerGroup,
-		consumerName:   consumerName,
-		messageBus:     messageBus,
-		logger:         logger,
-		stopCh:         make(chan struct{}),
+		client:            client,
+		deployedStream:    deployedStream,
+		checkStream:       checkStream,
+		consumerGroup:     consumerGroup,
+		consumerName:      consumerName,
+		messageBus:        messageBus,
+		defaultMaxRetries: defaultMaxRetries,
+		logger:            logger,
+		stopCh:            make(chan struct{}),
 	}
 
 	// Create consumer groups for both streams
@@ -315,6 +326,27 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 	jobName, _ := msg.Values["job_name"].(string)
 	nodeType, _ := msg.Values["node_type"].(string)
 
+	// Parse retry count. check.k8s:v1 re-circulating messages carry "retry_count"
+	// (from JobCheckRequest.ToMap()); node.deployed:v1 from executor-controller
+	// carries "task_retry_count". Try "retry_count" first, fall back to
+	// "task_retry_count" for backward compatibility.
+	retryCountStr, _ := msg.Values["retry_count"].(string)
+	if retryCountStr == "" {
+		retryCountStr, _ = msg.Values["task_retry_count"].(string)
+	}
+	retryCount := int32(0)
+	if n, err := strconv.ParseInt(retryCountStr, 10, 32); err == nil {
+		retryCount = int32(n)
+	}
+
+	// Parse max_retries; fall back to the consumer's configured default when absent.
+	maxRetries := int32(c.defaultMaxRetries)
+	if s, _ := msg.Values["max_retries"].(string); s != "" {
+		if n, err := strconv.ParseInt(s, 10, 32); err == nil && n > 0 {
+			maxRetries = int32(n)
+		}
+	}
+
 	cmd := command.CheckJobStatus{
 		TaskID:       taskID,
 		ScheduleID:   scheduleID,
@@ -324,6 +356,8 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 		TableName:    tableName,
 		JobName:      jobName,
 		NodeType:     nodeType,
+		RetryCount:   retryCount,
+		MaxRetries:   maxRetries,
 	}
 
 	// Extract outbox_entry_id for deduplication.

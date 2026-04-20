@@ -55,6 +55,14 @@ type FakeEventPublisher struct {
 	PublishCallCount    int
 	LastStreamName      string
 	LastValues          map[string]interface{}
+	// AllPublishes records every (streamName, values) pair in order.
+	AllPublishes []PublishCall
+}
+
+// PublishCall records a single PublishToStream invocation.
+type PublishCall struct {
+	StreamName string
+	Values     map[string]interface{}
 }
 
 // PublishToStream implements EventPublisher
@@ -62,8 +70,19 @@ func (f *FakeEventPublisher) PublishToStream(ctx context.Context, streamName str
 	f.PublishCallCount++
 	f.LastStreamName = streamName
 	f.LastValues = values
+	f.AllPublishes = append(f.AllPublishes, PublishCall{StreamName: streamName, Values: values})
 	if f.PublishToStreamFunc != nil {
 		return f.PublishToStreamFunc(ctx, streamName, values)
 	}
 	return "msg-id-generic", nil
+}
+
+// FindPublish returns the first recorded call to the given stream, or nil.
+func (f *FakeEventPublisher) FindPublish(streamName string) *PublishCall {
+	for i := range f.AllPublishes {
+		if f.AllPublishes[i].StreamName == streamName {
+			return &f.AllPublishes[i]
+		}
+	}
+	return nil
 }

@@ -78,6 +78,27 @@ func (s *stubTaskRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, task *model.TaskT
 	s.tasks[task.TaskID] = task
 	return nil
 }
+func (s *stubTaskRepo) BulkCreateTx(_ context.Context, _ *sqlx.Tx, _ []*model.TaskTracker) error {
+	return nil
+}
+func (s *stubTaskRepo) ListAllByScheduleID(_ context.Context, _ uuid.UUID) ([]*model.TaskTracker, error) {
+	return nil, nil
+}
+func (s *stubTaskRepo) ResetTasksTx(_ context.Context, _ *sqlx.Tx, _ []uuid.UUID) (int32, error) {
+	return 0, nil
+}
+func (s *stubTaskRepo) UpdateStatusIfChangedTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string, _ int32) (int32, error) {
+	return 0, nil
+}
+func (s *stubTaskRepo) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (s *stubTaskRepo) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (s *stubTaskRepo) HasRetryableFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
 
 func ctxWithCaller(caller model.CallerID) context.Context {
 	md := metadata.Pairs("x-caller-id", string(caller))
@@ -226,66 +247,3 @@ func TestResetTask_OnlyFromFailedState(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, st.Code())
 }
 
-// ---- UpdateTask tests ---- (caller identity enforcement)
-
-func TestUpdateTask_ValidTransition(t *testing.T) {
-	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusPending, 0)
-	h := NewTaskHandler(repo, newTestLogger())
-
-	resp, err := h.UpdateTask(ctxWithCaller(model.CallerExecutorController), &statev1.UpdateTaskRequest{
-		TaskId: task.TaskID.String(),
-		Status: statev1.TaskStatus_TASK_STATUS_RUNNING,
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, statev1.TaskStatus_TASK_STATUS_RUNNING, resp.Task.Status)
-	assert.Equal(t, model.TaskStatusRunning, repo.tasks[task.TaskID].Status)
-}
-
-func TestUpdateTask_InvalidTransition(t *testing.T) {
-	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusPending, 0)
-	h := NewTaskHandler(repo, newTestLogger())
-
-	// pending → failed is not in the allowed table
-	_, err := h.UpdateTask(ctxWithCaller(model.CallerK8sController), &statev1.UpdateTaskRequest{
-		TaskId: task.TaskID.String(),
-		Status: statev1.TaskStatus_TASK_STATUS_FAILED,
-	})
-
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-}
-
-func TestUpdateTask_UnauthorizedTransition(t *testing.T) {
-	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusPending, 0)
-	h := NewTaskHandler(repo, newTestLogger())
-
-	// pending → running is executor-controller's, not startup-controller's
-	_, err := h.UpdateTask(ctxWithCaller(model.CallerStartupController), &statev1.UpdateTaskRequest{
-		TaskId: task.TaskID.String(),
-		Status: statev1.TaskStatus_TASK_STATUS_RUNNING,
-	})
-
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.PermissionDenied, st.Code())
-}
-
-func TestUpdateTask_MissingCallerID(t *testing.T) {
-	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusPending, 0)
-	h := NewTaskHandler(repo, newTestLogger())
-
-	_, err := h.UpdateTask(context.Background(), &statev1.UpdateTaskRequest{
-		TaskId: task.TaskID.String(),
-		Status: statev1.TaskStatus_TASK_STATUS_RUNNING,
-	})
-
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}

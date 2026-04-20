@@ -17,18 +17,21 @@ type Config struct {
 	Postgres pkgconfig.PostgresConfig
 	Neo4j    Neo4jConfig
 
-	// Consumer streams (3 streams the orchestrator consumes)
-	NodeUpdatedStream    string
-	NodeUpdatedGroup     string
-	ManifestLoadedStream string
-	ManifestLoadedGroup  string
-	InitializeRunStream  string
-	InitializeRunGroup   string
+	// Consumer streams
+	NodeUpdatedStream       string
+	NodeUpdatedGroup        string
+	ManifestLoadedStream    string
+	ManifestLoadedGroup     string
+	InitializeRunStream     string
+	InitializeRunGroup      string
+	SchedulerStartedStream  string
+	SchedulerStartedGroup   string
+	RerunStream             string
+	RerunGroup              string
 
 	// gRPC
-	StateGRPCAddr string
-	GRPCPort      int
-	HTTPPort      int
+	GRPCPort int
+	HTTPPort int
 
 	// Sweeper
 	RunHistoryRetentionDays   int
@@ -47,15 +50,18 @@ func Load(v *pkgconfig.Validator) Config {
 			Password: v.Require("NEO4J_PASSWORD"),
 		},
 
-		NodeUpdatedStream:    v.Require("NODE_UPDATED_STREAM"),
-		NodeUpdatedGroup:     v.Require("NODE_UPDATED_GROUP"),
-		ManifestLoadedStream: v.Require("MANIFEST_LOADED_STREAM"),
-		ManifestLoadedGroup:  v.Require("MANIFEST_LOADED_GROUP"),
-		InitializeRunStream:  v.Require("INITIALIZE_RUN_STREAM"),
-		InitializeRunGroup:   v.Require("INITIALIZE_RUN_GROUP"),
+		NodeUpdatedStream:      v.Require("NODE_UPDATED_STREAM"),
+		NodeUpdatedGroup:       v.Require("NODE_UPDATED_GROUP"),
+		ManifestLoadedStream:   v.Require("MANIFEST_LOADED_STREAM"),
+		ManifestLoadedGroup:    v.Require("MANIFEST_LOADED_GROUP"),
+		InitializeRunStream:    v.Require("INITIALIZE_RUN_STREAM"),
+		InitializeRunGroup:     v.Require("INITIALIZE_RUN_GROUP"),
+		SchedulerStartedStream: v.Require("SCHEDULER_STARTED_STREAM"),
+		SchedulerStartedGroup:  v.Require("SCHEDULER_STARTED_GROUP"),
+		RerunStream:            v.Require("RERUN_STREAM"),
+		RerunGroup:             v.Require("RERUN_GROUP"),
 
-		StateGRPCAddr: v.Require("STATE_SERVICE_GRPC_ADDR"),
-		GRPCPort:      envInt("GRPC_PORT", 50052),
+		GRPCPort: envInt("GRPC_PORT", 50052),
 		HTTPPort:      envInt("HTTP_PORT", 8087),
 
 		RunHistoryRetentionDays:   envInt("RUN_HISTORY_RETENTION_DAYS", 7),

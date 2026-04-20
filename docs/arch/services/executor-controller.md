@@ -9,7 +9,7 @@ It is responsible for:
 - deduplicating repeated dispatches by upstream `outbox_entry_id`
 - durably recording deployment intent in its own outbox
 - creating K8s Jobs via the Kubernetes API
-- marking tasks `RUNNING` in `state`
+- publishing `task.status.updated:v1` (RUNNING) so `state` can track task progress
 - publishing `node.deployed:v1` so `k8s-controller` can begin monitoring
 
 ## Owned Storage (Postgres: `continuo_executor`)
@@ -40,23 +40,23 @@ Both streams carry the same fields:
 
 ## Outbound Interfaces
 
-### Redis producer
+### Redis producers
 
 | Stream | Description |
 |---|---|
+| `task.status.updated:v1` | Published after K8s job creation succeeds with `status=RUNNING`; consumed by `state` to update task status |
 | `node.deployed:v1` | Published after K8s job creation succeeds; triggers `k8s-controller` monitoring |
+
+`task.status.updated:v1` payload fields:
+- `task_id`, `schedule_id`, `schedule_name`
+- `service_name`, `schema_name`, `table_name`
+- `status` — always `RUNNING` from this producer
 
 `node.deployed:v1` payload fields:
 - `outbox_entry_id`
 - `task_id`, `schedule_id`, `schedule_name`
 - `service_name`, `schema_name`, `table_name`, `job_name`
 - `node_type`
-
-### gRPC to `state`
-
-| Method | When |
-|---|---|
-| `UpdateTask` (status → RUNNING) | After K8s job is created successfully, before publishing `node.deployed:v1` |
 
 ### Kubernetes API
 
@@ -83,8 +83,7 @@ Both streams carry the same fields:
 For each pending deployment_outbox entry:
   1. ParseNodeType — if invalid: MarkFailed immediately (data corruption, permanent)
   2. CreateQueryJob (K8s) — idempotent; failure → retry up to MaxRetries
-  3. UpdateTask → RUNNING (state gRPC)
-     → if fails after K8s job exists: retry (K8s create is idempotent)
+  3. Publish task.status.updated:v1 (Redis) with status=RUNNING
   4. Publish node.deployed:v1 (Redis)
   5. MarkProcessed
 
@@ -105,6 +104,7 @@ On failure:
 - **Inbound dedup**: `processed_events` keyed by `outbox_entry_id` prevents double-deployment from duplicate Redis messages
 - **Deployment outbox**: intent is committed to Postgres before any K8s call; crash-safe
 - **K8s idempotency**: `CreateQueryJob` treats already-exists as success; retries after crash are safe
-- **Step ordering**: K8s creation → state RUNNING → Redis publish; if state update or Redis publish fail after K8s succeeds, the retry will re-attempt idempotently
+- **Step ordering**: K8s creation → `task.status.updated:v1` (RUNNING) → `node.deployed:v1`; if Redis publishes fail after K8s succeeds, the retry will re-attempt idempotently
+- **No state gRPC dependency**: executor-controller no longer calls state gRPC; task status updates flow via `task.status.updated:v1`
 - **Permanent failure**: invalid `node_type` (data corruption) is immediately marked failed rather than retried indefinitely
 - **Max retries**: 3 per outbox entry; after that, entry is marked `failed` and must be manually recovered

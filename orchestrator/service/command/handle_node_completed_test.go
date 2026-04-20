@@ -25,6 +25,7 @@ type fakeRunRepository struct {
 	getReadyDownstreamFn      func(ctx context.Context, runID, scheduleName, schema, tableName string) ([]*run.DownstreamNode, error)
 	checkScheduleCompletionFn func(ctx context.Context, runID, scheduleName string) (bool, bool, error)
 	finalizeRunFn             func(ctx context.Context, runID, terminalStatus string) error
+	getTaskIDForNodeFn        func(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error)
 
 	// Call-capture
 	updateNodeStatusCalls   int
@@ -86,38 +87,19 @@ func (f *fakeRunRepository) GetNodeType(ctx context.Context, schema, tableName s
 func (f *fakeRunRepository) GetNodeServiceName(ctx context.Context, schema, tableName string) (string, error) {
 	return "test-service", nil
 }
-
-// ── fakes: StateTaskClient ────────────────────────────────────────────────────
-
-type fakeStateClient struct {
-	getTaskFn                func(ctx context.Context, scheduleID uuid.UUID, serviceName, schema, tableName string) (string, error)
-	getSchedulerInitStatusFn func(ctx context.Context, scheduleID uuid.UUID) (string, error)
-	updateSchedulerStatusFn  func(ctx context.Context, scheduleID uuid.UUID, status string) error
-
-	updateSchedulerCalled  bool
-	capturedSchedulerStatus string
-}
-
-func (f *fakeStateClient) GetTask(ctx context.Context, scheduleID uuid.UUID, serviceName, schema, tableName string) (string, error) {
-	if f.getTaskFn != nil {
-		return f.getTaskFn(ctx, scheduleID, serviceName, schema, tableName)
+func (f *fakeRunRepository) GetTaskIDForNode(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error) {
+	if f.getTaskIDForNodeFn != nil {
+		return f.getTaskIDForNodeFn(ctx, runID, serviceName, schemaName, tableName)
 	}
-	return uuid.New().String(), nil
+	return "task-id-stub", nil
 }
-
-func (f *fakeStateClient) GetSchedulerInitStatus(ctx context.Context, scheduleID uuid.UUID) (string, error) {
-	if f.getSchedulerInitStatusFn != nil {
-		return f.getSchedulerInitStatusFn(ctx, scheduleID)
-	}
-	return "completed", nil
+func (f *fakeRunRepository) GetSkippedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
+	return nil, nil
 }
-
-func (f *fakeStateClient) UpdateSchedulerStatus(ctx context.Context, scheduleID uuid.UUID, status string) error {
-	f.updateSchedulerCalled = true
-	f.capturedSchedulerStatus = status
-	if f.updateSchedulerStatusFn != nil {
-		return f.updateSchedulerStatusFn(ctx, scheduleID, status)
-	}
+func (f *fakeRunRepository) MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
+	return nil, nil
+}
+func (f *fakeRunRepository) ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
 	return nil
 }
 
@@ -231,9 +213,8 @@ func TestHandleNodeCompleted_SucceededNoDownstream(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 	runRepo := &fakeRunRepository{}
-	stateClient := &fakeStateClient{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, stateClient, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
 	cmd := baseCmd()
 
 	err := h.Handle(ctx, cmd, "msg-1")
@@ -246,10 +227,11 @@ func TestHandleNodeCompleted_SucceededNoDownstream(t *testing.T) {
 }
 
 // 2. SUCCEEDED node with downstream → UpdateNodeStatus + GetReadyDownstream + outbox entries.
+// Task IDs come from runRepo.GetTaskIDForNode (not state gRPC).
 func TestHandleNodeCompleted_SucceededWithDownstream(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
-	existingTaskID := uuid.New().String()
+	repoTaskID := uuid.New().String()
 	scheduleID := uuid.New()
 
 	runRepo := &fakeRunRepository{
@@ -259,15 +241,12 @@ func TestHandleNodeCompleted_SucceededWithDownstream(t *testing.T) {
 				{ServiceName: "warehouse", SchemaName: "analytics", TableName: "daily_metrics", NodeType: "dbt-model", ScheduleName: "daily"},
 			}, nil
 		},
-	}
-
-	stateClient := &fakeStateClient{
-		getTaskFn: func(_ context.Context, sid uuid.UUID, svc, schema, table string) (string, error) {
-			return existingTaskID, nil
+		getTaskIDForNodeFn: func(_ context.Context, _, _, _, _ string) (string, error) {
+			return repoTaskID, nil
 		},
 	}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, stateClient, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
 	cmd := baseCmd()
 	cmd.ScheduleID = scheduleID
 
@@ -289,7 +268,7 @@ func TestHandleNodeCompleted_SucceededWithDownstream(t *testing.T) {
 		require.NoError(t, json.Unmarshal(entry.Payload, &evt))
 		assert.Equal(t, scheduleID.String(), evt.ScheduleID)
 		assert.Equal(t, "daily", evt.ScheduleName)
-		assert.Equal(t, existingTaskID, evt.TaskID)
+		assert.Equal(t, repoTaskID, evt.TaskID)
 		assert.Equal(t, "dbt-model", evt.NodeType)
 	}
 	assert.True(t, uow.CommittedTx)
@@ -300,9 +279,8 @@ func TestHandleNodeCompleted_FailedNoDownstream(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 	runRepo := &fakeRunRepository{}
-	stateClient := &fakeStateClient{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, stateClient, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
 	cmd := baseCmd()
 	cmd.Status = "FAILED"
 
@@ -320,18 +298,14 @@ func TestHandleNodeCompleted_DuplicateMessage(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 	runRepo := &fakeRunRepository{}
-	stateClient := &fakeStateClient{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, stateClient, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
 	cmd := baseCmd()
 
 	// First call: should process normally
 	err := h.Handle(ctx, cmd, "dup-msg-1")
 	require.NoError(t, err)
 	assert.Equal(t, 1, runRepo.updateNodeStatusCalls)
-
-	// Simulate the message state being set to "completed" by the first processing
-	// (The fake repo already has it in state "completed" after Commit updated it)
 
 	// Reset call counts to track only what the second call does
 	runRepo.updateNodeStatusCalls = 0
@@ -348,96 +322,38 @@ func TestHandleNodeCompleted_DuplicateMessage(t *testing.T) {
 	assert.Len(t, uow.outboxRepo.CreatedEntries, 0, "no outbox entries for duplicate")
 }
 
-// 5. SUCCEEDED node, schedule fully drained, no failures → scheduler status updated to SUCCEEDED.
-func TestHandleNodeCompleted_SucceededScheduleComplete(t *testing.T) {
+// 5. Handler must not call any state gRPC methods — task IDs come from the run repo.
+func TestHandleNodeCompleted_DoesNotCallStateGRPC(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
-	finalizedRunID := ""
-	finalizedStatus := ""
-	cmd := baseCmd()
+
+	taskIDFromRepo := uuid.New().String()
+	getTaskIDCalls := 0
 
 	runRepo := &fakeRunRepository{
-		checkScheduleCompletionFn: func(_ context.Context, runID, _ string) (bool, bool, error) {
-			return true, false, nil
+		getReadyDownstreamFn: func(_ context.Context, _, _, _, _ string) ([]*run.DownstreamNode, error) {
+			return []*run.DownstreamNode{
+				{ServiceName: "warehouse", SchemaName: "analytics", TableName: "daily_summary", NodeType: "dbt-model", ScheduleName: "daily"},
+			}, nil
 		},
-		finalizeRunFn: func(_ context.Context, runID, status string) error {
-			finalizedRunID = runID
-			finalizedStatus = status
-			return nil
+		getTaskIDForNodeFn: func(_ context.Context, _, _, _, _ string) (string, error) {
+			getTaskIDCalls++
+			return taskIDFromRepo, nil
 		},
 	}
-	stateClient := &fakeStateClient{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, stateClient, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
+	cmd := baseCmd()
+	cmd.Status = "SUCCEEDED"
 
 	require.NoError(t, h.Handle(ctx, cmd, "msg-5"))
-	assert.True(t, stateClient.updateSchedulerCalled)
-	assert.Equal(t, "SUCCEEDED", stateClient.capturedSchedulerStatus)
-	assert.Equal(t, cmd.ScheduleID.String(), finalizedRunID)
-	assert.Equal(t, "SUCCEEDED", finalizedStatus)
-}
 
-// 6. SUCCEEDED node, schedule drained with failures → scheduler status updated to FAILED.
-func TestHandleNodeCompleted_SucceededScheduleCompleteWithFailures(t *testing.T) {
-	ctx := context.Background()
-	uow := newFakeUnitOfWork()
+	// Task ID must come from the run repo.
+	assert.Equal(t, 1, getTaskIDCalls, "GetTaskIDForNode should be called once for the downstream node")
 
-	runRepo := &fakeRunRepository{
-		checkScheduleCompletionFn: func(_ context.Context, _, _ string) (bool, bool, error) {
-			return true, true, nil
-		},
-	}
-	stateClient := &fakeStateClient{}
-
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, stateClient, newTestLogger())
-
-	require.NoError(t, h.Handle(ctx, baseCmd(), "msg-6"))
-	assert.True(t, stateClient.updateSchedulerCalled)
-	assert.Equal(t, "FAILED", stateClient.capturedSchedulerStatus)
-}
-
-// 7. FAILED node, schedule fully drained → scheduler status updated to FAILED.
-func TestHandleNodeCompleted_FailedScheduleComplete(t *testing.T) {
-	ctx := context.Background()
-	uow := newFakeUnitOfWork()
-
-	runRepo := &fakeRunRepository{
-		checkScheduleCompletionFn: func(_ context.Context, _, _ string) (bool, bool, error) {
-			return true, true, nil
-		},
-	}
-	stateClient := &fakeStateClient{}
-
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, stateClient, newTestLogger())
-	cmd := baseCmd()
-	cmd.Status = "FAILED"
-
-	require.NoError(t, h.Handle(ctx, cmd, "msg-7"))
-	assert.True(t, stateClient.updateSchedulerCalled)
-	assert.Equal(t, "FAILED", stateClient.capturedSchedulerStatus)
-}
-
-// 8. Init status not "completed" → finalization skipped.
-func TestHandleNodeCompleted_InitStatusNotCompleted_SkipsFinalization(t *testing.T) {
-	ctx := context.Background()
-	uow := newFakeUnitOfWork()
-
-	checkCalled := false
-	runRepo := &fakeRunRepository{
-		checkScheduleCompletionFn: func(_ context.Context, _, _ string) (bool, bool, error) {
-			checkCalled = true
-			return true, false, nil
-		},
-	}
-	stateClient := &fakeStateClient{
-		getSchedulerInitStatusFn: func(_ context.Context, _ uuid.UUID) (string, error) {
-			return "initializing", nil
-		},
-	}
-
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, stateClient, newTestLogger())
-
-	require.NoError(t, h.Handle(ctx, baseCmd(), "msg-8"))
-	assert.False(t, checkCalled, "CheckScheduleCompletion must NOT be called when init_status != completed")
-	assert.False(t, stateClient.updateSchedulerCalled)
+	// The downstream event must carry the task ID from the repo.
+	require.Len(t, uow.outboxRepo.CreatedEntries, 1)
+	var evt domain.NodeReadyForExecution
+	require.NoError(t, json.Unmarshal(uow.outboxRepo.CreatedEntries[0].Payload, &evt))
+	assert.Equal(t, taskIDFromRepo, evt.TaskID)
 }

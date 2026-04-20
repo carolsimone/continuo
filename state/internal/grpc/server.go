@@ -95,24 +95,9 @@ func (s *Server) GetScheduler(ctx context.Context, req *statev1.GetSchedulerRequ
 	return s.schedulerHandler.GetScheduler(ctx, req)
 }
 
-// UpdateScheduler delegates to scheduler handler
-func (s *Server) UpdateScheduler(ctx context.Context, req *statev1.UpdateSchedulerRequest) (*statev1.SchedulerResponse, error) {
-	return s.schedulerHandler.UpdateScheduler(ctx, req)
-}
-
 // CancelScheduler delegates to scheduler handler
 func (s *Server) CancelScheduler(ctx context.Context, req *statev1.CancelSchedulerRequest) (*statev1.SchedulerResponse, error) {
 	return s.schedulerHandler.CancelScheduler(ctx, req)
-}
-
-// UpdateSchedulerInitStatus delegates to scheduler handler
-func (s *Server) UpdateSchedulerInitStatus(ctx context.Context, req *statev1.UpdateSchedulerInitStatusRequest) (*statev1.SchedulerResponse, error) {
-	return s.schedulerHandler.UpdateSchedulerInitStatus(ctx, req)
-}
-
-// ResetInProgressInitializations delegates to scheduler handler
-func (s *Server) ResetInProgressInitializations(ctx context.Context, req *statev1.ResetInProgressInitializationsRequest) (*statev1.ResetInProgressInitializationsResponse, error) {
-	return s.schedulerHandler.ResetInProgressInitializations(ctx, req)
 }
 
 // ActivateSchedule delegates to scheduler handler
@@ -150,11 +135,6 @@ func (s *Server) GetTaskByScheduleAndNode(ctx context.Context, req *statev1.GetT
 	return s.taskHandler.GetTaskByScheduleAndNode(ctx, req)
 }
 
-// UpdateTask delegates to task handler
-func (s *Server) UpdateTask(ctx context.Context, req *statev1.UpdateTaskRequest) (*statev1.TaskResponse, error) {
-	return s.taskHandler.UpdateTask(ctx, req)
-}
-
 // DeleteTask delegates to task handler
 func (s *Server) DeleteTask(ctx context.Context, req *statev1.DeleteTaskRequest) (*statev1.DeleteTaskResponse, error) {
 	return s.taskHandler.DeleteTask(ctx, req)
@@ -173,11 +153,6 @@ func (s *Server) ResetTask(ctx context.Context, req *statev1.ResetTaskRequest) (
 // GetSchedulerInitStatus delegates to scheduler handler
 func (s *Server) GetSchedulerInitStatus(ctx context.Context, req *statev1.GetSchedulerInitStatusRequest) (*statev1.GetSchedulerInitStatusResponse, error) {
 	return s.schedulerHandler.GetSchedulerInitStatus(ctx, req)
-}
-
-// CreateTaskExecution delegates to task execution handler
-func (s *Server) CreateTaskExecution(ctx context.Context, req *statev1.CreateTaskExecutionRequest) (*statev1.TaskExecutionResponse, error) {
-	return s.taskExecutionHandler.CreateTaskExecution(ctx, req)
 }
 
 // GetTaskExecution delegates to task execution handler

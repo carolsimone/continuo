@@ -77,7 +77,7 @@ jobs:
 
       - name: Wait for service containers to be running
         run: |
-          for container in state orchestrator startup-controller executor-controller k8s-controller manifest-controller; do
+          for container in state orchestrator executor-controller k8s-controller manifest-controller; do
             echo "Waiting for $container..."
             for i in $(seq 1 30); do
               if docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
@@ -140,9 +140,6 @@ jobs:
       - name: Test orchestrator
         run: docker exec orchestrator make test-ci
 
-      - name: Test startup-controller
-        run: docker exec startup-controller make test-ci
-
       - name: Test executor-controller
         run: docker exec executor-controller make test-ci
 
@@ -164,24 +161,6 @@ jobs:
         # setup.sh.  Build and start the remaining service binaries that the
         # e2e test needs beyond state/graph (which are already running above).
         run: |
-          echo "Building and starting startup-controller (HTTP :8083)..."
-          docker exec startup-controller go build -o bin/startup-controller .
-          docker exec -d startup-controller ./bin/startup-controller
-
-          echo "Waiting for startup-controller :8083..."
-          for i in $(seq 1 30); do
-            if docker exec startup-controller bash -c 'echo > /dev/tcp/localhost/8083' 2>/dev/null; then
-              echo "✓ startup-controller ready"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "✗ startup-controller not ready after 60s"
-              docker exec startup-controller cat /proc/1/fd/1 2>/dev/null || true
-              exit 1
-            fi
-            sleep 2
-          done
-
           echo "Starting manifest-controller..."
           docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"
           sleep 3
@@ -211,7 +190,7 @@ jobs:
 
       - name: Run e2e test
         timeout-minutes: 30
-        run: docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller go test -v -timeout 25m /app/e2e/...
+        run: docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 25m /app/e2e/...
 
       - name: Cleanup k8s controllers
         if: always()

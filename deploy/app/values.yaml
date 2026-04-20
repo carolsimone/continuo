@@ -52,6 +52,10 @@ services:
       DB_MAX_OVERFLOW: "20"
       HEALTH_PORT: "8082"
       GRPC_PORT: "50051"
+      REDIS_STREAM_RUN_ENTRIES_DISPATCHED: run.entries.dispatched:v1
+      REDIS_STREAM_RUN_RERUN_DISPATCHED: run.rerun.dispatched:v1
+      REDIS_STREAM_TASK_STATUS_UPDATED: task.status.updated:v1
+      REDIS_STREAM_TASK_EXECUTION_RECORDED: task.execution.recorded:v1
       REDIS_STREAM_SCHEDULER_STARTED: scheduler.started:v1
       REDIS_STREAM_SCHEDULES_LOADED: schedules.loaded:v1
       SCHEDULES_CONFIG_PATH: /etc/continuo/schedules.yaml
@@ -87,6 +91,10 @@ services:
       MANIFEST_LOADED_GROUP: orchestrator_manifest_loaded
       INITIALIZE_RUN_STREAM: initialize.run:v1
       INITIALIZE_RUN_GROUP: orchestrator_initialize_run
+      SCHEDULER_STARTED_STREAM: scheduler.started:v1
+      SCHEDULER_STARTED_GROUP: orchestrator_scheduler_started
+      RERUN_STREAM: rerun:v1
+      RERUN_GROUP: orchestrator_rerun
       POSTGRES_DB: continuo_orchestrator
       GRPC_PORT: "50052"
       HTTP_PORT: "8087"
@@ -138,6 +146,7 @@ services:
       REDIS_CONSUMER_RETRY_STREAM: retry.task:v1
       REDIS_CONSUMER_GROUP: executor_controller_consumers
       REDIS_PRODUCER_STREAM: node.deployed:v1
+      REDIS_STATUS_STREAM: task.status.updated:v1
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       DBT_POSTGRES_DB: continuo_dbt

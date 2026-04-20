@@ -10,24 +10,22 @@ import (
 
 // Producer publishes events to Redis streams
 type Producer struct {
-	client     *goredis.Client
-	streamName string
-	logger     *slog.Logger
+	client *goredis.Client
+	logger *slog.Logger
 }
 
 // NewProducer creates a new Redis producer
-func NewProducer(client *goredis.Client, streamName string, logger *slog.Logger) *Producer {
+func NewProducer(client *goredis.Client, logger *slog.Logger) *Producer {
 	return &Producer{
-		client:     client,
-		streamName: streamName,
-		logger:     logger,
+		client: client,
+		logger: logger,
 	}
 }
 
-// Publish publishes an event to the Redis stream
-func (p *Producer) Publish(ctx context.Context, values map[string]interface{}) (string, error) {
+// Publish publishes an event to the given Redis stream
+func (p *Producer) Publish(ctx context.Context, stream string, values map[string]interface{}) (string, error) {
 	messageID, err := p.client.XAdd(ctx, &goredis.XAddArgs{
-		Stream: p.streamName,
+		Stream: stream,
 		MaxLen: 10000,
 		Approx: true,
 		Values: values,
@@ -35,14 +33,14 @@ func (p *Producer) Publish(ctx context.Context, values map[string]interface{}) (
 
 	if err != nil {
 		p.logger.Error("Failed to publish message to Redis stream",
-			"stream", p.streamName,
+			"stream", stream,
 			"error", err,
 		)
 		return "", fmt.Errorf("failed to publish message: %w", err)
 	}
 
 	p.logger.Debug("Published message to Redis",
-		"stream", p.streamName,
+		"stream", stream,
 		"message_id", messageID,
 	)
 

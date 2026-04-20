@@ -182,6 +182,7 @@ func buildRunInitializedPayload(runID string, initNodes *run.ScheduleInitNodes) 
 				Criticality:  string(n.Criticality),
 				NodeType:     n.NodeType,
 				Status:       n.Status,
+				TaskID:       n.TaskID,
 			})
 		}
 		return out

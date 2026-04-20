@@ -22,10 +22,11 @@ const (
 	NodeStatusRunning   NodeStatus = "RUNNING"
 	NodeStatusSucceeded NodeStatus = "SUCCEEDED"
 	NodeStatusFailed    NodeStatus = "FAILED"
+	NodeStatusSkipped   NodeStatus = "SKIPPED"
 )
 
 func (s NodeStatus) IsTerminal() bool {
-	return s == NodeStatusSucceeded || s == NodeStatusFailed
+	return s == NodeStatusSucceeded || s == NodeStatusFailed || s == NodeStatusSkipped
 }
 
 type GraphEdge struct {
@@ -52,6 +53,7 @@ type TableNode struct {
 	CreatedAt     time.Time
 	NodeType      string
 	Status        string
+	TaskID        string
 }
 
 type ScheduleGraph struct {
@@ -94,6 +96,13 @@ type PublishedMessage struct {
 	OutboxEntryID  uuid.UUID `db:"outbox_entry_id"`
 	RedisMessageID *string   `db:"redis_message_id"`
 	PublishedAt    time.Time `db:"published_at"`
+}
+
+// CascadeTaskSkipped is the event payload written to task.status.updated:v1 outbox entries
+// for downstream nodes that become unreachable due to an upstream failure.
+type CascadeTaskSkipped struct {
+	TaskID     string `json:"task_id"`
+	ScheduleID string `json:"schedule_id"`
 }
 
 // NodeReadyForExecution is the event payload written to query.model:v1 outbox entries

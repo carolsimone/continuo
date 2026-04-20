@@ -27,3 +27,12 @@ type DownstreamNode struct {
 	NodeType     string
 	ScheduleName string
 }
+
+// CascadedFailureNode holds the identifying info for a downstream node
+// that was marked FAILED as a result of an upstream failure.
+type CascadedFailureNode struct {
+	TaskID      string
+	SchemaName  string
+	TableName   string
+	ServiceName string
+}

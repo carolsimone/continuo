@@ -160,10 +160,6 @@ mkdir -p executor-controller/kubeconfig
 cp kubeconfig/kubeconfig.yaml executor-controller/kubeconfig/kubeconfig.yaml
 echo "✓ Copied kubeconfig to executor-controller/"
 
-mkdir -p startup-controller/kubeconfig
-cp kubeconfig/kubeconfig.yaml startup-controller/kubeconfig/kubeconfig.yaml
-echo "✓ Copied kubeconfig to startup-controller/"
-
 rm kubeconfig.yaml.tmp
 echo "Kubeconfig created at: kubeconfig/kubeconfig.yaml"
 

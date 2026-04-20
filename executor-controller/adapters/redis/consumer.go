@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/service/messagebus"
 	"github.com/google/uuid"
-	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -309,15 +310,34 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 		return nil
 	}
 
+	// Parse task_retry_count; present on retry.task:v1 messages, absent on initial deploys (defaults to 0).
+	taskRetryCount := 0
+	if s := getString(msg.Values, "task_retry_count"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			taskRetryCount = n
+		}
+	}
+
+	// Parse max_retries; present on retry.task:v1 messages that carry it.
+	// 0 means "use service default" — deploy_handler applies the fallback.
+	maxRetries := 0
+	if s := getString(msg.Values, "max_retries"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			maxRetries = n
+		}
+	}
+
 	cmd := command.DeployJob{
-		TaskID:       taskID,
-		ScheduleID:   scheduleID,
-		ScheduleName: getString(msg.Values, "schedule_name"),
-		ServiceName:  getString(msg.Values, "service_name"),
-		SchemaName:   getString(msg.Values, "schema_name"),
-		TableName:    getString(msg.Values, "table_name"),
-		JobName:      getString(msg.Values, "job_name"),
-		NodeType:     nodeType,
+		TaskID:         taskID,
+		ScheduleID:     scheduleID,
+		ScheduleName:   getString(msg.Values, "schedule_name"),
+		ServiceName:    getString(msg.Values, "service_name"),
+		SchemaName:     getString(msg.Values, "schema_name"),
+		TableName:      getString(msg.Values, "table_name"),
+		JobName:        getString(msg.Values, "job_name"),
+		NodeType:       nodeType,
+		TaskRetryCount: taskRetryCount,
+		MaxRetries:     maxRetries,
 	}
 
 	// Handle via message bus (same handler works for both initial deploy and retry)

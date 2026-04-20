@@ -39,10 +39,12 @@ func (r *outboxRepository) Create(ctx context.Context, entry *model.DeploymentOu
 	query := `
 		INSERT INTO deployment_outbox (
 			id, task_id, schedule_id, schedule_name, service_name, schema_name,
-			table_name, job_name, node_type, status, created_at, retry_count, max_retries
+			table_name, job_name, node_type, task_retry_count, task_max_retries,
+			status, created_at, retry_count, max_retries
 		) VALUES (
 			:id, :task_id, :schedule_id, :schedule_name, :service_name, :schema_name,
-			:table_name, :job_name, :node_type, :status, :created_at, :retry_count, :max_retries
+			:table_name, :job_name, :node_type, :task_retry_count, :task_max_retries,
+			:status, :created_at, :retry_count, :max_retries
 		)
 	`
 
@@ -56,8 +58,8 @@ func (r *outboxRepository) Create(ctx context.Context, entry *model.DeploymentOu
 	if entry.Status == "" {
 		entry.Status = string(model.OutboxStatusPending)
 	}
-	if entry.MaxRetries == 0 {
-		entry.MaxRetries = 3
+	if entry.OutboxMaxRetries == 0 {
+		entry.OutboxMaxRetries = 3
 	}
 
 	_, err := r.db.NamedExecContext(ctx, query, entry)
@@ -84,7 +86,10 @@ func (r *outboxRepository) Create(ctx context.Context, entry *model.DeploymentOu
 func (r *outboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*model.DeploymentOutboxEntry, error) {
 	query := `
 		SELECT id, task_id, schedule_id, schedule_name, service_name, schema_name,
-		       table_name, job_name, node_type, status, created_at, processed_at,
+		       table_name, job_name, node_type,
+		       COALESCE(task_retry_count, 0) as task_retry_count,
+		       COALESCE(task_max_retries, 3) as task_max_retries,
+		       status, created_at, processed_at,
 		       retry_count, max_retries, error_message
 		FROM deployment_outbox
 		WHERE status = $1

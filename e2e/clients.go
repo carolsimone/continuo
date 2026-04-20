@@ -24,7 +24,6 @@ type testClients struct {
 	stateClient        statev1.StateServiceClient
 	redisClient        *goredis.Client
 	neo4jDriver        neo4jdriver.DriverWithContext
-	startupDB          *sqlx.DB
 	executorDB         *sqlx.DB
 	orchestratorDB     *sqlx.DB
 	k8sDB              *sqlx.DB
@@ -77,7 +76,6 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	require.NoError(t, err, "Failed to connect to Neo4j")
 
 	// Setup PostgreSQL connections for each database
-	startupDB := connectPostgres(t, pgHost, "continuo_startup")
 	executorDB := connectPostgres(t, pgHost, "continuo_executor")
 	orchestratorDB := connectPostgres(t, pgHost, "continuo_orchestrator")
 	k8sDB := connectPostgres(t, pgHost, "continuo_k8s")
@@ -88,7 +86,6 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		stateClient:        statev1.NewStateServiceClient(stateConn),
 		redisClient:        redisClient,
 		neo4jDriver:        neo4jDriver,
-		startupDB:          startupDB,
 		executorDB:         executorDB,
 		orchestratorDB:     orchestratorDB,
 		k8sDB:              k8sDB,
@@ -114,7 +111,6 @@ func connectPostgres(t *testing.T, host, database string) *sqlx.DB {
 func (c *testClients) close(ctx context.Context) {
 	c.redisClient.Close()
 	c.neo4jDriver.Close(ctx)
-	c.startupDB.Close()
 	c.executorDB.Close()
 	c.orchestratorDB.Close()
 	c.k8sDB.Close()

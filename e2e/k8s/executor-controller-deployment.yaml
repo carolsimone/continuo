@@ -69,6 +69,8 @@ spec:
               value: "executor_controller_consumers"
             - name: REDIS_PRODUCER_STREAM
               value: "node.deployed:v1"
+            - name: REDIS_STATUS_STREAM
+              value: "task.status.updated:v1"
             - name: POSTGRES_HOST
               value: "${DOCKER_BRIDGE_IP}"
             - name: POSTGRES_PORT
@@ -79,8 +81,6 @@ spec:
               value: "continuo_svc"
             - name: POSTGRES_PASSWORD
               value: "continuo"
-            - name: STATE_SERVICE_GRPC_ADDR
-              value: "${DOCKER_BRIDGE_IP}:50051"
             - name: K8S_NAMESPACE
               value: "default"
             - name: HTTP_PORT

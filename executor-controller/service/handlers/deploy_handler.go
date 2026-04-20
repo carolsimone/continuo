@@ -41,20 +41,27 @@ func (h *DeployHandler) Handle(ctx context.Context, cmd command.DeployJob) error
 	defer h.uow.Rollback()
 
 	// Step 2: Write deployment intent to outbox table
+	taskMaxRetries := cmd.MaxRetries
+	if taskMaxRetries <= 0 {
+		taskMaxRetries = 3
+	}
+
 	entry := &model.DeploymentOutboxEntry{
-		ID:           uuid.New(),
-		TaskID:       cmd.TaskID,
-		ScheduleID:   cmd.ScheduleID,
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  cmd.ServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		JobName:      cmd.JobName,
-		NodeType:     string(cmd.NodeType),
-		Status:       string(model.OutboxStatusPending),
-		CreatedAt:    time.Now(),
-		RetryCount:   0,
-		MaxRetries:   3,
+		ID:             uuid.New(),
+		TaskID:         cmd.TaskID,
+		ScheduleID:     cmd.ScheduleID,
+		ScheduleName:   cmd.ScheduleName,
+		ServiceName:    cmd.ServiceName,
+		SchemaName:     cmd.SchemaName,
+		TableName:      cmd.TableName,
+		JobName:        cmd.JobName,
+		NodeType:       string(cmd.NodeType),
+		TaskRetryCount: cmd.TaskRetryCount,
+		TaskMaxRetries: taskMaxRetries,
+		Status:         string(model.OutboxStatusPending),
+		CreatedAt:      time.Now(),
+		OutboxRetryCount: 0,
+		OutboxMaxRetries: 3,
 	}
 
 	if err := h.uow.OutboxRepo().Create(ctx, entry); err != nil {

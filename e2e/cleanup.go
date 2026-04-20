@@ -69,11 +69,6 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 		SELECT schedule_id FROM scheduler_tracker WHERE schedule_name = $1
 	`, scheduleName)
 
-	// Clean startup_outbox
-	if schedulerID != "" {
-		_, _ = clients.startupDB.Exec("DELETE FROM startup_outbox WHERE aggregate_id = $1", schedulerID)
-	}
-
 	// Clean deployment_outbox
 	_, _ = clients.executorDB.Exec("DELETE FROM deployment_outbox WHERE schedule_name = $1", scheduleName)
 

@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -162,10 +161,9 @@ func verifyFullDAGExecution(
 	t.Log("✅ Full DAG execution completed successfully")
 }
 
-// verifyStartupController verifies the startup-controller processed the schedule
-// activation correctly: outbox entries are processed with correct payloads, and
-// the expected root node messages appear exactly once in query.model:v1.
-func verifyStartupController(
+// verifyOrchestratorPublishedRootNodes verifies that the orchestrator published
+// the expected root node messages to query.model:v1 after processing scheduler.started:v1.
+func verifyOrchestratorPublishedRootNodes(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
@@ -175,59 +173,8 @@ func verifyStartupController(
 	t.Helper()
 	expectedCount := len(expectedRootNodes)
 
-	// 1. Wait for all root-node outbox entries to be processed.
-	// Filter by stream_name = 'query.model:v1' to exclude the initialize.run:v1 entry.
-	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
-		var processedCount int
-		err := clients.startupDB.Get(&processedCount, `
-			SELECT COUNT(*)
-			FROM startup_outbox
-			WHERE aggregate_id = $1 AND status = 'processed' AND stream_name = 'query.model:v1'
-		`, schedulerID)
-		if err != nil {
-			return false, err
-		}
-		return processedCount == expectedCount, nil
-	}, fmt.Sprintf("Timeout waiting for startup-controller to process %d outbox entries", expectedCount))
-
-	// 2. Assert outbox payload correctness
-	var outboxEntries []struct {
-		Payload []byte `db:"payload"`
-		Status  string `db:"status"`
-	}
-	err := clients.startupDB.Select(&outboxEntries, `
-		SELECT payload, status FROM startup_outbox
-		WHERE aggregate_id = $1 AND stream_name = 'query.model:v1'
-		ORDER BY created_at
-	`, schedulerID)
-	require.NoError(t, err, "Failed to query startup_outbox")
-	require.Len(t, outboxEntries, expectedCount, "Expected %d outbox entries", expectedCount)
-
-	seenTables := make(map[string]bool)
-	for _, entry := range outboxEntries {
-		assert.Equal(t, "processed", entry.Status)
-
-		var payload struct {
-			ScheduleID   string `json:"schedule_id"`
-			ScheduleName string `json:"schedule_name"`
-			TableName    string `json:"table_name"`
-			TaskID       string `json:"task_id"`
-			JobName      string `json:"job_name"`
-		}
-		require.NoError(t, json.Unmarshal(entry.Payload, &payload), "Failed to unmarshal outbox payload")
-
-		assert.Equal(t, schedulerID.String(), payload.ScheduleID)
-		assert.NotEmpty(t, payload.ScheduleName)
-		assert.NotEmpty(t, payload.TaskID)
-		assert.NotEmpty(t, payload.JobName)
-		assert.Regexp(t, `^[a-z0-9-]+$`, payload.JobName, "JobName must be k8s-compliant")
-		assert.Contains(t, expectedRootNodes, payload.TableName, "TableName must be one of the root nodes")
-		assert.False(t, seenTables[payload.TableName], "Duplicate outbox entry for table: %s", payload.TableName)
-		seenTables[payload.TableName] = true
-	}
-
-	// 3. Wait for query.model:v1 to contain the expected messages
-	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
+	// Wait for query.model:v1 to contain the expected messages
+	pollUntil(t, ctx, 60*time.Second, 500*time.Millisecond, func() (bool, error) {
 		messages, err := clients.redisClient.XRange(ctx, "query.model:v1", "-", "+").Result()
 		if err != nil {
 			return false, err
@@ -241,7 +188,7 @@ func verifyStartupController(
 		return count >= expectedCount, nil
 	}, fmt.Sprintf("Timeout waiting for %d messages in query.model:v1", expectedCount))
 
-	// 4. Assert Redis message content and no duplicates
+	// Assert Redis message content and no duplicates
 	messages, err := clients.redisClient.XRange(ctx, "query.model:v1", "-", "+").Result()
 	require.NoError(t, err)
 
@@ -264,7 +211,7 @@ func verifyStartupController(
 		seenStreamTables[tableName] = true
 	}
 
-	t.Logf("✅ startup-controller verified: %d outbox entries processed, %d Redis messages correct", expectedCount, expectedCount)
+	t.Logf("✅ orchestrator published %d root node messages to query.model:v1", expectedCount)
 }
 
 // verifyTableEExhaustedRetries polls state DB until table_e has retry_count = 3

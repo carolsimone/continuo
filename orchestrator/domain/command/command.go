@@ -1,17 +1,8 @@
 package command
 
 import (
-	"context"
-
 	"github.com/google/uuid"
 )
-
-// StateTaskClient defines the interface for task and scheduler operations on the state service.
-type StateTaskClient interface {
-	GetTask(ctx context.Context, scheduleID uuid.UUID, serviceName, schema, tableName string) (taskID string, err error)
-	GetSchedulerInitStatus(ctx context.Context, scheduleID uuid.UUID) (string, error)
-	UpdateSchedulerStatus(ctx context.Context, scheduleID uuid.UUID, status string) error
-}
 
 // HandleNodeCompletedCmd carries the data for a node-completed event.
 type HandleNodeCompletedCmd struct {
@@ -57,6 +48,7 @@ type NodePayload struct {
 	Criticality  string `json:"criticality"`
 	NodeType     string `json:"node_type"`
 	Status       string `json:"status"`
+	TaskID       string `json:"task_id"`
 }
 
 // IngestTopologyCmd carries the data for a topology ingestion command.

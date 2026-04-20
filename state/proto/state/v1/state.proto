@@ -11,10 +11,7 @@ service StateService {
   // Scheduler operations
   rpc CreateScheduler(CreateSchedulerRequest) returns (SchedulerResponse);
   rpc GetScheduler(GetSchedulerRequest) returns (SchedulerResponse);
-  rpc UpdateScheduler(UpdateSchedulerRequest) returns (SchedulerResponse);
   rpc CancelScheduler(CancelSchedulerRequest) returns (SchedulerResponse);
-  rpc UpdateSchedulerInitStatus(UpdateSchedulerInitStatusRequest) returns (SchedulerResponse);
-  rpc ResetInProgressInitializations(ResetInProgressInitializationsRequest) returns (ResetInProgressInitializationsResponse);
 
   // Trigger operations
   rpc ActivateSchedule(ActivateScheduleRequest) returns (ActivateScheduleResponse);
@@ -30,11 +27,9 @@ service StateService {
   rpc CreateTask(CreateTaskRequest) returns (TaskResponse);
   rpc GetTask(GetTaskRequest) returns (TaskResponse);
   rpc GetTaskByScheduleAndNode(GetTaskByScheduleAndNodeRequest) returns (TaskResponse);
-  rpc UpdateTask(UpdateTaskRequest) returns (TaskResponse);
   rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
   // ResetTask unconditionally resets a task to PENDING with retry_count=0.
-  // Required because UpdateTask ignores retry_count=0 (proto3 zero-value).
   rpc ResetTask(ResetTaskRequest) returns (TaskResponse);
 
   // GetSchedulerInitStatus returns initialization_status for a scheduler.
@@ -46,7 +41,6 @@ service StateService {
   rpc TriggerRerun(TriggerRerunRequest) returns (TriggerRerunResponse);
 
   // TaskExecution operations
-  rpc CreateTaskExecution(CreateTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
 }
@@ -136,14 +130,6 @@ message GetSchedulerRequest {
   string schedule_id = 1;              // Required
 }
 
-message UpdateSchedulerRequest {
-  string schedule_id = 1;              // Required
-  SchedulerStatus status = 2;          // Optional
-  google.protobuf.Timestamp started_at = 3;         // Optional
-  google.protobuf.Timestamp completed_at = 4;       // Optional
-  google.protobuf.Timestamp last_heartbeat_at = 5;  // Optional
-}
-
 message CancelSchedulerRequest {
   string schedule_id = 1;              // Required
   string cancelled_by = 2;             // Optional
@@ -152,19 +138,6 @@ message CancelSchedulerRequest {
 
 message SchedulerResponse {
   Scheduler scheduler = 1;
-}
-
-message UpdateSchedulerInitStatusRequest {
-  string schedule_id = 1;                  // Required
-  string initialization_status = 2;        // Required: 'pending', 'in_progress', 'completed', 'failed'
-}
-
-message ResetInProgressInitializationsRequest {
-  // No parameters needed - resets all 'in_progress' to 'pending'
-}
-
-message ResetInProgressInitializationsResponse {
-  int32 count = 1;                         // Number of records reset
 }
 
 // ============================================================================
@@ -190,14 +163,6 @@ message GetTaskByScheduleAndNodeRequest {
   string service_name = 2;             // Required
   string schema_name = 3;              // Required
   string table_name = 4;               // Required
-}
-
-message UpdateTaskRequest {
-  string task_id = 1;                  // Required
-  TaskStatus status = 2;               // Optional
-  int32 retry_count = 3;               // Optional
-  google.protobuf.Timestamp cancelled_at = 4;  // Optional
-  string cancelled_by = 5;             // Optional
 }
 
 message DeleteTaskRequest {
@@ -228,18 +193,6 @@ message TaskResponse {
 // ============================================================================
 // TASK EXECUTION REQUESTS/RESPONSES
 // ============================================================================
-
-message CreateTaskExecutionRequest {
-  string id = 1;                                    // Optional: client-provided UUID
-  string task_id = 2;                               // Required: parent task
-  google.protobuf.Timestamp started_at = 3;         // Optional
-  google.protobuf.Timestamp completed_at = 4;       // Optional
-  double execution_time_seconds = 5;                // Optional
-  string executor_id = 6;                           // Optional
-  string k8s_job_name = 7;                          // Optional
-  string error_message = 8;                         // Optional
-  string log_s3_key = 9;                            // Optional: S3 key for full pod log
-}
 
 message GetTaskExecutionRequest {
   string id = 1;                                    // Required: execution ID

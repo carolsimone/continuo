@@ -42,7 +42,7 @@ func TestOutboxRepository_Create(t *testing.T) {
 	assert.NotEqual(t, uuid.Nil, entry.ID)
 	assert.False(t, entry.CreatedAt.IsZero())
 	assert.Equal(t, string(model.OutboxStatusPending), entry.Status)
-	assert.Equal(t, 3, entry.MaxRetries)
+	assert.Equal(t, 3, entry.OutboxMaxRetries)
 }
 
 func TestOutboxRepository_GetPendingBatch(t *testing.T) {
@@ -251,7 +251,7 @@ func TestOutboxRepository_IncrementRetry(t *testing.T) {
 		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
-		RetryCount:   0,
+		OutboxRetryCount: 0,
 	}
 
 	err := repo.Create(ctx, entry)
@@ -265,7 +265,7 @@ func TestOutboxRepository_IncrementRetry(t *testing.T) {
 	entries, err := repo.GetPendingBatch(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	assert.Equal(t, 1, entries[0].RetryCount)
+	assert.Equal(t, 1, entries[0].OutboxRetryCount)
 
 	// Increment again
 	err = repo.IncrementRetry(ctx, entry.ID)
@@ -274,7 +274,7 @@ func TestOutboxRepository_IncrementRetry(t *testing.T) {
 	entries, err = repo.GetPendingBatch(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	assert.Equal(t, 2, entries[0].RetryCount)
+	assert.Equal(t, 2, entries[0].OutboxRetryCount)
 }
 
 func TestOutboxRepository_MaxRetriesFilter(t *testing.T) {
@@ -298,8 +298,8 @@ func TestOutboxRepository_MaxRetriesFilter(t *testing.T) {
 		SchemaName:   "public",
 		TableName:    "users",
 		JobName:      "dbt-public-users",
-		RetryCount:   3,
-		MaxRetries:   3,
+		OutboxRetryCount: 3,
+		OutboxMaxRetries: 3,
 	}
 
 	err := repo.Create(ctx, entry)

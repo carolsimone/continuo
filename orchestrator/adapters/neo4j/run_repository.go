@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -21,33 +22,85 @@ func NewRunRepository(client Neo4jClient, logger *slog.Logger) *RunRepository {
 }
 
 // SnapshotGraph creates a Run node and EXECUTES edges for all nodes in a schedule.
+// Each edge gets a stable task_id UUID assigned at creation time; re-snapshots
+// (idempotent replay via MERGE) preserve the original task_id.
 func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName string) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
-	query := `
-		MERGE (run:Run {run_id: $run_id})
-		ON CREATE SET run.schedule_name = $schedule_name, run.created_at = datetime()
-		WITH run
+	// Step 1: collect all node identities for this schedule so we can build
+	// UUID assignments in Go before writing.
+	listQuery := `
 		CALL {
-			WITH run
 			MATCH (t:Table {schedule_name: $schedule_name})
-			RETURN t AS node
+			RETURN t.schema_name   AS schema_name,
+			       t.table_name    AS table_name,
+			       t.service_name  AS service_name,
+			       t.schedule_name AS schedule_name
 
 			UNION
 
-			WITH run
 			MATCH (t:Table {schedule_name: $schedule_name})-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
-			RETURN s AS node
+			RETURN s.schema_name   AS schema_name,
+			       s.table_name    AS table_name,
+			       s.service_name  AS service_name,
+			       s.schedule_name AS schedule_name
 		}
-		WITH DISTINCT run, node
+		RETURN DISTINCT schema_name, table_name, service_name, schedule_name
+	`
+	listResult, err := session.Run(ctx, listQuery, map[string]interface{}{
+		"schedule_name": scheduleName,
+	})
+	if err != nil {
+		return fmt.Errorf("SnapshotGraph: failed to list nodes: %w", err)
+	}
+
+	assignments := make([]map[string]interface{}, 0)
+	for listResult.Next(ctx) {
+		record := listResult.Record()
+		schemaRaw, _ := record.Get("schema_name")
+		tableRaw, _ := record.Get("table_name")
+		serviceRaw, _ := record.Get("service_name")
+		scheduleRaw, _ := record.Get("schedule_name")
+		assignments = append(assignments, map[string]interface{}{
+			"schema_name":   safeString(schemaRaw),
+			"table_name":    safeString(tableRaw),
+			"service_name":  safeString(serviceRaw),
+			"schedule_name": safeString(scheduleRaw),
+			"task_id":       uuid.New().String(),
+		})
+	}
+	if err := listResult.Err(); err != nil {
+		return fmt.Errorf("SnapshotGraph: error iterating nodes: %w", err)
+	}
+
+	if len(assignments) == 0 {
+		r.logger.Warn("SnapshotGraph: no nodes found for schedule, run will have no EXECUTES edges",
+			"schedule_name", scheduleName, "run_id", runID)
+		return nil
+	}
+
+	// Step 2: MERGE Run node and EXECUTES edges; ON CREATE sets task_id so
+	// existing edges on replay keep their original task_id.
+	mergeQuery := `
+		MERGE (run:Run {run_id: $run_id})
+		ON CREATE SET run.schedule_name = $schedule_name, run.created_at = datetime()
+		WITH run
+		UNWIND $assignments AS a
+		MATCH (node:Table {schema_name:   a.schema_name,
+		                   table_name:    a.table_name,
+		                   service_name:  a.service_name,
+		                   schedule_name: a.schedule_name})
 		MERGE (run)-[e:EXECUTES]->(node)
-		ON CREATE SET e.status = 'PENDING', e.manifest_version = COALESCE(node.manifest_version, '')
+		ON CREATE SET e.status = 'PENDING',
+		              e.manifest_version = COALESCE(node.manifest_version, ''),
+		              e.task_id = a.task_id
 		RETURN count(e) AS edges_created
 	`
-	result, err := session.Run(ctx, query, map[string]interface{}{
+	result, err := session.Run(ctx, mergeQuery, map[string]interface{}{
 		"run_id":        runID,
 		"schedule_name": scheduleName,
+		"assignments":   assignments,
 	})
 	if err != nil {
 		return fmt.Errorf("SnapshotGraph: failed to create snapshot: %w", err)
@@ -313,7 +366,7 @@ func (r *RunRepository) GetScheduleInitNodes(ctx context.Context, scheduleName, 
 
 func (r *RunRepository) getRootNodesInRun(ctx context.Context, tx neo4j.ExplicitTransaction, scheduleName, runID string) ([]*domain.TableNode, error) {
 	query := `
-		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(t:Table {schedule_name: $schedule_name})
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table {schedule_name: $schedule_name})
 		WHERE NOT (t)-[:DEPENDS_ON]->(:Table {schedule_name: $schedule_name})
 		RETURN
 			t.schema_name AS schema_name,
@@ -324,7 +377,8 @@ func (r *RunRepository) getRootNodesInRun(ctx context.Context, tx neo4j.Explicit
 			COALESCE(t.criticality, "unspecified") AS criticality,
 			t.last_updated_at AS last_updated_at,
 			t.created_at AS created_at,
-			COALESCE(t.node_type, "") AS node_type
+			COALESCE(t.node_type, "") AS node_type,
+			COALESCE(e.task_id, "") AS task_id
 		ORDER BY t.table_name
 	`
 	result, err := tx.Run(ctx, query, map[string]interface{}{
@@ -341,7 +395,7 @@ func (r *RunRepository) getUpstreamSeedNodesInRun(ctx context.Context, tx neo4j.
 	query := `
 		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(t:Table {schedule_name: $schedule_name})
 		MATCH (t)-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
-		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(s)
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(s)
 		RETURN DISTINCT
 			s.schema_name AS schema_name,
 			s.table_name AS table_name,
@@ -351,7 +405,8 @@ func (r *RunRepository) getUpstreamSeedNodesInRun(ctx context.Context, tx neo4j.
 			COALESCE(s.criticality, "unspecified") AS criticality,
 			s.last_updated_at AS last_updated_at,
 			s.created_at AS created_at,
-			s.node_type AS node_type
+			s.node_type AS node_type,
+			COALESCE(e.task_id, "") AS task_id
 		ORDER BY s.table_name
 	`
 	result, err := tx.Run(ctx, query, map[string]interface{}{
@@ -367,7 +422,7 @@ func (r *RunRepository) getUpstreamSeedNodesInRun(ctx context.Context, tx neo4j.
 func (r *RunRepository) getAllNodesInRun(ctx context.Context, tx neo4j.ExplicitTransaction, scheduleName, runID string) ([]*domain.TableNode, error) {
 	query := `
 		CALL {
-		    MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(t:Table {schedule_name: $schedule_name})
+		    MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table {schedule_name: $schedule_name})
 		    RETURN
 		        t.schema_name   AS schema_name,
 		        t.table_name    AS table_name,
@@ -377,13 +432,14 @@ func (r *RunRepository) getAllNodesInRun(ctx context.Context, tx neo4j.ExplicitT
 		        COALESCE(t.criticality, "unspecified") AS criticality,
 		        t.last_updated_at AS last_updated_at,
 		        t.created_at AS created_at,
-		        COALESCE(t.node_type, "") AS node_type
+		        COALESCE(t.node_type, "") AS node_type,
+		        COALESCE(e.task_id, "") AS task_id
 
 		    UNION
 
 		    MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(t:Table {schedule_name: $schedule_name})
 		    MATCH (t)-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
-		    MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(s)
+		    MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(s)
 		    RETURN
 		        s.schema_name   AS schema_name,
 		        s.table_name    AS table_name,
@@ -393,9 +449,10 @@ func (r *RunRepository) getAllNodesInRun(ctx context.Context, tx neo4j.ExplicitT
 		        COALESCE(s.criticality, "unspecified") AS criticality,
 		        s.last_updated_at AS last_updated_at,
 		        s.created_at AS created_at,
-		        s.node_type     AS node_type
+		        s.node_type     AS node_type,
+		        COALESCE(e.task_id, "") AS task_id
 		}
-		RETURN schema_name, table_name, service_name, owner, schedule_name, criticality, last_updated_at, created_at, node_type
+		RETURN schema_name, table_name, service_name, owner, schedule_name, criticality, last_updated_at, created_at, node_type, task_id
 		ORDER BY table_name
 	`
 	result, err := tx.Run(ctx, query, map[string]interface{}{
@@ -509,6 +566,175 @@ func (r *RunRepository) GetNodeServiceName(ctx context.Context, schema, tableNam
 	return "", fmt.Errorf("node not found: %s.%s", schema, tableName)
 }
 
+// GetTaskIDForNode returns the task_id assigned on the EXECUTES edge for a specific
+// Table node within a run.
+func (r *RunRepository) GetTaskIDForNode(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table)
+		WHERE t.service_name = $service_name AND t.schema_name = $schema_name AND t.table_name = $table_name
+		RETURN e.task_id AS task_id
+		LIMIT 1
+	`, map[string]interface{}{
+		"run_id":       runID,
+		"service_name": serviceName,
+		"schema_name":  schemaName,
+		"table_name":   tableName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("GetTaskIDForNode query failed: %w", err)
+	}
+	if result.Next(ctx) {
+		if v, _ := result.Record().Get("task_id"); v != nil {
+			if id := safeString(v); id != "" {
+				return id, nil
+			}
+		}
+	}
+	if err := result.Err(); err != nil {
+		return "", fmt.Errorf("GetTaskIDForNode result error: %w", err)
+	}
+	return "", fmt.Errorf("GetTaskIDForNode: no task_id on EXECUTES edge for run=%s service=%s schema=%s table=%s", runID, serviceName, schemaName, tableName)
+}
+
+// GetSkippedDownstreamTaskIDs returns the task_ids of all transitively downstream
+// Table nodes that currently have status=SKIPPED within the given run.
+func (r *RunRepository) GetSkippedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(target:Table)
+		WHERE target.schema_name = $schema_name AND target.table_name = $table_name
+		MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
+		MATCH (:Run {run_id: $run_id})-[de:EXECUTES]->(downstream)
+		WHERE de.status = 'SKIPPED'
+		RETURN COALESCE(de.task_id, '') AS task_id
+	`, map[string]interface{}{
+		"run_id":      runID,
+		"schema_name": schemaName,
+		"table_name":  tableName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetSkippedDownstreamTaskIDs query failed: %w", err)
+	}
+
+	var taskIDs []string
+	for result.Next(ctx) {
+		if v, _ := result.Record().Get("task_id"); v != nil {
+			if id := safeString(v); id != "" {
+				taskIDs = append(taskIDs, id)
+			}
+		}
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("GetSkippedDownstreamTaskIDs result error: %w", err)
+	}
+	return taskIDs, nil
+}
+
+// MarkPendingDownstreamSkipped finds all transitively downstream nodes in the run that
+// are still PENDING, atomically marks them SKIPPED, and returns their identifying info.
+func (r *RunRepository) MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(target:Table)
+		WHERE target.schema_name = $schema_name AND target.table_name = $table_name
+		MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
+		MATCH (:Run {run_id: $run_id})-[de:EXECUTES]->(downstream)
+		WHERE de.status = 'PENDING' OR de.status IS NULL
+		SET de.status = 'SKIPPED'
+		RETURN
+			COALESCE(de.task_id, '')           AS task_id,
+			downstream.schema_name              AS schema_name,
+			downstream.table_name               AS table_name,
+			COALESCE(downstream.service_name, '') AS service_name
+	`, map[string]interface{}{
+		"run_id":      runID,
+		"schema_name": schemaName,
+		"table_name":  tableName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("MarkPendingDownstreamSkipped query failed: %w", err)
+	}
+
+	var nodes []*run.CascadedFailureNode
+	for result.Next(ctx) {
+		record := result.Record()
+		n := &run.CascadedFailureNode{}
+		if v, _ := record.Get("task_id"); v != nil {
+			n.TaskID = safeString(v)
+		}
+		if v, _ := record.Get("schema_name"); v != nil {
+			n.SchemaName = safeString(v)
+		}
+		if v, _ := record.Get("table_name"); v != nil {
+			n.TableName = safeString(v)
+		}
+		if v, _ := record.Get("service_name"); v != nil {
+			n.ServiceName = safeString(v)
+		}
+		nodes = append(nodes, n)
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("MarkPendingDownstreamSkipped result error: %w", err)
+	}
+
+	if len(nodes) > 0 {
+		r.logger.Info("Marked pending downstream nodes as SKIPPED",
+			"run_id", runID,
+			"failed_table", tableName,
+			"cascaded_count", len(nodes),
+		)
+	}
+	return nodes, nil
+}
+
+// ResetSkippedDownstreamToPending resets all transitively downstream nodes that were
+// cascade-skipped back to PENDING so they can be dispatched after a successful rerun.
+func (r *RunRepository) ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(target:Table)
+		WHERE target.schema_name = $schema_name AND target.table_name = $table_name
+		MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
+		MATCH (:Run {run_id: $run_id})-[de:EXECUTES]->(downstream)
+		WHERE de.status = 'SKIPPED'
+		SET de.status = 'PENDING'
+		RETURN count(de) AS reset_count
+	`, map[string]interface{}{
+		"run_id":      runID,
+		"schema_name": schemaName,
+		"table_name":  tableName,
+	})
+	if err != nil {
+		return fmt.Errorf("ResetSkippedDownstreamToPending query failed: %w", err)
+	}
+
+	var resetCount int64
+	if result.Next(ctx) {
+		if v, _ := result.Record().Get("reset_count"); v != nil {
+			resetCount, _ = v.(int64)
+		}
+	}
+	if err := result.Err(); err != nil {
+		return fmt.Errorf("ResetSkippedDownstreamToPending result error: %w", err)
+	}
+
+	r.logger.Info("Reset cascade-skipped downstream nodes to PENDING",
+		"run_id", runID,
+		"table_name", tableName,
+		"reset_count", resetCount,
+	)
+	return nil
+}
+
 // DeleteExpiredRuns removes Run nodes (and their EXECUTES edges) older than retentionDays.
 func (r *RunRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
@@ -561,6 +787,7 @@ func recordToTableNode(record *neo4j.Record) (*domain.TableNode, error) {
 	lastUpdatedAt, _ := record.Get("last_updated_at")
 	createdAt, _ := record.Get("created_at")
 	nodeType, _ := record.Get("node_type")
+	taskID, _ := record.Get("task_id")
 
 	node := &domain.TableNode{
 		TableName:    safeString(tableName),
@@ -570,6 +797,7 @@ func recordToTableNode(record *neo4j.Record) (*domain.TableNode, error) {
 		ScheduleName: safeString(scheduleName),
 		Criticality:  domain.Criticality(safeString(criticality)),
 		NodeType:     safeString(nodeType),
+		TaskID:       safeString(taskID),
 	}
 
 	// Convert Neo4j datetime to Go time.Time

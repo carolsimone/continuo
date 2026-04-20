@@ -18,24 +18,21 @@ import (
 
 // HandleNodeCompletedHandler handles the HandleNodeCompleted command.
 type HandleNodeCompletedHandler struct {
-	uow         uow.UnitOfWork
-	runRepo     run.Repository
-	stateClient domainCmd.StateTaskClient
-	logger      *slog.Logger
+	uow     uow.UnitOfWork
+	runRepo run.Repository
+	logger  *slog.Logger
 }
 
 // NewHandleNodeCompletedHandler creates a new HandleNodeCompletedHandler.
 func NewHandleNodeCompletedHandler(
 	u uow.UnitOfWork,
 	runRepo run.Repository,
-	stateClient domainCmd.StateTaskClient,
 	logger *slog.Logger,
 ) *HandleNodeCompletedHandler {
 	return &HandleNodeCompletedHandler{
-		uow:         u,
-		runRepo:     runRepo,
-		stateClient: stateClient,
-		logger:      logger,
+		uow:     u,
+		runRepo: runRepo,
+		logger:  logger,
 	}
 }
 
@@ -110,7 +107,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.H
 				continue
 			}
 
-			taskID, err := h.stateClient.GetTask(ctx, cmd.ScheduleID, node.ServiceName, node.SchemaName, node.TableName)
+			taskID, err := h.runRepo.GetTaskIDForNode(ctx, cmd.ScheduleID.String(), node.ServiceName, node.SchemaName, node.TableName)
 			if err != nil {
 				return fmt.Errorf("failed to get task for %s.%s: %w", node.SchemaName, node.TableName, err)
 			}
@@ -157,6 +154,62 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.H
 				"downstream_table", node.TableName,
 			)
 		}
+	} else if cmd.Status == string(domain.NodeStatusFailed) {
+		// Cascade failure: mark all still-PENDING downstream nodes as FAILED in Neo4j
+		// and write outbox entries so the state service increments terminal_task_count.
+		cascaded, err := h.runRepo.MarkPendingDownstreamSkipped(
+			ctx,
+			cmd.ScheduleID.String(),
+			cmd.ScheduleName,
+			cmd.SchemaName,
+			cmd.TableName,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to cascade downstream skips: %w", err)
+		}
+
+		for _, node := range cascaded {
+			if node.TaskID == "" {
+				h.logger.Warn("Cascaded skip node has no task_id, skipping outbox entry",
+					"schema", node.SchemaName, "table", node.TableName)
+				continue
+			}
+
+			evtPayload, err := json.Marshal(domain.CascadeTaskSkipped{
+				TaskID:     node.TaskID,
+				ScheduleID: cmd.ScheduleID.String(),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to marshal cascade_task_skipped event: %w", err)
+			}
+
+			outboxEntry := &domain.OutboxEntry{
+				ID:                  uuid.New(),
+				MessageProcessingID: &msgProcessingID,
+				AggregateType:       "orchestrator",
+				AggregateID:         cmd.ScheduleID,
+				EventType:           "cascade_task_skipped",
+				Payload:             evtPayload,
+				StreamName:          "task.status.updated:v1",
+				Status:              "pending",
+				MaxRetries:          3,
+			}
+
+			if err := h.uow.OutboxRepo().Create(ctx, outboxEntry); err != nil {
+				return fmt.Errorf("failed to write cascade outbox entry for %s.%s: %w", node.SchemaName, node.TableName, err)
+			}
+
+			h.logger.Debug("Wrote cascade_task_skipped outbox entry",
+				"task_id", node.TaskID,
+				"schema", node.SchemaName,
+				"table", node.TableName,
+			)
+		}
+
+		h.logger.Info("Cascaded skip to downstream nodes",
+			"table_name", cmd.TableName,
+			"cascaded_count", len(cascaded),
+		)
 	} else {
 		h.logger.Info("Node did not succeed, skipping downstream check",
 			"table_name", cmd.TableName,
@@ -175,71 +228,6 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.H
 	}
 
 	h.logger.Info("Node completed processing finished", "trigger_table", cmd.TableName)
-
-	// Post-commit: for terminal statuses, check if the entire schedule is drained.
-	if cmd.Status == "SUCCEEDED" || cmd.Status == "FAILED" {
-		if err := h.checkAndFinalizeSchedule(ctx, cmd); err != nil {
-			// Non-fatal: main work is committed. A future reconciliation job recovers stale records.
-			h.logger.Error("Failed to finalize schedule completion",
-				"schedule_id", cmd.ScheduleID,
-				"schedule_name", cmd.ScheduleName,
-				"error", err,
-			)
-		}
-	}
-
-	return nil
-}
-
-// checkAndFinalizeSchedule queries the graph for drain status and, if complete,
-// updates scheduler_tracker status and finalizes the run snapshot.
-func (h *HandleNodeCompletedHandler) checkAndFinalizeSchedule(ctx context.Context, cmd domainCmd.HandleNodeCompletedCmd) error {
-	// Guard: skip finalization while a re-run is being set up.
-	// Prevents overwriting RUNNING status with FAILED/SUCCEEDED before
-	// startup-controller has finished resetting graph nodes.
-	initStatus, err := h.stateClient.GetSchedulerInitStatus(ctx, cmd.ScheduleID)
-	if err != nil {
-		return fmt.Errorf("failed to get scheduler init status: %w", err)
-	}
-	if initStatus != "completed" {
-		h.logger.Debug("Skipping finalization: init status not completed",
-			"schedule_id", cmd.ScheduleID,
-			"init_status", initStatus,
-		)
-		return nil
-	}
-
-	isComplete, hasFailed, err := h.runRepo.CheckScheduleCompletion(ctx, cmd.ScheduleID.String(), cmd.ScheduleName)
-	if err != nil {
-		return fmt.Errorf("failed to check schedule completion: %w", err)
-	}
-
-	if !isComplete {
-		h.logger.Debug("Schedule not yet complete", "schedule_name", cmd.ScheduleName)
-		return nil
-	}
-
-	status := "SUCCEEDED"
-	if hasFailed {
-		status = "FAILED"
-	}
-
-	if err := h.stateClient.UpdateSchedulerStatus(ctx, cmd.ScheduleID, status); err != nil {
-		return fmt.Errorf("failed to update scheduler status: %w", err)
-	}
-
-	if err := h.runRepo.FinalizeRun(ctx, cmd.ScheduleID.String(), status); err != nil {
-		h.logger.Error("Failed to finalize run snapshot",
-			"run_id", cmd.ScheduleID,
-			"error", err,
-		)
-	}
-
-	h.logger.Info("Schedule finalized and run stamped",
-		"schedule_id", cmd.ScheduleID,
-		"schedule_name", cmd.ScheduleName,
-		"status", status,
-	)
 
 	return nil
 }

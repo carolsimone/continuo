@@ -17,6 +17,10 @@ type Repository interface {
 	GetTransitiveDownstream(ctx context.Context, scheduleName, schema, tableName string) ([]*domain.TableNode, error)
 	GetNodeType(ctx context.Context, schema, tableName string) (string, error)
 	GetNodeServiceName(ctx context.Context, schema, tableName string) (string, error)
+	GetTaskIDForNode(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error)
+	GetSkippedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error)
+	MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*CascadedFailureNode, error)
+	ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error
 
 	// Read-side: queries (CQRS — called directly, not through aggregate)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)

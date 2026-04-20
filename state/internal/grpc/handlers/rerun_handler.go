@@ -113,17 +113,10 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 		h.logger.Error("failed to reset scheduler", "error", err)
 		return nil, status.Errorf(codes.Internal, "internal error")
 	}
-	if err := h.schedulerRepo.UpdateInitializationStatusTx(ctx, tx, scheduleID, "pending"); err != nil {
-		h.logger.Error("failed to reset init status", "error", err)
-		return nil, status.Errorf(codes.Internal, "internal error")
-	}
-
-	task.Status = model.TaskStatusPending
-	task.RetryCount = 0
-	if err := h.taskRepo.UpdateTx(ctx, tx, task); err != nil {
-		h.logger.Error("failed to reset task", "error", err)
-		return nil, status.Errorf(codes.Internal, "internal error")
-	}
+	// NOTE: initialization_status intentionally NOT reset to "pending" here.
+	// Task resets and terminal_count adjustment are handled by run_rerun_dispatched_handler
+	// when it consumes the outbox entry below, keeping initialization_status = "completed"
+	// so that finalization can trigger once all tasks reach terminal state.
 
 	payload, _ := json.Marshal(map[string]string{
 		"schedule_id":   scheduleID.String(),

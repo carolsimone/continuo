@@ -15,9 +15,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	redisadapter "github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 )
 
 // schedulerStartedEvent holds the fields read back from the Redis stream.
@@ -137,7 +137,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 
 	// Start outbox processor in background — picks up pending outbox entries and
 	// publishes them to Redis
-	outboxProcessor := redisadapter.NewOutboxProcessor(outboxRepo, redisClient, logger)
+	outboxProcessor := svchandlers.NewOutboxProcessor(outboxRepo, redisClient, logger)
 	go func() {
 		if err := outboxProcessor.Run(ctx); err != nil {
 			logger.Error("Outbox processor error", "error", err)

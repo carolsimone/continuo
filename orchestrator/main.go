@@ -108,19 +108,6 @@ func main() {
 		return redisClient.Close()
 	})
 
-	// 4. State gRPC client
-	stateClient, err := grpcinfra.NewStateClient(cfg.StateGRPCAddr, logger)
-	if err != nil {
-		logger.Error("Failed to create state service client", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("State service gRPC client initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Closing state service gRPC client")
-		return stateClient.Close()
-	})
-
 	// ========================================================================
 	// INITIALIZE REPOSITORIES
 	// ========================================================================
@@ -140,7 +127,9 @@ func main() {
 
 	ingestTopologyHandler := command.NewIngestTopologyHandler(unitOfWork, topologyRepo, logger)
 	initializeRunHandler := command.NewInitializeRunHandler(unitOfWork, runRepo, logger)
-	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, stateClient, logger)
+	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, logger)
+	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(unitOfWork, runRepo, logger)
+	handleRerunHandler := command.NewHandleRerunHandler(unitOfWork, runRepo, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -249,6 +238,61 @@ func main() {
 		logger,
 	)
 
+	// Consumer 4: scheduler.started:v1 -> HandleSchedulerStarted
+	schedulerStartedHandler := func(ctx context.Context, msg goredis.XMessage) error {
+		runnerID, ok := msg.Values["runner_id"].(string)
+		if !ok || runnerID == "" {
+			return fmt.Errorf("missing or invalid runner_id in scheduler.started message %s", msg.ID)
+		}
+		schedulerID, err := uuid.Parse(runnerID)
+		if err != nil {
+			return fmt.Errorf("invalid runner_id UUID %q in message %s: %w", runnerID, msg.ID, err)
+		}
+		scheduleName, ok2 := msg.Values["schedule_name"].(string)
+		if !ok2 || scheduleName == "" {
+			return fmt.Errorf("missing or invalid schedule_name in scheduler.started message %s", msg.ID)
+		}
+		cmd := command.SchedulerStartedCmd{
+			ScheduleID:   schedulerID,
+			ScheduleName: scheduleName,
+		}
+		return handleSchedulerStartedHandler.Handle(ctx, cmd, msg.ID)
+	}
+	schedulerStartedConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.SchedulerStartedStream,
+		cfg.SchedulerStartedGroup,
+		schedulerStartedHandler,
+		logger,
+	)
+
+	// Consumer 5: rerun:v1 -> HandleRerun
+	rerunHandler := func(ctx context.Context, msg goredis.XMessage) error {
+		scheduleID, _ := msg.Values["schedule_id"].(string)
+		scheduleName, _ := msg.Values["schedule_name"].(string)
+		schemaName, _ := msg.Values["schema_name"].(string)
+		tableName, _ := msg.Values["table_name"].(string)
+		serviceName, _ := msg.Values["service_name"].(string)
+		if scheduleID == "" || scheduleName == "" || schemaName == "" || tableName == "" {
+			return fmt.Errorf("missing required fields in rerun message %s", msg.ID)
+		}
+		cmd := domainCmd.HandleRerunCmd{
+			RunID:        scheduleID,
+			ScheduleName: scheduleName,
+			ServiceName:  serviceName,
+			SchemaName:   schemaName,
+			TableName:    tableName,
+		}
+		return handleRerunHandler.Handle(ctx, cmd, msg.ID)
+	}
+	rerunConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.RerunStream,
+		cfg.RerunGroup,
+		rerunHandler,
+		logger,
+	)
+
 	// Start all consumers in goroutines
 	go func() {
 		if err := nodeUpdatedConsumer.Start(ctx); err != nil {
@@ -265,6 +309,18 @@ func main() {
 	go func() {
 		if err := initRunConsumer.Start(ctx); err != nil {
 			logger.Error("Initialize run consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := schedulerStartedConsumer.Start(ctx); err != nil {
+			logger.Error("Scheduler started consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := rerunConsumer.Start(ctx); err != nil {
+			logger.Error("Rerun consumer error", "error", err)
 		}
 	}()
 
