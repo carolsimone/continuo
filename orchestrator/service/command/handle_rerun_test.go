@@ -19,11 +19,11 @@ import (
 type rerunFakeRunRepository struct {
 	fakeRunRepository
 
-	getTaskIDForNodeFn          func(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error)
-	getFailedDownstreamTaskIDsFn func(ctx context.Context, runID, schemaName, tableName string) ([]string, error)
+	getTaskIDForNodeFn            func(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error)
+	getSkippedDownstreamTaskIDsFn func(ctx context.Context, runID, schemaName, tableName string) ([]string, error)
 
-	getTaskIDForNodeCalls          int
-	getFailedDownstreamTaskIDsCalls int
+	getTaskIDForNodeCalls            int
+	getSkippedDownstreamTaskIDsCalls int
 }
 
 func (f *rerunFakeRunRepository) GetTaskIDForNode(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error) {
@@ -34,17 +34,17 @@ func (f *rerunFakeRunRepository) GetTaskIDForNode(ctx context.Context, runID, se
 	return "task-id-target", nil
 }
 
-func (f *rerunFakeRunRepository) GetFailedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
-	f.getFailedDownstreamTaskIDsCalls++
-	if f.getFailedDownstreamTaskIDsFn != nil {
-		return f.getFailedDownstreamTaskIDsFn(ctx, runID, schemaName, tableName)
+func (f *rerunFakeRunRepository) GetSkippedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
+	f.getSkippedDownstreamTaskIDsCalls++
+	if f.getSkippedDownstreamTaskIDsFn != nil {
+		return f.getSkippedDownstreamTaskIDsFn(ctx, runID, schemaName, tableName)
 	}
 	return nil, nil
 }
-func (f *rerunFakeRunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
+func (f *rerunFakeRunRepository) MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
 	return nil, nil
 }
-func (f *rerunFakeRunRepository) ResetFailedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
+func (f *rerunFakeRunRepository) ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
 	return nil
 }
 
@@ -78,7 +78,7 @@ func TestHandleRerun_WritesRunRerunDispatchedAndQueryModel(t *testing.T) {
 			assert.Equal(t, "orders", table)
 			return targetTaskID, nil
 		},
-		getFailedDownstreamTaskIDsFn: func(_ context.Context, runID, schema, table string) ([]string, error) {
+		getSkippedDownstreamTaskIDsFn: func(_ context.Context, runID, schema, table string) ([]string, error) {
 			return []string{ds1TaskID, ds2TaskID}, nil
 		},
 	}
@@ -143,8 +143,8 @@ func TestHandleRerun_NoFailedDownstream(t *testing.T) {
 		getTaskIDForNodeFn: func(_ context.Context, _, _, _, _ string) (string, error) {
 			return targetTaskID, nil
 		},
-		getFailedDownstreamTaskIDsFn: func(_ context.Context, _, _, _ string) ([]string, error) {
-			return nil, nil // no failed downstream
+		getSkippedDownstreamTaskIDsFn: func(_ context.Context, _, _, _ string) ([]string, error) {
+			return nil, nil // no skipped downstream
 		},
 	}
 
@@ -178,7 +178,7 @@ func TestHandleRerun_DuplicateMessage(t *testing.T) {
 
 	// Reset tracking.
 	runRepo.getTaskIDForNodeCalls = 0
-	runRepo.getFailedDownstreamTaskIDsCalls = 0
+	runRepo.getSkippedDownstreamTaskIDsCalls = 0
 	uow.outboxRepo.CreatedEntries = nil
 	uow.CommittedTx = false
 
@@ -187,7 +187,7 @@ func TestHandleRerun_DuplicateMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, runRepo.getTaskIDForNodeCalls, "GetTaskIDForNode must NOT be called for duplicate")
-	assert.Equal(t, 0, runRepo.getFailedDownstreamTaskIDsCalls, "GetFailedDownstreamTaskIDs must NOT be called for duplicate")
+	assert.Equal(t, 0, runRepo.getSkippedDownstreamTaskIDsCalls, "GetSkippedDownstreamTaskIDs must NOT be called for duplicate")
 	assert.Equal(t, 0, runRepo.updateNodeStatusCalls, "UpdateNodeStatus must NOT be called for duplicate")
 	assert.Len(t, uow.outboxRepo.CreatedEntries, 0, "no outbox entries for duplicate")
 }

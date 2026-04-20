@@ -599,20 +599,18 @@ func (r *RunRepository) GetTaskIDForNode(ctx context.Context, runID, serviceName
 	return "", fmt.Errorf("GetTaskIDForNode: no task_id on EXECUTES edge for run=%s service=%s schema=%s table=%s", runID, serviceName, schemaName, tableName)
 }
 
-// GetFailedDownstreamTaskIDs returns the task_ids of all transitively downstream
-// Table nodes that currently have status=FAILED within the given run.
-func (r *RunRepository) GetFailedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
+// GetSkippedDownstreamTaskIDs returns the task_ids of all transitively downstream
+// Table nodes that currently have status=SKIPPED within the given run.
+func (r *RunRepository) GetSkippedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
-	// Traverse from the target node *downstream* (nodes that DEPENDS_ON* the target)
-	// and return task_ids of those whose EXECUTES edge status is FAILED.
 	result, err := session.Run(ctx, `
 		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(target:Table)
 		WHERE target.schema_name = $schema_name AND target.table_name = $table_name
 		MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
 		MATCH (:Run {run_id: $run_id})-[de:EXECUTES]->(downstream)
-		WHERE de.status = 'FAILED'
+		WHERE de.status = 'SKIPPED'
 		RETURN COALESCE(de.task_id, '') AS task_id
 	`, map[string]interface{}{
 		"run_id":      runID,
@@ -620,7 +618,7 @@ func (r *RunRepository) GetFailedDownstreamTaskIDs(ctx context.Context, runID, s
 		"table_name":  tableName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("GetFailedDownstreamTaskIDs query failed: %w", err)
+		return nil, fmt.Errorf("GetSkippedDownstreamTaskIDs query failed: %w", err)
 	}
 
 	var taskIDs []string
@@ -632,14 +630,14 @@ func (r *RunRepository) GetFailedDownstreamTaskIDs(ctx context.Context, runID, s
 		}
 	}
 	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("GetFailedDownstreamTaskIDs result error: %w", err)
+		return nil, fmt.Errorf("GetSkippedDownstreamTaskIDs result error: %w", err)
 	}
 	return taskIDs, nil
 }
 
-// MarkPendingDownstreamFailed finds all transitively downstream nodes in the run that
-// are still PENDING, atomically marks them FAILED, and returns their identifying info.
-func (r *RunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
+// MarkPendingDownstreamSkipped finds all transitively downstream nodes in the run that
+// are still PENDING, atomically marks them SKIPPED, and returns their identifying info.
+func (r *RunRepository) MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
@@ -649,7 +647,7 @@ func (r *RunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, 
 		MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
 		MATCH (:Run {run_id: $run_id})-[de:EXECUTES]->(downstream)
 		WHERE de.status = 'PENDING' OR de.status IS NULL
-		SET de.status = 'FAILED'
+		SET de.status = 'SKIPPED'
 		RETURN
 			COALESCE(de.task_id, '')           AS task_id,
 			downstream.schema_name              AS schema_name,
@@ -661,7 +659,7 @@ func (r *RunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, 
 		"table_name":  tableName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("MarkPendingDownstreamFailed query failed: %w", err)
+		return nil, fmt.Errorf("MarkPendingDownstreamSkipped query failed: %w", err)
 	}
 
 	var nodes []*run.CascadedFailureNode
@@ -683,11 +681,11 @@ func (r *RunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, 
 		nodes = append(nodes, n)
 	}
 	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("MarkPendingDownstreamFailed result error: %w", err)
+		return nil, fmt.Errorf("MarkPendingDownstreamSkipped result error: %w", err)
 	}
 
 	if len(nodes) > 0 {
-		r.logger.Info("Marked pending downstream nodes as FAILED",
+		r.logger.Info("Marked pending downstream nodes as SKIPPED",
 			"run_id", runID,
 			"failed_table", tableName,
 			"cascaded_count", len(nodes),
@@ -696,9 +694,9 @@ func (r *RunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, 
 	return nodes, nil
 }
 
-// ResetFailedDownstreamToPending resets all transitively downstream nodes that were
-// cascade-failed back to PENDING so they can be dispatched after a successful rerun.
-func (r *RunRepository) ResetFailedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
+// ResetSkippedDownstreamToPending resets all transitively downstream nodes that were
+// cascade-skipped back to PENDING so they can be dispatched after a successful rerun.
+func (r *RunRepository) ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
@@ -707,7 +705,7 @@ func (r *RunRepository) ResetFailedDownstreamToPending(ctx context.Context, runI
 		WHERE target.schema_name = $schema_name AND target.table_name = $table_name
 		MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
 		MATCH (:Run {run_id: $run_id})-[de:EXECUTES]->(downstream)
-		WHERE de.status = 'FAILED'
+		WHERE de.status = 'SKIPPED'
 		SET de.status = 'PENDING'
 		RETURN count(de) AS reset_count
 	`, map[string]interface{}{
@@ -716,7 +714,7 @@ func (r *RunRepository) ResetFailedDownstreamToPending(ctx context.Context, runI
 		"table_name":  tableName,
 	})
 	if err != nil {
-		return fmt.Errorf("ResetFailedDownstreamToPending query failed: %w", err)
+		return fmt.Errorf("ResetSkippedDownstreamToPending query failed: %w", err)
 	}
 
 	var resetCount int64
@@ -726,10 +724,10 @@ func (r *RunRepository) ResetFailedDownstreamToPending(ctx context.Context, runI
 		}
 	}
 	if err := result.Err(); err != nil {
-		return fmt.Errorf("ResetFailedDownstreamToPending result error: %w", err)
+		return fmt.Errorf("ResetSkippedDownstreamToPending result error: %w", err)
 	}
 
-	r.logger.Info("Reset cascade-failed downstream nodes to PENDING",
+	r.logger.Info("Reset cascade-skipped downstream nodes to PENDING",
 		"run_id", runID,
 		"table_name", tableName,
 		"reset_count", resetCount,

@@ -93,13 +93,13 @@ func (f *fakeRunRepository) GetTaskIDForNode(ctx context.Context, runID, service
 	}
 	return "task-id-stub", nil
 }
-func (f *fakeRunRepository) GetFailedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
+func (f *fakeRunRepository) GetSkippedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
 	return nil, nil
 }
-func (f *fakeRunRepository) MarkPendingDownstreamFailed(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
+func (f *fakeRunRepository) MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
 	return nil, nil
 }
-func (f *fakeRunRepository) ResetFailedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
+func (f *fakeRunRepository) ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
 	return nil
 }
 

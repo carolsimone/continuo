@@ -155,8 +155,8 @@ func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID string,
 	}
 
 	// Only terminal statuses count towards run finalization.
-	isTerminal := normalizedStatus == "succeeded" || normalizedStatus == "failed"
-	prevWasTerminal := prevTaskStatus == "succeeded" || prevTaskStatus == "failed"
+	isTerminal := normalizedStatus == "succeeded" || normalizedStatus == "failed" || normalizedStatus == "skipped"
+	prevWasTerminal := prevTaskStatus == "succeeded" || prevTaskStatus == "failed" || prevTaskStatus == "skipped"
 
 	if !isTerminal {
 		// Non-terminal update (e.g. RUNNING on retry).

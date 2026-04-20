@@ -203,16 +203,16 @@ func (p *OutboxProcessor) payloadToValues(entry *domain.OutboxEntry) (map[string
 			"node_type":       evt.NodeType,
 		}, nil
 
-	case "cascade_task_failed":
-		var evt domain.CascadeTaskFailed
+	case "cascade_task_skipped":
+		var evt domain.CascadeTaskSkipped
 		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal cascade_task_failed payload: %w", err)
+			return nil, fmt.Errorf("failed to unmarshal cascade_task_skipped payload: %w", err)
 		}
 		return map[string]interface{}{
 			"outbox_entry_id": entry.ID.String(),
 			"task_id":         evt.TaskID,
 			"schedule_id":     evt.ScheduleID,
-			"status":          "failed",
+			"status":          "skipped",
 			"retry_count":     "0",
 		}, nil
 

@@ -39,13 +39,14 @@ const (
 	TaskStatusSucceeded TaskStatus = "succeeded"
 	TaskStatusFailed    TaskStatus = "failed"
 	TaskStatusCancelled TaskStatus = "cancelled"
+	TaskStatusSkipped   TaskStatus = "skipped"
 )
 
 // IsValid checks if the TaskStatus is valid
 func (t TaskStatus) IsValid() bool {
 	switch t {
 	case TaskStatusPending, TaskStatusRunning, TaskStatusSucceeded,
-		TaskStatusFailed, TaskStatusCancelled:
+		TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped:
 		return true
 	}
 	return false
