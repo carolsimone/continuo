@@ -1,6 +1,7 @@
 go 1.25.1
 
 use (
+	./cli
 	./e2e
 	./executor-controller
 	./k8s-controller
