@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/model"
@@ -95,19 +96,27 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 		if parseErr != nil {
 			h.logger.Error("run.entries.dispatched: invalid task_id UUID — discarding message",
 				"task_id", t.TaskID, "error", parseErr)
+			_ = tx.Rollback()
 			return true, nil
 		}
-		tasks = append(tasks, &model.TaskTracker{
-			TaskID:      taskID,
-			ScheduleID:  scheduleID,
-			CreatedAt:   now,
-			ServiceName: t.ServiceName,
-			SchemaName:  t.SchemaName,
-			TableName:   t.TableName,
-			JobName:     t.TableName, // use table_name as job_name default; can be overridden later
-			Status:      model.TaskStatusPending,
-			MaxRetries:  int(t.MaxRetries),
-		})
+		jobName, parseErr := domain.ComputeJobName(t.ServiceName, t.SchemaName, t.TableName)
+		if parseErr != nil {
+			h.logger.Error("run.entries.dispatched: invalid task names — discarding message",
+				"service", t.ServiceName, "schema", t.SchemaName, "table", t.TableName, "error", parseErr)
+			_ = tx.Rollback()
+			return true, nil
+		}
+			tasks = append(tasks, &model.TaskTracker{
+				TaskID:      taskID,
+				ScheduleID:  scheduleID,
+				CreatedAt:   now,
+				ServiceName: t.ServiceName,
+				SchemaName:  t.SchemaName,
+				TableName:   t.TableName,
+				JobName:     jobName,
+				Status:      model.TaskStatusPending,
+				MaxRetries:  int(t.MaxRetries),
+			})
 	}
 
 	if txErr := h.taskRepo.BulkCreateTx(ctx, tx, tasks); txErr != nil {

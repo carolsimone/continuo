@@ -33,14 +33,20 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 	listQuery := `
 		CALL {
 			MATCH (t:Table {schedule_name: $schedule_name})
-			RETURN t.schema_name AS schema_name, t.table_name AS table_name
+			RETURN t.schema_name   AS schema_name,
+			       t.table_name    AS table_name,
+			       t.service_name  AS service_name,
+			       t.schedule_name AS schedule_name
 
 			UNION
 
 			MATCH (t:Table {schedule_name: $schedule_name})-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
-			RETURN s.schema_name AS schema_name, s.table_name AS table_name
+			RETURN s.schema_name   AS schema_name,
+			       s.table_name    AS table_name,
+			       s.service_name  AS service_name,
+			       s.schedule_name AS schedule_name
 		}
-		RETURN DISTINCT schema_name, table_name
+		RETURN DISTINCT schema_name, table_name, service_name, schedule_name
 	`
 	listResult, err := session.Run(ctx, listQuery, map[string]interface{}{
 		"schedule_name": scheduleName,
@@ -54,10 +60,14 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 		record := listResult.Record()
 		schemaRaw, _ := record.Get("schema_name")
 		tableRaw, _ := record.Get("table_name")
+		serviceRaw, _ := record.Get("service_name")
+		scheduleRaw, _ := record.Get("schedule_name")
 		assignments = append(assignments, map[string]interface{}{
-			"schema_name": safeString(schemaRaw),
-			"table_name":  safeString(tableRaw),
-			"task_id":     uuid.New().String(),
+			"schema_name":   safeString(schemaRaw),
+			"table_name":    safeString(tableRaw),
+			"service_name":  safeString(serviceRaw),
+			"schedule_name": safeString(scheduleRaw),
+			"task_id":       uuid.New().String(),
 		})
 	}
 	if err := listResult.Err(); err != nil {
@@ -77,7 +87,10 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 		ON CREATE SET run.schedule_name = $schedule_name, run.created_at = datetime()
 		WITH run
 		UNWIND $assignments AS a
-		MATCH (node:Table {schema_name: a.schema_name, table_name: a.table_name})
+		MATCH (node:Table {schema_name:   a.schema_name,
+		                   table_name:    a.table_name,
+		                   service_name:  a.service_name,
+		                   schedule_name: a.schedule_name})
 		MERGE (run)-[e:EXECUTES]->(node)
 		ON CREATE SET e.status = 'PENDING',
 		              e.manifest_version = COALESCE(node.manifest_version, ''),

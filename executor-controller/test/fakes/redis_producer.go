@@ -10,6 +10,7 @@ import (
 
 // PublishedMessage represents a message published to Redis
 type PublishedMessage struct {
+	Stream string
 	Values map[string]interface{}
 }
 
@@ -36,8 +37,8 @@ func (f *FakeRedisProducer) SetPublishError(err error) {
 	f.publishErr = err
 }
 
-// Publish records a published message
-func (f *FakeRedisProducer) Publish(ctx context.Context, values map[string]interface{}) (string, error) {
+// Publish records a published message with its target stream
+func (f *FakeRedisProducer) Publish(ctx context.Context, stream string, values map[string]interface{}) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -52,6 +53,7 @@ func (f *FakeRedisProducer) Publish(ctx context.Context, values map[string]inter
 	}
 
 	f.publishedMsgs = append(f.publishedMsgs, PublishedMessage{
+		Stream: stream,
 		Values: valuesCopy,
 	})
 
@@ -67,6 +69,19 @@ func (f *FakeRedisProducer) GetPublishedMessages() []PublishedMessage {
 	// Return a copy
 	msgs := make([]PublishedMessage, len(f.publishedMsgs))
 	copy(msgs, f.publishedMsgs)
+	return msgs
+}
+
+// GetPublishedMessagesByStream returns all messages published to a specific stream
+func (f *FakeRedisProducer) GetPublishedMessagesByStream(stream string) []PublishedMessage {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	var msgs []PublishedMessage
+	for _, m := range f.publishedMsgs {
+		if m.Stream == stream {
+			msgs = append(msgs, m)
+		}
+	}
 	return msgs
 }
 

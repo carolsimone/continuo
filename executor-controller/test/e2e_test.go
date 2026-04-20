@@ -32,8 +32,7 @@ func TestE2E_DeploymentFlow(t *testing.T) {
 	// Initialize dependencies
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
 	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
 
@@ -42,8 +41,9 @@ func TestE2E_DeploymentFlow(t *testing.T) {
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)
@@ -104,14 +104,14 @@ func TestE2E_DeploymentFlow(t *testing.T) {
 	assert.Contains(t, jobs, jobKey, "Job should exist in K8s")
 
 	// Verify task.status.updated:v1 RUNNING event was published
-	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	statusMsgs := fakePublisher.GetPublishedMessagesByStream("task.status.updated:v1")
 	require.Len(t, statusMsgs, 1, "Should have one status event")
 	assert.Equal(t, taskID.String(), statusMsgs[0].Values["task_id"])
 	assert.Equal(t, scheduleID.String(), statusMsgs[0].Values["schedule_id"])
 	assert.Equal(t, "RUNNING", statusMsgs[0].Values["status"])
 
 	// Verify job-deployed event was published to Redis
-	msgs := fakeProducer.GetPublishedMessages()
+	msgs := fakePublisher.GetPublishedMessagesByStream("job.deployed:v1")
 	require.Len(t, msgs, 1, "Should have published one message")
 	msg := msgs[0]
 	assert.Equal(t, taskID.String(), msg.Values["task_id"])
@@ -140,8 +140,7 @@ func TestE2E_MultipleDeployments(t *testing.T) {
 	// Initialize dependencies
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
 	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
 
@@ -149,8 +148,9 @@ func TestE2E_MultipleDeployments(t *testing.T) {
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)
@@ -202,11 +202,11 @@ func TestE2E_MultipleDeployments(t *testing.T) {
 	assert.Len(t, jobs, numDeployments, "All jobs should be created")
 
 	// Verify all status events were published
-	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	statusMsgs := fakePublisher.GetPublishedMessagesByStream("task.status.updated:v1")
 	assert.Len(t, statusMsgs, numDeployments, "All status events should be published")
 
 	// Verify all job-deployed events were published
-	msgs := fakeProducer.GetPublishedMessages()
+	msgs := fakePublisher.GetPublishedMessagesByStream("job.deployed:v1")
 	assert.Len(t, msgs, numDeployments, "All events should be published")
 
 	// Verify no pending entries remain
@@ -227,8 +227,7 @@ func TestE2E_RetryOnFailure(t *testing.T) {
 	// Initialize dependencies
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
 	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
 
@@ -236,8 +235,9 @@ func TestE2E_RetryOnFailure(t *testing.T) {
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)
@@ -284,7 +284,7 @@ func TestE2E_RetryOnFailure(t *testing.T) {
 	entries, err := outboxRepo.GetPendingBatch(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	assert.Equal(t, 1, entries[0].RetryCount)
+	assert.Equal(t, 1, entries[0].OutboxRetryCount)
 
 	// Fix K8s and retry
 	fakeK8s.SetCreateJobError(nil)
@@ -298,7 +298,7 @@ func TestE2E_RetryOnFailure(t *testing.T) {
 	assert.Len(t, jobs, 1, "Job should be created on retry")
 
 	// Verify status event was published on retry
-	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	statusMsgs := fakePublisher.GetPublishedMessagesByStream("task.status.updated:v1")
 	assert.Len(t, statusMsgs, 1, "Status event should be published on retry")
 	assert.Equal(t, "RUNNING", statusMsgs[0].Values["status"])
 
@@ -320,8 +320,7 @@ func TestE2E_IdempotentDeployment(t *testing.T) {
 	// Initialize dependencies
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
 	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
 
@@ -329,8 +328,9 @@ func TestE2E_IdempotentDeployment(t *testing.T) {
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)
@@ -391,11 +391,11 @@ func TestE2E_IdempotentDeployment(t *testing.T) {
 	assert.Len(t, jobs, 1, "Only one K8s job should exist (idempotent)")
 
 	// Both tasks should have status events published
-	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	statusMsgs := fakePublisher.GetPublishedMessagesByStream("task.status.updated:v1")
 	assert.Len(t, statusMsgs, 2, "Both tasks should have status events")
 
 	// And two job-deployed events should be published
-	msgs := fakeProducer.GetPublishedMessages()
+	msgs := fakePublisher.GetPublishedMessagesByStream("job.deployed:v1")
 	assert.Len(t, msgs, 2, "Both events should be published")
 }
 
@@ -415,8 +415,7 @@ func TestE2E_BackgroundProcessing(t *testing.T) {
 	// Initialize dependencies
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
 	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
 
@@ -424,8 +423,9 @@ func TestE2E_BackgroundProcessing(t *testing.T) {
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)

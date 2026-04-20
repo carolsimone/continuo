@@ -28,14 +28,14 @@ func TestOutboxProcessor_ProcessBatch_Success(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)
@@ -46,19 +46,19 @@ func TestOutboxProcessor_ProcessBatch_Success(t *testing.T) {
 	scheduleID := uuid.New()
 
 	entry := &model.DeploymentOutboxEntry{
-		ID:           uuid.New(),
-		TaskID:       taskID,
-		ScheduleID:   scheduleID,
-		ScheduleName: "hourly",
-		ServiceName:  "dbt",
-		SchemaName:   "public",
-		TableName:    "users",
-		JobName:      "dbt-public-users",
-		NodeType:     "dbt-model",
-		Status:       string(model.OutboxStatusPending),
-		CreatedAt:    time.Now(),
-		RetryCount:   0,
-		MaxRetries:   3,
+		ID:               uuid.New(),
+		TaskID:           taskID,
+		ScheduleID:       scheduleID,
+		ScheduleName:     "hourly",
+		ServiceName:      "dbt",
+		SchemaName:       "public",
+		TableName:        "users",
+		JobName:          "dbt-public-users",
+		NodeType:         "dbt-model",
+		Status:           string(model.OutboxStatusPending),
+		CreatedAt:        time.Now(),
+		OutboxRetryCount: 0,
+		OutboxMaxRetries: 3,
 	}
 
 	err := outboxRepo.Create(ctx, entry)
@@ -74,14 +74,14 @@ func TestOutboxProcessor_ProcessBatch_Success(t *testing.T) {
 	assert.Contains(t, jobs, "default/dbt-public-users")
 
 	// Verify task.status.updated:v1 event was published with RUNNING status
-	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	statusMsgs := fakePublisher.GetPublishedMessagesByStream("task.status.updated:v1")
 	require.Len(t, statusMsgs, 1, "Should have published one task status event")
 	assert.Equal(t, taskID.String(), statusMsgs[0].Values["task_id"])
 	assert.Equal(t, scheduleID.String(), statusMsgs[0].Values["schedule_id"])
 	assert.Equal(t, "RUNNING", statusMsgs[0].Values["status"])
 
 	// Verify job-deployed event was published
-	msgs := fakeProducer.GetPublishedMessages()
+	msgs := fakePublisher.GetPublishedMessagesByStream("job.deployed:v1")
 	require.Len(t, msgs, 1, "Should have published one message")
 	assert.Equal(t, taskID.String(), msgs[0].Values["task_id"])
 	assert.Equal(t, scheduleID.String(), msgs[0].Values["schedule_id"])
@@ -104,14 +104,14 @@ func TestOutboxProcessor_ProcessBatch_Idempotent(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)
@@ -121,19 +121,19 @@ func TestOutboxProcessor_ProcessBatch_Idempotent(t *testing.T) {
 
 	// Create outbox entry
 	entry := &model.DeploymentOutboxEntry{
-		ID:           uuid.New(),
-		TaskID:       taskID,
-		ScheduleID:   uuid.New(),
-		ScheduleName: "hourly",
-		ServiceName:  "dbt",
-		SchemaName:   "public",
-		TableName:    "users",
-		JobName:      "dbt-public-users",
-		NodeType:     "dbt-model",
-		Status:       string(model.OutboxStatusPending),
-		CreatedAt:    time.Now(),
-		RetryCount:   0,
-		MaxRetries:   3,
+		ID:               uuid.New(),
+		TaskID:           taskID,
+		ScheduleID:       uuid.New(),
+		ScheduleName:     "hourly",
+		ServiceName:      "dbt",
+		SchemaName:       "public",
+		TableName:        "users",
+		JobName:          "dbt-public-users",
+		NodeType:         "dbt-model",
+		Status:           string(model.OutboxStatusPending),
+		CreatedAt:        time.Now(),
+		OutboxRetryCount: 0,
+		OutboxMaxRetries: 3,
 	}
 
 	err := outboxRepo.Create(ctx, entry)
@@ -145,19 +145,19 @@ func TestOutboxProcessor_ProcessBatch_Idempotent(t *testing.T) {
 
 	// Simulate a retry by creating another pending entry with the same job name
 	entry2 := &model.DeploymentOutboxEntry{
-		ID:           uuid.New(),
-		TaskID:       uuid.New(), // Different task
-		ScheduleID:   uuid.New(),
-		ScheduleName: "hourly",
-		ServiceName:  "dbt",
-		SchemaName:   "public",
-		TableName:    "users",
-		JobName:      "dbt-public-users", // Same job name
-		NodeType:     "dbt-model",
-		Status:       string(model.OutboxStatusPending),
-		CreatedAt:    time.Now(),
-		RetryCount:   0,
-		MaxRetries:   3,
+		ID:               uuid.New(),
+		TaskID:           uuid.New(), // Different task
+		ScheduleID:       uuid.New(),
+		ScheduleName:     "hourly",
+		ServiceName:      "dbt",
+		SchemaName:       "public",
+		TableName:        "users",
+		JobName:          "dbt-public-users", // Same job name
+		NodeType:         "dbt-model",
+		Status:           string(model.OutboxStatusPending),
+		CreatedAt:        time.Now(),
+		OutboxRetryCount: 0,
+		OutboxMaxRetries: 3,
 	}
 
 	err = outboxRepo.Create(ctx, entry2)
@@ -172,7 +172,7 @@ func TestOutboxProcessor_ProcessBatch_Idempotent(t *testing.T) {
 	assert.Len(t, jobs, 1, "Should still have only one K8s job (idempotent)")
 
 	// Both tasks should have published status events
-	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	statusMsgs := fakePublisher.GetPublishedMessagesByStream("task.status.updated:v1")
 	assert.Len(t, statusMsgs, 2, "Both tasks should have published status events")
 }
 
@@ -187,8 +187,7 @@ func TestOutboxProcessor_ProcessBatch_K8sFailure(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
 	// Set K8s to fail
 	fakeK8s.SetCreateJobError(errors.New("k8s error"))
@@ -196,8 +195,9 @@ func TestOutboxProcessor_ProcessBatch_K8sFailure(t *testing.T) {
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)
@@ -206,19 +206,19 @@ func TestOutboxProcessor_ProcessBatch_K8sFailure(t *testing.T) {
 
 	// Create outbox entry
 	entry := &model.DeploymentOutboxEntry{
-		ID:           uuid.New(),
-		TaskID:       uuid.New(),
-		ScheduleID:   uuid.New(),
-		ScheduleName: "hourly",
-		ServiceName:  "dbt",
-		SchemaName:   "public",
-		TableName:    "users",
-		JobName:      "dbt-public-users",
-		NodeType:     "dbt-model",
-		Status:       string(model.OutboxStatusPending),
-		CreatedAt:    time.Now(),
-		RetryCount:   0,
-		MaxRetries:   3,
+		ID:               uuid.New(),
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		ScheduleName:     "hourly",
+		ServiceName:      "dbt",
+		SchemaName:       "public",
+		TableName:        "users",
+		JobName:          "dbt-public-users",
+		NodeType:         "dbt-model",
+		Status:           string(model.OutboxStatusPending),
+		CreatedAt:        time.Now(),
+		OutboxRetryCount: 0,
+		OutboxMaxRetries: 3,
 	}
 
 	err := outboxRepo.Create(ctx, entry)
@@ -232,11 +232,11 @@ func TestOutboxProcessor_ProcessBatch_K8sFailure(t *testing.T) {
 	entries, err := outboxRepo.GetPendingBatch(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	assert.Equal(t, 1, entries[0].RetryCount, "Retry count should be incremented")
+	assert.Equal(t, 1, entries[0].OutboxRetryCount, "Retry count should be incremented")
 
 	// Verify no status events or job-deployed messages published on failure
-	assert.Len(t, fakeStatusProducer.GetPublishedMessages(), 0, "No status events on K8s failure")
-	assert.Len(t, fakeProducer.GetPublishedMessages(), 0, "No messages published on failure")
+	assert.Len(t, fakePublisher.GetPublishedMessagesByStream("task.status.updated:v1"), 0, "No status events on K8s failure")
+	assert.Len(t, fakePublisher.GetPublishedMessagesByStream("job.deployed:v1"), 0, "No messages published on failure")
 }
 
 func TestOutboxProcessor_ProcessBatch_MaxRetriesExceeded(t *testing.T) {
@@ -250,8 +250,7 @@ func TestOutboxProcessor_ProcessBatch_MaxRetriesExceeded(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
 	// Set K8s to always fail
 	fakeK8s.SetCreateJobError(errors.New("persistent k8s error"))
@@ -259,8 +258,9 @@ func TestOutboxProcessor_ProcessBatch_MaxRetriesExceeded(t *testing.T) {
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)
@@ -270,19 +270,19 @@ func TestOutboxProcessor_ProcessBatch_MaxRetriesExceeded(t *testing.T) {
 
 	// Create entry with retry count at max
 	entry := &model.DeploymentOutboxEntry{
-		ID:           entryID,
-		TaskID:       uuid.New(),
-		ScheduleID:   uuid.New(),
-		ScheduleName: "hourly",
-		ServiceName:  "dbt",
-		SchemaName:   "public",
-		TableName:    "users",
-		JobName:      "dbt-public-users",
-		NodeType:     "dbt-model",
-		Status:       string(model.OutboxStatusPending),
-		CreatedAt:    time.Now(),
-		RetryCount:   3, // At max
-		MaxRetries:   3,
+		ID:               entryID,
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		ScheduleName:     "hourly",
+		ServiceName:      "dbt",
+		SchemaName:       "public",
+		TableName:        "users",
+		JobName:          "dbt-public-users",
+		NodeType:         "dbt-model",
+		Status:           string(model.OutboxStatusPending),
+		CreatedAt:        time.Now(),
+		OutboxRetryCount: 3, // At max
+		OutboxMaxRetries: 3,
 	}
 
 	err := outboxRepo.Create(ctx, entry)
@@ -321,17 +321,16 @@ func TestOutboxProcessor_PublishesOutboxEntryID(t *testing.T) {
 	`, entryID, taskID, schedID)
 	require.NoError(t, err)
 
-	publisher := fakes.NewFakeRedisProducer()
-	statusPublisher := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 	k8sClient := fakes.NewFakeK8sClient()
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	processor := handlers.NewOutboxProcessor(outboxRepo, k8sClient, publisher, statusPublisher, "default", logger)
+	processor := handlers.NewOutboxProcessor(outboxRepo, k8sClient, fakePublisher, "job.deployed:v1", "task.status.updated:v1", "default", logger)
 
 	err = processor.ProcessBatch(ctx)
 	require.NoError(t, err)
 
-	msgs := publisher.GetPublishedMessages()
+	msgs := fakePublisher.GetPublishedMessagesByStream("job.deployed:v1")
 	require.Len(t, msgs, 1, "expected one publish call")
 	require.Equal(t, entryID.String(), msgs[0].Values["outbox_entry_id"],
 		"outbox_entry_id must equal the deployment_outbox entry ID")
@@ -348,17 +347,17 @@ func TestOutboxProcessor_ProcessBatch_StatusPublishFailure(t *testing.T) {
 
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	fakeK8s := fakes.NewFakeK8sClient()
-	fakeProducer := fakes.NewFakeRedisProducer()
-	fakeStatusProducer := fakes.NewFakeRedisProducer()
+	fakePublisher := fakes.NewFakeRedisProducer()
 
-	// Set status producer to fail
-	fakeStatusProducer.SetPublishError(errors.New("redis publish error"))
+	// Set publisher to fail (affects status publish, which happens first)
+	fakePublisher.SetPublishError(errors.New("redis publish error"))
 
 	processor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
-		fakeProducer,
-		fakeStatusProducer,
+		fakePublisher,
+		"job.deployed:v1",
+		"task.status.updated:v1",
 		"default",
 		logger,
 	)
@@ -367,19 +366,19 @@ func TestOutboxProcessor_ProcessBatch_StatusPublishFailure(t *testing.T) {
 
 	// Create outbox entry
 	entry := &model.DeploymentOutboxEntry{
-		ID:           uuid.New(),
-		TaskID:       uuid.New(),
-		ScheduleID:   uuid.New(),
-		ScheduleName: "hourly",
-		ServiceName:  "dbt",
-		SchemaName:   "public",
-		TableName:    "users",
-		JobName:      "dbt-public-users",
-		NodeType:     "dbt-model",
-		Status:       string(model.OutboxStatusPending),
-		CreatedAt:    time.Now(),
-		RetryCount:   0,
-		MaxRetries:   3,
+		ID:               uuid.New(),
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		ScheduleName:     "hourly",
+		ServiceName:      "dbt",
+		SchemaName:       "public",
+		TableName:        "users",
+		JobName:          "dbt-public-users",
+		NodeType:         "dbt-model",
+		Status:           string(model.OutboxStatusPending),
+		CreatedAt:        time.Now(),
+		OutboxRetryCount: 0,
+		OutboxMaxRetries: 3,
 	}
 
 	err := outboxRepo.Create(ctx, entry)
@@ -397,10 +396,10 @@ func TestOutboxProcessor_ProcessBatch_StatusPublishFailure(t *testing.T) {
 	entries, err := outboxRepo.GetPendingBatch(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	assert.Equal(t, 1, entries[0].RetryCount, "Retry count should be incremented")
+	assert.Equal(t, 1, entries[0].OutboxRetryCount, "Retry count should be incremented")
 
-	// Fix status producer and retry
-	fakeStatusProducer.SetPublishError(nil)
+	// Fix publisher and retry
+	fakePublisher.SetPublishError(nil)
 
 	err = processor.ProcessBatch(ctx)
 	require.NoError(t, err)
@@ -411,7 +410,7 @@ func TestOutboxProcessor_ProcessBatch_StatusPublishFailure(t *testing.T) {
 	assert.Len(t, entries, 0, "Entry should be processed after retry")
 
 	// Verify status event was eventually published
-	statusMsgs := fakeStatusProducer.GetPublishedMessages()
+	statusMsgs := fakePublisher.GetPublishedMessagesByStream("task.status.updated:v1")
 	assert.Len(t, statusMsgs, 1, "Status event should be published on retry")
 	assert.Equal(t, "RUNNING", statusMsgs[0].Values["status"])
 }

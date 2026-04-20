@@ -113,6 +113,265 @@ func isValidUUID(s string) bool {
 	return err == nil
 }
 
+// TestRunRepository_SnapshotGraph_ScopesExactlyToScheduleNodes verifies that when two
+// Table nodes share (schema_name, table_name) but belong to different schedules,
+// SnapshotGraph only creates EXECUTES edges for the target schedule's nodes.
+//
+// This guards against the two-phase snapshot bug: the listQuery filters by schedule, but
+// the original mergeQuery matched only on (schema_name, table_name), so it would attach
+// the run to nodes from other schedules sharing the same pair.
+func TestRunRepository_SnapshotGraph_ScopesExactlyToScheduleNodes(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	uid := uuid.New().String()[:8]
+	schedA := "sched_a_" + uid
+	schedB := "sched_b_" + uid
+
+	driver := client.(interface {
+		NewSession(context.Context, neo4j.AccessMode) neo4j.SessionWithContext
+	})
+
+	// CREATE (not MERGE) to force two distinct Neo4j nodes with the same
+	// (schema_name, table_name) but different service_name/schedule_name,
+	// simulating a future topology where the MERGE key includes service_name.
+	session := driver.NewSession(ctx, neo4j.AccessModeWrite)
+	result, err := session.Run(ctx, `
+		CREATE (:Table {
+			schema_name:  'shared_schema',
+			table_name:   'shared_table',
+			service_name: 'svc_a',
+			schedule_name: $sched_a,
+			node_type:    'dbt-model',
+			criticality:  'unspecified'
+		})
+		CREATE (:Table {
+			schema_name:  'shared_schema',
+			table_name:   'shared_table',
+			service_name: 'svc_b',
+			schedule_name: $sched_b,
+			node_type:    'dbt-model',
+			criticality:  'unspecified'
+		})
+	`, map[string]interface{}{"sched_a": schedA, "sched_b": schedB})
+	require.NoError(t, err)
+	_, err = result.Consume(ctx)
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	t.Cleanup(func() {
+		cs := driver.NewSession(context.Background(), neo4j.AccessModeWrite)
+		defer cs.Close(context.Background())
+		r, _ := cs.Run(context.Background(), `
+			MATCH (n:Table) WHERE n.schedule_name IN [$sa, $sb] DETACH DELETE n
+		`, map[string]interface{}{"sa": schedA, "sb": schedB})
+		if r != nil {
+			_, _ = r.Consume(context.Background())
+		}
+		r2, _ := cs.Run(context.Background(), `
+			MATCH (r:Run) WHERE r.schedule_name IN [$sa, $sb] DETACH DELETE r
+		`, map[string]interface{}{"sa": schedA, "sb": schedB})
+		if r2 != nil {
+			_, _ = r2.Consume(context.Background())
+		}
+	})
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	repo := neo4jinfra.NewRunRepository(client, logger)
+	runID := uuid.New().String()
+
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, schedA))
+
+	// Count EXECUTES edges to nodes that do NOT belong to schedA — must be zero.
+	sess2 := driver.NewSession(ctx, neo4j.AccessModeRead)
+	defer sess2.Close(ctx)
+	r2, err := sess2.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(n:Table)
+		WHERE n.schedule_name <> $sched_a
+		RETURN count(n) AS spurious_count
+	`, map[string]interface{}{"run_id": runID, "sched_a": schedA})
+	require.NoError(t, err)
+	require.True(t, r2.Next(ctx))
+	countRaw, _ := r2.Record().Get("spurious_count")
+	spurious, _ := countRaw.(int64)
+	assert.Equal(t, int64(0), spurious,
+		"SnapshotGraph must not attach EXECUTES edges to nodes outside the target schedule")
+}
+
+// TestRunRepository_SnapshotGraph_IncludesCrossScheduleSeed verifies that a dbt-seed
+// whose schedule_name differs from the snapshotted schedule is still included in the
+// run (via the seed UNION branch) and receives a valid task_id on its EXECUTES edge.
+//
+// This guards against a partial-fix regression where schedule_name is added to the
+// mergeQuery MATCH but not projected from listQuery / stored in assignments, causing
+// the seed MATCH to filter on null and silently drop the seed.
+func TestRunRepository_SnapshotGraph_IncludesCrossScheduleSeed(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	uid := uuid.New().String()[:8]
+	mainSched := "main_sched_" + uid
+	seedSched := "seed_sched_" + uid
+
+	driver := client.(interface {
+		NewSession(context.Context, neo4j.AccessMode) neo4j.SessionWithContext
+	})
+	session := driver.NewSession(ctx, neo4j.AccessModeWrite)
+	result, err := session.Run(ctx, `
+		MERGE (t:Table {schema_name: 'cs_schema', table_name: $t_table})
+		  ON CREATE SET t.service_name = 'svc1', t.schedule_name = $main_sched,
+		                t.node_type = 'dbt-model', t.criticality = 'unspecified'
+		  ON MATCH  SET t.service_name = 'svc1', t.schedule_name = $main_sched
+		MERGE (s:Table {schema_name: 'cs_schema', table_name: $s_table})
+		  ON CREATE SET s.service_name = 'svc1', s.schedule_name = $seed_sched,
+		                s.node_type = 'dbt-seed', s.criticality = 'unspecified'
+		  ON MATCH  SET s.service_name = 'svc1', s.schedule_name = $seed_sched
+		MERGE (t)-[:DEPENDS_ON]->(s)
+	`, map[string]interface{}{
+		"t_table":   "cs_model_" + uid,
+		"s_table":   "cs_seed_" + uid,
+		"main_sched": mainSched,
+		"seed_sched": seedSched,
+	})
+	require.NoError(t, err)
+	_, err = result.Consume(ctx)
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	t.Cleanup(func() {
+		cs := driver.NewSession(context.Background(), neo4j.AccessModeWrite)
+		defer cs.Close(context.Background())
+		for _, q := range []string{
+			`MATCH (n:Table) WHERE n.schedule_name IN [$a, $b] DETACH DELETE n`,
+			`MATCH (r:Run) WHERE r.schedule_name IN [$a, $b] DETACH DELETE r`,
+		} {
+			r, _ := cs.Run(context.Background(), q, map[string]interface{}{"a": mainSched, "b": seedSched})
+			if r != nil {
+				_, _ = r.Consume(context.Background())
+			}
+		}
+	})
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	repo := neo4jinfra.NewRunRepository(client, logger)
+	runID := uuid.New().String()
+
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, mainSched))
+
+	// The seed node (schedule_name=seedSched) must have an EXECUTES edge with a valid task_id.
+	sess2 := driver.NewSession(ctx, neo4j.AccessModeRead)
+	defer sess2.Close(ctx)
+	r2, err := sess2.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(n:Table {node_type: 'dbt-seed', schedule_name: $seed_sched})
+		RETURN COALESCE(e.task_id, '') AS task_id
+	`, map[string]interface{}{"run_id": runID, "seed_sched": seedSched})
+	require.NoError(t, err)
+	require.True(t, r2.Next(ctx), "cross-schedule seed must have an EXECUTES edge in the run")
+	taskIDRaw, _ := r2.Record().Get("task_id")
+	assert.True(t, isValidUUID(safeStringTest(taskIDRaw)),
+		"cross-schedule seed must have a valid UUID task_id on its EXECUTES edge, got %q", taskIDRaw)
+}
+
+// TestRunRepository_SnapshotGraph_NoSpuriousEdgesToDuplicateSeeds verifies that when
+// two services each have a dbt-seed with the same (schema_name, table_name), snapshotting
+// one service's schedule creates an EXECUTES edge only to that service's seed node, not to
+// the other service's seed.
+//
+// This extends ScopesExactlyToScheduleNodes to the seed branch of the listQuery.
+func TestRunRepository_SnapshotGraph_NoSpuriousEdgesToDuplicateSeeds(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	uid := uuid.New().String()[:8]
+	mainSched := "dseed_main_" + uid
+	otherSched := "dseed_other_" + uid
+	seedSchedA := "dseed_sa_" + uid
+	seedSchedB := "dseed_sb_" + uid
+
+	driver := client.(interface {
+		NewSession(context.Context, neo4j.AccessMode) neo4j.SessionWithContext
+	})
+
+	// model_a (mainSched) -[:DEPENDS_ON]-> seed_shared (svc_a, seedSchedA)
+	// model_b (otherSched) -[:DEPENDS_ON]-> seed_shared (svc_b, seedSchedB) — duplicate (schema, table)
+	session := driver.NewSession(ctx, neo4j.AccessModeWrite)
+	result, err := session.Run(ctx, `
+		MERGE (ma:Table {schema_name: 'ds_schema', table_name: $ma_table})
+		  ON CREATE SET ma.service_name = 'svc_a', ma.schedule_name = $main_sched,
+		                ma.node_type = 'dbt-model', ma.criticality = 'unspecified'
+		  ON MATCH  SET ma.service_name = 'svc_a', ma.schedule_name = $main_sched
+		MERGE (mb:Table {schema_name: 'ds_schema', table_name: $mb_table})
+		  ON CREATE SET mb.service_name = 'svc_b', mb.schedule_name = $other_sched,
+		                mb.node_type = 'dbt-model', mb.criticality = 'unspecified'
+		  ON MATCH  SET mb.service_name = 'svc_b', mb.schedule_name = $other_sched
+		CREATE (sa:Table {schema_name: 'ds_schema', table_name: 'ds_shared_seed_' + $uid,
+		                  service_name: 'svc_a', schedule_name: $seed_sched_a,
+		                  node_type: 'dbt-seed', criticality: 'unspecified'})
+		CREATE (sb:Table {schema_name: 'ds_schema', table_name: 'ds_shared_seed_' + $uid,
+		                  service_name: 'svc_b', schedule_name: $seed_sched_b,
+		                  node_type: 'dbt-seed', criticality: 'unspecified'})
+		MERGE (ma)-[:DEPENDS_ON]->(sa)
+		MERGE (mb)-[:DEPENDS_ON]->(sb)
+	`, map[string]interface{}{
+		"ma_table":    "ds_model_a_" + uid,
+		"mb_table":    "ds_model_b_" + uid,
+		"uid":         uid,
+		"main_sched":  mainSched,
+		"other_sched": otherSched,
+		"seed_sched_a": seedSchedA,
+		"seed_sched_b": seedSchedB,
+	})
+	require.NoError(t, err)
+	_, err = result.Consume(ctx)
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	t.Cleanup(func() {
+		cs := driver.NewSession(context.Background(), neo4j.AccessModeWrite)
+		defer cs.Close(context.Background())
+		for _, q := range []string{
+			`MATCH (n:Table) WHERE n.schedule_name IN [$a, $b, $c, $d] DETACH DELETE n`,
+			`MATCH (r:Run)   WHERE r.schedule_name IN [$a, $b, $c, $d] DETACH DELETE r`,
+		} {
+			r, _ := cs.Run(context.Background(), q, map[string]interface{}{
+				"a": mainSched, "b": otherSched, "c": seedSchedA, "d": seedSchedB,
+			})
+			if r != nil {
+				_, _ = r.Consume(context.Background())
+			}
+		}
+	})
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	repo := neo4jinfra.NewRunRepository(client, logger)
+	runID := uuid.New().String()
+
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, mainSched))
+
+	sess2 := driver.NewSession(ctx, neo4j.AccessModeRead)
+	defer sess2.Close(ctx)
+
+	// svc_b's seed must NOT have an EXECUTES edge from this run.
+	r2, err := sess2.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[:EXECUTES]->(n:Table {service_name: 'svc_b'})
+		RETURN count(n) AS spurious_count
+	`, map[string]interface{}{"run_id": runID})
+	require.NoError(t, err)
+	require.True(t, r2.Next(ctx))
+	countRaw, _ := r2.Record().Get("spurious_count")
+	spurious, _ := countRaw.(int64)
+	assert.Equal(t, int64(0), spurious,
+		"SnapshotGraph must not create EXECUTES edges to seeds belonging to another service")
+}
+
+// safeStringTest mirrors safeString for use in test assertions.
+func safeStringTest(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
 // TestRunRepository_SnapshotGraph_AssignsTaskUUIDs verifies that:
 //  1. After SnapshotGraph, every node returned by GetScheduleInitNodes has a
 //     non-empty, valid UUID in TaskID.

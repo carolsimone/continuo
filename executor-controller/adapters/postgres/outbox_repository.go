@@ -58,8 +58,8 @@ func (r *outboxRepository) Create(ctx context.Context, entry *model.DeploymentOu
 	if entry.Status == "" {
 		entry.Status = string(model.OutboxStatusPending)
 	}
-	if entry.MaxRetries == 0 {
-		entry.MaxRetries = 3
+	if entry.OutboxMaxRetries == 0 {
+		entry.OutboxMaxRetries = 3
 	}
 
 	_, err := r.db.NamedExecContext(ctx, query, entry)

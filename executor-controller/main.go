@@ -147,19 +147,8 @@ func main() {
 		"consumer_group", cfg.RedisConsumerGroup,
 	)
 
-	// Create producer for job-deployed event stream (consumed by k8s-controller)
-	producer := redis.NewProducer(
-		redisClient,
-		cfg.RedisProducerStream,
-		logger,
-	)
-
-	// Create producer for task.status.updated:v1 stream (consumed by state)
-	statusProducer := redis.NewProducer(
-		redisClient,
-		cfg.RedisStatusStream,
-		logger,
-	)
+	// Single publisher routes to both job-deployed and task-status streams
+	publisher := redis.NewProducer(redisClient, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -168,8 +157,9 @@ func main() {
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		k8sClient,
-		producer,
-		statusProducer,
+		publisher,
+		cfg.RedisProducerStream,
+		cfg.RedisStatusStream,
 		cfg.K8sNamespace,
 		logger,
 	)

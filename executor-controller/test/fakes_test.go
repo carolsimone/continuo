@@ -75,13 +75,14 @@ func TestFakeRedisProducer_Publish(t *testing.T) {
 		"status":   "running",
 	}
 
-	msgID, err := fakeProducer.Publish(ctx, values)
+	msgID, err := fakeProducer.Publish(ctx, "test-stream", values)
 	require.NoError(t, err)
 	assert.NotEmpty(t, msgID)
 
 	// Verify message was recorded
 	msgs := fakeProducer.GetPublishedMessages()
 	require.Len(t, msgs, 1)
+	assert.Equal(t, "test-stream", msgs[0].Stream)
 	assert.Equal(t, "123", msgs[0].Values["task_id"])
 	assert.Equal(t, "test-job", msgs[0].Values["job_name"])
 	assert.Equal(t, "running", msgs[0].Values["status"])
@@ -97,7 +98,7 @@ func TestFakeRedisProducer_MultipleMessages(t *testing.T) {
 		values := map[string]interface{}{
 			"index": i,
 		}
-		_, err := fakeProducer.Publish(ctx, values)
+		_, err := fakeProducer.Publish(ctx, "test-stream", values)
 		require.NoError(t, err)
 	}
 
@@ -124,7 +125,7 @@ func TestFakeRedisProducer_Error(t *testing.T) {
 		"test": "value",
 	}
 
-	msgID, err := fakeProducer.Publish(ctx, values)
+	msgID, err := fakeProducer.Publish(ctx, "test-stream", values)
 	assert.Equal(t, expectedErr, err)
 	assert.Empty(t, msgID)
 
@@ -144,7 +145,7 @@ func TestFakes_Reset(t *testing.T) {
 	// Add some state
 	params := k8s.JobParams{JobName: "test", Namespace: "default"}
 	_ = fakeK8s.CreateQueryJob(ctx, params)
-	_, _ = fakeProducer.Publish(ctx, map[string]interface{}{"test": "value"})
+	_, _ = fakeProducer.Publish(ctx, "test-stream", map[string]interface{}{"test": "value"})
 
 	// Verify state exists
 	assert.Len(t, fakeK8s.GetCreatedJobs(), 1)
