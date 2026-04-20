@@ -164,9 +164,9 @@ func TestTaskStatusUpdatedHandler_AnyFailedMarksRunFailed(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, shouldACK)
 
-	// Process tB FAILED
+	// Process tB FAILED with retry_count=3 == max_retries=3 (exhausted — no retries left)
 	shouldACK, err = handler.Handle(context.Background(), "msg-fail-tB",
-		buildTaskStatusPayload(t, tB, scheduleID, "FAILED", 1))
+		buildTaskStatusPayload(t, tB, scheduleID, "FAILED", 3))
 	require.NoError(t, err)
 	assert.True(t, shouldACK)
 
@@ -224,4 +224,94 @@ func TestTaskStatusUpdatedHandler_Idempotent(t *testing.T) {
 	assert.Equal(t, int32(1), getTerminalTaskCount(t, db, scheduleID))
 	// run still running (total=2, terminal=1)
 	assert.Equal(t, model.SchedulerStatusRunning, getSchedulerStatus(t, db, scheduleID))
+}
+
+// TestTaskStatusUpdatedHandler_RetryableFailureDoesNotFinalize verifies that a FAILED event
+// for a task that still has retries remaining does NOT finalize the run.
+func TestTaskStatusUpdatedHandler_RetryableFailureDoesNotFinalize(t *testing.T) {
+	db := setupTaskStatusTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	scheduleID := uuid.New()
+	tA := uuid.New()
+
+	// Single-task run; seedTaskForStatus uses max_retries=3, so retry_count=0 is retryable.
+	seedSchedulerForTaskStatus(t, db, scheduleID, 1, 0)
+	seedTaskForStatus(t, db, tA, scheduleID, model.TaskStatusRunning)
+
+	handler := newTaskStatusHandler(db, logger)
+
+	// FAILED with retry_count=0 (still has retries left)
+	shouldACK, err := handler.Handle(context.Background(), "msg-retry-fail",
+		buildTaskStatusPayload(t, tA, scheduleID, "FAILED", 0))
+	require.NoError(t, err)
+	assert.True(t, shouldACK)
+
+	// terminal_task_count is incremented (task is terminal)
+	assert.Equal(t, int32(1), getTerminalTaskCount(t, db, scheduleID))
+	// Run must NOT be finalized — stays running
+	assert.Equal(t, model.SchedulerStatusRunning, getSchedulerStatus(t, db, scheduleID))
+	assert.Equal(t, 0, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
+}
+
+// TestTaskStatusUpdatedHandler_RetryRevivesRun verifies the full retry cycle:
+// FAILED (retryable) → terminal++, no finalize → RUNNING (retry) → terminal-- → SUCCEEDED → finalize succeeded.
+func TestTaskStatusUpdatedHandler_RetryRevivesRun(t *testing.T) {
+	db := setupTaskStatusTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	scheduleID := uuid.New()
+	tA := uuid.New()
+
+	seedSchedulerForTaskStatus(t, db, scheduleID, 1, 0)
+	seedTaskForStatus(t, db, tA, scheduleID, model.TaskStatusRunning)
+
+	handler := newTaskStatusHandler(db, logger)
+
+	// 1. FAILED (retry_count=0, max_retries=3) — retryable, must NOT finalize
+	_, err := handler.Handle(context.Background(), "msg-retry-1-fail",
+		buildTaskStatusPayload(t, tA, scheduleID, "FAILED", 0))
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), getTerminalTaskCount(t, db, scheduleID))
+	assert.Equal(t, model.SchedulerStatusRunning, getSchedulerStatus(t, db, scheduleID))
+
+	// 2. RUNNING (k8s retry) — must decrement terminal_count
+	_, err = handler.Handle(context.Background(), "msg-retry-1-running",
+		buildTaskStatusPayload(t, tA, scheduleID, "RUNNING", 1))
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), getTerminalTaskCount(t, db, scheduleID))
+	assert.Equal(t, model.SchedulerStatusRunning, getSchedulerStatus(t, db, scheduleID))
+
+	// 3. SUCCEEDED on retry — should finalize as succeeded
+	_, err = handler.Handle(context.Background(), "msg-retry-1-succeeded",
+		buildTaskStatusPayload(t, tA, scheduleID, "SUCCEEDED", 1))
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), getTerminalTaskCount(t, db, scheduleID))
+	assert.Equal(t, model.SchedulerStatusSucceeded, getSchedulerStatus(t, db, scheduleID))
+	assert.Equal(t, 1, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
+}
+
+// TestTaskStatusUpdatedHandler_ExhaustedRetriesFinalizeFailed verifies that a task
+// with retry_count == max_retries (permanently failed) still finalizes the run as failed.
+func TestTaskStatusUpdatedHandler_ExhaustedRetriesFinalizeFailed(t *testing.T) {
+	db := setupTaskStatusTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	scheduleID := uuid.New()
+	tA := uuid.New()
+
+	seedSchedulerForTaskStatus(t, db, scheduleID, 1, 0)
+	seedTaskForStatus(t, db, tA, scheduleID, model.TaskStatusRunning) // max_retries=3
+
+	handler := newTaskStatusHandler(db, logger)
+
+	// FAILED with retry_count=3 == max_retries=3 → permanently failed, no retries left
+	shouldACK, err := handler.Handle(context.Background(), "msg-exhausted",
+		buildTaskStatusPayload(t, tA, scheduleID, "FAILED", 3))
+	require.NoError(t, err)
+	assert.True(t, shouldACK)
+
+	assert.Equal(t, int32(1), getTerminalTaskCount(t, db, scheduleID))
+	assert.Equal(t, model.SchedulerStatusFailed, getSchedulerStatus(t, db, scheduleID))
+	assert.Equal(t, 1, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
 }

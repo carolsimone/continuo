@@ -192,14 +192,28 @@ func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID string,
 	// Decide whether to finalize the run.
 	initCompleted := scheduler.InitializationStatus == "completed"
 	var anyFailed bool
+	var skipFinalize bool
 	if terminal == total {
-		anyFailed, txErr = h.taskRepo.HasFailedTaskTx(ctx, tx, scheduleID)
+		// If any failed task still has retries left, the RUNNING retry event will
+		// decrement terminal_count later — don't finalize yet.
+		hasRetryable, txErr := h.taskRepo.HasRetryableFailedTaskTx(ctx, tx, scheduleID)
 		if txErr != nil {
-			return false, fmt.Errorf("has failed task check: %w", txErr)
+			return false, fmt.Errorf("has retryable failed task check: %w", txErr)
+		}
+		if hasRetryable {
+			skipFinalize = true
+		} else {
+			anyFailed, txErr = h.taskRepo.HasFailedTaskTx(ctx, tx, scheduleID)
+			if txErr != nil {
+				return false, fmt.Errorf("has failed task check: %w", txErr)
+			}
 		}
 	}
 
-	outcome := finalization.Decide(terminal, total, anyFailed, initCompleted, string(scheduler.Status))
+	var outcome string
+	if !skipFinalize {
+		outcome = finalization.Decide(terminal, total, anyFailed, initCompleted, string(scheduler.Status))
+	}
 	if outcome != "" {
 		if txErr := h.schedulerRepo.FinalizeRunTx(ctx, tx, scheduleID, outcome); txErr != nil {
 			return false, fmt.Errorf("finalize scheduler status to %s: %w", outcome, txErr)
