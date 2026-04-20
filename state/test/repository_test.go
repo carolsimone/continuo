@@ -118,7 +118,8 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 										'running',
 										'succeeded',
 										'failed',
-										'cancelled'
+										'cancelled',
+										'skipped'
 									)),
 			retry_count         INTEGER NOT NULL DEFAULT 0,
 			max_retries         INTEGER NOT NULL,

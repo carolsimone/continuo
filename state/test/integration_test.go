@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS task_tracker (
 	schema_name         VARCHAR(100) NOT NULL,
 	table_name          VARCHAR(100) NOT NULL,
 	status              VARCHAR(20) NOT NULL CHECK (status IN (
-							'pending','running','succeeded','failed','cancelled'
+							'pending','running','succeeded','failed','cancelled','skipped'
 						)),
 	retry_count         INTEGER NOT NULL DEFAULT 0,
 	max_retries         INTEGER NOT NULL,
