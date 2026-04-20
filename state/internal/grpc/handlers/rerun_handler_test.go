@@ -125,6 +125,9 @@ func (s *rerunTaskStub) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bo
 func (s *rerunTaskStub) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
 }
+func (s *rerunTaskStub) HasRetryableFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
 
 type rerunOutboxStub struct {
 	created   *postgres.OutboxEntry

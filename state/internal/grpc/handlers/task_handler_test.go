@@ -96,6 +96,9 @@ func (s *stubTaskRepo) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (boo
 func (s *stubTaskRepo) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
 }
+func (s *stubTaskRepo) HasRetryableFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
 
 func ctxWithCaller(caller model.CallerID) context.Context {
 	md := metadata.Pairs("x-caller-id", string(caller))
