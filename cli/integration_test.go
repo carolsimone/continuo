@@ -24,20 +24,16 @@ import (
 
 type stubStateServer struct {
 	statev1.UnimplementedStateServiceServer
-	resp *statev1.TriggerScheduleResponse
+	triggerResp *statev1.TriggerScheduleResponse
+	listResp    *statev1.ListAllSchedulesResponse
 }
 
 func (s *stubStateServer) TriggerSchedule(_ context.Context, _ *statev1.TriggerScheduleRequest) (*statev1.TriggerScheduleResponse, error) {
-	return s.resp, nil
+	return s.triggerResp, nil
 }
 
-type stubStateListServer struct {
-	statev1.UnimplementedStateServiceServer
-	resp *statev1.ListAllSchedulesResponse
-}
-
-func (s *stubStateListServer) ListAllSchedules(_ context.Context, _ *statev1.ListAllSchedulesRequest) (*statev1.ListAllSchedulesResponse, error) {
-	return s.resp, nil
+func (s *stubStateServer) ListAllSchedules(_ context.Context, _ *statev1.ListAllSchedulesRequest) (*statev1.ListAllSchedulesResponse, error) {
+	return s.listResp, nil
 }
 
 type stubOrchestratorServer struct {
@@ -73,7 +69,8 @@ func TestCLI_TriggerScheduleAgainstInProcessServer(t *testing.T) {
 
 	grpcSrv := grpc.NewServer()
 	statev1.RegisterStateServiceServer(grpcSrv, &stubStateServer{
-		resp: &statev1.TriggerScheduleResponse{ScheduleId: "sched_integ_1"},
+		triggerResp: &statev1.TriggerScheduleResponse{ScheduleId: "sched_integ_1"},
+		listResp:    nil,
 	})
 	go func() { _ = grpcSrv.Serve(lis) }()
 	defer grpcSrv.GracefulStop()
@@ -96,8 +93,9 @@ func TestCLI_ScheduleListAgainstInProcessServer(t *testing.T) {
 	endpoint := lis.Addr().String()
 
 	grpcSrv := grpc.NewServer()
-	statev1.RegisterStateServiceServer(grpcSrv, &stubStateListServer{
-		resp: &statev1.ListAllSchedulesResponse{
+	statev1.RegisterStateServiceServer(grpcSrv, &stubStateServer{
+		triggerResp: nil,
+		listResp: &statev1.ListAllSchedulesResponse{
 			Schedules: []*statev1.ScheduleSummary{
 				{
 					ScheduleName:   "daily_ingest",
@@ -123,9 +121,10 @@ func TestCLI_ScheduleListAgainstInProcessServer(t *testing.T) {
 	_, ok := payload["schedules"]
 	assert.True(t, ok, "response must contain 'schedules' key")
 
-	var schedules []json.RawMessage
+	var schedules []map[string]interface{}
 	require.NoError(t, json.Unmarshal(payload["schedules"], &schedules))
 	assert.Len(t, schedules, 1, "expected one schedule entry")
+	assert.Equal(t, "daily_ingest", schedules[0]["schedule_name"])
 }
 
 func TestCLI_ScheduleGraphAgainstInProcessServer(t *testing.T) {
