@@ -88,7 +88,7 @@ func (r *outboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*m
 		SELECT id, task_id, schedule_id, schedule_name, service_name, schema_name,
 		       table_name, job_name, node_type,
 		       COALESCE(task_retry_count, 0) as task_retry_count,
-		       COALESCE(task_max_retries, 3) as task_max_retries,
+		       COALESCE(task_max_retries, 2) as task_max_retries,
 		       status, created_at, processed_at,
 		       retry_count, max_retries, error_message
 		FROM deployment_outbox
