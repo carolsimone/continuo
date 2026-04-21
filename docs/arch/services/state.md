@@ -264,6 +264,7 @@ Effects:
 | Service | Methods used |
 |---|---|
 | `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule` |
+| `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
 
 State calls no external gRPC services.
 

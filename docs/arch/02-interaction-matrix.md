@@ -17,8 +17,11 @@ Legend:
 | `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `R` | `W` |
 | `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `R` |
 | `ui-service` | `-` | `-` | `W` | `RW` | `R` | `-` | `-` |
+| `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` |
 
 > `startup-controller` has been removed. Its responsibilities were absorbed into `orchestrator`.
+
+> `continuo CLI` is an external consumer (not a Docker Compose service). It is invoked by humans or LLM agents and makes direct gRPC calls to `state` (port 50051) and `orchestrator` (port 50052). It produces no Redis events and holds no durable state.
 
 ## Redis Stream Matrix
 
@@ -50,12 +53,14 @@ Internal pipeline writes to `state` are now event-driven (via Redis). The only r
 | Caller | Methods used |
 |---|---|
 | `ui-service` | `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule` |
+| `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
 
 ### Calls to `orchestrator`
 
 | Caller | Methods used |
 |---|---|
 | `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
+| `continuo CLI` | `GetScheduleGraph` |
 
 ## S3 Matrix
 

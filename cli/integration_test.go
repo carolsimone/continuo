@@ -18,6 +18,35 @@ import (
 	"google.golang.org/grpc"
 )
 
+// cliBinary is set by TestMain once at the start of all integration tests
+var cliBinary string
+
+// ---------------------------------------------------------------------------
+// TestMain: build the binary once for all integration tests
+// ---------------------------------------------------------------------------
+
+func TestMain(m *testing.M) {
+	// Create a temporary directory for the binary
+	tmpDir, err := os.MkdirTemp("", "continuo-integration-*")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Build the binary once
+	binPath := filepath.Join(tmpDir, "continuo")
+	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/continuo")
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		panic(err)
+	}
+
+	cliBinary = binPath
+
+	// Run all tests
+	os.Exit(m.Run())
+}
+
 // ---------------------------------------------------------------------------
 // Stub servers
 // ---------------------------------------------------------------------------
@@ -46,19 +75,6 @@ func (s *stubOrchestratorServer) GetScheduleGraph(_ context.Context, _ *orchestr
 }
 
 // ---------------------------------------------------------------------------
-// Helper: build binary once per test (reuses TempDir)
-// ---------------------------------------------------------------------------
-
-func buildBinary(t *testing.T) string {
-	t.Helper()
-	binPath := filepath.Join(t.TempDir(), "continuo")
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/continuo")
-	cmd.Stderr = os.Stderr
-	require.NoError(t, cmd.Run())
-	return binPath
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -75,9 +91,7 @@ func TestCLI_TriggerScheduleAgainstInProcessServer(t *testing.T) {
 	go func() { _ = grpcSrv.Serve(lis) }()
 	defer grpcSrv.GracefulStop()
 
-	binPath := buildBinary(t)
-
-	out, err := exec.Command(binPath, "--endpoint", endpoint, "schedule", "trigger", "daily_ingest").Output()
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "trigger", "daily_ingest").Output()
 	require.NoError(t, err)
 
 	var payload map[string]string
@@ -111,9 +125,7 @@ func TestCLI_ScheduleListAgainstInProcessServer(t *testing.T) {
 	go func() { _ = grpcSrv.Serve(lis) }()
 	defer grpcSrv.GracefulStop()
 
-	binPath := buildBinary(t)
-
-	out, err := exec.Command(binPath, "--endpoint", endpoint, "schedule", "list").Output()
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "list").Output()
 	require.NoError(t, err)
 
 	var payload map[string]json.RawMessage
@@ -155,9 +167,7 @@ func TestCLI_ScheduleGraphAgainstInProcessServer(t *testing.T) {
 	go func() { _ = grpcSrv.Serve(lis) }()
 	defer grpcSrv.GracefulStop()
 
-	binPath := buildBinary(t)
-
-	out, err := exec.Command(binPath, "--orchestrator-endpoint", endpoint, "schedule", "graph", "test_schedule").Output()
+	out, err := exec.Command(cliBinary, "--orchestrator-endpoint", endpoint, "schedule", "graph", "test_schedule").Output()
 	require.NoError(t, err)
 
 	var payload map[string]json.RawMessage
