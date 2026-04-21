@@ -430,7 +430,7 @@ services:
       dockerfile: Dockerfile.upload
     restart: "no"
     # If you want to load to hetzner
-    command: ["load", "--services-dir", "./services", "--target", "hetzner"]
+    # command: ["load", "--services-dir", "./services", "--target", "hetzner"]
     env_file:
       - ./dbt/.env.hetzner
     depends_on:
