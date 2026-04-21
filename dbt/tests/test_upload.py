@@ -47,7 +47,7 @@ def test_dbt_compile_service1_succeeds():
 
 
 def test_upload_and_read_back(s3):
-    """compile + upload produces a readable manifest.json in S3."""
+    """compile + upload produces a readable manifest_v1.json in S3."""
     from dbt_upload.compile import compile_service
     from dbt_upload.upload import upload_manifest
 
@@ -55,7 +55,7 @@ def test_upload_and_read_back(s3):
     assert compile_service(service_dir), "compile_service returned False"
     assert upload_manifest(s3, service_dir, S3_ENV, S3_BUCKET), "upload_manifest returned False"
 
-    key = f"{S3_ENV}/manifest/service-1/manifest.json"
+    key = f"{S3_ENV}/manifest/service-1/manifest_v1.json"
     response = s3.get_object(Bucket=S3_BUCKET, Key=key)
     content = json.loads(response["Body"].read())
 
@@ -75,11 +75,12 @@ def test_all_valid_services_upload(s3):
         assert compile_service(service_dir), f"{name} failed to compile"
         assert upload_manifest(s3, service_dir, S3_ENV, S3_BUCKET), f"{name} failed to upload"
 
-    # verify keys exist in S3
+    # verify versioned keys exist in S3
     response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=f"{S3_ENV}/manifest/")
     keys = {obj["Key"] for obj in response.get("Contents", [])}
     for name in valid:
-        assert f"{S3_ENV}/manifest/{name}/manifest.json" in keys
+        versioned_keys = {k for k in keys if k.startswith(f"{S3_ENV}/manifest/{name}/manifest_v")}
+        assert versioned_keys, f"No versioned manifest found in S3 for {name}"
 
 
 def test_service3_broken_compiles_but_fails_at_runtime():
