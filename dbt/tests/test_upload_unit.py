@@ -1,6 +1,6 @@
 import json
 from unittest.mock import MagicMock
-from dbt_upload.upload import filter_manifest, upload_manifest, upload_services
+from dbt_upload.upload import filter_manifest, next_version, upload_manifest, upload_services
 
 
 class TestFilterManifest:
@@ -110,3 +110,53 @@ class TestUploadServices:
         assert len(succeeded) == 2
         assert len(failed) == 0
         assert mock_s3.upload_file.call_count == 2
+
+
+class TestNextVersion:
+    def _make_s3(self, pages: list[dict]):
+        """Return a mock s3 client whose paginator yields the given pages."""
+        s3 = MagicMock()
+        paginator = MagicMock()
+        paginator.paginate.return_value = pages
+        s3.get_paginator.return_value = paginator
+        return s3
+
+    def test_returns_1_when_prefix_is_empty(self):
+        s3 = self._make_s3([{}])  # one page, no Contents
+
+        assert next_version(s3, "my-bucket", "dev/manifest/service-1/") == 1
+
+    def test_returns_1_when_no_versioned_files(self):
+        s3 = self._make_s3([{
+            "Contents": [{"Key": "dev/manifest/service-1/manifest.json"}]
+        }])
+
+        assert next_version(s3, "my-bucket", "dev/manifest/service-1/") == 1
+
+    def test_returns_max_plus_1(self):
+        s3 = self._make_s3([{
+            "Contents": [
+                {"Key": "dev/manifest/service-1/manifest_v1.json"},
+                {"Key": "dev/manifest/service-1/manifest_v3.json"},
+            ]
+        }])
+
+        assert next_version(s3, "my-bucket", "dev/manifest/service-1/") == 4
+
+    def test_single_existing_version(self):
+        s3 = self._make_s3([{
+            "Contents": [{"Key": "dev/manifest/service-1/manifest_v2.json"}]
+        }])
+
+        assert next_version(s3, "my-bucket", "dev/manifest/service-1/") == 3
+
+    def test_passes_correct_bucket_and_prefix(self):
+        s3 = self._make_s3([{}])
+
+        result = next_version(s3, "continuo-dev", "dev/manifest/svc/")
+
+        s3.get_paginator.assert_called_once_with("list_objects_v2")
+        s3.get_paginator.return_value.paginate.assert_called_once_with(
+            Bucket="continuo-dev", Prefix="dev/manifest/svc/"
+        )
+        assert result == 1
