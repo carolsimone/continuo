@@ -49,7 +49,11 @@ def filter_manifest(service_dir: str) -> None:
 def upload_manifest(
     s3_client, service_dir: str, env: str, bucket: str
 ) -> bool:
-    """Upload target/manifest.json to S3. Returns True on success."""
+    """Upload target/manifest.json to S3 with an auto-incremented version key.
+
+    Checks the current highest manifest_v{N}.json in the service S3 prefix
+    and uploads as manifest_v{N+1}.json. Returns True on success.
+    """
     service_name = os.path.basename(service_dir)
     manifest_path = os.path.join(service_dir, "target", "manifest.json")
 
@@ -57,13 +61,15 @@ def upload_manifest(
         logger.error("manifest.json not found at %s", manifest_path)
         return False
 
-    key = f"{env}/manifest/{service_name}/manifest.json"
+    prefix = f"{env}/manifest/{service_name}/"
+    version = next_version(s3_client, bucket, prefix)
+    key = f"{env}/manifest/{service_name}/manifest_v{version}.json"
     try:
         s3_client.upload_file(manifest_path, bucket, key)
     except Exception:
         logger.exception("S3 upload failed for %s", service_name)
         return False
-    logger.info("Uploaded %s -> s3://%s/%s", service_name, bucket, key)
+    logger.info("Uploaded %s -> s3://%s/%s (v%d)", service_name, bucket, key, version)
     return True
 
 

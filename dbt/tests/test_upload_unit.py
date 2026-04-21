@@ -47,13 +47,16 @@ class TestFilterManifest:
 
 
 class TestUploadManifest:
-    def test_uploads_to_correct_key(self, tmp_path):
+    def test_uploads_to_versioned_key_when_s3_is_empty(self, tmp_path):
         service_dir = tmp_path / "service-1"
         target_dir = service_dir / "target"
         target_dir.mkdir(parents=True)
         (target_dir / "manifest.json").write_text('{"nodes": {}}')
 
         s3 = MagicMock()
+        paginator = MagicMock()
+        paginator.paginate.return_value = [{}]  # empty prefix → version 1
+        s3.get_paginator.return_value = paginator
 
         result = upload_manifest(s3, str(service_dir), "dev", "my-bucket")
 
@@ -61,7 +64,29 @@ class TestUploadManifest:
         s3.upload_file.assert_called_once_with(
             str(target_dir / "manifest.json"),
             "my-bucket",
-            "dev/manifest/service-1/manifest.json",
+            "dev/manifest/service-1/manifest_v1.json",
+        )
+
+    def test_increments_version_when_v1_exists(self, tmp_path):
+        service_dir = tmp_path / "service-1"
+        target_dir = service_dir / "target"
+        target_dir.mkdir(parents=True)
+        (target_dir / "manifest.json").write_text('{"nodes": {}}')
+
+        s3 = MagicMock()
+        paginator = MagicMock()
+        paginator.paginate.return_value = [{
+            "Contents": [{"Key": "dev/manifest/service-1/manifest_v1.json"}]
+        }]
+        s3.get_paginator.return_value = paginator
+
+        result = upload_manifest(s3, str(service_dir), "dev", "my-bucket")
+
+        assert result is True
+        s3.upload_file.assert_called_once_with(
+            str(target_dir / "manifest.json"),
+            "my-bucket",
+            "dev/manifest/service-1/manifest_v2.json",
         )
 
     def test_returns_false_when_manifest_missing(self, tmp_path):
@@ -73,6 +98,7 @@ class TestUploadManifest:
 
         assert result is False
         s3.upload_file.assert_not_called()
+        s3.get_paginator.assert_not_called()
 
 
 class TestUploadServices:
@@ -96,11 +122,15 @@ class TestUploadServices:
             "secret_access_key": "test",
         }
 
-        # Patch boto3 inside upload module
         from unittest.mock import patch
         with patch("dbt_upload.upload.boto3") as mock_boto3:
             mock_s3 = MagicMock()
             mock_boto3.client.return_value = mock_s3
+
+            # Configure paginator to return no existing versions → each upload gets v1
+            paginator = MagicMock()
+            paginator.paginate.return_value = [{}]
+            mock_s3.get_paginator.return_value = paginator
 
             succeeded, failed = upload_services(
                 [str(tmp_path / "svc-1"), str(tmp_path / "svc-2")],
@@ -109,7 +139,11 @@ class TestUploadServices:
 
         assert len(succeeded) == 2
         assert len(failed) == 0
-        assert mock_s3.upload_file.call_count == 2
+        # Paginator called once per service (versioning path ran)
+        assert mock_s3.get_paginator.call_count == 2
+        # Both uploads used versioned keys
+        uploaded_keys = [call.args[2] for call in mock_s3.upload_file.call_args_list]
+        assert all("_v1" in key for key in uploaded_keys)
 
 
 class TestNextVersion:
