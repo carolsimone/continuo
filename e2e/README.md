@@ -56,6 +56,9 @@ bash e2e/cleanup-k8s-controllers.sh
 When the kind cluster and all Docker images already exist:
 
 ```bash
+# Tear down any stale containers from a previous run
+docker compose down
+
 # Start (or restart) all docker-compose services
 docker compose up -d
 
