@@ -19,7 +19,7 @@ profile.cov
 
 # env file
 .env
-.env.hetzner
+*.env.hetzner
 
 # Editor/IDE
 .idea/

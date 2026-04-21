@@ -429,6 +429,10 @@ services:
       context: ./dbt
       dockerfile: Dockerfile.upload
     restart: "no"
+    # If you want to load to hetzner
+    command: ["load", "--services-dir", "./services", "--target", "hetzner"]
+    env_file:
+      - ./dbt/.env.hetzner
     depends_on:
       localstack:
         condition: service_healthy
@@ -445,7 +449,6 @@ services:
       - ./dbt/services:/app/services
     profiles:
       - e2e
-
 
 volumes:
   neo4j_data:
