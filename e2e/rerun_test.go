@@ -20,7 +20,7 @@ import (
 // POST /api/schedulers/{id}/rerun and the schedule recovers to SUCCEEDED.
 //
 // DAG: uses the failure DAG (e2e-schedule-failure).
-//   - table_e fails via service-3-broken after exhausting 3 retries.
+//   - table_e fails via service-3-broken after exhausting 2 retries (3 total attempts).
 //   - The broken manifest is replaced with a working one and manifest-controller reloads.
 //   - POST /api/schedulers/{id}/rerun is called for table_e (BFF route → TriggerRerun gRPC).
 //   - The full downstream cascade (table_g, table_h, table_i, table_j) completes.
@@ -115,7 +115,7 @@ func TestRerunFailedNode(t *testing.T) {
 
 	assertRerunTaskRetryCountZero(t, ctx, clients, schedulerID, "table_e")
 	assertInitStatusCompleted(t, ctx, clients, schedulerID)
-	assertTaskExecutionAtLeast(t, ctx, clients, schedulerID, "table_e", 4) // 3 failed + 1 succeeded
+	assertTaskExecutionAtLeast(t, ctx, clients, schedulerID, "table_e", 3) // 2 failed + 1 succeeded
 
 	// Upstream nodes untouched by rerun
 	assertTaskStatus(t, ctx, clients, schedulerID, "table_b", "succeeded")
