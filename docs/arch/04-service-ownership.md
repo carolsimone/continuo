@@ -34,7 +34,7 @@ The process exits before any connection is attempted, so missing-config failures
 
 ## Bootstrap Migration Image
 
-The dedicated Flyway image artifact sequentially applies the SQL files under `db/migration/{state,startup,executor,orchestrator,k8s}` against the corresponding `continuo_*` databases. It owns no runtime state; it is only the packaging and entrypoint for those migrations.
+The dedicated Flyway image artifact sequentially applies the SQL files under `db/migration/{state,executor,orchestrator,k8s}` against the corresponding `continuo_*` databases. It owns no runtime state; it is only the packaging and entrypoint for those migrations.
 
 ## `state`
 
@@ -42,8 +42,8 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | `scheduler_tracker`, `task_tracker`, `task_execution`, `schedule_catalog`, `state_outbox`, `processed_events` |
 | gRPC server methods owned | `CreateScheduler`, `GetScheduler`, `UpdateScheduler`, `CancelScheduler`, `UpdateSchedulerInitStatus`, `ResetInProgressInitializations`, `ActivateSchedule`, `ListAllSchedules`, `TriggerSchedule`, `CancelSchedule`, `CreateTask`, `GetTask`, `GetTaskByScheduleAndNode`, `UpdateTask`, `DeleteTask`, `ListTasks`, `ResetTask`, `GetSchedulerInitStatus`, `CreateTaskExecution`, `GetTaskExecution`, `ListTaskExecutions` |
-| Redis consumes | `schedules.loaded:v1` |
-| Redis produces | `scheduler.started:v1` |
+| Redis consumes | `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1` |
+| Redis produces | `scheduler.started:v1`, `rerun:v1` |
 | Outbound gRPC calls | none |
 
 ## `orchestrator`
@@ -52,19 +52,9 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | Neo4j `Table` nodes, `Run` nodes, `DEPENDS_ON` edges, `EXECUTES` edges; Postgres `message_processing`, `outbox`, `published_messages` |
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
-| Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1` |
-| Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.initialized:v1`, `rerun.ready:v1` |
+| Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `rerun:v1` |
+| Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1` |
 | Outbound gRPC calls | `state`: `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler` |
-
-## `startup-controller`
-
-| Category | Owned / used surface |
-|---|---|
-| Durable state | `startup_outbox` |
-| gRPC server methods owned | none |
-| Redis consumes | `scheduler.started:v1`, `run.initialized:v1`, `rerun.ready:v1` |
-| Redis produces | `query.model:v1`, `initialize.run:v1` |
-| Outbound gRPC calls | `state`: `GetTaskByScheduleAndNode`, `CreateTask`, `UpdateTask`, `UpdateSchedulerInitStatus`, `GetScheduler`, `ResetInProgressInitializations`, `ResetTask`, `GetSchedulerInitStatus` |
 
 ## `executor-controller`
 

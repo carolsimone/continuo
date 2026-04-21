@@ -99,28 +99,6 @@ services:
       GRPC_PORT: "50052"
       HTTP_PORT: "8087"
 
-  - name: startup-controller
-    enabled: true
-    replicas: 1
-    httpPort: 8083
-    secretEnv:
-      - name: POSTGRES_USER
-        secretKey: POSTGRES_USER
-      - name: POSTGRES_PASSWORD
-        secretKey: POSTGRES_PASSWORD
-      - name: NEO4J_USER
-        secretKey: NEO4J_USER
-      - name: NEO4J_PASSWORD
-        secretKey: NEO4J_PASSWORD
-      - name: REDIS_PASSWORD
-        secretKey: REDIS_PASSWORD
-    env:
-      REDIS_CONSUMER_STREAM: scheduler.started:v1
-      REDIS_CONSUMER_GROUP: startup_controller_consumers
-      REDIS_PRODUCER_STREAM: query.model:v1
-      POSTGRES_DB: continuo_startup
-      HTTP_PORT: "8083"
-
   - name: executor-controller
     enabled: true
     replicas: 1
