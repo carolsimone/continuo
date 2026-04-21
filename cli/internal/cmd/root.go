@@ -19,13 +19,15 @@ func Execute() int {
 
 func executeWith(args []string, stdout, stderr io.Writer) int {
 	in := config.Inputs{
-		EnvStateAddr: os.Getenv("CONTINUO_STATE_ADDR"),
-		EnvTimeout:   os.Getenv("CONTINUO_TIMEOUT"),
+		EnvStateAddr:        os.Getenv("CONTINUO_STATE_ADDR"),
+		EnvOrchestratorAddr: os.Getenv("CONTINUO_ORCHESTRATOR_ADDR"),
+		EnvTimeout:          os.Getenv("CONTINUO_TIMEOUT"),
 	}
 	var (
-		flagEndpoint string
-		flagTimeout  string
-		flagHuman    bool
+		flagEndpoint             string
+		flagOrchestratorEndpoint string
+		flagTimeout              string
+		flagHuman                bool
 	)
 
 	// Shared config pointer. The schedule subcommand and its children capture
@@ -40,12 +42,14 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 		SilenceUsage:  true,
 	}
 	root.PersistentFlags().StringVar(&flagEndpoint, "endpoint", "", "gRPC address of the state service (env: CONTINUO_STATE_ADDR)")
+	root.PersistentFlags().StringVar(&flagOrchestratorEndpoint, "orchestrator-endpoint", "", "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)")
 	root.PersistentFlags().StringVar(&flagTimeout, "timeout", "", "gRPC deadline (env: CONTINUO_TIMEOUT)")
 	root.PersistentFlags().BoolVar(&flagHuman, "human", false, "emit human text on stderr instead of JSON on stdout")
 	root.PersistentFlags().Bool("json", true, "forward-compat no-op; JSON is the default")
 
 	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
 		in.FlagEndpoint = flagEndpoint
+		in.FlagOrchestratorEndpoint = flagOrchestratorEndpoint
 		in.FlagTimeout = flagTimeout
 		in.FlagHuman = flagHuman
 		*cfg = config.Resolve(in)

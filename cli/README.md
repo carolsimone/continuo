@@ -5,13 +5,15 @@ LLM-friendly command-line client for the Continuo platform. Calls the
 
 ## Status
 
-MVP. Exactly one verb implemented:
+Multiple commands implemented:
 
 ```
 continuo schedule trigger <schedule-name>
+continuo schedule list
+continuo schedule graph <schedule-name>
 ```
 
-More verbs (list, status, cancel, logs) will follow the same output and
+More verbs (status, cancel, logs) will follow the same output and
 exit-code contract documented below.
 
 ## Build
@@ -47,6 +49,7 @@ continuo [global-flags] <command> [args...]
 | Flag         | Env                    | Default           | Purpose                                            |
 |--------------|------------------------|-------------------|----------------------------------------------------|
 | `--endpoint` | `CONTINUO_STATE_ADDR`  | `localhost:50051` | gRPC address of the state service                  |
+| `--orchestrator-endpoint` | `CONTINUO_ORCHESTRATOR_ADDR` | `localhost:50052` | gRPC address of the orchestrator service |
 | `--timeout`  | `CONTINUO_TIMEOUT`     | `10s`             | Per-call deadline (any `time.ParseDuration` value) |
 | `--human`    | —                      | `false`           | Emit a human one-liner on **stderr** instead of JSON on stdout |
 | `--json`     | —                      | `true`            | Forward-compat no-op; JSON is already the default  |
@@ -71,6 +74,26 @@ With `--human`, stdout is empty and a single line is written to stderr:
 ```
 Triggered run <uuid> for schedule '<name>'
 ```
+
+### `schedule list`
+
+Lists all schedules. Calls StateService.ListAllSchedules. Success prints a
+JSON object to stdout:
+
+```json
+{"schedules":[{"schedule_name":"...","cron_expression":"..."}]}
+```
+
+### `schedule graph <schedule-name>`
+
+Returns the dependency graph for a schedule. Calls OrchestratorQuery.GetScheduleGraph.
+Success prints a JSON object to stdout:
+
+```json
+{"schedule_name":"...","nodes":[...],"edges":[...]}
+```
+
+Requires `--orchestrator-endpoint` or `CONTINUO_ORCHESTRATOR_ADDR` to be set correctly.
 
 ## Exit codes
 

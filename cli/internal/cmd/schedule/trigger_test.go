@@ -31,6 +31,10 @@ func (f *fakeState) TriggerSchedule(_ context.Context, name string) (*statev1.Tr
 
 func (f *fakeState) Close() error { return nil }
 
+func (f *fakeState) ListAllSchedules(_ context.Context) (*statev1.ListAllSchedulesResponse, error) {
+	return nil, nil
+}
+
 // run invokes the trigger command end-to-end with the provided fake client and args.
 // It captures stdout/stderr and returns the exit code.
 func run(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {

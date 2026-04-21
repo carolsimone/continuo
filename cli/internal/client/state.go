@@ -14,6 +14,7 @@ import (
 // implement this; the real implementation lives in stateGRPCClient.
 type StateClient interface {
 	TriggerSchedule(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error)
+	ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error)
 	Close() error
 }
 
@@ -34,6 +35,10 @@ type stateGRPCClient struct {
 
 func (c *stateGRPCClient) TriggerSchedule(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error) {
 	return c.api.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: scheduleName})
+}
+
+func (c *stateGRPCClient) ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error) {
+	return c.api.ListAllSchedules(ctx, &statev1.ListAllSchedulesRequest{})
 }
 
 func (c *stateGRPCClient) Close() error { return c.conn.Close() }

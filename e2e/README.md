@@ -56,6 +56,11 @@ bash e2e/cleanup-k8s-controllers.sh
 When the kind cluster and all Docker images already exist:
 
 ```bash
+# Tear down stale containers — including any left over from the main project directory
+# (the main project uses bare container names like /state, /ui that conflict with this worktree)
+docker rm -f state orchestrator executor-controller k8s-controller ui 2>/dev/null || true
+docker compose down
+
 # Start (or restart) all docker-compose services
 docker compose up -d
 

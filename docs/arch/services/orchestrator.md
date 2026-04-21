@@ -139,6 +139,7 @@ When `initialize.run:v1` carries a `rerun_target`:
 | Service | Methods used |
 |---|---|
 | `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
+| `continuo CLI` | `GetScheduleGraph` |
 
 Orchestrator calls no external gRPC services.
 

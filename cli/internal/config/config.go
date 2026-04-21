@@ -4,38 +4,49 @@ package config
 import "time"
 
 const (
-	defaultStateEndpoint = "localhost:50051"
-	defaultTimeout       = 10 * time.Second
+	defaultStateEndpoint       = "localhost:50051"
+	defaultOrchestratorEndpoint = "localhost:50052"
+	defaultTimeout              = 10 * time.Second
 )
 
 // Config is the resolved configuration a command uses at runtime.
 type Config struct {
-	StateEndpoint string
-	Timeout       time.Duration
-	Human         bool
+	StateEndpoint       string
+	OrchestratorEndpoint string
+	Timeout             time.Duration
+	Human               bool
 }
 
 // Inputs carries raw strings from flags and environment. Empty strings mean "not set".
 type Inputs struct {
-	FlagEndpoint string
-	FlagTimeout  string
-	FlagHuman    bool
-	EnvStateAddr string
-	EnvTimeout   string
+	FlagEndpoint             string
+	FlagOrchestratorEndpoint string
+	FlagTimeout              string
+	FlagHuman                bool
+	EnvStateAddr             string
+	EnvOrchestratorAddr      string
+	EnvTimeout               string
 }
 
 // Resolve applies precedence: flag > env > default. Invalid durations fall back silently to the default.
 func Resolve(in Inputs) Config {
 	cfg := Config{
-		StateEndpoint: defaultStateEndpoint,
-		Timeout:       defaultTimeout,
-		Human:         in.FlagHuman,
+		StateEndpoint:        defaultStateEndpoint,
+		OrchestratorEndpoint: defaultOrchestratorEndpoint,
+		Timeout:              defaultTimeout,
+		Human:                in.FlagHuman,
 	}
 	if in.EnvStateAddr != "" {
 		cfg.StateEndpoint = in.EnvStateAddr
 	}
 	if in.FlagEndpoint != "" {
 		cfg.StateEndpoint = in.FlagEndpoint
+	}
+	if in.EnvOrchestratorAddr != "" {
+		cfg.OrchestratorEndpoint = in.EnvOrchestratorAddr
+	}
+	if in.FlagOrchestratorEndpoint != "" {
+		cfg.OrchestratorEndpoint = in.FlagOrchestratorEndpoint
 	}
 	if d, err := time.ParseDuration(in.EnvTimeout); err == nil {
 		cfg.Timeout = d
