@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
@@ -14,8 +15,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"os"
-
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -99,11 +98,15 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 
 	// Step 3: For failed or succeeded jobs, get pod details for timing and error info
 	if result.Status == model.JobStatusFailed || result.Status == model.JobStatusSucceeded {
-		// Use job-level start time as the baseline — it persists on the Job object
+		// Use job-level times as the baseline — they persist on the Job object
 		// even after pods are garbage-collected.
 		if job.Status.StartTime != nil {
 			t := job.Status.StartTime.Time
 			result.StartedAt = &t
+		}
+		if job.Status.CompletionTime != nil {
+			t := job.Status.CompletionTime.Time
+			result.CompletedAt = &t
 		}
 
 		pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
