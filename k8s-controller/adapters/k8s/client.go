@@ -159,6 +159,12 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 				}
 			}
 		}
+
+		// When pods were GC'd before polling, compute duration from the job-level
+		// timestamps that were set as the baseline above.
+		if result.ExecutionSeconds == 0 && result.StartedAt != nil && result.CompletedAt != nil {
+			result.ExecutionSeconds = result.CompletedAt.Sub(*result.StartedAt).Seconds()
+		}
 	}
 
 	c.logger.Debug("Got job status",

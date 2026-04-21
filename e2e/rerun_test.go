@@ -115,7 +115,7 @@ func TestRerunFailedNode(t *testing.T) {
 
 	assertRerunTaskRetryCountZero(t, ctx, clients, schedulerID, "table_e")
 	assertInitStatusCompleted(t, ctx, clients, schedulerID)
-	assertTaskExecutionAtLeast(t, ctx, clients, schedulerID, "table_e", 3) // 2 failed + 1 succeeded
+	assertTaskExecutionAtLeast(t, ctx, clients, schedulerID, "table_e", 4) // 3 failed + 1 succeeded
 
 	// Upstream nodes untouched by rerun
 	assertTaskStatus(t, ctx, clients, schedulerID, "table_b", "succeeded")
