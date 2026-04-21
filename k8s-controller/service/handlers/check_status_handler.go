@@ -153,6 +153,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, cmd command.Ch
 		NewTaskStatus:        "succeeded",
 		NewRetryCount:        0,
 		CreateExecution:      true,
+		ExecutionID:          uuid.New(),
 		ExecutionStartedAt:   result.StartedAt,
 		ExecutionCompletedAt: result.CompletedAt,
 		ExecutionSeconds:     result.ExecutionSeconds,
