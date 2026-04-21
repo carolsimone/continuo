@@ -2,10 +2,7 @@ module github.com/carolsimone/continuo/cli
 
 go 1.25.1
 
-replace github.com/carolsimone/continuo/state => ../state
-
 require (
-	github.com/carolsimone/continuo/state v0.0.0-00010101000000-000000000000
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.80.0

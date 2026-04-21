@@ -5,7 +5,7 @@ package client
 import (
 	"context"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

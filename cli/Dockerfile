@@ -2,7 +2,7 @@
 FROM golang:1.25.1-alpine AS build
 WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=0 go build -o /out/continuo ./cli/cmd/continuo
+RUN CGO_ENABLED=0 go build -o /out/continuo ./cmd/continuo
 
 FROM alpine:3.20
 RUN adduser -D -u 10001 app

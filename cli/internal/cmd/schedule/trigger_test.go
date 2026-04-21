@@ -11,7 +11,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
