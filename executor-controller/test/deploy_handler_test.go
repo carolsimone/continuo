@@ -69,6 +69,7 @@ func TestDeployHandler_Handle_Success(t *testing.T) {
 	assert.Equal(t, string(model.OutboxStatusPending), entry.Status)
 	assert.Equal(t, 0, entry.OutboxRetryCount)
 	assert.Equal(t, 3, entry.OutboxMaxRetries)
+	assert.Equal(t, 2, entry.TaskMaxRetries)
 }
 
 func TestDeployHandler_Handle_MultipleCommands(t *testing.T) {

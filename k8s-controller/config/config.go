@@ -69,7 +69,7 @@ func Load(v *pkgconfig.Validator) Config {
 		HTTPPort:              envInt("HTTP_PORT", 8085),
 		K8sNamespace:          v.Require("K8S_NAMESPACE"),
 		K8sCheckDelaySeconds:  envInt("K8S_CHECK_DELAY_SECONDS", 30),
-		DefaultTaskMaxRetries: envInt("DEFAULT_TASK_MAX_RETRIES", 3),
+		DefaultTaskMaxRetries: envInt("DEFAULT_TASK_MAX_RETRIES", 2),
 		LogTailLines:          envInt("LOG_TAIL_LINES", 50),
 		ErrorMessageMaxLength: envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
 	}

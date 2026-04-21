@@ -43,7 +43,7 @@ func (h *DeployHandler) Handle(ctx context.Context, cmd command.DeployJob) error
 	// Step 2: Write deployment intent to outbox table
 	taskMaxRetries := cmd.MaxRetries
 	if taskMaxRetries <= 0 {
-		taskMaxRetries = 3
+		taskMaxRetries = 2
 	}
 
 	entry := &model.DeploymentOutboxEntry{
