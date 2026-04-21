@@ -160,6 +160,7 @@ func TestList_HumanModeRunningSchedule(t *testing.T) {
 	assert.Contains(t, stderr, "daily_ingest")
 	assert.Contains(t, stderr, "running")
 	assert.Contains(t, stderr, "success")
+	assert.Contains(t, stderr, "2026-04-20")
 }
 
 func TestList_HumanModeIdleScheduleWithLastRun(t *testing.T) {
@@ -184,6 +185,7 @@ func TestList_HumanModeIdleScheduleWithLastRun(t *testing.T) {
 	assert.Contains(t, stderr, "daily_ingest")
 	assert.Contains(t, stderr, "idle")
 	assert.Contains(t, stderr, "success")
+	assert.Contains(t, stderr, "2026-04-20")
 }
 
 func TestList_HumanModeIdleScheduleNoLastRun(t *testing.T) {
