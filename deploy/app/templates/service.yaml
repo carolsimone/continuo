@@ -10,7 +10,7 @@ metadata:
     {{- include "continuo-app.labels" $ | nindent 4 }}
     app.kubernetes.io/name: {{ $svc.name }}
 spec:
-  type: ClusterIP
+  type: {{ default "ClusterIP" $svc.serviceType }}
   selector:
     {{- include "continuo-app.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 4 }}
   ports:
