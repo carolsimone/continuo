@@ -6,5 +6,8 @@ export function createRedisClient(): Redis | null {
     console.warn('REDIS_URL not set — graph update endpoint will be unavailable');
     return null;
   }
-  return new Redis(url);
+  const client = new Redis(url);
+  client.on('connect', () => console.log('Redis connected'));
+  client.on('error', (err) => console.error('Redis error:', err.message));
+  return client;
 }
