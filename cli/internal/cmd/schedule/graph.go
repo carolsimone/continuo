@@ -111,6 +111,7 @@ func toGraphPayload(scheduleName string, resp *orchestratorv1.GetScheduleGraphRe
 		if ts := n.GetCreatedAt(); ts != nil && ts.IsValid() {
 			e.CreatedAt = ts.AsTime().UTC().Format("2006-01-02T15:04:05Z")
 		}
+		// TableNode.ScheduleName is intentionally excluded — it is internal denormalisation, not part of the output contract.
 		nodes = append(nodes, e)
 	}
 
