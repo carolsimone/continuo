@@ -42,7 +42,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 		SilenceUsage:  true,
 	}
 	root.PersistentFlags().StringVar(&flagEndpoint, "endpoint", "", "gRPC address of the state service (env: CONTINUO_STATE_ADDR)")
-	root.PersistentFlags().StringVar(&flagOrchestratorEndpoint, "orchestrator-endpoint", "", "gRPC address of the orchestrator service ($CONTINUO_ORCHESTRATOR_ADDR)")
+	root.PersistentFlags().StringVar(&flagOrchestratorEndpoint, "orchestrator-endpoint", "", "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)")
 	root.PersistentFlags().StringVar(&flagTimeout, "timeout", "", "gRPC deadline (env: CONTINUO_TIMEOUT)")
 	root.PersistentFlags().BoolVar(&flagHuman, "human", false, "emit human text on stderr instead of JSON on stdout")
 	root.PersistentFlags().Bool("json", true, "forward-compat no-op; JSON is the default")
