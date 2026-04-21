@@ -67,8 +67,8 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
 ### On `node.deployed:v1` or `check.k8s:v1`
 
 ```
-1. GetJobStatus (K8s) — query current pod status
-2. Determine retry_count from message payload (max_retries from config default)
+1. GetJobStatus (K8s) — query current pod status; `started_at` uses a three-tier priority: job-level `StartTime` (persists after pod GC) → pod-level `StartTime` → container-level `terminated.StartedAt`
+2. Determine retry_count from message payload (max_retries from config default = 2, meaning 3 total attempts: initial + 2 retries)
 3. Begin Postgres transaction
 4. Dedup: TryMarkProcessed(outbox_entry_id) — INSERT ON CONFLICT DO NOTHING
    → if duplicate: rollback + XACK
@@ -115,7 +115,7 @@ Reads `k8s_status_outbox` entries and executes the staged side effects:
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `status`, `retry_count`
 
 ### `task.execution.recorded:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `execution_id`, `started_at`, `finished_at`, `status`, `error_message`, `s3_log_key`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `execution_id`, `started_at` (job-level → pod-level → container-level priority), `finished_at`, `status`, `error_message`, `s3_log_key`
 
 ### `node.updated:v1`
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `status`
@@ -135,6 +135,6 @@ Reads `k8s_status_outbox` entries and executes the staged side effects:
 - **Inbound dedup inside transaction**: `processed_events` insert and outbox writes are in the same transaction; a crash after commit is idempotent on retry (dedup fires)
 - **S3 soft-fail**: log upload failure does not block task completion; execution record is written with empty S3 key
 - **No state gRPC dependency**: k8s-controller no longer calls state gRPC; all state mutations flow via `task.status.updated:v1` and `task.execution.recorded:v1`
-- **Retry count in payload**: `retry_count` flows through Redis messages; `max_retries` uses the service config default
+- **Retry count in payload**: `retry_count` flows through Redis messages; `max_retries` uses the service config default (default = 2, meaning 3 total execution attempts: initial + 2 retries); permanent failure occurs when `retry_count >= max_retries`
 - **Stuck resolver**: catches outbox entries that exceed `max_retries` but haven't been cleaned up; force-marks them as failed with a diagnostic message; escalates to CRITICAL log if auto-resolution fails after `max_resolve_attempts`
 - **`task.failed:v1`**: currently has no in-repo consumer; exists for external observability or future integration

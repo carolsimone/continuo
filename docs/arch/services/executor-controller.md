@@ -107,4 +107,5 @@ On failure:
 - **Step ordering**: K8s creation → `task.status.updated:v1` (RUNNING) → `node.deployed:v1`; if Redis publishes fail after K8s succeeds, the retry will re-attempt idempotently
 - **No state gRPC dependency**: executor-controller no longer calls state gRPC; task status updates flow via `task.status.updated:v1`
 - **Permanent failure**: invalid `node_type` (data corruption) is immediately marked failed rather than retried indefinitely
-- **Max retries**: 3 per outbox entry; after that, entry is marked `failed` and must be manually recovered
+- **Outbox delivery retries**: 3 per `deployment_outbox` entry (governs K8s job creation attempts); after that, entry is marked `failed` and must be manually recovered
+- **Task max retries**: `task_max_retries` written into `deployment_outbox` defaults to 2 (3 total execution attempts: initial + 2 retries); propagated to `k8s-controller` via `node.deployed:v1` to govern task-level retry logic

@@ -214,8 +214,8 @@ func verifyOrchestratorPublishedRootNodes(
 	t.Logf("✅ orchestrator published %d root node messages to query.model:v1", expectedCount)
 }
 
-// verifyTableEExhaustedRetries polls state DB until table_e has retry_count = 3
-// and status = 'failed', confirming all 3 retries were exhausted.
+// verifyTableEExhaustedRetries polls state DB until table_e has retry_count = 2
+// and status = 'failed', confirming all 2 retries were exhausted (3 total attempts).
 func verifyTableEExhaustedRetries(
 	t *testing.T,
 	ctx context.Context,
@@ -234,10 +234,10 @@ func verifyTableEExhaustedRetries(
 		if err != nil {
 			return false, err
 		}
-		return retryCount == 3 && status == "failed", nil
-	}, "Timeout waiting for table_e to exhaust 3 retries and reach failed status")
+		return retryCount == 2 && status == "failed", nil
+	}, "Timeout waiting for table_e to exhaust 2 retries and reach failed status")
 
-	t.Log("✅ table_e exhausted 3 retries and is permanently failed")
+	t.Log("✅ table_e exhausted 2 retries and is permanently failed (3 total attempts)")
 }
 
 // verifyNoJobsDeployed asserts that none of the given tables have K8s jobs.

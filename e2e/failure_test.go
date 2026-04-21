@@ -11,7 +11,7 @@ import (
 )
 
 // TestE2E_FailurePath_NodeFailureDrainsSchedule verifies that when a mid-DAG
-// node (table_e) permanently fails after exhausting 3 retries, all downstream
+// node (table_e) permanently fails after exhausting 2 retries (3 total attempts), all downstream
 // nodes are never deployed and the scheduler is finalised as FAILED.
 //
 // DAG used (seeds as level 0, table_e uses service-3-broken):
@@ -79,7 +79,7 @@ func TestE2E_FailurePath_NodeFailureDrainsSchedule(t *testing.T) {
 	t.Log("Verifying table_d and table_f succeed...")
 	verifyJobsCompleted(t, ctx, clients, []string{"table_d", "table_f"}, failureTestScheduleName)
 
-	// table_e should exhaust all 3 retries and be permanently failed
+	// table_e should exhaust all 2 retries (3 total attempts) and be permanently failed
 	t.Log("Waiting for table_e to exhaust retries...")
 	verifyTableEExhaustedRetries(t, ctx, clients, schedulerID)
 

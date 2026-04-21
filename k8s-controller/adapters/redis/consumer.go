@@ -16,7 +16,7 @@ import (
 
 // defaultMaxRetries is used when a message does not carry a max_retries field
 // (backward-compat: old executor-controller versions did not publish it).
-const defaultConsumerMaxRetries = 3
+const defaultConsumerMaxRetries = 2
 
 // DualStreamConsumer consumes from both node.deployed:v1 and check.k8s:v1 streams
 type DualStreamConsumer struct {

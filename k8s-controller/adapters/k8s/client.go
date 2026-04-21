@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
@@ -14,8 +15,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"os"
-
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -23,7 +22,7 @@ import (
 
 // K8sClient provides methods to interact with Kubernetes
 type K8sClient struct {
-	clientset *kubernetes.Clientset
+	clientset kubernetes.Interface
 	logger    *slog.Logger
 }
 
@@ -99,6 +98,17 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 
 	// Step 3: For failed or succeeded jobs, get pod details for timing and error info
 	if result.Status == model.JobStatusFailed || result.Status == model.JobStatusSucceeded {
+		// Use job-level times as the baseline — they persist on the Job object
+		// even after pods are garbage-collected.
+		if job.Status.StartTime != nil {
+			t := job.Status.StartTime.Time
+			result.StartedAt = &t
+		}
+		if job.Status.CompletionTime != nil {
+			t := job.Status.CompletionTime.Time
+			result.CompletedAt = &t
+		}
+
 		pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 		})
@@ -111,17 +121,15 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 			return result, nil
 		}
 
-		// Get details from the first pod
 		if len(pods.Items) > 0 {
 			pod := pods.Items[0]
 
-			// Extract start time
+			// Pod-level start time overrides job-level when available.
 			if pod.Status.StartTime != nil {
-				startTime := pod.Status.StartTime.Time
-				result.StartedAt = &startTime
+				t := pod.Status.StartTime.Time
+				result.StartedAt = &t
 			}
 
-			// Extract container status details
 			for _, cs := range pod.Status.ContainerStatuses {
 				if cs.State.Terminated != nil {
 					terminated := cs.State.Terminated
@@ -138,13 +146,24 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 					completedTime := terminated.FinishedAt.Time
 					result.CompletedAt = &completedTime
 
-					// Calculate execution time
+					// Container-level StartedAt is the most precise; use it when set.
+					if !terminated.StartedAt.IsZero() {
+						t := terminated.StartedAt.Time
+						result.StartedAt = &t
+					}
+
 					if result.StartedAt != nil {
 						result.ExecutionSeconds = completedTime.Sub(*result.StartedAt).Seconds()
 					}
 					break
 				}
 			}
+		}
+
+		// When pods were GC'd before polling, compute duration from the job-level
+		// timestamps that were set as the baseline above.
+		if result.ExecutionSeconds == 0 && result.StartedAt != nil && result.CompletedAt != nil {
+			result.ExecutionSeconds = result.CompletedAt.Sub(*result.StartedAt).Seconds()
 		}
 	}
 

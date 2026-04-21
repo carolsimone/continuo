@@ -164,7 +164,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 
 `TestE2E_FailurePath_NodeFailureDrainsSchedule` uses the same 10-node diamond DAG but with `table_e` pointing to `service-3-broken`. It verifies:
 
-- `table_e` exhausts 3 retries and reaches `failed` status
+- `table_e` exhausts 2 retries (3 total attempts) and reaches `failed` status
 - Downstream nodes (`table_g`, `table_h`, `table_i`, `table_j`) are never deployed
 - The scheduler is finalised as `FAILED`
 

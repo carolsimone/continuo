@@ -229,6 +229,32 @@ func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 	}
 }
 
+// TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts documents the invariant:
+// retryCount=2 (3rd attempt) with maxRetries=2 must produce a permanent failure.
+func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
+	fw := newFakeUoW()
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, 2)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-abc",
+		RetryCount: 2, // 0-indexed; 2 = third attempt
+		MaxRetries: 2,
+	}
+
+	if err := handler.Handle(context.Background(), cmd); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(fw.outboxRepo.entries) == 0 {
+		t.Fatal("expected outbox entries, got none")
+	}
+	if got := fw.outboxRepo.entries[0].EventType; got != "task_failed" {
+		t.Errorf("expected event_type=task_failed, got %q", got)
+	}
+}
+
 // Compile-time interface checks.
 var _ s3adapter.LogUploader = (*fakeLogUploader)(nil)
 var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)
