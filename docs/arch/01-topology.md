@@ -7,7 +7,6 @@ flowchart LR
   subgraph ControlPlane
     ST[state]
     OR[orchestrator]
-    SC[startup-controller]
     EC[executor-controller]
     KC[k8s-controller]
     MC[manifest-controller]
@@ -18,7 +17,6 @@ flowchart LR
     STDB[(Postgres: state)]
     ORPG[(Postgres: orchestrator)]
     GRDB[(Neo4j: graph)]
-    SCPG[(Postgres: startup_outbox)]
     ECPG[(Postgres: deployment_outbox/processed_events)]
     KCPG[(Postgres: k8s_status_outbox/processed_events)]
     S3[(S3/LocalStack)]
@@ -29,18 +27,15 @@ flowchart LR
   ST --> STDB
   OR --> GRDB
   OR --> ORPG
-  SC --> SCPG
   EC --> ECPG
   KC --> KCPG
 
   ST <--> R
-  SC <--> R
   OR <--> R
   EC <--> R
   KC <--> R
   MC <--> R
 
-  SC --> ST
   OR --> ST
   EC --> ST
   KC --> ST
@@ -62,9 +57,9 @@ flowchart TD
   ML[manifest.loaded:v1]
   SL[schedules.loaded:v1]
   SS[scheduler.started:v1]
-  IR[initialize.run:v1]
-  RI[run.initialized:v1]
-  RR[rerun.ready:v1]
+  RED[run.entries.dispatched:v1]
+  RN[rerun:v1]
+  RRD[run.rerun.dispatched:v1]
   QM[query.model:v1]
   ED[node.deployed:v1]
   KCV[check.k8s:v1]
@@ -79,13 +74,14 @@ flowchart TD
   SL --> ST[state]
 
   ST --> SS
-  SS --> SC[startup-controller]
-  SC --> IR
-  IR --> OR
-  OR --> RI
-  OR --> RR
-  RI --> SC
-  RR --> SC
+  SS --> OR
+  OR --> RED
+  RED --> ST
+
+  ST --> RN
+  RN --> OR
+  OR --> RRD
+  RRD --> ST
 
   OR --> QM
 
@@ -111,7 +107,7 @@ flowchart TD
 | Scheduler/task/task-execution truth | `state` | Postgres |
 | Dependency topology and run projection | `orchestrator` | Neo4j |
 | Node completion, downstream unlock, run finalization | `orchestrator` | Postgres outbox + Neo4j |
-| Schedule/bootstrap dispatch intents | `startup-controller` | Postgres outbox |
+| Schedule/bootstrap dispatch intents | `orchestrator` | Postgres outbox |
 | Deployment intents / inbound dedup | `executor-controller` | Postgres |
 | Runtime status / retry orchestration | `k8s-controller` | Postgres |
 | Manifest ingestion | `manifest-controller` | Redis + filesystem/S3 |
@@ -121,7 +117,7 @@ flowchart TD
 
 - `state` owns task and scheduler status; other services must mutate that state through gRPC.
 - `orchestrator` owns table topology (Neo4j) and run-time `EXECUTES` status projection; it also handles node completion events and downstream unlocking (formerly split between `graph` and `dependency-controller`).
-- The dedicated Flyway migration image artifact runs the shared `db/migration/` trees sequentially for `continuo_state`, `continuo_startup`, `continuo_executor`, `continuo_orchestrator`, and `continuo_k8s`.
+- The dedicated Flyway migration image artifact runs the shared `db/migration/` trees sequentially for `continuo_state`, `continuo_executor`, `continuo_orchestrator`, and `continuo_k8s`.
 - Redis carries orchestration events between services. Redis requires password authentication in all environments (local docker-compose: `--requirepass continuo`; production: injected via Kubernetes secret as `REDIS_PASSWORD`). All services must supply `REDIS_PASSWORD` or the process will refuse to start (see `pkg/config.Validator`).
 - The controller services use local Postgres outbox and dedup tables to make cross-service messaging reliable.
 - The `deploy/infra` Helm chart provisions the shared infrastructure stack (`Postgres`, `Redis`, `Neo4j`) as cluster-internal defaults and initializes the service databases in one Postgres instance. Local docker-compose uses `POSTGRES_PASSWORD=continuo` (superuser) and `REDIS_PASSWORD=continuo`.
