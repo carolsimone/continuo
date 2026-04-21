@@ -6,15 +6,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
 	"github.com/spf13/cobra"
 )
-
-// StateClientFactory dials and returns a StateClient. In production this is
-// client.NewStateClient; tests pass a closure returning a fake.
-type StateClientFactory func(ctx context.Context, endpoint string) (client.StateClient, error)
 
 // NewTriggerCommand builds `continuo schedule trigger <schedule-name>`.
 // cfg is a pointer because root.go populates it in PersistentPreRunE after

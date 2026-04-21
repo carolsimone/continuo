@@ -6,17 +6,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
 	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
 	"github.com/spf13/cobra"
 )
-
-// OrchestratorClientFactory dials and returns an OrchestratorClient. In
-// production this is client.NewOrchestratorClient; tests pass a closure
-// returning a fake.
-type OrchestratorClientFactory func(ctx context.Context, endpoint string) (client.OrchestratorClient, error)
 
 // nodeEntry is the JSON-serialisable representation of a single graph node.
 // Fields with omitempty are conditionally omitted per the spec:

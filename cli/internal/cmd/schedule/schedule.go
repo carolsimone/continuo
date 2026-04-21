@@ -10,6 +10,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// StateClientFactory dials and returns a StateClient. In production this is
+// client.NewStateClient; tests pass a closure returning a fake.
+type StateClientFactory func(ctx context.Context, endpoint string) (client.StateClient, error)
+
+// OrchestratorClientFactory dials and returns an OrchestratorClient. In
+// production this is client.NewOrchestratorClient; tests pass a closure
+// returning a fake.
+type OrchestratorClientFactory func(ctx context.Context, endpoint string) (client.OrchestratorClient, error)
+
 // NewCommand builds `continuo schedule` and attaches subcommands.
 // cfg is a pointer that root.go fills in via PersistentPreRunE before any
 // subcommand's RunE fires.
