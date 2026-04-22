@@ -50,6 +50,13 @@ redis:
     enabled: true
     password: changeme
   master:
+    resources:
+      requests:
+        memory: 384Mi
+        cpu: 100m
+      limits:
+        memory: 576Mi
+        cpu: 150m
     persistence:
       storageClass: hcloud-volumes
       size: 2Gi
