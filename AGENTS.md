@@ -64,6 +64,7 @@ As the very last step before finishing a branch and pushing the last commit it, 
 * only merge to main from a PR.
 * run e2e tests (read e2e/README.md for how to do that).
 * update `docs/arch/*` documentations.
+* whenever you find edge cases on the logic and you solve the problem, let's build a proper test to avoid this issue will resurface again.
 
 <!-- rtk-instructions v2 -->
 # RTK (Rust Token Killer) - Token-Optimized Commands
