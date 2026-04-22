@@ -297,6 +297,7 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .detail-right-col {
@@ -441,7 +442,7 @@ body {
 /* ---- Focus mode legend ---- */
 .dag-focus-legend {
   position: absolute;
-  top: 12px;
+  top: 52px;
   right: 12px;
   z-index: 10;
   background: #fff;
@@ -449,7 +450,6 @@ body {
   border-radius: 7px;
   padding: 8px 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  pointer-events: none;
 }
 .dag-focus-legend-title {
   font-size: 9.5px;
@@ -478,6 +478,46 @@ body {
 .dag-focus-dot--parent   { background: #a5b4fc; }
 .dag-focus-dot--child    { background: #86efac; }
 .dag-focus-dot--dim      { background: #e5e7eb; }
+
+/* ---- Rerun button inside focus legend ---- */
+.dag-rerun-divider {
+  border: none;
+  border-top: 1px solid #f1f5f9;
+  margin: 8px 0;
+}
+
+.dag-rerun-btn {
+  width: 100%;
+  padding: 5px 0;
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+.dag-rerun-btn:hover:not(:disabled) { background: #4338ca; }
+.dag-rerun-btn:disabled { background: #a5b4fc; cursor: not-allowed; }
+
+.dag-rerun-feedback {
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-size: 10px;
+  text-align: center;
+}
+.dag-rerun-feedback--success {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #16a34a;
+}
+.dag-rerun-feedback--error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+  margin-bottom: 6px;
+}
 
 /* ---- Nodes table ---- */
 .nodes-table-scroll {

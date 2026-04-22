@@ -254,13 +254,6 @@ export default function DAGPanel({
     [onNodeClick, selectedNodeId],
   );
 
-  const parentIds = selectedNodeId
-    ? new Set(graphEdges.filter((e) => e.to_node_id === selectedNodeId).map((e) => e.from_node_id))
-    : new Set<string>();
-  const childIds = selectedNodeId
-    ? new Set(graphEdges.filter((e) => e.from_node_id === selectedNodeId).map((e) => e.to_node_id))
-    : new Set<string>();
-
   return (
     <>
       <div className="dag-search-strip">
@@ -317,26 +310,6 @@ export default function DAGPanel({
         >
           {zoomLevel}%
         </div>
-
-        {selectedNodeId && (
-          <div className="dag-focus-legend">
-            <div className="dag-focus-legend-title">{selectedNodeId.split('.').pop()}</div>
-            <div className="dag-focus-legend-row">
-              <div className="dag-focus-dot dag-focus-dot--selected" /> Selected
-            </div>
-            <div className="dag-focus-legend-row">
-              <div className="dag-focus-dot dag-focus-dot--parent" />
-              Depends on ({parentIds.size})
-            </div>
-            <div className="dag-focus-legend-row">
-              <div className="dag-focus-dot dag-focus-dot--child" />
-              Required by ({childIds.size})
-            </div>
-            <div className="dag-focus-legend-row">
-              <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
-            </div>
-          </div>
-        )}
       </div>
     </>
   );

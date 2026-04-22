@@ -50,6 +50,7 @@ graphify-out/*
 *.worktrees/
 *.scheduler-stop/.worktrees/
 .wrkt/
+.worktree/
 .worktree/*
 
 ui-service/.superpowers*
