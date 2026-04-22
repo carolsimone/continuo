@@ -87,4 +87,9 @@ docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv 
 sleep 3
 log_info "manifest-controller started"
 
+log_info "Compiling and uploading dbt manifests..."
+docker exec dbt-compile-and-load \
+  uv run python -m dbt_upload load --services-dir /app/services
+log_info "dbt manifests uploaded"
+
 log_info "All services started successfully!"
