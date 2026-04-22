@@ -129,6 +129,8 @@ services:
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       DBT_POSTGRES_DB: continuo_dbt
       HTTP_PORT: "8084"
+      DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__
+      IMAGE_TAG: latest
 
   - name: k8s-controller
     enabled: true
