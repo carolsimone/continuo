@@ -328,7 +328,7 @@ services:
       ui:
         condition: service_started
       dbt-compile-and-load:
-        condition: service_completed_successfully
+        condition: service_started
     environment:
       - ORCHESTRATOR_HOST=orchestrator
       - STATE_HOST=state
@@ -428,9 +428,7 @@ services:
     build:
       context: ./dbt
       dockerfile: Dockerfile.upload
-    restart: "no"
-    # If you want to load to hetzner
-    # command: ["load", "--services-dir", "./services", "--target", "hetzner"]
+    container_name: dbt-compile-and-load
     env_file:
       - ./dbt/.env.hetzner
     depends_on:
@@ -439,7 +437,6 @@ services:
       postgres:
         condition: service_started
     environment:
-      # dbt PostgreSQL connection for dbt compile
       - DBT_POSTGRES_HOST=postgres
       - DBT_POSTGRES_PORT=5432
       - DBT_POSTGRES_DB=continuo_dbt
@@ -447,8 +444,6 @@ services:
       - DBT_POSTGRES_PASSWORD=continuo
     volumes:
       - ./dbt/services:/app/services
-    profiles:
-      - e2e
 
 volumes:
   neo4j_data:
