@@ -95,6 +95,7 @@ export default function DetailPage() {
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunState, setRerunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [rerunError, setRerunError] = useState<string | null>(null);
+  const rerunGenRef = useRef(0);
 
   useEffect(() => {
     resolvedRef.current = false;
@@ -295,12 +296,14 @@ export default function DetailPage() {
   }, [selectedRunId]);
 
   useEffect(() => {
+    rerunGenRef.current += 1;
     setRerunState('idle');
     setRerunError(null);
   }, [selectedNodeId]);
 
   const handleRerun = useCallback(async () => {
     if (!selectedNodeId || !lastRunId) return;
+    const gen = (rerunGenRef.current += 1);
     const { service_name, schema_name, table_name } = parseNodeId(selectedNodeId);
     setRerunState('loading');
     setRerunError(null);
@@ -310,15 +313,20 @@ export default function DetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ service_name, schema: schema_name, table_name }),
       });
+      if (gen !== rerunGenRef.current) return;
       if (res.ok) {
         setRerunState('success');
-        setTimeout(() => setRerunState('idle'), 3000);
+        setTimeout(() => {
+          if (gen === rerunGenRef.current) setRerunState('idle');
+        }, 3000);
       } else {
         const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
+        if (gen !== rerunGenRef.current) return;
         setRerunError(body.error ?? 'Request failed — please try again');
         setRerunState('error');
       }
     } catch {
+      if (gen !== rerunGenRef.current) return;
       setRerunError('Request failed — please try again');
       setRerunState('error');
     }
