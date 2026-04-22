@@ -89,6 +89,12 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 		result.Status = model.JobStatusSucceeded
 	} else if job.Status.Failed > 0 || c.hasFailedCondition(job) {
 		result.Status = model.JobStatusFailed
+	} else if reason, msg := c.checkImagePullError(ctx, namespace, jobName); reason != "" {
+		// Pod is stuck waiting for an image that will never arrive. The k8s Job
+		// controller never increments Status.Failed for image pull loops — detect
+		// it via pod ContainerStatus.Waiting.Reason so the run can fail cleanly.
+		result.Status = model.JobStatusFailed
+		result.TerminationMsg = fmt.Sprintf("%s: %s", reason, msg)
 	} else {
 		// Active > 0 means running; Active == 0 with no success/failure means
 		// the job is still pending (being scheduled) — treat as running so a
@@ -237,4 +243,31 @@ func (c *K8sClient) hasFailedCondition(job *batchv1.Job) bool {
 		}
 	}
 	return false
+}
+
+// checkImagePullError inspects pod ContainerStatus.Waiting for image pull failure reasons.
+// The k8s Job controller never marks Status.Failed for stuck image pulls, so we detect
+// them directly from pod state. Returns reason+message if found, empty strings otherwise.
+func (c *K8sClient) checkImagePullError(ctx context.Context, namespace, jobName string) (reason, message string) {
+	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
+	})
+	if err != nil || len(pods.Items) == 0 {
+		return "", ""
+	}
+	for _, pod := range pods.Items {
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.State.Waiting != nil {
+				switch cs.State.Waiting.Reason {
+				case "ImagePullBackOff", "ErrImagePull", "InvalidImageName":
+					msg := cs.State.Waiting.Message
+					if msg == "" {
+						msg = cs.State.Waiting.Reason
+					}
+					return cs.State.Waiting.Reason, msg
+				}
+			}
+		}
+	}
+	return "", ""
 }
