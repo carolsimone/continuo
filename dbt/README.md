@@ -95,18 +95,12 @@ targets:
 LocalStack credentials are baked into `targets.yaml`. No extra setup needed:
 
 ```bash
-# Via docker-compose (container runs idle)
-docker compose up dbt-compile-and-load
+# Start the container (it idles until exec'd)
+docker compose up -d dbt-compile-and-load
 
-# Or manually inside the container
-docker run --rm --network continuo_default \
-  -e DBT_POSTGRES_HOST=postgres \
-  -e DBT_POSTGRES_PORT=5432 \
-  -e DBT_POSTGRES_DB=continuo_dbt \
-  -e DBT_POSTGRES_USER=continuo_svc \
-  -e DBT_POSTGRES_PASSWORD=continuo \
-  -v "$(pwd)/dbt/services:/app/services" \
-  dbt-compile-and-load:latest
+# Then run the load
+docker exec dbt-compile-and-load \
+  uv run python -m dbt_upload load --services-dir /app/services
 ```
 
 ### Targeting Hetzner Object Storage
@@ -118,18 +112,14 @@ AWS_ACCESS_KEY_ID=<your-hetzner-access-key>
 AWS_SECRET_ACCESS_KEY=<your-hetzner-secret-key>
 ```
 
-2. Run with `--target hetzner` and `--env-file`:
+2. Run with `--target hetzner`:
 
 ```bash
-docker run --rm --network continuo_default \
-  --env-file dbt/.env.hetzner \
-  -e DBT_POSTGRES_HOST=postgres \
-  -e DBT_POSTGRES_PORT=5432 \
-  -e DBT_POSTGRES_DB=continuo_dbt \
-  -e DBT_POSTGRES_USER=continuo_svc \
-  -e DBT_POSTGRES_PASSWORD=continuo \
-  -v "$(pwd)/dbt/services:/app/services" \
-  dbt-compile-and-load:latest load --services-dir ./services --target hetzner
+docker exec \
+  -e AWS_ACCESS_KEY_ID="$(grep AWS_ACCESS_KEY_ID dbt/.env.hetzner | cut -d= -f2)" \
+  -e AWS_SECRET_ACCESS_KEY="$(grep AWS_SECRET_ACCESS_KEY dbt/.env.hetzner | cut -d= -f2)" \
+  dbt-compile-and-load \
+  uv run python -m dbt_upload load --services-dir /app/services --target hetzner
 ```
 
 Manifests are uploaded to `s3://continuo-dev/dev/manifest/<service-name>/manifest_v{N}.json`.
