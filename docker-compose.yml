@@ -431,7 +431,8 @@ services:
     container_name: dbt-compile-and-load
     command: ["tail", "-f", "/dev/null"]
     env_file:
-      - ./dbt/.env.hetzner
+      - path: ./dbt/.env.hetzner
+        required: false
     depends_on:
       localstack:
         condition: service_healthy
