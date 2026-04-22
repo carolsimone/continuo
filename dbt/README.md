@@ -43,39 +43,22 @@ The `dbt_upload` package provides three subcommands for compiling dbt services a
 
 ### Usage
 
-**Inside Docker** (the image entrypoint is already `uv run python -m dbt_upload`):
+The image entrypoint is `uv run python -m dbt_upload` and the default CMD is `load --services-dir ./services`, so docker-compose runs the full compile+upload automatically on startup.
+
+To run a different subcommand, override the CMD:
 
 ```bash
-# Compile + upload in one step (most common)
-docker run ... dbt-compile-and-load:latest load --services-dir ./services
+# Compile + upload to hetzner instead of localstack
+docker compose run --rm dbt-compile-and-load load --services-dir ./services --target hetzner
 
-# Compile only
-docker run ... dbt-compile-and-load:latest compile --services-dir ./services
+# Compile only (skip upload)
+docker compose run --rm dbt-compile-and-load compile --services-dir ./services
 
-# Upload already-compiled manifests
-docker run ... dbt-compile-and-load:latest upload --services-dir ./services --target hetzner
-```
-
-**Locally** (requires `uv` and the package installed):
-
-```bash
-# Compile all services in a directory
-uv run python -m dbt_upload compile --services-dir ./services
-
-# Compile specific services
-uv run python -m dbt_upload compile ./services/service-1 ./services/service-3
-
-# Upload already-compiled manifests to localstack (default target)
-uv run python -m dbt_upload upload --services-dir ./services
-
-# Upload to hetzner
-uv run python -m dbt_upload upload --services-dir ./services --target hetzner
-
-# Compile + upload in one step (most common)
-uv run python -m dbt_upload load --services-dir ./services
+# Upload already-compiled manifests (skip compile)
+docker compose run --rm dbt-compile-and-load upload --services-dir ./services --target hetzner
 
 # Override the S3 env prefix
-uv run python -m dbt_upload load --services-dir ./services --target hetzner --env staging
+docker compose run --rm dbt-compile-and-load load --services-dir ./services --target hetzner --env staging
 ```
 
 ### S3 Target Profiles
