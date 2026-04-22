@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RED="\033[0;31M"
+RED="\033[0;31m"
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 NC="\033[0m"
@@ -86,5 +86,10 @@ log_info "Starting manifest-controller..."
 docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"
 sleep 3
 log_info "manifest-controller started"
+
+log_info "Compiling and uploading dbt manifests..."
+docker exec dbt-compile-and-load \
+  uv run python -m dbt_upload load --services-dir /app/services
+log_info "dbt manifests uploaded"
 
 log_info "All services started successfully!"

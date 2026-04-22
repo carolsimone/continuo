@@ -1,21 +1,18 @@
 FROM dbt-base:latest
 
-# Override the inherited dbt entrypoint — this image runs Python scripts, not dbt jobs
+# Clear the inherited dbt-base entrypoint; callers use docker exec with explicit commands
 ENTRYPOINT []
 
 WORKDIR /app
 
-# Install uv
-RUN pip install uv --quiet
+RUN pip install --no-cache-dir uv
 
-# Install dependencies
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 
-# Copy package, targets config, and tests
 COPY dbt_upload/ ./dbt_upload/
 COPY targets.yaml .
+# Kept so integration tests can be run via: docker exec dbt-compile-and-load uv run --with pytest pytest tests/
 COPY tests/ ./tests/
 
-ENTRYPOINT ["uv", "run", "python", "-m", "dbt_upload"]
-CMD ["load", "--services-dir", "./services"]
+CMD ["tail", "-f", "/dev/null"]
