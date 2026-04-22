@@ -13,6 +13,7 @@ UI_BASE="${UI_BASE_URL:-http://localhost:8090}"
 SOURCE="${1:-s3}"
 TARGET="${TARGET:-localstack}"
 
+# 'upload' skips compile — assumes manifests are already compiled. Use 'load' if they may be stale.
 echo "==> Uploading manifests to S3 (target: $TARGET)"
 docker exec dbt-compile-and-load \
   uv run python -m dbt_upload upload \

@@ -115,9 +115,7 @@ AWS_SECRET_ACCESS_KEY=<your-hetzner-secret-key>
 2. Run with `--target hetzner`:
 
 ```bash
-docker exec \
-  -e AWS_ACCESS_KEY_ID="$(grep AWS_ACCESS_KEY_ID dbt/.env.hetzner | cut -d= -f2)" \
-  -e AWS_SECRET_ACCESS_KEY="$(grep AWS_SECRET_ACCESS_KEY dbt/.env.hetzner | cut -d= -f2)" \
+docker exec --env-file dbt/.env.hetzner \
   dbt-compile-and-load \
   uv run python -m dbt_upload load --services-dir /app/services --target hetzner
 ```

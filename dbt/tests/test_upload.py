@@ -1,12 +1,14 @@
 """
 Integration tests for dbt compile+upload pipeline.
 Requires localstack running at S3_ENDPOINT_URL (default: http://localstack:4566).
-Run from the repo root:
-  docker run --rm --network continuo_default --workdir /app \
-    -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test \
+Run against the running dbt-compile-and-load container:
+  docker exec -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test \
     -e AWS_DEFAULT_REGION=us-east-1 \
-    -v "$(pwd)/dbt/services:/app/services" \
-    dbt-compile-and-load:latest uv run pytest tests/ -v
+    -e S3_ENDPOINT_URL=http://localstack:4566 -e S3_BUCKET=continuo -e S3_ENV=local \
+    -e DBT_POSTGRES_HOST=postgres -e DBT_POSTGRES_PORT=5432 \
+    -e DBT_POSTGRES_DB=continuo_dbt -e DBT_POSTGRES_USER=continuo_svc \
+    -e DBT_POSTGRES_PASSWORD=continuo \
+    dbt-compile-and-load uv run --with pytest pytest tests/test_upload.py -v
 """
 import json
 import os
