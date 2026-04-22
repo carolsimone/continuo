@@ -43,22 +43,24 @@ The `dbt_upload` package provides three subcommands for compiling dbt services a
 
 ### Usage
 
-The image entrypoint is `uv run python -m dbt_upload` and the default CMD is `load --services-dir ./services`, so docker-compose runs the full compile+upload automatically on startup.
-
-To run a different subcommand, override the CMD:
+The container starts idle (`tail -f /dev/null`). Use `docker exec` to run any subcommand:
 
 ```bash
-# Compile + upload to hetzner instead of localstack
-docker compose run --rm dbt-compile-and-load load --services-dir ./services --target hetzner
+# Compile + upload (full load)
+docker exec dbt-compile-and-load \
+  uv run python -m dbt_upload load --services-dir /app/services
 
-# Compile only (skip upload)
-docker compose run --rm dbt-compile-and-load compile --services-dir ./services
+# Upload only (skip compile) to hetzner
+docker exec dbt-compile-and-load \
+  uv run python -m dbt_upload upload --services-dir /app/services --target hetzner
 
-# Upload already-compiled manifests (skip compile)
-docker compose run --rm dbt-compile-and-load upload --services-dir ./services --target hetzner
+# Compile only
+docker exec dbt-compile-and-load \
+  uv run python -m dbt_upload compile --services-dir /app/services
 
-# Override the S3 env prefix
-docker compose run --rm dbt-compile-and-load load --services-dir ./services --target hetzner --env staging
+# Compile specific services
+docker exec dbt-compile-and-load \
+  uv run python -m dbt_upload compile /app/services/service-1 /app/services/service-3
 ```
 
 ### S3 Target Profiles
@@ -93,8 +95,8 @@ targets:
 LocalStack credentials are baked into `targets.yaml`. No extra setup needed:
 
 ```bash
-# Via docker-compose (runs automatically with e2e profile)
-docker compose --profile e2e up dbt-compile-and-load
+# Via docker-compose (container runs idle)
+docker compose up dbt-compile-and-load
 
 # Or manually inside the container
 docker run --rm --network continuo_default \
@@ -187,9 +189,8 @@ DOCKER_BUILDKIT=1 docker build -t service-3:latest ./services/service-3
 # Unit tests (no Docker needed)
 cd dbt && uv run pytest tests/test_config.py tests/test_compile.py tests/test_cli.py -v
 
-# Integration tests (requires Docker + localstack + PostgreSQL running)
-docker run --rm --network continuo_default --workdir /app \
-  --entrypoint uv \
+# Integration tests (requires docker compose up -d localstack postgres dbt-compile-and-load)
+docker exec \
   -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test \
   -e AWS_DEFAULT_REGION=us-east-1 \
   -e S3_ENDPOINT_URL=http://localstack:4566 \
@@ -197,9 +198,8 @@ docker run --rm --network continuo_default --workdir /app \
   -e DBT_POSTGRES_HOST=postgres -e DBT_POSTGRES_PORT=5432 \
   -e DBT_POSTGRES_DB=continuo_dbt -e DBT_POSTGRES_USER=continuo_svc \
   -e DBT_POSTGRES_PASSWORD=continuo \
-  -v "$(pwd)/dbt/services:/app/services" \
-  dbt-compile-and-load:latest \
-  run --with pytest pytest tests/test_upload.py -v
+  dbt-compile-and-load \
+  uv run --with pytest pytest tests/test_upload.py -v
 ```
 
 ## service-3-broken
