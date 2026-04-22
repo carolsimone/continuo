@@ -165,6 +165,15 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 // PostgreSQL connection env vars are forwarded from the executor-controller's
 // own environment so dbt pods can reach the same database.
 func buildPodSpec(params JobParams) corev1.PodSpec {
+	image := params.ServiceName
+	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+		tag := os.Getenv("IMAGE_TAG")
+		if tag == "" {
+			tag = "latest"
+		}
+		image = user + "/" + params.ServiceName + ":" + tag
+	}
+
 	envVars := []corev1.EnvVar{
 		{Name: "TASK_ID", Value: params.TaskID},
 		{Name: "SCHEDULE_ID", Value: params.ScheduleID},
@@ -186,7 +195,7 @@ func buildPodSpec(params JobParams) corev1.PodSpec {
 		Containers: []corev1.Container{
 			{
 				Name:            "dbt-job",
-				Image:           params.ServiceName,
+				Image:           image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         params.NodeType.Command(params.TableName),
 				Env:             envVars,

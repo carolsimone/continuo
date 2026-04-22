@@ -1,0 +1,68 @@
+name: Publish dbt service images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dbt/base/**'
+      - 'dbt/services/**'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build dbt-base locally (not pushed; used as base layer for service images)
+      - name: Build dbt-base
+        uses: docker/build-push-action@v6
+        with:
+          context: dbt/base
+          push: false
+          load: true
+          tags: dbt-base:latest
+          cache-from: type=gha,scope=dbt-base
+          cache-to: type=gha,mode=max,scope=dbt-base
+
+      # One step per service. Image name = DOCKERHUB_USERNAME/service-N:latest,
+      # matching the dbt project name and params.ServiceName in executor-controller.
+      - name: Build and push service-1
+        uses: docker/build-push-action@v6
+        with:
+          context: dbt/services/service-1
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/service-1:latest
+          cache-from: type=gha,scope=dbt-service-1
+          cache-to: type=gha,mode=max,scope=dbt-service-1
+
+      - name: Build and push service-2
+        uses: docker/build-push-action@v6
+        with:
+          context: dbt/services/service-2
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/service-2:latest
+          cache-from: type=gha,scope=dbt-service-2
+          cache-to: type=gha,mode=max,scope=dbt-service-2
+
+      - name: Build and push service-3
+        uses: docker/build-push-action@v6
+        with:
+          context: dbt/services/service-3
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/service-3:latest
+          cache-from: type=gha,scope=dbt-service-3
+          cache-to: type=gha,mode=max,scope=dbt-service-3

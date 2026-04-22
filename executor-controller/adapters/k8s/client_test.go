@@ -30,3 +30,30 @@ func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
 			"NodeType %q should produce command %v", tt.nodeType, tt.wantCommand)
 	}
 }
+
+func TestBuildPodSpec_ImageRef(t *testing.T) {
+	t.Run("no DOCKERHUB_USERNAME uses service name directly", func(t *testing.T) {
+		t.Setenv("DOCKERHUB_USERNAME", "")
+		spec := buildPodSpec(JobParams{ServiceName: "service-1"})
+		require.Len(t, spec.Containers, 1)
+		assert.Equal(t, "service-1", spec.Containers[0].Image)
+	})
+
+	t.Run("with DOCKERHUB_USERNAME each service gets its own image", func(t *testing.T) {
+		t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+		specA := buildPodSpec(JobParams{ServiceName: "service-1"})
+		specB := buildPodSpec(JobParams{ServiceName: "service-2"})
+		require.Len(t, specA.Containers, 1)
+		require.Len(t, specB.Containers, 1)
+		assert.Equal(t, "carolsimone/service-1:latest", specA.Containers[0].Image)
+		assert.Equal(t, "carolsimone/service-2:latest", specB.Containers[0].Image)
+	})
+
+	t.Run("with IMAGE_TAG overrides default latest", func(t *testing.T) {
+		t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+		t.Setenv("IMAGE_TAG", "v1.2.3")
+		spec := buildPodSpec(JobParams{ServiceName: "service-1"})
+		require.Len(t, spec.Containers, 1)
+		assert.Equal(t, "carolsimone/service-1:v1.2.3", spec.Containers[0].Image)
+	})
+}
