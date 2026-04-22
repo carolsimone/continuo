@@ -56,12 +56,14 @@ if ! docker image inspect continuo-base:latest > /dev/null 2>&1; then
     echo "Building continuo-base image..."
     DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
 fi
+# dbt-base must exist before docker compose build because dbt-compile-and-load
+# depends on it and is now in the default (non-profiled) service set.
+echo "Building dbt base image..."
+DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 echo "Building service images..."
 DOCKER_BUILDKIT=1 docker compose build
 
 # Build dbt service images and load into KIND
-echo "Building dbt base image..."
-DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 
 echo "Building dbt service images..."
 DOCKER_BUILDKIT=1 docker build -t service-1:latest dbt/services/service-1/
