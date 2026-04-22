@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  parseNodeId,
   resolveActiveGraph,
   resolveNodeStatus,
   toScheduleGraph,
@@ -121,5 +122,21 @@ describe('detail page graph helpers', () => {
 
     expect(resolveNodeStatus(graphNode, [matchingTask])).toBe('running');
     expect(resolveNodeStatus(graphNode, [])).toBe('succeeded');
+  });
+
+  it('parses a node_id into service, schema, and table', () => {
+    expect(parseNodeId('svc.analytics.orders')).toEqual({
+      service_name: 'svc',
+      schema_name: 'analytics',
+      table_name: 'orders',
+    });
+  });
+
+  it('returns empty strings for missing node_id segments', () => {
+    expect(parseNodeId('only')).toEqual({
+      service_name: 'only',
+      schema_name: '',
+      table_name: '',
+    });
   });
 });

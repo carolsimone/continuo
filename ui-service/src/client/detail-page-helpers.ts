@@ -42,3 +42,12 @@ export function resolveActiveGraph({
 
   return toScheduleGraph(liveRunGraph) ?? scheduleGraph;
 }
+
+export function parseNodeId(nodeId: string): {
+  service_name: string;
+  schema_name: string;
+  table_name: string;
+} {
+  const [service_name = '', schema_name = '', table_name = ''] = nodeId.split('.');
+  return { service_name, schema_name, table_name };
+}
