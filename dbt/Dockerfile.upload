@@ -5,13 +5,14 @@ ENTRYPOINT []
 
 WORKDIR /app
 
-RUN pip install uv --quiet
+RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 
 COPY dbt_upload/ ./dbt_upload/
 COPY targets.yaml .
+# Kept so integration tests can be run via: docker exec dbt-compile-and-load uv run --with pytest pytest tests/
 COPY tests/ ./tests/
 
 CMD ["tail", "-f", "/dev/null"]
