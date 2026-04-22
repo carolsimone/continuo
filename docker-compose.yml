@@ -429,6 +429,7 @@ services:
       context: ./dbt
       dockerfile: Dockerfile.upload
     container_name: dbt-compile-and-load
+    command: ["tail", "-f", "/dev/null"]
     env_file:
       - ./dbt/.env.hetzner
     depends_on:
