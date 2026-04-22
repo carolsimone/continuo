@@ -15,6 +15,8 @@ import subprocess
 import boto3
 import pytest
 
+from dbt_upload.upload import next_version, upload_manifest
+
 SERVICES_DIR = "/app/services"
 S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://localstack:4566")
 S3_BUCKET = os.getenv("S3_BUCKET", "continuo")
@@ -30,6 +32,18 @@ def s3():
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
         region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
     )
+
+
+@pytest.fixture
+def s3_prefix(s3, request):
+    """Yield a unique S3 prefix for a test and delete all its objects on teardown."""
+    service = request.node.name.replace("[", "-").replace("]", "")
+    prefix = f"{S3_ENV}/manifest/{service}/"
+    yield prefix
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            s3.delete_object(Bucket=S3_BUCKET, Key=obj["Key"])
 
 
 def test_dbt_compile_service1_succeeds():
@@ -49,7 +63,6 @@ def test_dbt_compile_service1_succeeds():
 def test_upload_and_read_back(s3):
     """compile + upload produces a readable manifest_v1.json in S3."""
     from dbt_upload.compile import compile_service
-    from dbt_upload.upload import upload_manifest
 
     service_dir = os.path.join(SERVICES_DIR, "service-1")
     assert compile_service(service_dir), "compile_service returned False"
@@ -67,7 +80,6 @@ def test_upload_and_read_back(s3):
 def test_all_valid_services_upload(s3):
     """service-1, service-2, service-3 all compile and upload; service-3-broken is skipped."""
     from dbt_upload.compile import compile_service
-    from dbt_upload.upload import upload_manifest
 
     valid = ["service-1", "service-2", "service-3"]
     for name in valid:
@@ -75,7 +87,6 @@ def test_all_valid_services_upload(s3):
         assert compile_service(service_dir), f"{name} failed to compile"
         assert upload_manifest(s3, service_dir, S3_ENV, S3_BUCKET), f"{name} failed to upload"
 
-    # verify versioned keys exist in S3
     response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=f"{S3_ENV}/manifest/")
     keys = {obj["Key"] for obj in response.get("Contents", [])}
     for name in valid:
@@ -88,6 +99,48 @@ def test_service3_broken_compiles_but_fails_at_runtime():
     from dbt_upload.compile import compile_service
 
     service_dir = os.path.join(SERVICES_DIR, "service-3-broken")
-    # dbt compile succeeds because the SQL is syntactically valid;
-    # the failure only occurs at dbt run time when the table doesn't exist.
     assert compile_service(service_dir), "Expected compile to succeed for service-3-broken"
+
+
+# Versioning edge-case integration tests
+
+
+def test_next_version_returns_1_when_prefix_empty(s3, s3_prefix):
+    """next_version returns 1 when no files exist under the S3 prefix."""
+    assert next_version(s3, S3_BUCKET, s3_prefix) == 1
+
+
+def test_next_version_returns_8_when_v7_exists(s3, s3_prefix):
+    """next_version returns 8 when manifest_v7.json is already in S3."""
+    s3.put_object(Bucket=S3_BUCKET, Key=f"{s3_prefix}manifest_v7.json", Body=b"{}")
+    assert next_version(s3, S3_BUCKET, s3_prefix) == 8
+
+
+def test_upload_manifest_first_upload_creates_v1(s3, s3_prefix, tmp_path):
+    """upload_manifest uploads to manifest_v1.json when the S3 prefix is empty."""
+    service_name = s3_prefix.rstrip("/").rsplit("/", 1)[-1]
+    service_dir = tmp_path / service_name
+    (service_dir / "target").mkdir(parents=True)
+    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+
+    assert upload_manifest(s3, str(service_dir), S3_ENV, S3_BUCKET)
+
+    response = s3.get_object(Bucket=S3_BUCKET, Key=f"{s3_prefix}manifest_v1.json")
+    assert json.loads(response["Body"].read()) == {"nodes": {}}
+
+
+def test_upload_manifest_increments_from_v7_to_v8(s3, s3_prefix, tmp_path):
+    """upload_manifest uploads to manifest_v8.json when manifest_v7.json already exists in S3."""
+    s3.put_object(Bucket=S3_BUCKET, Key=f"{s3_prefix}manifest_v7.json", Body=b'{"nodes": {}}')
+
+    service_name = s3_prefix.rstrip("/").rsplit("/", 1)[-1]
+    service_dir = tmp_path / service_name
+    (service_dir / "target").mkdir(parents=True)
+    (service_dir / "target" / "manifest.json").write_text(
+        '{"nodes": {"model.x.y": {"resource_type": "model", "name": "y", "tags": []}}}'
+    )
+
+    assert upload_manifest(s3, str(service_dir), S3_ENV, S3_BUCKET)
+
+    response = s3.get_object(Bucket=S3_BUCKET, Key=f"{s3_prefix}manifest_v8.json")
+    assert "nodes" in json.loads(response["Body"].read())
