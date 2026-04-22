@@ -167,7 +167,11 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 func buildPodSpec(params JobParams) corev1.PodSpec {
 	image := params.ServiceName
 	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
-		image = user + "/" + params.ServiceName + ":latest"
+		tag := os.Getenv("IMAGE_TAG")
+		if tag == "" {
+			tag = "latest"
+		}
+		image = user + "/" + params.ServiceName + ":" + tag
 	}
 
 	envVars := []corev1.EnvVar{
