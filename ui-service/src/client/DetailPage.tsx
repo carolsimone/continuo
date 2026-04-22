@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import {
@@ -10,7 +10,7 @@ import {
   Task,
   TaskExecution,
 } from './types';
-import { resolveActiveGraph } from './detail-page-helpers';
+import { parseNodeId, resolveActiveGraph } from './detail-page-helpers';
 import DAGPanel from './DAGPanel';
 import NodesPanel from './NodesPanel';
 import PastRunsPanel from './PastRunsPanel';
@@ -93,6 +93,8 @@ export default function DetailPage() {
   const [runGraph, setRunGraph] = useState<RunGraph | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [rerunState, setRerunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [rerunError, setRerunError] = useState<string | null>(null);
 
   useEffect(() => {
     resolvedRef.current = false;
@@ -292,6 +294,36 @@ export default function DetailPage() {
     };
   }, [selectedRunId]);
 
+  useEffect(() => {
+    setRerunState('idle');
+    setRerunError(null);
+  }, [selectedNodeId]);
+
+  const handleRerun = useCallback(async () => {
+    if (!selectedNodeId || !lastRunId) return;
+    const { service_name, schema_name, table_name } = parseNodeId(selectedNodeId);
+    setRerunState('loading');
+    setRerunError(null);
+    try {
+      const res = await fetch(`/api/schedulers/${lastRunId}/rerun`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service_name, schema: schema_name, table_name }),
+      });
+      if (res.ok) {
+        setRerunState('success');
+        setTimeout(() => setRerunState('idle'), 3000);
+      } else {
+        const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
+        setRerunError(body.error ?? 'Request failed — please try again');
+        setRerunState('error');
+      }
+    } catch {
+      setRerunError('Request failed — please try again');
+      setRerunState('error');
+    }
+  }, [selectedNodeId, lastRunId]);
+
   const latestExecutions = Array.from(
     executions.reduce((map, execution) => {
       const existing = map.get(execution.task_id);
@@ -352,6 +384,14 @@ export default function DetailPage() {
         ? 'pill-sm pill-sm--current'
         : 'pill-sm pill-sm--pending';
 
+  const legendParentIds = selectedNodeId && activeGraph
+    ? new Set(activeGraph.edges.filter((e) => e.to_node_id === selectedNodeId).map((e) => e.from_node_id))
+    : new Set<string>();
+
+  const legendChildIds = selectedNodeId && activeGraph
+    ? new Set(activeGraph.edges.filter((e) => e.from_node_id === selectedNodeId).map((e) => e.to_node_id))
+    : new Set<string>();
+
   const handleSelectRun = (runId: string | null) => {
     setSelectedRunId(runId);
     setSelectedNodeId(null);
@@ -389,15 +429,52 @@ export default function DetailPage() {
           </div>
           <div className="dag-card-body">
             {graphCardState === 'ready' && activeGraph ? (
-              <ReactFlowProvider>
-                <DAGPanel
-                  graphNodes={activeGraph.nodes}
-                  graphEdges={activeGraph.edges}
-                  tasks={activeTasks}
-                  selectedNodeId={selectedNodeId}
-                  onNodeClick={setSelectedNodeId}
-                />
-              </ReactFlowProvider>
+              <>
+                <ReactFlowProvider>
+                  <DAGPanel
+                    graphNodes={activeGraph.nodes}
+                    graphEdges={activeGraph.edges}
+                    tasks={activeTasks}
+                    selectedNodeId={selectedNodeId}
+                    onNodeClick={setSelectedNodeId}
+                  />
+                </ReactFlowProvider>
+                {selectedNodeId && !selectedRunId && lastRunId && (
+                  <div className="dag-focus-legend">
+                    <div className="dag-focus-legend-title">{selectedNodeId.split('.').pop()}</div>
+                    <div className="dag-focus-legend-row">
+                      <div className="dag-focus-dot dag-focus-dot--selected" /> Selected
+                    </div>
+                    <div className="dag-focus-legend-row">
+                      <div className="dag-focus-dot dag-focus-dot--parent" />
+                      Depends on ({legendParentIds.size})
+                    </div>
+                    <div className="dag-focus-legend-row">
+                      <div className="dag-focus-dot dag-focus-dot--child" />
+                      Required by ({legendChildIds.size})
+                    </div>
+                    <div className="dag-focus-legend-row">
+                      <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
+                    </div>
+                    <hr className="dag-rerun-divider" />
+                    {rerunState === 'error' && rerunError && (
+                      <div className="dag-rerun-feedback dag-rerun-feedback--error">{rerunError}</div>
+                    )}
+                    {rerunState === 'success' ? (
+                      <div className="dag-rerun-feedback dag-rerun-feedback--success">✓ Rerun triggered</div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="dag-rerun-btn"
+                        disabled={rerunState === 'loading'}
+                        onClick={handleRerun}
+                      >
+                        {rerunState === 'loading' ? 'Running…' : '↺ Rerun node'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
             ) : graphCardState === 'error' ? (
               <div className="graph-empty-state">
                 <p className="graph-empty-title">Graph unavailable</p>
