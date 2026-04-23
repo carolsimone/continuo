@@ -41,6 +41,12 @@ type Config struct {
 	// Log extraction
 	LogTailLines          int
 	ErrorMessageMaxLength int
+
+	// Schedule cancellation
+	ScheduleCancelledStream            string
+	ScheduleCancelledGroup             string
+	CancelledSchedulesTTLHours         int
+	CancelledSchedulesSweepIntervalMin int
 }
 
 // Load reads configuration from environment variables.
@@ -72,6 +78,11 @@ func Load(v *pkgconfig.Validator) Config {
 		DefaultTaskMaxRetries: envInt("DEFAULT_TASK_MAX_RETRIES", 2),
 		LogTailLines:          envInt("LOG_TAIL_LINES", 50),
 		ErrorMessageMaxLength: envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
+
+		ScheduleCancelledStream:            v.Require("SCHEDULE_CANCELLED_STREAM"),
+		ScheduleCancelledGroup:             v.Require("SCHEDULE_CANCELLED_GROUP"),
+		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
+		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
 	}
 }
 
