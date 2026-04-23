@@ -220,6 +220,7 @@ func main() {
 	scheduleCancelledConsumer, err := redis.NewScheduleCancelledConsumer(
 		redisClient,
 		cfg.ScheduleCancelledStream,
+		cfg.ScheduleCancelledGroup,
 		cancelledSchedulesRepo,
 		logger,
 	)

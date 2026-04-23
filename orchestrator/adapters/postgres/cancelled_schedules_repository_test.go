@@ -19,11 +19,11 @@ func newTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
 	host := envOrDefault("POSTGRES_HOST", "postgres")
 	port := envOrDefault("POSTGRES_PORT", "5432")
-	db_name := envOrDefault("POSTGRES_DB", "continuo_orchestrator")
+	dbName := envOrDefault("POSTGRES_DB", "continuo_orchestrator")
 	user := envOrDefault("POSTGRES_USER", "continuo_svc")
 	password := envOrDefault("POSTGRES_PASSWORD", "continuo")
 	connStr := fmt.Sprintf("host=%s port=%s dbname=%s user=%s password=%s sslmode=disable",
-		host, port, db_name, user, password)
+		host, port, dbName, user, password)
 	db, err := sqlx.Connect("postgres", connStr)
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })

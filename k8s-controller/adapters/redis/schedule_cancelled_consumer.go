@@ -24,13 +24,14 @@ type ScheduleCancelledConsumer struct {
 func NewScheduleCancelledConsumer(
 	client *goredis.Client,
 	streamName string,
+	group string,
 	repo postgres.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) (*ScheduleCancelledConsumer, error) {
 	c := &ScheduleCancelledConsumer{
 		client:        client,
 		streamName:    streamName,
-		consumerGroup: "k8s-schedule-cancelled",
+		consumerGroup: group,
 		consumerName:  fmt.Sprintf("consumer-%s", uuid.New().String()[:8]),
 		repo:          repo,
 		logger:        logger,
