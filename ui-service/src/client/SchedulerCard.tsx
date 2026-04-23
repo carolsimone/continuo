@@ -50,6 +50,7 @@ export default function SchedulerCard({ schedule }: Props) {
   const succeeded = tasks.filter(t => t.status === 'succeeded').length;
   const failed = tasks.filter(t => t.status === 'failed').length;
   const pending = tasks.filter(t => t.status === 'pending').length;
+  const running = tasks.filter(t => t.status === 'running').length;
   const pct = getScheduleProgressPercent(tasks);
 
   const handleClick = () =>
@@ -110,9 +111,10 @@ export default function SchedulerCard({ schedule }: Props) {
             <span className="progress-pct">{pct}%</span>
           </div>
           <div className="summary-row">
-            <span>✅ {succeeded} succeeded</span>
-            <span>❌ {failed} failed</span>
-            <span>⏳ {pending} pending</span>
+            <span><span aria-hidden="true">✅</span> {succeeded} succeeded</span>
+            <span><span aria-hidden="true">❌</span> {failed} failed</span>
+            <span><span aria-hidden="true">⏳</span> {pending} pending</span>
+            <span><span aria-hidden="true">🏃</span> {running} running</span>
           </div>
         </div>
       )}

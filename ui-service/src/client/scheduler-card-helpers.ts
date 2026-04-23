@@ -8,6 +8,10 @@ export function getCompletedCount(tasks: Task[]): number {
   return tasks.filter((task) => isTerminalStatus(task.status)).length;
 }
 
+export function getRunningCount(tasks: Task[]): number {
+  return tasks.filter((task) => task.status === 'running').length;
+}
+
 export function getScheduleProgressLabel(tasks: Task[]): string {
   return `Completed: ${getCompletedCount(tasks)}/${tasks.length}`;
 }
