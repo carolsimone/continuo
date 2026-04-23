@@ -111,11 +111,35 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 		"rerun.ready:v1",
 		"schedules.loaded:v1",
 		"update.graph:v1",
+		"schedule.cancelled:v1",
 	}
 
 	for _, stream := range streams {
 		clients.redisClient.Del(ctx, stream)
 	}
+}
+
+// cleanupPostgresByScheduleID removes test data for a specific scheduler run by ID.
+// Used when a test needs to clean up one run without affecting others that share the
+// same schedule_name (e.g., cancel-then-retrigger tests that create two runs).
+func cleanupPostgresByScheduleID(t *testing.T, ctx context.Context, clients *testClients, schedulerID, scheduleName string) {
+	t.Helper()
+	if schedulerID == "" {
+		return
+	}
+	_, _ = clients.executorDB.ExecContext(ctx, "DELETE FROM deployment_outbox WHERE schedule_name = $1", scheduleName)
+	_, _ = clients.executorDB.ExecContext(ctx, "DELETE FROM processed_events")
+	_, _ = clients.orchestratorDB.ExecContext(ctx, "DELETE FROM outbox WHERE aggregate_id = $1", schedulerID)
+	_, _ = clients.k8sDB.ExecContext(ctx, "DELETE FROM k8s_status_outbox WHERE schedule_name = $1", scheduleName)
+	_, _ = clients.stateDB.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", schedulerID)
+	_, _ = clients.stateDB.ExecContext(ctx, "DELETE FROM task_execution WHERE task_id IN (SELECT id FROM task_tracker WHERE schedule_id = $1)", schedulerID)
+	_, _ = clients.stateDB.ExecContext(ctx, "DELETE FROM task_tracker WHERE schedule_id = $1", schedulerID)
+	_, _ = clients.stateDB.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", schedulerID)
+	// Clear cancelled_schedules guards — the fresh run uses a new schedule_id so the old
+	// guard is harmless, but removing it keeps the service DBs clean between test phases.
+	_, _ = clients.orchestratorDB.ExecContext(ctx, "DELETE FROM cancelled_schedules WHERE schedule_id = $1", schedulerID)
+	_, _ = clients.executorDB.ExecContext(ctx, "DELETE FROM cancelled_schedules WHERE schedule_id = $1", schedulerID)
+	_, _ = clients.k8sDB.ExecContext(ctx, "DELETE FROM cancelled_schedules WHERE schedule_id = $1", schedulerID)
 }
 
 // cleanupK8s removes test jobs from Kubernetes

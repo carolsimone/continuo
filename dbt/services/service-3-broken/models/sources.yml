@@ -1,8 +1,0 @@
-version: 2
-
-sources:
-  - name: service_1
-    schema: main
-    tables:
-      - name: table_b
-      - name: table_c

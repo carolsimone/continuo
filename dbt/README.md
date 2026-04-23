@@ -21,7 +21,6 @@ dbt/
     service-1/              # models: table_a, table_b, table_c
     service-2/              # models: table_g, table_h
     service-3/              # models: table_d, table_e, table_f, table_i, table_j
-    service-3-broken/       # intentionally failing table_e (e2e failure-path test)
   tests/
     test_config.py           # Unit tests for config module
     test_compile.py          # Unit tests for compile module
@@ -190,6 +189,3 @@ docker exec \
   uv run --with pytest pytest tests/test_upload.py -v
 ```
 
-## service-3-broken
-
-`service-3-broken` is a copy of `service-3` whose `table_e` model references a nonexistent table (`public.wrong_table`). This causes `dbt run --select table_e` to fail at runtime, which the e2e failure-path test uses to verify that continuo correctly exhausts retries and drains the downstream DAG.
