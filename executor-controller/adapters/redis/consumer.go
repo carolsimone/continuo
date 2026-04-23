@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/service/messagebus"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -18,15 +19,16 @@ import (
 
 // Consumer consumes deployment events from Redis Streams using consumer groups
 type Consumer struct {
-	client        *goredis.Client
-	streamName    string
-	retryStream   string // New: retry.task:v1
-	consumerGroup string
-	consumerName  string
-	messageBus    *messagebus.MessageBus
-	db            *sqlx.DB
-	logger        *slog.Logger
-	stopCh        chan struct{}
+	client             *goredis.Client
+	streamName         string
+	retryStream        string // New: retry.task:v1
+	consumerGroup      string
+	consumerName       string
+	messageBus         *messagebus.MessageBus
+	db                 *sqlx.DB
+	cancelledSchedules postgres.CancelledSchedulesRepository
+	logger             *slog.Logger
+	stopCh             chan struct{}
 }
 
 // NewConsumer creates a new Redis stream consumer with consumer groups
@@ -37,20 +39,22 @@ func NewConsumer(
 	consumerGroup string,
 	messageBus *messagebus.MessageBus,
 	db *sqlx.DB,
+	cancelledSchedules postgres.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) (*Consumer, error) {
 	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String()[:8])
 
 	c := &Consumer{
-		client:        client,
-		streamName:    streamName,
-		retryStream:   retryStream,
-		consumerGroup: consumerGroup,
-		consumerName:  consumerName,
-		messageBus:    messageBus,
-		db:            db,
-		logger:        logger,
-		stopCh:        make(chan struct{}),
+		client:             client,
+		streamName:         streamName,
+		retryStream:        retryStream,
+		consumerGroup:      consumerGroup,
+		consumerName:       consumerName,
+		messageBus:         messageBus,
+		db:                 db,
+		cancelledSchedules: cancelledSchedules,
+		logger:             logger,
+		stopCh:             make(chan struct{}),
 	}
 
 	// Create consumer groups for both streams
@@ -294,6 +298,20 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 			"message_id", msg.ID,
 			"task_id", taskID,
 		)
+	}
+
+	// Guard: drop the message if the schedule was cancelled.
+	cancelled, err := c.cancelledSchedules.Exists(ctx, scheduleID)
+	if err != nil {
+		return fmt.Errorf("cancelled schedules check: %w", err)
+	}
+	if cancelled {
+		c.logger.Info("Schedule cancelled — dropping deploy message",
+			"schedule_id", scheduleID, "task_id", taskID)
+		if c.client != nil {
+			return c.client.XAck(ctx, streamName, c.consumerGroup, msg.ID).Err()
+		}
+		return nil
 	}
 
 	nodeTypeStr := getString(msg.Values, "node_type")

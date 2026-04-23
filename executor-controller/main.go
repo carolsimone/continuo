@@ -125,6 +125,12 @@ func main() {
 	)
 
 	// ========================================================================
+	// INITIALIZE CANCELLED SCHEDULES REPOSITORY
+	// ========================================================================
+
+	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
+
+	// ========================================================================
 	// INITIALIZE REDIS CONSUMER & PRODUCER
 	// ========================================================================
 
@@ -136,6 +142,7 @@ func main() {
 		cfg.RedisConsumerGroup,
 		messageBus,
 		pgDB,
+		cancelledSchedulesRepo,
 		logger,
 	)
 	if err != nil {
@@ -175,8 +182,6 @@ func main() {
 	// ========================================================================
 	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER
 	// ========================================================================
-
-	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
 	scheduleCancelledConsumer, err := redis.NewScheduleCancelledConsumer(
 		redisClient,
