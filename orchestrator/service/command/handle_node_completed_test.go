@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/service/command"
 	"github.com/carolsimone/continuo/orchestrator/domain"
@@ -163,6 +164,29 @@ func (f *fakeMessageProcessingRepository) UpdateState(ctx context.Context, id uu
 	return nil
 }
 
+// ── fakes: CancelledSchedulesRepository ──────────────────────────────────────
+
+type fakeCancelledSchedulesRepo struct {
+	ids map[uuid.UUID]bool
+}
+
+func newFakeCancelledSchedulesRepo() *fakeCancelledSchedulesRepo {
+	return &fakeCancelledSchedulesRepo{ids: make(map[uuid.UUID]bool)}
+}
+
+func (f *fakeCancelledSchedulesRepo) Insert(_ context.Context, id uuid.UUID) error {
+	f.ids[id] = true
+	return nil
+}
+func (f *fakeCancelledSchedulesRepo) Exists(_ context.Context, id uuid.UUID) (bool, error) {
+	return f.ids[id], nil
+}
+func (f *fakeCancelledSchedulesRepo) DeleteExpired(_ context.Context, _ time.Duration) (int64, error) {
+	return 0, nil
+}
+
+var _ postgres.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepo)(nil)
+
 // ── fakes: UnitOfWork ─────────────────────────────────────────────────────────
 
 type fakeUnitOfWork struct {
@@ -214,7 +238,7 @@ func TestHandleNodeCompleted_SucceededNoDownstream(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	runRepo := &fakeRunRepository{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 
 	err := h.Handle(ctx, cmd, "msg-1")
@@ -246,7 +270,7 @@ func TestHandleNodeCompleted_SucceededWithDownstream(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 	cmd.ScheduleID = scheduleID
 
@@ -280,7 +304,7 @@ func TestHandleNodeCompleted_FailedNoDownstream(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	runRepo := &fakeRunRepository{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 	cmd.Status = "FAILED"
 
@@ -299,7 +323,7 @@ func TestHandleNodeCompleted_DuplicateMessage(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	runRepo := &fakeRunRepository{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 
 	// First call: should process normally
@@ -342,7 +366,7 @@ func TestHandleNodeCompleted_DoesNotCallStateGRPC(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newTestLogger())
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 	cmd.Status = "SUCCEEDED"
 
@@ -356,4 +380,34 @@ func TestHandleNodeCompleted_DoesNotCallStateGRPC(t *testing.T) {
 	var evt domain.NodeReadyForExecution
 	require.NoError(t, json.Unmarshal(uow.outboxRepo.CreatedEntries[0].Payload, &evt))
 	assert.Equal(t, taskIDFromRepo, evt.TaskID)
+}
+
+// 6. Cancelled schedule → UpdateNodeStatus called, no outbox entries produced.
+func TestHandleNodeCompleted_DropsOutboxWhenScheduleCancelled(t *testing.T) {
+	ctx := context.Background()
+	scheduleID := uuid.New()
+
+	cancelledRepo := newFakeCancelledSchedulesRepo()
+	cancelledRepo.ids[scheduleID] = true
+
+	uow := newFakeUnitOfWork()
+	runRepo := &fakeRunRepository{
+		getReadyDownstreamFn: func(_ context.Context, _, _, _, _ string) ([]*run.DownstreamNode, error) {
+			return []*run.DownstreamNode{
+				{ServiceName: "warehouse", SchemaName: "analytics", TableName: "daily_summary", NodeType: "dbt-model", ScheduleName: "daily"},
+			}, nil
+		},
+	}
+
+	h := command.NewHandleNodeCompletedHandler(uow, runRepo, cancelledRepo, newTestLogger())
+	cmd := baseCmd()
+	cmd.ScheduleID = scheduleID
+	cmd.Status = "SUCCEEDED"
+
+	err := h.Handle(ctx, cmd, "msg-cancelled-1")
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, runRepo.updateNodeStatusCalls, "UpdateNodeStatus must have been called")
+	assert.Empty(t, uow.outboxRepo.CreatedEntries, "no outbox entries for cancelled schedule")
+	assert.True(t, uow.CommittedTx, "transaction should be committed")
 }

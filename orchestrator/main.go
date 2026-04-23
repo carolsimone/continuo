@@ -129,7 +129,7 @@ func main() {
 
 	ingestTopologyHandler := command.NewIngestTopologyHandler(unitOfWork, topologyRepo, logger)
 	initializeRunHandler := command.NewInitializeRunHandler(unitOfWork, runRepo, logger)
-	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, logger)
+	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(unitOfWork, runRepo, logger)
 	handleRerunHandler := command.NewHandleRerunHandler(unitOfWork, runRepo, logger)
 
