@@ -3,8 +3,8 @@ module github.com/carolsimone/continuo/e2e
 go 1.25.1
 
 replace (
-	github.com/carolsimone/continuo/orchestrator => ../orchestrator
-	github.com/carolsimone/continuo/state => ../state
+	github.com/carolsimone/continuo/orchestrator => ../../orchestrator
+	github.com/carolsimone/continuo/state => ../../state
 )
 
 require (
