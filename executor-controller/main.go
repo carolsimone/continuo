@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/http"
 	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
@@ -168,6 +169,46 @@ func main() {
 	go func() {
 		if err := outboxProcessor.Run(ctx); err != nil {
 			logger.Error("Outbox processor error", "error", err)
+		}
+	}()
+
+	// ========================================================================
+	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER
+	// ========================================================================
+
+	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
+
+	scheduleCancelledConsumer, err := redis.NewScheduleCancelledConsumer(
+		redisClient,
+		cfg.ScheduleCancelledStream,
+		cancelledSchedulesRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create schedule cancelled consumer", "error", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
+			logger.Error("Schedule cancelled consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
+		defer ticker.Stop()
+		ttl := time.Duration(cfg.CancelledSchedulesTTLHours) * time.Hour
+		for {
+			select {
+			case <-ticker.C:
+				if n, err := cancelledSchedulesRepo.DeleteExpired(ctx, ttl); err != nil {
+					logger.Error("cancelled_schedules sweep failed", "error", err)
+				} else if n > 0 {
+					logger.Info("Swept expired cancelled_schedules rows", "count", n)
+				}
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
