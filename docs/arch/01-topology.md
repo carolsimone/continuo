@@ -98,6 +98,12 @@ flowchart TD
   KC --> UT
 
   UT --> OR
+
+  SC_EV[schedule.cancelled:v1]
+  ST --> SC_EV
+  SC_EV --> OR
+  SC_EV --> EC
+  SC_EV --> KC
 ```
 
 ## Ownership Boundaries
@@ -110,6 +116,7 @@ flowchart TD
 | Schedule/bootstrap dispatch intents | `orchestrator` | Postgres outbox |
 | Deployment intents / inbound dedup | `executor-controller` | Postgres |
 | Runtime status / retry orchestration | `k8s-controller` | Postgres |
+| Cancelled schedule guard (local copy) | `orchestrator`, `executor-controller`, `k8s-controller` | Postgres (`cancelled_schedules`) |
 | Manifest ingestion | `manifest-controller` | Redis + filesystem/S3 |
 | UI/API facade + graph update command | `ui-service` | none (publishes to Redis) |
 
@@ -123,3 +130,4 @@ flowchart TD
 - The `deploy/infra` Helm chart provisions the shared infrastructure stack (`Postgres`, `Redis`, `Neo4j`) as cluster-internal defaults and initializes the service databases in one Postgres instance. Local docker-compose uses `POSTGRES_PASSWORD=continuo` (superuser) and `REDIS_PASSWORD=continuo`.
 - `manifest-controller` is topology ingest, not execution orchestration.
 - `ui-service` is primarily read-only; its only write is publishing `update.graph:v1` commands to Redis.
+- `schedule.cancelled:v1` is published by `state` via the outbox processor and consumed independently by `orchestrator`, `executor-controller`, and `k8s-controller` (each with its own consumer group). Each consumer maintains a local `cancelled_schedules` Postgres table populated from this stream and uses it as a hot-path guard to suppress further processing for cancelled runs. Rows are swept after a configurable TTL (default 24h).
