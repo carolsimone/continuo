@@ -86,7 +86,7 @@ func seedNodes(t *testing.T, ctx context.Context, clients *testClients, nodes []
 	t.Logf("Seeded %d nodes in Neo4j for schedule %s", len(nodes), scheduleName)
 }
 
-// seedFailureDAG seeds the failure DAG (table_e uses service-3-broken) and
+// seedFailureDAG seeds the failure DAG (ftable_e runs against service-2 but JOINs public.wrong_name, causing it to fail) and
 // inserts the schedule into schedule_catalog so ActivateSchedule can proceed.
 // The failure tests bypass manifest-controller (direct Neo4j seeding), so the
 // catalog must be populated manually.

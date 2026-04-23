@@ -215,7 +215,7 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 3. **Trigger** - `ActivateSchedule` gRPC call
 4. **Verify Level 0** - Root nodes (`ftable_a`, `ftable_b`) complete successfully
 5. **Verify Level 1** - `ftable_c` executes; `ftable_d` and `ftable_e` are deployed
-6. **Wait for ftable_e failure** - Poll until `retry_count = 3` and `status = 'failed'` in `task_tracker`; `ftable_d` succeeds
+6. **Wait for ftable_e failure** - Poll until `retry_count = 2` and `status = 'failed'` in `task_tracker`; `ftable_d` succeeds
 7. **Verify no downstream jobs** - Confirm `ftable_f` is never deployed
 8. **Verify scheduler FAILED** - Poll `scheduler_tracker` until `status = 'failed'`
 9. **Cleanup** - Remove all test data
