@@ -218,3 +218,33 @@ func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 	assert.True(t, got.TotalTaskCount.Valid)
 	assert.Equal(t, int32(2), got.TerminalTaskCount)
 }
+
+func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	id := uuid.New()
+	require.NoError(t, repo.Create(ctx, &model.SchedulerTracker{
+		ScheduleID:           id,
+		ScheduleName:         "test-cancel-" + id.String(),
+		Status:               model.SchedulerStatusRunning,
+		CreatedAt:            time.Now(),
+		InitializationStatus: "completed",
+	}))
+	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	require.NoError(t, repo.CancelTx(ctx, tx, id, "test-user", "test reason"))
+	require.NoError(t, tx.Commit())
+
+	got, err := repo.GetByID(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, model.SchedulerStatusCancelled, got.Status)
+	assert.NotNil(t, got.CancelledAt)
+	assert.Equal(t, "test-user", *got.CancelledBy)
+	assert.Equal(t, "test reason", *got.CancellationReason)
+}

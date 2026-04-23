@@ -30,6 +30,8 @@ type SchedulerTrackerRepository interface {
 	GetByID(ctx context.Context, scheduleID uuid.UUID) (*model.SchedulerTracker, error)
 	Update(ctx context.Context, tracker *model.SchedulerTracker) error
 	Cancel(ctx context.Context, scheduleID uuid.UUID, cancelledBy, reason string) error
+	// CancelTx cancels a scheduler within an existing transaction.
+	CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string) error
 	List(ctx context.Context, filters SchedulerFilters) ([]*model.SchedulerTracker, int, error)
 	HasActiveSchedule(ctx context.Context, scheduleName string) (bool, error)
 	UpdateInitializationStatus(ctx context.Context, scheduleID uuid.UUID, status string) error
@@ -295,6 +297,27 @@ func (r *schedulerTrackerRepository) Cancel(ctx context.Context, scheduleID uuid
 		"cancelled_by", cancelledBy,
 	)
 
+	return nil
+}
+
+// CancelTx cancels a scheduler within an existing transaction.
+func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string) error {
+	result, err := tx.ExecContext(ctx, `
+		UPDATE scheduler_tracker
+		SET status              = $1,
+		    cancelled_at        = $2,
+		    cancelled_by        = $3,
+		    cancellation_reason = $4
+		WHERE schedule_id = $5
+		  AND status NOT IN ('succeeded', 'failed', 'cancelled')
+	`, model.SchedulerStatusCancelled, time.Now(), cancelledBy, reason, scheduleID)
+	if err != nil {
+		return fmt.Errorf("cancel scheduler tx: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return ErrNotCancellable
+	}
 	return nil
 }
 
