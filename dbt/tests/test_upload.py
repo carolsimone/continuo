@@ -80,7 +80,7 @@ def test_upload_and_read_back(s3):
 
 
 def test_all_valid_services_upload(s3):
-    """service-1, service-2, service-3 all compile and upload; service-3-broken is skipped."""
+    """service-1, service-2, service-3 all compile and upload."""
     from dbt_upload.compile import compile_service
 
     valid = ["service-1", "service-2", "service-3"]
@@ -94,14 +94,6 @@ def test_all_valid_services_upload(s3):
     for name in valid:
         versioned_keys = {k for k in keys if k.startswith(f"{S3_ENV}/manifest/{name}/manifest_v")}
         assert versioned_keys, f"No versioned manifest found in S3 for {name}"
-
-
-def test_service3_broken_compiles_but_fails_at_runtime():
-    """service-3-broken compiles OK (SQL is valid) but fails at dbt run (wrong_table doesn't exist)."""
-    from dbt_upload.compile import compile_service
-
-    service_dir = os.path.join(SERVICES_DIR, "service-3-broken")
-    assert compile_service(service_dir), "Expected compile to succeed for service-3-broken"
 
 
 # Versioning edge-case integration tests

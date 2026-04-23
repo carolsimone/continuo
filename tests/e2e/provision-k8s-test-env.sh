@@ -22,6 +22,7 @@ log_error() {
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 K8S_DIR="${SCRIPT_DIR}/k8s"
 
 log_info "Starting K8s controllers setup for E2E tests..."
@@ -42,7 +43,7 @@ export DOCKER_BRIDGE_IP
 
 log_info "Building controller images..."
 
-cd "${SCRIPT_DIR}/.."
+cd "${REPO_ROOT}"
 
 log_info "Building executor-controller image"
 docker build -f executor-controller/Dockerfile.dev -t continuo-executor-controller:latest . || {
@@ -93,14 +94,14 @@ fi
 
 log_info "Kubernetes API server: ${KUBE_IP}:${KUBE_PORT}"
 
-mkdir -p "${SCRIPT_DIR}/../kubeconfig"
+mkdir -p "${REPO_ROOT}/kubeconfig"
 kubectl config view --raw \
     | sed "s|server: https://[^:]*:[0-9]*|server: https://${KUBE_IP}:${KUBE_PORT}|g" \
-    > "${SCRIPT_DIR}/../kubeconfig/kubeconfig.yaml"
+    > "${REPO_ROOT}/kubeconfig/kubeconfig.yaml"
 
 for svc in executor-controller; do
-    mkdir -p "${SCRIPT_DIR}/../${svc}/kubeconfig"
-    cp "${SCRIPT_DIR}/../kubeconfig/kubeconfig.yaml" "${SCRIPT_DIR}/../${svc}/kubeconfig/kubeconfig.yaml"
+    mkdir -p "${REPO_ROOT}/${svc}/kubeconfig"
+    cp "${REPO_ROOT}/kubeconfig/kubeconfig.yaml" "${REPO_ROOT}/${svc}/kubeconfig/kubeconfig.yaml"
     log_info "Kubeconfig copied to ${svc}/"
 done
 
