@@ -312,7 +312,7 @@ func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, 
 		  AND status NOT IN ('succeeded', 'failed', 'cancelled')
 	`, model.SchedulerStatusCancelled, time.Now(), cancelledBy, reason, scheduleID)
 	if err != nil {
-		return fmt.Errorf("cancel scheduler tx: %w", err)
+		return fmt.Errorf("failed to cancel scheduler tx: %w", err)
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {

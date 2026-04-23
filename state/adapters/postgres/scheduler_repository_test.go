@@ -247,4 +247,10 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	assert.NotNil(t, got.CancelledAt)
 	assert.Equal(t, "test-user", *got.CancelledBy)
 	assert.Equal(t, "test reason", *got.CancellationReason)
+
+	// Second cancel on already-cancelled row must return ErrNotCancellable.
+	tx2, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx2.Rollback()
+	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, "test-user", "duplicate"), postgres.ErrNotCancellable)
 }
