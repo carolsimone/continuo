@@ -482,7 +482,10 @@ func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx
 	if err != nil {
 		return 0, fmt.Errorf("failed to bulk cancel tasks: %w", err)
 	}
-	n, _ := result.RowsAffected()
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected after bulk cancel: %w", err)
+	}
 	return n, nil
 }
 
