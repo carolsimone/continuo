@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
@@ -11,6 +12,7 @@ import (
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -23,6 +25,10 @@ type SchedulerHandler struct {
 	catalogRepo     postgres.ScheduleCatalogRepository
 	schedulesConfig *schedulerpkg.SchedulesConfig // may be nil
 	logger          *slog.Logger
+	// Cancel dependencies — injected after construction via WithCancelDeps.
+	db         *sqlx.DB
+	taskRepo   postgres.TaskTrackerRepository
+	outboxRepo postgres.OutboxRepository
 }
 
 // NewSchedulerHandler creates a new SchedulerHandler
@@ -40,6 +46,13 @@ func NewSchedulerHandler(
 		schedulesConfig: schedulesConfig,
 		logger:          logger,
 	}
+}
+
+// WithCancelDeps injects the dependencies needed by CancelSchedule.
+func (h *SchedulerHandler) WithCancelDeps(db *sqlx.DB, taskRepo postgres.TaskTrackerRepository, outboxRepo postgres.OutboxRepository) {
+	h.db = db
+	h.taskRepo = taskRepo
+	h.outboxRepo = outboxRepo
 }
 
 // CreateScheduler creates a new scheduler
@@ -391,14 +404,48 @@ func (h *SchedulerHandler) CancelSchedule(
 			"no active run for schedule %q", req.ScheduleName)
 	}
 
-	if err := h.repo.Cancel(ctx, active.ScheduleID, req.CancelledBy, req.CancellationReason); err != nil {
+	tx, err := h.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if err := h.repo.CancelTx(ctx, tx, active.ScheduleID, req.CancelledBy, req.CancellationReason); err != nil {
 		if errors.Is(err, postgres.ErrNotCancellable) {
 			return nil, status.Errorf(codes.FailedPrecondition,
 				"schedule %q run already in terminal state", req.ScheduleName)
 		}
-		h.logger.Error("Failed to cancel schedule", "error", err)
+		h.logger.Error("Failed to cancel scheduler", "error", err)
 		return nil, status.Errorf(codes.Internal, "cancel scheduler: %v", err)
 	}
 
+	if _, err := h.taskRepo.BulkCancelByScheduleIDTx(ctx, tx, active.ScheduleID, req.CancelledBy); err != nil {
+		h.logger.Error("Failed to bulk-cancel tasks", "schedule_id", active.ScheduleID, "error", err)
+		return nil, status.Errorf(codes.Internal, "bulk cancel tasks: %v", err)
+	}
+
+	payload, _ := json.Marshal(map[string]string{
+		"schedule_id":   active.ScheduleID.String(),
+		"schedule_name": active.ScheduleName,
+	})
+	if err := h.outboxRepo.Create(ctx, tx, &postgres.OutboxEntry{
+		ID:            uuid.New(),
+		AggregateType: "scheduler",
+		AggregateID:   active.ScheduleID,
+		EventType:     "schedule_cancelled",
+		Payload:       payload,
+		StreamName:    "schedule.cancelled:v1",
+		Status:        "pending",
+		MaxRetries:    3,
+		CreatedAt:     time.Now(),
+	}); err != nil {
+		return nil, status.Errorf(codes.Internal, "write outbox: %v", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, status.Errorf(codes.Internal, "commit: %v", err)
+	}
+
+	h.logger.Info("Schedule cancelled", "schedule_name", req.ScheduleName, "schedule_id", active.ScheduleID)
 	return &statev1.CancelScheduleResponse{ScheduleId: active.ScheduleID.String()}, nil
 }

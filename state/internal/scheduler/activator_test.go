@@ -75,6 +75,9 @@ func (r *stubRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID
 func (r *stubRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
+func (r *stubRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string) error {
+	return nil
+}
 
 func TestPrepareActivation_ReturnsTracker_WhenNoActiveSchedule(t *testing.T) {
 	a := scheduler.NewScheduleActivator(&stubRepo{hasActive: false}, testLogger())

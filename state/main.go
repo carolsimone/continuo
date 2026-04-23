@@ -277,6 +277,7 @@ func main() {
 
 	// Initialize gRPC handlers
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activationService, catalogRepo, schedulesConfig, logger)
+	schedulerHandler.WithCancelDeps(db, taskRepo, outboxRepo)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)

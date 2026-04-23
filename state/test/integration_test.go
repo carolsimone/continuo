@@ -114,7 +114,9 @@ func TestMain(m *testing.M) {
 	activator := &noopScheduleActivator{}
 
 	// ---- Build handlers ----
+	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activator, nil, nil, logger)
+	schedulerHandler.WithCancelDeps(db, taskRepo, outboxRepo)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	execHandler := handlers.NewTaskExecutionHandler(execRepo, logger)
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, nil, logger)
@@ -234,6 +236,19 @@ CREATE TABLE IF NOT EXISTS task_execution (
 
 CREATE INDEX IF NOT EXISTS idx_int_task_execution_task_id ON task_execution(task_id);
 CREATE INDEX IF NOT EXISTS idx_int_task_execution_created_at ON task_execution(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS state_outbox (
+	id             UUID PRIMARY KEY,
+	aggregate_type VARCHAR(100) NOT NULL,
+	aggregate_id   UUID NOT NULL,
+	event_type     VARCHAR(100) NOT NULL,
+	payload        JSONB NOT NULL,
+	stream_name    VARCHAR(200) NOT NULL,
+	status         VARCHAR(20) NOT NULL DEFAULT 'pending',
+	max_retries    INTEGER NOT NULL DEFAULT 3,
+	retry_count    INTEGER NOT NULL DEFAULT 0,
+	created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `
 
 // ============================================================================
