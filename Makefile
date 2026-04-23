@@ -59,23 +59,23 @@ format:
 .PHONY: e2e-setup
 e2e-setup:  ## Provision K8s test environment for E2E testing
 	@echo "Setting up K8s controllers..."
-	@bash e2e/provision-k8s-test-env.sh
+	@bash tests/e2e/provision-k8s-test-env.sh
 
 .PHONY: e2e-test
 e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-services already done)
 	@echo "Running E2E tests..."
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller go test -v -count=1 -timeout 10m /app/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller go test -v -count=1 -timeout 10m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 .PHONY: e2e-cleanup
 e2e-cleanup:  ## Cleanup K8s controllers
 	@echo "Cleaning up K8s controllers..."
-	@bash e2e/cleanup-k8s-controllers.sh
+	@bash tests/e2e/cleanup-k8s-controllers.sh
 
 .PHONY: e2e-start-services
 e2e-start-services:  ## Start Go services inside docker-compose containers and wait for health
 	@echo "Starting services..."
-	@bash e2e/start-services.sh
+	@bash tests/e2e/start-services.sh
 
 # Remove dangling images, stopped containers, unused networks, and build cache.
 # Safe to run between test runs — does NOT delete named volumes or the kind cluster.
@@ -111,5 +111,5 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Building dbt-base image (required for e2e-setup)..."
 	@DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 	@$(MAKE) e2e-setup
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller go test -v -count=1 -timeout 10m /app/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller go test -v -count=1 -timeout 10m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
