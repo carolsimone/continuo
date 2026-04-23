@@ -470,6 +470,52 @@ func TestCancelSchedule_CancelInternalError(t *testing.T) {
 	assert.Equal(t, codes.Internal, st.Code())
 }
 
+func TestCancelSchedule_NilDepsReturnsInternal(t *testing.T) {
+	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
+	repo := &stubSchedulerRepo{getActiveResult: tracker}
+	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
+	// WithCancelDeps deliberately NOT called
+
+	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+		ScheduleName: "daily",
+	})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.Internal, st.Code())
+}
+
+func TestCancelSchedule_BulkCancelError(t *testing.T) {
+	db := getSchedulerHandlerTestDB(t)
+	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
+	repo := &stubSchedulerRepo{getActiveResult: tracker}
+	taskStub := &cancelTaskStub{bulkCancelErr: errors.New("db error")}
+	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
+	h.WithCancelDeps(db, taskStub, &cancelOutboxStub{})
+
+	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+		ScheduleName: "daily",
+	})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.Internal, st.Code())
+}
+
+func TestCancelSchedule_OutboxCreateError(t *testing.T) {
+	db := getSchedulerHandlerTestDB(t)
+	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
+	repo := &stubSchedulerRepo{getActiveResult: tracker}
+	outboxStub := &cancelOutboxStub{createErr: errors.New("outbox error")}
+	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
+	h.WithCancelDeps(db, &cancelTaskStub{}, outboxStub)
+
+	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+		ScheduleName: "daily",
+	})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.Internal, st.Code())
+}
+
 // ---- CancelScheduler fix test ----
 
 func TestCancelScheduler_AlreadyTerminal(t *testing.T) {

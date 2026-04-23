@@ -404,6 +404,10 @@ func (h *SchedulerHandler) CancelSchedule(
 			"no active run for schedule %q", req.ScheduleName)
 	}
 
+	if h.db == nil || h.taskRepo == nil || h.outboxRepo == nil {
+		return nil, status.Errorf(codes.Internal, "cancel dependencies not initialised")
+	}
+
 	tx, err := h.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
