@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  getRunningCount,
   getScheduleProgressLabel,
   getScheduleProgressPercent,
 } from './scheduler-card-helpers';
@@ -50,6 +51,7 @@ export default function SchedulerCard({ schedule }: Props) {
   const succeeded = tasks.filter(t => t.status === 'succeeded').length;
   const failed = tasks.filter(t => t.status === 'failed').length;
   const pending = tasks.filter(t => t.status === 'pending').length;
+  const running = getRunningCount(tasks);
   const pct = getScheduleProgressPercent(tasks);
 
   const handleClick = () =>
@@ -113,6 +115,7 @@ export default function SchedulerCard({ schedule }: Props) {
             <span>✅ {succeeded} succeeded</span>
             <span>❌ {failed} failed</span>
             <span>⏳ {pending} pending</span>
+            <span>🏃 {running} running</span>
           </div>
         </div>
       )}
