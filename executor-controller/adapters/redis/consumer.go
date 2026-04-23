@@ -308,7 +308,7 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 	if cancelled {
 		c.logger.Info("Schedule cancelled — dropping deploy message",
 			"schedule_id", scheduleID, "task_id", taskID)
-		if c.client != nil {
+		if c.client != nil { // nil in unit tests that construct Consumer via struct literal
 			return c.client.XAck(ctx, streamName, c.consumerGroup, msg.ID).Err()
 		}
 		return nil

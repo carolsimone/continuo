@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -26,6 +27,8 @@ func (f *fakeCancelledRepo) Exists(_ context.Context, _ uuid.UUID) (bool, error)
 func (f *fakeCancelledRepo) DeleteExpired(_ context.Context, _ time.Duration) (int64, error) {
 	return 0, nil
 }
+
+var _ postgres.CancelledSchedulesRepository = (*fakeCancelledRepo)(nil)
 
 func TestScheduleCancelledHandler_InsertsScheduleID(t *testing.T) {
 	repo := &fakeCancelledRepo{}
