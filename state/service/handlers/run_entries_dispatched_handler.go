@@ -88,6 +88,21 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 		return true, nil
 	}
 
+	// Guard: if the scheduler was cancelled between event publication and now, treat as a no-op.
+	var currentStatus string
+	if dbErr := tx.QueryRowContext(ctx,
+		`SELECT status FROM scheduler_tracker WHERE schedule_id = $1`,
+		scheduleID,
+	).Scan(&currentStatus); dbErr != nil {
+		return false, fmt.Errorf("read scheduler status: %w", dbErr)
+	}
+	if currentStatus == string(model.SchedulerStatusCancelled) {
+		h.logger.Info("run.entries.dispatched: scheduler already cancelled — skipping",
+			"schedule_id", scheduleID)
+		_ = tx.Commit()
+		return true, nil
+	}
+
 	// Build task rows.
 	now := time.Now()
 	tasks := make([]*model.TaskTracker, 0, len(evt.AllTasks))

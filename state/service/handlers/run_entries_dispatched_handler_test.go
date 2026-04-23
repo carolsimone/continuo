@@ -158,3 +158,38 @@ func TestRunEntriesDispatchedHandler_Idempotent(t *testing.T) {
 	assert.True(t, tracker.TotalTaskCount.Valid)
 	assert.Equal(t, int32(1), tracker.TotalTaskCount.Int32)
 }
+
+func TestRunEntriesDispatchedHandler_NoopWhenSchedulerCancelled(t *testing.T) {
+	db := setupRunEntriesDispatchedTestDB(t)
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	// Create a scheduler, then move its status to 'cancelled' directly.
+	schedID := uuid.New()
+	seedSchedulerTracker(t, db, schedID, "completed")
+	_, err := db.ExecContext(ctx, `UPDATE scheduler_tracker SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = 'test' WHERE schedule_id = $1`, schedID)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
+
+	h := statehandlers.NewRunEntriesDispatchedHandler(db, schedRepo, taskRepo, discardLogger())
+
+	payload, _ := json.Marshal(events.RunEntriesDispatched{
+		ScheduleID:   schedID.String(),
+		ScheduleName: "test-schedule",
+		AllTasks: []events.DispatchedTask{
+			{TaskID: uuid.New().String(), ServiceName: "svc", SchemaName: "sc", TableName: "t", MaxRetries: 0},
+		},
+		TotalTaskCount: 1,
+	})
+	ack, err := h.Handle(ctx, "msg-noop-cancelled-1", string(payload))
+
+	require.NoError(t, err)
+	assert.True(t, ack, "should ACK (no-op) when scheduler already cancelled")
+
+	// Scheduler status must remain 'cancelled', not revert to 'running'.
+	got, err := schedRepo.GetByID(ctx, schedID)
+	require.NoError(t, err)
+	assert.Equal(t, model.SchedulerStatusCancelled, got.Status)
+}
