@@ -16,7 +16,7 @@ COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
 COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
 COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
-COPY e2e/go.mod e2e/go.sum ./e2e/
+COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 
 # Layer 3: Download dependencies with cache mount
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -28,7 +28,7 @@ COPY pkg/ ./pkg/
 COPY orchestrator/ ./orchestrator/
 COPY executor-controller/ ./executor-controller/
 COPY k8s-controller/ ./k8s-controller/
-COPY e2e/ ./e2e/
+COPY tests/e2e/ ./tests/e2e/
 
 WORKDIR /app/orchestrator
 
