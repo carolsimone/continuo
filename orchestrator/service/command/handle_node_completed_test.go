@@ -408,6 +408,7 @@ func TestHandleNodeCompleted_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, runRepo.updateNodeStatusCalls, "UpdateNodeStatus must have been called")
+	assert.Equal(t, 0, runRepo.getReadyDownstreamCalls, "GetReadyDownstream must not be called for a cancelled schedule")
 	assert.Empty(t, uow.outboxRepo.CreatedEntries, "no outbox entries for cancelled schedule")
 	assert.True(t, uow.CommittedTx, "transaction should be committed")
 }
