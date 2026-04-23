@@ -112,6 +112,9 @@ func main() {
 		cfg.S3.SecretAccessKey,
 	)
 
+	// Initialize cancelled schedules repository (needed by CheckStatusHandler guard)
+	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
+
 	// Step 10b: Initialize check status handler with UoW
 	handlerConfig := &handlers.HandlerConfig{
 		K8sNamespace:          cfg.K8sNamespace,
@@ -120,7 +123,7 @@ func main() {
 		LogTailLines:          int64(cfg.LogTailLines),
 		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
 	}
-	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, unitOfWork, s3Client, handlerConfig, logger)
+	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, unitOfWork, s3Client, handlerConfig, cancelledSchedulesRepo, logger)
 
 	// Step 11: Create command handlers map (CQRS pattern)
 	commandHandlers := map[string]messagebus.CommandHandler{
@@ -214,8 +217,6 @@ func main() {
 	// ========================================================================
 	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER
 	// ========================================================================
-
-	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
 	scheduleCancelledConsumer, err := redis.NewScheduleCancelledConsumer(
 		redisClient,

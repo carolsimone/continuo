@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	postgresadapter "github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
@@ -30,11 +31,12 @@ type HandlerConfig struct {
 
 // CheckStatusHandler handles CheckJobStatus commands
 type CheckStatusHandler struct {
-	k8sClient   K8sStatusChecker
-	uow         uow.UnitOfWork
-	logUploader s3adapter.LogUploader
-	config      *HandlerConfig
-	logger      *slog.Logger
+	k8sClient          K8sStatusChecker
+	uow                uow.UnitOfWork
+	logUploader        s3adapter.LogUploader
+	config             *HandlerConfig
+	cancelledSchedules postgresadapter.CancelledSchedulesRepository
+	logger             *slog.Logger
 }
 
 // NewCheckStatusHandler creates a new CheckStatusHandler
@@ -43,14 +45,16 @@ func NewCheckStatusHandler(
 	uow uow.UnitOfWork,
 	logUploader s3adapter.LogUploader,
 	config *HandlerConfig,
+	cancelledSchedules postgresadapter.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) *CheckStatusHandler {
 	return &CheckStatusHandler{
-		k8sClient:   k8sClient,
-		uow:         uow,
-		logUploader: logUploader,
-		config:      config,
-		logger:      logger,
+		k8sClient:          k8sClient,
+		uow:                uow,
+		logUploader:        logUploader,
+		config:             config,
+		cancelledSchedules: cancelledSchedules,
+		logger:             logger,
 	}
 }
 
@@ -97,6 +101,18 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, cmd command.CheckJobSta
 			// Rollback is handled by defer; consumer will XACK.
 			return nil
 		}
+	}
+
+	// Guard: if the schedule was cancelled, absorb the result silently.
+	// Running pods are left to complete naturally; results are suppressed here.
+	cancelled, err := h.cancelledSchedules.Exists(ctx, cmd.ScheduleID)
+	if err != nil {
+		return fmt.Errorf("cancelled schedules check: %w", err)
+	}
+	if cancelled {
+		h.logger.Info("Schedule cancelled — absorbing job result",
+			"schedule_id", cmd.ScheduleID, "job_name", cmd.JobName, "status", result.Status)
+		return nil
 	}
 
 	// Step 5: Write outbox entries (sub-handlers use h.uow.OutboxRepo() — already in-tx)
