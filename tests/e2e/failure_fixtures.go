@@ -16,15 +16,18 @@ type dagNode struct {
 	NodeType     string // empty string defaults to "dbt-model" in CreateNodeRequest
 }
 
-// getFailureDAG returns the same 10-node diamond DAG with table_e using service-3-broken
+// getFailureDAG returns the 6-node DAG used by the failure-path test.
+// ftable_e runs against service-2 but JOINs public.wrong_name, causing it to
+// fail after exhausting retries. ftable_f is downstream and must never run.
 func getFailureDAG() []dagNode {
-	nodes := getDiamondDAG()
-	for i, n := range nodes {
-		if n.Name == "table_e" {
-			nodes[i].ServiceName = "service-3-broken"
-		}
+	return []dagNode{
+		{Name: "ftable_a", Dependencies: nil, ServiceName: "service-1"},
+		{Name: "ftable_b", Dependencies: nil, ServiceName: "service-1"},
+		{Name: "ftable_c", Dependencies: []string{"ftable_a", "ftable_b"}, ServiceName: "service-3"},
+		{Name: "ftable_d", Dependencies: []string{"ftable_c"}, ServiceName: "service-2"},
+		{Name: "ftable_e", Dependencies: []string{"ftable_c"}, ServiceName: "service-2"},
+		{Name: "ftable_f", Dependencies: []string{"ftable_d", "ftable_e"}, ServiceName: "service-3"},
 	}
-	return nodes
 }
 
 // seedNodes creates the given DAG nodes directly in Neo4j.
