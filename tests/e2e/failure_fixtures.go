@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -15,36 +14,6 @@ type dagNode struct {
 	Dependencies []string
 	ServiceName  string
 	NodeType     string // empty string defaults to "dbt-model" in CreateNodeRequest
-}
-
-// getDiamondDAG returns the 13-node diamond DAG structure (3 seeds + 10 models) with per-node service names
-func getDiamondDAG() []dagNode {
-	return []dagNode{
-		{Name: "seed_table_1", Dependencies: nil, ServiceName: "service-1", NodeType: "dbt-seed"},
-		{Name: "seed_table_2", Dependencies: nil, ServiceName: "service-1", NodeType: "dbt-seed"},
-		{Name: "seed_table_3", Dependencies: nil, ServiceName: "service-1", NodeType: "dbt-seed"},
-		{Name: "table_a", Dependencies: []string{"seed_table_1"}, ServiceName: "service-1"},
-		{Name: "table_b", Dependencies: []string{"seed_table_2"}, ServiceName: "service-1"},
-		{Name: "table_c", Dependencies: []string{"seed_table_3"}, ServiceName: "service-1"},
-		{Name: "table_d", Dependencies: []string{"table_a", "table_b"}, ServiceName: "service-3"},
-		{Name: "table_e", Dependencies: []string{"table_b", "table_c"}, ServiceName: "service-3"},
-		{Name: "table_f", Dependencies: []string{"table_a", "table_c"}, ServiceName: "service-3"},
-		{Name: "table_g", Dependencies: []string{"table_d", "table_e"}, ServiceName: "service-2"},
-		{Name: "table_h", Dependencies: []string{"table_e", "table_f"}, ServiceName: "service-2"},
-		{Name: "table_i", Dependencies: []string{"table_g", "table_h"}, ServiceName: "service-3"},
-		{Name: "table_j", Dependencies: []string{"table_g", "table_h"}, ServiceName: "service-3"},
-	}
-}
-
-// getDAGLevels returns nodes grouped by execution level (used by verify.go)
-func getDAGLevels() [][]string {
-	return [][]string{
-		{"seed_table_1", "seed_table_2", "seed_table_3"},
-		{"table_a", "table_b", "table_c"},
-		{"table_d", "table_e", "table_f"},
-		{"table_g", "table_h"},
-		{"table_i", "table_j"},
-	}
 }
 
 // getFailureDAG returns the same 10-node diamond DAG with table_e using service-3-broken
@@ -145,19 +114,3 @@ const (
 	failureTestOwner        = "test"
 )
 
-// failureTableServiceMap maps each table to its owning service for the failure DAG
-var failureTableServiceMap = func() map[string]string {
-	m := make(map[string]string)
-	for _, n := range getFailureDAG() {
-		m[n.Name] = n.ServiceName
-	}
-	return m
-}()
-
-func getFailureServiceNameForTable(tableName string) string {
-	svc, ok := failureTableServiceMap[tableName]
-	if !ok {
-		panic(fmt.Sprintf("no service mapping for table %q", tableName))
-	}
-	return svc
-}
