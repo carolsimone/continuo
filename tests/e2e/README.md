@@ -4,13 +4,25 @@ Comprehensive end-to-end test validating the complete Continuo orchestration pip
 
 ## Test Overview
 
-Tests a 10-node diamond DAG executing through all services:
+Tests a 6-node `ftable_*` DAG executing through all services:
 - `state` - Creates scheduler
 - `orchestrator` - Identifies root nodes, publishes to query.model:v1
 - `executor-controller` - Deploys k8s jobs
 - `k8s-controller` - Monitors job status
 - `dependency-controller` - Unlocks downstream dependencies
 - `ui-service` - HTTP API verified to return correct scheduler/task data
+
+### DAG Layout
+
+```
+ftable_a (service-1)  ftable_b (service-1)
+              \           /
+           ftable_c (service-3)
+          /                    \
+ftable_d (service-2)   ftable_e (service-2, FAILS)
+          \                    /
+           ftable_f (service-3)  <- never deployed in failure path
+```
 
 ## From Blank State (first run / full reset)
 
@@ -33,20 +45,20 @@ DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
 bash scripts/setup.sh
 
 # 4. Start Go service processes inside containers and wait for health
-bash e2e/start-services.sh
+bash tests/e2e/start-services.sh
 
 # 5. Start the ui-service container
 docker compose up -d ui
 
 # 6. Deploy pre-built controller images into the kind cluster
-bash e2e/deploy-k8s-controllers.sh
+bash tests/e2e/deploy-k8s-controllers.sh
 
 # 7. Run the tests
 docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
-  go test -v -count=1 -timeout 25m /app/e2e/...
+  go test -v -count=1 -timeout 25m /app/tests/e2e/...
 
 # 8. Clean up k8s resources
-bash e2e/cleanup-k8s-controllers.sh
+bash tests/e2e/cleanup-k8s-controllers.sh
 ```
 
 > `setup.sh` takes ~10 minutes on first run.
@@ -68,22 +80,22 @@ docker compose up -d
 docker compose ps   # neo4j should show "(healthy)"
 
 # Start Go service processes and wait for health
-bash e2e/start-services.sh
+bash tests/e2e/start-services.sh
 
 # Start ui-service
 docker compose up -d ui
 
 # If any service images changed since last run, rebuild and reload into kind:
-bash e2e/provision-k8s-test-env.sh
+bash tests/e2e/provision-k8s-test-env.sh
 # Otherwise, if images are unchanged, just (re)deploy:
-# bash e2e/deploy-k8s-controllers.sh
+# bash tests/e2e/deploy-k8s-controllers.sh
 
 # Run the tests
 docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
-  go test -v -count=1 -timeout 25m /app/e2e/...
+  go test -v -count=1 -timeout 25m /app/tests/e2e/...
 
 # Clean up k8s resources
-bash e2e/cleanup-k8s-controllers.sh
+bash tests/e2e/cleanup-k8s-controllers.sh
 ```
 
 Or use the convenience target (assumes kind cluster and images already exist):
@@ -100,10 +112,10 @@ runs `provision-k8s-test-env.sh`, then executes the tests.
 | Script | What it does |
 |--------|-------------|
 | `scripts/setup.sh` | Full bootstrap: kind cluster + image builds + dbt manifests + kubeconfig + compose up |
-| `e2e/start-services.sh` | Starts Go service processes inside containers (`go run`), waits for HTTP health |
-| `e2e/provision-k8s-test-env.sh` | Rebuilds controller + dbt images, loads them into kind, regenerates kubeconfig, deploys k8s manifests |
-| `e2e/deploy-k8s-controllers.sh` | Deploys pre-built images already in kind (no rebuild); used by CI after `setup.sh` |
-| `e2e/cleanup-k8s-controllers.sh` | Removes controller Deployments from the kind cluster |
+| `tests/e2e/start-services.sh` | Starts Go service processes inside containers (`go run`), waits for HTTP health |
+| `tests/e2e/provision-k8s-test-env.sh` | Rebuilds controller + dbt images, loads them into kind, regenerates kubeconfig, deploys k8s manifests |
+| `tests/e2e/deploy-k8s-controllers.sh` | Deploys pre-built images already in kind (no rebuild); used by CI after `setup.sh` |
+| `tests/e2e/cleanup-k8s-controllers.sh` | Removes controller Deployments from the kind cluster |
 
 ### How CI runs it
 
@@ -115,9 +127,9 @@ CI mirrors the blank-state flow above:
 4. Run per-service unit tests
 5. Build + start `manifest-controller`
 6. `docker compose up -d ui`
-7. `bash e2e/deploy-k8s-controllers.sh` (images pre-loaded by setup.sh)
-8. `docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 25m /app/e2e/...`
-9. `bash e2e/cleanup-k8s-controllers.sh`
+7. `bash tests/e2e/deploy-k8s-controllers.sh` (images pre-loaded by setup.sh)
+8. `docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 25m /app/tests/e2e/...`
+9. `bash tests/e2e/cleanup-k8s-controllers.sh`
 
 CI uses `deploy-k8s-controllers.sh` (not `provision-k8s-test-env.sh`) because
 `setup.sh` already built and loaded all images into kind.
@@ -132,7 +144,7 @@ open http://localhost:8090
 
 You should see:
 - 1 scheduler card with a **succeeded** badge
-- A task table with **10 tasks** (the diamond DAG), each with **succeeded** status
+- A task table with **6 tasks** (the `ftable_*` DAG), each with **succeeded** status
 - ISO-8601 timestamps showing when each task ran
 
 ## Architecture
@@ -157,39 +169,36 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | `system_test.go` | `TestE2E_HappyPath_FullDAGExecution` |
 | `trigger_test.go` | `TestTriggerSchedule_SeedRunAndRerun` — trigger seed schedule via TriggerSchedule RPC, wait for completion, re-trigger |
 | `failure_test.go` | `TestE2E_FailurePath_NodeFailureDrainsSchedule` |
+| `schedule_catalog_test.go` | Catalog and schedule assertions |
 | `ui_http_test.go` | HTTP assertions against the ui-service (`verifyUIService`) |
 | `verify.go` | DAG-level assertions (executor jobs, k8s jobs, dependency unlocking, failure helpers) |
 | `clients.go` | gRPC, Redis, Postgres, Neo4j client setup |
-| `fixtures.go` | 10-node diamond DAG definition, failure DAG fixture |
-| `seed.go` | Seeds DAG nodes into Neo4j via the graph service |
+| `system_fixtures.go` | 6-node `ftable_*` DAG definition used by the happy path and failure tests |
+| `failure_fixtures.go` | Failure DAG fixture helpers |
 | `helpers.go` | `pollUntil`, k8s job helpers, `containsAll` |
 | `cleanup.go` | Removes all test data from every data store |
 
 ## Failure Path Test
 
-`TestE2E_FailurePath_NodeFailureDrainsSchedule` uses the same 10-node diamond DAG but with `table_e` pointing to `service-3-broken`. It verifies:
+`TestE2E_FailurePath_NodeFailureDrainsSchedule` uses the 6-node `ftable_*` DAG. It verifies:
 
-- `table_e` exhausts 2 retries (3 total attempts) and reaches `failed` status
-- Downstream nodes (`table_g`, `table_h`, `table_i`, `table_j`) are never deployed
+- `ftable_e` exhausts 2 retries (3 total attempts) and reaches `failed` status
+- Downstream node (`ftable_f`) is never deployed
 - The scheduler is finalised as `FAILED`
 
-`service-3-broken`'s `table_e` model raises a dbt compiler error unconditionally:
-```sql
-{{ exceptions.raise_compiler_error("intentional failure: service-3-broken table_e") }}
-```
-This makes `dbt run --select table_e` exit non-zero on every attempt.
+The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `public.wrong_name`, which does not exist. This causes the dbt run to fail at execution time on every attempt.
 
 ## Test Flow
 
 ### Happy Path
 1. **Setup** - Initialize clients, verify services healthy
 2. **Cleanup** - Remove any leftover test data
-3. **Seed** - Create 10-node DAG in Neo4j via graph service
+3. **Seed** - Create 6-node `ftable_*` DAG in Neo4j via graph service
 4. **Trigger** - `ActivateSchedule` gRPC call → state creates scheduler record
-5. **Verify Level 0** - Check 3 root jobs deploy and complete
-6. **Verify Level 1** - Check dependency-controller unlocks and 3 jobs execute
-7. **Verify Level 2** - Check 2 converging jobs execute
-8. **Verify Level 3** - Check 2 final jobs execute
+5. **Verify Level 0** - Check root jobs (`ftable_a`, `ftable_b`) deploy and complete
+6. **Verify Level 1** - Check `ftable_c` unlocks and executes
+7. **Verify Level 2** - Check `ftable_d` and `ftable_e` execute
+8. **Verify Level 3** - Check `ftable_f` executes
 9. **Verify UI** - `GET /api/schedulers` and `/api/schedulers/:id/tasks` return `status: "succeeded"` and ISO-8601 timestamps (skipped if `UI_HTTP_BASE` unset)
 10. **Cleanup** - Remove all test data
 
@@ -202,12 +211,12 @@ This makes `dbt run --select table_e` exit non-zero on every attempt.
 
 ### Failure Path
 1. **Setup** - Initialize clients, verify services healthy
-2. **Seed** - Create the same 10-node DAG with `table_e` using `service-3-broken`
+2. **Seed** - Create the 6-node `ftable_*` DAG in Neo4j
 3. **Trigger** - `ActivateSchedule` gRPC call
-4. **Verify Level 0** - Root nodes complete successfully
-5. **Verify Level 1 deployed** - All 3 level-1 jobs are deployed; `table_d` and `table_f` succeed
-6. **Wait for table_e failure** - Poll until `retry_count = 3` and `status = 'failed'` in `task_tracker`
-7. **Verify no downstream jobs** - Confirm `table_g`, `table_h`, `table_i`, `table_j` are never deployed
+4. **Verify Level 0** - Root nodes (`ftable_a`, `ftable_b`) complete successfully
+5. **Verify Level 1** - `ftable_c` executes; `ftable_d` and `ftable_e` are deployed
+6. **Wait for ftable_e failure** - Poll until `retry_count = 3` and `status = 'failed'` in `task_tracker`; `ftable_d` succeeds
+7. **Verify no downstream jobs** - Confirm `ftable_f` is never deployed
 8. **Verify scheduler FAILED** - Poll `scheduler_tracker` until `status = 'failed'`
 9. **Cleanup** - Remove all test data
 
@@ -238,7 +247,7 @@ colima start --disk 100  # 100GB
 - Check service health: `curl http://localhost:8082/health`
 
 **Neo4j not healthy / services fail to start:**
-- Neo4j takes up to 90 seconds to become healthy. Wait for `docker compose ps` to show `neo4j` as `(healthy)` before running `bash e2e/start-services.sh`.
+- Neo4j takes up to 90 seconds to become healthy. Wait for `docker compose ps` to show `neo4j` as `(healthy)` before running `bash tests/e2e/start-services.sh`.
 
 **Test fails with kubectl errors:**
 - Verify kind cluster is running: `kind get clusters`
@@ -251,7 +260,7 @@ colima start --disk 100  # 100GB
 **Test fails at k8s controller health check:**
 - Check pod status: `kubectl get pods -n default | grep controller`
 - View pod logs: `kubectl logs -l app=executor-controller -n default`
-- Re-run provisioning: `bash e2e/provision-k8s-test-env.sh`
+- Re-run provisioning: `bash tests/e2e/provision-k8s-test-env.sh`
 
 **Test fails with "table does not exist":**
 - Verify flyway migrations completed: `docker compose logs flyway-orchestrator`
@@ -262,7 +271,7 @@ colima start --disk 100  # 100GB
 docker compose ps
 docker logs orchestrator --tail 50
 docker compose restart orchestrator state
-bash e2e/start-services.sh
+bash tests/e2e/start-services.sh
 ```
 
 **continuo-base image missing (after docker system prune):**
@@ -295,8 +304,8 @@ kubectl exec deployment/executor-controller -- nc -zv 172.17.0.1 50051
 
 **Rebuild all k8s images and redeploy:**
 ```bash
-bash e2e/cleanup-k8s-controllers.sh
-bash e2e/provision-k8s-test-env.sh
+bash tests/e2e/cleanup-k8s-controllers.sh
+bash tests/e2e/provision-k8s-test-env.sh
 ```
 
 **Neo4j fails to start ("Neo4j is already running"):**
