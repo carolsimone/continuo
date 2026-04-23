@@ -214,13 +214,14 @@ func verifyOrchestratorPublishedRootNodes(
 	t.Logf("✅ orchestrator published %d root node messages to query.model:v1", expectedCount)
 }
 
-// verifyTableEExhaustedRetries polls state DB until table_e has retry_count = 2
+// verifyNodeExhaustedRetries polls state DB until the given node has retry_count = 2
 // and status = 'failed', confirming all 2 retries were exhausted (3 total attempts).
-func verifyTableEExhaustedRetries(
+func verifyNodeExhaustedRetries(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
 	schedulerID uuid.UUID,
+	tableName string,
 ) {
 	t.Helper()
 	pollUntil(t, ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
@@ -229,15 +230,15 @@ func verifyTableEExhaustedRetries(
 		err := clients.stateDB.QueryRow(`
 			SELECT retry_count, status
 			FROM task_tracker
-			WHERE schedule_id = $1 AND table_name = 'table_e'
-		`, schedulerID).Scan(&retryCount, &status)
+			WHERE schedule_id = $1 AND table_name = $2
+		`, schedulerID, tableName).Scan(&retryCount, &status)
 		if err != nil {
 			return false, err
 		}
 		return retryCount == 2 && status == "failed", nil
-	}, "Timeout waiting for table_e to exhaust 2 retries and reach failed status")
+	}, fmt.Sprintf("Timeout waiting for %s to exhaust 2 retries and reach failed status", tableName))
 
-	t.Log("✅ table_e exhausted 2 retries and is permanently failed (3 total attempts)")
+	t.Logf("✅ %s exhausted 2 retries and is permanently failed (3 total attempts)", tableName)
 }
 
 // verifyNoJobsDeployed asserts that none of the given tables have K8s jobs.

@@ -22,6 +22,7 @@ log_error() {
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 K8S_DIR="${SCRIPT_DIR}/k8s"
 
 log_info "Starting K8s controllers setup for E2E tests..."
@@ -42,7 +43,7 @@ export DOCKER_BRIDGE_IP
 
 log_info "Building controller images..."
 
-cd "${SCRIPT_DIR}/.."
+cd "${REPO_ROOT}"
 
 log_info "Building executor-controller image"
 docker build -f executor-controller/Dockerfile.dev -t continuo-executor-controller:latest . || {
@@ -57,10 +58,9 @@ docker build -f k8s-controller/Dockerfile.dev -t continuo-k8s-controller:latest 
 }
 
 log_info "Building dbt service images..."
-DOCKER_BUILDKIT=1 docker build -t service-1:latest dbt/services/service-1/ || { log_error "failed to build service-1"; exit 1; }
-DOCKER_BUILDKIT=1 docker build -t service-2:latest dbt/services/service-2/ || { log_error "failed to build service-2"; exit 1; }
-DOCKER_BUILDKIT=1 docker build -t service-3:latest dbt/services/service-3/ || { log_error "failed to build service-3"; exit 1; }
-DOCKER_BUILDKIT=1 docker build -t service-3-broken:latest dbt/services/service-3-broken/ || { log_error "failed to build service-3-broken"; exit 1; }
+DOCKER_BUILDKIT=1 docker build -f dbt/services/service-1/Dockerfile.local -t service-1:latest dbt/services/service-1/ || { log_error "failed to build service-1"; exit 1; }
+DOCKER_BUILDKIT=1 docker build -f dbt/services/service-2/Dockerfile.local -t service-2:latest dbt/services/service-2/ || { log_error "failed to build service-2"; exit 1; }
+DOCKER_BUILDKIT=1 docker build -f dbt/services/service-3/Dockerfile.local -t service-3:latest dbt/services/service-3/ || { log_error "failed to build service-3"; exit 1; }
 
 log_info "Load images into k8s/kind..."
 
@@ -77,7 +77,6 @@ log_info "Loading dbt service images into kind..."
 kind load docker-image service-1:latest --name continuo || { log_error "Failed to load service-1 into kind"; exit 1; }
 kind load docker-image service-2:latest --name continuo || { log_error "Failed to load service-2 into kind"; exit 1; }
 kind load docker-image service-3:latest --name continuo || { log_error "Failed to load service-3 into kind"; exit 1; }
-kind load docker-image service-3-broken:latest --name continuo || { log_error "Failed to load service-3-broken into kind"; exit 1; }
 
 log_info "Images built and loaded successfully"
 
@@ -95,14 +94,14 @@ fi
 
 log_info "Kubernetes API server: ${KUBE_IP}:${KUBE_PORT}"
 
-mkdir -p "${SCRIPT_DIR}/../kubeconfig"
+mkdir -p "${REPO_ROOT}/kubeconfig"
 kubectl config view --raw \
     | sed "s|server: https://[^:]*:[0-9]*|server: https://${KUBE_IP}:${KUBE_PORT}|g" \
-    > "${SCRIPT_DIR}/../kubeconfig/kubeconfig.yaml"
+    > "${REPO_ROOT}/kubeconfig/kubeconfig.yaml"
 
 for svc in executor-controller; do
-    mkdir -p "${SCRIPT_DIR}/../${svc}/kubeconfig"
-    cp "${SCRIPT_DIR}/../kubeconfig/kubeconfig.yaml" "${SCRIPT_DIR}/../${svc}/kubeconfig/kubeconfig.yaml"
+    mkdir -p "${REPO_ROOT}/${svc}/kubeconfig"
+    cp "${REPO_ROOT}/kubeconfig/kubeconfig.yaml" "${REPO_ROOT}/${svc}/kubeconfig/kubeconfig.yaml"
     log_info "Kubeconfig copied to ${svc}/"
 done
 

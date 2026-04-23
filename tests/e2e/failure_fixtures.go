@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -17,45 +16,18 @@ type dagNode struct {
 	NodeType     string // empty string defaults to "dbt-model" in CreateNodeRequest
 }
 
-// getDiamondDAG returns the 13-node diamond DAG structure (3 seeds + 10 models) with per-node service names
-func getDiamondDAG() []dagNode {
-	return []dagNode{
-		{Name: "seed_table_1", Dependencies: nil, ServiceName: "service-1", NodeType: "dbt-seed"},
-		{Name: "seed_table_2", Dependencies: nil, ServiceName: "service-1", NodeType: "dbt-seed"},
-		{Name: "seed_table_3", Dependencies: nil, ServiceName: "service-1", NodeType: "dbt-seed"},
-		{Name: "table_a", Dependencies: []string{"seed_table_1"}, ServiceName: "service-1"},
-		{Name: "table_b", Dependencies: []string{"seed_table_2"}, ServiceName: "service-1"},
-		{Name: "table_c", Dependencies: []string{"seed_table_3"}, ServiceName: "service-1"},
-		{Name: "table_d", Dependencies: []string{"table_a", "table_b"}, ServiceName: "service-3"},
-		{Name: "table_e", Dependencies: []string{"table_b", "table_c"}, ServiceName: "service-3"},
-		{Name: "table_f", Dependencies: []string{"table_a", "table_c"}, ServiceName: "service-3"},
-		{Name: "table_g", Dependencies: []string{"table_d", "table_e"}, ServiceName: "service-2"},
-		{Name: "table_h", Dependencies: []string{"table_e", "table_f"}, ServiceName: "service-2"},
-		{Name: "table_i", Dependencies: []string{"table_g", "table_h"}, ServiceName: "service-3"},
-		{Name: "table_j", Dependencies: []string{"table_g", "table_h"}, ServiceName: "service-3"},
-	}
-}
-
-// getDAGLevels returns nodes grouped by execution level (used by verify.go)
-func getDAGLevels() [][]string {
-	return [][]string{
-		{"seed_table_1", "seed_table_2", "seed_table_3"},
-		{"table_a", "table_b", "table_c"},
-		{"table_d", "table_e", "table_f"},
-		{"table_g", "table_h"},
-		{"table_i", "table_j"},
-	}
-}
-
-// getFailureDAG returns the same 10-node diamond DAG with table_e using service-3-broken
+// getFailureDAG returns the 6-node DAG used by the failure-path test.
+// ftable_e runs against service-2 but JOINs public.wrong_name, causing it to
+// fail after exhausting retries. ftable_f is downstream and must never run.
 func getFailureDAG() []dagNode {
-	nodes := getDiamondDAG()
-	for i, n := range nodes {
-		if n.Name == "table_e" {
-			nodes[i].ServiceName = "service-3-broken"
-		}
+	return []dagNode{
+		{Name: "ftable_a", Dependencies: nil, ServiceName: "service-1"},
+		{Name: "ftable_b", Dependencies: nil, ServiceName: "service-1"},
+		{Name: "ftable_c", Dependencies: []string{"ftable_a", "ftable_b"}, ServiceName: "service-3"},
+		{Name: "ftable_d", Dependencies: []string{"ftable_c"}, ServiceName: "service-2"},
+		{Name: "ftable_e", Dependencies: []string{"ftable_c"}, ServiceName: "service-2"},
+		{Name: "ftable_f", Dependencies: []string{"ftable_d", "ftable_e"}, ServiceName: "service-3"},
 	}
-	return nodes
 }
 
 // seedNodes creates the given DAG nodes directly in Neo4j.
@@ -114,7 +86,7 @@ func seedNodes(t *testing.T, ctx context.Context, clients *testClients, nodes []
 	t.Logf("Seeded %d nodes in Neo4j for schedule %s", len(nodes), scheduleName)
 }
 
-// seedFailureDAG seeds the failure DAG (table_e uses service-3-broken) and
+// seedFailureDAG seeds the failure DAG (ftable_e runs against service-2 but JOINs public.wrong_name, causing it to fail) and
 // inserts the schedule into schedule_catalog so ActivateSchedule can proceed.
 // The failure tests bypass manifest-controller (direct Neo4j seeding), so the
 // catalog must be populated manually.
@@ -145,19 +117,3 @@ const (
 	failureTestOwner        = "test"
 )
 
-// failureTableServiceMap maps each table to its owning service for the failure DAG
-var failureTableServiceMap = func() map[string]string {
-	m := make(map[string]string)
-	for _, n := range getFailureDAG() {
-		m[n.Name] = n.ServiceName
-	}
-	return m
-}()
-
-func getFailureServiceNameForTable(tableName string) string {
-	svc, ok := failureTableServiceMap[tableName]
-	if !ok {
-		panic(fmt.Sprintf("no service mapping for table %q", tableName))
-	}
-	return svc
-}

@@ -46,7 +46,7 @@ All should be added to the `docker-compose.yml` file at the root of the project.
 * `pkg` folder should contain all the logic shared between services.
 
 **Running the e2e test:**
-Please read: `e2e/README.md`.
+Please read: `tests/e2e/README.md`.
 
 # Deployment in Server (or debugging server issues)
 * You can access the server by running: `ssh continuo-server`. Now you are in the server ubuntu machine.
@@ -62,7 +62,7 @@ Please read: `e2e/README.md`.
 # IMPORTANT
 As the very last step before finishing a branch and pushing the last commit it, LLM must:
 * only merge to main from a PR.
-* run e2e tests (read e2e/README.md for how to do that).
+* run e2e tests (read tests/e2e/README.md for how to do that).
 * update `docs/arch/*` documentations.
 * whenever you find edge cases on the logic and you solve the problem, let's build a proper test to avoid this issue will resurface again.
 

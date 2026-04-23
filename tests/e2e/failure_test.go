@@ -1,0 +1,78 @@
+package e2e
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+)
+
+// TestE2E_FailurePath_NodeFailureDrainsSchedule verifies that when ftable_e
+// permanently fails (exhausts 2 retries / 3 total attempts), its downstream
+// node ftable_f is never deployed and the scheduler is finalised as FAILED.
+//
+// DAG (all nodes seeded directly into Neo4j — bypasses manifest-controller):
+//
+//	ftable_a (service-1)  ftable_b (service-1)
+//	              \           /
+//	           ftable_c (service-3)
+//	          /                    \
+//	ftable_d (service-2)   ftable_e (service-2, FAILS — JOINs public.wrong_name)
+//	          \                    /
+//	           ftable_f (service-3)  ← never deployed
+func TestE2E_FailurePath_NodeFailureDrainsSchedule(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	defer func() {
+		cleanupTestData(t, ctx, clients, failureTestScheduleName)
+	}()
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+
+	cleanupTestData(t, ctx, clients, failureTestScheduleName)
+
+	t.Log("Seeding 6-node failure DAG...")
+	seedFailureDAG(t, ctx, clients)
+
+	t.Log("Activating schedule...")
+	schedulerIDStr := createAndActivateFailureScheduler(t, ctx, clients)
+	schedulerID, err := uuid.Parse(schedulerIDStr)
+	require.NoError(t, err, "Invalid schedule_id returned from ActivateSchedule")
+
+	t.Log("Waiting for ftable_e to exhaust retries...")
+	verifyNodeExhaustedRetries(t, ctx, clients, schedulerID, "ftable_e")
+
+	t.Log("Verifying ftable_f was never deployed...")
+	verifyNoJobsDeployed(t, ctx, []string{"ftable_f"})
+
+	t.Log("Verifying scheduler reaches FAILED state...")
+	verifySchedulerFailed(t, ctx, clients, schedulerID)
+
+	t.Log("✅ Failure path test completed successfully")
+}
+
+// createAndActivateFailureScheduler activates the failure schedule via state gRPC.
+func createAndActivateFailureScheduler(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+) string {
+	resp, err := clients.stateClient.ActivateSchedule(ctx, &statev1.ActivateScheduleRequest{
+		ScheduleName: failureTestScheduleName,
+	})
+	require.NoError(t, err, "Failed to activate failure schedule via state service")
+	t.Logf("Activated failure schedule: schedule_id=%s", resp.ScheduleId)
+	return resp.ScheduleId
+}

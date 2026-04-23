@@ -66,11 +66,9 @@ DOCKER_BUILDKIT=1 docker compose build
 # Build dbt service images and load into KIND
 
 echo "Building dbt service images..."
-DOCKER_BUILDKIT=1 docker build -t service-1:latest dbt/services/service-1/
-DOCKER_BUILDKIT=1 docker build -t service-2:latest dbt/services/service-2/
-DOCKER_BUILDKIT=1 docker build -t service-3:latest dbt/services/service-3/
-DOCKER_BUILDKIT=1 docker build -t service-3-broken:latest dbt/services/service-3-broken/
-
+DOCKER_BUILDKIT=1 docker build -f dbt/services/service-1/Dockerfile.local -t service-1:latest dbt/services/service-1/
+DOCKER_BUILDKIT=1 docker build -f dbt/services/service-2/Dockerfile.local -t service-2:latest dbt/services/service-2/
+DOCKER_BUILDKIT=1 docker build -f dbt/services/service-3/Dockerfile.local -t service-3:latest dbt/services/service-3/
 # continuo-executor-controller and continuo-k8s-controller are already built by
 # 'docker compose build' above with the correct tags, so no need to rebuild them here.
 
@@ -84,7 +82,6 @@ echo "Loading images into kind (parallel)..."
 kind load docker-image service-1:latest --name ${CLUSTER_NAME} &
 kind load docker-image service-2:latest --name ${CLUSTER_NAME} &
 kind load docker-image service-3:latest --name ${CLUSTER_NAME} &
-kind load docker-image service-3-broken:latest --name ${CLUSTER_NAME} &
 kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME} &
 kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME} &
 wait
