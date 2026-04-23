@@ -8,7 +8,14 @@ model-paths: ["models"]
 models:
   service_2:
     +materialized: table
-    +tags: ["e2e-schedule"]
     +meta:
       owner: "test"
       criticality: "CORE"
+    table_g:
+      +tags: ["e2e-schedule"]
+    table_h:
+      +tags: ["e2e-schedule"]
+    ftable_d:
+      +tags: ["e2e-schedule-failure"]
+    ftable_e:
+      +tags: ["e2e-schedule-failure"]

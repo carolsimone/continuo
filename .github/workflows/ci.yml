@@ -186,15 +186,15 @@ jobs:
           done
 
       - name: Deploy k8s controllers
-        run: bash e2e/deploy-k8s-controllers.sh
+        run: bash tests/e2e/deploy-k8s-controllers.sh
 
       - name: Run e2e test
         timeout-minutes: 30
-        run: docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 25m /app/e2e/...
+        run: docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 25m /app/tests/e2e/...
 
       - name: Cleanup k8s controllers
         if: always()
-        run: bash e2e/cleanup-k8s-controllers.sh
+        run: bash tests/e2e/cleanup-k8s-controllers.sh
       # ────────────────────────────────────────────────────────────────────────
 
       - name: Tear down

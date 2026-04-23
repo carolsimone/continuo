@@ -58,6 +58,22 @@ func getServiceNameForTable(tableName string) string {
 func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
 
+	// Clear any nodes and catalog rows left by a previous run so the polls
+	// below always wait for fresh data rather than returning immediately
+	// against stale state.
+	clearSession := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeWrite,
+	})
+	_, err := clearSession.Run(ctx,
+		"MATCH (t:Table {schedule_name: $schedule_name}) DETACH DELETE t",
+		map[string]interface{}{"schedule_name": testScheduleName},
+	)
+	clearSession.Close(ctx)
+	require.NoError(t, err, "pre-trigger: failed to clear stale Table nodes from Neo4j")
+
+	_, err = clients.stateDB.ExecContext(ctx, "DELETE FROM schedule_catalog")
+	require.NoError(t, err, "pre-trigger: failed to clear stale schedule_catalog rows")
+
 	resp, err := http.Post(
 		fmt.Sprintf("%s/api/graph/update", clients.uiBase),
 		"application/json",

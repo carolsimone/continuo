@@ -124,7 +124,7 @@ services:
       - ./k8s-controller:/app/k8s-controller
       - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./e2e:/app/e2e
+      - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
       - ./config/schedules.yaml:/etc/continuo/schedules.yaml:ro
@@ -179,7 +179,7 @@ services:
       - ./k8s-controller:/app/k8s-controller
       - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./e2e:/app/e2e
+      - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
@@ -247,7 +247,7 @@ services:
       - ./k8s-controller:/app/k8s-controller
       - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
-      - ./e2e:/app/e2e
+      - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
@@ -312,7 +312,7 @@ services:
       - ./k8s-controller:/app/k8s-controller
       - ./pkg:/app/pkg
       - ./orchestrator:/app/orchestrator
-      - ./e2e:/app/e2e
+      - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock
@@ -324,7 +324,7 @@ services:
   e2e:
     build:
       context: .
-      dockerfile: e2e/Dockerfile
+      dockerfile: tests/e2e/Dockerfile
     container_name: e2e
     depends_on:
       state:
@@ -351,7 +351,7 @@ services:
       - UI_HTTP_BASE=http://ui:8090
     volumes:
       - ./kubeconfig:/app/kubeconfig
-      - ./e2e:/app/e2e
+      - ./tests/e2e:/app/tests/e2e
       - ./state:/app/state
       - ./orchestrator:/app/orchestrator
       - ./executor-controller:/app/executor-controller
