@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
@@ -40,6 +41,9 @@ type TaskTrackerRepository interface {
 	// HasRetryableFailedTaskTx reports whether any task for the given schedule has
 	// status = 'failed' AND retry_count < max_retries (i.e. k8s will retry it).
 	HasRetryableFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
+	// BulkCancelByScheduleIDTx sets status='cancelled' for all pending/running tasks
+	// in a schedule. Returns the number of rows updated.
+	BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string) (int64, error)
 }
 
 // TaskFilters defines query filters for List operation
@@ -462,6 +466,24 @@ func (r *taskTrackerRepository) ResetTasksTx(ctx context.Context, tx *sqlx.Tx, i
 		return 0, err
 	}
 	return int32(n), nil
+}
+
+// BulkCancelByScheduleIDTx sets status='cancelled' for all pending/running tasks
+// in a schedule within the given transaction. Returns the number of rows updated.
+func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string) (int64, error) {
+	result, err := tx.ExecContext(ctx, `
+		UPDATE task_tracker
+		SET status       = $1,
+		    cancelled_at = $2,
+		    cancelled_by = $3
+		WHERE schedule_id = $4
+		  AND status IN ('pending', 'running')
+	`, model.TaskStatusCancelled, time.Now(), cancelledBy, scheduleID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to bulk cancel tasks: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
 }
 
 // List queries tasks with flexible filters and pagination
