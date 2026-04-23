@@ -19,6 +19,7 @@ service StateService {
   // Schedule catalog operations
   rpc ListAllSchedules(ListAllSchedulesRequest) returns (ListAllSchedulesResponse);
   rpc TriggerSchedule(TriggerScheduleRequest) returns (TriggerScheduleResponse);
+  rpc CancelSchedule(CancelScheduleRequest) returns (CancelScheduleResponse);
 
   // Trigger operations
   rpc ActivateSchedule(ActivateScheduleRequest) returns (ActivateScheduleResponse);
@@ -308,5 +309,20 @@ message TriggerScheduleRequest {
 // schedule_id is always non-empty on success.
 // Errors: NOT_FOUND (schedule not in catalog), FAILED_PRECONDITION (already running).
 message TriggerScheduleResponse {
+  string schedule_id = 1;
+}
+
+// ============================================================================
+// CANCEL SCHEDULE REQUESTS/RESPONSES
+// ============================================================================
+
+// Errors: NOT_FOUND (schedule not in catalog), FAILED_PRECONDITION (no active run).
+message CancelScheduleRequest {
+  string schedule_name       = 1;
+  string cancelled_by        = 2;
+  string cancellation_reason = 3;
+}
+
+message CancelScheduleResponse {
   string schedule_id = 1;
 }
