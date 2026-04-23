@@ -1,4 +1,4 @@
-FROM carolsimone/dbt-base:latest
+FROM dbt-base:latest
 
 COPY dbt_project.yml profiles.yml ./
 COPY models/ ./models/
