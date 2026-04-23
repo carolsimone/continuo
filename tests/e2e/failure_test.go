@@ -81,7 +81,7 @@ func TestE2E_FailurePath_NodeFailureDrainsSchedule(t *testing.T) {
 
 	// table_e should exhaust all 2 retries (3 total attempts) and be permanently failed
 	t.Log("Waiting for table_e to exhaust retries...")
-	verifyTableEExhaustedRetries(t, ctx, clients, schedulerID)
+	verifyNodeExhaustedRetries(t, ctx, clients, schedulerID, "table_e")
 
 	// Level 3 and Level 4 must never be deployed
 	t.Log("Verifying Level 3 and Level 4 are never deployed...")

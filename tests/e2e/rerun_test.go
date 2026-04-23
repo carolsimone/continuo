@@ -73,7 +73,7 @@ func TestRerunFailedNode(t *testing.T) {
 	verifyJobsCompleted(t, ctx, clients, []string{"table_d", "table_f"}, failureTestScheduleName)
 
 	t.Log("Waiting for table_e to exhaust retries...")
-	verifyTableEExhaustedRetries(t, ctx, clients, schedulerID)
+	verifyNodeExhaustedRetries(t, ctx, clients, schedulerID, "table_e")
 
 	verifySchedulerFailed(t, ctx, clients, schedulerID)
 	t.Log("Phase 1 complete: scheduler reached FAILED")
