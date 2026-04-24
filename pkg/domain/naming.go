@@ -6,16 +6,17 @@ import (
 	"strings"
 )
 
-// ComputeJobName generates a Kubernetes-compliant job name from service/schema/table components.
+// ComputeJobName generates a Kubernetes-compliant job name from service/schema/table components
+// plus the first 8 characters of a scheduleID to prevent name collisions across runs.
 // It follows DNS-1123 subdomain naming rules which require:
 // - lowercase alphanumeric characters or hyphens only
 // - must start and end with an alphanumeric character
 // - maximum 63 characters in length
 //
-// Format: {service}-{schema}-{table} (lowercase, sanitized)
+// Format: {service}-{schema}-{table}-{scheduleID[:8]} (lowercase, sanitized)
 //
 // The function performs the following transformations:
-// 1. Combines service, schema, and table with hyphens
+// 1. Combines service, schema, table, and scheduleID short hash with hyphens
 // 2. Converts to lowercase
 // 3. Replaces invalid characters with hyphens
 // 4. Collapses consecutive hyphens into a single hyphen
@@ -24,9 +25,15 @@ import (
 // 7. Validates the result is non-empty
 //
 // Returns an error if the computed name is empty after sanitization.
-func ComputeJobName(serviceName, schemaName, tableName string) (string, error) {
+func ComputeJobName(serviceName, schemaName, tableName, scheduleID string) (string, error) {
+	// Use first 8 chars of scheduleID as a run-scoped suffix to avoid cross-run collisions.
+	idSuffix := scheduleID
+	if len(idSuffix) > 8 {
+		idSuffix = idSuffix[:8]
+	}
+
 	// Combine with hyphens
-	raw := fmt.Sprintf("%s-%s-%s", serviceName, schemaName, tableName)
+	raw := fmt.Sprintf("%s-%s-%s-%s", serviceName, schemaName, tableName, idSuffix)
 
 	// Convert to lowercase
 	raw = strings.ToLower(raw)

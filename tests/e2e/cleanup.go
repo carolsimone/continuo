@@ -72,8 +72,9 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	// Clean deployment_outbox
 	_, _ = clients.executorDB.Exec("DELETE FROM deployment_outbox WHERE schedule_name = $1", scheduleName)
 
-	// Clean processed_events (deduplication table) - must be cleared so re-runs can process the same outbox IDs
+	// Clean processed_events (deduplication tables) - must be cleared so re-runs can process the same outbox IDs
 	_, _ = clients.executorDB.Exec("DELETE FROM processed_events")
+	_, _ = clients.k8sDB.Exec("DELETE FROM processed_events")
 
 	// Clean orchestrator outbox
 	if schedulerID != "" {

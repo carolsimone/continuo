@@ -117,7 +117,7 @@ When `initialize.run:v1` carries a `rerun_target`:
       - GetReadyDownstream from Neo4j
       - For each ready node:
           - Read pre-assigned task_id from EXECUTES edge in Neo4j
-          - ComputeJobName
+          - ComputeJobName(service, schema, table, scheduleID) — includes 8-char schedule_id suffix to prevent cross-run K8s job name collisions
           - Write outbox entry (query.model:v1)
       - Update message_processing state -> completed
    c. Commit transaction
