@@ -88,15 +88,13 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 		return true, nil
 	}
 
-	// Guard: if the scheduler was cancelled between event publication and now, treat as a no-op.
-	var currentStatus string
-	if dbErr := tx.QueryRowContext(ctx,
-		`SELECT status FROM scheduler_tracker WHERE schedule_id = $1`,
-		scheduleID,
-	).Scan(&currentStatus); dbErr != nil {
-		return false, fmt.Errorf("read scheduler status: %w", dbErr)
+	// Guard: row-lock the scheduler before inserting tasks so a concurrent CancelSchedule
+	// cannot win the race and leave a cancelled run in "running" with fresh pending tasks.
+	scheduler, dbErr := h.schedulerRepo.GetByIDForUpdateTx(ctx, tx, scheduleID)
+	if dbErr != nil {
+		return false, fmt.Errorf("lock scheduler row: %w", dbErr)
 	}
-	if currentStatus == string(model.SchedulerStatusCancelled) {
+	if scheduler.Status == model.SchedulerStatusCancelled {
 		h.logger.Info("run.entries.dispatched: scheduler already cancelled — skipping",
 			"schedule_id", scheduleID)
 		_ = tx.Commit()
