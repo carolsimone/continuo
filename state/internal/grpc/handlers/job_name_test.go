@@ -81,7 +81,9 @@ func TestComputeJobName(t *testing.T) {
 			schema:     "very-long-schema-name",
 			table:      "very-long-table-name",
 			scheduleID: scheduleID,
-			expected:   "very-long-service-name-that-exceeds-kubernetes-limits-significa",
+			// Prefix truncates to "...limits" (53 chars) to make room for the suffix;
+			// total is 62 chars (within the 63-char K8s limit).
+			expected: "very-long-service-name-that-exceeds-kubernetes-limits-a1b2c3d4",
 		},
 		{
 			name:       "all numeric values",
