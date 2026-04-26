@@ -298,6 +298,8 @@ func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 	}
 	if len(fw.outboxRepo.entries) != 0 {
 		t.Errorf("expected no outbox entries for cancelled schedule, got %d", len(fw.outboxRepo.entries))
+	}
+}
 
 // TestNotFoundRetry verifies that when GetJobStatus returns "Job not found in Kubernetes"
 // (now JobStatusFailed), with retryCount < maxRetries, the handler creates a task_retry
@@ -309,7 +311,7 @@ func TestNotFoundRetry(t *testing.T) {
 	}
 
 	fw := newFakeUoW()
-	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, 3)
+	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -341,7 +343,7 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 	}
 
 	fw := newFakeUoW()
-	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, 3)
+	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
