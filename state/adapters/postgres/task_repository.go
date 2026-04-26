@@ -381,6 +381,7 @@ func (r *taskTrackerRepository) UpdateStatusIfChangedTx(ctx context.Context, tx 
 		SET status = $2, retry_count = $3
 		WHERE task_id = $1
 		  AND status != $2
+		  AND status != 'cancelled'
 	`, taskID, status, retryCount)
 	if err != nil {
 		return 0, fmt.Errorf("update task status if changed: %w", err)
