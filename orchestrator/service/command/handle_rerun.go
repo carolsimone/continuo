@@ -139,7 +139,7 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 		return fmt.Errorf("failed to get service_name for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}
 
-	jobName, err := pkgDomain.ComputeJobName(targetServiceName, cmd.SchemaName, cmd.TableName)
+	jobName, err := pkgDomain.ComputeJobName(targetServiceName, cmd.SchemaName, cmd.TableName, cmd.RunID)
 	if err != nil {
 		return fmt.Errorf("failed to compute job_name for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}

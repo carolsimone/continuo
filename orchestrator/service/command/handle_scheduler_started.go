@@ -121,7 +121,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd Schedule
 			continue
 		}
 
-		jobName, err := pkgDomain.ComputeJobName(node.ServiceName, node.SchemaName, node.TableName)
+		jobName, err := pkgDomain.ComputeJobName(node.ServiceName, node.SchemaName, node.TableName, cmd.ScheduleID.String())
 		if err != nil {
 			return fmt.Errorf("failed to compute job_name for %s.%s: %w", node.SchemaName, node.TableName, err)
 		}

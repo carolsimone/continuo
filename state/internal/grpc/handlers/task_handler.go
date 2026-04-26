@@ -68,8 +68,8 @@ func (h *TaskHandler) CreateTask(ctx context.Context, req *statev1.CreateTaskReq
 		domainStatus = model.TaskStatusPending
 	}
 
-	// Compute k8s-compliant job_name from service/schema/table
-	jobName, err := pkgDomain.ComputeJobName(req.ServiceName, req.SchemaName, req.TableName)
+	// Compute k8s-compliant job_name from service/schema/table + schedule_id suffix
+	jobName, err := pkgDomain.ComputeJobName(req.ServiceName, req.SchemaName, req.TableName, req.ScheduleId)
 	if err != nil {
 		h.logger.Error("failed to compute job_name", "error", err)
 		return nil, status.Errorf(codes.InvalidArgument, "invalid service/schema/table names: %v", err)

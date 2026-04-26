@@ -112,7 +112,7 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 			_ = tx.Rollback()
 			return true, nil
 		}
-		jobName, parseErr := domain.ComputeJobName(t.ServiceName, t.SchemaName, t.TableName)
+		jobName, parseErr := domain.ComputeJobName(t.ServiceName, t.SchemaName, t.TableName, evt.ScheduleID)
 		if parseErr != nil {
 			h.logger.Error("run.entries.dispatched: invalid task names — discarding message",
 				"service", t.ServiceName, "schema", t.SchemaName, "table", t.TableName, "error", parseErr)

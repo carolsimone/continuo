@@ -298,6 +298,88 @@ func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 	}
 	if len(fw.outboxRepo.entries) != 0 {
 		t.Errorf("expected no outbox entries for cancelled schedule, got %d", len(fw.outboxRepo.entries))
+
+// TestNotFoundRetry verifies that when GetJobStatus returns "Job not found in Kubernetes"
+// (now JobStatusFailed), with retryCount < maxRetries, the handler creates a task_retry
+// outbox entry — not a permanent failure — so the job gets re-created and re-checked.
+func TestNotFoundRetry(t *testing.T) {
+	notFoundResult := &model.K8sPodResult{
+		Status:         model.JobStatusFailed,
+		TerminationMsg: "Job not found in Kubernetes",
+	}
+
+	fw := newFakeUoW()
+	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "service-1-e2e-schema-table-b-a1b2c3d4",
+		RetryCount: 0, // first occurrence
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), cmd); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(fw.outboxRepo.entries) == 0 {
+		t.Fatal("expected outbox entry, got none")
+	}
+	if got := fw.outboxRepo.entries[0].EventType; got != "task_retry" {
+		t.Errorf("expected event_type=task_retry (not_found retried), got %q", got)
+	}
+}
+
+// TestNotFoundPermanentFailureNotifiesOrchestrator verifies that when "Job not found" retries
+// are exhausted, handleFailedPermanent is called — which writes both task_failed AND
+// node_status_updated (node.updated:v1) entries, so the orchestrator cascades failure.
+func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
+	notFoundResult := &model.K8sPodResult{
+		Status:         model.JobStatusFailed,
+		TerminationMsg: "Job not found in Kubernetes",
+	}
+
+	fw := newFakeUoW()
+	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "service-1-e2e-schema-table-b-a1b2c3d4",
+		RetryCount: 3, // exhausted
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), cmd); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(fw.outboxRepo.entries) < 2 {
+		t.Fatalf("expected 2 outbox entries (task_failed + node_status_updated), got %d", len(fw.outboxRepo.entries))
+	}
+
+	eventTypes := make([]string, len(fw.outboxRepo.entries))
+	for i, e := range fw.outboxRepo.entries {
+		eventTypes[i] = e.EventType
+	}
+
+	hasTaskFailed := false
+	hasNodeUpdated := false
+	for _, e := range fw.outboxRepo.entries {
+		if e.EventType == "task_failed" {
+			hasTaskFailed = true
+		}
+		if e.EventType == "node_status_updated" && e.StreamName == "node.updated:v1" {
+			hasNodeUpdated = true
+		}
+	}
+
+	if !hasTaskFailed {
+		t.Errorf("expected task_failed entry, got event_types: %v", eventTypes)
+	}
+	if !hasNodeUpdated {
+		t.Errorf("expected node_status_updated entry on node.updated:v1, got event_types: %v", eventTypes)
 	}
 }
 
