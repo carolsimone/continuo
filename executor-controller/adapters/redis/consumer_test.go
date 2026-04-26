@@ -36,9 +36,9 @@ func TestConsumer_DropsQueryModelWhenScheduleCancelled(t *testing.T) {
 
 	// Consumer with minimal setup (no real Redis needed)
 	c := &Consumer{
-		cancelledSchedules: cancelledRepo,
-		consumerGroup:      "test-group",
-		logger:             logger,
+		cancelledSchedulesRepo: cancelledRepo,
+		consumerGroup:          "test-group",
+		logger:                 logger,
 	}
 
 	msg := goredis.XMessage{
