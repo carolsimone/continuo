@@ -79,7 +79,9 @@ func TestComputeJobName(t *testing.T) {
 			schema:     "very-long-schema-name",
 			table:      "very-long-table-name",
 			scheduleID: scheduleID,
-			expected:   "very-long-service-name-that-exceeds-kubernetes-limits-significa",
+			// Prefix truncates to "...limits" (53 chars) to make room for the suffix;
+			// total is 62 chars (within the 63-char K8s limit).
+			expected: "very-long-service-name-that-exceeds-kubernetes-limits-a1b2c3d4",
 		},
 		{
 			name:       "all numeric values",
@@ -145,6 +147,26 @@ func TestComputeJobName(t *testing.T) {
 			table:      "t",
 			scheduleID: "abcdef12",
 			expected:   "svc-sc-t-abcdef12",
+		},
+		{
+			// Regression: suffix must survive truncation for long identifiers.
+			// Prefix sanitizes to 65 chars; fixed code truncates prefix to 54 and
+			// appends the 8-char suffix so different runs stay distinct.
+			name:       "suffix preserved when prefix exceeds 54 chars",
+			service:    "very-long-service-name",
+			schema:     "very-long-schema-name",
+			table:      "very-long-table-name",
+			scheduleID: "a1b2c3d4-xxxx",
+			expected:   "very-long-service-name-very-long-schema-name-very-long-a1b2c3d4",
+		},
+		{
+			// Regression: two runs with the same long prefix must NOT collide.
+			name:       "different schedule IDs produce different names for long prefix",
+			service:    "very-long-service-name",
+			schema:     "very-long-schema-name",
+			table:      "very-long-table-name",
+			scheduleID: "b5c6d7e8-yyyy",
+			expected:   "very-long-service-name-very-long-schema-name-very-long-b5c6d7e8",
 		},
 	}
 
