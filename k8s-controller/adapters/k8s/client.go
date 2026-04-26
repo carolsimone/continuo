@@ -70,7 +70,7 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 				"job_name", jobName,
 			)
 			return &model.K8sPodResult{
-				Status:         model.JobStatusUnknown,
+				Status:         model.JobStatusFailed,
 				TerminationMsg: "Job not found in Kubernetes",
 			}, nil
 		}
