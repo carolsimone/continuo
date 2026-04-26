@@ -163,6 +163,53 @@ sequenceDiagram
 
 All Tier-1 required keys are accumulated before any `os.Exit(1)` so the operator sees the full list of missing vars in a single log line. The service will not attempt any DB or Redis connection until this check passes.
 
+## 6. Schedule Cancellation
+
+```mermaid
+sequenceDiagram
+  participant U as user
+  participant UI as ui-service
+  participant ST as state
+  participant R as Redis
+  participant OR as orchestrator
+  participant EC as executor-controller
+  participant KC as k8s-controller
+
+  U->>UI: POST /api/schedules/:name/cancel
+  UI->>ST: CancelSchedule(schedule_name, cancelled_by?, cancellation_reason?) gRPC
+  ST->>ST: UPDATE scheduler_tracker → cancelled
+  ST->>ST: UPDATE task_tracker (pending/running → cancelled)
+  ST->>ST: INSERT state_outbox for schedule.cancelled:v1
+  ST-->>UI: CancelScheduleResponse { schedule_id }
+  UI-->>U: 200 OK { schedule_id }
+
+  ST->>R: publish schedule.cancelled:v1 (via OutboxProcessor)
+
+  par each consumer receives independently
+    R->>OR: consume schedule.cancelled:v1
+    OR->>OR: INSERT cancelled_schedules(schedule_id)
+  and
+    R->>EC: consume schedule.cancelled:v1
+    EC->>EC: INSERT cancelled_schedules(schedule_id)
+  and
+    R->>KC: consume schedule.cancelled:v1
+    KC->>KC: INSERT cancelled_schedules(schedule_id)
+  end
+
+  note over R,KC: in-flight messages are now absorbed by local guards
+
+  R->>EC: query.model:v1 (in-flight for cancelled schedule)
+  EC->>EC: SELECT EXISTS cancelled_schedules → true → drop, ack
+
+  R->>KC: check.k8s:v1 (in-flight for cancelled schedule)
+  KC->>KC: SELECT EXISTS cancelled_schedules → true → stop polling, ack
+
+  R->>OR: node.updated:v1 (job finished before guard reached KC)
+  OR->>OR: SELECT EXISTS cancelled_schedules → true → update Neo4j only, no cascade
+```
+
+Running K8s pods are left to complete naturally; their results are suppressed at the outbox layer (graceful cancellation). Rows in `cancelled_schedules` are swept after a configurable TTL (default 24h) by a background goroutine in each service.
+
 ## Why These Diagrams Are Not Enough On Their Own
 
 These diagrams show timing and ordering well, but they do not fully show:

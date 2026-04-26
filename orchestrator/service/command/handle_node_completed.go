@@ -12,27 +12,31 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
 
 // HandleNodeCompletedHandler handles the HandleNodeCompleted command.
 type HandleNodeCompletedHandler struct {
-	uow     uow.UnitOfWork
-	runRepo run.Repository
-	logger  *slog.Logger
+	uow                uow.UnitOfWork
+	runRepo            run.Repository
+	cancelledSchedules postgresadapter.CancelledSchedulesRepository
+	logger             *slog.Logger
 }
 
 // NewHandleNodeCompletedHandler creates a new HandleNodeCompletedHandler.
 func NewHandleNodeCompletedHandler(
 	u uow.UnitOfWork,
 	runRepo run.Repository,
+	cancelledSchedules postgresadapter.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) *HandleNodeCompletedHandler {
 	return &HandleNodeCompletedHandler{
-		uow:     u,
-		runRepo: runRepo,
-		logger:  logger,
+		uow:                u,
+		runRepo:            runRepo,
+		cancelledSchedules: cancelledSchedules,
+		logger:             logger,
 	}
 }
 
@@ -79,6 +83,20 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.H
 		cmd.Status,
 	); err != nil {
 		return fmt.Errorf("failed to update node status: %w", err)
+	}
+
+	// Guard: if the schedule was cancelled, record the node status but suppress cascade.
+	cancelled, err := h.cancelledSchedules.Exists(ctx, cmd.ScheduleID)
+	if err != nil {
+		return fmt.Errorf("cancelled schedules check: %w", err)
+	}
+	if cancelled {
+		h.logger.Info("Schedule is cancelled — suppressing cascade",
+			"schedule_id", cmd.ScheduleID, "table", cmd.TableName)
+		if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
+			return fmt.Errorf("update message state: %w", err)
+		}
+		return h.uow.Commit()
 	}
 
 	// If the node succeeded, find and enqueue ready downstream nodes.

@@ -69,6 +69,7 @@ echo "Building dbt service images..."
 DOCKER_BUILDKIT=1 docker build -f dbt/services/service-1/Dockerfile.local -t service-1:latest dbt/services/service-1/
 DOCKER_BUILDKIT=1 docker build -f dbt/services/service-2/Dockerfile.local -t service-2:latest dbt/services/service-2/
 DOCKER_BUILDKIT=1 docker build -f dbt/services/service-3/Dockerfile.local -t service-3:latest dbt/services/service-3/
+
 # continuo-executor-controller and continuo-k8s-controller are already built by
 # 'docker compose build' above with the correct tags, so no need to rebuild them here.
 

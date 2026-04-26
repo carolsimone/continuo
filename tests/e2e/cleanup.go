@@ -115,6 +115,7 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 		"rerun.ready:v1",
 		"schedules.loaded:v1",
 		"update.graph:v1",
+		"schedule.cancelled:v1",
 	}
 
 	for _, stream := range streams {

@@ -88,6 +88,19 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 		return true, nil
 	}
 
+	// Guard: row-lock the scheduler before inserting tasks so a concurrent CancelSchedule
+	// cannot win the race and leave a cancelled run in "running" with fresh pending tasks.
+	scheduler, dbErr := h.schedulerRepo.GetByIDForUpdateTx(ctx, tx, scheduleID)
+	if dbErr != nil {
+		return false, fmt.Errorf("lock scheduler row: %w", dbErr)
+	}
+	if scheduler.Status == model.SchedulerStatusCancelled {
+		h.logger.Info("run.entries.dispatched: scheduler already cancelled — skipping",
+			"schedule_id", scheduleID)
+		_ = tx.Commit()
+		return true, nil
+	}
+
 	// Build task rows.
 	now := time.Now()
 	tasks := make([]*model.TaskTracker, 0, len(evt.AllTasks))

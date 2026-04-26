@@ -91,6 +91,14 @@ spec:
               value: "INFO"
             - name: DBT_POSTGRES_DB
               value: "continuo_dbt"
+            - name: SCHEDULE_CANCELLED_STREAM
+              value: "schedule.cancelled:v1"
+            - name: SCHEDULE_CANCELLED_GROUP
+              value: "executor-schedule-cancelled"
+            - name: CANCELLED_SCHEDULES_TTL_HOURS
+              value: "24"
+            - name: CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES
+              value: "60"
           readinessProbe:
             httpGet:
               path: /health

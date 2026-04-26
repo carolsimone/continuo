@@ -112,6 +112,14 @@ spec:
               value: "local"
             - name: LOG_LEVEL
               value: "INFO"
+            - name: SCHEDULE_CANCELLED_STREAM
+              value: "schedule.cancelled:v1"
+            - name: SCHEDULE_CANCELLED_GROUP
+              value: "k8s-schedule-cancelled"
+            - name: CANCELLED_SCHEDULES_TTL_HOURS
+              value: "24"
+            - name: CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES
+              value: "60"
           readinessProbe:
             httpGet:
               path: /health

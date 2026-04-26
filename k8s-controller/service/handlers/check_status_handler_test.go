@@ -61,6 +61,24 @@ func (r *fakeOutboxRepo) ForceMarkFailed(_ context.Context, _ uuid.UUID, _ strin
 // Verify at compile time.
 var _ postgres.OutboxRepository = (*fakeOutboxRepo)(nil)
 
+type fakeCancelledSchedulesRepo struct {
+	ids map[uuid.UUID]bool
+}
+
+func (f *fakeCancelledSchedulesRepo) Insert(_ context.Context, id uuid.UUID) error { return nil }
+func (f *fakeCancelledSchedulesRepo) Exists(_ context.Context, id uuid.UUID) (bool, error) {
+	return f.ids[id], nil
+}
+func (f *fakeCancelledSchedulesRepo) DeleteExpired(_ context.Context, _ time.Duration) (int64, error) {
+	return 0, nil
+}
+
+var _ postgres.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepo)(nil)
+
+func noopCancelledRepo() *fakeCancelledSchedulesRepo {
+	return &fakeCancelledSchedulesRepo{ids: map[uuid.UUID]bool{}}
+}
+
 type fakeProcessedEventsRepo struct{}
 
 func (r *fakeProcessedEventsRepo) TryMarkProcessed(_ context.Context, _ uuid.UUID) (bool, error) {
@@ -99,7 +117,7 @@ func failedResult() *model.K8sPodResult {
 	}
 }
 
-func newHandler(k8s handlers.K8sStatusChecker, unitOfWork uow.UnitOfWork, defaultMaxRetries int) *handlers.CheckStatusHandler {
+func newHandler(k8s handlers.K8sStatusChecker, unitOfWork uow.UnitOfWork, cancelledSchedules postgres.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
 	cfg := &handlers.HandlerConfig{
 		K8sNamespace:          "default",
 		CheckDelaySeconds:     30,
@@ -107,7 +125,7 @@ func newHandler(k8s handlers.K8sStatusChecker, unitOfWork uow.UnitOfWork, defaul
 		LogTailLines:          50,
 		DefaultTaskMaxRetries: defaultMaxRetries,
 	}
-	return handlers.NewCheckStatusHandler(k8s, unitOfWork, &fakeLogUploader{}, cfg, slog.Default())
+	return handlers.NewCheckStatusHandler(k8s, unitOfWork, &fakeLogUploader{}, cfg, cancelledSchedules, slog.Default())
 }
 
 // --- tests ---
@@ -116,7 +134,7 @@ func newHandler(k8s handlers.K8sStatusChecker, unitOfWork uow.UnitOfWork, defaul
 // produces a "task_retry" outbox entry — using cmd fields, no gRPC.
 func TestHandleFailedWithRetry(t *testing.T) {
 	fw := newFakeUoW()
-	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, 3)
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -142,7 +160,7 @@ func TestHandleFailedWithRetry(t *testing.T) {
 // produces a "task_failed" outbox entry — using cmd fields, no gRPC.
 func TestHandleFailedPermanent(t *testing.T) {
 	fw := newFakeUoW()
-	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, 3)
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -171,7 +189,7 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 	fw := newFakeUoW()
 	handler := newHandler(
 		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}},
-		fw, 3,
+		fw, noopCancelledRepo(), 3,
 	)
 
 	cmd := command.CheckJobStatus{
@@ -206,7 +224,7 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 // config.DefaultTaskMaxRetries.  With RetryCount=0 and default=3 the job should be retried.
 func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 	fw := newFakeUoW()
-	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, 3)
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -233,7 +251,7 @@ func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 // retryCount=2 (3rd attempt) with maxRetries=2 must produce a permanent failure.
 func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
 	fw := newFakeUoW()
-	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, 2)
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, fw, noopCancelledRepo(), 2)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -255,6 +273,34 @@ func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
 	}
 }
 
+func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
+	scheduleID := uuid.New()
+	cancelledRepo := &fakeCancelledSchedulesRepo{ids: map[uuid.UUID]bool{scheduleID: true}}
+	fw := newFakeUoW()
+
+	handler := newHandler(
+		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusSucceeded}},
+		fw,
+		cancelledRepo,
+		3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: scheduleID,
+		JobName:    "job-1",
+		MaxRetries: 3,
+	}
+
+	err := handler.Handle(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(fw.outboxRepo.entries) != 0 {
+		t.Errorf("expected no outbox entries for cancelled schedule, got %d", len(fw.outboxRepo.entries))
+	}
+}
+
 // TestNotFoundRetry verifies that when GetJobStatus returns "Job not found in Kubernetes"
 // (now JobStatusFailed), with retryCount < maxRetries, the handler creates a task_retry
 // outbox entry — not a permanent failure — so the job gets re-created and re-checked.
@@ -265,7 +311,7 @@ func TestNotFoundRetry(t *testing.T) {
 	}
 
 	fw := newFakeUoW()
-	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, 3)
+	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -297,7 +343,7 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 	}
 
 	fw := newFakeUoW()
-	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, 3)
+	handler := newHandler(&fakeK8sClient{status: notFoundResult}, fw, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),

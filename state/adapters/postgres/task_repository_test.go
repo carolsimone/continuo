@@ -135,3 +135,101 @@ func TestTaskRepository_HasRetryableFailedTaskTx(t *testing.T) {
 		assert.False(t, runCheck(t, s.ScheduleID))
 	})
 }
+
+func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
+	db := newTestDB(t)
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	schedID := uuid.New()
+	require.NoError(t, schedRepo.Create(ctx, &model.SchedulerTracker{
+		ScheduleID:           schedID,
+		ScheduleName:         "bulk-cancel-" + schedID.String(),
+		Status:               model.SchedulerStatusRunning,
+		CreatedAt:            time.Now(),
+		InitializationStatus: "completed",
+	}))
+	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", schedID)
+
+	// Create tasks in different states
+	pendingID := uuid.New()
+	runningID := uuid.New()
+	succeededID := uuid.New()
+	for _, tt := range []struct {
+		id     uuid.UUID
+		status model.TaskStatus
+	}{
+		{pendingID, model.TaskStatusPending},
+		{runningID, model.TaskStatusRunning},
+		{succeededID, model.TaskStatusSucceeded},
+	} {
+		require.NoError(t, taskRepo.Create(ctx, &model.TaskTracker{
+			TaskID:      tt.id,
+			ScheduleID:  schedID,
+			ServiceName: "svc",
+			SchemaName:  "sch",
+			TableName:   "t-" + tt.id.String()[:8],
+			JobName:     "j-" + tt.id.String()[:8],
+			Status:      tt.status,
+			MaxRetries:  0,
+			CreatedAt:   time.Now(),
+		}))
+	}
+	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE schedule_id = $1", schedID)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	n, err := taskRepo.BulkCancelByScheduleIDTx(ctx, tx, schedID, "user1")
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	assert.EqualValues(t, 2, n) // pending + running; succeeded untouched
+
+	for _, id := range []uuid.UUID{pendingID, runningID} {
+		got, err := taskRepo.GetByID(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, model.TaskStatusCancelled, got.Status)
+		assert.NotNil(t, got.CancelledAt)
+		assert.Equal(t, "user1", *got.CancelledBy)
+	}
+
+	// succeeded task must be untouched
+	got, err := taskRepo.GetByID(ctx, succeededID)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSucceeded, got.Status)
+}
+
+func TestTaskRepository_UpdateStatusIfChangedTx_DoesNotReviveCancelledTask(t *testing.T) {
+	db := newTestDB(t)
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	scheduler := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
+	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduler.ScheduleID)
+
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	task := createTask(t, taskRepo, scheduler.ScheduleID)
+	defer db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
+
+	// Mark the task cancelled (simulating BulkCancelByScheduleIDTx).
+	_, err := db.ExecContext(context.Background(),
+		`UPDATE task_tracker SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = 'test' WHERE task_id = $1`,
+		task.TaskID,
+	)
+	require.NoError(t, err)
+
+	// A late task.status.updated:v1 event tries to flip it to 'succeeded'.
+	tx, err := db.BeginTxx(context.Background(), nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	affected, err := taskRepo.UpdateStatusIfChangedTx(context.Background(), tx, task.TaskID, "succeeded", 0)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	assert.Equal(t, int32(0), affected, "cancelled task must not be revived")
+
+	got, err := taskRepo.GetByID(context.Background(), task.TaskID)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusCancelled, got.Status, "status must remain cancelled")
+}

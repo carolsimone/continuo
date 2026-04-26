@@ -79,6 +79,9 @@ func (s *rerunSchedStub) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uui
 func (s *rerunSchedStub) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
+func (s *rerunSchedStub) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string) error {
+	return nil
+}
 
 type rerunTaskStub struct {
 	task         *model.TaskTracker
@@ -127,6 +130,9 @@ func (s *rerunTaskStub) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UU
 }
 func (s *rerunTaskStub) HasRetryableFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
+}
+func (s *rerunTaskStub) BulkCancelByScheduleIDTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) (int64, error) {
+	return 0, nil
 }
 
 type rerunOutboxStub struct {

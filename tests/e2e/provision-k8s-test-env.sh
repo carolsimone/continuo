@@ -57,6 +57,9 @@ docker build -f k8s-controller/Dockerfile.dev -t continuo-k8s-controller:latest 
   exit 1
 }
 
+log_info "Building dbt base image..."
+DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/ || { log_error "failed to build dbt-base"; exit 1; }
+
 log_info "Building dbt service images..."
 DOCKER_BUILDKIT=1 docker build -f dbt/services/service-1/Dockerfile.local -t service-1:latest dbt/services/service-1/ || { log_error "failed to build service-1"; exit 1; }
 DOCKER_BUILDKIT=1 docker build -f dbt/services/service-2/Dockerfile.local -t service-2:latest dbt/services/service-2/ || { log_error "failed to build service-2"; exit 1; }

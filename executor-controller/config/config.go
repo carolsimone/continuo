@@ -16,6 +16,12 @@ type Config struct {
 	RedisProducerStream      string
 	RedisStatusStream        string // task.status.updated:v1
 
+	// Schedule cancellation
+	ScheduleCancelledStream            string
+	ScheduleCancelledGroup             string
+	CancelledSchedulesTTLHours         int
+	CancelledSchedulesSweepIntervalMin int
+
 	// HTTP
 	HTTPPort int
 
@@ -35,6 +41,11 @@ func Load(v *pkgconfig.Validator) Config {
 		RedisConsumerGroup:       v.Require("REDIS_CONSUMER_GROUP"),
 		RedisProducerStream:      v.Require("REDIS_PRODUCER_STREAM"),
 		RedisStatusStream:        v.Require("REDIS_STATUS_STREAM"),
+
+		ScheduleCancelledStream:            v.Require("SCHEDULE_CANCELLED_STREAM"),
+		ScheduleCancelledGroup:             v.Require("SCHEDULE_CANCELLED_GROUP"),
+		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
+		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
 
 		HTTPPort:     envInt("HTTP_PORT", 8084),
 		K8sNamespace: v.Require("K8S_NAMESPACE"),

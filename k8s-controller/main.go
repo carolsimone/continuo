@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/carolsimone/continuo/k8s-controller/adapters/http"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/k8s"
@@ -111,6 +112,9 @@ func main() {
 		cfg.S3.SecretAccessKey,
 	)
 
+	// Initialize cancelled schedules repository (needed by CheckStatusHandler guard)
+	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
+
 	// Step 10b: Initialize check status handler with UoW
 	handlerConfig := &handlers.HandlerConfig{
 		K8sNamespace:          cfg.K8sNamespace,
@@ -119,7 +123,7 @@ func main() {
 		LogTailLines:          int64(cfg.LogTailLines),
 		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
 	}
-	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, unitOfWork, s3Client, handlerConfig, logger)
+	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, unitOfWork, s3Client, handlerConfig, cancelledSchedulesRepo, logger)
 
 	// Step 11: Create command handlers map (CQRS pattern)
 	commandHandlers := map[string]messagebus.CommandHandler{
@@ -209,6 +213,45 @@ func main() {
 	})
 
 	logger.Info("HTTP health server started", "port", cfg.HTTPPort)
+
+	// ========================================================================
+	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER
+	// ========================================================================
+
+	scheduleCancelledConsumer, err := redis.NewScheduleCancelledConsumer(
+		redisClient,
+		cfg.ScheduleCancelledStream,
+		cfg.ScheduleCancelledGroup,
+		cancelledSchedulesRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create schedule cancelled consumer", "error", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
+			logger.Error("Schedule cancelled consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
+		defer ticker.Stop()
+		ttl := time.Duration(cfg.CancelledSchedulesTTLHours) * time.Hour
+		for {
+			select {
+			case <-ticker.C:
+				if n, err := cancelledSchedulesRepo.DeleteExpired(ctx, ttl); err != nil {
+					logger.Error("cancelled_schedules sweep failed", "error", err)
+				} else if n > 0 {
+					logger.Info("Swept expired cancelled_schedules rows", "count", n)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Step 17: Start Redis Consumer (BLOCKING - main loop)
 	logger.Info("Starting Redis consumer (main loop)")

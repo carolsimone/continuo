@@ -152,6 +152,10 @@ services:
       - REDIS_CONSUMER_GROUP=executor_controller_consumers
       - REDIS_PRODUCER_STREAM=node.deployed:v1
       - REDIS_STATUS_STREAM=task.status.updated:v1
+      - SCHEDULE_CANCELLED_STREAM=schedule.cancelled:v1
+      - SCHEDULE_CANCELLED_GROUP=executor-schedule-cancelled
+      - CANCELLED_SCHEDULES_TTL_HOURS=24
+      - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -207,6 +211,10 @@ services:
       - REDIS_PRODUCER_RETRY_STREAM=retry.task:v1
       - REDIS_PRODUCER_FAILED_STREAM=task.failed:v1
       - REDIS_PRODUCER_UPDATE_TABLE_STREAM=node.updated:v1
+      - SCHEDULE_CANCELLED_STREAM=schedule.cancelled:v1
+      - SCHEDULE_CANCELLED_GROUP=k8s-schedule-cancelled
+      - CANCELLED_SCHEDULES_TTL_HOURS=24
+      - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -279,6 +287,10 @@ services:
       - SCHEDULER_STARTED_GROUP=orchestrator_scheduler_started
       - RERUN_STREAM=rerun:v1
       - RERUN_GROUP=orchestrator_rerun
+      - SCHEDULE_CANCELLED_STREAM=schedule.cancelled:v1
+      - SCHEDULE_CANCELLED_GROUP=orchestrator-schedule-cancelled
+      - CANCELLED_SCHEDULES_TTL_HOURS=24
+      - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432

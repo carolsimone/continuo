@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/service/command"
 	"github.com/carolsimone/continuo/orchestrator/config"
@@ -118,6 +119,7 @@ func main() {
 	runRepo := neo4jinfra.NewCompositeRunRepository(runRepoWrite, queryRepo)
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
 	publishedRepo := postgres.NewPublishedMessagesRepository(pgDB, logger)
+	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
 	// ========================================================================
 	// INITIALIZE UNIT OF WORK & COMMAND HANDLERS
@@ -127,7 +129,7 @@ func main() {
 
 	ingestTopologyHandler := command.NewIngestTopologyHandler(unitOfWork, topologyRepo, logger)
 	initializeRunHandler := command.NewInitializeRunHandler(unitOfWork, runRepo, logger)
-	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, logger)
+	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(unitOfWork, runRepo, logger)
 	handleRerunHandler := command.NewHandleRerunHandler(unitOfWork, runRepo, logger)
 
@@ -165,6 +167,42 @@ func main() {
 
 	runSweeper := sweeper.New(runRepoWrite, cfg.RunHistoryRetentionDays, cfg.RunSweeperIntervalMinutes, logger)
 	go runSweeper.Start(ctx)
+
+	// ========================================================================
+	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER
+	// ========================================================================
+
+	scheduleCancelledHandler := redis.NewScheduleCancelledHandler(cancelledSchedulesRepo, logger)
+	scheduleCancelledConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.ScheduleCancelledStream,
+		cfg.ScheduleCancelledGroup,
+		scheduleCancelledHandler,
+		logger,
+	)
+	go func() {
+		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
+			logger.Error("Schedule cancelled consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
+		defer ticker.Stop()
+		ttl := time.Duration(cfg.CancelledSchedulesTTLHours) * time.Hour
+		for {
+			select {
+			case <-ticker.C:
+				if n, err := cancelledSchedulesRepo.DeleteExpired(ctx, ttl); err != nil {
+					logger.Error("cancelled_schedules sweep failed", "error", err)
+				} else if n > 0 {
+					logger.Info("Swept expired cancelled_schedules rows", "count", n)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// ========================================================================
 	// INITIALIZE REDIS CONSUMERS (3 streams)

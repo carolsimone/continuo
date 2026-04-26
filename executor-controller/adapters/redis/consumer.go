@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/service/messagebus"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -18,39 +19,42 @@ import (
 
 // Consumer consumes deployment events from Redis Streams using consumer groups
 type Consumer struct {
-	client        *goredis.Client
-	streamName    string
-	retryStream   string // New: retry.task:v1
-	consumerGroup string
-	consumerName  string
-	messageBus    *messagebus.MessageBus
-	db            *sqlx.DB
-	logger        *slog.Logger
-	stopCh        chan struct{}
+	client                 *goredis.Client
+	queryModelStream       string
+	retryStream            string
+	consumerGroup          string
+	consumerName           string
+	messageBus             *messagebus.MessageBus
+	db                     *sqlx.DB
+	cancelledSchedulesRepo postgres.CancelledSchedulesRepository
+	logger                 *slog.Logger
+	stopCh                 chan struct{}
 }
 
 // NewConsumer creates a new Redis stream consumer with consumer groups
 func NewConsumer(
 	client *goredis.Client,
-	streamName string,
+	queryModelStream string,
 	retryStream string,
 	consumerGroup string,
 	messageBus *messagebus.MessageBus,
 	db *sqlx.DB,
+	cancelledSchedulesRepo postgres.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) (*Consumer, error) {
 	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String()[:8])
 
 	c := &Consumer{
-		client:        client,
-		streamName:    streamName,
-		retryStream:   retryStream,
-		consumerGroup: consumerGroup,
-		consumerName:  consumerName,
-		messageBus:    messageBus,
-		db:            db,
-		logger:        logger,
-		stopCh:        make(chan struct{}),
+		client:                 client,
+		queryModelStream:       queryModelStream,
+		retryStream:            retryStream,
+		consumerGroup:          consumerGroup,
+		consumerName:           consumerName,
+		messageBus:             messageBus,
+		db:                     db,
+		cancelledSchedulesRepo: cancelledSchedulesRepo,
+		logger:                 logger,
+		stopCh:                 make(chan struct{}),
 	}
 
 	// Create consumer groups for both streams
@@ -66,9 +70,9 @@ func (c *Consumer) createConsumerGroups() error {
 	ctx := context.Background()
 
 	// Create group for main stream
-	err := c.client.XGroupCreateMkStream(ctx, c.streamName, c.consumerGroup, "0").Err()
+	err := c.client.XGroupCreateMkStream(ctx, c.queryModelStream, c.consumerGroup, "0").Err()
 	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		return fmt.Errorf("failed to create consumer group for %s: %w", c.streamName, err)
+		return fmt.Errorf("failed to create consumer group for %s: %w", c.queryModelStream, err)
 	}
 
 	// Create group for retry stream
@@ -79,7 +83,7 @@ func (c *Consumer) createConsumerGroups() error {
 
 	c.logger.Info("Consumer groups created/verified",
 		"group", c.consumerGroup,
-		"streams", []string{c.streamName, c.retryStream},
+		"streams", []string{c.queryModelStream, c.retryStream},
 	)
 	return nil
 }
@@ -88,13 +92,13 @@ func (c *Consumer) createConsumerGroups() error {
 func (c *Consumer) Start(ctx context.Context) error {
 	c.logger.Info("Starting consumer",
 		"name", c.consumerName,
-		"streams", []string{c.streamName, c.retryStream},
+		"streams", []string{c.queryModelStream, c.retryStream},
 		"group", c.consumerGroup,
 	)
 
 	// CRITICAL: Process pending messages first (crash recovery) for both streams
-	if err := c.processPendingMessages(ctx, c.streamName); err != nil {
-		c.logger.Error("Error processing pending messages", "stream", c.streamName, "error", err)
+	if err := c.processPendingMessages(ctx, c.queryModelStream); err != nil {
+		c.logger.Error("Error processing pending messages", "stream", c.queryModelStream, "error", err)
 	}
 	if err := c.processPendingMessages(ctx, c.retryStream); err != nil {
 		c.logger.Error("Error processing pending messages", "stream", c.retryStream, "error", err)
@@ -185,7 +189,7 @@ func (c *Consumer) readAndProcess(ctx context.Context) error {
 	streams, err := c.client.XReadGroup(ctx, &goredis.XReadGroupArgs{
 		Group:    c.consumerGroup,
 		Consumer: c.consumerName,
-		Streams:  []string{c.streamName, c.retryStream, ">", ">"}, // Read from both streams
+		Streams:  []string{c.queryModelStream, c.retryStream, ">", ">"}, // Read from both streams
 		Count:    10,
 		Block:    1 * time.Second,
 	}).Result()
@@ -196,7 +200,7 @@ func (c *Consumer) readAndProcess(ctx context.Context) error {
 		}
 		if strings.Contains(err.Error(), "NOGROUP") {
 			c.logger.Warn("Consumer group missing, recreating",
-				"streams", []string{c.streamName, c.retryStream},
+				"streams", []string{c.queryModelStream, c.retryStream},
 				"group", c.consumerGroup,
 			)
 			if createErr := c.createConsumerGroups(); createErr != nil {
@@ -294,6 +298,20 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 			"message_id", msg.ID,
 			"task_id", taskID,
 		)
+	}
+
+	// Guard: drop the message if the schedule was cancelled.
+	cancelled, err := c.cancelledSchedulesRepo.Exists(ctx, scheduleID)
+	if err != nil {
+		return fmt.Errorf("cancelled schedules check: %w", err)
+	}
+	if cancelled {
+		c.logger.Info("Schedule cancelled — dropping deploy message",
+			"schedule_id", scheduleID, "task_id", taskID)
+		if c.client != nil { // nil in unit tests that construct Consumer via struct literal
+			return c.client.XAck(ctx, streamName, c.consumerGroup, msg.ID).Err()
+		}
+		return nil
 	}
 
 	nodeTypeStr := getString(msg.Values, "node_type")

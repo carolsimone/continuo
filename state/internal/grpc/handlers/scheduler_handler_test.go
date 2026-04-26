@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
@@ -184,6 +185,9 @@ func (s *stubSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ 
 func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
+func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string) error {
+	return s.cancelErr
+}
 
 // ---- TriggerSchedule tests ----
 
@@ -298,20 +302,83 @@ func TestListAllSchedules_PopulatesLastRunId(t *testing.T) {
 	assert.Equal(t, id.String(), resp.Schedules[0].LastRunId)
 }
 
-// ---- CancelSchedule tests ----
+// ---- CancelSchedule helpers ----
 
-func TestCancelSchedule_Success(t *testing.T) {
-	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
-	repo := &stubSchedulerRepo{getActiveResult: tracker}
-	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
-
-	resp, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
-		ScheduleName: "daily",
-		CancelledBy:  "user",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, tracker.ScheduleID.String(), resp.ScheduleId)
+// getSchedulerHandlerTestDB returns a real DB connection for integration-style
+// handler tests, skipping the test if the database is unavailable.
+func getSchedulerHandlerTestDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	db, err := database.GetPostgresConnection()
+	if err != nil {
+		t.Skip("no test DB available:", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
 }
+
+// cancelTaskStub is a minimal TaskTrackerRepository stub for cancel handler tests.
+// It tracks whether BulkCancelByScheduleIDTx was called.
+type cancelTaskStub struct {
+	bulkCancelCalled bool
+	bulkCancelN      int64
+	bulkCancelErr    error
+}
+
+func (s *cancelTaskStub) Create(_ context.Context, _ *model.TaskTracker) error               { return nil }
+func (s *cancelTaskStub) GetByID(_ context.Context, _ uuid.UUID) (*model.TaskTracker, error) { return nil, nil }
+func (s *cancelTaskStub) GetByScheduleAndNode(_ context.Context, _ uuid.UUID, _, _, _ string) (*model.TaskTracker, error) {
+	return nil, nil
+}
+func (s *cancelTaskStub) Update(_ context.Context, _ *model.TaskTracker) error { return nil }
+func (s *cancelTaskStub) Delete(_ context.Context, _ uuid.UUID) error          { return nil }
+func (s *cancelTaskStub) ListByScheduleID(_ context.Context, _ uuid.UUID, _ *model.TaskStatus, _, _ int) ([]*model.TaskTracker, int, error) {
+	return nil, 0, nil
+}
+func (s *cancelTaskStub) List(_ context.Context, _ postgres.TaskFilters) ([]*model.TaskTracker, int, error) {
+	return nil, 0, nil
+}
+func (s *cancelTaskStub) UpdateTx(_ context.Context, _ *sqlx.Tx, _ *model.TaskTracker) error       { return nil }
+func (s *cancelTaskStub) BulkCreateTx(_ context.Context, _ *sqlx.Tx, _ []*model.TaskTracker) error { return nil }
+func (s *cancelTaskStub) ListAllByScheduleID(_ context.Context, _ uuid.UUID) ([]*model.TaskTracker, error) {
+	return nil, nil
+}
+func (s *cancelTaskStub) ResetTasksTx(_ context.Context, _ *sqlx.Tx, _ []uuid.UUID) (int32, error) {
+	return 0, nil
+}
+func (s *cancelTaskStub) UpdateStatusIfChangedTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string, _ int32) (int32, error) {
+	return 0, nil
+}
+func (s *cancelTaskStub) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (s *cancelTaskStub) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (s *cancelTaskStub) HasRetryableFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (s *cancelTaskStub) BulkCancelByScheduleIDTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) (int64, error) {
+	s.bulkCancelCalled = true
+	return s.bulkCancelN, s.bulkCancelErr
+}
+
+// cancelOutboxStub is a minimal OutboxRepository stub for cancel handler tests.
+type cancelOutboxStub struct {
+	created   []*postgres.OutboxEntry
+	createErr error
+}
+
+func (s *cancelOutboxStub) Create(_ context.Context, _ *sqlx.Tx, e *postgres.OutboxEntry) error {
+	s.created = append(s.created, e)
+	return s.createErr
+}
+func (s *cancelOutboxStub) ListPending(_ context.Context, _ int) ([]*postgres.OutboxEntry, error) {
+	return nil, nil
+}
+func (s *cancelOutboxStub) MarkPublished(_ context.Context, _ uuid.UUID) error  { return nil }
+func (s *cancelOutboxStub) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
+
+// ---- CancelSchedule tests ----
 
 func TestCancelSchedule_EmptyScheduleName(t *testing.T) {
 	h := NewSchedulerHandler(&stubSchedulerRepo{}, nil, nil, nil, newTestLogger())
@@ -323,7 +390,7 @@ func TestCancelSchedule_EmptyScheduleName(t *testing.T) {
 }
 
 func TestCancelSchedule_NoActiveRun(t *testing.T) {
-	// getActiveResult is nil, getActiveErr is nil
+	// getActiveResult is nil, getActiveErr is nil — returns before hitting the DB
 	repo := &stubSchedulerRepo{}
 	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
 
@@ -347,13 +414,35 @@ func TestCancelSchedule_GetActiveSchedulerError(t *testing.T) {
 	assert.Equal(t, codes.Internal, st.Code())
 }
 
+func TestCancelSchedule_Success(t *testing.T) {
+	db := getSchedulerHandlerTestDB(t)
+	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
+	repo := &stubSchedulerRepo{getActiveResult: tracker}
+	taskStub := &cancelTaskStub{}
+	outboxStub := &cancelOutboxStub{}
+	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
+	h.WithCancelDeps(db, taskStub, outboxStub)
+
+	resp, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+		ScheduleName: "daily",
+		CancelledBy:  "user",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, tracker.ScheduleID.String(), resp.ScheduleId)
+	assert.True(t, taskStub.bulkCancelCalled, "BulkCancelByScheduleIDTx must be called")
+	require.Len(t, outboxStub.created, 1, "outbox entry must be written")
+	assert.Equal(t, "schedule.cancelled:v1", outboxStub.created[0].StreamName)
+}
+
 func TestCancelSchedule_CancelNotCancellable(t *testing.T) {
+	db := getSchedulerHandlerTestDB(t)
 	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
 	repo := &stubSchedulerRepo{
 		getActiveResult: tracker,
 		cancelErr:       postgres.ErrNotCancellable,
 	}
 	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
+	h.WithCancelDeps(db, &cancelTaskStub{}, &cancelOutboxStub{})
 
 	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
 		ScheduleName: "daily",
@@ -364,12 +453,60 @@ func TestCancelSchedule_CancelNotCancellable(t *testing.T) {
 }
 
 func TestCancelSchedule_CancelInternalError(t *testing.T) {
+	db := getSchedulerHandlerTestDB(t)
 	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
 	repo := &stubSchedulerRepo{
 		getActiveResult: tracker,
 		cancelErr:       errors.New("db connection lost"),
 	}
 	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
+	h.WithCancelDeps(db, &cancelTaskStub{}, &cancelOutboxStub{})
+
+	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+		ScheduleName: "daily",
+	})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.Internal, st.Code())
+}
+
+func TestCancelSchedule_NilDepsReturnsInternal(t *testing.T) {
+	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
+	repo := &stubSchedulerRepo{getActiveResult: tracker}
+	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
+	// WithCancelDeps deliberately NOT called
+
+	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+		ScheduleName: "daily",
+	})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.Internal, st.Code())
+}
+
+func TestCancelSchedule_BulkCancelError(t *testing.T) {
+	db := getSchedulerHandlerTestDB(t)
+	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
+	repo := &stubSchedulerRepo{getActiveResult: tracker}
+	taskStub := &cancelTaskStub{bulkCancelErr: errors.New("db error")}
+	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
+	h.WithCancelDeps(db, taskStub, &cancelOutboxStub{})
+
+	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+		ScheduleName: "daily",
+	})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.Internal, st.Code())
+}
+
+func TestCancelSchedule_OutboxCreateError(t *testing.T) {
+	db := getSchedulerHandlerTestDB(t)
+	tracker := &model.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "daily"}
+	repo := &stubSchedulerRepo{getActiveResult: tracker}
+	outboxStub := &cancelOutboxStub{createErr: errors.New("outbox error")}
+	h := NewSchedulerHandler(repo, nil, nil, nil, newTestLogger())
+	h.WithCancelDeps(db, &cancelTaskStub{}, outboxStub)
 
 	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
 		ScheduleName: "daily",
@@ -449,6 +586,9 @@ func (f *fakeSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ 
 	return f.tracker, nil
 }
 func (f *fakeSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (f *fakeSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string) error {
 	return nil
 }
 
