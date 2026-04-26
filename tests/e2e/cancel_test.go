@@ -17,11 +17,17 @@ import (
 // TestCancelMidwayAndRetrigger verifies the cancel → retrigger recovery flow
 // using the standard happy-path DAG (e2e-schedule, all working nodes).
 //
-// Phase 1: Load graph, activate schedule, let level 0 (seeds) complete.
+// Phase 1: Load graph, trigger schedule via UI HTTP endpoint, let level 0 (seeds) complete.
 // Phase 2: Cancel mid-way — before level 1 can finish.
-//          Assert scheduler + tasks reach 'cancelled' and all three service
-//          guards (cancelled_schedules tables) are armed via the Redis event.
-// Phase 3: Clean up the cancelled run state, re-activate the same schedule.
+//
+//	Assert scheduler + tasks reach 'cancelled' and all three service
+//	guards (cancelled_schedules tables) are armed via the Redis event.
+//
+// Phase 3: Retrigger immediately via UI HTTP endpoint — no cleanup.
+//
+//	The system self-stabilises: guards reject late events for the old
+//	schedule_id; TriggerSchedule creates a fresh schedule_id.
+//
 // Phase 4: Assert the fresh run completes fully to 'succeeded'.
 func TestCancelMidwayAndRetrigger(t *testing.T) {
 	if testing.Short() {
@@ -43,11 +49,11 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// ── Phase 1: Load graph + run level 0 ────────────────────────────────────
-	t.Log("Phase 1: loading graph and activating schedule...")
+	// ── Phase 1: Load graph + trigger via UI endpoint ─────────────────────────
+	t.Log("Phase 1: loading graph and triggering schedule via UI...")
 	triggerGraphLoad(t, ctx, clients)
 
-	cancelledIDStr := createAndActivateScheduler(t, ctx, clients)
+	cancelledIDStr := triggerScheduleHTTP(t, clients.uiBase, testScheduleName)
 	cancelledID, err := uuid.Parse(cancelledIDStr)
 	require.NoError(t, err)
 
@@ -71,26 +77,31 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 
 	t.Log("Phase 2 complete: schedule cancelled, guards armed in all three services")
 
-	// ── Phase 3: Clean up + re-activate ──────────────────────────────────────
-	// The fresh run gets a new schedule_id → the guards for the old ID do not
-	// affect it. Clean up Postgres state, Redis streams, and K8s jobs so the
-	// fresh run starts from a clean slate.
-	t.Log("Phase 3: cleaning up cancelled run and re-triggering...")
-	cleanupPostgresByScheduleID(t, ctx, clients, cancelledIDStr, testScheduleName)
-	cleanupNeo4j(t, ctx, clients, testScheduleName)
-	cleanupRedis(t, ctx, clients)
-	cleanupK8s(t, ctx)
-
-	freshIDStr := createAndActivateScheduler(t, ctx, clients)
+	// ── Phase 3: Retrigger — no cleanup ──────────────────────────────────────
+	// Guards are armed; the system rejects any late events for cancelledID.
+	// TriggerSchedule creates a brand-new schedule_id for the fresh run.
+	t.Log("Phase 3: retriggering via UI endpoint (no cleanup)...")
+	freshIDStr := triggerScheduleHTTP(t, clients.uiBase, testScheduleName)
 	freshID, err := uuid.Parse(freshIDStr)
 	require.NoError(t, err)
+	require.NotEqual(t, cancelledID, freshID, "retrigger must produce a new schedule_id")
 
-	t.Logf("Phase 3 complete: fresh run activated (schedule_id=%s)", freshID)
+	t.Logf("Phase 3 complete: fresh run triggered (schedule_id=%s)", freshID)
 
 	// ── Phase 4: Verify fresh run completes ───────────────────────────────────
+	// Verify by schedule_id — two runs share the same schedule_name in the DB,
+	// so schedule_name-scoped queries would be ambiguous.
 	t.Log("Phase 4: verifying fresh run completes to SUCCEEDED...")
 	verifyOrchestratorPublishedRootNodes(t, ctx, clients, freshID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
-	verifyFullDAGExecution(t, ctx, clients, freshID)
+
+	allTables := []string{
+		"seed_table_1", "seed_table_2", "seed_table_3",
+		"table_a", "table_b", "table_c",
+		"table_d", "table_e", "table_f",
+		"table_g", "table_h",
+		"table_i", "table_j",
+	}
+	waitForAllTasksSucceeded(t, ctx, clients, freshID, allTables)
 	verifySchedulerSucceeded(t, ctx, clients, freshID)
 
 	t.Log("TestCancelMidwayAndRetrigger completed successfully")
@@ -212,63 +223,3 @@ func verifyCancelledSchedulesGuardArmed(t *testing.T, ctx context.Context, clien
 	}
 }
 
-// assertTaskStatus asserts a task has the expected status.
-func assertTaskStatus(
-	t *testing.T,
-	ctx context.Context,
-	clients *testClients,
-	schedulerID uuid.UUID,
-	tableName, expectedStatus string,
-) {
-	t.Helper()
-	var status string
-	err := clients.stateDB.QueryRowContext(ctx, `
-		SELECT status FROM task_tracker
-		WHERE schedule_id = $1 AND table_name = $2
-	`, schedulerID, tableName).Scan(&status)
-	require.NoError(t, err, "Failed to query status for %s", tableName)
-	require.Equal(t, expectedStatus, status,
-		"Expected status=%s for %s, got %s", expectedStatus, tableName, status)
-	t.Logf("Task %s has expected status=%s", tableName, expectedStatus)
-}
-
-// assertInitStatusCompleted asserts initialization_status = "completed".
-func assertInitStatusCompleted(
-	t *testing.T,
-	ctx context.Context,
-	clients *testClients,
-	schedulerID uuid.UUID,
-) {
-	t.Helper()
-	var initStatus string
-	err := clients.stateDB.QueryRowContext(ctx, `
-		SELECT initialization_status FROM scheduler_tracker WHERE schedule_id = $1
-	`, schedulerID).Scan(&initStatus)
-	require.NoError(t, err, "Failed to query initialization_status")
-	require.Equal(t, "completed", initStatus,
-		"Expected initialization_status=completed, got %s", initStatus)
-	t.Log("initialization_status=completed confirmed")
-}
-
-// assertTaskExecutionAtLeast asserts a task has at least minCount task_execution records.
-func assertTaskExecutionAtLeast(
-	t *testing.T,
-	ctx context.Context,
-	clients *testClients,
-	schedulerID uuid.UUID,
-	tableName string,
-	minCount int,
-) {
-	t.Helper()
-	var count int
-	err := clients.stateDB.QueryRowContext(ctx, `
-		SELECT COUNT(*)
-		FROM task_execution te
-		JOIN task_tracker tt ON te.task_id = tt.task_id
-		WHERE tt.schedule_id = $1 AND tt.table_name = $2
-	`, schedulerID, tableName).Scan(&count)
-	require.NoError(t, err, "Failed to query task_execution count for %s", tableName)
-	require.GreaterOrEqual(t, count, minCount,
-		"Expected >= %d task_execution records for %s, got %d", minCount, tableName, count)
-	t.Logf("task_execution count for %s: %d (>= %d required)", tableName, count, minCount)
-}
