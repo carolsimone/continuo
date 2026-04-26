@@ -15,11 +15,14 @@ func cleanupTestData(t *testing.T, ctx context.Context, clients *testClients, sc
 	// Clean Neo4j
 	cleanupNeo4j(t, ctx, clients, scheduleName)
 
+	// Clean Redis streams before Postgres dedup tables: deleting processed_events
+	// while the k8s consumer still has pending node.deployed:v1 / check.k8s:v1
+	// messages re-enables those messages and can trigger replays that recreate
+	// k8s_status_outbox rows before the streams are gone.
+	cleanupRedis(t, ctx, clients)
+
 	// Clean PostgreSQL databases
 	cleanupPostgres(t, ctx, clients, scheduleName)
-
-	// Clean Redis streams
-	cleanupRedis(t, ctx, clients)
 
 	// Clean Kubernetes jobs
 	cleanupK8s(t, ctx)
