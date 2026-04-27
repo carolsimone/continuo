@@ -180,6 +180,7 @@ jobs:
           host: ${{ secrets.HETZNER_HOST }}
           username: root
           key: ${{ secrets.HETZNER_SSH_KEY }}
+          command_timeout: 25m
           script: |
             set -euo pipefail
 
