@@ -1,0 +1,53 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import request from 'supertest';
+import express from 'express';
+import { writeFileSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { createConfigRouter } from '../../src/server/routes/config';
+
+const VALID_CONFIG_PATH = join(tmpdir(), 'test-cancel-config-valid.json');
+const BAD_CONFIG_PATH = join(tmpdir(), 'test-cancel-config-bad.json');
+
+beforeAll(() => {
+  writeFileSync(
+    VALID_CONFIG_PATH,
+    JSON.stringify({
+      cancel_by_emails: ['alice@example.com'],
+      cancellation_reasons: ['Incorrect trigger', 'Other'],
+    }),
+  );
+  writeFileSync(BAD_CONFIG_PATH, 'not valid json {{{');
+});
+
+afterAll(() => {
+  try { unlinkSync(VALID_CONFIG_PATH); } catch {}
+  try { unlinkSync(BAD_CONFIG_PATH); } catch {}
+});
+
+describe('GET /api/config', () => {
+  it('returns the config as JSON when the file exists', async () => {
+    const app = express();
+    app.use('/api/config', createConfigRouter(VALID_CONFIG_PATH));
+    const res = await request(app).get('/api/config');
+    expect(res.status).toBe(200);
+    expect(res.body.cancel_by_emails).toEqual(['alice@example.com']);
+    expect(res.body.cancellation_reasons).toEqual(['Incorrect trigger', 'Other']);
+  });
+
+  it('returns 503 when the config file is missing', async () => {
+    const app = express();
+    app.use('/api/config', createConfigRouter('/no/such/file.json'));
+    const res = await request(app).get('/api/config');
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/unavailable/i);
+  });
+
+  it('returns 503 when the config file contains invalid JSON', async () => {
+    const app = express();
+    app.use('/api/config', createConfigRouter(BAD_CONFIG_PATH));
+    const res = await request(app).get('/api/config');
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/unavailable/i);
+  });
+});
