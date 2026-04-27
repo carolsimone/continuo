@@ -95,6 +95,8 @@ services:
       SCHEDULER_STARTED_GROUP: orchestrator_scheduler_started
       RERUN_STREAM: rerun:v1
       RERUN_GROUP: orchestrator_rerun
+      SCHEDULE_CANCELLED_STREAM: schedule.cancelled:v1
+      SCHEDULE_CANCELLED_GROUP: orchestrator-schedule-cancelled
       POSTGRES_DB: continuo_orchestrator
       GRPC_PORT: "50052"
       HTTP_PORT: "8087"
@@ -125,6 +127,8 @@ services:
       REDIS_CONSUMER_GROUP: executor_controller_consumers
       REDIS_PRODUCER_STREAM: node.deployed:v1
       REDIS_STATUS_STREAM: task.status.updated:v1
+      SCHEDULE_CANCELLED_STREAM: schedule.cancelled:v1
+      SCHEDULE_CANCELLED_GROUP: executor-schedule-cancelled
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       DBT_POSTGRES_DB: continuo_dbt
@@ -164,6 +168,8 @@ services:
       REDIS_PRODUCER_RETRY_STREAM: retry.task:v1
       REDIS_PRODUCER_FAILED_STREAM: task.failed:v1
       REDIS_PRODUCER_UPDATE_TABLE_STREAM: node.updated:v1
+      SCHEDULE_CANCELLED_STREAM: schedule.cancelled:v1
+      SCHEDULE_CANCELLED_GROUP: k8s-schedule-cancelled
       POSTGRES_DB: continuo_k8s
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       LOG_TAIL_LINES: "50"
