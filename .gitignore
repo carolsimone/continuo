@@ -33,6 +33,7 @@ profile.cov
 */bin/*.worktrees/
 
 */manifest.json
+*/manifest_*.json
 
 # dbt generated files
 dbt/services/*/.user.yml
