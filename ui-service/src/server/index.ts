@@ -8,7 +8,7 @@ import { createApp } from './app';
 const PORT = parseInt(process.env.PORT || '8090', 10);
 const STATE_GRPC_ADDR = process.env.STATE_GRPC_ADDR || 'localhost:50051';
 const ORCHESTRATOR_GRPC_ADDR = process.env.ORCHESTRATOR_GRPC_ADDR || 'localhost:50052';
-const CONFIG_FILE = process.env.CONFIG_FILE || '/app/config/cancel-config.json';
+const CONFIG_FILE = process.env.CONFIG_FILE;
 
 const client = createGrpcClient(STATE_GRPC_ADDR);
 const graphClient = createGrpcGraphClient(ORCHESTRATOR_GRPC_ADDR);

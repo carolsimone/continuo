@@ -13,7 +13,7 @@ export function createApp(
   client: GrpcClient,
   graphClient: GrpcGraphClient,
   redisClient: Redis | null,
-  configFilePath: string,
+  configFilePath = '/app/config/cancel-config.json',
 ) {
   const app = express();
   app.use(express.json());
