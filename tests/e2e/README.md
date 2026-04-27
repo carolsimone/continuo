@@ -173,7 +173,6 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | `ui_http_test.go` | HTTP assertions against the ui-service (`verifyUIService`) |
 | `verify.go` | DAG-level assertions (executor jobs, k8s jobs, dependency unlocking, failure helpers) |
 | `clients.go` | gRPC, Redis, Postgres, Neo4j client setup |
-| `failure_fixtures.go` | Failure DAG fixture helpers |
 | `helpers.go` | `pollUntil`, k8s job helpers, `containsAll` |
 | `cleanup.go` | Removes all test data from every data store |
 
