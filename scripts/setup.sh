@@ -124,8 +124,9 @@ for svc in service-1 service-2 service-3; do
         --entrypoint dbt "${svc}:latest" compile --profiles-dir /project)
     docker wait "$CID"
     docker cp "$CID:/project/target/manifest.json" "dbt/services/${svc}/manifest.json"
+    docker cp "$CID:/project/target/manifest.json" "dbt/services/${svc}/manifest_v1.json"
     docker rm "$CID"
-    echo "  ✓ manifest saved to dbt/services/${svc}/manifest.json"
+    echo "  ✓ manifest saved to dbt/services/${svc}/manifest.json and manifest_v1.json"
 done
 echo "✓ dbt manifests compiled"
 
