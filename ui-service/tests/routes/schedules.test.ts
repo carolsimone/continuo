@@ -22,7 +22,7 @@ app.use(express.json());
 app.use('/api/schedules', createSchedulesRouter(mockStateClient as any, mockGraphClient));
 
 describe('POST /api/schedules/:name/trigger', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns 200 with schedule_id on success', async () => {
     mockTriggerSchedule.mockImplementation((_req: any, cb: any) =>
@@ -74,7 +74,7 @@ describe('POST /api/schedules/:name/trigger', () => {
 });
 
 describe('POST /api/schedules/:name/cancel', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns 200 with schedule_id on success', async () => {
     mockCancelSchedule.mockImplementation((_req: any, cb: any) =>

@@ -73,10 +73,10 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
         className="dialog"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="cancel-dialog-title"
+        aria-labelledby={`cancel-dialog-title-${scheduleName}`}
         onClick={e => e.stopPropagation()}
       >
-        <h2 className="dialog-title" id="cancel-dialog-title">Cancel run</h2>
+        <h2 className="dialog-title" id={`cancel-dialog-title-${scheduleName}`}>Cancel run</h2>
         {configError ? (
           <p className="dialog-config-error">Could not load configuration.</p>
         ) : !config ? (

@@ -69,7 +69,7 @@ export default function SchedulerCard({ schedule }: Props) {
     e.stopPropagation();
     setTriggerLoading(true);
     setTriggerError(null);
-    fetch(`/api/schedules/${schedule.schedule_name}/trigger`, { method: 'POST' })
+    fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/trigger`, { method: 'POST' })
       .then(async r => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
