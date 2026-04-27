@@ -691,3 +691,124 @@ body {
 .update-graph-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .update-graph-btn.loading { opacity: 0.6; }
 .update-graph-btn.success { color: #16a34a; border-color: #86efac; }
+
+/* ---- Cancel button on scheduler card ---- */
+.cancel-run-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid #fca5a5;
+  border-radius: 4px;
+  background: #fff;
+  color: #dc2626;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cancel-run-btn:hover { background: #fef2f2; border-color: #ef4444; }
+
+/* ---- Cancel dialog ---- */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.dialog {
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 24px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.dialog-label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.dialog-select,
+.dialog-textarea {
+  padding: 7px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1e293b;
+  font-family: inherit;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.dialog-select:focus,
+.dialog-textarea:focus { border-color: #a5b4fc; }
+
+.dialog-textarea { resize: vertical; }
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.dialog-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-family: inherit;
+}
+
+.dialog-btn--secondary {
+  background: #fff;
+  border-color: #d1d5db;
+  color: #374151;
+}
+.dialog-btn--secondary:hover { background: #f9fafb; }
+
+.dialog-btn--danger {
+  background: #dc2626;
+  color: #fff;
+}
+.dialog-btn--danger:hover:not(:disabled) { background: #b91c1c; }
+.dialog-btn--danger:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.dialog-loading,
+.dialog-config-error,
+.dialog-submit-error {
+  margin: 0;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+.dialog-loading { color: #64748b; background: #f8fafc; }
+
+.dialog-config-error,
+.dialog-submit-error {
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+}
