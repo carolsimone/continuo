@@ -3,6 +3,6 @@ package topology
 import "context"
 
 type Repository interface {
-	UpsertNode(ctx context.Context, node *TopologyNode) error
+	ApplySnapshot(ctx context.Context, nodes []*TopologyNode) error
 	GetScheduleGraph(ctx context.Context, scheduleName string) ([]*Node, []*UpstreamDependency, error)
 }

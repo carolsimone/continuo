@@ -29,8 +29,10 @@ func (r *QueryRepository) GetScheduleGraph(ctx context.Context, scheduleName str
 
 	query := `
 		MATCH (n:Table {schedule_name: $schedule_name})
+		WHERE COALESCE(n.active, true)
 		OPTIONAL MATCH (n)-[:DEPENDS_ON]->(u:Table)
-		  WHERE u.schedule_name <> $schedule_name OR u.schedule_name IS NULL
+		  WHERE COALESCE(u.active, true)
+		    AND (u.schedule_name <> $schedule_name OR u.schedule_name IS NULL)
 		WITH collect(DISTINCT n) AS scheduleNodes,
 		     collect(DISTINCT u) AS externalNodes,
 		     collect(DISTINCT CASE WHEN u IS NOT NULL THEN {
@@ -39,6 +41,7 @@ func (r *QueryRepository) GetScheduleGraph(ctx context.Context, scheduleName str
 		     } END) AS crossEdges
 		UNWIND scheduleNodes AS n
 		OPTIONAL MATCH (n)-[:DEPENDS_ON]->(m:Table {schedule_name: $schedule_name})
+		  WHERE COALESCE(m.active, true)
 		WITH scheduleNodes, externalNodes, crossEdges,
 		     collect(DISTINCT CASE WHEN m IS NOT NULL THEN {
 		       from_id: n.service_name + '.' + n.schema_name + '.' + n.table_name,

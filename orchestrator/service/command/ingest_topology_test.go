@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/service/command"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
+	"github.com/carolsimone/continuo/orchestrator/service/command"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,14 +15,15 @@ import (
 // ── fakes: topology.Repository ───────────────────────────────────────────────
 
 type fakeTopologyRepository struct {
-	upsertNodeFn    func(ctx context.Context, node *topology.TopologyNode) error
-	upsertNodeCalls []*topology.TopologyNode
+	applySnapshotFn    func(ctx context.Context, nodes []*topology.TopologyNode) error
+	applySnapshotCalls [][]*topology.TopologyNode
 }
 
-func (f *fakeTopologyRepository) UpsertNode(ctx context.Context, node *topology.TopologyNode) error {
-	f.upsertNodeCalls = append(f.upsertNodeCalls, node)
-	if f.upsertNodeFn != nil {
-		return f.upsertNodeFn(ctx, node)
+func (f *fakeTopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topology.TopologyNode) error {
+	copied := append([]*topology.TopologyNode(nil), nodes...)
+	f.applySnapshotCalls = append(f.applySnapshotCalls, copied)
+	if f.applySnapshotFn != nil {
+		return f.applySnapshotFn(ctx, nodes)
 	}
 	return nil
 }
@@ -77,7 +78,7 @@ func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-// 1. 3 nodes across 2 schedules → UpsertNode called 3x, outbox entry created with both schedule names.
+// 1. 3 nodes across 2 schedules → ApplySnapshot called once, outbox entry created with both schedule names.
 func TestIngestTopology_ThreeNodesTwoSchedules(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
@@ -89,8 +90,8 @@ func TestIngestTopology_ThreeNodesTwoSchedules(t *testing.T) {
 	err := h.Handle(ctx, cmd, "msg-ingest-1")
 	require.NoError(t, err)
 
-	// UpsertNode should be called once per node
-	assert.Len(t, topoRepo.upsertNodeCalls, 3, "UpsertNode should be called 3 times")
+	require.Len(t, topoRepo.applySnapshotCalls, 1, "ApplySnapshot should be called once per manifest message")
+	assert.Len(t, topoRepo.applySnapshotCalls[0], 3, "ApplySnapshot should receive all nodes from the manifest payload")
 
 	// Transaction should be committed
 	assert.True(t, uow.CommittedTx, "transaction should be committed")
@@ -129,10 +130,11 @@ func TestIngestTopology_DuplicateMessage(t *testing.T) {
 	// First call: processes normally
 	err := h.Handle(ctx, cmd, "dup-ingest-1")
 	require.NoError(t, err)
-	assert.Len(t, topoRepo.upsertNodeCalls, 3)
+	require.Len(t, topoRepo.applySnapshotCalls, 1)
+	assert.Len(t, topoRepo.applySnapshotCalls[0], 3)
 
 	// Reset call tracking
-	topoRepo.upsertNodeCalls = nil
+	topoRepo.applySnapshotCalls = nil
 	uow.outboxRepo.CreatedEntries = nil
 	uow.CommittedTx = false
 
@@ -140,6 +142,6 @@ func TestIngestTopology_DuplicateMessage(t *testing.T) {
 	err = h.Handle(ctx, cmd, "dup-ingest-1")
 	require.NoError(t, err)
 
-	assert.Len(t, topoRepo.upsertNodeCalls, 0, "UpsertNode must NOT be called for duplicate")
+	assert.Len(t, topoRepo.applySnapshotCalls, 0, "ApplySnapshot must NOT be called for duplicate")
 	assert.Len(t, uow.outboxRepo.CreatedEntries, 0, "no outbox entries for duplicate")
 }

@@ -17,7 +17,7 @@ It is responsible for:
 
 | Entity | Description |
 |---|---|
-| `Table` node | One per model/seed; carries topology metadata and `last_updated_at` |
+| `Table` node | One per model/seed; carries topology metadata, `last_updated_at`, and an `active` flag for current-topology reconciliation |
 | `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at` |
 | `DEPENDS_ON` relationship | Directed edge from downstream to upstream `Table` |
 | `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status` and pre-assigned `task_id` UUID |
@@ -44,7 +44,7 @@ The `run.Repository` interface exposes the following Neo4j read methods used dur
 |---|---|---|
 | `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — initializes run snapshot, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` |
 | `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes |
-| `manifest.loaded:v1` | `orchestrator_manifest_loaded` | `IngestTopology` — upserts Table nodes and DEPENDS_ON edges |
+| `manifest.loaded:v1` | `orchestrator_manifest_loaded` | `IngestTopology` — applies the full manifest snapshot, rewrites `DEPENDS_ON`, retires missing `Table` nodes, then emits `schedules.loaded:v1` |
 | `initialize.run:v1` | `orchestrator_initialize_run` | `HandleRerun` — resets target/downstream nodes and produces `run.rerun.dispatched:v1` when a rerun target is present |
 
 ### gRPC server — `OrchestratorQuery` (port 50052)
@@ -87,7 +87,13 @@ Orchestrator no longer calls `state` gRPC for any internal writes. All state mut
 
 ### On `manifest.loaded:v1` — IngestTopology
 
-Receives a JSON payload of topology nodes. For each node, upserts the `Table` node and rewrites `DEPENDS_ON` edges in Neo4j. Deduplicates by Redis message ID via `message_processing` table.
+Receives a JSON payload of topology nodes representing the full current manifest snapshot. Within one Neo4j write transaction it:
+
+1. upserts every current `Table` node and rewrites its outgoing `DEPENDS_ON` edges
+2. marks any previously-active `Table` node missing from the payload as `active=false`
+3. deletes inactive `Table` nodes only when they are no longer referenced by any `Run` snapshot
+
+Schedule graph reads and new run snapshots only consider `active=true` `Table` nodes, while historical `Run` graphs remain intact through their `EXECUTES` edges. Deduplication still keys off the Redis message ID via `message_processing`.
 
 ### On `initialize.run:v1` (rerun path) — HandleRerun
 
@@ -148,6 +154,7 @@ Orchestrator calls no external gRPC services.
 - **Inbound dedup**: `message_processing` keyed by Redis message ID; INSERT IF NOT EXISTS prevents double-processing
 - **Outbound idempotency**: `published_messages` tracks published outbox entries; republishing is safe
 - **Neo4j updates are outside the Postgres tx**: topology and status writes are idempotent; if the tx fails the message will be redelivered
+- **Snapshot reconciliation**: `manifest.loaded:v1` is treated as authoritative; nodes missing from the latest payload are retired from the current topology automatically
 - **Pre-assigned task UUIDs**: task IDs are committed to Neo4j EXECUTES edges before `run.entries.dispatched:v1` is produced; the outbox processor reads them at publish time, ensuring consistent IDs across retries
 - **No state gRPC dependency**: orchestrator is fully decoupled from the state write path; all state mutations go through events
 - **RunSweeper**: deletion is best-effort; a sweep failure is logged and retried on the next tick
