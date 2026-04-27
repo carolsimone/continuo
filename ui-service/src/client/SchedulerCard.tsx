@@ -5,6 +5,7 @@ import {
   getScheduleProgressPercent,
 } from './scheduler-card-helpers';
 import { ScheduleSummary, Task } from './types';
+import CancelDialog from './CancelDialog';
 
 function formatTime(iso: string | null): string {
   if (!iso) return '—';
@@ -27,6 +28,7 @@ export default function SchedulerCard({ schedule }: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
 
   useEffect(() => {
     if (neverRun) return;
@@ -73,51 +75,74 @@ export default function SchedulerCard({ schedule }: Props) {
       .finally(() => setTriggerLoading(false));
   };
 
+  const handleCancelClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCancelDialogOpen(true);
+  };
+
   return (
-    <div
-      className={`scheduler-card ${cardBorderClass(displayStatus)}`}
-      onClick={handleClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={e => e.key === 'Enter' && handleClick()}
-    >
-      <div className="scheduler-card-header">
-        <span className="schedule-name">{schedule.schedule_name}</span>
-        <span className={`status-badge status-${displayStatus.replace(' ', '-')}`}>
-          {displayStatus}
-        </span>
-        {!neverRun && (
-          <span className="timestamps">
-            {schedule.last_run_at && <>last run {formatTime(schedule.last_run_at)}</>}
-          </span>
-        )}
-        <button
-          className={`trigger-run-btn${triggerLoading ? ' loading' : ''}`}
-          disabled={schedule.is_running || triggerLoading}
-          onClick={handleTrigger}
-          title={schedule.is_running ? 'A run is already active' : 'Trigger a full DAG run'}
-        >
-          {triggerLoading ? 'Starting...' : 'Run'}
-        </button>
-      </div>
-      {triggerError && <div className="trigger-error">{triggerError}</div>}
-      {!neverRun && total > 0 && (
-        <div className="scheduler-card-body">
-          <div className="progress-row">
-            <span className="progress-label">{getScheduleProgressLabel(tasks)}</span>
-            <div className="progress-bar-track">
-              <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
-            </div>
-            <span className="progress-pct">{pct}%</span>
-          </div>
-          <div className="summary-row">
-            <span><span aria-hidden="true">✅</span> {succeeded} succeeded</span>
-            <span><span aria-hidden="true">❌</span> {failed} failed</span>
-            <span><span aria-hidden="true">⏳</span> {pending} pending</span>
-            <span><span aria-hidden="true">🏃</span> {running} running</span>
-          </div>
-        </div>
+    <>
+      {cancelDialogOpen && (
+        <CancelDialog
+          scheduleName={schedule.schedule_name}
+          onClose={() => setCancelDialogOpen(false)}
+        />
       )}
-    </div>
+      <div
+        className={`scheduler-card ${cardBorderClass(displayStatus)}`}
+        onClick={handleClick}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => e.key === 'Enter' && handleClick()}
+      >
+        <div className="scheduler-card-header">
+          <span className="schedule-name">{schedule.schedule_name}</span>
+          <span className={`status-badge status-${displayStatus.replace(' ', '-')}`}>
+            {displayStatus}
+          </span>
+          {!neverRun && (
+            <span className="timestamps">
+              {schedule.last_run_at && <>last run {formatTime(schedule.last_run_at)}</>}
+            </span>
+          )}
+          <button
+            className={`trigger-run-btn${triggerLoading ? ' loading' : ''}`}
+            disabled={schedule.is_running || triggerLoading}
+            onClick={handleTrigger}
+            title={schedule.is_running ? 'A run is already active' : 'Trigger a full DAG run'}
+          >
+            {triggerLoading ? 'Starting...' : 'Run'}
+          </button>
+          {schedule.is_running && (
+            <button
+              type="button"
+              className="cancel-run-btn"
+              onClick={handleCancelClick}
+              title="Cancel the active run"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+        {triggerError && <div className="trigger-error">{triggerError}</div>}
+        {!neverRun && total > 0 && (
+          <div className="scheduler-card-body">
+            <div className="progress-row">
+              <span className="progress-label">{getScheduleProgressLabel(tasks)}</span>
+              <div className="progress-bar-track">
+                <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="progress-pct">{pct}%</span>
+            </div>
+            <div className="summary-row">
+              <span><span aria-hidden="true">✅</span> {succeeded} succeeded</span>
+              <span><span aria-hidden="true">❌</span> {failed} failed</span>
+              <span><span aria-hidden="true">⏳</span> {pending} pending</span>
+              <span><span aria-hidden="true">🏃</span> {running} running</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
