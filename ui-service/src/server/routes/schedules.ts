@@ -93,11 +93,15 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
 
   // POST /api/schedules/:name/cancel — cancel an active DAG run
   router.post('/:name/cancel', (req, res) => {
+    const { cancelled_by, cancellation_reason } = req.body ?? {};
+    if (!cancelled_by || !cancellation_reason) {
+      return res.status(400).json({ error: 'cancelled_by and cancellation_reason are required' });
+    }
     stateClient.cancelSchedule(
       {
         schedule_name:       req.params.name,
-        cancelled_by:        req.body.cancelled_by,
-        cancellation_reason: req.body.cancellation_reason,
+        cancelled_by,
+        cancellation_reason,
       },
       (err: any, response: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
