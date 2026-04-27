@@ -1,0 +1,148 @@
+import { useEffect, useState } from 'react';
+
+interface CancelConfig {
+  cancel_by_emails: string[];
+  cancellation_reasons: string[];
+}
+
+interface Props {
+  scheduleName: string;
+  onClose: () => void;
+}
+
+export default function CancelDialog({ scheduleName, onClose }: Props) {
+  const [config, setConfig] = useState<CancelConfig | null>(null);
+  const [configError, setConfigError] = useState(false);
+  const [cancelledBy, setCancelledBy] = useState('');
+  const [reason, setReason] = useState('');
+  const [otherText, setOtherText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then(r => {
+        if (!r.ok) throw new Error('config unavailable');
+        return r.json();
+      })
+      .then((data: CancelConfig) => setConfig(data))
+      .catch(() => setConfigError(true));
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const isOther = reason === 'Other';
+  const effectiveReason = isOther ? otherText.trim() : reason;
+  const canSubmit =
+    !submitting &&
+    cancelledBy !== '' &&
+    reason !== '' &&
+    (!isOther || otherText.trim() !== '');
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const res = await fetch(`/api/schedules/${encodeURIComponent(scheduleName)}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cancelled_by: cancelledBy, cancellation_reason: effectiveReason }),
+      });
+      if (res.ok) {
+        onClose();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setSubmitError(body.error ?? 'Request failed — please try again');
+      }
+    } catch {
+      setSubmitError('Request failed — please try again');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="dialog-overlay" onClick={onClose}>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`cancel-dialog-title-${scheduleName}`}
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="dialog-title" id={`cancel-dialog-title-${scheduleName}`}>Cancel run</h2>
+        {configError ? (
+          <p className="dialog-config-error">Could not load configuration.</p>
+        ) : !config ? (
+          <p className="dialog-loading">Loading…</p>
+        ) : (
+          <>
+            <label className="dialog-label">
+              Cancelled by
+              <select
+                className="dialog-select"
+                value={cancelledBy}
+                onChange={e => setCancelledBy(e.target.value)}
+                autoFocus
+              >
+                <option value="">Select…</option>
+                {config.cancel_by_emails.map(email => (
+                  <option key={email} value={email}>{email}</option>
+                ))}
+              </select>
+            </label>
+            <label className="dialog-label">
+              Reason
+              <select
+                className="dialog-select"
+                value={reason}
+                onChange={e => { setReason(e.target.value); setOtherText(''); }}
+              >
+                <option value="">Select…</option>
+                {config.cancellation_reasons.map(r => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            </label>
+            {isOther && (
+              <label className="dialog-label">
+                Describe the reason
+                <textarea
+                  className="dialog-textarea"
+                  value={otherText}
+                  onChange={e => setOtherText(e.target.value)}
+                  placeholder="Enter reason…"
+                  rows={3}
+                />
+              </label>
+            )}
+            {submitError && <p className="dialog-submit-error">{submitError}</p>}
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="dialog-btn dialog-btn--secondary"
+                onClick={onClose}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="dialog-btn dialog-btn--danger"
+                disabled={!canSubmit}
+                onClick={handleSubmit}
+              >
+                {submitting ? 'Cancelling…' : 'Cancel run'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -126,6 +126,16 @@ spec:
           {{- toYaml (omit $volume "name") | nindent 10 }}
           {{- end }}
         {{- end }}
+        {{- else if eq $svc.name "ui-service" }}
+        {{- range $volume := $svc.volumes }}
+        - name: {{ $volume.name }}
+          {{- if $volume.configMap }}
+          configMap:
+            name: {{ default (include "continuo-app.cancelConfigMapName" $) $volume.configMap.name }}
+          {{- else }}
+          {{- toYaml (omit $volume "name") | nindent 10 }}
+          {{- end }}
+        {{- end }}
         {{- else }}
         {{- toYaml $svc.volumes | nindent 8 }}
         {{- end }}

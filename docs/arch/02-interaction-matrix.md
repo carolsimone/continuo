@@ -43,6 +43,7 @@ Legend:
 | `task.execution.recorded:v1` | `k8s-controller` | `state` | Persist task execution record with timing and S3 log key |
 | `node.updated:v1` | `k8s-controller` | `orchestrator` | Node terminal status projection; orchestrator unlocks downstream nodes |
 | `run.finalized:v1` | `state` | *(future consumers)* | Run completed; emitted when all tasks reach terminal state |
+| `schedule.cancelled:v1` | `state` | `orchestrator`, `executor-controller`, `k8s-controller` | Signal active-run cancellation; consumers halt in-flight work for the cancelled schedule |
 
 ## Outbound gRPC Calls by Service
 
@@ -52,7 +53,7 @@ Internal pipeline writes to `state` are now event-driven (via Redis). The only r
 
 | Caller | Methods used |
 |---|---|
-| `ui-service` | `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule` |
+| `ui-service` | `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`, `CancelSchedule` |
 | `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
 
 ### Calls to `orchestrator`

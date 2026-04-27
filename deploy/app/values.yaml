@@ -191,6 +191,14 @@ services:
       PORT: "8090"
       NODE_ENV: production
       REDIS_URL: __REDIS_URL_FROM_AUTH__
+    volumeMounts:
+      - name: cancel-config
+        mountPath: /app/config
+        readOnly: true
+    volumes:
+      - name: cancel-config
+        configMap:
+          name: ""
 
   - name: manifest-controller
     enabled: true

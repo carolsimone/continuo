@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   getScheduleProgressLabel,
   getScheduleProgressPercent,
 } from './scheduler-card-helpers';
 import { ScheduleSummary, Task } from './types';
+import CancelDialog from './CancelDialog';
 
 function formatTime(iso: string | null): string {
   if (!iso) return '—';
@@ -27,6 +29,7 @@ export default function SchedulerCard({ schedule }: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
 
   useEffect(() => {
     if (neverRun) return;
@@ -39,6 +42,10 @@ export default function SchedulerCard({ schedule }: Props) {
     const id = setInterval(fetch_, 5000);
     return () => clearInterval(id);
   }, [schedule.last_run_id]);
+
+  useEffect(() => {
+    if (!schedule.is_running) setCancelDialogOpen(false);
+  }, [schedule.is_running]);
 
   const displayStatus = neverRun
     ? 'never run'
@@ -62,7 +69,7 @@ export default function SchedulerCard({ schedule }: Props) {
     e.stopPropagation();
     setTriggerLoading(true);
     setTriggerError(null);
-    fetch(`/api/schedules/${schedule.schedule_name}/trigger`, { method: 'POST' })
+    fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/trigger`, { method: 'POST' })
       .then(async r => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
@@ -73,51 +80,76 @@ export default function SchedulerCard({ schedule }: Props) {
       .finally(() => setTriggerLoading(false));
   };
 
+  const handleCancelClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCancelDialogOpen(true);
+  };
+
   return (
-    <div
-      className={`scheduler-card ${cardBorderClass(displayStatus)}`}
-      onClick={handleClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={e => e.key === 'Enter' && handleClick()}
-    >
-      <div className="scheduler-card-header">
-        <span className="schedule-name">{schedule.schedule_name}</span>
-        <span className={`status-badge status-${displayStatus.replace(' ', '-')}`}>
-          {displayStatus}
-        </span>
-        {!neverRun && (
-          <span className="timestamps">
-            {schedule.last_run_at && <>last run {formatTime(schedule.last_run_at)}</>}
-          </span>
-        )}
-        <button
-          className={`trigger-run-btn${triggerLoading ? ' loading' : ''}`}
-          disabled={schedule.is_running || triggerLoading}
-          onClick={handleTrigger}
-          title={schedule.is_running ? 'A run is already active' : 'Trigger a full DAG run'}
-        >
-          {triggerLoading ? 'Starting...' : 'Run'}
-        </button>
-      </div>
-      {triggerError && <div className="trigger-error">{triggerError}</div>}
-      {!neverRun && total > 0 && (
-        <div className="scheduler-card-body">
-          <div className="progress-row">
-            <span className="progress-label">{getScheduleProgressLabel(tasks)}</span>
-            <div className="progress-bar-track">
-              <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
-            </div>
-            <span className="progress-pct">{pct}%</span>
-          </div>
-          <div className="summary-row">
-            <span><span aria-hidden="true">✅</span> {succeeded} succeeded</span>
-            <span><span aria-hidden="true">❌</span> {failed} failed</span>
-            <span><span aria-hidden="true">⏳</span> {pending} pending</span>
-            <span><span aria-hidden="true">🏃</span> {running} running</span>
-          </div>
-        </div>
+    <>
+      {cancelDialogOpen && createPortal(
+        <CancelDialog
+          scheduleName={schedule.schedule_name}
+          onClose={() => setCancelDialogOpen(false)}
+        />,
+        document.body,
       )}
-    </div>
+      <div
+        className={`scheduler-card ${cardBorderClass(displayStatus)}`}
+        onClick={handleClick}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => e.key === 'Enter' && handleClick()}
+      >
+        <div className="scheduler-card-header">
+          <span className="schedule-name">{schedule.schedule_name}</span>
+          <span className={`status-badge status-${displayStatus.replace(' ', '-')}`}>
+            {displayStatus}
+          </span>
+          {!neverRun && (
+            <span className="timestamps">
+              {schedule.last_run_at && <>last run {formatTime(schedule.last_run_at)}</>}
+            </span>
+          )}
+          <button
+            type="button"
+            className={`trigger-run-btn${triggerLoading ? ' loading' : ''}`}
+            disabled={schedule.is_running || triggerLoading}
+            onClick={handleTrigger}
+            title={schedule.is_running ? 'A run is already active' : 'Trigger a full DAG run'}
+          >
+            {triggerLoading ? 'Starting...' : 'Run'}
+          </button>
+          {schedule.is_running && (
+            <button
+              type="button"
+              className="cancel-run-btn"
+              onClick={handleCancelClick}
+              title="Cancel the active run"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+        {triggerError && <div className="trigger-error">{triggerError}</div>}
+        {!neverRun && total > 0 && (
+          <div className="scheduler-card-body">
+            <div className="progress-row">
+              <span className="progress-label">{getScheduleProgressLabel(tasks)}</span>
+              <div className="progress-bar-track">
+                <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="progress-pct">{pct}%</span>
+            </div>
+            <div className="summary-row">
+              <span><span aria-hidden="true">✅</span> {succeeded} succeeded</span>
+              <span><span aria-hidden="true">❌</span> {failed} failed</span>
+              <span><span aria-hidden="true">⏳</span> {pending} pending</span>
+              <span><span aria-hidden="true">🏃</span> {running} running</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 }

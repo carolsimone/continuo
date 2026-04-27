@@ -388,6 +388,8 @@ services:
       - REDIS_URL=redis://:continuo@redis:6379
     ports:
       - "8090:8090"
+    volumes:
+      - ./ui-service/config:/app/config:ro
     networks:
       - default
 

@@ -7,8 +7,14 @@ import { createSchedulesRouter, createRunsRouter } from './routes/schedules';
 import { createExecutionsRouter } from './routes/executions';
 import { createTaskExecutionRouter } from './routes/task-execution';
 import { createGraphRouter } from './routes/graph';
+import { createConfigRouter } from './routes/config';
 
-export function createApp(client: GrpcClient, graphClient: GrpcGraphClient, redisClient: Redis | null) {
+export function createApp(
+  client: GrpcClient,
+  graphClient: GrpcGraphClient,
+  redisClient: Redis | null,
+  configFilePath = '/app/config/cancel-config.json',
+) {
   const app = express();
   app.use(express.json());
   app.use('/api/schedulers', createSchedulersRouter(client));
@@ -17,5 +23,6 @@ export function createApp(client: GrpcClient, graphClient: GrpcGraphClient, redi
   app.use('/api/schedulers', createExecutionsRouter(client));
   app.use('/api/task-execution', createTaskExecutionRouter());
   app.use('/api/graph', createGraphRouter(redisClient));
+  app.use('/api/config', createConfigRouter(configFilePath));
   return app;
 }

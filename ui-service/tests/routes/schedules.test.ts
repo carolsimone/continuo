@@ -22,7 +22,7 @@ app.use(express.json());
 app.use('/api/schedules', createSchedulesRouter(mockStateClient as any, mockGraphClient));
 
 describe('POST /api/schedules/:name/trigger', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns 200 with schedule_id on success', async () => {
     mockTriggerSchedule.mockImplementation((_req: any, cb: any) =>
@@ -74,7 +74,7 @@ describe('POST /api/schedules/:name/trigger', () => {
 });
 
 describe('POST /api/schedules/:name/cancel', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns 200 with schedule_id on success', async () => {
     mockCancelSchedule.mockImplementation((_req: any, cb: any) =>
@@ -103,7 +103,9 @@ describe('POST /api/schedules/:name/cancel', () => {
     });
     mockCancelSchedule.mockImplementation((_req: any, cb: any) => cb(err));
 
-    const res = await request(app).post('/api/schedules/no-run/cancel').send({});
+    const res = await request(app)
+      .post('/api/schedules/no-run/cancel')
+      .send({ cancelled_by: 'operator', cancellation_reason: 'manual' });
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/no active run/);
@@ -115,7 +117,9 @@ describe('POST /api/schedules/:name/cancel', () => {
     });
     mockCancelSchedule.mockImplementation((_req: any, cb: any) => cb(err));
 
-    const res = await request(app).post('/api/schedules/unknown/cancel').send({});
+    const res = await request(app)
+      .post('/api/schedules/unknown/cancel')
+      .send({ cancelled_by: 'operator', cancellation_reason: 'manual' });
 
     expect(res.status).toBe(404);
     expect(res.body.error).toMatch(/not found/);
@@ -125,8 +129,19 @@ describe('POST /api/schedules/:name/cancel', () => {
     const err = Object.assign(new Error('internal'), { code: grpc.status.INTERNAL });
     mockCancelSchedule.mockImplementation((_req: any, cb: any) => cb(err));
 
-    const res = await request(app).post('/api/schedules/hourly/cancel').send({});
+    const res = await request(app)
+      .post('/api/schedules/hourly/cancel')
+      .send({ cancelled_by: 'operator', cancellation_reason: 'manual' });
 
     expect(res.status).toBe(500);
+  });
+
+  it('returns 400 when cancelled_by or cancellation_reason is missing', async () => {
+    const res = await request(app)
+      .post('/api/schedules/my-schedule/cancel')
+      .send({ cancelled_by: 'operator' }); // missing cancellation_reason
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/required/i);
   });
 });

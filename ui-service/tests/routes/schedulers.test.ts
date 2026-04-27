@@ -19,7 +19,7 @@ app.use(express.json());
 app.use('/api/schedulers', createSchedulersRouter(mockClient as any));
 
 describe('GET /api/schedulers/:id/tasks', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns tasks with normalised status', async () => {
     mockListTasks.mockImplementation((_req: any, callback: any) => {
@@ -80,7 +80,7 @@ describe('GET /api/schedulers/:id/tasks', () => {
 describe('POST /api/schedulers/:id/rerun', () => {
   const VALID_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns 200 on success', async () => {
     mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(null));
