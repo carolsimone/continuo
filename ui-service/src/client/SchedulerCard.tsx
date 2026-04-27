@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   getScheduleProgressLabel,
@@ -42,6 +43,10 @@ export default function SchedulerCard({ schedule }: Props) {
     return () => clearInterval(id);
   }, [schedule.last_run_id]);
 
+  useEffect(() => {
+    if (!schedule.is_running) setCancelDialogOpen(false);
+  }, [schedule.is_running]);
+
   const displayStatus = neverRun
     ? 'never run'
     : schedule.is_running
@@ -82,11 +87,12 @@ export default function SchedulerCard({ schedule }: Props) {
 
   return (
     <>
-      {cancelDialogOpen && (
+      {cancelDialogOpen && createPortal(
         <CancelDialog
           scheduleName={schedule.schedule_name}
           onClose={() => setCancelDialogOpen(false)}
-        />
+        />,
+        document.body,
       )}
       <div
         className={`scheduler-card ${cardBorderClass(displayStatus)}`}
@@ -106,6 +112,7 @@ export default function SchedulerCard({ schedule }: Props) {
             </span>
           )}
           <button
+            type="button"
             className={`trigger-run-btn${triggerLoading ? ' loading' : ''}`}
             disabled={schedule.is_running || triggerLoading}
             onClick={handleTrigger}

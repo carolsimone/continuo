@@ -69,8 +69,14 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog" onClick={e => e.stopPropagation()}>
-        <h2 className="dialog-title">Cancel run</h2>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cancel-dialog-title"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="dialog-title" id="cancel-dialog-title">Cancel run</h2>
         {configError ? (
           <p className="dialog-config-error">Could not load configuration.</p>
         ) : !config ? (
@@ -83,6 +89,7 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
                 className="dialog-select"
                 value={cancelledBy}
                 onChange={e => setCancelledBy(e.target.value)}
+                autoFocus
               >
                 <option value="">Select…</option>
                 {config.cancel_by_emails.map(email => (
