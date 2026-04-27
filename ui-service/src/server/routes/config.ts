@@ -6,6 +6,7 @@ export function createConfigRouter(configFilePath: string) {
 
   router.get('/', (_req, res) => {
     try {
+      // Reads on every request intentionally — admin-only path, allows config hot-reload without restart.
       const raw = readFileSync(configFilePath, 'utf8');
       const parsed = JSON.parse(raw);
       res.json(parsed);

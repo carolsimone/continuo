@@ -9,23 +9,22 @@ import { createConfigRouter } from '../../src/server/routes/config';
 const VALID_CONFIG_PATH = join(tmpdir(), 'test-cancel-config-valid.json');
 const BAD_CONFIG_PATH = join(tmpdir(), 'test-cancel-config-bad.json');
 
-beforeAll(() => {
-  writeFileSync(
-    VALID_CONFIG_PATH,
-    JSON.stringify({
-      cancel_by_emails: ['alice@example.com'],
-      cancellation_reasons: ['Incorrect trigger', 'Other'],
-    }),
-  );
-  writeFileSync(BAD_CONFIG_PATH, 'not valid json {{{');
-});
-
-afterAll(() => {
-  try { unlinkSync(VALID_CONFIG_PATH); } catch {}
-  try { unlinkSync(BAD_CONFIG_PATH); } catch {}
-});
-
 describe('GET /api/config', () => {
+  beforeAll(() => {
+    writeFileSync(
+      VALID_CONFIG_PATH,
+      JSON.stringify({
+        cancel_by_emails: ['alice@example.com'],
+        cancellation_reasons: ['Incorrect trigger', 'Other'],
+      }),
+    );
+    writeFileSync(BAD_CONFIG_PATH, 'not valid json {{{');
+  });
+
+  afterAll(() => {
+    try { unlinkSync(VALID_CONFIG_PATH); } catch {}
+    try { unlinkSync(BAD_CONFIG_PATH); } catch {}
+  });
   it('returns the config as JSON when the file exists', async () => {
     const app = express();
     app.use('/api/config', createConfigRouter(VALID_CONFIG_PATH));
