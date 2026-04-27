@@ -21,10 +21,21 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
 
   useEffect(() => {
     fetch('/api/config')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('config unavailable');
+        return r.json();
+      })
       .then((data: CancelConfig) => setConfig(data))
       .catch(() => setConfigError(true));
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   const isOther = reason === 'Other';
   const effectiveReason = isOther ? otherText.trim() : reason;
@@ -38,7 +49,7 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const res = await fetch(`/api/schedules/${scheduleName}/cancel`, {
+      const res = await fetch(`/api/schedules/${encodeURIComponent(scheduleName)}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cancelled_by: cancelledBy, cancellation_reason: effectiveReason }),
