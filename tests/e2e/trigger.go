@@ -56,7 +56,7 @@ func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 	// Record the last message ID on manifest.loaded:v1 before triggering so the
 	// poll below can prove this specific trigger was processed, not a prior one.
 	entries, err := clients.redisClient.XRevRangeN(ctx, "manifest.loaded:v1", "+", "-", 1).Result()
-	lastManifestID := "0"
+	lastManifestID := "0-0"
 	if err == nil && len(entries) > 0 {
 		lastManifestID = entries[0].ID
 	}
@@ -95,8 +95,9 @@ func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 		var count int
 		if err := clients.stateDB.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM schedule_catalog
-			 WHERE schedule_name IN ('e2e-schedule', 'e2e-schedule-failure')
+			 WHERE schedule_name IN ($1, $2)
 			   AND removed_at IS NULL`,
+			testScheduleName, failureTestScheduleName,
 		).Scan(&count); err != nil {
 			return false, err
 		}
