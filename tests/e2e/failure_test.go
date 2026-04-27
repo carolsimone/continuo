@@ -14,7 +14,7 @@ import (
 // permanently fails (exhausts 2 retries / 3 total attempts), its downstream
 // node ftable_f is never deployed and the scheduler is finalised as FAILED.
 //
-// DAG (all nodes seeded directly into Neo4j — bypasses manifest-controller):
+// DAG topology loaded via manifest-controller from dbt/services/service-{1,2,3}/:
 //
 //	ftable_a (service-1)  ftable_b (service-1)
 //	              \           /
@@ -43,8 +43,8 @@ func TestE2E_FailurePath_NodeFailureDrainsSchedule(t *testing.T) {
 
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)
 
-	t.Log("Seeding 6-node failure DAG...")
-	seedFailureDAG(t, ctx, clients)
+	t.Log("Loading graph via manifest-controller...")
+	triggerGraphLoad(t, ctx, clients)
 
 	t.Log("Activating schedule...")
 	schedulerIDStr := createAndActivateFailureScheduler(t, ctx, clients)
