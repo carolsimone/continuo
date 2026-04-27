@@ -41,3 +41,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- define "continuo-app.migrationsJobName" -}}
 {{- printf "%s-db-migrate" (include "continuo-app.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
+
+{{- define "continuo-app.cancelConfigMapName" -}}
+{{- printf "%s-cancel-config" (include "continuo-app.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}

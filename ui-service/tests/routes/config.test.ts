@@ -8,6 +8,7 @@ import { createConfigRouter } from '../../src/server/routes/config';
 
 const VALID_CONFIG_PATH = join(tmpdir(), 'test-cancel-config-valid.json');
 const BAD_CONFIG_PATH = join(tmpdir(), 'test-cancel-config-bad.json');
+const MISSING_FIELDS_CONFIG_PATH = join(tmpdir(), 'test-cancel-config-missing-fields.json');
 
 describe('GET /api/config', () => {
   beforeAll(() => {
@@ -19,11 +20,13 @@ describe('GET /api/config', () => {
       }),
     );
     writeFileSync(BAD_CONFIG_PATH, 'not valid json {{{');
+    writeFileSync(MISSING_FIELDS_CONFIG_PATH, JSON.stringify({ cancel_by_emails: ['a@b.com'] }));
   });
 
   afterAll(() => {
     try { unlinkSync(VALID_CONFIG_PATH); } catch {}
     try { unlinkSync(BAD_CONFIG_PATH); } catch {}
+    try { unlinkSync(MISSING_FIELDS_CONFIG_PATH); } catch {}
   });
   it('returns the config as JSON when the file exists', async () => {
     const app = express();
@@ -45,6 +48,14 @@ describe('GET /api/config', () => {
   it('returns 503 when the config file contains invalid JSON', async () => {
     const app = express();
     app.use('/api/config', createConfigRouter(BAD_CONFIG_PATH));
+    const res = await request(app).get('/api/config');
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/unavailable/i);
+  });
+
+  it('returns 503 when required fields are missing from the config', async () => {
+    const app = express();
+    app.use('/api/config', createConfigRouter(MISSING_FIELDS_CONFIG_PATH));
     const res = await request(app).get('/api/config');
     expect(res.status).toBe(503);
     expect(res.body.error).toMatch(/unavailable/i);
