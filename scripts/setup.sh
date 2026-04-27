@@ -89,17 +89,14 @@ wait
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Compile dbt manifests for each service image so the continuo can read the
-# full dependency graph at runtime.  dbt compile requires a live Postgres
-# connection to resolve source references; run on the continuo_default network
-# with DBT_POSTGRES_HOST pointing at the postgres container.
-# Start postgres now so the compose network exists and postgres is
-# reachable before we try to compile.
-echo "Starting postgres for dbt manifest compilation..."
-docker compose up -d postgres
+# Compile dbt manifests and upload to localstack S3 using the dbt-compile-and-load
+# service. This mirrors the production flow: manifests live in S3, and the
+# manifest-controller reads them via source=s3 when update.graph:v1 fires.
+echo "Starting postgres and localstack for dbt manifest compilation..."
+docker compose up -d postgres localstack
 echo "Waiting for postgres to be ready..."
 for i in $(seq 1 30); do
-    if docker compose exec -T postgres pg_isready -U runner > /dev/null 2>&1; then
+    if docker compose exec -T postgres pg_isready -U continuo_svc > /dev/null 2>&1; then
         echo "✓ postgres ready"
         break
     fi
@@ -109,25 +106,23 @@ for i in $(seq 1 30); do
     fi
     sleep 2
 done
-# Detect the compose network name (varies by directory/project name)
-COMPOSE_NETWORK=$(docker compose config --format json 2>/dev/null | python3 -c "import sys,json; nets=json.load(sys.stdin).get('networks',{}); print(list(nets.values())[0].get('name','') if nets else '')" 2>/dev/null || true)
-if [ -z "$COMPOSE_NETWORK" ]; then
-    # Fallback: inspect the postgres container's networks
-    COMPOSE_NETWORK=$(docker inspect --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q postgres)")
-fi
-echo "Using compose network: $COMPOSE_NETWORK"
-echo "Compiling dbt manifests..."
-for svc in service-1 service-2 service-3; do
-    echo "  Compiling ${svc}..."
-    CID=$(docker run -d --network "$COMPOSE_NETWORK" \
-        -e DBT_POSTGRES_HOST=postgres \
-        --entrypoint dbt "${svc}:latest" compile --profiles-dir /project)
-    docker wait "$CID"
-    docker cp "$CID:/project/target/manifest.json" "dbt/services/${svc}/manifest.json"
-    docker rm "$CID"
-    echo "  ✓ manifest saved to dbt/services/${svc}/manifest.json"
+echo "Waiting for localstack to be healthy..."
+for i in $(seq 1 30); do
+    if docker compose exec -T localstack curl -sf http://localhost:4566/_localstack/health > /dev/null 2>&1; then
+        echo "✓ localstack ready"
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "✗ localstack not ready after 60s"
+        exit 1
+    fi
+    sleep 2
 done
-echo "✓ dbt manifests compiled"
+echo "Starting dbt-compile-and-load..."
+docker compose up -d dbt-compile-and-load
+echo "Compiling and uploading dbt manifests to localstack S3..."
+docker exec dbt-compile-and-load uv run python -m dbt_upload load --services-dir /app/services --target localstack
+echo "✓ dbt manifests compiled and uploaded to localstack S3"
 
 # Wait for control plane
 echo "Waiting for control plane..."

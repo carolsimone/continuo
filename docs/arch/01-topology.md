@@ -124,6 +124,7 @@ flowchart TD
 
 - `state` owns task and scheduler status; other services must mutate that state through gRPC.
 - `orchestrator` owns table topology (Neo4j) and run-time `EXECUTES` status projection; it also handles node completion events and downstream unlocking (formerly split between `graph` and `dependency-controller`).
+- `manifest.loaded:v1` is a full topology snapshot. `orchestrator` must reconcile Neo4j against it by retiring missing `Table` nodes from the active graph while preserving historical `Run` snapshots.
 - The dedicated Flyway migration image artifact runs the shared `db/migration/` trees sequentially for `continuo_state`, `continuo_executor`, `continuo_orchestrator`, and `continuo_k8s`.
 - Redis carries orchestration events between services. Redis requires password authentication in all environments (local docker-compose: `--requirepass continuo`; production: injected via Kubernetes secret as `REDIS_PASSWORD`). All services must supply `REDIS_PASSWORD` or the process will refuse to start (see `pkg/config.Validator`).
 - The controller services use local Postgres outbox and dedup tables to make cross-service messaging reliable.

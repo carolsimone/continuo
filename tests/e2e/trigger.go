@@ -9,23 +9,15 @@ import (
 	"testing"
 	"time"
 
-	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	testScheduleName = "e2e-schedule"
-	testSchemaName   = "e2e_schema"
-	testOwner        = "test"
+	testScheduleName        = "e2e-schedule"
+	testSchemaName          = "e2e_schema"
+	testOwner               = "test"
+	failureTestScheduleName = "e2e-schedule-failure"
 )
-
-// expectedTables is the full set of table names the manifest-controller loads
-var expectedTables = []string{
-	"table_a", "table_b", "table_c",
-	"table_d", "table_e", "table_f",
-	"table_g", "table_h",
-	"table_i", "table_j",
-}
 
 // tableServiceMap maps each happy-path table to its owning service
 var tableServiceMap = map[string]string{
@@ -53,31 +45,26 @@ func getServiceNameForTable(tableName string) string {
 	return svc
 }
 
-// triggerGraphLoad triggers a graph update via the ui-service HTTP endpoint
-// and waits until all expected nodes are visible in the Neo4j graph.
+// triggerGraphLoad triggers a graph update via the ui-service HTTP endpoint and
+// waits until the manifest-controller confirms the trigger was processed (via a
+// new manifest.loaded:v1 message) and both test schedules appear in schedule_catalog.
+// No topology state is mutated before triggering — the system is expected to handle
+// pre-existing Table nodes correctly, matching production behaviour.
 func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
 
-	// Clear any nodes and catalog rows left by a previous run so the polls
-	// below always wait for fresh data rather than returning immediately
-	// against stale state.
-	clearSession := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode: neo4jdriver.AccessModeWrite,
-	})
-	_, err := clearSession.Run(ctx,
-		"MATCH (t:Table {schedule_name: $schedule_name}) DETACH DELETE t",
-		map[string]interface{}{"schedule_name": testScheduleName},
-	)
-	clearSession.Close(ctx)
-	require.NoError(t, err, "pre-trigger: failed to clear stale Table nodes from Neo4j")
-
-	_, err = clients.stateDB.ExecContext(ctx, "DELETE FROM schedule_catalog")
-	require.NoError(t, err, "pre-trigger: failed to clear stale schedule_catalog rows")
+	// Record the last message ID on manifest.loaded:v1 before triggering so the
+	// poll below can prove this specific trigger was processed, not a prior one.
+	entries, err := clients.redisClient.XRevRangeN(ctx, "manifest.loaded:v1", "+", "-", 1).Result()
+	lastManifestID := "0-0"
+	if err == nil && len(entries) > 0 {
+		lastManifestID = entries[0].ID
+	}
 
 	resp, err := http.Post(
 		fmt.Sprintf("%s/api/graph/update", clients.uiBase),
 		"application/json",
-		strings.NewReader(`{"source":"local"}`),
+		strings.NewReader(`{"source":"s3"}`),
 	)
 	require.NoError(t, err, "POST /api/graph/update: request failed")
 	defer resp.Body.Close()
@@ -86,52 +73,36 @@ func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 	require.Equal(t, http.StatusOK, resp.StatusCode,
 		"POST /api/graph/update: expected 200, got %d: %s", resp.StatusCode, string(body))
 
-	t.Log("Published update.graph:v1 via ui-service — waiting for manifest-controller to load nodes...")
+	t.Log("Published update.graph:v1 via ui-service — waiting for manifest-controller to publish manifest.loaded:v1...")
 
+	// Wait for the manifest-controller to respond to this specific trigger.
+	// XRange with "("+lastManifestID as start returns only messages with ID
+	// strictly greater than lastManifestID, so pre-existing messages are ignored.
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
-		session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
-			AccessMode: neo4jdriver.AccessModeRead,
-		})
-		defer session.Close(ctx)
-
-		result, err := session.Run(ctx,
-			"MATCH (t:Table) WHERE t.table_name IN $tables AND t.schedule_name = $schedule_name RETURN count(t) AS cnt",
-			map[string]interface{}{
-				"tables":        expectedTables,
-				"schedule_name": testScheduleName,
-			},
-		)
+		msgs, err := clients.redisClient.XRange(ctx, "manifest.loaded:v1", "("+lastManifestID, "+").Result()
 		if err != nil {
 			return false, nil
 		}
-		record, err := result.Single(ctx)
-		if err != nil {
-			return false, nil
-		}
-		cnt, _ := record.Get("cnt")
-		count, ok := cnt.(int64)
-		if !ok {
-			return false, nil
-		}
-		return count >= int64(len(expectedTables)), nil
-	}, fmt.Sprintf("Timeout waiting for manifest-controller to load %d nodes", len(expectedTables)))
+		return len(msgs) > 0, nil
+	}, "Timeout waiting for manifest-controller to publish manifest.loaded:v1")
 
-	t.Logf("manifest-controller loaded %d nodes into graph", len(expectedTables))
+	t.Log("manifest-controller published manifest.loaded:v1 — waiting for schedule_catalog to be populated...")
 
-	// Wait for state service to consume schedules.loaded:v1 and populate schedule_catalog.
-	// Neo4j nodes appearing does not guarantee the catalog is ready — they are populated
-	// by two separate async steps (graph load → Redis publish → state consumer).
-	// Without this wait, ActivateSchedule bypasses the catalog check and the UI sees
-	// an empty catalog until the event is eventually processed.
+	// Wait for the full async chain: orchestrator consumed manifest.loaded:v1,
+	// updated Neo4j, published schedules.loaded:v1, state populated schedule_catalog.
+	// Both schedules are always loaded together from a single manifest trigger.
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
 		var count int
 		if err := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM schedule_catalog WHERE removed_at IS NULL`,
+			`SELECT COUNT(*) FROM schedule_catalog
+			 WHERE schedule_name IN ($1, $2)
+			   AND removed_at IS NULL`,
+			testScheduleName, failureTestScheduleName,
 		).Scan(&count); err != nil {
 			return false, err
 		}
-		return count > 0, nil
-	}, "Timeout waiting for schedule_catalog to be populated by state service")
+		return count >= 2, nil
+	}, "Timeout waiting for schedule_catalog to be populated with both schedules")
 
-	t.Log("schedule_catalog populated — catalog and graph are in sync")
+	t.Log("schedule_catalog populated for both schedules — catalog and graph are in sync")
 }

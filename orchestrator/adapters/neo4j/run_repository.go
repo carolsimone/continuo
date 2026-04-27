@@ -33,6 +33,7 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 	listQuery := `
 		CALL {
 			MATCH (t:Table {schedule_name: $schedule_name})
+			WHERE COALESCE(t.active, true)
 			RETURN t.schema_name   AS schema_name,
 			       t.table_name    AS table_name,
 			       t.service_name  AS service_name,
@@ -40,7 +41,10 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 
 			UNION
 
-			MATCH (t:Table {schedule_name: $schedule_name})-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
+			MATCH (t:Table {schedule_name: $schedule_name})
+			WHERE COALESCE(t.active, true)
+			MATCH (t)-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
+			WHERE COALESCE(s.active, true)
 			RETURN s.schema_name   AS schema_name,
 			       s.table_name    AS table_name,
 			       s.service_name  AS service_name,
@@ -131,10 +135,10 @@ func (r *RunRepository) UpdateNodeStatus(ctx context.Context, runID, scheduleNam
 	`
 
 	result, err := session.Run(ctx, query, map[string]interface{}{
-		"run_id":     runID,
+		"run_id":      runID,
 		"schema_name": schema,
-		"table_name": tableName,
-		"status":     status,
+		"table_name":  tableName,
+		"status":      status,
 	})
 	if err != nil {
 		r.logger.Error("Failed to update node status via EXECUTES",
@@ -473,8 +477,10 @@ func (r *RunRepository) GetTransitiveDownstream(ctx context.Context, scheduleNam
 
 	query := `
 		MATCH (start:Table {schedule_name: $schedule_name, schema_name: $schema_name, table_name: $table_name})
+		WHERE COALESCE(start.active, true)
 		MATCH (downstream:Table {schedule_name: $schedule_name})-[:DEPENDS_ON*1..]->(start)
-		WHERE downstream.status IS NULL OR downstream.status <> 'SUCCEEDED'
+		WHERE COALESCE(downstream.active, true)
+		  AND (downstream.status IS NULL OR downstream.status <> 'SUCCEEDED')
 		RETURN DISTINCT
 			downstream.table_name    AS table_name,
 			downstream.schema_name   AS schema_name,
@@ -529,7 +535,7 @@ func (r *RunRepository) GetNodeType(ctx context.Context, schema, tableName strin
 		LIMIT 1
 	`, map[string]interface{}{
 		"schema_name": schema,
-		"table_name": tableName,
+		"table_name":  tableName,
 	})
 	if err != nil {
 		return "", fmt.Errorf("GetNodeType query failed: %w", err)
@@ -553,7 +559,7 @@ func (r *RunRepository) GetNodeServiceName(ctx context.Context, schema, tableNam
 		LIMIT 1
 	`, map[string]interface{}{
 		"schema_name": schema,
-		"table_name": tableName,
+		"table_name":  tableName,
 	})
 	if err != nil {
 		return "", fmt.Errorf("GetNodeServiceName query failed: %w", err)

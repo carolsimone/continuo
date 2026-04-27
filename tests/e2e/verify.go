@@ -134,6 +134,17 @@ func verifyDependencyControllerUnlockedNextLevel(
 	t.Logf("✅ orchestrator unlocked %d nodes", len(nextLevelTables))
 }
 
+// getDAGLevels returns happy-path DAG nodes grouped by execution level.
+func getDAGLevels() [][]string {
+	return [][]string{
+		{"seed_table_1", "seed_table_2", "seed_table_3"},
+		{"table_a", "table_b", "table_c"},
+		{"table_d", "table_e", "table_f"},
+		{"table_g", "table_h"},
+		{"table_i", "table_j"},
+	}
+}
+
 // verifyFullDAGExecution verifies all 4 levels execute in order
 func verifyFullDAGExecution(
 	t *testing.T,

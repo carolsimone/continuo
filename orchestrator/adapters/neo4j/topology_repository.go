@@ -19,11 +19,63 @@ func NewTopologyRepository(client Neo4jClient, logger *slog.Logger) *TopologyRep
 	return &TopologyRepository{client: client, logger: logger}
 }
 
+// ApplySnapshot reconciles the current topology to exactly match the latest
+// manifest snapshot. Nodes missing from the payload are retired from the
+// current schedule graph, while historical nodes referenced by existing runs
+// are preserved in Neo4j.
+func (r *TopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topology.TopologyNode) error {
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	tx, err := session.BeginTransaction(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin topology transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	currentNodes := make([]map[string]interface{}, 0, len(nodes))
+	for _, node := range nodes {
+		if err := r.upsertNodeTx(ctx, tx, node); err != nil {
+			return err
+		}
+		currentNodes = append(currentNodes, map[string]interface{}{
+			"schema_name": node.SchemaName,
+			"table_name":  node.TableName,
+		})
+	}
+
+	if err := r.retireMissingNodes(ctx, tx, currentNodes); err != nil {
+		return err
+	}
+	if err := r.deleteInactiveOrphans(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit topology transaction: %w", err)
+	}
+
+	r.logger.Info("Applied topology snapshot", "node_count", len(nodes))
+	return nil
+}
+
 // UpsertNode creates or updates a table node with its upstream dependencies.
 func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.TopologyNode) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
+	tx, err := session.BeginTransaction(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin node upsert transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if err := r.upsertNodeTx(ctx, tx, node); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *TopologyRepository) upsertNodeTx(ctx context.Context, tx neo4j.ExplicitTransaction, node *topology.TopologyNode) error {
 	// Build query based on whether there are upstream dependencies
 	var query string
 	if len(node.Dependencies) == 0 {
@@ -37,6 +89,8 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 				t.criticality = $criticality,
 				t.node_type = $node_type,
 				t.manifest_version = $manifest_version,
+				t.active = true,
+				t.retired_at = NULL,
 				t.created_at = datetime(),
 				t.last_updated_at = datetime()
 			ON MATCH SET
@@ -46,6 +100,8 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 				t.criticality = $criticality,
 				t.node_type = $node_type,
 				t.manifest_version = $manifest_version,
+				t.active = true,
+				t.retired_at = NULL,
 				t.last_updated_at = datetime()
 			WITH t
 			OPTIONAL MATCH (t)-[old:DEPENDS_ON]->()
@@ -63,6 +119,8 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 				t.criticality = $criticality,
 				t.node_type = $node_type,
 				t.manifest_version = $manifest_version,
+				t.active = true,
+				t.retired_at = NULL,
 				t.created_at = datetime(),
 				t.last_updated_at = datetime()
 			ON MATCH SET
@@ -72,6 +130,8 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 				t.criticality = $criticality,
 				t.node_type = $node_type,
 				t.manifest_version = $manifest_version,
+				t.active = true,
+				t.retired_at = NULL,
 				t.last_updated_at = datetime()
 			WITH t
 			OPTIONAL MATCH (t)-[old:DEPENDS_ON]->()
@@ -112,7 +172,7 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 		"upstream_dependencies": upstreamDeps,
 	}
 
-	result, err := session.Run(ctx, query, params)
+	result, err := tx.Run(ctx, query, params)
 	if err != nil {
 		r.logger.Error("Failed to upsert node", "error", err, "schema", node.SchemaName, "table", node.TableName)
 		return fmt.Errorf("failed to upsert node: %w", err)
@@ -125,6 +185,54 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 	return nil
 }
 
+func (r *TopologyRepository) retireMissingNodes(
+	ctx context.Context,
+	tx neo4j.ExplicitTransaction,
+	currentNodes []map[string]interface{},
+) error {
+	result, err := tx.Run(ctx, `
+		MATCH (t:Table)
+		WHERE COALESCE(t.active, true)
+		  AND NOT any(node IN $current_nodes
+		              WHERE node.schema_name = t.schema_name
+		                AND node.table_name = t.table_name)
+		SET t.active = false,
+		    t.retired_at = datetime(),
+		    t.last_updated_at = datetime()
+		RETURN count(t) AS retired_count
+	`, map[string]interface{}{
+		"current_nodes": currentNodes,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to retire missing nodes: %w", err)
+	}
+	if result.Next(ctx) {
+		if retired, ok := result.Record().Get("retired_count"); ok {
+			r.logger.Info("Retired stale topology nodes", "count", retired)
+		}
+	}
+	return result.Err()
+}
+
+func (r *TopologyRepository) deleteInactiveOrphans(ctx context.Context, tx neo4j.ExplicitTransaction) error {
+	result, err := tx.Run(ctx, `
+		MATCH (t:Table)
+		WHERE COALESCE(t.active, true) = false
+		  AND NOT EXISTS { MATCH (:Run)-[:EXECUTES]->(t) }
+		DETACH DELETE t
+		RETURN count(t) AS deleted_count
+	`, nil)
+	if err != nil {
+		return fmt.Errorf("failed to delete inactive topology orphans: %w", err)
+	}
+	if result.Next(ctx) {
+		if deleted, ok := result.Record().Get("deleted_count"); ok {
+			r.logger.Info("Deleted inactive topology orphans", "count", deleted)
+		}
+	}
+	return result.Err()
+}
+
 // GetScheduleGraph returns all nodes and edges for a schedule.
 // NOTE: This is a minimal implementation to satisfy the topology.Repository interface.
 // The full graph read is handled by QueryRepository.
@@ -134,6 +242,7 @@ func (r *TopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName 
 
 	nodeQuery := `
 		MATCH (n:Table {schedule_name: $schedule_name})
+		WHERE COALESCE(n.active, true)
 		RETURN n.table_name AS table_name,
 		       n.schema_name AS schema_name,
 		       n.service_name AS service_name,
@@ -178,6 +287,7 @@ func (r *TopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName 
 
 	depQuery := `
 		MATCH (n:Table {schedule_name: $schedule_name})-[:DEPENDS_ON]->(u:Table)
+		WHERE COALESCE(n.active, true) AND COALESCE(u.active, true)
 		RETURN n.table_name AS from_table, n.schema_name AS from_schema,
 		       u.table_name AS to_table, u.schema_name AS to_schema,
 		       COALESCE(u.service_name, "") AS to_service

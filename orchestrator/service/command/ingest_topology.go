@@ -61,16 +61,18 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 		return nil
 	}
 
-	// Upsert each node outside the transaction (idempotent MERGE).
+	// Apply the full manifest snapshot outside the Postgres transaction. The
+	// payload is authoritative for the current topology, so missing nodes must
+	// be retired as part of the same Neo4j write pass.
+	//
 	// Collect unique schedule names and manifest versions while iterating.
 	scheduleNamesSet := make(map[string]struct{})
 	manifestVersions := make(map[string]string)
+	topologyNodes := make([]*topology.TopologyNode, 0, len(cmd.Nodes))
 
 	for _, n := range cmd.Nodes {
 		node := toTopologyNode(n)
-		if err := h.topologyRepo.UpsertNode(ctx, node); err != nil {
-			return fmt.Errorf("failed to upsert node %s.%s: %w", n.SchemaName, n.TableName, err)
-		}
+		topologyNodes = append(topologyNodes, node)
 
 		if n.ScheduleName != "" {
 			scheduleNamesSet[n.ScheduleName] = struct{}{}
@@ -78,6 +80,10 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 		if n.ServiceName != "" && n.ManifestVersion != "" {
 			manifestVersions[n.ServiceName] = n.ManifestVersion
 		}
+	}
+
+	if err := h.topologyRepo.ApplySnapshot(ctx, topologyNodes); err != nil {
+		return fmt.Errorf("failed to apply topology snapshot: %w", err)
 	}
 
 	// Build unique sorted schedule names slice.
