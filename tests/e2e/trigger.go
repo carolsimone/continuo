@@ -64,7 +64,7 @@ func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 	resp, err := http.Post(
 		fmt.Sprintf("%s/api/graph/update", clients.uiBase),
 		"application/json",
-		strings.NewReader(`{"source":"local"}`),
+		strings.NewReader(`{"source":"s3"}`),
 	)
 	require.NoError(t, err, "POST /api/graph/update: request failed")
 	defer resp.Body.Close()
