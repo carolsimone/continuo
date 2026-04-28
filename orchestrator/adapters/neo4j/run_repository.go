@@ -202,7 +202,9 @@ func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleN
 		       downstream.schema_name AS schema_name,
 		       downstream.table_name AS table_name,
 		       COALESCE(downstream.node_type, "") AS node_type,
-		       downstream.schedule_name AS schedule_name
+		       downstream.schedule_name AS schedule_name,
+		       COALESCE(snap.manifest_version, "") AS manifest_version,
+		       COALESCE(snap.image_tag, "") AS image_tag
 	`
 
 	result, err := session.Run(ctx, query, map[string]interface{}{
@@ -231,6 +233,8 @@ func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleN
 		tblName, _ := record.Get("table_name")
 		nodeTypeRaw, _ := record.Get("node_type")
 		schedNameRaw, _ := record.Get("schedule_name")
+		manifestVersionRaw, _ := record.Get("manifest_version")
+		imageTagRaw, _ := record.Get("image_tag")
 
 		nodeTypeStr := ""
 		if s, ok := nodeTypeRaw.(string); ok {
@@ -238,11 +242,13 @@ func (r *RunRepository) GetReadyDownstream(ctx context.Context, runID, scheduleN
 		}
 
 		nodes = append(nodes, &run.DownstreamNode{
-			ServiceName:  safeString(svcName),
-			SchemaName:   safeString(schemaVal),
-			TableName:    safeString(tblName),
-			NodeType:     nodeTypeStr,
-			ScheduleName: safeString(schedNameRaw),
+			ServiceName:     safeString(svcName),
+			SchemaName:      safeString(schemaVal),
+			TableName:       safeString(tblName),
+			NodeType:        nodeTypeStr,
+			ScheduleName:    safeString(schedNameRaw),
+			ManifestVersion: safeString(manifestVersionRaw),
+			ImageTag:        safeString(imageTagRaw),
 		})
 	}
 

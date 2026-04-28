@@ -21,11 +21,13 @@ type ScheduleInitNodes struct {
 }
 
 type DownstreamNode struct {
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	NodeType     string
-	ScheduleName string
+	ServiceName     string
+	SchemaName      string
+	TableName       string
+	NodeType        string
+	ScheduleName    string
+	ManifestVersion string
+	ImageTag        string
 }
 
 // CascadedFailureNode holds the identifying info for a downstream node

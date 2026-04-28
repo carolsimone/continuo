@@ -136,14 +136,16 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.H
 			}
 
 			evt := domain.NodeReadyForExecution{
-				ScheduleID:   cmd.ScheduleID.String(),
-				ScheduleName: node.ScheduleName,
-				ServiceName:  node.ServiceName,
-				SchemaName:   node.SchemaName,
-				TableName:    node.TableName,
-				TaskID:       taskID,
-				JobName:      jobName,
-				NodeType:     string(nodeType),
+				ScheduleID:      cmd.ScheduleID.String(),
+				ScheduleName:    node.ScheduleName,
+				ServiceName:     node.ServiceName,
+				SchemaName:      node.SchemaName,
+				TableName:       node.TableName,
+				TaskID:          taskID,
+				JobName:         jobName,
+				NodeType:        string(nodeType),
+				ManifestVersion: node.ManifestVersion,
+				ImageTag:        node.ImageTag,
 			}
 
 			evtPayload, err := json.Marshal(evt)
