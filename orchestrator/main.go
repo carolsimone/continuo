@@ -334,6 +334,16 @@ func main() {
 		logger,
 	)
 
+	// Consumer 6: run.finalized:v1 -> FinalizeRun
+	runFinalizedHandler := redis.NewRunFinalizedHandler(runRepoWrite, logger)
+	runFinalizedConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.RunFinalizedStream,
+		cfg.RunFinalizedGroup,
+		runFinalizedHandler,
+		logger,
+	)
+
 	// Start all consumers in goroutines
 	go func() {
 		if err := nodeUpdatedConsumer.Start(ctx); err != nil {
@@ -362,6 +372,12 @@ func main() {
 	go func() {
 		if err := rerunConsumer.Start(ctx); err != nil {
 			logger.Error("Rerun consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := runFinalizedConsumer.Start(ctx); err != nil {
+			logger.Error("Run finalized consumer error", "error", err)
 		}
 	}()
 

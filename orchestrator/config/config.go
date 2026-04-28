@@ -28,6 +28,8 @@ type Config struct {
 	SchedulerStartedGroup   string
 	RerunStream             string
 	RerunGroup              string
+	RunFinalizedStream      string
+	RunFinalizedGroup       string
 
 	// gRPC
 	GRPCPort int
@@ -66,6 +68,8 @@ func Load(v *pkgconfig.Validator) Config {
 		SchedulerStartedGroup:  v.Require("SCHEDULER_STARTED_GROUP"),
 		RerunStream:            v.Require("RERUN_STREAM"),
 		RerunGroup:             v.Require("RERUN_GROUP"),
+		RunFinalizedStream:     v.Require("RUN_FINALIZED_STREAM"),
+		RunFinalizedGroup:      v.Require("RUN_FINALIZED_GROUP"),
 
 		GRPCPort: envInt("GRPC_PORT", 50052),
 		HTTPPort:      envInt("HTTP_PORT", 8087),
