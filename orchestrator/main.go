@@ -125,13 +125,16 @@ func main() {
 	// INITIALIZE UNIT OF WORK & COMMAND HANDLERS
 	// ========================================================================
 
-	unitOfWork := uow.NewPostgresUnitOfWork(pgDB, logger)
-
-	ingestTopologyHandler := command.NewIngestTopologyHandler(unitOfWork, topologyRepo, logger)
-	initializeRunHandler := command.NewInitializeRunHandler(unitOfWork, runRepo, logger)
-	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, runRepo, cancelledSchedulesRepo, logger)
-	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(unitOfWork, runRepo, logger)
-	handleRerunHandler := command.NewHandleRerunHandler(unitOfWork, runRepo, logger)
+	// Each handler gets its own UnitOfWork instance. UnitOfWork holds a stateful
+	// Postgres transaction (inTx flag + *sqlx.Tx). Sharing one instance across
+	// consumers would cause "transaction already in progress" errors when two
+	// consumers process messages concurrently — the second Begin() sees inTx=true
+	// and the message is never ACKed, getting stuck in the PEL forever.
+	ingestTopologyHandler := command.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, logger)
+	initializeRunHandler := command.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
+	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, cancelledSchedulesRepo, logger)
+	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
+	handleRerunHandler := command.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
