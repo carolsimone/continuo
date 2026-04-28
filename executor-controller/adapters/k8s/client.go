@@ -174,10 +174,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 // falling back to "latest" is intentionally refused.
 func buildPodSpec(params JobParams) (corev1.PodSpec, error) {
 	if params.ImageTag == "" {
-		return corev1.PodSpec{}, fmt.Errorf(
-			"image_tag missing from JobParams for service %s — refuse to fall back to 'latest'",
-			params.ServiceName,
-		)
+		return corev1.PodSpec{}, fmt.Errorf("image_tag missing from job params for service %s", params.ServiceName)
 	}
 
 	image := params.ServiceName + ":" + params.ImageTag
