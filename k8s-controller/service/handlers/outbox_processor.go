@@ -262,6 +262,7 @@ func (p *OutboxProcessor) buildEvent(entry *model.K8sStatusOutboxEntry) map[stri
 			SchemaName:   entry.SchemaName,
 			TableName:    entry.TableName,
 			JobName:      entry.JobName,
+			ImageTag:     entry.ImageTag,
 			RetryCount:   entry.NewRetryCount,
 			MaxRetries:   entry.TaskMaxRetries,
 			NodeType:     entry.NodeType,
@@ -292,6 +293,7 @@ func (p *OutboxProcessor) buildEvent(entry *model.K8sStatusOutboxEntry) map[stri
 			JobName:       entry.JobName,
 			CheckAfter:    entry.CheckAfter,
 			NodeType:      entry.NodeType,
+			ImageTag:      entry.ImageTag,
 			RetryCount:    entry.TaskRetryCount,
 			MaxRetries:    entry.TaskMaxRetries,
 		}.ToMap()

@@ -58,7 +58,7 @@ func (r *outboxRepository) Create(ctx context.Context, entry *model.K8sStatusOut
 		INSERT INTO k8s_status_outbox (
 			id, event_type, stream_name,
 			task_id, schedule_id, schedule_name, service_name, schema_name,
-			table_name, job_name, node_type,
+			table_name, job_name, node_type, image_tag,
 			error_message, task_retry_count, task_max_retries, check_after,
 			update_task_status, new_task_status, new_retry_count,
 			create_execution, execution_started_at, execution_completed_at, execution_seconds,
@@ -67,7 +67,7 @@ func (r *outboxRepository) Create(ctx context.Context, entry *model.K8sStatusOut
 		) VALUES (
 			:id, :event_type, :stream_name,
 			:task_id, :schedule_id, :schedule_name, :service_name, :schema_name,
-			:table_name, :job_name, :node_type,
+			:table_name, :job_name, :node_type, :image_tag,
 			:error_message, :task_retry_count, :task_max_retries, :check_after,
 			:update_task_status, :new_task_status, :new_retry_count,
 			:create_execution, :execution_started_at, :execution_completed_at, :execution_seconds,
@@ -116,6 +116,7 @@ func (r *outboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*m
 		SELECT id, event_type, stream_name,
 		       task_id, schedule_id, schedule_name, service_name, schema_name,
 		       table_name, job_name, COALESCE(node_type, 'dbt-model') as node_type,
+		       COALESCE(image_tag, '') as image_tag,
 		       COALESCE(error_message, '') as error_message,
 		       COALESCE(task_retry_count, 0) as task_retry_count,
 		       COALESCE(task_max_retries, 2) as task_max_retries,
@@ -245,6 +246,7 @@ func (r *outboxRepository) GetStuckEntries(ctx context.Context, limit int, stuck
 		SELECT id, event_type, stream_name,
 		       task_id, schedule_id, schedule_name, service_name, schema_name,
 		       table_name, job_name, COALESCE(node_type, 'dbt-model') as node_type,
+		       COALESCE(image_tag, '') as image_tag,
 		       COALESCE(error_message, '') as error_message,
 		       COALESCE(task_retry_count, 0) as task_retry_count,
 		       COALESCE(task_max_retries, 2) as task_max_retries,

@@ -352,6 +352,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd comm
 		TableName:    cmd.TableName,
 		JobName:      newJobName,
 		NodeType:     cmd.NodeType,
+		ImageTag:     cmd.ImageTag,
 
 		ErrorMessage:   errorMsg,
 		TaskRetryCount: int(retryCount),
@@ -403,6 +404,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, cmd command.Chec
 		TableName:    cmd.TableName,
 		JobName:      cmd.JobName,
 		NodeType:     cmd.NodeType,
+		ImageTag:     cmd.ImageTag,
 
 		TaskRetryCount: int(cmd.RetryCount),
 		TaskMaxRetries: int(maxRetries),

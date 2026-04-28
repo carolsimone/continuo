@@ -207,6 +207,7 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.Deploym
 		SchemaName:     entry.SchemaName,
 		TableName:      entry.TableName,
 		JobName:        entry.JobName,
+		ImageTag:       entry.ImageTag,
 		NodeType:       entry.NodeType,
 		TaskRetryCount: entry.TaskRetryCount,
 		MaxRetries:     entry.TaskMaxRetries,

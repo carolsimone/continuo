@@ -17,8 +17,9 @@ type JobCheckRequest struct {
 	JobName       string `json:"job_name"`
 	CheckAfter    int64  `json:"check_after"` // Unix timestamp for delayed processing
 	NodeType      string `json:"node_type"`
-	RetryCount    int    `json:"retry_count"`  // current task retry count
-	MaxRetries    int    `json:"max_retries"`  // maximum task retries allowed
+	ImageTag      string `json:"image_tag"`
+	RetryCount    int    `json:"retry_count"` // current task retry count
+	MaxRetries    int    `json:"max_retries"` // maximum task retries allowed
 }
 
 func (JobCheckRequest) isEvent() {}
@@ -36,6 +37,7 @@ func (e JobCheckRequest) ToMap() map[string]interface{} {
 		"job_name":        e.JobName,
 		"check_after":     e.CheckAfter,
 		"node_type":       e.NodeType,
+		"image_tag":       e.ImageTag,
 		"retry_count":     e.RetryCount,
 		"max_retries":     e.MaxRetries,
 	}
@@ -80,6 +82,7 @@ type TaskRetry struct {
 	SchemaName   string `json:"schema_name"`
 	TableName    string `json:"table_name"`
 	JobName      string `json:"job_name"`
+	ImageTag     string `json:"image_tag"`
 	RetryCount   int    `json:"retry_count"`
 	MaxRetries   int    `json:"max_retries"`
 	NodeType     string `json:"node_type"`
@@ -98,6 +101,7 @@ func (e TaskRetry) ToMap() map[string]interface{} {
 		"schema_name":      e.SchemaName,
 		"table_name":       e.TableName,
 		"job_name":         e.JobName,
+		"image_tag":        e.ImageTag,
 		"task_retry_count": e.RetryCount,
 		"max_retries":      e.MaxRetries,
 		"node_type":        e.NodeType,

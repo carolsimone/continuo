@@ -18,6 +18,7 @@ type CheckJobStatus struct {
 	TableName     string
 	JobName       string
 	NodeType      string
+	ImageTag      string
 	RetryCount    int32 // current task retry count (carried from node.deployed:v1 / check.k8s:v1)
 	MaxRetries    int32 // maximum task retries allowed (default from config if absent in message)
 }
