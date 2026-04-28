@@ -95,6 +95,8 @@ services:
       SCHEDULER_STARTED_GROUP: orchestrator_scheduler_started
       RERUN_STREAM: rerun:v1
       RERUN_GROUP: orchestrator_rerun
+      RUN_FINALIZED_STREAM: run.finalized:v1
+      RUN_FINALIZED_GROUP: orchestrator-run-finalized
       SCHEDULE_CANCELLED_STREAM: schedule.cancelled:v1
       SCHEDULE_CANCELLED_GROUP: orchestrator-schedule-cancelled
       POSTGRES_DB: continuo_orchestrator
