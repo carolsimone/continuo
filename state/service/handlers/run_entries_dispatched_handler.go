@@ -120,15 +120,16 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 			return true, nil
 		}
 			tasks = append(tasks, &model.TaskTracker{
-				TaskID:      taskID,
-				ScheduleID:  scheduleID,
-				CreatedAt:   now,
-				ServiceName: t.ServiceName,
-				SchemaName:  t.SchemaName,
-				TableName:   t.TableName,
-				JobName:     jobName,
-				Status:      model.TaskStatusPending,
-				MaxRetries:  int(t.MaxRetries),
+				TaskID:          taskID,
+				ScheduleID:      scheduleID,
+				CreatedAt:       now,
+				ServiceName:     t.ServiceName,
+				SchemaName:      t.SchemaName,
+				TableName:       t.TableName,
+				JobName:         jobName,
+				Status:          model.TaskStatusPending,
+				MaxRetries:      int(t.MaxRetries),
+				ManifestVersion: t.ManifestVersion,
 			})
 	}
 

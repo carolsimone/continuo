@@ -34,7 +34,7 @@ func seedSchedulerTracker(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, initS
 	_, err := db.Exec(`
 		INSERT INTO scheduler_tracker (
 			schedule_id, schedule_name, status, created_at,
-			initialization_status, manifest_versions, total_task_count, terminal_task_count
+			initialization_status, service_metadata, total_task_count, terminal_task_count
 		) VALUES ($1, $2, $3, $4, $5, $6, NULL, 0)
 	`,
 		scheduleID,
@@ -157,6 +157,43 @@ func TestRunEntriesDispatchedHandler_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, tracker.TotalTaskCount.Valid)
 	assert.Equal(t, int32(1), tracker.TotalTaskCount.Int32)
+}
+
+func TestRunEntriesDispatchedHandler_PersistsManifestVersionPerTask(t *testing.T) {
+	db := setupRunEntriesDispatchedTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	scheduleID := uuid.New()
+	seedSchedulerTracker(t, db, scheduleID, "in_progress")
+	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
+
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	handler := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+
+	taskID := uuid.New()
+	tasks := []events.DispatchedTask{
+		{
+			TaskID:          taskID.String(),
+			ServiceName:     "svc-a",
+			SchemaName:      "public",
+			TableName:       "users",
+			NodeType:        "dbt-model",
+			MaxRetries:      3,
+			ManifestVersion: "v7",
+			ImageTag:        "abc123-1714300000",
+		},
+	}
+	payload := buildDispatchedPayload(t, scheduleID, tasks)
+
+	shouldACK, err := handler.Handle(context.Background(), scheduleID.String()+"-manifest-test", payload)
+	require.NoError(t, err)
+	assert.True(t, shouldACK)
+
+	created, err := taskRepo.ListAllByScheduleID(context.Background(), scheduleID)
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Equal(t, "v7", created[0].ManifestVersion, "manifest_version must be persisted from the event payload")
 }
 
 func TestRunEntriesDispatchedHandler_NoopWhenSchedulerCancelled(t *testing.T) {

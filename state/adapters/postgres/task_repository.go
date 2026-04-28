@@ -72,10 +72,12 @@ func (r *taskTrackerRepository) Create(ctx context.Context, task *model.TaskTrac
 	query := `
 		INSERT INTO task_tracker (
 			task_id, schedule_id, created_at, service_name, schema_name,
-			table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+			table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
+			manifest_version
 		) VALUES (
 			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
-			:table_name, :job_name, :status, :retry_count, :max_retries, :cancelled_at, :cancelled_by
+			:table_name, :job_name, :status, :retry_count, :max_retries, :cancelled_at, :cancelled_by,
+			:manifest_version
 		)
 	`
 
@@ -109,7 +111,8 @@ func (r *taskTrackerRepository) Create(ctx context.Context, task *model.TaskTrac
 func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (*model.TaskTracker, error) {
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
+		       manifest_version
 		FROM task_tracker
 		WHERE task_id = $1
 	`
@@ -142,7 +145,8 @@ func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (
 func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*model.TaskTracker, error) {
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
+		       manifest_version
 		FROM task_tracker
 		WHERE schedule_id = $1
 		  AND service_name = $2
@@ -299,7 +303,8 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 
 	query := fmt.Sprintf(`
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
+		       manifest_version
 		FROM task_tracker
 		WHERE %s
 		ORDER BY created_at DESC
@@ -339,10 +344,10 @@ func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, t
 	query := `
 		INSERT INTO task_tracker (
 			task_id, schedule_id, created_at, service_name, schema_name,
-			table_name, job_name, status, retry_count, max_retries
+			table_name, job_name, status, retry_count, max_retries, manifest_version
 		) VALUES (
 			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
-			:table_name, :job_name, :status, :retry_count, :max_retries
+			:table_name, :job_name, :status, :retry_count, :max_retries, :manifest_version
 		)
 		ON CONFLICT (task_id) DO NOTHING
 	`
@@ -358,7 +363,8 @@ func (r *taskTrackerRepository) ListAllByScheduleID(ctx context.Context, schedul
 	var tasks []*model.TaskTracker
 	err := r.db.SelectContext(ctx, &tasks, `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
+		       manifest_version
 		FROM task_tracker
 		WHERE schedule_id = $1
 		ORDER BY created_at ASC
@@ -537,7 +543,8 @@ func (r *taskTrackerRepository) List(ctx context.Context, filters TaskFilters) (
 
 	query := fmt.Sprintf(`
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
+		       manifest_version
 		FROM task_tracker
 		%s
 		ORDER BY created_at DESC
