@@ -42,6 +42,12 @@ func NewStreamConsumer(
 	}
 }
 
+// reclaimInterval is how often the consumer re-scans the PEL for messages whose
+// handler returned an error (and were therefore never ACKed). A periodic sweep
+// ensures that transient handler failures do not leave messages stuck forever —
+// without it, PEL entries are only reclaimed at service startup.
+const reclaimInterval = 2 * time.Minute
+
 // Start begins consuming messages from the Redis stream until the context is cancelled
 func (c *StreamConsumer) Start(ctx context.Context) error {
 	if err := c.ensureConsumerGroup(ctx); err != nil {
@@ -55,10 +61,17 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 		c.logger.Error("Failed to reclaim pending messages", "stream", c.streamName, "error", err)
 	}
 
+	reclaimTicker := time.NewTicker(reclaimInterval)
+	defer reclaimTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-reclaimTicker.C:
+			if err := c.reclaimPending(ctx); err != nil {
+				c.logger.Error("Periodic reclaim pending failed", "stream", c.streamName, "error", err)
+			}
 		default:
 			if err := c.readAndProcess(ctx); err != nil {
 				c.logger.Error("Error in read loop", "error", err)

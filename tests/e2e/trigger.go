@@ -46,19 +46,31 @@ func getServiceNameForTable(tableName string) string {
 }
 
 // triggerGraphLoad triggers a graph update via the ui-service HTTP endpoint and
-// waits until the manifest-controller confirms the trigger was processed (via a
-// new manifest.loaded:v1 message) and both test schedules appear in schedule_catalog.
-// No topology state is mutated before triggering — the system is expected to handle
-// pre-existing Table nodes correctly, matching production behaviour.
+// waits until:
+//  1. the manifest-controller publishes a new manifest.loaded:v1 message, AND
+//  2. the orchestrator processes it (IngestTopology commits) and publishes
+//     schedules.loaded:v1 — confirmed by a new message on that stream.
+//
+// Waiting for schedules.loaded:v1 (not just schedule_catalog row count) is
+// critical: schedule_catalog persists across test runs, so a count-based check
+// returns immediately with stale data. If we proceed before IngestTopology
+// commits, ActivateSchedule can publish scheduler.started:v1 while IngestTopology
+// still holds a Postgres transaction, and the two handlers would race.
 func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
 
-	// Record the last message ID on manifest.loaded:v1 before triggering so the
-	// poll below can prove this specific trigger was processed, not a prior one.
-	entries, err := clients.redisClient.XRevRangeN(ctx, "manifest.loaded:v1", "+", "-", 1).Result()
+	// Record the last message IDs on both streams before triggering so the
+	// polls below prove this specific trigger was processed, not a prior one.
+	manifestEntries, err := clients.redisClient.XRevRangeN(ctx, "manifest.loaded:v1", "+", "-", 1).Result()
 	lastManifestID := "0-0"
-	if err == nil && len(entries) > 0 {
-		lastManifestID = entries[0].ID
+	if err == nil && len(manifestEntries) > 0 {
+		lastManifestID = manifestEntries[0].ID
+	}
+
+	schedulesEntries, err := clients.redisClient.XRevRangeN(ctx, "schedules.loaded:v1", "+", "-", 1).Result()
+	lastSchedulesLoadedID := "0-0"
+	if err == nil && len(schedulesEntries) > 0 {
+		lastSchedulesLoadedID = schedulesEntries[0].ID
 	}
 
 	resp, err := http.Post(
@@ -75,9 +87,8 @@ func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 
 	t.Log("Published update.graph:v1 via ui-service — waiting for manifest-controller to publish manifest.loaded:v1...")
 
-	// Wait for the manifest-controller to respond to this specific trigger.
-	// XRange with "("+lastManifestID as start returns only messages with ID
-	// strictly greater than lastManifestID, so pre-existing messages are ignored.
+	// Step 1: wait for the manifest-controller to publish manifest.loaded:v1.
+	// XRange with "("+lastManifestID returns only messages strictly after that ID.
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		msgs, err := clients.redisClient.XRange(ctx, "manifest.loaded:v1", "("+lastManifestID, "+").Result()
 		if err != nil {
@@ -86,23 +97,21 @@ func triggerGraphLoad(t *testing.T, ctx context.Context, clients *testClients) {
 		return len(msgs) > 0, nil
 	}, "Timeout waiting for manifest-controller to publish manifest.loaded:v1")
 
-	t.Log("manifest-controller published manifest.loaded:v1 — waiting for schedule_catalog to be populated...")
+	t.Log("manifest-controller published manifest.loaded:v1 — waiting for orchestrator to commit IngestTopology (schedules.loaded:v1)...")
 
-	// Wait for the full async chain: orchestrator consumed manifest.loaded:v1,
-	// updated Neo4j, published schedules.loaded:v1, state populated schedule_catalog.
-	// Both schedules are always loaded together from a single manifest trigger.
+	// Step 2: wait for the orchestrator to commit IngestTopology and publish
+	// schedules.loaded:v1 via its outbox processor. This confirms that:
+	//   - ApplySnapshot wrote Neo4j changes, AND
+	//   - the Postgres transaction committed (inTx = false on the UoW)
+	// Only after this point is it safe to call ActivateSchedule: if we activate
+	// sooner the scheduler.started:v1 handler could race against IngestTopology.
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
-		var count int
-		if err := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM schedule_catalog
-			 WHERE schedule_name IN ($1, $2)
-			   AND removed_at IS NULL`,
-			testScheduleName, failureTestScheduleName,
-		).Scan(&count); err != nil {
-			return false, err
+		msgs, err := clients.redisClient.XRange(ctx, "schedules.loaded:v1", "("+lastSchedulesLoadedID, "+").Result()
+		if err != nil {
+			return false, nil
 		}
-		return count >= 2, nil
-	}, "Timeout waiting for schedule_catalog to be populated with both schedules")
+		return len(msgs) > 0, nil
+	}, "Timeout waiting for orchestrator to publish schedules.loaded:v1")
 
-	t.Log("schedule_catalog populated for both schedules — catalog and graph are in sync")
+	t.Log("orchestrator published schedules.loaded:v1 — graph and catalog are in sync")
 }
