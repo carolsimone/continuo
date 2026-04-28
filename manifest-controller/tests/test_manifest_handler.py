@@ -107,6 +107,6 @@ def test_handle_publishes_correct_node_structure(tmp_path):
     expected_keys = {
         "service_name", "schema_name", "table_name", "owner",
         "schedule_name", "criticality", "node_type",
-        "manifest_version", "dependencies",
+        "manifest_version", "image_tag", "dependencies",
     }
     assert set(node.keys()) == expected_keys

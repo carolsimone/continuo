@@ -72,6 +72,7 @@ def test_local_source_cleanup_does_not_raise(tmp_path):
 
 import json
 import os
+from botocore.exceptions import ClientError
 from unittest.mock import MagicMock
 from adapters.sources.s3 import S3Source
 
@@ -89,6 +90,12 @@ def _make_s3_source(keys=None, file_content='{"nodes": {}}'):
             f.write(file_content)
 
     mock_s3.download_file.side_effect = fake_download
+
+    # Default: no service_metadata.json sidecar (backward compat)
+    mock_s3.get_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "Not Found"}}, "GetObject"
+    )
+
     return S3Source(bucket="continuo", env="local", s3_client=mock_s3)
 
 
@@ -171,3 +178,92 @@ def test_s3_source_cleanup_removes_temp_dir():
     assert os.path.isdir(tmpdir_name)
     source.cleanup()
     assert not os.path.exists(tmpdir_name)
+
+
+def test_s3_source_attaches_image_tag_from_sidecar(tmp_path):
+    """S3Source populates ManifestFile.image_tag from service_metadata.json sidecar."""
+    from botocore.exceptions import ClientError
+
+    mock_s3 = MagicMock()
+    keys = ["local/manifest/service-1/manifest_v3.json"]
+    mock_s3.list_objects_v2.return_value = {"Contents": [{"Key": k} for k in keys]}
+
+    def fake_download(bucket, key, filename):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "w") as f:
+            f.write('{"nodes": {}}')
+    mock_s3.download_file.side_effect = fake_download
+
+    # Sidecar returns the metadata
+    mock_s3.get_object.return_value = {
+        "Body": MagicMock(read=lambda: json.dumps({
+            "manifest_version": "v3",
+            "image_tag": "abc123-1714300000",
+        }).encode())
+    }
+
+    source = S3Source(bucket="continuo", env="local", s3_client=mock_s3)
+    try:
+        result = source.list_manifests()
+        assert len(result) == 1
+        assert result[0].image_tag == "abc123-1714300000"
+    finally:
+        source.cleanup()
+
+
+def test_s3_source_image_tag_empty_when_sidecar_missing(tmp_path):
+    """S3Source returns image_tag='' when service_metadata.json is absent (backward compat)."""
+    from botocore.exceptions import ClientError
+
+    mock_s3 = MagicMock()
+    keys = ["local/manifest/service-1/manifest_v3.json"]
+    mock_s3.list_objects_v2.return_value = {"Contents": [{"Key": k} for k in keys]}
+
+    def fake_download(bucket, key, filename):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "w") as f:
+            f.write('{"nodes": {}}')
+    mock_s3.download_file.side_effect = fake_download
+
+    # Sidecar is missing
+    mock_s3.get_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "Not Found"}}, "GetObject"
+    )
+
+    source = S3Source(bucket="continuo", env="local", s3_client=mock_s3)
+    try:
+        result = source.list_manifests()
+        assert len(result) == 1
+        assert result[0].image_tag == ""
+    finally:
+        source.cleanup()
+
+
+def test_local_source_attaches_image_tag_from_sidecar(tmp_path):
+    """LocalFilesystemSource populates ManifestFile.image_tag from service_metadata.json."""
+    svc = tmp_path / "service-1"
+    svc.mkdir()
+    (svc / "manifest_v3.json").write_text("{}")
+    (svc / "service_metadata.json").write_text(json.dumps({
+        "manifest_version": "v3",
+        "image_tag": "abc123-1714300000",
+    }))
+
+    source = LocalFilesystemSource(str(tmp_path))
+    result = source.list_manifests()
+
+    assert len(result) == 1
+    assert result[0].image_tag == "abc123-1714300000"
+
+
+def test_local_source_image_tag_empty_when_sidecar_missing(tmp_path):
+    """LocalFilesystemSource returns image_tag='' when service_metadata.json is absent."""
+    svc = tmp_path / "service-1"
+    svc.mkdir()
+    (svc / "manifest_v3.json").write_text("{}")
+
+    source = LocalFilesystemSource(str(tmp_path))
+    result = source.list_manifests()
+
+    assert len(result) == 1
+    assert result[0].image_tag == ""

@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from adapters.sources import ManifestSource
@@ -33,8 +34,23 @@ class LocalFilesystemSource(ManifestSource):
                 continue
             _, filename = max(candidates)
             version = parse_version(filename)
+
+            image_tag = ""
+            meta_path = os.path.join(entry.path, "service_metadata.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path) as mf:
+                        meta = json.load(mf)
+                    image_tag = meta.get("image_tag", "")
+                except Exception:
+                    logger.warning(
+                        "Failed to read service_metadata.json — image_tag will be empty",
+                        extra={"meta_path": meta_path},
+                    )
+
             result.append(ManifestFile(
                 path=os.path.join(entry.path, filename),
                 version=version,
+                image_tag=image_tag,
             ))
         return result

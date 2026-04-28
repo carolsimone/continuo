@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import pytest
 from service.parser import parse_manifest
@@ -71,3 +72,26 @@ def test_parse_seed_without_tags_defaults_schedule_to_seed():
 def test_parse_stamps_manifest_version_on_all_nodes():
     nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v7")
     assert all(n.manifest_version == "v7" for n in nodes)
+
+
+def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
+    manifest = {
+        "nodes": {
+            "model.svc.users": {
+                "resource_type": "model",
+                "name": "users",
+                "schema": "public",
+                "fqn": ["svc_a"],
+                "config": {"meta": {"owner": "team-a"}},
+                "tags": ["nightly"],
+            }
+        }
+    }
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    nodes = parse_manifest(str(path), manifest_version="v3", image_tag="abc123-1714300000")
+
+    assert len(nodes) == 1
+    assert nodes[0].image_tag == "abc123-1714300000"
+    assert nodes[0].manifest_version == "v3"

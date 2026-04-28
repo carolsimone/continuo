@@ -21,7 +21,7 @@ _RESOURCE_TYPE_DEFAULT_SCHEDULE: dict[str, str | None] = {
 }
 
 
-def parse_manifest(manifest_path: str, manifest_version: str) -> list[ManifestNode]:
+def parse_manifest(manifest_path: str, manifest_version: str, image_tag: str = "") -> list[ManifestNode]:
     with open(manifest_path) as f:
         manifest = json.load(f)
 
@@ -60,5 +60,6 @@ def parse_manifest(manifest_path: str, manifest_version: str) -> list[ManifestNo
             compiled_sql=node.get("compiled_code", ""),
             node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
             manifest_version=manifest_version,
+            image_tag=image_tag,
         ))
     return nodes
