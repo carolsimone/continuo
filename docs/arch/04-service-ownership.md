@@ -40,7 +40,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | `scheduler_tracker`, `task_tracker`, `task_execution`, `schedule_catalog`, `state_outbox`, `processed_events` |
+| Durable state | `scheduler_tracker` (+ `service_metadata` JSONB column), `task_tracker` (+ `manifest_version` column), `task_execution`, `schedule_catalog` (+ `service_metadata` JSONB column), `state_outbox`, `processed_events` |
 | gRPC server methods owned | `CreateScheduler`, `GetScheduler`, `UpdateScheduler`, `CancelScheduler`, `UpdateSchedulerInitStatus`, `ResetInProgressInitializations`, `ActivateSchedule`, `ListAllSchedules`, `TriggerSchedule`, `CancelSchedule`, `CreateTask`, `GetTask`, `GetTaskByScheduleAndNode`, `UpdateTask`, `DeleteTask`, `ListTasks`, `ResetTask`, `GetSchedulerInitStatus`, `CreateTaskExecution`, `GetTaskExecution`, `ListTaskExecutions` |
 | Redis consumes | `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1` |
 | Redis produces | `scheduler.started:v1`, `rerun:v1` |
@@ -50,7 +50,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | Neo4j `Table` nodes, `Run` nodes, `DEPENDS_ON` edges, `EXECUTES` edges; Postgres `message_processing`, `outbox`, `published_messages` |
+| Durable state | Neo4j `Table` nodes (+ `image_tag`, `topology_generation` props), `Run` nodes (+ `topology_generation`, `service_metadata` props), `DEPENDS_ON` edges, `EXECUTES` edges (+ `image_tag` prop); Neo4j `:TopologyRoot {id:'singleton'}` (generation + service_metadata); Postgres `topology_state`, `message_processing`, `outbox`, `published_messages` |
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
 | Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `rerun:v1` |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1` |
@@ -60,7 +60,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | `deployment_outbox`, `processed_events` |
+| Durable state | `deployment_outbox` (+ `image_tag` column), `processed_events` |
 | gRPC server methods owned | none |
 | Redis consumes | `query.model:v1`, `retry.task:v1` |
 | Redis produces | `node.deployed:v1` |
