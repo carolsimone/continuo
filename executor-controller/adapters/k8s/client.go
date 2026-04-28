@@ -166,12 +166,14 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 // own environment so dbt pods can reach the same database.
 func buildPodSpec(params JobParams) corev1.PodSpec {
 	image := params.ServiceName
+	pullPolicy := corev1.PullIfNotPresent
 	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
 		tag := os.Getenv("IMAGE_TAG")
 		if tag == "" {
 			tag = "latest"
 		}
 		image = user + "/" + params.ServiceName + ":" + tag
+		pullPolicy = corev1.PullAlways
 	}
 
 	envVars := []corev1.EnvVar{
@@ -196,7 +198,7 @@ func buildPodSpec(params JobParams) corev1.PodSpec {
 			{
 				Name:            "dbt-job",
 				Image:           image,
-				ImagePullPolicy: corev1.PullAlways,
+				ImagePullPolicy: pullPolicy,
 				Command:         params.NodeType.Command(params.TableName),
 				Env:             envVars,
 			},
