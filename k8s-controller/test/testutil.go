@@ -192,6 +192,14 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	_, err = db.ExecContext(ctx, migrationV6)
 	require.NoError(t, err, "Failed to run migration V6")
 
+	// Run migration V8: add image_tag to k8s_status_outbox
+	migrationV8 := `
+		ALTER TABLE k8s_status_outbox
+		    ADD COLUMN image_tag TEXT NOT NULL DEFAULT '';
+	`
+	_, err = db.ExecContext(ctx, migrationV8)
+	require.NoError(t, err, "Failed to run migration V8")
+
 	// Cleanup function
 	cleanup := func() {
 		db.Close()
