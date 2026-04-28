@@ -66,6 +66,7 @@ type TopologyNodePayload struct {
 	Criticality     string              `json:"criticality"`
 	NodeType        string              `json:"node_type"`
 	ManifestVersion string              `json:"manifest_version"`
+	ImageTag        string              `json:"image_tag"`
 	Dependencies    []DependencyPayload `json:"dependencies"`
 }
 

@@ -43,17 +43,19 @@ type RunSummary struct {
 }
 
 type TableNode struct {
-	TableName     string
-	SchemaName    string
-	ServiceName   string
-	Owner         string
-	ScheduleName  string
-	Criticality   Criticality
-	LastUpdatedAt time.Time
-	CreatedAt     time.Time
-	NodeType      string
-	Status        string
-	TaskID        string
+	TableName       string
+	SchemaName      string
+	ServiceName     string
+	Owner           string
+	ScheduleName    string
+	Criticality     Criticality
+	LastUpdatedAt   time.Time
+	CreatedAt       time.Time
+	NodeType        string
+	Status          string
+	TaskID          string
+	ManifestVersion string
+	ImageTag        string
 }
 
 type ScheduleGraph struct {
@@ -107,12 +109,14 @@ type CascadeTaskSkipped struct {
 
 // NodeReadyForExecution is the event payload written to query.model:v1 outbox entries
 type NodeReadyForExecution struct {
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	TaskID       string `json:"task_id"`
-	JobName      string `json:"job_name"`
-	NodeType     string `json:"node_type"`
+	ScheduleID      string `json:"schedule_id"`
+	ScheduleName    string `json:"schedule_name"`
+	ServiceName     string `json:"service_name"`
+	SchemaName      string `json:"schema_name"`
+	TableName       string `json:"table_name"`
+	TaskID          string `json:"task_id"`
+	JobName         string `json:"job_name"`
+	NodeType        string `json:"node_type"`
+	ManifestVersion string `json:"manifest_version"`
+	ImageTag        string `json:"image_tag"`
 }

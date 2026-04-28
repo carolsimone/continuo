@@ -38,5 +38,6 @@ type TopologyNode struct {
 	Criticality     string
 	NodeType        string
 	ManifestVersion string
+	ImageTag        string
 	Dependencies    []UpstreamDependency
 }
