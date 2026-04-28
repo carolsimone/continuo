@@ -130,7 +130,8 @@ func main() {
 	// consumers would cause "transaction already in progress" errors when two
 	// consumers process messages concurrently — the second Begin() sees inTx=true
 	// and the message is never ACKed, getting stuck in the PEL forever.
-	ingestTopologyHandler := command.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, logger)
+	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
+	ingestTopologyHandler := command.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, logger)
 	initializeRunHandler := command.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)

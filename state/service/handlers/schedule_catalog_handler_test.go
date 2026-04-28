@@ -67,7 +67,10 @@ func TestScheduleCatalogHandler_Handle_PassesManifestVersionsToRepository(t *tes
 	shouldACK, err := handler.Handle(context.Background(), `{
 		"event_id":"4f1f4f31-d8be-4cc3-beb7-e73b784fd4af",
 		"schedule_names":["daily","hourly"],
-		"manifest_versions":{"svc-a":"v3","svc-b":"v5"}
+		"service_metadata":{
+			"svc-a":{"manifest_version":"v3","image_tag":"sha256:aaa"},
+			"svc-b":{"manifest_version":"v5","image_tag":"sha256:bbb"}
+		}
 	}`)
 
 	require.NoError(t, err)

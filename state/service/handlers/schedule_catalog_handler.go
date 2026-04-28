@@ -13,9 +13,9 @@ import (
 
 // schedulesLoadedPayload is the JSON payload of a schedules.loaded:v1 message.
 type schedulesLoadedPayload struct {
-	EventID          string            `json:"event_id"`
-	ScheduleNames    []string          `json:"schedule_names"`
-	ManifestVersions map[string]string `json:"manifest_versions"`
+	EventID         string                       `json:"event_id"`
+	ScheduleNames   []string                     `json:"schedule_names"`
+	ServiceMetadata map[string]map[string]string `json:"service_metadata"`
 }
 
 // ScheduleCatalogHandler reconciles schedule_catalog from a single schedules.loaded:v1 payload.
@@ -76,8 +76,17 @@ func (h *ScheduleCatalogHandler) Handle(ctx context.Context, payloadStr string) 
 		return true, nil
 	}
 
+	// Extract manifest_versions (map[string]string) from service_metadata
+	// (map[string]map[string]string) for backward compatibility with the catalog repo.
+	manifestVersions := make(map[string]string, len(p.ServiceMetadata))
+	for svc, meta := range p.ServiceMetadata {
+		if mv, ok := meta["manifest_version"]; ok {
+			manifestVersions[svc] = mv
+		}
+	}
+
 	// Reconcile catalog — transient errors: don't ACK
-	if err := h.catalogRepo.UpsertAll(ctx, p.ScheduleNames, p.ManifestVersions); err != nil {
+	if err := h.catalogRepo.UpsertAll(ctx, p.ScheduleNames, manifestVersions); err != nil {
 		return false, fmt.Errorf("upsert schedule names: %w", err)
 	}
 	if err := h.catalogRepo.SoftDeleteAbsent(ctx, p.ScheduleNames); err != nil {

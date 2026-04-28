@@ -19,7 +19,7 @@ type fakeTopologyRepository struct {
 	applySnapshotCalls [][]*topology.TopologyNode
 }
 
-func (f *fakeTopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topology.TopologyNode) error {
+func (f *fakeTopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error {
 	copied := append([]*topology.TopologyNode(nil), nodes...)
 	f.applySnapshotCalls = append(f.applySnapshotCalls, copied)
 	if f.applySnapshotFn != nil {
@@ -28,8 +28,27 @@ func (f *fakeTopologyRepository) ApplySnapshot(ctx context.Context, nodes []*top
 	return nil
 }
 
+func (f *fakeTopologyRepository) SetServiceMetadata(ctx context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error {
+	return nil
+}
+
 func (f *fakeTopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName string) ([]*topology.Node, []*topology.UpstreamDependency, error) {
 	return nil, nil, nil
+}
+
+// ── fakes: topology.TopologyStateRepository ──────────────────────────────────
+
+type fakeTopologyStateRepository struct {
+	generation int64
+}
+
+func (f *fakeTopologyStateRepository) IncrementGeneration(ctx context.Context) (int64, error) {
+	f.generation++
+	return f.generation, nil
+}
+
+func (f *fakeTopologyStateRepository) GetGeneration(ctx context.Context) (int64, error) {
+	return f.generation, nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -46,6 +65,7 @@ func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
 				Criticality:     "CORE",
 				NodeType:        "dbt-model",
 				ManifestVersion: "v1",
+				ImageTag:        "sha256:abc",
 				Dependencies:    []domainCmd.DependencyPayload{},
 			},
 			{
@@ -57,6 +77,7 @@ func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
 				Criticality:     "CORE",
 				NodeType:        "dbt-model",
 				ManifestVersion: "v1",
+				ImageTag:        "sha256:abc",
 				Dependencies: []domainCmd.DependencyPayload{
 					{ServiceName: "svc1", SchemaName: "public", TableName: "orders"},
 				},
@@ -70,6 +91,7 @@ func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
 				Criticality:     "REGULATORY",
 				NodeType:        "dbt-model",
 				ManifestVersion: "v2",
+				ImageTag:        "sha256:def",
 				Dependencies:    []domainCmd.DependencyPayload{},
 			},
 		},
@@ -83,8 +105,9 @@ func TestIngestTopology_ThreeNodesTwoSchedules(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
 
-	h := command.NewIngestTopologyHandler(uow, topoRepo, newTestLogger())
+	h := command.NewIngestTopologyHandler(uow, topoRepo, stateRepo, newTestLogger())
 	cmd := makeIngestTopologyCmd()
 
 	err := h.Handle(ctx, cmd, "msg-ingest-1")
@@ -105,17 +128,23 @@ func TestIngestTopology_ThreeNodesTwoSchedules(t *testing.T) {
 	assert.Equal(t, "orchestrator", entry.AggregateType)
 	assert.Equal(t, "pending", entry.Status)
 
-	// Parse outbox payload and verify schedule names and manifest versions
+	// Parse outbox payload and verify schedule names and service_metadata
 	var outboxPayload struct {
-		ScheduleNames    []string          `json:"schedule_names"`
-		ManifestVersions map[string]string `json:"manifest_versions"`
+		ScheduleNames   []string                       `json:"schedule_names"`
+		ServiceMetadata map[string]map[string]string   `json:"service_metadata"`
 	}
 	require.NoError(t, json.Unmarshal(entry.Payload, &outboxPayload))
 
 	assert.ElementsMatch(t, []string{"daily", "hourly"}, outboxPayload.ScheduleNames,
 		"outbox payload should contain both schedule names")
-	assert.Equal(t, map[string]string{"svc1": "v1", "svc2": "v2"}, outboxPayload.ManifestVersions,
-		"outbox payload should contain manifest versions per service")
+	assert.Equal(t, map[string]map[string]string{
+		"svc1": {"manifest_version": "v1", "image_tag": "sha256:abc"},
+		"svc2": {"manifest_version": "v2", "image_tag": "sha256:def"},
+	}, outboxPayload.ServiceMetadata,
+		"outbox payload should contain service_metadata per service")
+
+	// topology_generation should be 1 after one ingestion
+	assert.Equal(t, int64(1), stateRepo.generation)
 }
 
 // 2. Duplicate message → skip processing.
@@ -123,8 +152,9 @@ func TestIngestTopology_DuplicateMessage(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
 
-	h := command.NewIngestTopologyHandler(uow, topoRepo, newTestLogger())
+	h := command.NewIngestTopologyHandler(uow, topoRepo, stateRepo, newTestLogger())
 	cmd := makeIngestTopologyCmd()
 
 	// First call: processes normally
