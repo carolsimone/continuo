@@ -122,6 +122,13 @@ func (t *TaskTracker) Transition(caller CallerID, to TaskStatus) error {
 	return ErrInvalidTransition
 }
 
+// ServiceMetadata holds per-service topology snapshot data stored in scheduler_tracker
+// and schedule_catalog (service_metadata JSONB column).
+type ServiceMetadata struct {
+	ManifestVersion string `json:"manifest_version"`
+	ImageTag        string `json:"image_tag"`
+}
+
 // SchedulerTracker represents a scheduler execution run
 // Maps to the scheduler_tracker table in PostgreSQL
 type SchedulerTracker struct {
@@ -138,26 +145,25 @@ type SchedulerTracker struct {
 	InitializationStatus string            `json:"initialization_status" db:"initialization_status"`
 	TotalTaskCount       sql.NullInt32     `json:"total_task_count,omitempty" db:"total_task_count"`
 	TerminalTaskCount    int32             `json:"terminal_task_count" db:"terminal_task_count"`
-	ManifestVersions     map[string]string `json:"manifest_versions"`
-	ManifestVersionsRaw  json.RawMessage   `json:"-" db:"manifest_versions"`
+	ServiceMetadata    map[string]ServiceMetadata `json:"service_metadata"`
+	ServiceMetadataRaw json.RawMessage            `json:"-" db:"service_metadata"`
 }
 
-func (s *SchedulerTracker) GetManifestVersions() map[string]string {
-	if len(s.ManifestVersions) > 0 {
-		return s.ManifestVersions
+func (s *SchedulerTracker) GetServiceMetadata() map[string]ServiceMetadata {
+	if len(s.ServiceMetadata) > 0 {
+		return s.ServiceMetadata
 	}
-	if len(s.ManifestVersionsRaw) == 0 {
-		return map[string]string{}
+	if len(s.ServiceMetadataRaw) == 0 {
+		return map[string]ServiceMetadata{}
 	}
-
-	var versions map[string]string
-	if err := json.Unmarshal(s.ManifestVersionsRaw, &versions); err != nil {
-		return map[string]string{}
+	var meta map[string]ServiceMetadata
+	if err := json.Unmarshal(s.ServiceMetadataRaw, &meta); err != nil {
+		return map[string]ServiceMetadata{}
 	}
-	if versions == nil {
-		return map[string]string{}
+	if meta == nil {
+		return map[string]ServiceMetadata{}
 	}
-	return versions
+	return meta
 }
 
 // TaskTracker represents a task execution within a schedule

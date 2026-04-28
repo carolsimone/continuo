@@ -91,9 +91,9 @@ func NewSchedulerTrackerRepository(db *sqlx.DB, logger *slog.Logger) SchedulerTr
 
 // Create inserts a new scheduler_tracker record into the database
 func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.SchedulerTracker) error {
-	versionsJSON, err := json.Marshal(tracker.GetManifestVersions())
+	metaJSON, err := json.Marshal(tracker.GetServiceMetadata())
 	if err != nil {
-		return fmt.Errorf("marshal manifest_versions: %w", err)
+		return fmt.Errorf("marshal service_metadata: %w", err)
 	}
 
 	query := `
@@ -101,7 +101,7 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, manifest_versions,
+			initialization_status, service_metadata,
 			total_task_count, terminal_task_count
 		) VALUES (
 			$1, $2, $3, $4,
@@ -116,7 +116,7 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.
 		tracker.ScheduleID, tracker.ScheduleName, tracker.Status, tracker.CreatedAt,
 		tracker.StartedAt, tracker.CompletedAt, tracker.LastHeartbeatAt,
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
-		tracker.InitializationStatus, versionsJSON,
+		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
 	)
 	if err != nil {
@@ -147,9 +147,9 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.
 
 // CreateTx inserts a new scheduler_tracker record within an existing transaction.
 func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *model.SchedulerTracker) error {
-	versionsJSON, err := json.Marshal(tracker.GetManifestVersions())
+	metaJSON, err := json.Marshal(tracker.GetServiceMetadata())
 	if err != nil {
-		return fmt.Errorf("marshal manifest_versions: %w", err)
+		return fmt.Errorf("marshal service_metadata: %w", err)
 	}
 
 	_, err = tx.ExecContext(ctx, `
@@ -157,7 +157,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, manifest_versions,
+			initialization_status, service_metadata,
 			total_task_count, terminal_task_count
 		) VALUES (
 			$1, $2, $3, $4,
@@ -170,7 +170,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 		tracker.ScheduleID, tracker.ScheduleName, tracker.Status, tracker.CreatedAt,
 		tracker.StartedAt, tracker.CompletedAt, tracker.LastHeartbeatAt,
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
-		tracker.InitializationStatus, versionsJSON,
+		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
 	)
 	if err != nil {
@@ -189,7 +189,7 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, manifest_versions,
+			initialization_status, service_metadata,
 			total_task_count, terminal_task_count
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
@@ -210,7 +210,7 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 		)
 		return nil, fmt.Errorf("failed to get scheduler_tracker: %w", err)
 	}
-	tracker.ManifestVersions = tracker.GetManifestVersions()
+	tracker.ServiceMetadata = tracker.GetServiceMetadata()
 
 	r.logger.Debug("Retrieved scheduler_tracker",
 		"schedule_id", scheduleID,
@@ -369,7 +369,7 @@ func (r *schedulerTrackerRepository) List(ctx context.Context, filters Scheduler
 	query := fmt.Sprintf(`
 		SELECT schedule_id, schedule_name, status, created_at, started_at,
 		       completed_at, last_heartbeat_at, cancelled_at, cancelled_by,
-		       cancellation_reason, initialization_status, manifest_versions,
+		       cancellation_reason, initialization_status, service_metadata,
 		       total_task_count, terminal_task_count
 		FROM scheduler_tracker
 		%s
@@ -389,7 +389,7 @@ func (r *schedulerTrackerRepository) List(ctx context.Context, filters Scheduler
 		return nil, 0, fmt.Errorf("failed to list schedulers: %w", err)
 	}
 	for _, tracker := range trackers {
-		tracker.ManifestVersions = tracker.GetManifestVersions()
+		tracker.ServiceMetadata = tracker.GetServiceMetadata()
 	}
 
 	r.logger.Debug("Listed schedulers",
@@ -500,7 +500,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, manifest_versions,
+			initialization_status, service_metadata,
 			total_task_count, terminal_task_count
 		FROM scheduler_tracker
 		WHERE schedule_name = $1
@@ -522,7 +522,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 		)
 		return nil, fmt.Errorf("failed to get active scheduler: %w", err)
 	}
-	tracker.ManifestVersions = tracker.GetManifestVersions()
+	tracker.ServiceMetadata = tracker.GetServiceMetadata()
 
 	r.logger.Debug("Found active scheduler",
 		"schedule_name", scheduleName,
@@ -634,7 +634,7 @@ func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx 
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, manifest_versions,
+			initialization_status, service_metadata,
 			total_task_count, terminal_task_count
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
@@ -646,7 +646,7 @@ func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx 
 		}
 		return nil, fmt.Errorf("get scheduler_tracker for update: %w", err)
 	}
-	tracker.ManifestVersions = tracker.GetManifestVersions()
+	tracker.ServiceMetadata = tracker.GetServiceMetadata()
 	return &tracker, nil
 }
 

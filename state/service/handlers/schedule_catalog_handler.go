@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -76,17 +77,16 @@ func (h *ScheduleCatalogHandler) Handle(ctx context.Context, payloadStr string) 
 		return true, nil
 	}
 
-	// Extract manifest_versions (map[string]string) from service_metadata
-	// (map[string]map[string]string) for backward compatibility with the catalog repo.
-	manifestVersions := make(map[string]string, len(p.ServiceMetadata))
+	serviceMetadata := make(map[string]model.ServiceMetadata, len(p.ServiceMetadata))
 	for svc, meta := range p.ServiceMetadata {
-		if mv, ok := meta["manifest_version"]; ok {
-			manifestVersions[svc] = mv
+		serviceMetadata[svc] = model.ServiceMetadata{
+			ManifestVersion: meta["manifest_version"],
+			ImageTag:        meta["image_tag"],
 		}
 	}
 
 	// Reconcile catalog — transient errors: don't ACK
-	if err := h.catalogRepo.UpsertAll(ctx, p.ScheduleNames, manifestVersions); err != nil {
+	if err := h.catalogRepo.UpsertAll(ctx, p.ScheduleNames, serviceMetadata); err != nil {
 		return false, fmt.Errorf("upsert schedule names: %w", err)
 	}
 	if err := h.catalogRepo.SoftDeleteAbsent(ctx, p.ScheduleNames); err != nil {

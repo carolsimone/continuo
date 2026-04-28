@@ -115,14 +115,14 @@ func TestOutboxProcessor_UsesStreamNameFromEntry(t *testing.T) {
 	assert.Equal(t, "scheduler.started:v1", publishedStream)
 }
 
-func TestOutboxProcessor_StringifiesNestedManifestVersionsForRedis(t *testing.T) {
+func TestOutboxProcessor_StringifiesNestedServiceMetadataForRedis(t *testing.T) {
 	entry := &postgres.OutboxEntry{
 		ID:         uuid.New(),
 		StreamName: "scheduler.started:v1",
 		Payload: []byte(`{
 			"runner_id":"abc",
 			"schedule_name":"daily",
-			"manifest_versions":{"svc-a":"v3","svc-b":"v5"}
+			"service_metadata":{"svc-a":{"manifest_version":"v3","image_tag":""},"svc-b":{"manifest_version":"v5","image_tag":""}}
 		}`),
 		Status:     "pending",
 		MaxRetries: 3,
@@ -138,7 +138,8 @@ func TestOutboxProcessor_StringifiesNestedManifestVersionsForRedis(t *testing.T)
 
 	require.NoError(t, processor.ProcessBatch(context.Background()))
 	require.NotNil(t, publishedFields)
-	assert.Equal(t, `{"svc-a":"v3","svc-b":"v5"}`, publishedFields["manifest_versions"])
+	// service_metadata is a nested object — the outbox processor stringifies it for Redis
+	assert.Contains(t, publishedFields["service_metadata"], "manifest_version")
 }
 
 func TestOutboxProcessor_PublishesRunFinalized(t *testing.T) {

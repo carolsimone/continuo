@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS scheduler_tracker (
 	initialization_status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (initialization_status IN (
 							'pending','in_progress','completed','failed'
 						)),
-	manifest_versions   JSONB NOT NULL DEFAULT '{}',
+	service_metadata    JSONB NOT NULL DEFAULT '{}',
 	total_task_count    INTEGER,
 	terminal_task_count INTEGER NOT NULL DEFAULT 0,
 	CONSTRAINT valid_timestamps CHECK (

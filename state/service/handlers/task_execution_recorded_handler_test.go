@@ -36,7 +36,7 @@ func seedSchedulerAndTaskForExecution(t *testing.T, db *sqlx.DB, scheduleID, tas
 	_, err := db.Exec(`
 		INSERT INTO scheduler_tracker (
 			schedule_id, schedule_name, status, created_at,
-			initialization_status, manifest_versions, total_task_count, terminal_task_count
+			initialization_status, service_metadata, total_task_count, terminal_task_count
 		) VALUES ($1, $2, $3, $4, $5, $6, 1, 0)
 	`,
 		scheduleID,

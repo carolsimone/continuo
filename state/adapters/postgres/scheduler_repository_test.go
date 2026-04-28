@@ -99,7 +99,7 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 		Status:               model.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
-		ManifestVersionsRaw:  []byte(`{"svc-a":"v3"}`),
+		ServiceMetadataRaw:   []byte(`{"svc-a":{"manifest_version":"v3","image_tag":""}}`),
 	}
 	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
 
@@ -115,7 +115,7 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.SchedulerStatusPending, got.Status)
 	assert.Equal(t, "pending", got.InitializationStatus)
-	assert.Equal(t, map[string]string{"svc-a": "v3"}, got.GetManifestVersions())
+	assert.Equal(t, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, got.GetServiceMetadata())
 }
 
 func TestSchedulerRepository_IncrementTerminalCountTx(t *testing.T) {

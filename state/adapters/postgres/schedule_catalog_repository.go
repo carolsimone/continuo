@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -14,14 +15,14 @@ import (
 type ScheduleCatalogRepository interface {
 	// UpsertAll inserts or reactivates all names in the list.
 	// On conflict: sets last_seen_at=now(), removed_at=NULL.
-	UpsertAll(ctx context.Context, names []string, manifestVersions map[string]string) error
+	UpsertAll(ctx context.Context, names []string, serviceMetadata map[string]model.ServiceMetadata) error
 	// SoftDeleteAbsent soft-deletes any active row whose name is not in names.
 	SoftDeleteAbsent(ctx context.Context, names []string) error
 	// ListActive returns all schedule_names with removed_at IS NULL.
 	ListActive(ctx context.Context) ([]string, error)
 	// ExistsActive returns true if schedule_name is active in the catalog.
 	ExistsActive(ctx context.Context, scheduleName string) (bool, error)
-	GetManifestVersions(ctx context.Context, scheduleName string) (map[string]string, error)
+	GetServiceMetadata(ctx context.Context, scheduleName string) (map[string]model.ServiceMetadata, error)
 }
 
 type scheduleCatalogRepository struct {
@@ -34,13 +35,13 @@ func NewScheduleCatalogRepository(db *sqlx.DB, logger *slog.Logger) ScheduleCata
 	return &scheduleCatalogRepository{db: db, logger: logger}
 }
 
-func (r *scheduleCatalogRepository) UpsertAll(ctx context.Context, names []string, manifestVersions map[string]string) error {
+func (r *scheduleCatalogRepository) UpsertAll(ctx context.Context, names []string, serviceMetadata map[string]model.ServiceMetadata) error {
 	if len(names) == 0 {
 		return nil
 	}
-	versionsJSON, err := json.Marshal(manifestVersions)
+	metaJSON, err := json.Marshal(serviceMetadata)
 	if err != nil {
-		return fmt.Errorf("marshal manifest_versions: %w", err)
+		return fmt.Errorf("marshal service_metadata: %w", err)
 	}
 	now := time.Now()
 	tx, err := r.db.BeginTxx(ctx, nil)
@@ -51,13 +52,13 @@ func (r *scheduleCatalogRepository) UpsertAll(ctx context.Context, names []strin
 
 	for _, name := range names {
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, manifest_versions)
+			INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
 			VALUES ($1, $2, $2, NULL, $3)
 			ON CONFLICT (schedule_name) DO UPDATE
 			  SET last_seen_at = $2,
 			      removed_at = NULL,
-			      manifest_versions = $3
-		`, name, now, versionsJSON)
+			      service_metadata = $3
+		`, name, now, metaJSON)
 		if err != nil {
 			return fmt.Errorf("upsert schedule_catalog %q: %w", name, err)
 		}
@@ -114,22 +115,22 @@ func (r *scheduleCatalogRepository) ExistsActive(ctx context.Context, scheduleNa
 	return exists, nil
 }
 
-func (r *scheduleCatalogRepository) GetManifestVersions(ctx context.Context, scheduleName string) (map[string]string, error) {
+func (r *scheduleCatalogRepository) GetServiceMetadata(ctx context.Context, scheduleName string) (map[string]model.ServiceMetadata, error) {
 	var raw []byte
 	err := r.db.QueryRowContext(ctx,
-		`SELECT manifest_versions FROM schedule_catalog WHERE schedule_name = $1`,
+		`SELECT service_metadata FROM schedule_catalog WHERE schedule_name = $1`,
 		scheduleName,
 	).Scan(&raw)
 	if err != nil {
-		return nil, fmt.Errorf("get manifest_versions for %q: %w", scheduleName, err)
+		return nil, fmt.Errorf("get service_metadata for %q: %w", scheduleName, err)
 	}
 
-	var versions map[string]string
-	if err := json.Unmarshal(raw, &versions); err != nil {
-		return nil, fmt.Errorf("unmarshal manifest_versions: %w", err)
+	var meta map[string]model.ServiceMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return nil, fmt.Errorf("unmarshal service_metadata: %w", err)
 	}
-	if versions == nil {
-		versions = map[string]string{}
+	if meta == nil {
+		meta = map[string]model.ServiceMetadata{}
 	}
-	return versions, nil
+	return meta, nil
 }
