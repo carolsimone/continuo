@@ -182,8 +182,6 @@ def test_s3_source_cleanup_removes_temp_dir():
 
 def test_s3_source_attaches_image_tag_from_sidecar(tmp_path):
     """S3Source populates ManifestFile.image_tag from service_metadata.json sidecar."""
-    from botocore.exceptions import ClientError
-
     mock_s3 = MagicMock()
     keys = ["local/manifest/service-1/manifest_v3.json"]
     mock_s3.list_objects_v2.return_value = {"Contents": [{"Key": k} for k in keys]}
@@ -213,8 +211,6 @@ def test_s3_source_attaches_image_tag_from_sidecar(tmp_path):
 
 def test_s3_source_image_tag_empty_when_sidecar_missing(tmp_path):
     """S3Source returns image_tag='' when service_metadata.json is absent (backward compat)."""
-    from botocore.exceptions import ClientError
-
     mock_s3 = MagicMock()
     keys = ["local/manifest/service-1/manifest_v3.json"]
     mock_s3.list_objects_v2.return_value = {"Contents": [{"Key": k} for k in keys]}

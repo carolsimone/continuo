@@ -46,6 +46,7 @@ class LocalFilesystemSource(ManifestSource):
                     logger.warning(
                         "Failed to read service_metadata.json — image_tag will be empty",
                         extra={"meta_path": meta_path},
+                        exc_info=True,
                     )
 
             result.append(ManifestFile(
