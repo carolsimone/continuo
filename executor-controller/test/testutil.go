@@ -76,6 +76,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 			table_name VARCHAR(255) NOT NULL,
 			job_name VARCHAR(63) NOT NULL,
 			node_type TEXT NOT NULL DEFAULT 'dbt-model',
+			image_tag VARCHAR(255) NOT NULL DEFAULT '',
 			task_retry_count INT NOT NULL DEFAULT 0,
 			task_max_retries INT NOT NULL DEFAULT 2,
 			status VARCHAR(20) NOT NULL DEFAULT 'pending',

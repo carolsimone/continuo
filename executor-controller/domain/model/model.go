@@ -18,6 +18,7 @@ type DeploymentOutboxEntry struct {
 	TableName      string     `db:"table_name"`
 	JobName        string     `db:"job_name"`
 	NodeType       string     `db:"node_type"`
+	ImageTag       string     `db:"image_tag"`
 	TaskRetryCount    int        `db:"task_retry_count"`    // task-level retry count (k8s retries)
 	TaskMaxRetries    int        `db:"task_max_retries"`    // maximum k8s retries allowed
 	Status            string     `db:"status"`              // 'pending', 'processed', 'failed'

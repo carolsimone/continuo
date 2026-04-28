@@ -56,6 +56,7 @@ func (h *DeployHandler) Handle(ctx context.Context, cmd command.DeployJob) error
 		TableName:      cmd.TableName,
 		JobName:        cmd.JobName,
 		NodeType:       string(cmd.NodeType),
+		ImageTag:       cmd.ImageTag,
 		TaskRetryCount: cmd.TaskRetryCount,
 		TaskMaxRetries: taskMaxRetries,
 		Status:         string(model.OutboxStatusPending),

@@ -177,6 +177,7 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.Deploym
 		TableName:    entry.TableName,
 		Namespace:    p.k8sNamespace,
 		NodeType:     nodeType,
+		ImageTag:     entry.ImageTag,
 	}
 
 	if err := p.k8sClient.CreateQueryJob(ctx, params); err != nil {

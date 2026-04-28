@@ -345,6 +345,8 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 		}
 	}
 
+	imageTag := getString(msg.Values, "image_tag")
+
 	cmd := command.DeployJob{
 		TaskID:         taskID,
 		ScheduleID:     scheduleID,
@@ -354,6 +356,7 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 		TableName:      getString(msg.Values, "table_name"),
 		JobName:        getString(msg.Values, "job_name"),
 		NodeType:       nodeType,
+		ImageTag:       imageTag,
 		TaskRetryCount: taskRetryCount,
 		MaxRetries:     maxRetries,
 	}

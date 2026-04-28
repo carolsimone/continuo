@@ -192,15 +192,17 @@ func (p *OutboxProcessor) payloadToValues(entry *domain.OutboxEntry) (map[string
 			return nil, fmt.Errorf("failed to unmarshal node_ready_for_execution payload: %w", err)
 		}
 		return map[string]interface{}{
-			"outbox_entry_id": entry.ID.String(),
-			"schedule_id":     evt.ScheduleID,
-			"schedule_name":   evt.ScheduleName,
-			"service_name":    evt.ServiceName,
-			"schema_name":     evt.SchemaName,
-			"table_name":      evt.TableName,
-			"task_id":         evt.TaskID,
-			"job_name":        evt.JobName,
-			"node_type":       evt.NodeType,
+			"outbox_entry_id":  entry.ID.String(),
+			"schedule_id":      evt.ScheduleID,
+			"schedule_name":    evt.ScheduleName,
+			"service_name":     evt.ServiceName,
+			"schema_name":      evt.SchemaName,
+			"table_name":       evt.TableName,
+			"task_id":          evt.TaskID,
+			"job_name":         evt.JobName,
+			"node_type":        evt.NodeType,
+			"image_tag":        evt.ImageTag,
+			"manifest_version": evt.ManifestVersion,
 		}, nil
 
 	case "cascade_task_skipped":
