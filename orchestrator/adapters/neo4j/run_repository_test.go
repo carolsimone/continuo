@@ -412,6 +412,10 @@ func TestSnapshotGraph_StampsGenerationAndServiceMetadataAndEdgeImageTag(t *test
 		_, _ = s.Run(context.Background(), `
 			MATCH (r:Run {schedule_name: $sched}) DETACH DELETE r
 		`, map[string]interface{}{"sched": scheduleName})
+		_, _ = s.Run(context.Background(), `
+			MATCH (root:TopologyRoot {id: 'singleton'})
+			REMOVE root.topology_generation, root.service_metadata
+		`, nil)
 	})
 
 	repo := neo4jinfra.NewRunRepository(client, slog.Default())
