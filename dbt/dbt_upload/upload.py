@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from pathlib import Path
 
 import boto3
@@ -10,7 +11,6 @@ import boto3
 from dbt_upload.service_metadata import (
     parse_image_tag_env,
     write_service_metadata_json,
-    MissingImageTagError,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,17 +83,17 @@ def upload_manifest(
 
     # Write and upload service_metadata.json sidecar if image_tag is provided.
     if image_tag:
-        import tempfile
-        meta_dir = Path(tempfile.mkdtemp())
-        write_service_metadata_json(
-            out_dir=meta_dir,
-            service_name=service_name,
-            manifest_version=f"v{version}",
-            image_tag=image_tag,
-        )
-        meta_key = f"{env}/manifest/{service_name}/service_metadata.json"
-        s3_client.upload_file(str(meta_dir / "service_metadata.json"), bucket, meta_key)
-        logger.info("Uploaded service_metadata.json -> s3://%s/%s", bucket, meta_key)
+        with tempfile.TemporaryDirectory() as _tmp:
+            meta_dir = Path(_tmp)
+            write_service_metadata_json(
+                out_dir=meta_dir,
+                service_name=service_name,
+                manifest_version=f"v{version}",
+                image_tag=image_tag,
+            )
+            meta_key = f"{env}/manifest/{service_name}/service_metadata.json"
+            s3_client.upload_file(str(meta_dir / "service_metadata.json"), bucket, meta_key)
+            logger.info("Uploaded service_metadata.json -> s3://%s/%s", bucket, meta_key)
 
     return True
 

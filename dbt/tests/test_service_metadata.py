@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -61,3 +60,27 @@ def test_write_service_metadata_json_raises_on_empty_image_tag(tmp_path: Path):
             manifest_version="v3",
             image_tag="",
         )
+
+
+def test_upload_manifest_writes_sidecar_when_image_tag_provided(tmp_path: Path):
+    """upload_manifest uploads service_metadata.json sidecar when image_tag is set."""
+    from unittest.mock import MagicMock
+    from dbt_upload.upload import upload_manifest
+
+    # Create a fake manifest.json
+    service_dir = tmp_path / "service-1"
+    (service_dir / "target").mkdir(parents=True)
+    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+
+    mock_s3 = MagicMock()
+    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": []}]
+
+    result = upload_manifest(mock_s3, str(service_dir), "local", "continuo", image_tag="abc123-1714300000")
+
+    assert result is True
+    upload_calls = [str(c) for c in mock_s3.upload_file.call_args_list]
+    assert any("service_metadata.json" in c for c in upload_calls), \
+        f"service_metadata.json not uploaded; calls={upload_calls}"
+    # Verify the S3 key for the sidecar
+    sidecar_call = next(c for c in mock_s3.upload_file.call_args_list if "service_metadata" in str(c))
+    assert "local/manifest/service-1/service_metadata.json" in str(sidecar_call)
