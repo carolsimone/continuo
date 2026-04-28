@@ -758,6 +758,40 @@ func (r *RunRepository) ResetSkippedDownstreamToPending(ctx context.Context, run
 	return nil
 }
 
+// GetNodeEdgeData reads manifest_version and image_tag from the EXECUTES edge for a
+// specific Table node within a run.
+func (r *RunRepository) GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (string, string, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(:Table {schema_name: $schema_name, table_name: $table_name})
+		RETURN COALESCE(e.manifest_version, '') AS manifest_version, COALESCE(e.image_tag, '') AS image_tag
+		LIMIT 1
+	`, map[string]interface{}{
+		"run_id":      runID,
+		"schema_name": schemaName,
+		"table_name":  tableName,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("GetNodeEdgeData query failed: %w", err)
+	}
+	if result.Next(ctx) {
+		record := result.Record()
+		mv, _ := record.Get("manifest_version")
+		it, _ := record.Get("image_tag")
+		mvStr, itStr := safeString(mv), safeString(it)
+		if err := result.Err(); err != nil {
+			return "", "", fmt.Errorf("GetNodeEdgeData result error: %w", err)
+		}
+		return mvStr, itStr, nil
+	}
+	if err := result.Err(); err != nil {
+		return "", "", fmt.Errorf("GetNodeEdgeData result error: %w", err)
+	}
+	return "", "", fmt.Errorf("GetNodeEdgeData: no EXECUTES edge for run=%s schema=%s table=%s", runID, schemaName, tableName)
+}
+
 // DeleteExpiredRuns removes Run nodes (and their EXECUTES edges) older than retentionDays.
 func (r *RunRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)

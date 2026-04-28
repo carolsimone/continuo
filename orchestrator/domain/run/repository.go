@@ -21,6 +21,7 @@ type Repository interface {
 	GetSkippedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error)
 	MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*CascadedFailureNode, error)
 	ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error
+	GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (manifestVersion, imageTag string, err error)
 
 	// Read-side: queries (CQRS — called directly, not through aggregate)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)

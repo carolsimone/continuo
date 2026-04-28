@@ -127,14 +127,16 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd Schedule
 		}
 
 		evt := domain.NodeReadyForExecution{
-			ScheduleID:   cmd.ScheduleID.String(),
-			ScheduleName: node.ScheduleName,
-			ServiceName:  node.ServiceName,
-			SchemaName:   node.SchemaName,
-			TableName:    node.TableName,
-			TaskID:       node.TaskID,
-			JobName:      jobName,
-			NodeType:     string(nodeType),
+			ScheduleID:      cmd.ScheduleID.String(),
+			ScheduleName:    node.ScheduleName,
+			ServiceName:     node.ServiceName,
+			SchemaName:      node.SchemaName,
+			TableName:       node.TableName,
+			TaskID:          node.TaskID,
+			JobName:         jobName,
+			NodeType:        string(nodeType),
+			ManifestVersion: node.ManifestVersion,
+			ImageTag:        node.ImageTag,
 		}
 
 		evtPayload, err := json.Marshal(evt)
@@ -234,11 +236,13 @@ func (h *HandleSchedulerStartedHandler) buildRunEntriesDispatchedPayload(
 	if initNodes != nil {
 		for _, node := range initNodes.AllNodes {
 			allTasks = append(allTasks, pkgevents.DispatchedTask{
-				TaskID:      node.TaskID,
-				ServiceName: node.ServiceName,
-				SchemaName:  node.SchemaName,
-				TableName:   node.TableName,
-				NodeType:    node.NodeType,
+				TaskID:          node.TaskID,
+				ServiceName:     node.ServiceName,
+				SchemaName:      node.SchemaName,
+				TableName:       node.TableName,
+				NodeType:        node.NodeType,
+				ManifestVersion: node.ManifestVersion,
+				ImageTag:        node.ImageTag,
 			})
 		}
 	}

@@ -103,6 +103,9 @@ func (f *fakeRunRepository) MarkPendingDownstreamSkipped(ctx context.Context, ru
 func (f *fakeRunRepository) ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
 	return nil
 }
+func (f *fakeRunRepository) GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (string, string, error) {
+	return "v1-stub", "tag-stub", nil
+}
 
 // ── fakes: outbox and message processing repos ────────────────────────────────
 
