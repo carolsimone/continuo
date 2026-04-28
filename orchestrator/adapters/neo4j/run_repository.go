@@ -86,9 +86,17 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 
 	// Step 2: MERGE Run node and EXECUTES edges; ON CREATE sets task_id so
 	// existing edges on replay keep their original task_id.
+	// topology_generation and service_metadata are copied from :TopologyRoot at
+	// snapshot time so the run is isolated from future topology changes.
 	mergeQuery := `
+		OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
+		WITH COALESCE(root.topology_generation, 0) AS topo_gen,
+		     COALESCE(root.service_metadata, '{}') AS svc_meta
 		MERGE (run:Run {run_id: $run_id})
-		ON CREATE SET run.schedule_name = $schedule_name, run.created_at = datetime()
+		ON CREATE SET run.schedule_name = $schedule_name,
+		              run.created_at = datetime(),
+		              run.topology_generation = topo_gen,
+		              run.service_metadata = svc_meta
 		WITH run
 		UNWIND $assignments AS a
 		MATCH (node:Table {schema_name:   a.schema_name,
@@ -98,6 +106,7 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 		MERGE (run)-[e:EXECUTES]->(node)
 		ON CREATE SET e.status = 'PENDING',
 		              e.manifest_version = COALESCE(node.manifest_version, ''),
+		              e.image_tag = COALESCE(node.image_tag, ''),
 		              e.task_id = a.task_id
 		RETURN count(e) AS edges_created
 	`
@@ -382,7 +391,9 @@ func (r *RunRepository) getRootNodesInRun(ctx context.Context, tx neo4j.Explicit
 			t.last_updated_at AS last_updated_at,
 			t.created_at AS created_at,
 			COALESCE(t.node_type, "") AS node_type,
-			COALESCE(e.task_id, "") AS task_id
+			COALESCE(e.task_id, "") AS task_id,
+			COALESCE(e.manifest_version, "") AS manifest_version,
+			COALESCE(e.image_tag, "") AS image_tag
 		ORDER BY t.table_name
 	`
 	result, err := tx.Run(ctx, query, map[string]interface{}{
@@ -410,7 +421,9 @@ func (r *RunRepository) getUpstreamSeedNodesInRun(ctx context.Context, tx neo4j.
 			s.last_updated_at AS last_updated_at,
 			s.created_at AS created_at,
 			s.node_type AS node_type,
-			COALESCE(e.task_id, "") AS task_id
+			COALESCE(e.task_id, "") AS task_id,
+			COALESCE(e.manifest_version, "") AS manifest_version,
+			COALESCE(e.image_tag, "") AS image_tag
 		ORDER BY s.table_name
 	`
 	result, err := tx.Run(ctx, query, map[string]interface{}{
@@ -437,7 +450,9 @@ func (r *RunRepository) getAllNodesInRun(ctx context.Context, tx neo4j.ExplicitT
 		        t.last_updated_at AS last_updated_at,
 		        t.created_at AS created_at,
 		        COALESCE(t.node_type, "") AS node_type,
-		        COALESCE(e.task_id, "") AS task_id
+		        COALESCE(e.task_id, "") AS task_id,
+		        COALESCE(e.manifest_version, "") AS manifest_version,
+		        COALESCE(e.image_tag, "") AS image_tag
 
 		    UNION
 
@@ -454,9 +469,11 @@ func (r *RunRepository) getAllNodesInRun(ctx context.Context, tx neo4j.ExplicitT
 		        s.last_updated_at AS last_updated_at,
 		        s.created_at AS created_at,
 		        s.node_type     AS node_type,
-		        COALESCE(e.task_id, "") AS task_id
+		        COALESCE(e.task_id, "") AS task_id,
+		        COALESCE(e.manifest_version, "") AS manifest_version,
+		        COALESCE(e.image_tag, "") AS image_tag
 		}
-		RETURN schema_name, table_name, service_name, owner, schedule_name, criticality, last_updated_at, created_at, node_type, task_id
+		RETURN schema_name, table_name, service_name, owner, schedule_name, criticality, last_updated_at, created_at, node_type, task_id, manifest_version, image_tag
 		ORDER BY table_name
 	`
 	result, err := tx.Run(ctx, query, map[string]interface{}{
@@ -794,16 +811,20 @@ func recordToTableNode(record *neo4j.Record) (*domain.TableNode, error) {
 	createdAt, _ := record.Get("created_at")
 	nodeType, _ := record.Get("node_type")
 	taskID, _ := record.Get("task_id")
+	manifestVersion, _ := record.Get("manifest_version")
+	imageTag, _ := record.Get("image_tag")
 
 	node := &domain.TableNode{
-		TableName:    safeString(tableName),
-		SchemaName:   safeString(schemaName),
-		ServiceName:  safeString(serviceName),
-		Owner:        safeString(owner),
-		ScheduleName: safeString(scheduleName),
-		Criticality:  domain.Criticality(safeString(criticality)),
-		NodeType:     safeString(nodeType),
-		TaskID:       safeString(taskID),
+		TableName:       safeString(tableName),
+		SchemaName:      safeString(schemaName),
+		ServiceName:     safeString(serviceName),
+		Owner:           safeString(owner),
+		ScheduleName:    safeString(scheduleName),
+		Criticality:     domain.Criticality(safeString(criticality)),
+		NodeType:        safeString(nodeType),
+		TaskID:          safeString(taskID),
+		ManifestVersion: safeString(manifestVersion),
+		ImageTag:        safeString(imageTag),
 	}
 
 	// Convert Neo4j datetime to Go time.Time

@@ -372,6 +372,83 @@ func safeStringTest(v interface{}) string {
 	return ""
 }
 
+func TestSnapshotGraph_StampsGenerationAndServiceMetadataAndEdgeImageTag(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	scheduleName := "test_gen_sched_" + uuid.New().String()[:8]
+	tableNameA := "test_gen_table_" + uuid.New().String()[:8]
+
+	// Seed a Table node with image_tag and manifest_version, plus the :TopologyRoot.
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := session.Run(ctx, `
+		MERGE (root:TopologyRoot {id: 'singleton'})
+		SET root.topology_generation = 7,
+		    root.service_metadata = '{"svc-a":{"manifest_version":"v3","image_tag":"abc123"}}'
+
+		WITH root
+
+		MERGE (t:Table {schema_name: 'public', table_name: $table_name, service_name: 'svc-a', schedule_name: $schedule_name})
+		SET t.active = true,
+		    t.manifest_version = 'v3',
+		    t.image_tag = 'abc123',
+		    t.topology_generation = 7,
+		    t.node_type = 'dbt-model',
+		    t.owner = 'team-a',
+		    t.criticality = 'CORE'
+	`, map[string]interface{}{
+		"table_name":    tableNameA,
+		"schedule_name": scheduleName,
+	})
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	t.Cleanup(func() {
+		s := client.NewSession(context.Background(), neo4j.AccessModeWrite)
+		defer s.Close(context.Background())
+		_, _ = s.Run(context.Background(), `
+			MATCH (t:Table {table_name: $table_name}) DETACH DELETE t
+		`, map[string]interface{}{"table_name": tableNameA})
+		_, _ = s.Run(context.Background(), `
+			MATCH (r:Run {schedule_name: $sched}) DETACH DELETE r
+		`, map[string]interface{}{"sched": scheduleName})
+	})
+
+	repo := neo4jinfra.NewRunRepository(client, slog.Default())
+	runID := uuid.New().String()
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, scheduleName))
+
+	readSession := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer readSession.Close(ctx)
+
+	// Assert Run node has topology_generation + service_metadata.
+	res, err := readSession.Run(ctx, `
+		MATCH (r:Run {run_id: $run_id})
+		RETURN r.topology_generation AS gen, r.service_metadata AS sm
+	`, map[string]interface{}{"run_id": runID})
+	require.NoError(t, err)
+	require.True(t, res.Next(ctx))
+	gen, _ := res.Record().Get("gen")
+	assert.Equal(t, int64(7), gen.(int64))
+	sm, _ := res.Record().Get("sm")
+	assert.Contains(t, sm.(string), `"image_tag":"abc123"`)
+
+	// Assert EXECUTES edge has image_tag stamped.
+	res2, err := readSession.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(:Table {table_name: $table_name})
+		RETURN e.image_tag AS image_tag, e.manifest_version AS mv
+	`, map[string]interface{}{
+		"run_id":     runID,
+		"table_name": tableNameA,
+	})
+	require.NoError(t, err)
+	require.True(t, res2.Next(ctx))
+	edgeTag, _ := res2.Record().Get("image_tag")
+	edgeMV, _ := res2.Record().Get("mv")
+	assert.Equal(t, "abc123", edgeTag)
+	assert.Equal(t, "v3", edgeMV)
+}
+
 // TestRunRepository_SnapshotGraph_AssignsTaskUUIDs verifies that:
 //  1. After SnapshotGraph, every node returned by GetScheduleInitNodes has a
 //     non-empty, valid UUID in TaskID.
