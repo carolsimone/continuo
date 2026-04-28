@@ -36,7 +36,7 @@ func NewRunFinalizedHandler(
 			return fmt.Errorf("finalize run %s: %w", scheduleID, err)
 		}
 
-		logger.Info("Run finalized in Neo4j", "run_id", scheduleID, "status", status)
+		logger.Info("Run finalized in Neo4j", "schedule_id", scheduleID, "status", status)
 		return nil
 	}
 }

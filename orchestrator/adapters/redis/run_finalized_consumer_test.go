@@ -2,6 +2,7 @@ package redis_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -23,6 +24,8 @@ func (f *fakeRunFinalizer) FinalizeRun(_ context.Context, runID, terminalStatus 
 	f.calledStatus = terminalStatus
 	return f.err
 }
+
+var _ redis.RunFinalizer = (*fakeRunFinalizer)(nil)
 
 func TestRunFinalizedHandler_CallsFinalizeRun(t *testing.T) {
 	finalizer := &fakeRunFinalizer{}
@@ -72,4 +75,22 @@ func TestRunFinalizedHandler_DiscardsEmptyStatus(t *testing.T) {
 	err := handler(context.Background(), msg)
 	require.NoError(t, err)
 	assert.Empty(t, finalizer.calledRunID, "FinalizeRun must not be called for empty status")
+}
+
+func TestRunFinalizedHandler_PropagatesRepoError(t *testing.T) {
+	finalizer := &fakeRunFinalizer{err: errors.New("neo4j unavailable")}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := redis.NewRunFinalizedHandler(finalizer, logger)
+
+	msg := goredis.XMessage{
+		ID: "1-0",
+		Values: map[string]interface{}{
+			"schedule_id": "550e8400-e29b-41d4-a716-446655440000",
+			"status":      "succeeded",
+		},
+	}
+
+	err := handler(context.Background(), msg)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "finalize run")
 }
