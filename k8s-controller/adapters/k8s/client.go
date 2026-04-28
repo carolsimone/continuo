@@ -86,7 +86,16 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 	result := &model.K8sPodResult{}
 
 	if job.Status.Succeeded > 0 {
-		result.Status = model.JobStatusSucceeded
+		// dbt exits 0 when no models match the selector ("Nothing to do").
+		// The k8s Job controller marks the pod Succeeded, but nothing was actually
+		// executed — detect it via log tail so the run fails cleanly instead of
+		// silently reporting a false success.
+		if reason := c.checkDbtNoop(ctx, namespace, jobName); reason != "" {
+			result.Status = model.JobStatusFailed
+			result.TerminationMsg = reason
+		} else {
+			result.Status = model.JobStatusSucceeded
+		}
 	} else if job.Status.Failed > 0 || c.hasFailedCondition(job) {
 		result.Status = model.JobStatusFailed
 	} else if reason, msg := c.checkImagePullError(ctx, namespace, jobName); reason != "" {
@@ -233,6 +242,21 @@ func (c *K8sClient) streamPodLogs(ctx context.Context, namespace, podName string
 		return "", fmt.Errorf("failed to read log stream: %w", err)
 	}
 	return strings.TrimRight(buf.String(), "\n"), nil
+}
+
+// checkDbtNoop detects when dbt exits 0 having matched no models.
+// dbt emits "Nothing to do" when the selector finds no enabled nodes — the
+// pod exits 0 so the k8s Job marks it Succeeded, but no model was run and
+// no table was created. Returns a non-empty reason string when detected.
+func (c *K8sClient) checkDbtNoop(ctx context.Context, namespace, jobName string) string {
+	_, tail, err := c.GetPodLogs(ctx, namespace, jobName, 5)
+	if err != nil || tail == "" {
+		return ""
+	}
+	if strings.Contains(tail, "Nothing to do") {
+		return "dbt matched no models for this selector — model may be missing from the service image"
+	}
+	return ""
 }
 
 // hasFailedCondition checks if the job has a failed condition

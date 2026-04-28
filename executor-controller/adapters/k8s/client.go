@@ -196,7 +196,7 @@ func buildPodSpec(params JobParams) corev1.PodSpec {
 			{
 				Name:            "dbt-job",
 				Image:           image,
-				ImagePullPolicy: corev1.PullIfNotPresent,
+				ImagePullPolicy: corev1.PullAlways,
 				Command:         params.NodeType.Command(params.TableName),
 				Env:             envVars,
 			},
