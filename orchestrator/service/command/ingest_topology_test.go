@@ -15,7 +15,7 @@ import (
 // ── fakes: topology.Repository ───────────────────────────────────────────────
 
 type fakeTopologyRepository struct {
-	applySnapshotFn    func(ctx context.Context, nodes []*topology.TopologyNode) error
+	applySnapshotFn    func(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error
 	applySnapshotCalls [][]*topology.TopologyNode
 }
 
@@ -23,7 +23,7 @@ func (f *fakeTopologyRepository) ApplySnapshot(ctx context.Context, nodes []*top
 	copied := append([]*topology.TopologyNode(nil), nodes...)
 	f.applySnapshotCalls = append(f.applySnapshotCalls, copied)
 	if f.applySnapshotFn != nil {
-		return f.applySnapshotFn(ctx, nodes)
+		return f.applySnapshotFn(ctx, nodes, topologyGeneration)
 	}
 	return nil
 }

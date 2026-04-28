@@ -81,9 +81,19 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 			scheduleNamesSet[n.ScheduleName] = struct{}{}
 		}
 		if n.ServiceName != "" && n.ManifestVersion != "" {
-			serviceMetadata[n.ServiceName] = map[string]string{
-				"manifest_version": n.ManifestVersion,
-				"image_tag":        n.ImageTag,
+			if existing, seen := serviceMetadata[n.ServiceName]; seen {
+				if existing["image_tag"] != n.ImageTag {
+					h.logger.Warn("Multiple nodes from same service carry different image_tag — using first seen",
+						"service", n.ServiceName,
+						"first_tag", existing["image_tag"],
+						"conflict_tag", n.ImageTag,
+					)
+				}
+			} else {
+				serviceMetadata[n.ServiceName] = map[string]string{
+					"manifest_version": n.ManifestVersion,
+					"image_tag":        n.ImageTag,
+				}
 			}
 		}
 	}

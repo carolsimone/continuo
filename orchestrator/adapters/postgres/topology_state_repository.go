@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
@@ -28,6 +30,9 @@ func (r *TopologyStateRepository) IncrementGeneration(ctx context.Context) (int6
 		RETURNING topology_generation
 	`).Scan(&next)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("increment topology_generation: topology_state singleton row missing — was V6 migration applied?")
+		}
 		return 0, fmt.Errorf("increment topology_generation: %w", err)
 	}
 	return next, nil
@@ -40,6 +45,9 @@ func (r *TopologyStateRepository) GetGeneration(ctx context.Context) (int64, err
 		SELECT topology_generation FROM topology_state WHERE id = TRUE
 	`).Scan(&current)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("get topology_generation: topology_state singleton row missing — was V6 migration applied?")
+		}
 		return 0, fmt.Errorf("get topology_generation: %w", err)
 	}
 	return current, nil
