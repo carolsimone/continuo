@@ -103,6 +103,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 			schema_name VARCHAR(255) NOT NULL,
 			table_name VARCHAR(255) NOT NULL,
 			job_name VARCHAR(63) NOT NULL,
+			image_tag TEXT NOT NULL DEFAULT '',
 
 			-- Event-specific data
 			error_message TEXT,

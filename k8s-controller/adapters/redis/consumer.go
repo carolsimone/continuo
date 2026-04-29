@@ -325,6 +325,7 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 	tableName, _ := msg.Values["table_name"].(string)
 	jobName, _ := msg.Values["job_name"].(string)
 	nodeType, _ := msg.Values["node_type"].(string)
+	imageTag, _ := msg.Values["image_tag"].(string)
 
 	// Parse retry count. check.k8s:v1 re-circulating messages carry "retry_count"
 	// (from JobCheckRequest.ToMap()); node.deployed:v1 from executor-controller
@@ -356,6 +357,7 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 		TableName:    tableName,
 		JobName:      jobName,
 		NodeType:     nodeType,
+		ImageTag:     imageTag,
 		RetryCount:   retryCount,
 		MaxRetries:   maxRetries,
 	}

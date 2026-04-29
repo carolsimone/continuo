@@ -30,6 +30,7 @@ type K8sStatusOutboxEntry struct {
 	TableName    string    `db:"table_name"`
 	JobName      string    `db:"job_name"`
 	NodeType     string    `db:"node_type"`
+	ImageTag     string    `db:"image_tag"`
 
 	// Event-specific data
 	ErrorMessage   string `db:"error_message"`

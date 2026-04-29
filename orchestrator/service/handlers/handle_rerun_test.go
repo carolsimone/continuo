@@ -1,4 +1,4 @@
-package command_test
+package handlers_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
-	"github.com/carolsimone/continuo/orchestrator/service/command"
+	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +21,7 @@ type rerunFakeRunRepository struct {
 
 	getTaskIDForNodeFn            func(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error)
 	getSkippedDownstreamTaskIDsFn func(ctx context.Context, runID, schemaName, tableName string) ([]string, error)
+	getNodeEdgeDataFn             func(ctx context.Context, runID, schemaName, tableName string) (string, string, error)
 
 	getTaskIDForNodeCalls            int
 	getSkippedDownstreamTaskIDsCalls int
@@ -46,6 +47,12 @@ func (f *rerunFakeRunRepository) MarkPendingDownstreamSkipped(ctx context.Contex
 }
 func (f *rerunFakeRunRepository) ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
 	return nil
+}
+func (f *rerunFakeRunRepository) GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (string, string, error) {
+	if f.getNodeEdgeDataFn != nil {
+		return f.getNodeEdgeDataFn(ctx, runID, schemaName, tableName)
+	}
+	return "v3-stub", "tag-stub", nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -83,7 +90,7 @@ func TestHandleRerun_WritesRunRerunDispatchedAndQueryModel(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
 	cmd := makeRerunCmd()
 
 	err := h.Handle(ctx, cmd, "msg-rerun-1")
@@ -130,6 +137,8 @@ func TestHandleRerun_WritesRunRerunDispatchedAndQueryModel(t *testing.T) {
 	assert.Equal(t, "orders", queryModel.TableName)
 	// service_name comes from the graph mock (fakeRunRepository.GetNodeServiceName returns "test-service")
 	assert.Equal(t, "test-service", queryModel.ServiceName)
+	assert.NotEmpty(t, queryModel.ManifestVersion, "rerun query.model must carry manifest_version")
+	assert.NotEmpty(t, queryModel.ImageTag, "rerun query.model must carry image_tag")
 }
 
 // 2. Target only, no failed downstream → 2 outbox entries, TasksToReset has 1 entry.
@@ -148,7 +157,7 @@ func TestHandleRerun_NoFailedDownstream(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
 
 	err := h.Handle(ctx, makeRerunCmd(), "msg-rerun-2")
 	require.NoError(t, err)
@@ -168,7 +177,7 @@ func TestHandleRerun_DuplicateMessage(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	runRepo := &rerunFakeRunRepository{}
 
-	h := command.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
 	cmd := makeRerunCmd()
 
 	// First call: processes normally.

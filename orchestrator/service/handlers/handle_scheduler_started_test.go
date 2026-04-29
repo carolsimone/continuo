@@ -1,4 +1,4 @@
-package command_test
+package handlers_test
 
 import (
 	"context"
@@ -6,8 +6,9 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
-	"github.com/carolsimone/continuo/orchestrator/service/command"
+	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -24,34 +25,40 @@ func makeSchedulerStartedNodes() *run.ScheduleInitNodes {
 	taskC := uuid.New().String()
 
 	nodeA := &domain.TableNode{
-		TableName:    "a",
-		SchemaName:   "public",
-		ServiceName:  "svc1",
-		Owner:        "team",
-		ScheduleName: "daily",
-		NodeType:     "dbt-model",
-		Status:       "PENDING",
-		TaskID:       taskA,
+		TableName:       "a",
+		SchemaName:      "public",
+		ServiceName:     "svc1",
+		Owner:           "team",
+		ScheduleName:    "daily",
+		NodeType:        "dbt-model",
+		Status:          "PENDING",
+		TaskID:          taskA,
+		ManifestVersion: "v3",
+		ImageTag:        "abc123-1714300000",
 	}
 	nodeB := &domain.TableNode{
-		TableName:    "b",
-		SchemaName:   "public",
-		ServiceName:  "svc1",
-		Owner:        "team",
-		ScheduleName: "daily",
-		NodeType:     "dbt-model",
-		Status:       "PENDING",
-		TaskID:       taskB,
+		TableName:       "b",
+		SchemaName:      "public",
+		ServiceName:     "svc1",
+		Owner:           "team",
+		ScheduleName:    "daily",
+		NodeType:        "dbt-model",
+		Status:          "PENDING",
+		TaskID:          taskB,
+		ManifestVersion: "v3",
+		ImageTag:        "abc123-1714300000",
 	}
 	nodeC := &domain.TableNode{
-		TableName:    "c",
-		SchemaName:   "public",
-		ServiceName:  "svc1",
-		Owner:        "team",
-		ScheduleName: "daily",
-		NodeType:     "dbt-model",
-		Status:       "PENDING",
-		TaskID:       taskC,
+		TableName:       "c",
+		SchemaName:      "public",
+		ServiceName:     "svc1",
+		Owner:           "team",
+		ScheduleName:    "daily",
+		NodeType:        "dbt-model",
+		Status:          "PENDING",
+		TaskID:          taskC,
+		ManifestVersion: "v3",
+		ImageTag:        "abc123-1714300000",
 	}
 
 	return &run.ScheduleInitNodes{
@@ -78,8 +85,8 @@ func TestHandleSchedulerStarted_WritesEntriesDispatchedAndDispatches(t *testing.
 		},
 	}
 
-	h := command.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := command.SchedulerStartedCmd{
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	cmd := domainCmd.SchedulerStartedCmd{
 		ScheduleID:   scheduleID,
 		ScheduleName: "daily",
 	}
@@ -129,6 +136,16 @@ func TestHandleSchedulerStarted_WritesEntriesDispatchedAndDispatches(t *testing.
 	assert.Equal(t, "public", nodeEvt.SchemaName)
 	assert.Equal(t, "svc1", nodeEvt.ServiceName)
 	assert.Equal(t, nodes.RootNodes[0].TaskID, nodeEvt.TaskID)
+
+	for _, task := range dispatched.AllTasks {
+		assert.NotEmpty(t, task.ManifestVersion, "every dispatched task must carry manifest_version from EXECUTES edge")
+		assert.NotEmpty(t, task.ImageTag, "every dispatched task must carry image_tag from EXECUTES edge")
+	}
+
+	var nodeReady domain.NodeReadyForExecution
+	require.NoError(t, json.Unmarshal(queryModelEntries[0].Payload, &nodeReady))
+	assert.NotEmpty(t, nodeReady.ManifestVersion, "query.model payload must carry manifest_version")
+	assert.NotEmpty(t, nodeReady.ImageTag, "query.model payload must carry image_tag")
 }
 
 // TestHandleSchedulerStarted_DispatchesSeedsWhenPresent verifies that when
@@ -171,8 +188,8 @@ func TestHandleSchedulerStarted_DispatchesSeedsWhenPresent(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := command.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	cmd := domainCmd.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
 
 	require.NoError(t, h.Handle(ctx, cmd, "msg-seeds-1"))
 
@@ -204,8 +221,8 @@ func TestHandleSchedulerStarted_Idempotent(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := command.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	cmd := domainCmd.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
 
 	// First call: processes normally
 	require.NoError(t, h.Handle(ctx, cmd, "msg-start-dup"))

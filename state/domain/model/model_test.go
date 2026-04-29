@@ -117,10 +117,14 @@ func TestSchedulerTransition_StatusNotMutatedOnError(t *testing.T) {
 	assert.Equal(t, SchedulerStatusRunning, s.Status)
 }
 
-func TestSchedulerTracker_GetManifestVersions(t *testing.T) {
+func TestSchedulerTracker_GetServiceMetadata(t *testing.T) {
 	tracker := &SchedulerTracker{
-		ManifestVersionsRaw: json.RawMessage(`{"svc-a":"v3","svc-b":"v5"}`),
+		ServiceMetadataRaw: json.RawMessage(`{"svc-a":{"manifest_version":"v3","image_tag":"sha256:aaa"},"svc-b":{"manifest_version":"v5","image_tag":"sha256:bbb"}}`),
 	}
 
-	assert.Equal(t, map[string]string{"svc-a": "v3", "svc-b": "v5"}, tracker.GetManifestVersions())
+	expected := map[string]ServiceMetadata{
+		"svc-a": {ManifestVersion: "v3", ImageTag: "sha256:aaa"},
+		"svc-b": {ManifestVersion: "v5", ImageTag: "sha256:bbb"},
+	}
+	assert.Equal(t, expected, tracker.GetServiceMetadata())
 }

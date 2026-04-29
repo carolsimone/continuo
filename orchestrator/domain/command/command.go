@@ -4,6 +4,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// SchedulerStartedCmd carries the data from a scheduler.started:v1 event.
+type SchedulerStartedCmd struct {
+	ScheduleID   uuid.UUID
+	ScheduleName string
+}
+
 // HandleNodeCompletedCmd carries the data for a node-completed event.
 type HandleNodeCompletedCmd struct {
 	TaskID       uuid.UUID
@@ -66,6 +72,7 @@ type TopologyNodePayload struct {
 	Criticality     string              `json:"criticality"`
 	NodeType        string              `json:"node_type"`
 	ManifestVersion string              `json:"manifest_version"`
+	ImageTag        string              `json:"image_tag"`
 	Dependencies    []DependencyPayload `json:"dependencies"`
 }
 

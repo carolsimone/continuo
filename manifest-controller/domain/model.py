@@ -6,6 +6,13 @@ from dataclasses import dataclass, field
 class ManifestFile:
     path: str
     version: str
+    image_tag: str = ""
+
+
+@dataclass
+class ServiceMetadata:
+    manifest_version: str
+    image_tag: str
 
 
 @dataclass
@@ -26,6 +33,7 @@ class ManifestNode:
     compiled_sql: str
     node_type: str = "dbt-model"  # dbt-model | dbt-seed | dbt-snapshot
     manifest_version: str = ""
+    image_tag: str = ""
     upstream_deps: list[UpstreamDep] = field(default_factory=list)
 
 

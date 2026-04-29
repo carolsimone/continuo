@@ -3,8 +3,15 @@ import json
 import logging
 import os
 import re
+import tempfile
+from pathlib import Path
 
 import boto3
+
+from dbt_upload.service_metadata import (
+    parse_image_tag_env,
+    write_service_metadata_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +54,15 @@ def filter_manifest(service_dir: str) -> None:
 
 
 def upload_manifest(
-    s3_client, service_dir: str, env: str, bucket: str
+    s3_client, service_dir: str, env: str, bucket: str, image_tag: str = ""
 ) -> bool:
     """Upload target/manifest.json to S3 with an auto-incremented version key.
 
     Checks the current highest manifest_v{N}.json in the service S3 prefix
     and uploads as manifest_v{N+1}.json. Returns True on success.
+
+    If image_tag is provided, also writes and uploads service_metadata.json
+    alongside the versioned manifest.
     """
     service_name = os.path.basename(service_dir)
     manifest_path = os.path.join(service_dir, "target", "manifest.json")
@@ -70,6 +80,21 @@ def upload_manifest(
         logger.exception("S3 upload failed for %s", service_name)
         return False
     logger.info("Uploaded %s -> s3://%s/%s (v%d)", service_name, bucket, key, version)
+
+    # Write and upload service_metadata.json sidecar if image_tag is provided.
+    if image_tag:
+        with tempfile.TemporaryDirectory() as _tmp:
+            meta_dir = Path(_tmp)
+            write_service_metadata_json(
+                out_dir=meta_dir,
+                service_name=service_name,
+                manifest_version=f"v{version}",
+                image_tag=image_tag,
+            )
+            meta_key = f"{env}/manifest/{service_name}/service_metadata.json"
+            s3_client.upload_file(str(meta_dir / "service_metadata.json"), bucket, meta_key)
+            logger.info("Uploaded service_metadata.json -> s3://%s/%s", bucket, meta_key)
+
     return True
 
 
@@ -94,9 +119,23 @@ def upload_services(
     succeeded: list[str] = []
     failed: list[str] = []
 
+    image_tag_map = parse_image_tag_env(os.getenv("IMAGE_TAG_PER_SERVICE", ""))
+
     for service_dir in service_dirs:
         service_name = os.path.basename(service_dir)
         logger.info("Uploading %s", service_name)
+
+        # Refuse to upload before image_tag is known: a successful manifest upload
+        # without a sidecar poisons the snapshot — manifest-controller propagates
+        # image_tag="" and the run fails at deployment time on every task.
+        image_tag = image_tag_map.get(service_name, "")
+        if not image_tag:
+            logger.error(
+                "image_tag missing for %s — set IMAGE_TAG_PER_SERVICE=%s=<tag>,...; refusing to upload",
+                service_name, service_name,
+            )
+            failed.append(service_dir)
+            continue
 
         try:
             filter_manifest(service_dir)
@@ -105,7 +144,7 @@ def upload_services(
             failed.append(service_dir)
             continue
 
-        if upload_manifest(s3_client, service_dir, env, bucket):
+        if upload_manifest(s3_client, service_dir, env, bucket, image_tag=image_tag):
             succeeded.append(service_dir)
         else:
             failed.append(service_dir)

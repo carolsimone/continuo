@@ -63,18 +63,18 @@ func (s *ScheduleActivationService) ActivateSchedule(ctx context.Context, schedu
 		return uuid.Nil, nil
 	}
 
-	manifestVersions, err := s.catalogRepo.GetManifestVersions(ctx, scheduleName)
+	serviceMetadata, err := s.catalogRepo.GetServiceMetadata(ctx, scheduleName)
 	if err != nil {
-		s.logger.Warn("Could not read manifest_versions from catalog, proceeding with empty",
+		s.logger.Warn("Could not read service_metadata from catalog, proceeding with empty",
 			"schedule_name", scheduleName, "error", err)
-		manifestVersions = map[string]string{}
+		serviceMetadata = map[string]model.ServiceMetadata{}
 	}
-	versionsJSON, err := json.Marshal(manifestVersions)
+	metaJSON, err := json.Marshal(serviceMetadata)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to marshal manifest_versions: %w", err)
+		return uuid.Nil, fmt.Errorf("failed to marshal service_metadata: %w", err)
 	}
-	tracker.ManifestVersions = manifestVersions
-	tracker.ManifestVersionsRaw = versionsJSON
+	tracker.ServiceMetadata = serviceMetadata
+	tracker.ServiceMetadataRaw = metaJSON
 
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -92,9 +92,9 @@ func (s *ScheduleActivationService) ActivateSchedule(ctx context.Context, schedu
 	tracker.InitializationStatus = "in_progress"
 
 	payload, err := json.Marshal(map[string]interface{}{
-		"runner_id":         tracker.ScheduleID.String(),
-		"schedule_name":     tracker.ScheduleName,
-		"manifest_versions": manifestVersions,
+		"runner_id":        tracker.ScheduleID.String(),
+		"schedule_name":    tracker.ScheduleName,
+		"service_metadata": serviceMetadata,
 	})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to marshal outbox payload: %w", err)

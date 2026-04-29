@@ -1,4 +1,4 @@
-package command
+package handlers
 
 import (
 	"context"
@@ -15,21 +15,24 @@ import (
 
 // IngestTopologyHandler handles the IngestTopology command.
 type IngestTopologyHandler struct {
-	uow          uow.UnitOfWork
-	topologyRepo topology.Repository
-	logger       *slog.Logger
+	uow               uow.UnitOfWork
+	topologyRepo      topology.Repository
+	topologyStateRepo topology.TopologyStateRepository
+	logger            *slog.Logger
 }
 
 // NewIngestTopologyHandler creates a new IngestTopologyHandler.
 func NewIngestTopologyHandler(
 	u uow.UnitOfWork,
 	topologyRepo topology.Repository,
+	topologyStateRepo topology.TopologyStateRepository,
 	logger *slog.Logger,
 ) *IngestTopologyHandler {
 	return &IngestTopologyHandler{
-		uow:          u,
-		topologyRepo: topologyRepo,
-		logger:       logger,
+		uow:               u,
+		topologyRepo:      topologyRepo,
+		topologyStateRepo: topologyStateRepo,
+		logger:            logger,
 	}
 }
 
@@ -65,9 +68,9 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 	// payload is authoritative for the current topology, so missing nodes must
 	// be retired as part of the same Neo4j write pass.
 	//
-	// Collect unique schedule names and manifest versions while iterating.
+	// Collect unique schedule names and service metadata while iterating.
 	scheduleNamesSet := make(map[string]struct{})
-	manifestVersions := make(map[string]string)
+	serviceMetadata := make(map[string]map[string]string)
 	topologyNodes := make([]*topology.TopologyNode, 0, len(cmd.Nodes))
 
 	for _, n := range cmd.Nodes {
@@ -78,12 +81,35 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 			scheduleNamesSet[n.ScheduleName] = struct{}{}
 		}
 		if n.ServiceName != "" && n.ManifestVersion != "" {
-			manifestVersions[n.ServiceName] = n.ManifestVersion
+			if existing, seen := serviceMetadata[n.ServiceName]; seen {
+				if existing["image_tag"] != n.ImageTag {
+					h.logger.Warn("Multiple nodes from same service carry different image_tag — using first seen",
+						"service", n.ServiceName,
+						"first_tag", existing["image_tag"],
+						"conflict_tag", n.ImageTag,
+					)
+				}
+			} else {
+				serviceMetadata[n.ServiceName] = map[string]string{
+					"manifest_version": n.ManifestVersion,
+					"image_tag":        n.ImageTag,
+				}
+			}
 		}
 	}
 
-	if err := h.topologyRepo.ApplySnapshot(ctx, topologyNodes); err != nil {
+	// Increment the monotonic topology_generation counter.
+	topologyGeneration, err := h.topologyStateRepo.IncrementGeneration(ctx)
+	if err != nil {
+		return fmt.Errorf("increment topology_generation: %w", err)
+	}
+
+	if err := h.topologyRepo.ApplySnapshot(ctx, topologyNodes, topologyGeneration); err != nil {
 		return fmt.Errorf("failed to apply topology snapshot: %w", err)
+	}
+
+	if err := h.topologyRepo.SetServiceMetadata(ctx, serviceMetadata, topologyGeneration); err != nil {
+		return fmt.Errorf("failed to set service_metadata: %w", err)
 	}
 
 	// Build unique sorted schedule names slice.
@@ -96,9 +122,9 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 	// event_id is required by the state service's ScheduleCatalogHandler for
 	// deduplication — without it the message is discarded on consumption.
 	outboxPayload, err := json.Marshal(map[string]interface{}{
-		"event_id":          uuid.New().String(),
-		"schedule_names":    scheduleNames,
-		"manifest_versions": manifestVersions,
+		"event_id":         uuid.New().String(),
+		"schedule_names":   scheduleNames,
+		"service_metadata": serviceMetadata,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal outbox payload: %w", err)
@@ -200,6 +226,7 @@ func toTopologyNode(p domainCmd.TopologyNodePayload) *topology.TopologyNode {
 		Criticality:     p.Criticality,
 		NodeType:        p.NodeType,
 		ManifestVersion: p.ManifestVersion,
+		ImageTag:        p.ImageTag,
 		Dependencies:    deps,
 	}
 }

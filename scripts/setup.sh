@@ -65,10 +65,25 @@ DOCKER_BUILDKIT=1 docker compose build
 
 # Build dbt service images and load into KIND
 
-echo "Building dbt service images..."
-DOCKER_BUILDKIT=1 docker build -f dbt/services/service-1/Dockerfile.local -t service-1:latest dbt/services/service-1/
-DOCKER_BUILDKIT=1 docker build -f dbt/services/service-2/Dockerfile.local -t service-2:latest dbt/services/service-2/
-DOCKER_BUILDKIT=1 docker build -f dbt/services/service-3/Dockerfile.local -t service-3:latest dbt/services/service-3/
+IMAGE_TAG="$(git rev-parse --short HEAD)-$(date +%s)"
+echo "Using IMAGE_TAG=${IMAGE_TAG} for dbt service images"
+
+DBT_SERVICES=(service-1 service-2 service-3)
+echo "Building dbt service images with content-addressed tag..."
+for svc in "${DBT_SERVICES[@]}"; do
+    DOCKER_BUILDKIT=1 docker build \
+        -f "dbt/services/${svc}/Dockerfile.local" \
+        -t "${svc}:${IMAGE_TAG}" \
+        "dbt/services/${svc}/"
+done
+
+PER_SERVICE=""
+for svc in "${DBT_SERVICES[@]}"; do
+    [ -n "$PER_SERVICE" ] && PER_SERVICE="${PER_SERVICE},"
+    PER_SERVICE="${PER_SERVICE}${svc}=${IMAGE_TAG}"
+done
+export IMAGE_TAG_PER_SERVICE="$PER_SERVICE"
+echo "Exported IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE}"
 
 # continuo-executor-controller and continuo-k8s-controller are already built by
 # 'docker compose build' above with the correct tags, so no need to rebuild them here.
@@ -80,9 +95,9 @@ if [ -n "$KIND_PID" ]; then
     echo "✓ Kind cluster ready"
 fi
 echo "Loading images into kind (parallel)..."
-kind load docker-image service-1:latest --name ${CLUSTER_NAME} &
-kind load docker-image service-2:latest --name ${CLUSTER_NAME} &
-kind load docker-image service-3:latest --name ${CLUSTER_NAME} &
+for svc in "${DBT_SERVICES[@]}"; do
+    kind load docker-image "${svc}:${IMAGE_TAG}" --name "${CLUSTER_NAME}" &
+done
 kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME} &
 kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME} &
 wait

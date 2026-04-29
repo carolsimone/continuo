@@ -27,6 +27,7 @@ type JobParams struct {
 	TableName    string
 	Namespace    string
 	NodeType     pkg_model.NodeType
+	ImageTag     string
 }
 
 // K8sClient provides methods to interact with Kubernetes
@@ -123,6 +124,11 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	}
 
 	// Step 2: Build Job spec
+	podSpec, err := buildPodSpec(params)
+	if err != nil {
+		return fmt.Errorf("failed to build pod spec: %w", err)
+	}
+
 	backoffLimit := int32(0)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -152,7 +158,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 						"service_name": params.ServiceName,
 					},
 				},
-				Spec: buildPodSpec(params),
+				Spec: podSpec,
 			},
 		},
 	}
@@ -164,16 +170,16 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 // buildPodSpec constructs the PodSpec for a query executor job.
 // PostgreSQL connection env vars are forwarded from the executor-controller's
 // own environment so dbt pods can reach the same database.
-func buildPodSpec(params JobParams) corev1.PodSpec {
-	image := params.ServiceName
-	pullPolicy := corev1.PullIfNotPresent
+// Returns an error if ImageTag is empty — content-addressed tags must be explicit;
+// falling back to "latest" is intentionally refused.
+func buildPodSpec(params JobParams) (corev1.PodSpec, error) {
+	if params.ImageTag == "" {
+		return corev1.PodSpec{}, fmt.Errorf("image_tag missing from job params for service %s", params.ServiceName)
+	}
+
+	image := params.ServiceName + ":" + params.ImageTag
 	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
-		tag := os.Getenv("IMAGE_TAG")
-		if tag == "" {
-			tag = "latest"
-		}
-		image = user + "/" + params.ServiceName + ":" + tag
-		pullPolicy = corev1.PullAlways
+		image = user + "/" + image
 	}
 
 	envVars := []corev1.EnvVar{
@@ -198,10 +204,10 @@ func buildPodSpec(params JobParams) corev1.PodSpec {
 			{
 				Name:            "dbt-job",
 				Image:           image,
-				ImagePullPolicy: pullPolicy,
+				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         params.NodeType.Command(params.TableName),
 				Env:             envVars,
 			},
 		},
-	}
+	}, nil
 }

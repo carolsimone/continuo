@@ -16,6 +16,7 @@ type JobDeployed struct {
 	TableName      string `json:"table_name"`
 	JobName        string `json:"job_name"`
 	NodeType       string `json:"node_type"`
+	ImageTag       string `json:"image_tag"`
 	TaskRetryCount int    `json:"task_retry_count"` // task-level retry count (not outbox delivery retries)
 	MaxRetries     int    `json:"max_retries"`      // maximum task retries allowed
 }
@@ -34,6 +35,7 @@ func (e JobDeployed) ToMap() map[string]interface{} {
 		"table_name":       e.TableName,
 		"job_name":         e.JobName,
 		"node_type":        e.NodeType,
+		"image_tag":        e.ImageTag,
 		"task_retry_count": e.TaskRetryCount,
 		"max_retries":      e.MaxRetries,
 	}

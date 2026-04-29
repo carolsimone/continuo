@@ -354,6 +354,7 @@ func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage, str
 		TableName:      getString(msg.Values, "table_name"),
 		JobName:        getString(msg.Values, "job_name"),
 		NodeType:       nodeType,
+		ImageTag:       getString(msg.Values, "image_tag"),
 		TaskRetryCount: taskRetryCount,
 		MaxRetries:     maxRetries,
 	}

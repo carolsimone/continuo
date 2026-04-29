@@ -1,11 +1,11 @@
-package command_test
+package handlers_test
 
 import (
 	"context"
 	"encoding/json"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/service/command"
+	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
@@ -81,7 +81,7 @@ func TestInitializeRun_FreshInit(t *testing.T) {
 		},
 	}
 
-	h := command.NewInitializeRunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewInitializeRunHandler(uow, runRepo, newTestLogger())
 	cmd := domainCmd.InitializeRunCmd{
 		ScheduleName: "daily",
 		RunID:        "run-123",
@@ -131,7 +131,7 @@ func TestInitializeRun_DuplicateMessage(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	runRepo := &extendedFakeRunRepository{}
 
-	h := command.NewInitializeRunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewInitializeRunHandler(uow, runRepo, newTestLogger())
 	cmd := domainCmd.InitializeRunCmd{
 		ScheduleName: "daily",
 		RunID:        "run-456",

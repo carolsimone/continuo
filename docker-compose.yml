@@ -460,6 +460,7 @@ services:
       - DBT_POSTGRES_DB=continuo_dbt
       - DBT_POSTGRES_USER=continuo_svc
       - DBT_POSTGRES_PASSWORD=continuo
+      - IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE:-}
     volumes:
       - ./dbt/services:/app/services
 

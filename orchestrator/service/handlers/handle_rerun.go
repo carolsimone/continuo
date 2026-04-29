@@ -1,4 +1,4 @@
-package command
+package handlers
 
 import (
 	"context"
@@ -144,15 +144,22 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 		return fmt.Errorf("failed to compute job_name for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
 	}
 
+	manifestVersion, imageTag, err := h.runRepo.GetNodeEdgeData(ctx, cmd.RunID, cmd.SchemaName, cmd.TableName)
+	if err != nil {
+		return fmt.Errorf("failed to get edge data for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
+	}
+
 	queryModelEvt := domain.NodeReadyForExecution{
-		ScheduleID:   cmd.RunID,
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  targetServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		TaskID:       targetTaskID,
-		JobName:      jobName,
-		NodeType:     string(parsedNodeType),
+		ScheduleID:      cmd.RunID,
+		ScheduleName:    cmd.ScheduleName,
+		ServiceName:     targetServiceName,
+		SchemaName:      cmd.SchemaName,
+		TableName:       cmd.TableName,
+		TaskID:          targetTaskID,
+		JobName:         jobName,
+		NodeType:        string(parsedNodeType),
+		ManifestVersion: manifestVersion,
+		ImageTag:        imageTag,
 	}
 	queryModelPayload, err := json.Marshal(queryModelEvt)
 	if err != nil {

@@ -100,7 +100,9 @@ type stubCatalogRepo struct {
 	existsActive map[string]bool
 }
 
-func (s *stubCatalogRepo) UpsertAll(_ context.Context, _ []string, _ map[string]string) error { return nil }
+func (s *stubCatalogRepo) UpsertAll(_ context.Context, _ []string, _ map[string]model.ServiceMetadata) error {
+	return nil
+}
 func (s *stubCatalogRepo) SoftDeleteAbsent(_ context.Context, _ []string) error { return nil }
 func (s *stubCatalogRepo) ListActive(_ context.Context) ([]string, error) {
 	names := make([]string, 0)
@@ -114,8 +116,8 @@ func (s *stubCatalogRepo) ListActive(_ context.Context) ([]string, error) {
 func (s *stubCatalogRepo) ExistsActive(_ context.Context, name string) (bool, error) {
 	return s.existsActive[name], nil
 }
-func (s *stubCatalogRepo) GetManifestVersions(_ context.Context, _ string) (map[string]string, error) {
-	return map[string]string{}, nil
+func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, _ string) (map[string]model.ServiceMetadata, error) {
+	return map[string]model.ServiceMetadata{}, nil
 }
 
 type stubSchedulerRepo struct {

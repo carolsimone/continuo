@@ -8,19 +8,20 @@ import (
 
 	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/database"
+	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type fakeCatalogRepo struct {
-	upsertNames            []string
-	upsertManifestVersions map[string]string
+	upsertNames         []string
+	upsertServiceMetadata map[string]model.ServiceMetadata
 }
 
-func (f *fakeCatalogRepo) UpsertAll(_ context.Context, names []string, manifestVersions map[string]string) error {
+func (f *fakeCatalogRepo) UpsertAll(_ context.Context, names []string, serviceMetadata map[string]model.ServiceMetadata) error {
 	f.upsertNames = append([]string(nil), names...)
-	f.upsertManifestVersions = manifestVersions
+	f.upsertServiceMetadata = serviceMetadata
 	return nil
 }
 
@@ -29,8 +30,8 @@ func (f *fakeCatalogRepo) ListActive(_ context.Context) ([]string, error)       
 func (f *fakeCatalogRepo) ExistsActive(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }
-func (f *fakeCatalogRepo) GetManifestVersions(_ context.Context, _ string) (map[string]string, error) {
-	return map[string]string{}, nil
+func (f *fakeCatalogRepo) GetServiceMetadata(_ context.Context, _ string) (map[string]model.ServiceMetadata, error) {
+	return map[string]model.ServiceMetadata{}, nil
 }
 
 func getScheduleCatalogHandlerTestDB(t *testing.T) *sqlx.DB {
@@ -55,7 +56,7 @@ func getScheduleCatalogHandlerTestDB(t *testing.T) *sqlx.DB {
 	return db
 }
 
-func TestScheduleCatalogHandler_Handle_PassesManifestVersionsToRepository(t *testing.T) {
+func TestScheduleCatalogHandler_Handle_PassesServiceMetadataToRepository(t *testing.T) {
 	db := getScheduleCatalogHandlerTestDB(t)
 	repo := &fakeCatalogRepo{}
 	handler := statehandlers.NewScheduleCatalogHandler(
@@ -67,11 +68,17 @@ func TestScheduleCatalogHandler_Handle_PassesManifestVersionsToRepository(t *tes
 	shouldACK, err := handler.Handle(context.Background(), `{
 		"event_id":"4f1f4f31-d8be-4cc3-beb7-e73b784fd4af",
 		"schedule_names":["daily","hourly"],
-		"manifest_versions":{"svc-a":"v3","svc-b":"v5"}
+		"service_metadata":{
+			"svc-a":{"manifest_version":"v3","image_tag":"sha256:aaa"},
+			"svc-b":{"manifest_version":"v5","image_tag":"sha256:bbb"}
+		}
 	}`)
 
 	require.NoError(t, err)
 	assert.True(t, shouldACK)
 	assert.ElementsMatch(t, []string{"daily", "hourly"}, repo.upsertNames)
-	assert.Equal(t, map[string]string{"svc-a": "v3", "svc-b": "v5"}, repo.upsertManifestVersions)
+	assert.Equal(t, map[string]model.ServiceMetadata{
+		"svc-a": {ManifestVersion: "v3", ImageTag: "sha256:aaa"},
+		"svc-b": {ManifestVersion: "v5", ImageTag: "sha256:bbb"},
+	}, repo.upsertServiceMetadata)
 }

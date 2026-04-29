@@ -2,6 +2,7 @@ package neo4jinfra
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -23,7 +24,7 @@ func NewTopologyRepository(client Neo4jClient, logger *slog.Logger) *TopologyRep
 // manifest snapshot. Nodes missing from the payload are retired from the
 // current schedule graph, while historical nodes referenced by existing runs
 // are preserved in Neo4j.
-func (r *TopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topology.TopologyNode) error {
+func (r *TopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
@@ -35,7 +36,7 @@ func (r *TopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topolog
 
 	currentNodes := make([]map[string]interface{}, 0, len(nodes))
 	for _, node := range nodes {
-		if err := r.upsertNodeTx(ctx, tx, node); err != nil {
+		if err := r.upsertNodeTx(ctx, tx, node, topologyGeneration); err != nil {
 			return err
 		}
 		currentNodes = append(currentNodes, map[string]interface{}{
@@ -58,6 +59,32 @@ func (r *TopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topolog
 	return nil
 }
 
+// SetServiceMetadata writes the per-service metadata map onto the :TopologyRoot singleton node.
+func (r *TopologyRepository) SetServiceMetadata(
+	ctx context.Context,
+	serviceMetadata map[string]map[string]string,
+	topologyGeneration int64,
+) error {
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	payload, err := json.Marshal(serviceMetadata)
+	if err != nil {
+		return fmt.Errorf("marshal service_metadata: %w", err)
+	}
+
+	_, err = session.Run(ctx, `
+		MERGE (root:TopologyRoot {id: 'singleton'})
+		SET root.service_metadata = $service_metadata,
+		    root.topology_generation = $topology_generation,
+		    root.updated_at = datetime()
+	`, map[string]interface{}{
+		"service_metadata":    string(payload),
+		"topology_generation": topologyGeneration,
+	})
+	return err
+}
+
 // UpsertNode creates or updates a table node with its upstream dependencies.
 func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.TopologyNode) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
@@ -69,13 +96,13 @@ func (r *TopologyRepository) UpsertNode(ctx context.Context, node *topology.Topo
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	if err := r.upsertNodeTx(ctx, tx, node); err != nil {
+	if err := r.upsertNodeTx(ctx, tx, node, 0); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-func (r *TopologyRepository) upsertNodeTx(ctx context.Context, tx neo4j.ExplicitTransaction, node *topology.TopologyNode) error {
+func (r *TopologyRepository) upsertNodeTx(ctx context.Context, tx neo4j.ExplicitTransaction, node *topology.TopologyNode, topologyGeneration int64) error {
 	// Build query based on whether there are upstream dependencies
 	var query string
 	if len(node.Dependencies) == 0 {
@@ -89,6 +116,8 @@ func (r *TopologyRepository) upsertNodeTx(ctx context.Context, tx neo4j.Explicit
 				t.criticality = $criticality,
 				t.node_type = $node_type,
 				t.manifest_version = $manifest_version,
+				t.image_tag = $image_tag,
+				t.topology_generation = $topology_generation,
 				t.active = true,
 				t.retired_at = NULL,
 				t.created_at = datetime(),
@@ -100,6 +129,8 @@ func (r *TopologyRepository) upsertNodeTx(ctx context.Context, tx neo4j.Explicit
 				t.criticality = $criticality,
 				t.node_type = $node_type,
 				t.manifest_version = $manifest_version,
+				t.image_tag = $image_tag,
+				t.topology_generation = $topology_generation,
 				t.active = true,
 				t.retired_at = NULL,
 				t.last_updated_at = datetime()
@@ -119,6 +150,8 @@ func (r *TopologyRepository) upsertNodeTx(ctx context.Context, tx neo4j.Explicit
 				t.criticality = $criticality,
 				t.node_type = $node_type,
 				t.manifest_version = $manifest_version,
+				t.image_tag = $image_tag,
+				t.topology_generation = $topology_generation,
 				t.active = true,
 				t.retired_at = NULL,
 				t.created_at = datetime(),
@@ -130,6 +163,8 @@ func (r *TopologyRepository) upsertNodeTx(ctx context.Context, tx neo4j.Explicit
 				t.criticality = $criticality,
 				t.node_type = $node_type,
 				t.manifest_version = $manifest_version,
+				t.image_tag = $image_tag,
+				t.topology_generation = $topology_generation,
 				t.active = true,
 				t.retired_at = NULL,
 				t.last_updated_at = datetime()
@@ -169,6 +204,8 @@ func (r *TopologyRepository) upsertNodeTx(ctx context.Context, tx neo4j.Explicit
 		"criticality":           node.Criticality,
 		"node_type":             node.NodeType,
 		"manifest_version":      node.ManifestVersion,
+		"image_tag":             node.ImageTag,
+		"topology_generation":   topologyGeneration,
 		"upstream_dependencies": upstreamDeps,
 	}
 

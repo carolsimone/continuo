@@ -33,7 +33,7 @@ class ManifestHandler:
         all_nodes = []
         for mf in manifests:
             logger.info("Parsing manifest", extra={"manifest_path": mf.path, "version": mf.version})
-            all_nodes.extend(parse_manifest(mf.path, mf.version))
+            all_nodes.extend(parse_manifest(mf.path, mf.version, mf.image_tag))
 
         # Pass 2: build combined registry and persist
         registry = NodeRegistry(entries=[
@@ -63,6 +63,7 @@ class ManifestHandler:
                 "criticality": node.criticality,
                 "node_type": node.node_type,
                 "manifest_version": node.manifest_version,
+                "image_tag": node.image_tag,
                 "dependencies": [
                     {
                         "service_name": dep.service_name,

@@ -1,8 +1,8 @@
 package domain
 
 type TopologyIngested struct {
-	ScheduleNames    []string
-	ManifestVersions map[string]string
+	ScheduleNames   []string
+	ServiceMetadata map[string]map[string]string
 }
 
 type RunInitialized struct {

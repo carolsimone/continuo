@@ -27,7 +27,7 @@
 | Create | `orchestrator/adapters/redis/schedule_cancelled_consumer.go` | Consumer for `schedule.cancelled:v1` |
 | Modify | `orchestrator/config/config.go` | Add `ScheduleCancelledStream`, `ScheduleCancelledGroup`, `CancelledSchedulesTTLHours`, `CancelledSchedulesSweepIntervalMinutes` |
 | Modify | `orchestrator/main.go` | Wire consumer + sweeper goroutine |
-| Modify | `orchestrator/service/command/handle_node_completed.go` | Guard before cascade outbox writes |
+| Modify | `orchestrator/service/handlers/handle_node_completed.go` | Guard before cascade outbox writes |
 | Create | `executor-controller/adapters/postgres/cancelled_schedules_repository.go` | Insert/Exists/DeleteExpired |
 | Create | `executor-controller/adapters/redis/schedule_cancelled_consumer.go` | Consumer for `schedule.cancelled:v1` |
 | Modify | `executor-controller/config/config.go` | Add stream/group/TTL/sweep env vars |
@@ -869,11 +869,11 @@ rtk git commit -m "feat(orchestrator): schedule.cancelled:v1 consumer + cancelle
 ## Task 8: Orchestrator — Guard in `HandleNodeCompletedHandler`
 
 **Files:**
-- Modify: `orchestrator/service/command/handle_node_completed.go`
+- Modify: `orchestrator/service/handlers/handle_node_completed.go`
 
 - [ ] **Step 1: Write failing test**
 
-In `orchestrator/service/command/handle_node_completed_test.go`, add:
+In `orchestrator/service/handlers/handle_node_completed_test.go`, add:
 ```go
 func TestHandleNodeCompleted_DropsOutboxWhenScheduleCancelled(t *testing.T) {
     scheduleID := uuid.New()
@@ -912,7 +912,7 @@ func (f *fakeCancelledSchedulesRepo) DeleteExpired(_ context.Context, _ time.Dur
 
 - [ ] **Step 2: Add `cancelledSchedulesRepo` to `HandleNodeCompletedHandler`**
 
-In `orchestrator/service/command/handle_node_completed.go`:
+In `orchestrator/service/handlers/handle_node_completed.go`:
 ```go
 type HandleNodeCompletedHandler struct {
     uow                  uow.UnitOfWork
@@ -967,7 +967,7 @@ handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(unitOfWork, 
 
 - [ ] **Step 5: Run tests**
 ```bash
-docker exec orchestrator go test ./service/command/... -run TestHandleNodeCompleted -v
+docker exec orchestrator go test ./service/handlers/... -run TestHandleNodeCompleted -v
 docker exec orchestrator go build ./...
 ```
 Expected: PASS, no build errors

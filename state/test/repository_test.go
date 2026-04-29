@@ -95,7 +95,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 									'completed',
 									'failed'
 								)),
-			manifest_versions   JSONB NOT NULL DEFAULT '{}',
+			service_metadata    JSONB NOT NULL DEFAULT '{}',
 			total_task_count    INTEGER,
 			terminal_task_count INTEGER NOT NULL DEFAULT 0,
 			CONSTRAINT valid_timestamps CHECK (
@@ -329,7 +329,7 @@ func setupCatalogSchema(t *testing.T, db *sqlx.DB) {
 			first_seen_at TIMESTAMPTZ NOT NULL,
 			last_seen_at  TIMESTAMPTZ NOT NULL,
 			removed_at    TIMESTAMPTZ,
-			manifest_versions JSONB NOT NULL DEFAULT '{}'
+			service_metadata JSONB NOT NULL DEFAULT '{}'
 		)
 	`)
 	require.NoError(t, err, "Failed to create schedule_catalog table")
@@ -342,18 +342,21 @@ func TestScheduleCatalogRepository_UpsertAll_Insert(t *testing.T) {
 
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
-	manifestVersions := map[string]string{"svc-a": "v3", "svc-b": "v5"}
+	serviceMetadata := map[string]model.ServiceMetadata{
+		"svc-a": {ManifestVersion: "v3", ImageTag: "sha256:aaa"},
+		"svc-b": {ManifestVersion: "v5", ImageTag: "sha256:bbb"},
+	}
 
-	err := repo.UpsertAll(ctx, []string{"daily", "hourly"}, manifestVersions)
+	err := repo.UpsertAll(ctx, []string{"daily", "hourly"}, serviceMetadata)
 	require.NoError(t, err)
 
 	active, err := repo.ListActive(ctx)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"daily", "hourly"}, active)
 
-	versions, err := repo.GetManifestVersions(ctx, "daily")
+	meta, err := repo.GetServiceMetadata(ctx, "daily")
 	require.NoError(t, err)
-	assert.Equal(t, manifestVersions, versions)
+	assert.Equal(t, serviceMetadata, meta)
 }
 
 func TestScheduleCatalogRepository_UpsertAll_ReactivatesRemoved(t *testing.T) {
@@ -365,19 +368,19 @@ func TestScheduleCatalogRepository_UpsertAll_ReactivatesRemoved(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert and then soft-delete "daily"
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]string{"svc-a": "v1"}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
 	require.NoError(t, repo.SoftDeleteAbsent(ctx, []string{})) // delete all
 
 	// Upsert again — should reactivate
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]string{"svc-a": "v2"}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v2", ImageTag: ""}}))
 
 	active, err := repo.ListActive(ctx)
 	require.NoError(t, err)
 	assert.Contains(t, active, "daily")
 
-	versions, err := repo.GetManifestVersions(ctx, "daily")
+	meta, err := repo.GetServiceMetadata(ctx, "daily")
 	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"svc-a": "v2"}, versions)
+	assert.Equal(t, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v2", ImageTag: ""}}, meta)
 }
 
 func TestScheduleCatalogRepository_SoftDeleteAbsent(t *testing.T) {
@@ -388,7 +391,7 @@ func TestScheduleCatalogRepository_SoftDeleteAbsent(t *testing.T) {
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily", "hourly", "weekly"}, map[string]string{"svc-a": "v1"}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily", "hourly", "weekly"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
 	// Payload now only contains daily and hourly — weekly should be soft-deleted
 	require.NoError(t, repo.SoftDeleteAbsent(ctx, []string{"daily", "hourly"}))
 
@@ -406,7 +409,7 @@ func TestScheduleCatalogRepository_ExistsActive(t *testing.T) {
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]string{"svc-a": "v1"}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
 
 	exists, err := repo.ExistsActive(ctx, "daily")
 	require.NoError(t, err)
@@ -425,7 +428,7 @@ func TestScheduleCatalogRepository_ExistsActive_SoftDeletedReturnsFalse(t *testi
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]string{"svc-a": "v1"}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
 	require.NoError(t, repo.SoftDeleteAbsent(ctx, []string{}))
 
 	exists, err := repo.ExistsActive(ctx, "daily")

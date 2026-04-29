@@ -23,8 +23,10 @@ func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
 		params := JobParams{
 			NodeType:  tt.nodeType,
 			TableName: tt.tableName,
+			ImageTag:  "test-tag",
 		}
-		spec := buildPodSpec(params)
+		spec, err := buildPodSpec(params)
+		require.NoError(t, err)
 		require.Len(t, spec.Containers, 1)
 		assert.Equal(t, tt.wantCommand, spec.Containers[0].Command,
 			"NodeType %q should produce command %v", tt.nodeType, tt.wantCommand)
@@ -34,26 +36,55 @@ func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
 func TestBuildPodSpec_ImageRef(t *testing.T) {
 	t.Run("no DOCKERHUB_USERNAME uses service name directly", func(t *testing.T) {
 		t.Setenv("DOCKERHUB_USERNAME", "")
-		spec := buildPodSpec(JobParams{ServiceName: "service-1"})
+		spec, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "some-tag", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"})
+		require.NoError(t, err)
 		require.Len(t, spec.Containers, 1)
-		assert.Equal(t, "service-1", spec.Containers[0].Image)
+		assert.Equal(t, "service-1:some-tag", spec.Containers[0].Image)
 	})
 
 	t.Run("with DOCKERHUB_USERNAME each service gets its own image", func(t *testing.T) {
 		t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
-		specA := buildPodSpec(JobParams{ServiceName: "service-1"})
-		specB := buildPodSpec(JobParams{ServiceName: "service-2"})
+		specA, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"})
+		require.NoError(t, err)
+		specB, err := buildPodSpec(JobParams{ServiceName: "service-2", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"})
+		require.NoError(t, err)
 		require.Len(t, specA.Containers, 1)
 		require.Len(t, specB.Containers, 1)
 		assert.Equal(t, "carolsimone/service-1:latest", specA.Containers[0].Image)
 		assert.Equal(t, "carolsimone/service-2:latest", specB.Containers[0].Image)
 	})
 
-	t.Run("with IMAGE_TAG overrides default latest", func(t *testing.T) {
+	t.Run("with DOCKERHUB_USERNAME uses params.ImageTag", func(t *testing.T) {
 		t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
-		t.Setenv("IMAGE_TAG", "v1.2.3")
-		spec := buildPodSpec(JobParams{ServiceName: "service-1"})
+		spec, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "v1.2.3", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"})
+		require.NoError(t, err)
 		require.Len(t, spec.Containers, 1)
 		assert.Equal(t, "carolsimone/service-1:v1.2.3", spec.Containers[0].Image)
 	})
+}
+
+func TestBuildPodSpec_UsesImageTagFromParams(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	params := JobParams{
+		ServiceName: "service-1",
+		ImageTag:    "abc123-1714300000",
+		NodeType:    pkg_model.NodeTypeDbtModel,
+		TableName:   "users",
+	}
+	spec, err := buildPodSpec(params)
+	require.NoError(t, err)
+	require.Len(t, spec.Containers, 1)
+	assert.Equal(t, "service-1:abc123-1714300000", spec.Containers[0].Image)
+}
+
+func TestBuildPodSpec_RefusesEmptyImageTag(t *testing.T) {
+	params := JobParams{
+		ServiceName: "service-1",
+		ImageTag:    "",
+		NodeType:    pkg_model.NodeTypeDbtModel,
+		TableName:   "users",
+	}
+	_, err := buildPodSpec(params)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "image_tag missing")
 }

@@ -53,16 +53,18 @@ func (r *fakeCreateTxRepo) CreateTx(_ context.Context, _ *sqlx.Tx, t *model.Sche
 }
 
 type fakeCatalogRepoSvc struct {
-	manifestVersions map[string]string
-	err              error
+	serviceMetadata map[string]model.ServiceMetadata
+	err             error
 }
 
-func (f *fakeCatalogRepoSvc) UpsertAll(_ context.Context, _ []string, _ map[string]string) error { return nil }
-func (f *fakeCatalogRepoSvc) SoftDeleteAbsent(_ context.Context, _ []string) error                { return nil }
-func (f *fakeCatalogRepoSvc) ListActive(_ context.Context) ([]string, error)                      { return nil, nil }
-func (f *fakeCatalogRepoSvc) ExistsActive(_ context.Context, _ string) (bool, error)              { return false, nil }
-func (f *fakeCatalogRepoSvc) GetManifestVersions(_ context.Context, _ string) (map[string]string, error) {
-	return f.manifestVersions, f.err
+func (f *fakeCatalogRepoSvc) UpsertAll(_ context.Context, _ []string, _ map[string]model.ServiceMetadata) error {
+	return nil
+}
+func (f *fakeCatalogRepoSvc) SoftDeleteAbsent(_ context.Context, _ []string) error   { return nil }
+func (f *fakeCatalogRepoSvc) ListActive(_ context.Context) ([]string, error)          { return nil, nil }
+func (f *fakeCatalogRepoSvc) ExistsActive(_ context.Context, _ string) (bool, error)  { return false, nil }
+func (f *fakeCatalogRepoSvc) GetServiceMetadata(_ context.Context, _ string) (map[string]model.ServiceMetadata, error) {
+	return f.serviceMetadata, f.err
 }
 
 // fakeOutboxRepoSvc records outbox Create calls.
@@ -173,7 +175,7 @@ func TestScheduleActivationService_AtomicallyWritesTrackerAndOutbox(t *testing.T
 	activator := &fakeActivator{tracker: tracker}
 	repo := &fakeCreateTxRepo{}
 	outbox := &fakeOutboxRepoSvc{}
-	catalog := &fakeCatalogRepoSvc{manifestVersions: map[string]string{"svc-a": "v3"}}
+	catalog := &fakeCatalogRepoSvc{serviceMetadata: map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}}
 	svc := scheduler.NewScheduleActivationService(
 		db, activator, catalog, repo, outbox, "scheduler.started:v1", testLogger(),
 	)
@@ -185,7 +187,7 @@ func TestScheduleActivationService_AtomicallyWritesTrackerAndOutbox(t *testing.T
 
 	require.NotNil(t, repo.createdTracker, "CreateTx must be called")
 	assert.Equal(t, tracker.ScheduleID, repo.createdTracker.ScheduleID)
-	assert.Equal(t, map[string]string{"svc-a": "v3"}, repo.createdTracker.GetManifestVersions())
+	assert.Equal(t, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, repo.createdTracker.GetServiceMetadata())
 
 	require.NotNil(t, outbox.createdEntry, "outbox Create must be called")
 	assert.Equal(t, "scheduler.started:v1", outbox.createdEntry.StreamName)
@@ -196,5 +198,10 @@ func TestScheduleActivationService_AtomicallyWritesTrackerAndOutbox(t *testing.T
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(outbox.createdEntry.Payload, &payload))
-	assert.Equal(t, map[string]any{"svc-a": "v3"}, payload["manifest_versions"])
+	// service_metadata is a nested object now: {"svc-a": {"manifest_version": "v3", "image_tag": ""}}
+	svcMeta, ok := payload["service_metadata"].(map[string]any)
+	require.True(t, ok, "service_metadata must be a map in the outbox payload")
+	svcA, ok := svcMeta["svc-a"].(map[string]any)
+	require.True(t, ok, "svc-a must be a map in service_metadata")
+	assert.Equal(t, "v3", svcA["manifest_version"])
 }

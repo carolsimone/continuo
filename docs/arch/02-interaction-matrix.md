@@ -28,13 +28,13 @@ Legend:
 | Stream | Producer(s) | Consumer(s) | Purpose |
 |---|---|---|---|
 | `update.graph:v1` | `ui-service` | `manifest-controller` | Trigger manifest reload from `local` or `s3` source |
-| `manifest.loaded:v1` | `manifest-controller` | `orchestrator` | Topology payload for graph ingestion |
+| `manifest.loaded:v1` | `manifest-controller` | `orchestrator` | Topology payload for graph ingestion; each node carries image_tag per-service |
 | `schedules.loaded:v1` | `orchestrator` | `state` | Reconcile `schedule_catalog` |
 | `scheduler.started:v1` | `state` | `orchestrator` | Start schedule initialization; orchestrator creates run snapshot and emits `run.entries.dispatched:v1` |
-| `run.entries.dispatched:v1` | `orchestrator` | `state` | All task entries with pre-assigned UUIDs; state creates task rows, sets `total_task_count`, marks run as initialized |
+| `run.entries.dispatched:v1` | `orchestrator` | `state` | All task entries with pre-assigned UUIDs and per-task manifest_version + image_tag; state creates task rows, sets total_task_count, marks run as initialized |
 | `initialize.run:v1` | *(rerun command path)* | `orchestrator` | Request rerun scope resolution |
 | `run.rerun.dispatched:v1` | `orchestrator` | `state` | Rerun scope resolved; state resets target task(s) to PENDING |
-| `query.model:v1` | `orchestrator` | `executor-controller` | Dispatch executable nodes |
+| `query.model:v1` | `orchestrator` | `executor-controller` | Dispatch executable nodes; carries image_tag and manifest_version as stream fields |
 | `node.deployed:v1` | `executor-controller` | `k8s-controller` | Begin runtime monitoring |
 | `check.k8s:v1` | `k8s-controller` | `k8s-controller` | Delayed re-check queue |
 | `retry.task:v1` | `k8s-controller` | `executor-controller` | Re-dispatch retry deployment |
@@ -67,16 +67,16 @@ Internal pipeline writes to `state` are now event-driven (via Redis). The only r
 
 | Service | Operation type | Concrete calls |
 |---|---|---|
-| `manifest-controller` | read | `list_objects_v2`, `download_file` |
+| `manifest-controller` | read | `list_objects_v2`, `download_file` (manifest.json + service_metadata.json sidecar) |
 | `k8s-controller` | write | `PutObject` |
 
 ## Local Durable State by Service
 
 | Service | Tables / durable structures |
 |---|---|
-| `state` | `scheduler_tracker`, `task_tracker`, `task_execution`, `schedule_catalog`, `state_outbox`, `processed_events` |
-| `orchestrator` | Neo4j `Table`, `Run`, `DEPENDS_ON`, `EXECUTES` (with `task_id`); Postgres `message_processing`, `outbox`, `published_messages` |
-| `executor-controller` | `deployment_outbox`, `processed_events` |
+| `state` | `scheduler_tracker`, `schedule_catalog` (+ `service_metadata` JSONB), `task_tracker` (+ `manifest_version` column), `task_execution`, `state_outbox`, `processed_events` |
+| `orchestrator` | Neo4j `Table` (+ `image_tag`, `topology_generation`), `Run` (+ `topology_generation`, `service_metadata`), `DEPENDS_ON`, `EXECUTES` (+ `image_tag`); Neo4j `:TopologyRoot {id:'singleton'}`; Postgres `topology_state`, `message_processing`, `outbox`, `published_messages` |
+| `executor-controller` | `deployment_outbox` (+ `image_tag` column), `processed_events` |
 | `k8s-controller` | `k8s_status_outbox`, `processed_events` |
 | `manifest-controller` | none |
 | `ui-service` | none |

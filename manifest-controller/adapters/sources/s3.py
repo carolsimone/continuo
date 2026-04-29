@@ -1,11 +1,13 @@
+import json
 import logging
 import os
 import tempfile
+from botocore.exceptions import ClientError
 from adapters.sources import ManifestSource
-
-logger = logging.getLogger(__name__)
 from domain.model import ManifestFile
 from service.version import _VERSION_RE, parse_version
+
+logger = logging.getLogger(__name__)
 
 
 class S3Source(ManifestSource):
@@ -51,7 +53,23 @@ class S3Source(ManifestSource):
             version = parse_version(filename)
             local_path = os.path.join(self._tmpdir.name, key.replace("/", "_"))
             self._s3.download_file(self._bucket, key, local_path)
-            result.append(ManifestFile(path=local_path, version=version))
+
+            image_tag = ""
+            meta_key = f"{service_prefix}/service_metadata.json"
+            try:
+                meta_obj = self._s3.get_object(Bucket=self._bucket, Key=meta_key)
+                meta = json.loads(meta_obj["Body"].read())
+                image_tag = meta.get("image_tag", "")
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] == "NoSuchKey":
+                    logger.warning(
+                        "service_metadata.json missing — image_tag will be empty",
+                        extra={"service_prefix": service_prefix},
+                    )
+                else:
+                    raise
+
+            result.append(ManifestFile(path=local_path, version=version, image_tag=image_tag))
 
         return result
 
