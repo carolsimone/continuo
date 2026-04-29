@@ -1,4 +1,4 @@
-package command_test
+package handlers_test
 
 import (
 	"context"
@@ -6,8 +6,9 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
-	"github.com/carolsimone/continuo/orchestrator/service/command"
+	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -84,8 +85,8 @@ func TestHandleSchedulerStarted_WritesEntriesDispatchedAndDispatches(t *testing.
 		},
 	}
 
-	h := command.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := command.SchedulerStartedCmd{
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	cmd := domainCmd.SchedulerStartedCmd{
 		ScheduleID:   scheduleID,
 		ScheduleName: "daily",
 	}
@@ -187,8 +188,8 @@ func TestHandleSchedulerStarted_DispatchesSeedsWhenPresent(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := command.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	cmd := domainCmd.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
 
 	require.NoError(t, h.Handle(ctx, cmd, "msg-seeds-1"))
 
@@ -220,8 +221,8 @@ func TestHandleSchedulerStarted_Idempotent(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := command.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	cmd := domainCmd.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
 
 	// First call: processes normally
 	require.NoError(t, h.Handle(ctx, cmd, "msg-start-dup"))

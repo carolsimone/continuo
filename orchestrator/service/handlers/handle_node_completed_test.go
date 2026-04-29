@@ -1,4 +1,4 @@
-package command_test
+package handlers_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/orchestrator/service/command"
+	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
@@ -241,7 +241,7 @@ func TestHandleNodeCompleted_SucceededNoDownstream(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	runRepo := &fakeRunRepository{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
+	h := handlers.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 
 	err := h.Handle(ctx, cmd, "msg-1")
@@ -273,7 +273,7 @@ func TestHandleNodeCompleted_SucceededWithDownstream(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
+	h := handlers.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 	cmd.ScheduleID = scheduleID
 
@@ -307,7 +307,7 @@ func TestHandleNodeCompleted_FailedNoDownstream(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	runRepo := &fakeRunRepository{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
+	h := handlers.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 	cmd.Status = "FAILED"
 
@@ -326,7 +326,7 @@ func TestHandleNodeCompleted_DuplicateMessage(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	runRepo := &fakeRunRepository{}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
+	h := handlers.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 
 	// First call: should process normally
@@ -369,7 +369,7 @@ func TestHandleNodeCompleted_DoesNotCallStateGRPC(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
+	h := handlers.NewHandleNodeCompletedHandler(uow, runRepo, newFakeCancelledSchedulesRepo(), newTestLogger())
 	cmd := baseCmd()
 	cmd.Status = "SUCCEEDED"
 
@@ -402,7 +402,7 @@ func TestHandleNodeCompleted_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleNodeCompletedHandler(uow, runRepo, cancelledRepo, newTestLogger())
+	h := handlers.NewHandleNodeCompletedHandler(uow, runRepo, cancelledRepo, newTestLogger())
 	cmd := baseCmd()
 	cmd.ScheduleID = scheduleID
 	cmd.Status = "SUCCEEDED"

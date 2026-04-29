@@ -1,4 +1,4 @@
-package command_test
+package handlers_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	pginfra "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
-	"github.com/carolsimone/continuo/orchestrator/service/command"
+	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -130,7 +130,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	require.NoError(t, err)
 
 	stateRepo := pginfra.NewTopologyStateRepository(pgDB)
-	handler := command.NewIngestTopologyHandler(
+	handler := handlers.NewIngestTopologyHandler(
 		newFakeUnitOfWork(),
 		neo4jinfra.NewTopologyRepository(client, newTestLogger()),
 		stateRepo,

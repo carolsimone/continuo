@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/orchestrator/service/command"
 	"github.com/carolsimone/continuo/orchestrator/config"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
@@ -131,11 +130,11 @@ func main() {
 	// consumers process messages concurrently — the second Begin() sees inTx=true
 	// and the message is never ACKed, getting stuck in the PEL forever.
 	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
-	ingestTopologyHandler := command.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, logger)
-	initializeRunHandler := command.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
-	handleNodeCompletedHandler := command.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, cancelledSchedulesRepo, logger)
-	handleSchedulerStartedHandler := command.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
-	handleRerunHandler := command.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
+	ingestTopologyHandler := handlers.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, logger)
+	initializeRunHandler := handlers.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
+	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, cancelledSchedulesRepo, logger)
+	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
+	handleRerunHandler := handlers.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -294,7 +293,7 @@ func main() {
 		if !ok2 || scheduleName == "" {
 			return fmt.Errorf("missing or invalid schedule_name in scheduler.started message %s", msg.ID)
 		}
-		cmd := command.SchedulerStartedCmd{
+		cmd := domainCmd.SchedulerStartedCmd{
 			ScheduleID:   schedulerID,
 			ScheduleName: scheduleName,
 		}

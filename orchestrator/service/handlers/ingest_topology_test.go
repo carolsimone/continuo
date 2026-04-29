@@ -1,4 +1,4 @@
-package command_test
+package handlers_test
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
-	"github.com/carolsimone/continuo/orchestrator/service/command"
+	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -107,7 +107,7 @@ func TestIngestTopology_ThreeNodesTwoSchedules(t *testing.T) {
 	topoRepo := &fakeTopologyRepository{}
 	stateRepo := &fakeTopologyStateRepository{}
 
-	h := command.NewIngestTopologyHandler(uow, topoRepo, stateRepo, newTestLogger())
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, newTestLogger())
 	cmd := makeIngestTopologyCmd()
 
 	err := h.Handle(ctx, cmd, "msg-ingest-1")
@@ -154,7 +154,7 @@ func TestIngestTopology_DuplicateMessage(t *testing.T) {
 	topoRepo := &fakeTopologyRepository{}
 	stateRepo := &fakeTopologyStateRepository{}
 
-	h := command.NewIngestTopologyHandler(uow, topoRepo, stateRepo, newTestLogger())
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, newTestLogger())
 	cmd := makeIngestTopologyCmd()
 
 	// First call: processes normally

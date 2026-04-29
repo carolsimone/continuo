@@ -1,4 +1,4 @@
-package command_test
+package handlers_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
-	"github.com/carolsimone/continuo/orchestrator/service/command"
+	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,7 +90,7 @@ func TestHandleRerun_WritesRunRerunDispatchedAndQueryModel(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
 	cmd := makeRerunCmd()
 
 	err := h.Handle(ctx, cmd, "msg-rerun-1")
@@ -157,7 +157,7 @@ func TestHandleRerun_NoFailedDownstream(t *testing.T) {
 		},
 	}
 
-	h := command.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
 
 	err := h.Handle(ctx, makeRerunCmd(), "msg-rerun-2")
 	require.NoError(t, err)
@@ -177,7 +177,7 @@ func TestHandleRerun_DuplicateMessage(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	runRepo := &rerunFakeRunRepository{}
 
-	h := command.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
 	cmd := makeRerunCmd()
 
 	// First call: processes normally.

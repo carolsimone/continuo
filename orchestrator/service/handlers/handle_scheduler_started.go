@@ -1,4 +1,4 @@
-package command
+package handlers
 
 import (
 	"context"
@@ -11,16 +11,11 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
-
-// SchedulerStartedCmd carries the data from a scheduler.started:v1 event.
-type SchedulerStartedCmd struct {
-	ScheduleID   uuid.UUID
-	ScheduleName string
-}
 
 // HandleSchedulerStartedHandler consumes scheduler.started:v1 events.
 // It snapshots the run graph, emits run.entries.dispatched:v1 with all tasks,
@@ -46,7 +41,7 @@ func NewHandleSchedulerStartedHandler(
 }
 
 // Handle processes a SchedulerStartedCmd.
-func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd SchedulerStartedCmd, messageID string) error {
+func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd domainCmd.SchedulerStartedCmd, messageID string) error {
 	h.logger.Info("Processing scheduler started",
 		"message_id", messageID,
 		"schedule_id", cmd.ScheduleID,
@@ -229,7 +224,7 @@ func (h *HandleSchedulerStartedHandler) dedup(
 
 // buildRunEntriesDispatchedPayload constructs the JSON payload for run.entries.dispatched:v1.
 func (h *HandleSchedulerStartedHandler) buildRunEntriesDispatchedPayload(
-	cmd SchedulerStartedCmd,
+	cmd domainCmd.SchedulerStartedCmd,
 	initNodes *run.ScheduleInitNodes,
 ) ([]byte, error) {
 	var allTasks []pkgevents.DispatchedTask
