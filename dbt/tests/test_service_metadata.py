@@ -84,3 +84,35 @@ def test_upload_manifest_writes_sidecar_when_image_tag_provided(tmp_path: Path):
     # Verify the S3 key for the sidecar
     sidecar_call = next(c for c in mock_s3.upload_file.call_args_list if "service_metadata" in str(c))
     assert "local/manifest/service-1/service_metadata.json" in str(sidecar_call)
+
+
+def test_upload_services_rejects_service_missing_image_tag(tmp_path: Path, monkeypatch):
+    """upload_services must mark services missing from IMAGE_TAG_PER_SERVICE as failed
+    before touching S3 — otherwise a manifest is uploaded without a sidecar, the
+    snapshot propagates image_tag='', and the run fails at deployment instead of
+    at upload time."""
+    from unittest.mock import patch
+    from dbt_upload.upload import upload_services
+
+    service_dir = tmp_path / "service-1"
+    (service_dir / "target").mkdir(parents=True)
+    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+
+    monkeypatch.setenv("IMAGE_TAG_PER_SERVICE", "")
+
+    target_config = {
+        "endpoint_url": "http://localstack:4566",
+        "access_key_id": "test",
+        "secret_access_key": "test",
+        "region": "us-east-1",
+        "env": "local",
+        "bucket": "continuo",
+    }
+
+    with patch("dbt_upload.upload.boto3.client"), \
+         patch("dbt_upload.upload.upload_manifest") as mock_upload:
+        succeeded, failed = upload_services([str(service_dir)], target_config)
+
+    assert succeeded == []
+    assert failed == [str(service_dir)]
+    mock_upload.assert_not_called()

@@ -125,6 +125,18 @@ def upload_services(
         service_name = os.path.basename(service_dir)
         logger.info("Uploading %s", service_name)
 
+        # Refuse to upload before image_tag is known: a successful manifest upload
+        # without a sidecar poisons the snapshot — manifest-controller propagates
+        # image_tag="" and the run fails at deployment time on every task.
+        image_tag = image_tag_map.get(service_name, "")
+        if not image_tag:
+            logger.error(
+                "image_tag missing for %s — set IMAGE_TAG_PER_SERVICE=%s=<tag>,...; refusing to upload",
+                service_name, service_name,
+            )
+            failed.append(service_dir)
+            continue
+
         try:
             filter_manifest(service_dir)
         except FileNotFoundError:
@@ -132,7 +144,6 @@ def upload_services(
             failed.append(service_dir)
             continue
 
-        image_tag = image_tag_map.get(service_name, "")
         if upload_manifest(s3_client, service_dir, env, bucket, image_tag=image_tag):
             succeeded.append(service_dir)
         else:
