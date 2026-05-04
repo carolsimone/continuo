@@ -3,11 +3,15 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
+	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -98,6 +102,26 @@ func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
 	}
 }
 
+// ── fakes: RejectedTopologyRepository ────────────────────────────────────────
+
+type fakeRejectedTopologyRepo struct {
+	InsertCalls []rejectedInsertCall
+	InsertErr   error
+}
+
+type rejectedInsertCall struct {
+	MessageID string
+	Reason    string
+	Payload   json.RawMessage
+}
+
+func (f *fakeRejectedTopologyRepo) Insert(_ context.Context, messageID, reason string, payload json.RawMessage) error {
+	f.InsertCalls = append(f.InsertCalls, rejectedInsertCall{MessageID: messageID, Reason: reason, Payload: payload})
+	return f.InsertErr
+}
+
+var _ postgresadapter.RejectedTopologyRepository = (*fakeRejectedTopologyRepo)(nil)
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 // 1. 3 nodes across 2 schedules → ApplySnapshot called once, outbox entry created with both schedule names.
@@ -106,8 +130,9 @@ func TestIngestTopology_ThreeNodesTwoSchedules(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	topoRepo := &fakeTopologyRepository{}
 	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
 
-	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, newTestLogger())
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
 	cmd := makeIngestTopologyCmd()
 
 	err := h.Handle(ctx, cmd, "msg-ingest-1")
@@ -153,8 +178,9 @@ func TestIngestTopology_DuplicateMessage(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	topoRepo := &fakeTopologyRepository{}
 	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
 
-	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, newTestLogger())
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
 	cmd := makeIngestTopologyCmd()
 
 	// First call: processes normally
@@ -174,4 +200,131 @@ func TestIngestTopology_DuplicateMessage(t *testing.T) {
 
 	assert.Len(t, topoRepo.applySnapshotCalls, 0, "ApplySnapshot must NOT be called for duplicate")
 	assert.Len(t, uow.outboxRepo.CreatedEntries, 0, "no outbox entries for duplicate")
+}
+
+// ── rejection-path tests (Task A2.4) ─────────────────────────────────────────
+
+func TestIngestTopology_BadPayload_ReturnsWrappedPermanent(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
+
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
+	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
+	}}
+
+	err := h.Handle(ctx, cmd, "msg-bad-1")
+	if !errors.Is(err, events.ErrPermanent) {
+		t.Fatalf("expected wrapped ErrPermanent, got %v", err)
+	}
+}
+
+func TestIngestTopology_BadPayload_SkipsUnitOfWork(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
+
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
+	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
+	}}
+
+	_ = h.Handle(ctx, cmd, "msg-bad-2")
+
+	if uow.BegunTx {
+		t.Fatalf("expected uow.Begin not called, got BegunTx=true")
+	}
+	if uow.CommittedTx {
+		t.Fatalf("expected uow.Commit not called, got CommittedTx=true")
+	}
+}
+
+func TestIngestTopology_BadPayload_WritesForensicsRow(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
+
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
+	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
+	}}
+
+	_ = h.Handle(ctx, cmd, "msg-bad-3")
+
+	if got := len(rejectedRepo.InsertCalls); got != 1 {
+		t.Fatalf("expected exactly 1 forensics insert, got %d", got)
+	}
+	call := rejectedRepo.InsertCalls[0]
+	if call.MessageID != "msg-bad-3" {
+		t.Fatalf("expected message_id=msg-bad-3, got %q", call.MessageID)
+	}
+	if !strings.Contains(call.Reason, "svc-1/raw/users") {
+		t.Fatalf("expected offender in reason, got %q", call.Reason)
+	}
+	// Sanity: payload should be valid JSON containing the original cmd shape.
+	if len(call.Payload) == 0 {
+		t.Fatal("expected non-empty payload")
+	}
+}
+
+func TestIngestTopology_BadPayload_SkipsApplySnapshot(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
+
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
+	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
+	}}
+
+	_ = h.Handle(ctx, cmd, "msg-bad-4")
+
+	if got := len(topoRepo.applySnapshotCalls); got != 0 {
+		t.Fatalf("expected ApplySnapshot not called, got %d call(s)", got)
+	}
+}
+
+func TestIngestTopology_BadPayload_ForensicsFailureStillReturnsPermanent(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{InsertErr: errors.New("postgres blip")}
+
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
+	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
+	}}
+
+	err := h.Handle(ctx, cmd, "msg-bad-5")
+	if !errors.Is(err, events.ErrPermanent) {
+		t.Fatalf("expected wrapped ErrPermanent (forensics is best-effort), got %v", err)
+	}
+}
+
+func TestIngestTopology_HappyPath_DoesNotInsertForensics(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
+
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
+	cmd := makeIngestTopologyCmd() // helper at line 56 — all nodes have non-empty image_tag
+
+	if err := h.Handle(ctx, cmd, "msg-ok"); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+	if got := len(rejectedRepo.InsertCalls); got != 0 {
+		t.Fatalf("expected no forensics inserts on happy path, got %d", got)
+	}
 }

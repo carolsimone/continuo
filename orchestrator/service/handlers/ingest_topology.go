@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
@@ -21,6 +22,7 @@ type IngestTopologyHandler struct {
 	uow               uow.UnitOfWork
 	topologyRepo      topology.Repository
 	topologyStateRepo topology.TopologyStateRepository
+	rejectedRepo      postgresadapter.RejectedTopologyRepository
 	logger            *slog.Logger
 }
 
@@ -29,12 +31,14 @@ func NewIngestTopologyHandler(
 	u uow.UnitOfWork,
 	topologyRepo topology.Repository,
 	topologyStateRepo topology.TopologyStateRepository,
+	rejectedRepo postgresadapter.RejectedTopologyRepository,
 	logger *slog.Logger,
 ) *IngestTopologyHandler {
 	return &IngestTopologyHandler{
 		uow:               u,
 		topologyRepo:      topologyRepo,
 		topologyStateRepo: topologyStateRepo,
+		rejectedRepo:      rejectedRepo,
 		logger:            logger,
 	}
 }
@@ -45,6 +49,27 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 		"message_id", messageID,
 		"node_count", len(cmd.Nodes),
 	)
+
+	// Validate before any side effect. A permanent error here means the
+	// payload is deterministically bad; we record forensics and return
+	// the wrapped sentinel so the consumer ACKs.
+	if validationErr := validateTopologyNodes(cmd.Nodes); validationErr != nil {
+		h.logger.Error("Topology ingestion rejected",
+			"message_id", messageID,
+			"reason", validationErr,
+			"node_count", len(cmd.Nodes),
+		)
+		// Forensics is best-effort: a failed insert MUST NOT turn a
+		// permanent error into a transient one, so we ignore the error.
+		rawPayload, _ := json.Marshal(cmd)
+		if insertErr := h.rejectedRepo.Insert(ctx, messageID, validationErr.Error(), rawPayload); insertErr != nil {
+			h.logger.Error("Failed to record rejected_topology_messages forensics row — proceeding with ErrPermanent return so consumer ACKs",
+				"message_id", messageID,
+				"insert_error", insertErr,
+			)
+		}
+		return validationErr
+	}
 
 	// Marshal command payload for message_processing record.
 	payload, err := json.Marshal(cmd)
