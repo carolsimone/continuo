@@ -209,11 +209,21 @@ func (h *IngestTopologyHandler) handleTopologyDedup(
 	return id, false, nil
 }
 
+// maxOffendersInError caps the number of offending node triples shown in
+// the validateTopologyNodes error message. The cap is a log-readability
+// bound, not a correctness constraint — the full count appears as the
+// "for N node(s)" prefix and the persisted forensics row carries the
+// raw payload. Mirror this number in manifest-controller's validator
+// to keep error shapes symmetric across services.
+const maxOffendersInError = 10
+
 // validateTopologyNodes returns an ErrPermanent-wrapped error if any node
-// has an empty ImageTag. The offender list is sorted, capped at 10, and
-// followed by "...and N more" when truncated. Returns nil for empty input
-// — an empty topology is a valid (if degenerate) snapshot.
+// has an empty ImageTag. The offender list is sorted, capped at
+// maxOffendersInError, and followed by "...and N more" when truncated.
+// Returns nil for empty input — an empty topology is a valid (if degenerate)
+// snapshot.
 func validateTopologyNodes(nodes []domainCmd.TopologyNodePayload) error {
+	// nil-slice — first append allocates only when a violation is found.
 	var bad []string
 	for _, n := range nodes {
 		if n.ImageTag == "" {
@@ -224,11 +234,13 @@ func validateTopologyNodes(nodes []domainCmd.TopologyNodePayload) error {
 	if len(bad) == 0 {
 		return nil
 	}
+	// Sort the full list before slicing so the truncated head is the
+	// lex-first maxOffendersInError, not the insertion-first ones.
 	sort.Strings(bad)
 	detail := strings.Join(bad, ", ")
-	if len(bad) > 10 {
-		detail = strings.Join(bad[:10], ", ") +
-			fmt.Sprintf(", ...and %d more", len(bad)-10)
+	if len(bad) > maxOffendersInError {
+		detail = strings.Join(bad[:maxOffendersInError], ", ") +
+			fmt.Sprintf(", ...and %d more", len(bad)-maxOffendersInError)
 	}
 	return fmt.Errorf("%w: image_tag empty for %d node(s): %s",
 		events.ErrPermanent, len(bad), detail)

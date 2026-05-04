@@ -75,7 +75,35 @@ func TestValidateTopologyNodes_OverTen_Truncated(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "...and 2 more") {
-		t.Fatalf("expected truncation marker '...and 2 more', got %q", err.Error())
+	msg := err.Error()
+	if !strings.Contains(msg, "...and 2 more") {
+		t.Fatalf("expected truncation marker '...and 2 more', got %q", msg)
+	}
+	// Lex-sorted: svc-00..svc-09 fit in the first 10 slots; svc-10 and svc-11
+	// are truncated and must not appear in the detail list.
+	if strings.Contains(msg, "svc-10/raw/tbl-10") {
+		t.Fatalf("svc-10 should be truncated, got %q", msg)
+	}
+	if strings.Contains(msg, "svc-11/raw/tbl-11") {
+		t.Fatalf("svc-11 should be truncated, got %q", msg)
+	}
+}
+
+func TestValidateTopologyNodes_ExactlyTen_NoTruncation(t *testing.T) {
+	nodes := make([]domainCmd.TopologyNodePayload, 10)
+	for i := range nodes {
+		nodes[i] = domainCmd.TopologyNodePayload{
+			ServiceName: fmt.Sprintf("svc-%02d", i),
+			SchemaName:  "raw",
+			TableName:   fmt.Sprintf("tbl-%02d", i),
+			ImageTag:    "",
+		}
+	}
+	err := validateTopologyNodes(nodes)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if strings.Contains(err.Error(), "more") {
+		t.Fatalf("exactly-10 must NOT include truncation marker, got %q", err.Error())
 	}
 }
