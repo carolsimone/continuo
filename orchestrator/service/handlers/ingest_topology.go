@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 )
 
@@ -204,6 +207,31 @@ func (h *IngestTopologyHandler) handleTopologyDedup(
 	}
 
 	return id, false, nil
+}
+
+// validateTopologyNodes returns an ErrPermanent-wrapped error if any node
+// has an empty ImageTag. The offender list is sorted, capped at 10, and
+// followed by "...and N more" when truncated. Returns nil for empty input
+// — an empty topology is a valid (if degenerate) snapshot.
+func validateTopologyNodes(nodes []domainCmd.TopologyNodePayload) error {
+	var bad []string
+	for _, n := range nodes {
+		if n.ImageTag == "" {
+			bad = append(bad, fmt.Sprintf("%s/%s/%s",
+				n.ServiceName, n.SchemaName, n.TableName))
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad)
+	detail := strings.Join(bad, ", ")
+	if len(bad) > 10 {
+		detail = strings.Join(bad[:10], ", ") +
+			fmt.Sprintf(", ...and %d more", len(bad)-10)
+	}
+	return fmt.Errorf("%w: image_tag empty for %d node(s): %s",
+		events.ErrPermanent, len(bad), detail)
 }
 
 // toTopologyNode converts a domainCmd.TopologyNodePayload to a topology.TopologyNode.
