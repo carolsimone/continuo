@@ -61,6 +61,9 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 		)
 		// Forensics is best-effort: a failed insert MUST NOT turn a
 		// permanent error into a transient one, so we ignore the error.
+		// json.Marshal cannot fail on IngestTopologyCmd today (all fields
+		// are JSON-safe primitives) — if a future field changes that, the
+		// forensics row stores nil payload while we still return ErrPermanent.
 		rawPayload, _ := json.Marshal(cmd)
 		if insertErr := h.rejectedRepo.Insert(ctx, messageID, validationErr.Error(), rawPayload); insertErr != nil {
 			h.logger.Error("Failed to record rejected_topology_messages forensics row — proceeding with ErrPermanent return so consumer ACKs",

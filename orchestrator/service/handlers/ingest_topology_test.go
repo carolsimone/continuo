@@ -268,9 +268,40 @@ func TestIngestTopology_BadPayload_WritesForensicsRow(t *testing.T) {
 	if !strings.Contains(call.Reason, "svc-1/raw/users") {
 		t.Fatalf("expected offender in reason, got %q", call.Reason)
 	}
-	// Sanity: payload should be valid JSON containing the original cmd shape.
-	if len(call.Payload) == 0 {
-		t.Fatal("expected non-empty payload")
+	// Payload must be byte-equal to the input cmd marshalled — the forensics
+	// row's whole purpose is post-mortem replay, so a refactor that passes
+	// a different value (e.g. cmd.Nodes only, or a redacted copy) would
+	// silently break debuggability without this assertion.
+	expected, err := json.Marshal(cmd)
+	require.NoError(t, err)
+	require.JSONEq(t, string(expected), string(call.Payload))
+}
+
+func TestIngestTopology_MultipleBadNodes_WritesSingleAggregatedForensicsRow(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
+
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
+	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
+		{ServiceName: "svc-2", SchemaName: "raw", TableName: "orders", ImageTag: ""},
+		{ServiceName: "svc-3", SchemaName: "raw", TableName: "items", ImageTag: ""},
+	}}
+
+	_ = h.Handle(ctx, cmd, "msg-multi-bad")
+
+	// Contract: ONE forensics row per BATCH, not one per offender. A future
+	// refactor that loops Insert per offender would multiply rows under
+	// XCLAIM redelivery and explode the table.
+	require.Len(t, rejectedRepo.InsertCalls, 1, "expected exactly 1 forensics row for the whole batch")
+	call := rejectedRepo.InsertCalls[0]
+	for _, offender := range []string{"svc-1/raw/users", "svc-2/raw/orders", "svc-3/raw/items"} {
+		if !strings.Contains(call.Reason, offender) {
+			t.Fatalf("expected reason to contain %q, got %q", offender, call.Reason)
+		}
 	}
 }
 
