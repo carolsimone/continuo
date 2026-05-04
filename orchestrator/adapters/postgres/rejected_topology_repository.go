@@ -34,7 +34,7 @@ func (r *rejectedTopologyRepository) Insert(
 	const q = `
 		INSERT INTO rejected_topology_messages (message_id, reason, payload)
 		VALUES ($1, $2, $3)`
-	if _, err := r.db.ExecContext(ctx, q, messageID, reason, []byte(payload)); err != nil {
+	if _, err := r.db.ExecContext(ctx, q, messageID, reason, payload); err != nil {
 		return fmt.Errorf("insert rejected_topology_messages: %w", err)
 	}
 	return nil

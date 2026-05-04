@@ -21,11 +21,11 @@ func TestRejectedTopologyRepository_Insert_PersistsRow(t *testing.T) {
 	rawPayload := json.RawMessage(`{"nodes":[{"service_name":"svc-1","schema_name":"raw","table_name":"users","image_tag":""}]}`)
 	reason := "image_tag empty for 1 node(s): svc-1/raw/users"
 
-	require.NoError(t, repo.Insert(ctx, messageID, reason, rawPayload))
-
 	t.Cleanup(func() {
 		db.ExecContext(ctx, `DELETE FROM rejected_topology_messages WHERE message_id = $1`, messageID)
 	})
+
+	require.NoError(t, repo.Insert(ctx, messageID, reason, rawPayload))
 
 	var (
 		gotMessageID string
