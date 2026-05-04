@@ -19,3 +19,10 @@ func TestErrPermanent_PlainErrorIsNotPermanent(t *testing.T) {
 		t.Fatalf("expected errors.Is(plain, ErrPermanent) == false, got true")
 	}
 }
+
+func TestErrPermanent_RecognisedInsideJoinedError(t *testing.T) {
+	joined := errors.Join(errors.New("transient io blip"), fmt.Errorf("%w: bad input", ErrPermanent))
+	if !errors.Is(joined, ErrPermanent) {
+		t.Fatalf("expected ErrPermanent to be recognised inside errors.Join, got false")
+	}
+}
