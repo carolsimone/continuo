@@ -7,6 +7,7 @@ import (
 	"os"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -174,7 +175,8 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 // falling back to "latest" is intentionally refused.
 func buildPodSpec(params JobParams) (corev1.PodSpec, error) {
 	if params.ImageTag == "" {
-		return corev1.PodSpec{}, fmt.Errorf("image_tag missing from job params for service %s", params.ServiceName)
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for service %s",
+			events.ErrPermanent, params.ServiceName)
 	}
 
 	image := params.ServiceName + ":" + params.ImageTag

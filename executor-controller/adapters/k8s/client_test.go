@@ -1,9 +1,11 @@
 package k8s
 
 import (
+	"errors"
 	"testing"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -87,4 +89,10 @@ func TestBuildPodSpec_RefusesEmptyImageTag(t *testing.T) {
 	_, err := buildPodSpec(params)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "image_tag missing")
+	// Wrapping events.ErrPermanent lets the outbox processor classify this
+	// as non-retryable and short-circuit to terminal failure on attempt 1
+	// instead of consuming the retry budget for a deterministically-bad
+	// input (Task B1.3).
+	assert.True(t, errors.Is(err, events.ErrPermanent),
+		"empty image_tag must wrap events.ErrPermanent so outbox processor classifies non-retryable")
 }
