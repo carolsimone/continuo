@@ -294,8 +294,8 @@ services:
       - SCHEDULE_CANCELLED_GROUP=orchestrator-schedule-cancelled
       - CANCELLED_SCHEDULES_TTL_HOURS=24
       - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
-      # State gRPC (for watchdog)
-      - STATE_GRPC_ENDPOINT=state:50051
+      # State gRPC (for watchdog) — same name the Helm chart exposes globally
+      - STATE_GRPC_ADDR=state:50051
       # Dispatch watchdog (Phase B2)
       - ORCHESTRATOR_WATCHDOG_ENABLED=true
       - ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS=60

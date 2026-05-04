@@ -181,9 +181,9 @@ func main() {
 	// START DISPATCH WATCHDOG (Phase B2)
 	// ========================================================================
 
-	stateConn, err := grpc.NewClient(cfg.StateGRPCEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	stateConn, err := grpc.NewClient(cfg.StateGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		logger.Error("Failed to dial state gRPC", "endpoint", cfg.StateGRPCEndpoint, "error", err)
+		logger.Error("Failed to dial state gRPC", "endpoint", cfg.StateGRPCAddr, "error", err)
 		os.Exit(1)
 	}
 	defer stateConn.Close()

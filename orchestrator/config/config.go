@@ -47,8 +47,12 @@ type Config struct {
 	CancelledSchedulesTTLHours         int
 	CancelledSchedulesSweepIntervalMin int
 
-	// State gRPC endpoint (host:port)
-	StateGRPCEndpoint string
+	// State gRPC endpoint (host:port). Reuses the established
+	// STATE_GRPC_ADDR convention exposed globally by the Helm
+	// configmap (deploy/app/templates/configmap.yaml), so every
+	// service that consumes the global configmap automatically gets
+	// it populated — no per-service Helm wiring is required.
+	StateGRPCAddr string
 
 	// Dispatch watchdog (Phase B2)
 	WatchdogEnabled        bool
@@ -92,7 +96,7 @@ func Load(v *pkgconfig.Validator) Config {
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
 
-		StateGRPCEndpoint: v.Require("STATE_GRPC_ENDPOINT"),
+		StateGRPCAddr: v.Require("STATE_GRPC_ADDR"),
 
 		WatchdogEnabled:        envBool("ORCHESTRATOR_WATCHDOG_ENABLED", true),
 		WatchdogIntervalSecs:   envInt("ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS", 60),
