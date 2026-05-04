@@ -15,6 +15,7 @@ type Config struct {
 	RedisConsumerGroup       string
 	RedisProducerStream      string
 	RedisStatusStream        string // task.status.updated:v1
+	RedisNodeUpdatedStream   string // node.updated:v1 — for executor-side terminal failures
 
 	// Schedule cancellation
 	ScheduleCancelledStream            string
@@ -41,6 +42,7 @@ func Load(v *pkgconfig.Validator) Config {
 		RedisConsumerGroup:       v.Require("REDIS_CONSUMER_GROUP"),
 		RedisProducerStream:      v.Require("REDIS_PRODUCER_STREAM"),
 		RedisStatusStream:        v.Require("REDIS_STATUS_STREAM"),
+		RedisNodeUpdatedStream:   v.Require("REDIS_NODE_UPDATED_STREAM"),
 
 		ScheduleCancelledStream:            v.Require("SCHEDULE_CANCELLED_STREAM"),
 		ScheduleCancelledGroup:             v.Require("SCHEDULE_CANCELLED_GROUP"),

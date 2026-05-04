@@ -152,6 +152,7 @@ services:
       - REDIS_CONSUMER_GROUP=executor_controller_consumers
       - REDIS_PRODUCER_STREAM=node.deployed:v1
       - REDIS_STATUS_STREAM=task.status.updated:v1
+      - REDIS_NODE_UPDATED_STREAM=node.updated:v1
       - SCHEDULE_CANCELLED_STREAM=schedule.cancelled:v1
       - SCHEDULE_CANCELLED_GROUP=executor-schedule-cancelled
       - CANCELLED_SCHEDULES_TTL_HOURS=24
