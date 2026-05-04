@@ -67,6 +67,16 @@ sequenceDiagram
 
 ## 3. Retry and Terminal Failure Path
 
+> **Permanent dispatch errors fast-path.** Any error wrapping
+> `pkg/events.ErrPermanent` (e.g. `image_tag missing` from
+> `executor-controller/adapters/k8s/client.go:177`) takes the terminal-failure
+> branch on attempt 1 instead of consuming the retry budget. The executor's
+> outbox processor calls `MarkTaskTerminallyFailed`, which publishes
+> `task.status.updated:v1` (`Status="FAILED"`) and `node.updated:v1`
+> (`status="FAILED"`), then marks the outbox entry failed. From the
+> schedule's perspective the outcome is identical to retries-exhausted —
+> only the latency differs (~1 tick vs. minutes).
+
 ```mermaid
 sequenceDiagram
   participant R as Redis
@@ -241,6 +251,46 @@ sequenceDiagram
 ```
 
 Key invariant: `SnapshotGraph` reads `:TopologyRoot` at call time. Any in-flight run's `Run` node and its `EXECUTES` edges are immutable after creation.
+
+## 8. Dispatch Watchdog Termination
+
+Periodic loop in `orchestrator` terminates schedules that sit in
+`is_running=true` but have no task in `RUNNING` and whose most recent task
+was created longer than `ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES` ago.
+
+```mermaid
+sequenceDiagram
+  participant W as orchestrator watchdog
+  participant ST as state (gRPC)
+  participant R as Redis
+  participant OR as orchestrator
+  participant EC as executor-controller
+  participant KC as k8s-controller
+
+  loop every ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS
+    W->>ST: ListAllSchedules()
+    Note over W,ST: filter is_running=true
+    W->>ST: ListTasks(schedule_id=last_run_id) for each
+    W->>W: IsScheduleStuck(tasks, now, NO_PROGRESS_MINUTES)
+    alt stuck
+      W->>ST: CancelSchedule(schedule_name, cancelled_by="watchdog", reason="watchdog: ...")
+      ST->>ST: write outbox row (schedule.cancelled:v1)
+      ST->>R: publish schedule.cancelled:v1
+      Note over R,KC: cancelled_schedules guards (§6) absorb in-flight messages
+    end
+  end
+```
+
+A schedule is "stuck" iff (a) the most recent task's `created_at` is older
+than `NO_PROGRESS_MINUTES` and (b) no task is currently in `RUNNING`. The
+hasRunning guard distinguishes "stuck dispatching" from "legitimately
+running a long task" — a 4-hour dbt model with zero transitions during
+execution is not stuck.
+
+The watchdog reuses `state.CancelSchedule` (the same path user-driven
+cancellations use), so no new publisher or terminal state is introduced.
+Defaults: 60s polling, 30 min no-progress threshold. Toggle via
+`ORCHESTRATOR_WATCHDOG_ENABLED` (default `true`).
 
 ## Why These Diagrams Are Not Enough On Their Own
 
