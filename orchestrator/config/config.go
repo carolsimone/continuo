@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
@@ -44,6 +46,14 @@ type Config struct {
 	ScheduleCancelledGroup             string
 	CancelledSchedulesTTLHours         int
 	CancelledSchedulesSweepIntervalMin int
+
+	// State gRPC endpoint (host:port)
+	StateGRPCEndpoint string
+
+	// Dispatch watchdog (Phase B2)
+	WatchdogEnabled        bool
+	WatchdogIntervalSecs   int
+	WatchdogNoProgressMins int
 }
 
 // Load reads configuration from environment variables.
@@ -81,7 +91,20 @@ func Load(v *pkgconfig.Validator) Config {
 		ScheduleCancelledGroup:             v.Require("SCHEDULE_CANCELLED_GROUP"),
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
+
+		StateGRPCEndpoint: v.Require("STATE_GRPC_ENDPOINT"),
+
+		WatchdogEnabled:        envBool("ORCHESTRATOR_WATCHDOG_ENABLED", true),
+		WatchdogIntervalSecs:   envInt("ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS", 60),
+		WatchdogNoProgressMins: envInt("ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES", 30),
 	}
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }
+
+func envBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		return v == "true" || v == "1"
+	}
+	return fallback
+}

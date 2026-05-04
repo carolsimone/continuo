@@ -294,6 +294,12 @@ services:
       - SCHEDULE_CANCELLED_GROUP=orchestrator-schedule-cancelled
       - CANCELLED_SCHEDULES_TTL_HOURS=24
       - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
+      # State gRPC (for watchdog)
+      - STATE_GRPC_ENDPOINT=state:50051
+      # Dispatch watchdog (Phase B2)
+      - ORCHESTRATOR_WATCHDOG_ENABLED=true
+      - ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS=60
+      - ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES=30
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
