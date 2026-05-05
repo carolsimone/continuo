@@ -326,7 +326,7 @@ print("deleted", key)
 		"-e", "AWS_SECRET_ACCESS_KEY=test",
 		"-e", "AWS_DEFAULT_REGION=us-east-1",
 		"dbt-compile-and-load",
-		"python", "-c", pyScript)
+		"uv", "run", "python", "-c", pyScript)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "deleteS3Sidecar(%q) failed: %s", serviceName, string(out))
 	t.Logf("deleted sidecar for %s: %s", serviceName, string(out))
