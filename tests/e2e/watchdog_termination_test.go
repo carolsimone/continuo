@@ -22,13 +22,13 @@ import (
 // empty-image_tag dispatch before B2 has a chance) by inserting
 // scheduler_tracker + task_tracker rows directly via SQL with stale timestamps.
 //
-// Local docker-compose's watchdog overrides:
-//   ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS=5
-//   ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES=2
-// So the watchdog should detect within ~5s of the stale window opening, and
-// the test finishes in ~30-90s (since the rows are seeded already-stale).
+// Independent of the watchdog env timing: this test seeds task_tracker
+// rows with created_at 31 minutes in the past, so the watchdog's
+// IsScheduleStuck predicate is satisfied on the very next tick at
+// production defaults (INTERVAL_SECONDS=60, NO_PROGRESS_MINUTES=30).
+// Total runtime ≈ one tick (≤60s) + cancel path round-trip (~5–10s).
 func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -42,9 +42,10 @@ func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
 	t.Logf("seeding stuck schedule: name=%s schedule_id=%s task_id=%s",
 		scheduleName, scheduleID, taskID)
 
-	// Created 3 minutes ago so the schedule is past the 2-minute NO_PROGRESS
-	// threshold the moment we insert it.
-	createdAt := time.Now().Add(-3 * time.Minute)
+	// Seed 31 minutes in the past so the watchdog fires on its next tick
+	// regardless of NO_PROGRESS_MINUTES (production default 30, local
+	// docker-compose 30). Test no longer depends on the env override.
+	createdAt := time.Now().Add(-31 * time.Minute)
 
 	// Insert into schedule_catalog so state.ListAllSchedules surfaces the
 	// schedule (the watchdog reads its candidate set from there). Without
@@ -93,9 +94,10 @@ func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
 
 	t.Log("Stuck schedule seeded — waiting for watchdog to cancel it...")
 
-	// Poll up to 90s (one watchdog tick = 5s + cancel path round-trip via
-	// state.CancelSchedule outbox + cancel publisher).
-	pollUntil(t, ctx, 90*time.Second, 5*time.Second, func() (bool, error) {
+	// Poll up to 150s. Worst case: just missed a tick at INTERVAL_SECONDS=60,
+	// next tick in 60s, plus cancel path round-trip via state.CancelSchedule
+	// outbox + cancel publisher (~5–10s).
+	pollUntil(t, ctx, 150*time.Second, 5*time.Second, func() (bool, error) {
 		st := readScheduleState(t, ctx, clients, scheduleName)
 		if st.Status == "cancelled" && strings.HasPrefix(st.CancellationReason, "watchdog:") {
 			t.Logf("✅ watchdog cancelled: status=%s cancelled_by=%s reason=%q",
