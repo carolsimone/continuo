@@ -19,11 +19,11 @@ def mock_registry_repo(tmp_path):
     return FilesystemRegistryRepository(str(tmp_path / "registry.csv"))
 
 
-def _make_source(*entries: tuple[str, str]) -> ManifestSource:
-    """entries: (fixture_filename, version) pairs"""
+def _make_source(*entries: tuple[str, str], image_tag: str = "sha256:fixture") -> ManifestSource:
+    """entries: (fixture_filename, version) pairs. image_tag applied to all entries."""
     source = create_autospec(ManifestSource)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(FIXTURES / name), version=version)
+        ManifestFile(path=str(FIXTURES / name), version=version, image_tag=image_tag)
         for name, version in entries
     ]
     return source
@@ -110,3 +110,47 @@ def test_handle_publishes_correct_node_structure(tmp_path):
         "manifest_version", "image_tag", "dependencies",
     }
     assert set(node.keys()) == expected_keys
+
+
+def test_handle_skips_publish_on_empty_image_tag(tmp_path, caplog):
+    """When any parsed node has empty image_tag, the handler MUST log
+    event=manifest_publish_rejected at ERROR and skip the publish.
+    Returning normally (no raise) is the consumer's signal to ACK the
+    triggering update.graph:v1 message — redelivery cannot help because
+    S3 hasn't changed."""
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(FIXTURES / "manifest_service1.json"), version="v1", image_tag=""),
+    ]
+    mock_publisher = MagicMock()
+    repo = FilesystemRegistryRepository(str(tmp_path / "registry.csv"))
+
+    handler = ManifestHandler(source=source, manifest_publisher=mock_publisher, registry_repo=repo)
+
+    with caplog.at_level("ERROR"):
+        handler.handle()  # must NOT raise
+
+    mock_publisher.publish.assert_not_called()
+    rejection_logs = [r for r in caplog.records if "manifest_publish_rejected" in r.message]
+    assert rejection_logs, "expected at least one ERROR log with message 'manifest_publish_rejected'"
+    rec = rejection_logs[0]
+    assert rec.levelname == "ERROR"
+    # Structured fields:
+    assert getattr(rec, "reason", None) == "empty_image_tag"
+    assert getattr(rec, "missing_image_tag_count", None) >= 1
+    assert getattr(rec, "total_node_count", None) >= 1
+
+
+def test_handle_publishes_when_all_image_tags_populated(tmp_path):
+    """Happy-path regression: a manifest WITH image_tag still publishes."""
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(FIXTURES / "manifest_service1.json"), version="v1", image_tag="sha256:abc"),
+    ]
+    mock_publisher = MagicMock()
+    repo = FilesystemRegistryRepository(str(tmp_path / "registry.csv"))
+
+    handler = ManifestHandler(source=source, manifest_publisher=mock_publisher, registry_repo=repo)
+    handler.handle()
+
+    mock_publisher.publish.assert_called_once()

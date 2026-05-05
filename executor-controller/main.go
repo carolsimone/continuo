@@ -168,6 +168,7 @@ func main() {
 		publisher,
 		cfg.RedisProducerStream,
 		cfg.RedisStatusStream,
+		cfg.RedisNodeUpdatedStream,
 		cfg.K8sNamespace,
 		logger,
 	)

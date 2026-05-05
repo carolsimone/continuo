@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,9 +21,13 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
+	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -130,7 +135,8 @@ func main() {
 	// consumers process messages concurrently — the second Begin() sees inTx=true
 	// and the message is never ACKed, getting stuck in the PEL forever.
 	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
-	ingestTopologyHandler := handlers.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, logger)
+	rejectedTopologyRepo := postgres.NewRejectedTopologyRepository(pgDB)
+	ingestTopologyHandler := handlers.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, rejectedTopologyRepo, logger)
 	initializeRunHandler := handlers.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
@@ -170,6 +176,33 @@ func main() {
 
 	runSweeper := sweeper.New(runRepoWrite, cfg.RunHistoryRetentionDays, cfg.RunSweeperIntervalMinutes, logger)
 	go runSweeper.Start(ctx)
+
+	// ========================================================================
+	// START DISPATCH WATCHDOG
+	// ========================================================================
+
+	stateConn, err := grpc.NewClient(cfg.StateGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		logger.Error("Failed to dial state gRPC", "endpoint", cfg.StateGRPCAddr, "error", err)
+		os.Exit(1)
+	}
+	defer stateConn.Close()
+	stateGRPCClient := statev1.NewStateServiceClient(stateConn)
+
+	watchdogInstance := watchdog.NewWatchdog(
+		watchdog.Config{
+			Enabled:       cfg.WatchdogEnabled,
+			Interval:      time.Duration(cfg.WatchdogIntervalSecs) * time.Second,
+			NoProgressFor: time.Duration(cfg.WatchdogNoProgressMins) * time.Minute,
+		},
+		stateGRPCClient,
+		logger,
+	)
+	go func() {
+		if err := watchdogInstance.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Watchdog Run exited with error", "error", err)
+		}
+	}()
 
 	// ========================================================================
 	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER

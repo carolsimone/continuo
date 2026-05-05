@@ -36,6 +36,7 @@ type OutboxProcessor struct {
 	publisher         EventPublisher
 	jobDeployedStream string
 	taskStatusStream  string
+	nodeUpdatedStream string // node.updated:v1 — used for terminal dispatch failures
 	logger            *slog.Logger
 	k8sNamespace      string
 	PollInterval      time.Duration
@@ -48,6 +49,7 @@ func NewOutboxProcessor(
 	publisher EventPublisher,
 	jobDeployedStream string,
 	taskStatusStream string,
+	nodeUpdatedStream string,
 	k8sNamespace string,
 	logger *slog.Logger,
 ) *OutboxProcessor {
@@ -57,6 +59,7 @@ func NewOutboxProcessor(
 		publisher:         publisher,
 		jobDeployedStream: jobDeployedStream,
 		taskStatusStream:  taskStatusStream,
+		nodeUpdatedStream: nodeUpdatedStream,
 		k8sNamespace:      k8sNamespace,
 		logger:            logger,
 		PollInterval:      5 * time.Second,
@@ -88,6 +91,57 @@ func (p *OutboxProcessor) Run(ctx context.Context) error {
 	}
 }
 
+// MarkTaskTerminallyFailed propagates a terminal task failure originating in
+// the executor (e.g. permanent dispatch error or retry-exhaustion). Best-effort:
+// each publish step logs and continues on error so a single transient hiccup
+// doesn't leave the outbox entry stuck. Only outboxRepo.MarkFailed's error
+// propagates back to the caller — failing to mark the outbox row is the only
+// failure that genuinely blocks forward progress.
+//
+// Short-circuits the normal executor → k8s-controller → orchestrator chain
+// because we never created a pod: state needs the task tracker updated, and
+// orchestrator needs CheckScheduleCompletion to fire so the schedule advances.
+func (p *OutboxProcessor) MarkTaskTerminallyFailed(
+	ctx context.Context,
+	entry *model.DeploymentOutboxEntry,
+	reason string,
+) error {
+	// 1) state's task tracker → FAILED
+	statusEvt := pkgevents.TaskStatusUpdated{
+		TaskID:     entry.TaskID.String(),
+		ScheduleID: entry.ScheduleID.String(),
+		Status:     "FAILED",
+		RetryCount: int32(entry.TaskRetryCount),
+	}
+	if _, err := p.publisher.Publish(ctx, p.taskStatusStream, statusEvt.ToMap()); err != nil {
+		p.logger.Error("Failed to publish task.status.updated:v1 (FAILED) — continuing with node.updated and outbox mark",
+			"entry_id", entry.ID, "task_id", entry.TaskID, "error", err)
+	}
+
+	// 2) orchestrator's HandleNodeCompletedHandler → advances schedule (CheckScheduleCompletion)
+	nodeEvt := map[string]interface{}{
+		"task_id":       entry.TaskID.String(),
+		"schedule_id":   entry.ScheduleID.String(),
+		"schedule_name": entry.ScheduleName,
+		"service_name":  entry.ServiceName,
+		"schema_name":   entry.SchemaName,
+		"table_name":    entry.TableName,
+		"status":        "FAILED",
+	}
+	if _, err := p.publisher.Publish(ctx, p.nodeUpdatedStream, nodeEvt); err != nil {
+		p.logger.Error("Failed to publish node.updated:v1 (FAILED) — continuing with outbox mark",
+			"entry_id", entry.ID, "task_id", entry.TaskID, "error", err)
+	}
+
+	// 3) outbox row → failed (this is the only error worth bubbling)
+	if err := p.outboxRepo.MarkFailed(ctx, entry.ID, reason); err != nil {
+		p.logger.Error("Failed to mark outbox entry failed",
+			"entry_id", entry.ID, "task_id", entry.TaskID, "error", err)
+		return err
+	}
+	return nil
+}
+
 // ProcessBatch processes a batch of pending outbox entries
 func (p *OutboxProcessor) ProcessBatch(ctx context.Context) error {
 	// Step 1: Fetch pending entries
@@ -117,12 +171,10 @@ func (p *OutboxProcessor) ProcessBatch(ctx context.Context) error {
 
 			// Increment retry count
 			if entry.OutboxRetryCount >= entry.OutboxMaxRetries {
-				// Mark as failed permanently
-				if markErr := p.outboxRepo.MarkFailed(ctx, entry.ID, err.Error()); markErr != nil {
-					p.logger.Error("Failed to mark entry as failed",
-						"entry_id", entry.ID,
-						"error", markErr,
-					)
+				// Retry budget exhausted — propagate terminal failure to state + orchestrator.
+				if termErr := p.MarkTaskTerminallyFailed(ctx, entry, err.Error()); termErr != nil {
+					p.logger.Error("Failed to mark task terminally failed after retry exhaustion",
+						"entry_id", entry.ID, "error", termErr)
 				}
 			} else {
 				if incrErr := p.outboxRepo.IncrementRetry(ctx, entry.ID); incrErr != nil {
@@ -181,6 +233,19 @@ func (p *OutboxProcessor) processEntry(ctx context.Context, entry *model.Deploym
 	}
 
 	if err := p.k8sClient.CreateQueryJob(ctx, params); err != nil {
+		if errors.Is(err, pkgevents.ErrPermanent) {
+			p.logger.Error("Permanent dispatch failure — terminating task on attempt 1",
+				"entry_id", entry.ID,
+				"task_id", entry.TaskID,
+				"error", err,
+			)
+			if termErr := p.MarkTaskTerminallyFailed(ctx, entry, err.Error()); termErr != nil {
+				// MarkFailed itself failed — let ProcessBatch retry-increment so
+				// we eventually get unstuck on a future tick.
+				return fmt.Errorf("k8s deployment permanent + terminal mark failed: %w", err)
+			}
+			return errPermanentFailure
+		}
 		return fmt.Errorf("k8s deployment failed: %w", err)
 	}
 

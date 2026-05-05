@@ -54,7 +54,21 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
 | Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `rerun:v1` |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1` |
-| Outbound gRPC calls | `state`: `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler` |
+| Outbound gRPC calls | `state`: `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler`, `ListAllSchedules`, `ListTasks`, `CancelSchedule` (last three are watchdog-only) |
+
+### Invariants
+
+- **Ingest-time validation.** `IngestTopologyHandler` rejects any
+  `manifest.loaded:v1` batch carrying an empty `image_tag`. Rejections are
+  durable (`rejected_topology_messages` Postgres table) and ACKed in Redis
+  to keep the pending list clean. The validator runs before any side
+  effect; on rejection the consumer (`adapters/redis/consumer.go`)
+  recognises `events.ErrPermanent` via `errors.Is` and ACKs.
+- **Dispatch watchdog.** Periodic loop terminates `is_running=true`
+  schedules that have no task in `RUNNING` and no task progress within
+  `ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES` (default 30m), via the
+  established `state.CancelSchedule` cancellation pathway — no new
+  terminal state introduced. See sequence flow §8.
 
 ## `executor-controller`
 
@@ -65,6 +79,20 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | Redis consumes | `query.model:v1`, `retry.task:v1` |
 | Redis produces | `node.deployed:v1` |
 | Outbound gRPC calls | `state`: `UpdateTask` |
+
+### Invariants
+
+- **Permanent dispatch failures take the terminal-failure branch on
+  attempt 1.** `processEntry` classifies `CreateQueryJob` errors via
+  `errors.Is(err, events.ErrPermanent)`. On match, calls
+  `MarkTaskTerminallyFailed` (publishes `task.status.updated:v1` FAILED
+  + `node.updated:v1` FAILED + marks outbox failed) and returns
+  `errPermanentFailure`. No retry budget consumed for deterministic
+  errors like `image_tag missing`.
+- **Retry-exhaustion uses the same propagation.** `ProcessBatch`'s
+  retry-exhaustion branch calls `MarkTaskTerminallyFailed` instead of
+  bare `MarkFailed`, so transient errors that exceed the retry budget
+  also reach orchestrator's `CheckScheduleCompletion`.
 
 ## `k8s-controller`
 
@@ -85,6 +113,15 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | Redis consumes | `update.graph:v1` |
 | Redis produces | `manifest.loaded:v1` |
 | Outbound gRPC calls | none |
+
+### Invariants
+
+- **Publish-time validation.** Refuses to publish `manifest.loaded:v1`
+  if any node has an empty `image_tag`. The triggering `update.graph:v1`
+  is ACKed regardless — redelivery cannot help when the source of truth
+  (S3) hasn't changed. Logs structured ERROR
+  `event=manifest_publish_rejected` with `missing_image_tag_count`,
+  `total_node_count`, and `offenders`.
 
 ## `ui-service`
 

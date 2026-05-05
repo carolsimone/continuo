@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 
+	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 )
 
@@ -18,6 +22,7 @@ type IngestTopologyHandler struct {
 	uow               uow.UnitOfWork
 	topologyRepo      topology.Repository
 	topologyStateRepo topology.TopologyStateRepository
+	rejectedRepo      postgresadapter.RejectedTopologyRepository
 	logger            *slog.Logger
 }
 
@@ -26,12 +31,14 @@ func NewIngestTopologyHandler(
 	u uow.UnitOfWork,
 	topologyRepo topology.Repository,
 	topologyStateRepo topology.TopologyStateRepository,
+	rejectedRepo postgresadapter.RejectedTopologyRepository,
 	logger *slog.Logger,
 ) *IngestTopologyHandler {
 	return &IngestTopologyHandler{
 		uow:               u,
 		topologyRepo:      topologyRepo,
 		topologyStateRepo: topologyStateRepo,
+		rejectedRepo:      rejectedRepo,
 		logger:            logger,
 	}
 }
@@ -42,6 +49,30 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainCmd.Ingest
 		"message_id", messageID,
 		"node_count", len(cmd.Nodes),
 	)
+
+	// Validate before any side effect. A permanent error here means the
+	// payload is deterministically bad; we record forensics and return
+	// the wrapped sentinel so the consumer ACKs.
+	if validationErr := validateTopologyNodes(cmd.Nodes); validationErr != nil {
+		h.logger.Error("Topology ingestion rejected",
+			"message_id", messageID,
+			"reason", validationErr,
+			"node_count", len(cmd.Nodes),
+		)
+		// Forensics is best-effort: a failed insert MUST NOT turn a
+		// permanent error into a transient one, so we ignore the error.
+		// json.Marshal cannot fail on IngestTopologyCmd today (all fields
+		// are JSON-safe primitives) — if a future field changes that, the
+		// forensics row stores nil payload while we still return ErrPermanent.
+		rawPayload, _ := json.Marshal(cmd)
+		if insertErr := h.rejectedRepo.Insert(ctx, messageID, validationErr.Error(), rawPayload); insertErr != nil {
+			h.logger.Error("Failed to record rejected_topology_messages forensics row — proceeding with ErrPermanent return so consumer ACKs",
+				"message_id", messageID,
+				"insert_error", insertErr,
+			)
+		}
+		return validationErr
+	}
 
 	// Marshal command payload for message_processing record.
 	payload, err := json.Marshal(cmd)
@@ -204,6 +235,43 @@ func (h *IngestTopologyHandler) handleTopologyDedup(
 	}
 
 	return id, false, nil
+}
+
+// maxOffendersInError caps the number of offending node triples shown in
+// the validateTopologyNodes error message. The cap is a log-readability
+// bound, not a correctness constraint — the full count appears as the
+// "for N node(s)" prefix and the persisted forensics row carries the
+// raw payload. Mirror this number in manifest-controller's validator
+// to keep error shapes symmetric across services.
+const maxOffendersInError = 10
+
+// validateTopologyNodes returns an ErrPermanent-wrapped error if any node
+// has an empty ImageTag. The offender list is sorted, capped at
+// maxOffendersInError, and followed by "...and N more" when truncated.
+// Returns nil for empty input — an empty topology is a valid (if degenerate)
+// snapshot.
+func validateTopologyNodes(nodes []domainCmd.TopologyNodePayload) error {
+	// nil-slice — first append allocates only when a violation is found.
+	var bad []string
+	for _, n := range nodes {
+		if n.ImageTag == "" {
+			bad = append(bad, fmt.Sprintf("%s/%s/%s",
+				n.ServiceName, n.SchemaName, n.TableName))
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	// Sort the full list before slicing so the truncated head is the
+	// lex-first maxOffendersInError, not the insertion-first ones.
+	sort.Strings(bad)
+	detail := strings.Join(bad, ", ")
+	if len(bad) > maxOffendersInError {
+		detail = strings.Join(bad[:maxOffendersInError], ", ") +
+			fmt.Sprintf(", ...and %d more", len(bad)-maxOffendersInError)
+	}
+	return fmt.Errorf("%w: image_tag empty for %d node(s): %s",
+		events.ErrPermanent, len(bad), detail)
 }
 
 // toTopologyNode converts a domainCmd.TopologyNodePayload to a topology.TopologyNode.

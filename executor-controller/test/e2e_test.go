@@ -44,6 +44,7 @@ func TestE2E_DeploymentFlow(t *testing.T) {
 		fakePublisher,
 		"job.deployed:v1",
 		"task.status.updated:v1",
+		"node.updated:v1",
 		"default",
 		logger,
 	)
@@ -151,6 +152,7 @@ func TestE2E_MultipleDeployments(t *testing.T) {
 		fakePublisher,
 		"job.deployed:v1",
 		"task.status.updated:v1",
+		"node.updated:v1",
 		"default",
 		logger,
 	)
@@ -238,6 +240,7 @@ func TestE2E_RetryOnFailure(t *testing.T) {
 		fakePublisher,
 		"job.deployed:v1",
 		"task.status.updated:v1",
+		"node.updated:v1",
 		"default",
 		logger,
 	)
@@ -331,6 +334,7 @@ func TestE2E_IdempotentDeployment(t *testing.T) {
 		fakePublisher,
 		"job.deployed:v1",
 		"task.status.updated:v1",
+		"node.updated:v1",
 		"default",
 		logger,
 	)
@@ -426,6 +430,7 @@ func TestE2E_BackgroundProcessing(t *testing.T) {
 		fakePublisher,
 		"job.deployed:v1",
 		"task.status.updated:v1",
+		"node.updated:v1",
 		"default",
 		logger,
 	)

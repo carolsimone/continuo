@@ -2,11 +2,13 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/events"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -131,11 +133,19 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 
 		for _, msg := range msgs {
 			if err := c.handler(ctx, msg); err != nil {
-				c.logger.Error("Failed to process reclaimed message",
-					"message_id", msg.ID,
-					"error", err,
-				)
-				continue
+				if errors.Is(err, events.ErrPermanent) {
+					c.logger.Error("Permanent handler error — ACKing to drop from PEL",
+						"message_id", msg.ID,
+						"error", err,
+					)
+					// fall through to XAck
+				} else {
+					c.logger.Error("Failed to process reclaimed message",
+						"message_id", msg.ID,
+						"error", err,
+					)
+					continue // no-ACK; existing transient retry semantics
+				}
 			}
 			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {
 				c.logger.Error("Failed to ACK reclaimed message",
@@ -171,8 +181,16 @@ func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 	for _, stream := range streams {
 		for _, msg := range stream.Messages {
 			if err := c.handler(ctx, msg); err != nil {
-				c.logger.Error("Failed to process message", "message_id", msg.ID, "error", err)
-				continue
+				if errors.Is(err, events.ErrPermanent) {
+					c.logger.Error("Permanent handler error — ACKing to drop from PEL",
+						"message_id", msg.ID,
+						"error", err,
+					)
+					// fall through to XAck
+				} else {
+					c.logger.Error("Failed to process message", "message_id", msg.ID, "error", err)
+					continue // no-ACK; existing transient retry semantics
+				}
 			}
 			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {
 				c.logger.Error("Failed to ACK message", "message_id", msg.ID, "error", err)
