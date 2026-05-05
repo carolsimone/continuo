@@ -71,6 +71,8 @@ spec:
               value: "node.deployed:v1"
             - name: REDIS_STATUS_STREAM
               value: "task.status.updated:v1"
+            - name: REDIS_NODE_UPDATED_STREAM
+              value: "node.updated:v1"
             - name: POSTGRES_HOST
               value: "${DOCKER_BRIDGE_IP}"
             - name: POSTGRES_PORT
