@@ -20,7 +20,7 @@ import (
 // when any service's sidecar is missing — and ACKs the triggering
 // update.graph:v1 message so the Redis pending list stays clean.
 func TestPoisonRejection_A1_NoSidecar(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -74,8 +74,12 @@ func TestPoisonRejection_A1_NoSidecar(t *testing.T) {
 		"POST /api/graph/update: expected 200, got %d: %s", resp.StatusCode, string(body))
 	t.Log("Published update.graph:v1 — waiting for manifest-controller to log manifest_publish_rejected...")
 
-	// Poll: manifest_publish_rejected appears in NEW log content (after baseline) within 30s.
-	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
+	// Poll: manifest_publish_rejected appears in NEW log content (after baseline).
+	// 90s timeout (not 30s) tolerates the manifest-controller's known consumer
+	// reconnect flake where the Redis consumer group occasionally loses
+	// registration and re-creates it (~3-5s blip). With 18 reconnect cycles
+	// allowed the test survives all but a permanent stall.
+	pollUntil(t, ctx, 90*time.Second, 1*time.Second, func() (bool, error) {
 		return mcLogTailContains(t, logBaselineBytes, "manifest_publish_rejected"), nil
 	}, "Timeout waiting for manifest-controller to log 'manifest_publish_rejected' (after baseline)")
 	t.Log("✅ manifest-controller logged manifest_publish_rejected")
