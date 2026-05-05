@@ -16,6 +16,7 @@ jobs:
     outputs:
       release: ${{ steps.filter.outputs.release }}
       matrix: ${{ steps.matrix.outputs.matrix }}
+      dbt: ${{ steps.filter.outputs.dbt }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,6 +43,7 @@ jobs:
               - 'k8s-controller/**'
               - 'ui-service/**'
               - 'manifest-controller/**'
+              - 'dbt/**'
             state:
               - 'Dockerfile.base'
               - 'go.work'
@@ -70,6 +72,9 @@ jobs:
               - 'ui-service/**'
             manifest_controller:
               - 'manifest-controller/**'
+            dbt:
+              - 'dbt/base/**'
+              - 'dbt/services/**'
             migrations:
               - 'db/**'
 
