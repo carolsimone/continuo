@@ -172,6 +172,138 @@ jobs:
             echo "Built ${IMAGE_REPO} because latest was missing."
           fi
 
+  build-publish-dbt:
+    if: needs.detect-changes.outputs.release == 'true'
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DBT_CHANGED: ${{ needs.detect-changes.outputs.dbt }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ── dbt-base ──────────────────────────────────────────────────────
+      - name: Reuse dbt-base :latest as :${{ github.sha }}
+        id: reuse-base
+        if: env.DBT_CHANGED != 'true'
+        continue-on-error: true
+        run: |
+          docker buildx imagetools inspect "${DOCKERHUB_USER}/dbt-base:latest"
+          docker buildx imagetools create \
+            -t "${DOCKERHUB_USER}/dbt-base:${{ github.sha }}" \
+            "${DOCKERHUB_USER}/dbt-base:latest"
+
+      - name: Build and push dbt-base
+        if: env.DBT_CHANGED == 'true' || steps.reuse-base.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: dbt/base
+          file: dbt/base/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/dbt-base:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/dbt-base:latest
+          cache-from: type=gha,scope=dbt-base
+          cache-to: type=gha,scope=dbt-base,mode=max
+
+      # ── service-1 ─────────────────────────────────────────────────────
+      - name: Reuse service-1 :latest as :${{ github.sha }}
+        id: reuse-svc1
+        if: env.DBT_CHANGED != 'true'
+        continue-on-error: true
+        run: |
+          docker buildx imagetools inspect "${DOCKERHUB_USER}/service-1:latest"
+          docker buildx imagetools create \
+            -t "${DOCKERHUB_USER}/service-1:${{ github.sha }}" \
+            "${DOCKERHUB_USER}/service-1:latest"
+
+      - name: Build and push service-1
+        if: env.DBT_CHANGED == 'true' || steps.reuse-svc1.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: dbt/services/service-1
+          file: dbt/services/service-1/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/service-1:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/service-1:latest
+          cache-from: type=gha,scope=dbt-service-1
+          cache-to: type=gha,scope=dbt-service-1,mode=max
+
+      # ── service-2 ─────────────────────────────────────────────────────
+      - name: Reuse service-2 :latest as :${{ github.sha }}
+        id: reuse-svc2
+        if: env.DBT_CHANGED != 'true'
+        continue-on-error: true
+        run: |
+          docker buildx imagetools inspect "${DOCKERHUB_USER}/service-2:latest"
+          docker buildx imagetools create \
+            -t "${DOCKERHUB_USER}/service-2:${{ github.sha }}" \
+            "${DOCKERHUB_USER}/service-2:latest"
+
+      - name: Build and push service-2
+        if: env.DBT_CHANGED == 'true' || steps.reuse-svc2.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: dbt/services/service-2
+          file: dbt/services/service-2/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/service-2:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/service-2:latest
+          cache-from: type=gha,scope=dbt-service-2
+          cache-to: type=gha,scope=dbt-service-2,mode=max
+
+      # ── service-3 ─────────────────────────────────────────────────────
+      - name: Reuse service-3 :latest as :${{ github.sha }}
+        id: reuse-svc3
+        if: env.DBT_CHANGED != 'true'
+        continue-on-error: true
+        run: |
+          docker buildx imagetools inspect "${DOCKERHUB_USER}/service-3:latest"
+          docker buildx imagetools create \
+            -t "${DOCKERHUB_USER}/service-3:${{ github.sha }}" \
+            "${DOCKERHUB_USER}/service-3:latest"
+
+      - name: Build and push service-3
+        if: env.DBT_CHANGED == 'true' || steps.reuse-svc3.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: dbt/services/service-3
+          file: dbt/services/service-3/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/service-3:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/service-3:latest
+          cache-from: type=gha,scope=dbt-service-3
+          cache-to: type=gha,scope=dbt-service-3,mode=max
+
+      - name: Report publish strategy
+        run: |
+          if [ "${DBT_CHANGED}" = "true" ]; then
+            echo "Built and pushed all dbt images (dbt source changed)."
+          else
+            echo "Reused dbt :latest as :${{ github.sha }} for all 4 images (or rebuilt where reuse failed)."
+          fi
+
   deploy:
     if: needs.detect-changes.outputs.release == 'true'
     needs:
