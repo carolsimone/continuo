@@ -189,3 +189,66 @@ docker exec \
   uv run --with pytest pytest tests/test_upload.py -v
 ```
 
+
+## Deploy-time manifest + sidecar publish (production)
+
+Every push to `main` that triggers `.github/workflows/deploy.yml` also
+runs a `publish-dbt-manifests` job that:
+
+1. Spins up an ephemeral postgres service container.
+2. Installs `dbt-postgres` + the `dbt_upload` tool's deps.
+3. Compiles each service via `dbt compile`.
+4. Calls `python -m dbt_upload load --target hetzner --services-dir services`
+   with `IMAGE_TAG_PER_SERVICE=service-1=<commit-sha>,...` so each
+   `service_metadata.json` sidecar pins to the same SHA the
+   `build-publish-dbt` job pushed to Docker Hub in the same workflow run.
+5. Publishes `update.graph:v1` to the in-cluster Redis via SSH +
+   `kubectl exec`, so manifest-controller picks up the fresh manifests
+   immediately — no operator action required after deploy.
+
+### Required GitHub repo secrets
+
+| Secret | Source | Used by |
+|---|---|---|
+| `HETZNER_S3_ACCESS_KEY_ID` | same value as `manifest-controller` pod's `AWS_ACCESS_KEY_ID` env | upload step |
+| `HETZNER_S3_SECRET_ACCESS_KEY` | same value as `manifest-controller` pod's `AWS_SECRET_ACCESS_KEY` env | upload step |
+| `HETZNER_HOST` | (already exists, used by the `deploy` job) | SSH-tunnel Redis publish |
+| `HETZNER_SSH_KEY` | (already exists) | same |
+
+### Reproducing the deploy-time upload locally
+
+If the CI step fails, reproduce the upload portion locally before
+pushing a fix.
+
+Prerequisites:
+
+- Local `dbt-compile-and-load` container running (per `docker-compose.yml`).
+- AWS credentials for Hetzner Object Storage exported in your shell:
+
+```bash
+export AWS_ACCESS_KEY_ID=...   # = HETZNER_S3_ACCESS_KEY_ID GHA secret
+export AWS_SECRET_ACCESS_KEY=...
+```
+
+Run:
+
+```bash
+COMMIT_SHA=$(git rev-parse HEAD)
+docker exec \
+  -e AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+  -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+  -e IMAGE_TAG_PER_SERVICE="service-1=${COMMIT_SHA},service-2=${COMMIT_SHA},service-3=${COMMIT_SHA}" \
+  dbt-compile-and-load \
+  uv run python -m dbt_upload load --target hetzner --services-dir /app/services
+```
+
+Expected: `Load done: 3 compiled, 3 uploaded, 0 failed` plus six
+`Uploaded ...` lines (3 manifests + 3 sidecars).
+
+### Reduced `publish-dbt-images.yml`
+
+The legacy `publish-dbt-images.yml` workflow is now `workflow_dispatch`
+only; it builds dbt images at `:latest` (no SHA) as a manual safety
+valve. The default path for dbt image builds is `deploy.yml`'s
+`build-publish-dbt` job, which produces both `:latest` and
+`:${{ github.sha }}`.
