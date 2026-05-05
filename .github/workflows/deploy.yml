@@ -309,6 +309,7 @@ jobs:
     needs:
       - detect-changes
       - build-publish
+      - build-publish-dbt
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Hetzner
