@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -189,4 +190,144 @@ func verifyRedisStreamHasMessages(
 	}, fmt.Sprintf("Timeout waiting for %d messages in Redis stream %s", minCount, streamName))
 
 	t.Logf("✅ Redis stream %s has at least %d messages", streamName, minCount)
+}
+
+// xpending returns the count of unacked messages in a Redis stream's consumer group.
+// Returns 0 if the consumer group doesn't exist (treats NOGROUP as "no pending").
+func xpending(t *testing.T, ctx context.Context, clients *testClients, stream, group string) int64 {
+	t.Helper()
+	res, err := clients.redisClient.XPending(ctx, stream, group).Result()
+	if err != nil {
+		// NOGROUP variants vary across Redis versions; broaden the substring match.
+		if errStr := err.Error(); len(errStr) >= 7 && errStr[:7] == "NOGROUP" {
+			return 0
+		}
+		require.NoError(t, err, "XPENDING %s %s failed", stream, group)
+	}
+	return res.Count
+}
+
+// readTopologyGeneration returns the current topology_generation counter from
+// the orchestrator's Postgres state. Used by tests that assert no topology
+// commit happened (counter unchanged).
+func readTopologyGeneration(t *testing.T, ctx context.Context, clients *testClients) int64 {
+	t.Helper()
+	var gen int64
+	err := clients.orchestratorDB.GetContext(ctx, &gen,
+		`SELECT topology_generation FROM topology_state WHERE id = TRUE`)
+	require.NoError(t, err, "SELECT topology_generation failed")
+	return gen
+}
+
+// countRejectedTopologyMessages returns the number of rows in the orchestrator's
+// rejected_topology_messages forensics table.
+func countRejectedTopologyMessages(t *testing.T, ctx context.Context, clients *testClients) int {
+	t.Helper()
+	var n int
+	err := clients.orchestratorDB.GetContext(ctx, &n,
+		`SELECT count(*) FROM rejected_topology_messages`)
+	require.NoError(t, err, "SELECT count(*) FROM rejected_topology_messages failed")
+	return n
+}
+
+// manifestControllerLogContains tails the manifest-controller container's log
+// file (where its main loop writes via start-services.sh's bash launch line).
+func manifestControllerLogContains(t *testing.T, substr string) bool {
+	t.Helper()
+	cmd := exec.Command("docker", "exec", "manifest-controller",
+		"cat", "/tmp/mc.log")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Logf("docker exec manifest-controller cat /tmp/mc.log failed: %v", err)
+		return false
+	}
+	return contains(string(out), substr)
+}
+
+// contains is a tiny string-substring shim so we don't add a `strings` import
+// solely for this one call site.
+func contains(haystack, needle string) bool {
+	if len(needle) == 0 {
+		return true
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// scheduleState captures the fields the watchdog test asserts on.
+type scheduleState struct {
+	Status             string `db:"status"`
+	CancellationReason string `db:"cancellation_reason"`
+	CancelledBy        string `db:"cancelled_by"`
+}
+
+// readScheduleState returns the most-recently-created scheduler_tracker row
+// for a schedule matched by name. Returns an empty scheduleState if no row
+// matches (so callers can poll without distinguishing "not found" from "found
+// in non-terminal state").
+func readScheduleState(t *testing.T, ctx context.Context, clients *testClients, scheduleName string) scheduleState {
+	t.Helper()
+	var st scheduleState
+	err := clients.stateDB.GetContext(ctx, &st,
+		`SELECT
+		    coalesce(status, '') AS status,
+		    coalesce(cancellation_reason, '') AS cancellation_reason,
+		    coalesce(cancelled_by, '') AS cancelled_by
+		   FROM scheduler_tracker
+		  WHERE schedule_name = $1
+		  ORDER BY created_at DESC
+		  LIMIT 1`, scheduleName)
+	if err != nil {
+		return scheduleState{}
+	}
+	return st
+}
+
+// triggerSchedule calls state.TriggerSchedule via gRPC and returns the new run's
+// schedule_id (UUID string).
+func triggerSchedule(t *testing.T, ctx context.Context, clients *testClients, scheduleName string) string {
+	t.Helper()
+	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+		ScheduleName: scheduleName,
+	})
+	require.NoError(t, err, "TriggerSchedule(%q) failed", scheduleName)
+	return resp.GetScheduleId()
+}
+
+// deleteS3Sidecar removes service_metadata.json from localstack S3 for a
+// service. Used by E2E.1 to create the "no sidecar" condition that A1's
+// publish-boundary validator must reject. Shells out to dbt-compile-and-load
+// (which already has boto3 + the localstack endpoint configured) so we don't
+// need to add aws-sdk-go to tests/e2e/go.mod.
+func deleteS3Sidecar(t *testing.T, serviceName string) {
+	t.Helper()
+	pyScript := fmt.Sprintf(`
+import boto3, os
+s3 = boto3.client(
+    "s3",
+    endpoint_url=os.environ["S3_ENDPOINT_URL"],
+    region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", "test"),
+    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "test"),
+)
+key = os.environ["S3_ENV"] + "/manifest/%s/service_metadata.json"
+s3.delete_object(Bucket=os.environ["S3_BUCKET"], Key=key)
+print("deleted", key)
+`, serviceName)
+	cmd := exec.Command("docker", "exec",
+		"-e", "S3_ENDPOINT_URL=http://localstack:4566",
+		"-e", "S3_BUCKET=continuo",
+		"-e", "S3_ENV=local",
+		"-e", "AWS_ACCESS_KEY_ID=test",
+		"-e", "AWS_SECRET_ACCESS_KEY=test",
+		"-e", "AWS_DEFAULT_REGION=us-east-1",
+		"dbt-compile-and-load",
+		"uv", "run", "python", "-c", pyScript)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "deleteS3Sidecar(%q) failed: %s", serviceName, string(out))
+	t.Logf("deleted sidecar for %s: %s", serviceName, string(out))
 }

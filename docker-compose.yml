@@ -296,10 +296,14 @@ services:
       - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
       # State gRPC (for watchdog) — same name the Helm chart exposes globally
       - STATE_GRPC_ADDR=state:50051
-      # Dispatch watchdog (Phase B2)
+      # Dispatch watchdog
+      # Lowered for local e2e: NO_PROGRESS_MINUTES=2 lets the watchdog
+      # termination test (TestWatchdog_TerminatesStuckSchedule) finish in
+      # ~3 minutes instead of ~31. Helm values stay at orchestrator-config
+      # defaults (60s / 30m) for production.
       - ORCHESTRATOR_WATCHDOG_ENABLED=true
-      - ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS=60
-      - ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES=30
+      - ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS=5
+      - ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES=2
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
