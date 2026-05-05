@@ -403,3 +403,18 @@ jobs:
           # if multiple service compiles ever run in parallel.
           PGPASSWORD=runner psql -h localhost -U continuo_svc -d continuo_dbt \
             -c "CREATE SCHEMA IF NOT EXISTS e2e_schema;"
+
+      - name: Compile + upload manifests + service_metadata sidecars
+        working-directory: dbt
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.HETZNER_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.HETZNER_S3_SECRET_ACCESS_KEY }}
+          # Pin sidecars to the same SHA the build-publish-dbt job pushed to Docker Hub.
+          # Executor-controller's buildPodSpec constructs the dbt-job pod image as
+          # <DOCKERHUB_USERNAME>/<service_name>:<image_tag-from-sidecar>, so this SHA
+          # must equal the one this same workflow run just pushed.
+          IMAGE_TAG_PER_SERVICE: "service-1=${{ github.sha }},service-2=${{ github.sha }},service-3=${{ github.sha }}"
+        run: |
+          uv run python -m dbt_upload load \
+            --target hetzner \
+            --services-dir services
