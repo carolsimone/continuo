@@ -419,14 +419,18 @@ jobs:
             --target hetzner \
             --services-dir services
 
-      - name: Publish update.graph:v1 to Hetzner Redis
-        env:
-          REDIS_URL: ${{ secrets.HETZNER_REDIS_URL }}
-        run: |
-          pip install --no-cache-dir redis
-          python -c "
-          import os, redis
-          r = redis.from_url(os.environ['REDIS_URL'])
-          msg_id = r.xadd('update.graph:v1', {'source': 's3', 'trigger': 'deploy:${{ github.sha }}'})
-          print(f'published update.graph:v1 id={msg_id.decode()}')
-          "
+      - name: Publish update.graph:v1 to Hetzner Redis (via SSH tunnel)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: root
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          command_timeout: 1m
+          script: |
+            set -euo pipefail
+            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+            REDIS_PWD=$(kubectl -n continuo get secret continuo-infra-redis \
+              -o jsonpath='{.data.redis-password}' | base64 -d)
+            kubectl -n continuo exec continuo-infra-redis-master-0 -- \
+              redis-cli -a "${REDIS_PWD}" --no-auth-warning \
+              XADD update.graph:v1 '*' source s3 trigger 'deploy:${{ github.sha }}'
