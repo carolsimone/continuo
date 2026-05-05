@@ -353,3 +353,53 @@ jobs:
               -n continuo \
               --wait \
               --timeout 10m
+
+  publish-dbt-manifests:
+    if: needs.detect-changes.outputs.release == 'true'
+    needs: deploy
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: continuo_svc
+          POSTGRES_PASSWORD: runner
+          POSTGRES_DB: continuo_dbt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U continuo_svc -d continuo_dbt"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DBT_POSTGRES_HOST: localhost
+      DBT_POSTGRES_PORT: "5432"
+      DBT_POSTGRES_DB: continuo_dbt
+      DBT_POSTGRES_USER: continuo_svc
+      DBT_POSTGRES_PASSWORD: runner
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dbt-postgres + upload tool deps
+        working-directory: dbt
+        run: |
+          pip install --no-cache-dir uv dbt-postgres
+          uv sync --frozen
+
+      - name: Pre-create dbt schema in postgres
+        run: |
+          # The dbt profile (dbt/services/*/profiles.yml) targets schema=e2e_schema.
+          # dbt creates schemas on first run, but pre-creating it avoids races
+          # if multiple service compiles ever run in parallel.
+          PGPASSWORD=runner psql -h localhost -U continuo_svc -d continuo_dbt \
+            -c "CREATE SCHEMA IF NOT EXISTS e2e_schema;"
