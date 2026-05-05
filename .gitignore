@@ -50,6 +50,7 @@ graphify-out/*
 # WORKTREES
 *.worktrees/
 *.scheduler-stop/.worktrees/
+.worktrees/
 .wrkt/
 .worktree/
 .worktree/*
