@@ -178,7 +178,7 @@ func main() {
 	go runSweeper.Start(ctx)
 
 	// ========================================================================
-	// START DISPATCH WATCHDOG (Phase B2)
+	// START DISPATCH WATCHDOG
 	// ========================================================================
 
 	stateConn, err := grpc.NewClient(cfg.StateGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))

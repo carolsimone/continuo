@@ -162,7 +162,7 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 	assert.Empty(t, pending, "PEL must be empty after reclaimPending reprocessed the message")
 }
 
-// ── Task A2.5: ErrPermanent classification ───────────────────────────────────
+// ── ErrPermanent classification ─────────────────────────────────────────────
 //
 // Permanent handler errors (errors.Is(err, events.ErrPermanent)) MUST be ACKed
 // so the message exits the Redis pending entry list (PEL). Transient handler

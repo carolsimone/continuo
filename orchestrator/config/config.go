@@ -54,7 +54,8 @@ type Config struct {
 	// it populated — no per-service Helm wiring is required.
 	StateGRPCAddr string
 
-	// Dispatch watchdog (Phase B2)
+	// Dispatch watchdog — terminates schedules stuck without a RUNNING
+	// task and no progress within WatchdogNoProgressMins.
 	WatchdogEnabled        bool
 	WatchdogIntervalSecs   int
 	WatchdogNoProgressMins int

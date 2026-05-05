@@ -92,7 +92,7 @@ func TestBuildPodSpec_RefusesEmptyImageTag(t *testing.T) {
 	// Wrapping events.ErrPermanent lets the outbox processor classify this
 	// as non-retryable and short-circuit to terminal failure on attempt 1
 	// instead of consuming the retry budget for a deterministically-bad
-	// input (Task B1.3).
+	// input.
 	assert.True(t, errors.Is(err, events.ErrPermanent),
 		"empty image_tag must wrap events.ErrPermanent so outbox processor classifies non-retryable")
 }

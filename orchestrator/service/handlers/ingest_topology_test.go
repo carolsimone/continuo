@@ -202,7 +202,7 @@ func TestIngestTopology_DuplicateMessage(t *testing.T) {
 	assert.Len(t, uow.outboxRepo.CreatedEntries, 0, "no outbox entries for duplicate")
 }
 
-// ── rejection-path tests (Task A2.4) ─────────────────────────────────────────
+// ── rejection-path tests ────────────────────────────────────────────────────
 
 func TestIngestTopology_BadPayload_ReturnsWrappedPermanent(t *testing.T) {
 	ctx := context.Background()

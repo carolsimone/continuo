@@ -423,7 +423,10 @@ func TestOutboxProcessor_ProcessBatch_StatusPublishFailure(t *testing.T) {
 	assert.Equal(t, "RUNNING", statusMsgs[0].Values["status"])
 }
 
-// ── Task B1.2 + B1.3: terminal-failure propagation tests ────────────────────
+// ── Terminal-failure propagation tests ─────────────────────────────────────
+// Cover MarkTaskTerminallyFailed (publishes task.status.updated:v1 FAILED +
+// node.updated:v1 FAILED + outbox MarkFailed) and the two paths that invoke
+// it: permanent dispatch error on attempt 1, and retry-exhaustion.
 
 // newUnitProcessor builds an OutboxProcessor backed by the in-memory fakes
 // (no Postgres container required).
