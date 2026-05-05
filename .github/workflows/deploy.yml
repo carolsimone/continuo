@@ -418,3 +418,15 @@ jobs:
           uv run python -m dbt_upload load \
             --target hetzner \
             --services-dir services
+
+      - name: Publish update.graph:v1 to Hetzner Redis
+        env:
+          REDIS_URL: ${{ secrets.HETZNER_REDIS_URL }}
+        run: |
+          pip install --no-cache-dir redis
+          python -c "
+          import os, redis
+          r = redis.from_url(os.environ['REDIS_URL'])
+          msg_id = r.xadd('update.graph:v1', {'source': 's3', 'trigger': 'deploy:${{ github.sha }}'})
+          print(f'published update.graph:v1 id={msg_id.decode()}')
+          "
