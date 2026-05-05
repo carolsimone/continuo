@@ -1,12 +1,12 @@
-name: Publish dbt service images
+name: Publish dbt service images (manual ad-hoc only)
 
+# Auto-triggering moved into deploy.yml's build-publish-dbt job, which
+# pushes both :${{ github.sha }} AND :latest tags as part of every deploy.
+# This workflow is kept as a manual safety valve for ad-hoc rebuilds
+# (e.g. testing a hotfix branch's dbt changes without doing a full Go
+# rollout) and only produces :latest tags.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'dbt/base/**'
-      - 'dbt/services/**'
 
 jobs:
   publish:
