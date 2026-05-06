@@ -130,7 +130,12 @@ export function createRunsRouter(graphClient: GrpcGraphClient) {
         from_node_id: e.from_node_id,
         to_node_id: e.to_node_id,
       }));
-      res.json({ nodes, edges });
+      res.json({
+        nodes,
+        edges,
+        run_topology_generation: Number(resp.run_topology_generation ?? 0),
+        latest_topology_generation: Number(resp.latest_topology_generation ?? 0),
+      });
     });
   });
 
