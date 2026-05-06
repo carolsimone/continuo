@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
+	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -91,4 +92,66 @@ func TestQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenRunMissing(t *t
 	got, err := repo.GetRunTopologyGeneration(ctx, "nonexistent-run")
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), got)
+}
+
+func TestQueryRepository_ListActiveRuns_OnlyUnfinalized(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Seed: one unfinalized run + one finalized run.
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := session.Run(ctx, `
+        CREATE (r1:Run {run_id: 'active-1', schedule_name: 'sched-a', topology_generation: 5, test_marker: $m})
+        CREATE (r2:Run {run_id: 'finalized-1', schedule_name: 'sched-b', topology_generation: 4,
+                       completed_at: datetime(), terminal_status: 'SUCCEEDED', test_marker: $m})
+    `, map[string]any{"m": t.Name()})
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	runs, err := repo.ListActiveRuns(ctx)
+	require.NoError(t, err)
+	// Filter to runs created by this test (cleanup window).
+	filtered := make([]*domain.ActiveRun, 0)
+	for _, r := range runs {
+		if r.RunID == "active-1" || r.RunID == "finalized-1" {
+			filtered = append(filtered, r)
+		}
+	}
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "active-1", filtered[0].RunID)
+	assert.Equal(t, "sched-a", filtered[0].ScheduleName)
+	assert.Equal(t, int64(5), filtered[0].TopologyGeneration)
+}
+
+func TestQueryRepository_ListActiveRuns_ZeroForUnsetGeneration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := session.Run(ctx, `
+        CREATE (r:Run {run_id: 'active-no-gen', schedule_name: 'sched-c', test_marker: $m})
+    `, map[string]any{"m": t.Name()})
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	runs, err := repo.ListActiveRuns(ctx)
+	require.NoError(t, err)
+	var found *domain.ActiveRun
+	for _, r := range runs {
+		if r.RunID == "active-no-gen" {
+			found = r
+			break
+		}
+	}
+	require.NotNil(t, found)
+	assert.Equal(t, int64(0), found.TopologyGeneration)
 }
