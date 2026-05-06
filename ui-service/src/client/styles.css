@@ -189,6 +189,23 @@ body {
   color: #6b7280;
 }
 
+/* Stale topology strip — drift signal on the schedule card. */
+.scheduler-card-stale-strip {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.scheduler-card-stale-strip--unknown {
+  background: #f3f4f6;
+  color: #374151;
+}
+
 /* ===================== DETAIL PAGE ===================== */
 .detail-page {
   display: flex;
