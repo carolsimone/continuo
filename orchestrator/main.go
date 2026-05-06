@@ -20,6 +20,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/internal/lifecycle"
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
+	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -418,8 +419,8 @@ func main() {
 	// START gRPC SERVER (BLOCKING)
 	// ========================================================================
 
-	// TODO Task 10: replace nil with RunQueryService
-	queryHandler := grpcinfra.NewQueryHandler(queryRepo, nil, logger)
+	runQueries := queries.NewRunQueryService(runRepo, topologyStateRepo, logger)
+	queryHandler := grpcinfra.NewQueryHandler(queryRepo, runQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)
 	if err != nil {
