@@ -61,7 +61,7 @@ Internal pipeline writes to `state` are now event-driven (via Redis). The only r
 
 | Caller | Methods used |
 |---|---|
-| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
+| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
 | `continuo CLI` | `GetScheduleGraph` |
 
 ## S3 Matrix

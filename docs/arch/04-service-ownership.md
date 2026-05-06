@@ -51,7 +51,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | Category | Owned / used surface |
 |---|---|
 | Durable state | Neo4j `Table` nodes (+ `image_tag`, `topology_generation` props), `Run` nodes (+ `topology_generation`, `service_metadata` props), `DEPENDS_ON` edges, `EXECUTES` edges (+ `image_tag` prop); Neo4j `:TopologyRoot {id:'singleton'}` (generation + service_metadata); Postgres `topology_state`, `message_processing`, `outbox`, `published_messages` |
-| gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
+| gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
 | Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `rerun:v1` |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1` |
 | Outbound gRPC calls | `state`: `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler`, `ListAllSchedules`, `ListTasks`, `CancelSchedule` (last three are watchdog-only) |
@@ -131,4 +131,4 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | gRPC server methods owned | none |
 | Redis consumes | none |
 | Redis produces | `update.graph:v1` |
-| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
+| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
