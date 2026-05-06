@@ -82,6 +82,11 @@ func (s *Server) GetRunGraph(ctx context.Context, req *orchestratorv1.GetRunGrap
 	return s.queryHandler.GetRunGraph(ctx, req)
 }
 
+// ListActiveRunDrifts delegates to the query handler.
+func (s *Server) ListActiveRunDrifts(ctx context.Context, req *orchestratorv1.ListActiveRunDriftsRequest) (*orchestratorv1.ListActiveRunDriftsResponse, error) {
+	return s.queryHandler.ListActiveRunDrifts(ctx, req)
+}
+
 // ============================================================================
 // INTERCEPTORS
 // ============================================================================
