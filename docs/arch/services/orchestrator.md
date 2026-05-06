@@ -150,6 +150,39 @@ When `initialize.run:v1` carries a `rerun_target`:
 
 Orchestrator calls no external gRPC services.
 
+## Read-side query services (`service/queries/`)
+
+CQRS read-side application services live under `orchestrator/service/queries/`,
+mirroring the existing write-side `service/handlers/` package. Query services
+compose read-side stores; command handlers compose write-side stores.
+
+`RunQueryService` is the first orchestrator component to join Neo4j and
+Postgres on the read path:
+
+- `GetRunGraph(runID)` — returns the run's nodes and edges from Neo4j (via
+  `CompositeRunRepository`) plus `:Run.topology_generation` and the latest
+  `topology_state.topology_generation` from Postgres. Backs the rerun
+  confirmation modal in ui-service.
+- `ListActiveRunDrifts()` — returns every `:Run` with `completed_at IS NULL`
+  plus the latest `topology_state.topology_generation`. Backs the dashboard
+  schedule list in ui-service.
+
+`topology_state` (Postgres) is now read by both:
+- the **write path** — `IngestTopologyHandler.IncrementGeneration` allocates
+  the next monotonic value before stamping every `:Table` node with it.
+- the **read path** — `RunQueryService` calls `TopologyStateRepository.GetGeneration`
+  on each query to expose the current value.
+
+### Drift contract
+
+Per-run `topology_generation = 0` means **drift unknown** (the run was created
+before topology tracking, or the property is unset). Consumers MUST render
+this distinctly from "no drift" — typically as "topology version unknown for
+this run". `:Run` nodes with the property set carry a value `>= 1`; the latest
+is monotonically incremented before any `:Table` stamping, so the invariant is
+`run.topology_generation <= latest_topology_generation`. Inversions are logged
+as warnings by `RunQueryService` but otherwise pass through unmodified.
+
 ## Reliability Patterns
 
 - **Inbound dedup**: `message_processing` keyed by Redis message ID; INSERT IF NOT EXISTS prevents double-processing

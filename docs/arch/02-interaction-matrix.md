@@ -12,7 +12,7 @@ Legend:
 | Service | Own Postgres | Own Neo4j | Redis | state gRPC | orchestrator gRPC | K8s API | S3 |
 |---|---|---|---|---|---|---|---|
 | `state` | `RW` | `-` | `RW` | server | `-` | `-` | `-` |
-| `orchestrator` | `RW` | `RW` | `RW` | `R` (watchdog) | server | `-` | `-` |
+| `orchestrator` | `RW` (`topology_state` also read on query path) | `RW` | `RW` | `R` (watchdog) | server | `-` | `-` |
 | `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `W` | `-` |
 | `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `R` | `W` |
 | `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `R` |
