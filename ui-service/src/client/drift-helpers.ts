@@ -35,3 +35,44 @@ export function getDriftState(
   if (r >= l) return 'fresh';
   return 'stale';
 }
+
+export interface DriftMessage {
+  stripLine: string;
+  modalTitle: string;
+  modalChip: string;
+  modalBody: string;
+  modalCta: string;
+}
+
+/**
+ * Render the user-facing copy for a drift state. The numeric arguments are
+ * only consulted in the 'stale' branch; the 'unknown' branch ignores them.
+ * Callers are expected to invoke this only when state !== 'fresh'.
+ */
+export function getDriftMessage(
+  state: 'stale' | 'unknown',
+  runGen: number,
+  latestGen: number,
+): DriftMessage {
+  if (state === 'unknown') {
+    return {
+      stripLine:
+        'Topology version unknown for this run. May not match the current topology.',
+      modalTitle: 'Topology unknown',
+      modalChip: 'no version recorded',
+      modalBody:
+        "This run started before topology tracking existed. We can't tell if its pinned snapshot matches the current topology. The rerun will use whatever the run captured at start.\n\nTo guarantee a current run, trigger a fresh schedule run instead.",
+      modalCta: 'Rerun anyway',
+    };
+  }
+
+  const delta = latestGen - runGen;
+  const noun = delta === 1 ? 'time' : 'times';
+  return {
+    stripLine: `Stale — pinned to topology gen ${runGen}; latest is ${latestGen}. Rerun will use the older snapshot.`,
+    modalTitle: 'Stale topology',
+    modalChip: `${runGen} → ${latestGen}`,
+    modalBody: `The dbt manifest has been re-ingested ${delta} ${noun} since this run started. Rerunning will not pick up those changes — it reuses the original snapshot.\n\nTo run with the latest topology, trigger a fresh schedule run from the dashboard instead.`,
+    modalCta: 'Rerun with old snapshot',
+  };
+}
