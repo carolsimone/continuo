@@ -229,6 +229,36 @@ func (r *QueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*dom
 	return nodes, edges, nil
 }
 
+// GetRunTopologyGeneration returns the topology_generation stamped on the :Run
+// node at SnapshotGraph time. Returns 0 when the run does not exist OR when
+// the property is unset (pre-tracking runs). The 0-vs-missing-vs-unset
+// ambiguity is resolved at the service layer with a documented contract:
+// 0 means "drift unknown".
+func (r *QueryRepository) GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	query := `
+		MATCH (r:Run {run_id: $run_id})
+		RETURN COALESCE(r.topology_generation, 0) AS gen
+	`
+	result, err := session.Run(ctx, query, map[string]interface{}{"run_id": runID})
+	if err != nil {
+		return 0, fmt.Errorf("GetRunTopologyGeneration: %w", err)
+	}
+	if !result.Next(ctx) {
+		if err := result.Err(); err != nil {
+			return 0, fmt.Errorf("GetRunTopologyGeneration iterate: %w", err)
+		}
+		return 0, nil
+	}
+	raw, _ := result.Record().Get("gen")
+	if v, ok := raw.(int64); ok {
+		return v, nil
+	}
+	return 0, nil
+}
+
 // parseNeo4jTimestamp parses a Neo4j datetime string into a time.Time.
 func parseNeo4jTimestamp(value string) time.Time {
 	if value == "" {
