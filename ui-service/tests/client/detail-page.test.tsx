@@ -191,3 +191,51 @@ describe('DetailPage — rerun gating by drift state', () => {
     expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}/rerun`))).toBe(false);
   });
 });
+
+describe('DetailPage — failed-stale-rerun (safety-net)', () => {
+  it('failed run with stale drift → dialog mounts; Confirm dispatches the rerun POST', async () => {
+    const routes = freshRoutes();
+    routes[`/api/runs/${RUN_ID}/graph`] = async () => ({
+      nodes: [
+        {
+          node_id: SAMPLE_NODE_ID,
+          node_type: 'dbt-model',
+          schedule_name: SCHED,
+          status: 'failed',
+        },
+      ],
+      edges: [],
+      run_topology_generation: 5,
+      latest_topology_generation: 7,
+    });
+    // Confirm scheduler returns failed status — the modal must still fire.
+    routes[`/api/schedulers/${RUN_ID}`] = async () => ({
+      scheduler: {
+        schedule_id: RUN_ID,
+        schedule_name: SCHED,
+        status: 'failed',
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+        cancelled_at: null,
+        cancelled_by: '',
+      },
+    });
+    const fetchMock = mockFetchSequence(routes);
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    await selectFirstNode();
+    fireEvent.click(await screen.findByRole('button', { name: /Rerun node/i }));
+
+    expect(await screen.findByText('Stale topology')).toBeInTheDocument();
+    expect(screen.getByText('5 → 7')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rerun with old snapshot' }));
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map(c => String(c[0]));
+      expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}/rerun`))).toBe(true);
+    });
+  });
+});
