@@ -47,8 +47,18 @@ func TestPoisonRejection_A1_NoSidecar(t *testing.T) {
 	t.Cleanup(func() {
 		// Restore the sidecar by re-running dbt_upload load so subsequent tests
 		// (and any later interactive use) aren't broken.
+		//
+		// IMPORTANT: do NOT pass `-e IMAGE_TAG_PER_SERVICE=...=latest`. The
+		// dbt-compile-and-load container already has the correct
+		// IMAGE_TAG_PER_SERVICE injected by docker-compose (line 481), which
+		// in CI / local setup.sh is the SHA-pinned tag of the actually-built
+		// images. Overriding it to `latest` here writes
+		// `image_tag=latest` into all three sidecars, which then propagates
+		// through manifest.loaded:v1 → executor-controller → K8s job spec
+		// `service-1:latest`. The kind cluster only has SHA-tagged images
+		// loaded, so every subsequent dbt-job pod fails with ErrImagePull,
+		// breaking all later tests that wait for tasks to succeed.
 		restoreCmd := exec.Command("docker", "exec",
-			"-e", "IMAGE_TAG_PER_SERVICE=service-1=latest,service-2=latest,service-3=latest",
 			"dbt-compile-and-load",
 			"uv", "run", "python", "-m", "dbt_upload", "load",
 			"--target", "localstack",
