@@ -272,7 +272,7 @@ func (r *TopologyRepository) deleteInactiveOrphans(ctx context.Context, tx neo4j
 
 // GetScheduleGraph returns all nodes and edges for a schedule.
 // NOTE: This is a minimal implementation to satisfy the topology.Repository interface.
-// The full graph read is handled by QueryRepository.
+// The full graph read is handled by OrchestratorQueryRepository.
 func (r *TopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName string) ([]*topology.Node, []*topology.UpstreamDependency, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)

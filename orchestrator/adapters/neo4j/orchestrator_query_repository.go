@@ -10,20 +10,20 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// QueryRepository implements the read-side (CQRS) queries that bypass aggregates.
+// OrchestratorQueryRepository implements the read-side (CQRS) queries that bypass aggregates.
 // Used directly by gRPC handlers.
-type QueryRepository struct {
+type OrchestratorQueryRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
 }
 
-func NewQueryRepository(client Neo4jClient, logger *slog.Logger) *QueryRepository {
-	return &QueryRepository{client: client, logger: logger}
+func NewOrchestratorQueryRepository(client Neo4jClient, logger *slog.Logger) *OrchestratorQueryRepository {
+	return &OrchestratorQueryRepository{client: client, logger: logger}
 }
 
 // GetScheduleGraph returns all nodes and edges for a schedule,
 // including cross-boundary upstream dependencies (e.g. seeds).
-func (r *QueryRepository) GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error) {
+func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -127,7 +127,7 @@ func (r *QueryRepository) GetScheduleGraph(ctx context.Context, scheduleName str
 }
 
 // ListRuns returns completed runs for a schedule ordered by creation date descending.
-func (r *QueryRepository) ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error) {
+func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -165,7 +165,7 @@ func (r *QueryRepository) ListRuns(ctx context.Context, scheduleName string) ([]
 }
 
 // GetRunGraph returns nodes with their execution status and edges for a run.
-func (r *QueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
+func (r *OrchestratorQueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -234,7 +234,7 @@ func (r *QueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*dom
 // the property is unset (pre-tracking runs). The 0-vs-missing-vs-unset
 // ambiguity is resolved at the service layer with a documented contract:
 // 0 means "drift unknown".
-func (r *QueryRepository) GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error) {
+func (r *OrchestratorQueryRepository) GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -266,7 +266,7 @@ func (r *QueryRepository) GetRunTopologyGeneration(ctx context.Context, runID st
 // concurrent triggers with FAILED_PRECONDITION), but the read returns all rows
 // without dedup so an upstream invariant violation is observable rather than
 // silently masked.
-func (r *QueryRepository) ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error) {
+func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 

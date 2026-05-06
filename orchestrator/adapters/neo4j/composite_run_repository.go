@@ -7,16 +7,16 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 )
 
-// CompositeRunRepository combines RunRepository (write-side) and QueryRepository
+// CompositeRunRepository combines RunRepository (write-side) and OrchestratorQueryRepository
 // (read-side) to satisfy the full run.Repository interface.
 type CompositeRunRepository struct {
 	*RunRepository
-	query *QueryRepository
+	query *OrchestratorQueryRepository
 }
 
 // NewCompositeRunRepository creates a composite that implements run.Repository by
-// delegating writes to RunRepository and reads to QueryRepository.
-func NewCompositeRunRepository(runRepo *RunRepository, queryRepo *QueryRepository) *CompositeRunRepository {
+// delegating writes to RunRepository and reads to OrchestratorQueryRepository.
+func NewCompositeRunRepository(runRepo *RunRepository, queryRepo *OrchestratorQueryRepository) *CompositeRunRepository {
 	return &CompositeRunRepository{
 		RunRepository: runRepo,
 		query:         queryRepo,
@@ -26,27 +26,27 @@ func NewCompositeRunRepository(runRepo *RunRepository, queryRepo *QueryRepositor
 // compile-time check
 var _ run.Repository = (*CompositeRunRepository)(nil)
 
-// GetScheduleGraph delegates to QueryRepository.
+// GetScheduleGraph delegates to OrchestratorQueryRepository.
 func (c *CompositeRunRepository) GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error) {
 	return c.query.GetScheduleGraph(ctx, scheduleName)
 }
 
-// ListRuns delegates to QueryRepository.
+// ListRuns delegates to OrchestratorQueryRepository.
 func (c *CompositeRunRepository) ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error) {
 	return c.query.ListRuns(ctx, scheduleName)
 }
 
-// GetRunGraph delegates to QueryRepository.
+// GetRunGraph delegates to OrchestratorQueryRepository.
 func (c *CompositeRunRepository) GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
 	return c.query.GetRunGraph(ctx, runID)
 }
 
-// GetRunTopologyGeneration delegates to QueryRepository.
+// GetRunTopologyGeneration delegates to OrchestratorQueryRepository.
 func (c *CompositeRunRepository) GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error) {
 	return c.query.GetRunTopologyGeneration(ctx, runID)
 }
 
-// ListActiveRuns delegates to QueryRepository.
+// ListActiveRuns delegates to OrchestratorQueryRepository.
 func (c *CompositeRunRepository) ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error) {
 	return c.query.ListActiveRuns(ctx)
 }

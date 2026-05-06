@@ -120,7 +120,7 @@ func main() {
 
 	topologyRepo := neo4jinfra.NewTopologyRepository(neo4jClient, logger)
 	runRepoWrite := neo4jinfra.NewRunRepository(neo4jClient, logger)
-	queryRepo := neo4jinfra.NewQueryRepository(neo4jClient, logger)
+	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
 	runRepo := neo4jinfra.NewCompositeRunRepository(runRepoWrite, queryRepo)
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
 	publishedRepo := postgres.NewPublishedMessagesRepository(pgDB, logger)

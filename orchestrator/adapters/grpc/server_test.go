@@ -28,7 +28,7 @@ import (
 // return codes.Unimplemented from the embedded UnimplementedOrchestratorQueryServer.
 func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	handler := grpcadapter.NewQueryHandler(stubReader{}, stubRunQueries{}, logger)
+	handler := grpcadapter.NewQueryHandler(stubScheduleAndRunLists{}, stubDriftAwareRuns{}, logger)
 	server, err := grpcadapter.NewServer(0, handler, logger) // 0 = ephemeral port
 	require.NoError(t, err)
 	go func() { _ = server.Start() }()
@@ -83,25 +83,22 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 	}
 }
 
-// stubReader satisfies grpcadapter.QueryReader.
-type stubReader struct{}
+// stubScheduleAndRunLists satisfies grpcadapter.ScheduleAndRunListReader.
+type stubScheduleAndRunLists struct{}
 
-func (stubReader) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
+func (stubScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
 	return &domain.ScheduleGraph{}, nil
 }
-func (stubReader) ListRuns(context.Context, string) ([]*domain.RunSummary, error) {
+func (stubScheduleAndRunLists) ListRuns(context.Context, string) ([]*domain.RunSummary, error) {
 	return nil, nil
 }
-func (stubReader) GetRunGraph(context.Context, string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
-	return nil, nil, nil
-}
 
-// stubRunQueries satisfies grpcadapter.RunQueries.
-type stubRunQueries struct{}
+// stubDriftAwareRuns satisfies grpcadapter.DriftAwareRunReader.
+type stubDriftAwareRuns struct{}
 
-func (stubRunQueries) GetRunGraph(context.Context, string) (*queries.RunGraphView, error) {
+func (stubDriftAwareRuns) GetRunGraph(context.Context, string) (*queries.RunGraphView, error) {
 	return &queries.RunGraphView{}, nil
 }
-func (stubRunQueries) ListActiveRunDrifts(context.Context) (*queries.ActiveRunDriftView, error) {
+func (stubDriftAwareRuns) ListActiveRunDrifts(context.Context) (*queries.ActiveRunDriftView, error) {
 	return &queries.ActiveRunDriftView{}, nil
 }

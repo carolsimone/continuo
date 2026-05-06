@@ -137,7 +137,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 		&fakeRejectedTopologyRepo{},
 		newTestLogger(),
 	)
-	queryRepo := neo4jinfra.NewQueryRepository(client, newTestLogger())
+	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(client, newTestLogger())
 	runRepo := neo4jinfra.NewRunRepository(client, newTestLogger())
 
 	initialLoad := domainCmd.IngestTopologyCmd{

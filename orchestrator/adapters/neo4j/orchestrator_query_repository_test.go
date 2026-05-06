@@ -1,4 +1,3 @@
-// File: orchestrator/adapters/neo4j/query_repository_test.go
 package neo4jinfra_test
 
 import (
@@ -15,14 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestQueryRepo builds a QueryRepository against the live Neo4j and returns
+// newTestQueryRepo builds an OrchestratorQueryRepository against the live Neo4j and returns
 // it together with a cleanup function that wipes any nodes created by the test.
 // It intentionally re-uses the env conventions already in use by run_repository_test.go
 // (NEO4J_URI / NEO4J_USER / NEO4J_PASSWORD with the docker-compose defaults).
-func newTestQueryRepo(t *testing.T) (*neo4jinfra.QueryRepository, neo4jinfra.Neo4jClient, func()) {
+func newTestQueryRepo(t *testing.T) (*neo4jinfra.OrchestratorQueryRepository, neo4jinfra.Neo4jClient, func()) {
 	t.Helper()
 	client := newTestClient(t) // already defined in run_repository_test.go
-	repo := neo4jinfra.NewQueryRepository(client, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	repo := neo4jinfra.NewOrchestratorQueryRepository(client, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	cleanup := func() {
 		ctx := context.Background()
 		session := client.NewSession(ctx, neo4j.AccessModeWrite)
@@ -48,7 +47,7 @@ func seedRunWithGeneration(t *testing.T, ctx context.Context, client neo4jinfra.
 	require.NoError(t, err)
 }
 
-func TestQueryRepository_GetRunTopologyGeneration_ReturnsValue(t *testing.T) {
+func TestOrchestratorQueryRepository_GetRunTopologyGeneration_ReturnsValue(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -65,7 +64,7 @@ func TestQueryRepository_GetRunTopologyGeneration_ReturnsValue(t *testing.T) {
 	assert.Equal(t, int64(7), got)
 }
 
-func TestQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenUnset(t *testing.T) {
+func TestOrchestratorQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenUnset(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -81,7 +80,7 @@ func TestQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenUnset(t *testin
 	assert.Equal(t, int64(0), got)
 }
 
-func TestQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenRunMissing(t *testing.T) {
+func TestOrchestratorQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenRunMissing(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -94,7 +93,7 @@ func TestQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenRunMissing(t *t
 	assert.Equal(t, int64(0), got)
 }
 
-func TestQueryRepository_ListActiveRuns_OnlyUnfinalized(t *testing.T) {
+func TestOrchestratorQueryRepository_ListActiveRuns_OnlyUnfinalized(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -128,7 +127,7 @@ func TestQueryRepository_ListActiveRuns_OnlyUnfinalized(t *testing.T) {
 	assert.Equal(t, int64(5), filtered[0].TopologyGeneration)
 }
 
-func TestQueryRepository_ListActiveRuns_ZeroForUnsetGeneration(t *testing.T) {
+func TestOrchestratorQueryRepository_ListActiveRuns_ZeroForUnsetGeneration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}

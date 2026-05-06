@@ -1,4 +1,3 @@
-// File: orchestrator/adapters/grpc/handlers_test.go
 package grpc_test
 
 import (
@@ -15,47 +14,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeRunQueries satisfies the interface QueryHandler depends on for the
-// drift-aware methods. It returns deterministic views.
-type fakeRunQueries struct {
+// fakeDriftAwareRuns satisfies grpcadapter.DriftAwareRunReader. Returns
+// deterministic views so the handler's proto-mapping can be asserted.
+type fakeDriftAwareRuns struct {
 	runGraphView *queries.RunGraphView
 	runGraphErr  error
 	driftView    *queries.ActiveRunDriftView
 	driftErr     error
 }
 
-func (f *fakeRunQueries) GetRunGraph(ctx context.Context, runID string) (*queries.RunGraphView, error) {
+func (f *fakeDriftAwareRuns) GetRunGraph(ctx context.Context, runID string) (*queries.RunGraphView, error) {
 	if f.runGraphErr != nil {
 		return nil, f.runGraphErr
 	}
 	return f.runGraphView, nil
 }
-func (f *fakeRunQueries) ListActiveRunDrifts(ctx context.Context) (*queries.ActiveRunDriftView, error) {
+func (f *fakeDriftAwareRuns) ListActiveRunDrifts(ctx context.Context) (*queries.ActiveRunDriftView, error) {
 	if f.driftErr != nil {
 		return nil, f.driftErr
 	}
 	return f.driftView, nil
 }
 
-// fakeReader satisfies the existing QueryReader (only used for ListRuns/GetScheduleGraph here).
-type fakeReader struct{}
+// fakeScheduleAndRunLists satisfies grpcadapter.ScheduleAndRunListReader for
+// the GetScheduleGraph and ListRuns RPCs. The drift-aware GetRunGraph path
+// goes through DriftAwareRunReader instead.
+type fakeScheduleAndRunLists struct{}
 
-func (fakeReader) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
+func (fakeScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
 	return &domain.ScheduleGraph{}, nil
 }
-func (fakeReader) ListRuns(context.Context, string) ([]*domain.RunSummary, error) {
+func (fakeScheduleAndRunLists) ListRuns(context.Context, string) ([]*domain.RunSummary, error) {
 	return nil, nil
 }
-func (fakeReader) GetRunGraph(context.Context, string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
-	return nil, nil, nil
-}
 
-func newHandler(rq *fakeRunQueries) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(fakeReader{}, rq, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+func newHandler(rq *fakeDriftAwareRuns) *grpcadapter.QueryHandler {
+	return grpcadapter.NewQueryHandler(fakeScheduleAndRunLists{}, rq, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 func TestQueryHandler_GetRunGraph_PopulatesGenerations(t *testing.T) {
-	rq := &fakeRunQueries{
+	rq := &fakeDriftAwareRuns{
 		runGraphView: &queries.RunGraphView{
 			Nodes:                    []*domain.TableNode{{TableName: "t"}},
 			Edges:                    []*domain.GraphEdge{},
@@ -72,13 +70,13 @@ func TestQueryHandler_GetRunGraph_PopulatesGenerations(t *testing.T) {
 }
 
 func TestQueryHandler_GetRunGraph_RejectsEmptyRunID(t *testing.T) {
-	h := newHandler(&fakeRunQueries{})
+	h := newHandler(&fakeDriftAwareRuns{})
 	_, err := h.GetRunGraph(context.Background(), &orchestratorv1.GetRunGraphRequest{RunId: ""})
 	require.Error(t, err)
 }
 
 func TestQueryHandler_ListActiveRunDrifts_PopulatesView(t *testing.T) {
-	rq := &fakeRunQueries{
+	rq := &fakeDriftAwareRuns{
 		driftView: &queries.ActiveRunDriftView{
 			ActiveRuns: []*domain.ActiveRun{
 				{ScheduleName: "sched-a", RunID: "run-a", TopologyGeneration: 5},

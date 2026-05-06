@@ -12,17 +12,21 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// QueryReader is the read-side interface used by the topology- and run-list-only
-// RPCs. Drift-aware run reads go through RunQueries (see below) instead.
-type QueryReader interface {
+// ScheduleAndRunListReader returns the schedule's full topology graph and the
+// per-schedule run history. Both reads go straight to Neo4j and return raw
+// domain types — no drift information is composed in. Satisfied by
+// adapters/neo4j.OrchestratorQueryRepository.
+type ScheduleAndRunListReader interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
 	ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error)
-	GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error)
 }
 
-// RunQueries is the read-side interface for drift-aware run queries. Satisfied
-// by service/queries.RunQueryService.
-type RunQueries interface {
+// DriftAwareRunReader returns view-shaped run data composed from Neo4j
+// (the :Run node and its pinned topology_generation) AND Postgres (the
+// current topology_state.topology_generation). Used by the RPCs that
+// surface drift to the dashboard and rerun modal. Satisfied by
+// service/queries.RunQueryService.
+type DriftAwareRunReader interface {
 	GetRunGraph(ctx context.Context, runID string) (*queries.RunGraphView, error)
 	ListActiveRunDrifts(ctx context.Context) (*queries.ActiveRunDriftView, error)
 }
@@ -30,20 +34,20 @@ type RunQueries interface {
 // QueryHandler implements the OrchestratorQuery gRPC service.
 type QueryHandler struct {
 	orchestratorv1.UnimplementedOrchestratorQueryServer
-	reader     QueryReader
-	runQueries RunQueries
-	logger     *slog.Logger
+	scheduleAndRunLists ScheduleAndRunListReader
+	driftAwareRuns      DriftAwareRunReader
+	logger              *slog.Logger
 }
 
-func NewQueryHandler(reader QueryReader, runQueries RunQueries, logger *slog.Logger) *QueryHandler {
-	return &QueryHandler{reader: reader, runQueries: runQueries, logger: logger}
+func NewQueryHandler(scheduleAndRunLists ScheduleAndRunListReader, driftAwareRuns DriftAwareRunReader, logger *slog.Logger) *QueryHandler {
+	return &QueryHandler{scheduleAndRunLists: scheduleAndRunLists, driftAwareRuns: driftAwareRuns, logger: logger}
 }
 
 func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1.GetScheduleGraphRequest) (*orchestratorv1.GetScheduleGraphResponse, error) {
 	if req.ScheduleName == "" {
 		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
 	}
-	graph, err := h.reader.GetScheduleGraph(ctx, req.ScheduleName)
+	graph, err := h.scheduleAndRunLists.GetScheduleGraph(ctx, req.ScheduleName)
 	if err != nil {
 		h.logger.Error("GetScheduleGraph failed", "schedule", req.ScheduleName, "error", err)
 		return nil, status.Errorf(codes.Internal, "GetScheduleGraph: %v", err)
@@ -68,7 +72,7 @@ func (h *QueryHandler) ListRuns(ctx context.Context, req *orchestratorv1.ListRun
 	if req.ScheduleName == "" {
 		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
 	}
-	runs, err := h.reader.ListRuns(ctx, req.ScheduleName)
+	runs, err := h.scheduleAndRunLists.ListRuns(ctx, req.ScheduleName)
 	if err != nil {
 		h.logger.Error("ListRuns failed", "schedule", req.ScheduleName, "error", err)
 		return nil, status.Errorf(codes.Internal, "ListRuns: %v", err)
@@ -90,7 +94,7 @@ func (h *QueryHandler) GetRunGraph(ctx context.Context, req *orchestratorv1.GetR
 	if req.RunId == "" {
 		return nil, status.Error(codes.InvalidArgument, "run_id is required")
 	}
-	view, err := h.runQueries.GetRunGraph(ctx, req.RunId)
+	view, err := h.driftAwareRuns.GetRunGraph(ctx, req.RunId)
 	if err != nil {
 		h.logger.Error("GetRunGraph failed", "run_id", req.RunId, "error", err)
 		return nil, status.Errorf(codes.Internal, "GetRunGraph: %v", err)
@@ -114,7 +118,7 @@ func (h *QueryHandler) GetRunGraph(ctx context.Context, req *orchestratorv1.GetR
 }
 
 func (h *QueryHandler) ListActiveRunDrifts(ctx context.Context, req *orchestratorv1.ListActiveRunDriftsRequest) (*orchestratorv1.ListActiveRunDriftsResponse, error) {
-	view, err := h.runQueries.ListActiveRunDrifts(ctx)
+	view, err := h.driftAwareRuns.ListActiveRunDrifts(ctx)
 	if err != nil {
 		h.logger.Error("ListActiveRunDrifts failed", "error", err)
 		return nil, status.Errorf(codes.Internal, "ListActiveRunDrifts: %v", err)
