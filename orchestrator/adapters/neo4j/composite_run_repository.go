@@ -40,3 +40,13 @@ func (c *CompositeRunRepository) ListRuns(ctx context.Context, scheduleName stri
 func (c *CompositeRunRepository) GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
 	return c.query.GetRunGraph(ctx, runID)
 }
+
+// GetRunTopologyGeneration delegates to QueryRepository.
+func (c *CompositeRunRepository) GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error) {
+	return c.query.GetRunTopologyGeneration(ctx, runID)
+}
+
+// ListActiveRuns delegates to QueryRepository.
+func (c *CompositeRunRepository) ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error) {
+	return c.query.ListActiveRuns(ctx)
+}
