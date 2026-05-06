@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import {
@@ -11,9 +12,11 @@ import {
   TaskExecution,
 } from './types';
 import { parseNodeId, resolveActiveGraph } from './detail-page-helpers';
+import { getDriftState } from './drift-helpers';
 import DAGPanel from './DAGPanel';
 import NodesPanel from './NodesPanel';
 import PastRunsPanel from './PastRunsPanel';
+import RerunConfirmDialog from './RerunConfirmDialog';
 
 function initialLastRunId(locationState: unknown): string | null | undefined {
   if (locationState == null) return undefined;
@@ -95,6 +98,7 @@ export default function DetailPage() {
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunState, setRerunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [rerunError, setRerunError] = useState<string | null>(null);
+  const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
   const rerunGenRef = useRef(0);
 
   useEffect(() => {
@@ -301,7 +305,7 @@ export default function DetailPage() {
     setRerunError(null);
   }, [selectedNodeId]);
 
-  const handleRerun = useCallback(async () => {
+  const doRerun = useCallback(async () => {
     if (!selectedNodeId || !lastRunId) return;
     const gen = (rerunGenRef.current += 1);
     const { service_name, schema_name, table_name } = parseNodeId(selectedNodeId);
@@ -331,6 +335,22 @@ export default function DetailPage() {
       setRerunState('error');
     }
   }, [selectedNodeId, lastRunId]);
+
+  // handleRerun is the dispatcher: fresh runs short-circuit to doRerun;
+  // stale or unknown drift opens RerunConfirmDialog instead, which calls
+  // doRerun on Confirm.
+  const handleRerun = useCallback(() => {
+    if (!selectedNodeId || !lastRunId) return;
+    const driftState = getDriftState(
+      liveRunGraph?.run_topology_generation,
+      liveRunGraph?.latest_topology_generation,
+    );
+    if (driftState === 'fresh') {
+      void doRerun();
+      return;
+    }
+    setRerunDialogOpen(true);
+  }, [doRerun, liveRunGraph, selectedNodeId, lastRunId]);
 
   const latestExecutions = Array.from(
     executions.reduce((map, execution) => {
@@ -406,6 +426,25 @@ export default function DetailPage() {
   };
 
   return (
+    <>
+      {rerunDialogOpen && createPortal(
+        <RerunConfirmDialog
+          state={
+            getDriftState(
+              liveRunGraph?.run_topology_generation,
+              liveRunGraph?.latest_topology_generation,
+            ) as 'stale' | 'unknown'
+          }
+          runGen={Number(liveRunGraph?.run_topology_generation ?? 0)}
+          latestGen={Number(liveRunGraph?.latest_topology_generation ?? 0)}
+          onConfirm={() => {
+            setRerunDialogOpen(false);
+            void doRerun();
+          }}
+          onCancel={() => setRerunDialogOpen(false)}
+        />,
+        document.body,
+      )}
     <div className="detail-page">
       <div className="detail-topbar">
         <button className="detail-back-link" onClick={() => navigate('/')}>
@@ -539,5 +578,6 @@ export default function DetailPage() {
         </div>
       </div>
     </div>
+    </>
   );
 }

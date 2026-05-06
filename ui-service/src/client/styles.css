@@ -189,6 +189,23 @@ body {
   color: #6b7280;
 }
 
+/* Stale topology strip — drift signal on the schedule card. */
+.scheduler-card-stale-strip {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.scheduler-card-stale-strip--unknown {
+  background: #f3f4f6;
+  color: #374151;
+}
+
 /* ===================== DETAIL PAGE ===================== */
 .detail-page {
   display: flex;
@@ -794,6 +811,41 @@ body {
 }
 .dialog-btn--danger:hover:not(:disabled) { background: #b91c1c; }
 .dialog-btn--danger:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Rerun confirmation dialog (drift warning). */
+.rerun-confirm-dialog { max-width: 480px; }
+.rerun-confirm-title { display: flex; align-items: center; gap: 8px; }
+.rerun-confirm-title-icon { font-size: 18px; }
+.rerun-confirm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 12px;
+  align-self: flex-start;
+}
+.rerun-confirm-chip--stale   { background: #fef3c7; color: #92400e; }
+.rerun-confirm-chip--unknown { background: #f3f4f6; color: #374151; }
+.rerun-confirm-body {
+  color: #374151;
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rerun-confirm-paragraph { margin: 0; }
+.dialog-btn--primary {
+  background: #4338ca;
+  color: #fff;
+  border: 1px solid #4338ca;
+}
+.dialog-btn--primary:hover:not(:disabled) { background: #3730a3; }
+.dialog-btn--primary:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .dialog-loading,
 .dialog-config-error,

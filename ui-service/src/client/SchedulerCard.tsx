@@ -5,6 +5,7 @@ import {
   getScheduleProgressLabel,
   getScheduleProgressPercent,
 } from './scheduler-card-helpers';
+import { getDriftState, getDriftMessage } from './drift-helpers';
 import { ScheduleSummary, Task } from './types';
 import CancelDialog from './CancelDialog';
 
@@ -21,9 +22,10 @@ function cardBorderClass(status: string): string {
 
 interface Props {
   schedule: ScheduleSummary;
+  latestTopologyGeneration: number;
 }
 
-export default function SchedulerCard({ schedule }: Props) {
+export default function SchedulerCard({ schedule, latestTopologyGeneration }: Props) {
   const navigate = useNavigate();
   const neverRun = !schedule.last_run_id;
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -59,6 +61,21 @@ export default function SchedulerCard({ schedule }: Props) {
   const pending = tasks.filter(t => t.status === 'pending').length;
   const running = tasks.filter(t => t.status === 'running').length;
   const pct = getScheduleProgressPercent(tasks);
+
+  // Drift only matters while a run is in flight. Once finalised
+  // (active_run_id === null) the strip disappears even if there's drift.
+  const driftState =
+    schedule.active_run_id !== null
+      ? getDriftState(schedule.active_run_topology_generation, latestTopologyGeneration)
+      : 'fresh';
+  const showDriftStrip = driftState !== 'fresh';
+  const driftMsg = showDriftStrip
+    ? getDriftMessage(
+        driftState,
+        Number(schedule.active_run_topology_generation ?? 0),
+        latestTopologyGeneration,
+      )
+    : null;
 
   const handleClick = () =>
     navigate(`/schedule/${schedule.schedule_name}`, {
@@ -131,6 +148,15 @@ export default function SchedulerCard({ schedule }: Props) {
             </button>
           )}
         </div>
+        {showDriftStrip && driftMsg && (
+          <div
+            className={`scheduler-card-stale-strip${driftState === 'unknown' ? ' scheduler-card-stale-strip--unknown' : ''}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <span aria-hidden="true">{driftState === 'unknown' ? '?' : '⚠'}</span>
+            <span>{driftMsg.stripLine}</span>
+          </div>
+        )}
         {triggerError && <div className="trigger-error">{triggerError}</div>}
         {!neverRun && total > 0 && (
           <div className="scheduler-card-body">
