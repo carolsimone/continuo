@@ -53,7 +53,8 @@ The `run.Repository` interface exposes the following Neo4j read methods used dur
 |---|---|
 | `GetScheduleGraph` | Returns all Table nodes and DEPENDS_ON edges for a schedule |
 | `ListRuns` | Returns Run nodes for a schedule, newest first |
-| `GetRunGraph` | Returns nodes and EXECUTES edges for a specific run, with per-node status |
+| `GetRunGraph` | Returns nodes and EXECUTES edges for a specific run, with per-node status. Also returns `run_topology_generation` (stamped on the `:Run` node at SnapshotGraph time; `0` means "drift unknown" — not "no drift") and `latest_topology_generation` (current `topology_state.topology_generation` Postgres singleton). |
+| `ListActiveRunDrifts` | Returns one `ActiveRunDrift` row per `is_running=true` schedule (`schedule_name`, `run_id`, `run_topology_generation`) plus the orchestrator's current `latest_topology_generation`. Drives the dashboard's per-schedule active-run drift indicator without forcing the UI to call `GetRunGraph` for every active schedule. |
 
 ### HTTP (port 8087)
 
@@ -144,7 +145,7 @@ When `initialize.run:v1` carries a `rerun_target`:
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
+| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
 | `continuo CLI` | `GetScheduleGraph` |
 
 Orchestrator calls no external gRPC services.

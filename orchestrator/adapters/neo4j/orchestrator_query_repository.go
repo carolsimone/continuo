@@ -10,20 +10,20 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// QueryRepository implements the read-side (CQRS) queries that bypass aggregates.
+// OrchestratorQueryRepository implements the read-side (CQRS) queries that bypass aggregates.
 // Used directly by gRPC handlers.
-type QueryRepository struct {
+type OrchestratorQueryRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
 }
 
-func NewQueryRepository(client Neo4jClient, logger *slog.Logger) *QueryRepository {
-	return &QueryRepository{client: client, logger: logger}
+func NewOrchestratorQueryRepository(client Neo4jClient, logger *slog.Logger) *OrchestratorQueryRepository {
+	return &OrchestratorQueryRepository{client: client, logger: logger}
 }
 
 // GetScheduleGraph returns all nodes and edges for a schedule,
 // including cross-boundary upstream dependencies (e.g. seeds).
-func (r *QueryRepository) GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error) {
+func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -127,7 +127,7 @@ func (r *QueryRepository) GetScheduleGraph(ctx context.Context, scheduleName str
 }
 
 // ListRuns returns completed runs for a schedule ordered by creation date descending.
-func (r *QueryRepository) ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error) {
+func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -165,7 +165,7 @@ func (r *QueryRepository) ListRuns(ctx context.Context, scheduleName string) ([]
 }
 
 // GetRunGraph returns nodes with their execution status and edges for a run.
-func (r *QueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
+func (r *OrchestratorQueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -227,6 +227,81 @@ func (r *QueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*dom
 	}
 
 	return nodes, edges, nil
+}
+
+// GetRunTopologyGeneration returns the topology_generation stamped on the :Run
+// node at SnapshotGraph time. Returns 0 when the run does not exist OR when
+// the property is unset (pre-tracking runs). The 0-vs-missing-vs-unset
+// ambiguity is resolved at the service layer with a documented contract:
+// 0 means "drift unknown".
+func (r *OrchestratorQueryRepository) GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	query := `
+		MATCH (r:Run {run_id: $run_id})
+		RETURN COALESCE(r.topology_generation, 0) AS gen
+	`
+	result, err := session.Run(ctx, query, map[string]interface{}{"run_id": runID})
+	if err != nil {
+		return 0, fmt.Errorf("GetRunTopologyGeneration: %w", err)
+	}
+	if !result.Next(ctx) {
+		if err := result.Err(); err != nil {
+			return 0, fmt.Errorf("GetRunTopologyGeneration iterate: %w", err)
+		}
+		return 0, nil
+	}
+	raw, _ := result.Record().Get("gen")
+	if v, ok := raw.(int64); ok {
+		return v, nil
+	}
+	return 0, nil
+}
+
+// ListActiveRuns returns every :Run with completed_at IS NULL — the canonical
+// "in-flight" filter, matching DeleteExpiredRuns at run_repository.go:807-810.
+//
+// In practice at most one row per schedule_name (state.TriggerSchedule rejects
+// concurrent triggers with FAILED_PRECONDITION), but the read returns all rows
+// without dedup so an upstream invariant violation is observable rather than
+// silently masked.
+func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	query := `
+        MATCH (r:Run)
+        WHERE r.completed_at IS NULL
+        RETURN r.schedule_name AS schedule_name,
+               r.run_id        AS run_id,
+               COALESCE(r.topology_generation, 0) AS topology_generation
+        ORDER BY r.schedule_name
+    `
+	result, err := session.Run(ctx, query, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListActiveRuns: %w", err)
+	}
+
+	runs := make([]*domain.ActiveRun, 0)
+	for result.Next(ctx) {
+		record := result.Record()
+		scheduleName := safeString(recordValue(record, "schedule_name"))
+		runID := safeString(recordValue(record, "run_id"))
+		var gen int64
+		if v, ok := recordValue(record, "topology_generation").(int64); ok {
+			gen = v
+		}
+		runs = append(runs, &domain.ActiveRun{
+			ScheduleName:       scheduleName,
+			RunID:              runID,
+			TopologyGeneration: gen,
+		})
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("ListActiveRuns iterate: %w", err)
+	}
+	return runs, nil
 }
 
 // parseNeo4jTimestamp parses a Neo4j datetime string into a time.Time.

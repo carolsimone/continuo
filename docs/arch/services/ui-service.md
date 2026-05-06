@@ -28,7 +28,7 @@ None.
 
 | Route | Method | Backend |
 |---|---|---|
-| `/api/schedules` | GET | `ListAllSchedules` → state gRPC |
+| `/api/schedules` | GET | `ListAllSchedules` → state gRPC, `ListActiveRunDrifts` → orchestrator gRPC (fan-out: each schedule row carries `active_run_id` + `active_run_topology_generation`; response also carries top-level `latest_topology_generation`) |
 | `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → orchestrator gRPC |
 | `/api/schedules/:name/runs` | GET | `ListRuns` → orchestrator gRPC |
 | `/api/schedules/:name/trigger` | POST | `TriggerSchedule` → state gRPC |
@@ -38,7 +38,7 @@ None.
 
 | Route | Method | Backend |
 |---|---|---|
-| `/api/runs/:run_id/graph` | GET | `GetRunGraph` → orchestrator gRPC |
+| `/api/runs/:run_id/graph` | GET | `GetRunGraph` → orchestrator gRPC (response includes `run_topology_generation` + `latest_topology_generation` for drift detection) |
 | `/api/schedulers/:id` | GET | `GetScheduler` → state gRPC |
 | `/api/schedulers/:id/tasks` | GET | `ListTasks` → state gRPC (page_size=200) |
 | `/api/schedulers/:id/executions` | GET | `ListTaskExecutions` → state gRPC (page_size=500) |
@@ -74,6 +74,7 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 | `GetScheduleGraph` | `GET /api/schedules/:name/graph` |
 | `ListRuns` | `GET /api/schedules/:name/runs` |
 | `GetRunGraph` | `GET /api/runs/:run_id/graph` |
+| `ListActiveRunDrifts` | `GET /api/schedules` (fan-out alongside `state.ListAllSchedules`) |
 
 ### S3
 
@@ -99,7 +100,8 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 | Task execution history | `state.ListTaskExecutions` |
 | Schedule topology (all nodes + edges) | `orchestrator.GetScheduleGraph` |
 | Run list (historical) | `orchestrator.ListRuns` |
-| Per-run graph with node statuses | `orchestrator.GetRunGraph` |
+| Per-run graph with node statuses + per-run/latest topology generation | `orchestrator.GetRunGraph` |
+| Active-run drift summary (per-schedule `run_topology_generation` + global `latest_topology_generation`) | `orchestrator.ListActiveRunDrifts` |
 | Pod logs | S3 (via `log_s3_key` from task execution records) |
 
 ## What It Writes

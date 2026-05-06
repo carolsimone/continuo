@@ -20,6 +20,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/internal/lifecycle"
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
+	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -119,7 +120,7 @@ func main() {
 
 	topologyRepo := neo4jinfra.NewTopologyRepository(neo4jClient, logger)
 	runRepoWrite := neo4jinfra.NewRunRepository(neo4jClient, logger)
-	queryRepo := neo4jinfra.NewQueryRepository(neo4jClient, logger)
+	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
 	runRepo := neo4jinfra.NewCompositeRunRepository(runRepoWrite, queryRepo)
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
 	publishedRepo := postgres.NewPublishedMessagesRepository(pgDB, logger)
@@ -418,7 +419,8 @@ func main() {
 	// START gRPC SERVER (BLOCKING)
 	// ========================================================================
 
-	queryHandler := grpcinfra.NewQueryHandler(queryRepo, logger)
+	runQueries := queries.NewRunQueryService(runRepo, topologyStateRepo, logger)
+	queryHandler := grpcinfra.NewQueryHandler(queryRepo, runQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)
 	if err != nil {

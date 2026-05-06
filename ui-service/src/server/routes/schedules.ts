@@ -30,22 +30,47 @@ function grpcToHttpStatus(code: number): number {
 export function createSchedulesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
-  // GET /api/schedules — list all known schedules (including never-run)
-  router.get('/', (req, res) => {
-    stateClient.listAllSchedules({}, (err: any, response: any) => {
-      if (err) return res.status(500).json({ error: err.message });
-      const schedules = (response.schedules || []).map((s: any) => ({
-        schedule_name: s.schedule_name,
-        cron_expression: s.cron_expression,
-        description: s.description,
-        timezone: s.timezone,
-        is_running: s.is_running,
-        last_run_at: toISO(s.last_run_at),
-        last_run_status: s.last_run_status,
-        last_run_id: s.last_run_id || null,
-      }));
-      res.json({ schedules });
-    });
+  // GET /api/schedules — list all known schedules with active-run drift info
+  router.get('/', async (_req, res) => {
+    try {
+      const stateResp = await new Promise<any>((resolve, reject) => {
+        stateClient.listAllSchedules({}, (err: any, response: any) =>
+          err ? reject(err) : resolve(response)
+        );
+      });
+      const driftResp = await new Promise<any>((resolve, reject) => {
+        graphClient.listActiveRunDrifts({}, (err: any, response: any) =>
+          err ? reject(err) : resolve(response)
+        );
+      });
+
+      const driftByName = new Map<string, any>(
+        (driftResp.active_runs || []).map((d: any) => [d.schedule_name, d])
+      );
+
+      const schedules = (stateResp.schedules || []).map((s: any) => {
+        const d = driftByName.get(s.schedule_name);
+        return {
+          schedule_name: s.schedule_name,
+          cron_expression: s.cron_expression,
+          description: s.description,
+          timezone: s.timezone,
+          is_running: s.is_running,
+          last_run_at: toISO(s.last_run_at),
+          last_run_status: s.last_run_status,
+          last_run_id: s.last_run_id || null,
+          active_run_topology_generation: d ? Number(d.run_topology_generation) : null,
+          active_run_id: d ? d.run_id : null,
+        };
+      });
+
+      res.json({
+        schedules,
+        latest_topology_generation: Number(driftResp.latest_topology_generation ?? 0),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // GET /api/schedules/:name/graph — fetch DAG directly by schedule name
@@ -130,7 +155,12 @@ export function createRunsRouter(graphClient: GrpcGraphClient) {
         from_node_id: e.from_node_id,
         to_node_id: e.to_node_id,
       }));
-      res.json({ nodes, edges });
+      res.json({
+        nodes,
+        edges,
+        run_topology_generation: Number(resp.run_topology_generation ?? 0),
+        latest_topology_generation: Number(resp.latest_topology_generation ?? 0),
+      });
     });
   });
 
