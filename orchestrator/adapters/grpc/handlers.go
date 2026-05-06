@@ -6,41 +6,48 @@ import (
 
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// QueryReader is the interface the handler depends on for read-side queries.
+// QueryReader is the read-side interface used by the topology- and run-list-only
+// RPCs. Drift-aware run reads go through RunQueries (see below) instead.
 type QueryReader interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
 	ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error)
 	GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error)
 }
 
-// QueryHandler implements the OrchestratorQuery gRPC service methods.
+// RunQueries is the read-side interface for drift-aware run queries. Satisfied
+// by service/queries.RunQueryService.
+type RunQueries interface {
+	GetRunGraph(ctx context.Context, runID string) (*queries.RunGraphView, error)
+	ListActiveRunDrifts(ctx context.Context) (*queries.ActiveRunDriftView, error)
+}
+
+// QueryHandler implements the OrchestratorQuery gRPC service.
 type QueryHandler struct {
-	reader QueryReader
-	logger *slog.Logger
+	orchestratorv1.UnimplementedOrchestratorQueryServer
+	reader     QueryReader
+	runQueries RunQueries
+	logger     *slog.Logger
 }
 
-// NewQueryHandler creates a new QueryHandler.
-func NewQueryHandler(reader QueryReader, logger *slog.Logger) *QueryHandler {
-	return &QueryHandler{reader: reader, logger: logger}
+func NewQueryHandler(reader QueryReader, runQueries RunQueries, logger *slog.Logger) *QueryHandler {
+	return &QueryHandler{reader: reader, runQueries: runQueries, logger: logger}
 }
 
-// GetScheduleGraph returns nodes and edges for a schedule's topology.
 func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1.GetScheduleGraphRequest) (*orchestratorv1.GetScheduleGraphResponse, error) {
 	if req.ScheduleName == "" {
 		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
 	}
-
 	graph, err := h.reader.GetScheduleGraph(ctx, req.ScheduleName)
 	if err != nil {
 		h.logger.Error("GetScheduleGraph failed", "schedule", req.ScheduleName, "error", err)
 		return nil, status.Errorf(codes.Internal, "GetScheduleGraph: %v", err)
 	}
-
 	resp := &orchestratorv1.GetScheduleGraphResponse{
 		Nodes: make([]*orchestratorv1.TableNode, 0, len(graph.Nodes)),
 		Edges: make([]*orchestratorv1.GraphEdge, 0, len(graph.Edges)),
@@ -57,21 +64,16 @@ func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1
 	return resp, nil
 }
 
-// ListRuns returns completed runs for a schedule, ordered by creation date descending.
 func (h *QueryHandler) ListRuns(ctx context.Context, req *orchestratorv1.ListRunsRequest) (*orchestratorv1.ListRunsResponse, error) {
 	if req.ScheduleName == "" {
 		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
 	}
-
 	runs, err := h.reader.ListRuns(ctx, req.ScheduleName)
 	if err != nil {
 		h.logger.Error("ListRuns failed", "schedule", req.ScheduleName, "error", err)
 		return nil, status.Errorf(codes.Internal, "ListRuns: %v", err)
 	}
-
-	resp := &orchestratorv1.ListRunsResponse{
-		Runs: make([]*orchestratorv1.RunSummary, 0, len(runs)),
-	}
+	resp := &orchestratorv1.ListRunsResponse{Runs: make([]*orchestratorv1.RunSummary, 0, len(runs))}
 	for _, r := range runs {
 		resp.Runs = append(resp.Runs, &orchestratorv1.RunSummary{
 			RunId:          r.RunID,
@@ -84,26 +86,25 @@ func (h *QueryHandler) ListRuns(ctx context.Context, req *orchestratorv1.ListRun
 	return resp, nil
 }
 
-// GetRunGraph returns nodes with execution status and edges for a specific run.
 func (h *QueryHandler) GetRunGraph(ctx context.Context, req *orchestratorv1.GetRunGraphRequest) (*orchestratorv1.GetRunGraphResponse, error) {
 	if req.RunId == "" {
 		return nil, status.Error(codes.InvalidArgument, "run_id is required")
 	}
-
-	nodes, edges, err := h.reader.GetRunGraph(ctx, req.RunId)
+	view, err := h.runQueries.GetRunGraph(ctx, req.RunId)
 	if err != nil {
 		h.logger.Error("GetRunGraph failed", "run_id", req.RunId, "error", err)
 		return nil, status.Errorf(codes.Internal, "GetRunGraph: %v", err)
 	}
-
 	resp := &orchestratorv1.GetRunGraphResponse{
-		Nodes: make([]*orchestratorv1.TableNode, 0, len(nodes)),
-		Edges: make([]*orchestratorv1.GraphEdge, 0, len(edges)),
+		Nodes:                    make([]*orchestratorv1.TableNode, 0, len(view.Nodes)),
+		Edges:                    make([]*orchestratorv1.GraphEdge, 0, len(view.Edges)),
+		RunTopologyGeneration:    view.RunTopologyGeneration,
+		LatestTopologyGeneration: view.LatestTopologyGeneration,
 	}
-	for _, n := range nodes {
+	for _, n := range view.Nodes {
 		resp.Nodes = append(resp.Nodes, domainToProtoNode(n))
 	}
-	for _, e := range edges {
+	for _, e := range view.Edges {
 		resp.Edges = append(resp.Edges, &orchestratorv1.GraphEdge{
 			FromNodeId: e.FromNodeID,
 			ToNodeId:   e.ToNodeID,
@@ -112,7 +113,26 @@ func (h *QueryHandler) GetRunGraph(ctx context.Context, req *orchestratorv1.GetR
 	return resp, nil
 }
 
-// domainToProtoNode converts a domain TableNode to its proto representation.
+func (h *QueryHandler) ListActiveRunDrifts(ctx context.Context, req *orchestratorv1.ListActiveRunDriftsRequest) (*orchestratorv1.ListActiveRunDriftsResponse, error) {
+	view, err := h.runQueries.ListActiveRunDrifts(ctx)
+	if err != nil {
+		h.logger.Error("ListActiveRunDrifts failed", "error", err)
+		return nil, status.Errorf(codes.Internal, "ListActiveRunDrifts: %v", err)
+	}
+	resp := &orchestratorv1.ListActiveRunDriftsResponse{
+		LatestTopologyGeneration: view.LatestTopologyGeneration,
+		ActiveRuns:               make([]*orchestratorv1.ActiveRunDrift, 0, len(view.ActiveRuns)),
+	}
+	for _, r := range view.ActiveRuns {
+		resp.ActiveRuns = append(resp.ActiveRuns, &orchestratorv1.ActiveRunDrift{
+			ScheduleName:          r.ScheduleName,
+			RunId:                 r.RunID,
+			RunTopologyGeneration: r.TopologyGeneration,
+		})
+	}
+	return resp, nil
+}
+
 func domainToProtoNode(n *domain.TableNode) *orchestratorv1.TableNode {
 	return &orchestratorv1.TableNode{
 		TableName:     n.TableName,
@@ -128,7 +148,6 @@ func domainToProtoNode(n *domain.TableNode) *orchestratorv1.TableNode {
 	}
 }
 
-// domainToProtoCriticality converts a domain Criticality to its proto enum value.
 func domainToProtoCriticality(c domain.Criticality) orchestratorv1.Criticality {
 	switch c {
 	case domain.CriticalityRegulatory:

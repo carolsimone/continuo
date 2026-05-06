@@ -7,6 +7,7 @@ service OrchestratorQuery {
   rpc GetScheduleGraph(GetScheduleGraphRequest) returns (GetScheduleGraphResponse);
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc GetRunGraph(GetRunGraphRequest) returns (GetRunGraphResponse);
+  rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
 }
 
 message TableNode {
@@ -54,4 +55,24 @@ message GetRunGraphRequest { string run_id = 1; }
 message GetRunGraphResponse {
   repeated TableNode nodes = 1;
   repeated GraphEdge edges = 2;
+  // run_topology_generation is the value stamped on the :Run node at
+  // SnapshotGraph time (orchestrator/adapters/neo4j/run_repository.go:91-99).
+  // Returns 0 when the run does not exist or pre-dates topology tracking;
+  // consumers MUST treat 0 as "drift unknown", not "no drift".
+  int64 run_topology_generation = 3;
+  // latest_topology_generation is the orchestrator's current
+  // topology_state.topology_generation (Postgres singleton).
+  int64 latest_topology_generation = 4;
+}
+
+message ListActiveRunDriftsRequest {}
+message ListActiveRunDriftsResponse {
+  // latest_topology_generation matches the value in GetRunGraphResponse.
+  int64 latest_topology_generation = 1;
+  repeated ActiveRunDrift active_runs = 2;
+}
+message ActiveRunDrift {
+  string schedule_name = 1;
+  string run_id = 2;
+  int64 run_topology_generation = 3;
 }

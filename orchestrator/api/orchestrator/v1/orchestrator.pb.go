@@ -547,11 +547,19 @@ func (x *GetRunGraphRequest) GetRunId() string {
 }
 
 type GetRunGraphResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Nodes         []*TableNode           `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	Edges         []*GraphEdge           `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Nodes []*TableNode           `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Edges []*GraphEdge           `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
+	// run_topology_generation is the value stamped on the :Run node at
+	// SnapshotGraph time (orchestrator/adapters/neo4j/run_repository.go:91-99).
+	// Returns 0 when the run does not exist or pre-dates topology tracking;
+	// consumers MUST treat 0 as "drift unknown", not "no drift".
+	RunTopologyGeneration int64 `protobuf:"varint,3,opt,name=run_topology_generation,json=runTopologyGeneration,proto3" json:"run_topology_generation,omitempty"`
+	// latest_topology_generation is the orchestrator's current
+	// topology_state.topology_generation (Postgres singleton).
+	LatestTopologyGeneration int64 `protobuf:"varint,4,opt,name=latest_topology_generation,json=latestTopologyGeneration,proto3" json:"latest_topology_generation,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *GetRunGraphResponse) Reset() {
@@ -598,6 +606,169 @@ func (x *GetRunGraphResponse) GetEdges() []*GraphEdge {
 	return nil
 }
 
+func (x *GetRunGraphResponse) GetRunTopologyGeneration() int64 {
+	if x != nil {
+		return x.RunTopologyGeneration
+	}
+	return 0
+}
+
+func (x *GetRunGraphResponse) GetLatestTopologyGeneration() int64 {
+	if x != nil {
+		return x.LatestTopologyGeneration
+	}
+	return 0
+}
+
+type ListActiveRunDriftsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListActiveRunDriftsRequest) Reset() {
+	*x = ListActiveRunDriftsRequest{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListActiveRunDriftsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListActiveRunDriftsRequest) ProtoMessage() {}
+
+func (x *ListActiveRunDriftsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListActiveRunDriftsRequest.ProtoReflect.Descriptor instead.
+func (*ListActiveRunDriftsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{9}
+}
+
+type ListActiveRunDriftsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// latest_topology_generation matches the value in GetRunGraphResponse.
+	LatestTopologyGeneration int64             `protobuf:"varint,1,opt,name=latest_topology_generation,json=latestTopologyGeneration,proto3" json:"latest_topology_generation,omitempty"`
+	ActiveRuns               []*ActiveRunDrift `protobuf:"bytes,2,rep,name=active_runs,json=activeRuns,proto3" json:"active_runs,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
+}
+
+func (x *ListActiveRunDriftsResponse) Reset() {
+	*x = ListActiveRunDriftsResponse{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListActiveRunDriftsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListActiveRunDriftsResponse) ProtoMessage() {}
+
+func (x *ListActiveRunDriftsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListActiveRunDriftsResponse.ProtoReflect.Descriptor instead.
+func (*ListActiveRunDriftsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ListActiveRunDriftsResponse) GetLatestTopologyGeneration() int64 {
+	if x != nil {
+		return x.LatestTopologyGeneration
+	}
+	return 0
+}
+
+func (x *ListActiveRunDriftsResponse) GetActiveRuns() []*ActiveRunDrift {
+	if x != nil {
+		return x.ActiveRuns
+	}
+	return nil
+}
+
+type ActiveRunDrift struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleName          string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
+	RunId                 string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunTopologyGeneration int64                  `protobuf:"varint,3,opt,name=run_topology_generation,json=runTopologyGeneration,proto3" json:"run_topology_generation,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *ActiveRunDrift) Reset() {
+	*x = ActiveRunDrift{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActiveRunDrift) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActiveRunDrift) ProtoMessage() {}
+
+func (x *ActiveRunDrift) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActiveRunDrift.ProtoReflect.Descriptor instead.
+func (*ActiveRunDrift) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ActiveRunDrift) GetScheduleName() string {
+	if x != nil {
+		return x.ScheduleName
+	}
+	return ""
+}
+
+func (x *ActiveRunDrift) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ActiveRunDrift) GetRunTopologyGeneration() int64 {
+	if x != nil {
+		return x.RunTopologyGeneration
+	}
+	return 0
+}
+
 var File_proto_orchestrator_v1_orchestrator_proto protoreflect.FileDescriptor
 
 const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
@@ -641,19 +812,31 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"created_at\x18\x04 \x01(\tR\tcreatedAt\x12!\n" +
 	"\fcompleted_at\x18\x05 \x01(\tR\vcompletedAt\"+\n" +
 	"\x12GetRunGraphRequest\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId\"y\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\xef\x01\n" +
 	"\x13GetRunGraphResponse\x120\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x1a.orchestrator.v1.TableNodeR\x05nodes\x120\n" +
-	"\x05edges\x18\x02 \x03(\v2\x1a.orchestrator.v1.GraphEdgeR\x05edges*w\n" +
+	"\x05edges\x18\x02 \x03(\v2\x1a.orchestrator.v1.GraphEdgeR\x05edges\x126\n" +
+	"\x17run_topology_generation\x18\x03 \x01(\x03R\x15runTopologyGeneration\x12<\n" +
+	"\x1alatest_topology_generation\x18\x04 \x01(\x03R\x18latestTopologyGeneration\"\x1c\n" +
+	"\x1aListActiveRunDriftsRequest\"\x9d\x01\n" +
+	"\x1bListActiveRunDriftsResponse\x12<\n" +
+	"\x1alatest_topology_generation\x18\x01 \x01(\x03R\x18latestTopologyGeneration\x12@\n" +
+	"\vactive_runs\x18\x02 \x03(\v2\x1f.orchestrator.v1.ActiveRunDriftR\n" +
+	"activeRuns\"\x84\x01\n" +
+	"\x0eActiveRunDrift\x12#\n" +
+	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x126\n" +
+	"\x17run_topology_generation\x18\x03 \x01(\x03R\x15runTopologyGeneration*w\n" +
 	"\vCriticality\x12\x1b\n" +
 	"\x17CRITICALITY_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16CRITICALITY_REGULATORY\x10\x01\x12\x14\n" +
 	"\x10CRITICALITY_CORE\x10\x02\x12\x19\n" +
-	"\x15CRITICALITY_SECONDARY\x10\x032\xa7\x02\n" +
+	"\x15CRITICALITY_SECONDARY\x10\x032\x99\x03\n" +
 	"\x11OrchestratorQuery\x12g\n" +
 	"\x10GetScheduleGraph\x12(.orchestrator.v1.GetScheduleGraphRequest\x1a).orchestrator.v1.GetScheduleGraphResponse\x12O\n" +
 	"\bListRuns\x12 .orchestrator.v1.ListRunsRequest\x1a!.orchestrator.v1.ListRunsResponse\x12X\n" +
-	"\vGetRunGraph\x12#.orchestrator.v1.GetRunGraphRequest\x1a$.orchestrator.v1.GetRunGraphResponseBQZOgithub.com/carolsimone/continuo/orchestrator/api/orchestrator/v1;orchestratorv1b\x06proto3"
+	"\vGetRunGraph\x12#.orchestrator.v1.GetRunGraphRequest\x1a$.orchestrator.v1.GetRunGraphResponse\x12p\n" +
+	"\x13ListActiveRunDrifts\x12+.orchestrator.v1.ListActiveRunDriftsRequest\x1a,.orchestrator.v1.ListActiveRunDriftsResponseBQZOgithub.com/carolsimone/continuo/orchestrator/api/orchestrator/v1;orchestratorv1b\x06proto3"
 
 var (
 	file_proto_orchestrator_v1_orchestrator_proto_rawDescOnce sync.Once
@@ -668,40 +851,46 @@ func file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_orchestrator_v1_orchestrator_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_proto_orchestrator_v1_orchestrator_proto_goTypes = []any{
-	(Criticality)(0),                 // 0: orchestrator.v1.Criticality
-	(*TableNode)(nil),                // 1: orchestrator.v1.TableNode
-	(*GraphEdge)(nil),                // 2: orchestrator.v1.GraphEdge
-	(*GetScheduleGraphRequest)(nil),  // 3: orchestrator.v1.GetScheduleGraphRequest
-	(*GetScheduleGraphResponse)(nil), // 4: orchestrator.v1.GetScheduleGraphResponse
-	(*ListRunsRequest)(nil),          // 5: orchestrator.v1.ListRunsRequest
-	(*ListRunsResponse)(nil),         // 6: orchestrator.v1.ListRunsResponse
-	(*RunSummary)(nil),               // 7: orchestrator.v1.RunSummary
-	(*GetRunGraphRequest)(nil),       // 8: orchestrator.v1.GetRunGraphRequest
-	(*GetRunGraphResponse)(nil),      // 9: orchestrator.v1.GetRunGraphResponse
-	(*timestamppb.Timestamp)(nil),    // 10: google.protobuf.Timestamp
+	(Criticality)(0),                    // 0: orchestrator.v1.Criticality
+	(*TableNode)(nil),                   // 1: orchestrator.v1.TableNode
+	(*GraphEdge)(nil),                   // 2: orchestrator.v1.GraphEdge
+	(*GetScheduleGraphRequest)(nil),     // 3: orchestrator.v1.GetScheduleGraphRequest
+	(*GetScheduleGraphResponse)(nil),    // 4: orchestrator.v1.GetScheduleGraphResponse
+	(*ListRunsRequest)(nil),             // 5: orchestrator.v1.ListRunsRequest
+	(*ListRunsResponse)(nil),            // 6: orchestrator.v1.ListRunsResponse
+	(*RunSummary)(nil),                  // 7: orchestrator.v1.RunSummary
+	(*GetRunGraphRequest)(nil),          // 8: orchestrator.v1.GetRunGraphRequest
+	(*GetRunGraphResponse)(nil),         // 9: orchestrator.v1.GetRunGraphResponse
+	(*ListActiveRunDriftsRequest)(nil),  // 10: orchestrator.v1.ListActiveRunDriftsRequest
+	(*ListActiveRunDriftsResponse)(nil), // 11: orchestrator.v1.ListActiveRunDriftsResponse
+	(*ActiveRunDrift)(nil),              // 12: orchestrator.v1.ActiveRunDrift
+	(*timestamppb.Timestamp)(nil),       // 13: google.protobuf.Timestamp
 }
 var file_proto_orchestrator_v1_orchestrator_proto_depIdxs = []int32{
 	0,  // 0: orchestrator.v1.TableNode.criticality:type_name -> orchestrator.v1.Criticality
-	10, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
-	10, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
+	13, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
+	13, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: orchestrator.v1.GetScheduleGraphResponse.nodes:type_name -> orchestrator.v1.TableNode
 	2,  // 4: orchestrator.v1.GetScheduleGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
 	7,  // 5: orchestrator.v1.ListRunsResponse.runs:type_name -> orchestrator.v1.RunSummary
 	1,  // 6: orchestrator.v1.GetRunGraphResponse.nodes:type_name -> orchestrator.v1.TableNode
 	2,  // 7: orchestrator.v1.GetRunGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
-	3,  // 8: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
-	5,  // 9: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
-	8,  // 10: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
-	4,  // 11: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
-	6,  // 12: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
-	9,  // 13: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
-	11, // [11:14] is the sub-list for method output_type
-	8,  // [8:11] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	12, // 8: orchestrator.v1.ListActiveRunDriftsResponse.active_runs:type_name -> orchestrator.v1.ActiveRunDrift
+	3,  // 9: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
+	5,  // 10: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
+	8,  // 11: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
+	10, // 12: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:input_type -> orchestrator.v1.ListActiveRunDriftsRequest
+	4,  // 13: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
+	6,  // 14: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
+	9,  // 15: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
+	11, // 16: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:output_type -> orchestrator.v1.ListActiveRunDriftsResponse
+	13, // [13:17] is the sub-list for method output_type
+	9,  // [9:13] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_proto_orchestrator_v1_orchestrator_proto_init() }
@@ -715,7 +904,7 @@ func file_proto_orchestrator_v1_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_orchestrator_v1_orchestrator_proto_rawDesc), len(file_proto_orchestrator_v1_orchestrator_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

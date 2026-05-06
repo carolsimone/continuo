@@ -418,7 +418,8 @@ func main() {
 	// START gRPC SERVER (BLOCKING)
 	// ========================================================================
 
-	queryHandler := grpcinfra.NewQueryHandler(queryRepo, logger)
+	// TODO Task 10: replace nil with RunQueryService
+	queryHandler := grpcinfra.NewQueryHandler(queryRepo, nil, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)
 	if err != nil {
