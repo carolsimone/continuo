@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // ─── fixture ─────────────────────────────────────────────────────────────────
@@ -182,4 +184,61 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
 		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, srcID)
 	})
+}
+
+func TestSingleNodeRunHandler_Errors(t *testing.T) {
+	fx := setupSingleNodeRunFixture(t)
+	defer fx.Cleanup()
+
+	// Seed a non-terminal source run for FAILED_PRECONDITION coverage.
+	runningID := uuid.New()
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &model.SchedulerTracker{
+		ScheduleID:           runningID,
+		ScheduleName:         "running-src",
+		Status:               model.SchedulerStatusRunning,
+		CreatedAt:            time.Now(),
+		Kind:                 "cron",
+		InitializationStatus: "completed",
+	}))
+
+	// Seed a terminal source run with NO matching task for NOT_FOUND coverage.
+	terminalNoTaskID := uuid.New()
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &model.SchedulerTracker{
+		ScheduleID:           terminalNoTaskID,
+		ScheduleName:         "terminal-no-task",
+		Status:               model.SchedulerStatusSucceeded,
+		CreatedAt:            time.Now(),
+		Kind:                 "cron",
+		InitializationStatus: "completed",
+	}))
+
+	t.Cleanup(func() {
+		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runningID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, terminalNoTaskID)
+	})
+
+	cases := []struct {
+		name   string
+		req    *statev1.TriggerSingleNodeRunRequest
+		expect codes.Code
+	}{
+		{"empty service", &statev1.TriggerSingleNodeRunRequest{ServiceName: "", SchemaName: "s", TableName: "t", MetadataSource: "latest"}, codes.InvalidArgument},
+		{"empty schema", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "", TableName: "t", MetadataSource: "latest"}, codes.InvalidArgument},
+		{"empty table", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "", MetadataSource: "latest"}, codes.InvalidArgument},
+		{"unknown source", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "bogus"}, codes.InvalidArgument},
+		{"latest with src", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "latest", SourceRunId: uuid.NewString()}, codes.InvalidArgument},
+		{"stale no src", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "snapshot_of_run", SourceRunId: ""}, codes.InvalidArgument},
+		{"stale bad uuid", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "snapshot_of_run", SourceRunId: "not-a-uuid"}, codes.InvalidArgument},
+		{"stale src missing", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "snapshot_of_run", SourceRunId: uuid.NewString()}, codes.NotFound},
+		{"stale src not terminal", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "snapshot_of_run", SourceRunId: runningID.String()}, codes.FailedPrecondition},
+		{"stale src no matching task", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "snapshot_of_run", SourceRunId: terminalNoTaskID.String()}, codes.NotFound},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := fx.Handler.TriggerSingleNodeRun(context.Background(), tc.req)
+			require.Error(t, err)
+			require.Equal(t, tc.expect, status.Code(err), "wrong code for %s: %v", tc.name, err)
+		})
+	}
 }
