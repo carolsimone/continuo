@@ -32,6 +32,14 @@ type RunRerunDispatched struct {
 	EntryTaskID  string   `json:"entry_task_id"`
 }
 
+// RunInitialized — stream: run.initialized:v1
+// Published by: orchestrator (single-node run path)
+// Consumed by: state (to register the synthesised run)
+type RunInitialized struct {
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+}
+
 // RunFinalized — stream: run.finalized:v1
 // Published by: state
 // Consumed by: UI, analytics
