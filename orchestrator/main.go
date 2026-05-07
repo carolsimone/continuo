@@ -31,6 +31,46 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// parseSchedulerStartedMessage extracts a SchedulerStartedCmd from a Redis
+// stream message's Values map. Missing kind defaults to "cron"; missing or
+// empty source_run_id yields nil. This shape is unit-tested in
+// main_consumer_helpers_test.go.
+func parseSchedulerStartedMessage(values map[string]interface{}) (domainCmd.SchedulerStartedCmd, error) {
+	runnerID, ok := values["runner_id"].(string)
+	if !ok || runnerID == "" {
+		return domainCmd.SchedulerStartedCmd{}, fmt.Errorf("missing or invalid runner_id")
+	}
+	schedulerID, err := uuid.Parse(runnerID)
+	if err != nil {
+		return domainCmd.SchedulerStartedCmd{}, fmt.Errorf("invalid runner_id UUID %q: %w", runnerID, err)
+	}
+	scheduleName, ok2 := values["schedule_name"].(string)
+	if !ok2 || scheduleName == "" {
+		return domainCmd.SchedulerStartedCmd{}, fmt.Errorf("missing or invalid schedule_name")
+	}
+
+	kind, _ := values["kind"].(string)
+	if kind == "" {
+		kind = "cron"
+	}
+
+	var sourceRunID *uuid.UUID
+	if raw, ok := values["source_run_id"].(string); ok && raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			return domainCmd.SchedulerStartedCmd{}, fmt.Errorf("invalid source_run_id UUID %q: %w", raw, err)
+		}
+		sourceRunID = &parsed
+	}
+
+	return domainCmd.SchedulerStartedCmd{
+		ScheduleID:   schedulerID,
+		ScheduleName: scheduleName,
+		Kind:         kind,
+		SourceRunID:  sourceRunID,
+	}, nil
+}
+
 func main() {
 	// Setup structured logger
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -315,21 +355,9 @@ func main() {
 
 	// Consumer 4: scheduler.started:v1 -> HandleSchedulerStarted
 	schedulerStartedHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		runnerID, ok := msg.Values["runner_id"].(string)
-		if !ok || runnerID == "" {
-			return fmt.Errorf("missing or invalid runner_id in scheduler.started message %s", msg.ID)
-		}
-		schedulerID, err := uuid.Parse(runnerID)
+		cmd, err := parseSchedulerStartedMessage(msg.Values)
 		if err != nil {
-			return fmt.Errorf("invalid runner_id UUID %q in message %s: %w", runnerID, msg.ID, err)
-		}
-		scheduleName, ok2 := msg.Values["schedule_name"].(string)
-		if !ok2 || scheduleName == "" {
-			return fmt.Errorf("missing or invalid schedule_name in scheduler.started message %s", msg.ID)
-		}
-		cmd := domainCmd.SchedulerStartedCmd{
-			ScheduleID:   schedulerID,
-			ScheduleName: scheduleName,
+			return fmt.Errorf("scheduler.started message %s: %w", msg.ID, err)
 		}
 		return handleSchedulerStartedHandler.Handle(ctx, cmd, msg.ID)
 	}
