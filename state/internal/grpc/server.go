@@ -15,13 +15,14 @@ import (
 // Server wraps gRPC server with graceful shutdown
 type Server struct {
 	statev1.UnimplementedStateServiceServer
-	grpcServer           *grpc.Server
-	listener             net.Listener
-	logger               *slog.Logger
-	schedulerHandler     *handlers.SchedulerHandler
-	taskHandler          *handlers.TaskHandler
-	taskExecutionHandler *handlers.TaskExecutionHandler
-	rerunHandler         *handlers.RerunHandler
+	grpcServer            *grpc.Server
+	listener              net.Listener
+	logger                *slog.Logger
+	schedulerHandler      *handlers.SchedulerHandler
+	taskHandler           *handlers.TaskHandler
+	taskExecutionHandler  *handlers.TaskExecutionHandler
+	rerunHandler          *handlers.RerunHandler
+	singleNodeRunHandler  *handlers.SingleNodeRunHandler
 }
 
 // NewServer creates a new gRPC server
@@ -31,6 +32,7 @@ func NewServer(
 	taskHandler *handlers.TaskHandler,
 	taskExecutionHandler *handlers.TaskExecutionHandler,
 	rerunHandler *handlers.RerunHandler,
+	singleNodeRunHandler *handlers.SingleNodeRunHandler,
 	logger *slog.Logger,
 ) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -50,6 +52,7 @@ func NewServer(
 		taskHandler:          taskHandler,
 		taskExecutionHandler: taskExecutionHandler,
 		rerunHandler:         rerunHandler,
+		singleNodeRunHandler: singleNodeRunHandler,
 	}
 
 	statev1.RegisterStateServiceServer(grpcServer, server)
@@ -168,6 +171,11 @@ func (s *Server) ListTaskExecutions(ctx context.Context, req *statev1.ListTaskEx
 // TriggerRerun delegates to rerun handler
 func (s *Server) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
 	return s.rerunHandler.TriggerRerun(ctx, req)
+}
+
+// TriggerSingleNodeRun delegates to single node run handler
+func (s *Server) TriggerSingleNodeRun(ctx context.Context, req *statev1.TriggerSingleNodeRunRequest) (*statev1.TriggerSingleNodeRunResponse, error) {
+	return s.singleNodeRunHandler.TriggerSingleNodeRun(ctx, req)
 }
 
 // ============================================================================
