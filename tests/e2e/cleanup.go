@@ -108,7 +108,7 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 		"retry.task:v1",
 		"task.failed:v1",
 		"node.updated:v1",
-		"rerun:v1",
+		"trigger.rerun:v1",
 		"initialize.run:v1",
 		"run.initialized:v1",
 		"manifest.loaded:v1",
