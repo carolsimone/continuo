@@ -184,6 +184,7 @@ type TaskTracker struct {
 	CancelledAt     *time.Time `json:"cancelled_at,omitempty" db:"cancelled_at"`
 	CancelledBy     *string    `json:"cancelled_by,omitempty" db:"cancelled_by"`
 	ManifestVersion string     `json:"manifest_version" db:"manifest_version"`
+	ImageTag        string     `json:"image_tag" db:"image_tag"`
 }
 
 // TaskExecution represents a single execution attempt of a task

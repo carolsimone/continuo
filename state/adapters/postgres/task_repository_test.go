@@ -201,6 +201,46 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	assert.Equal(t, model.TaskStatusSucceeded, got.Status)
 }
 
+func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
+	db := newTestDB(t)
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewTaskTrackerRepository(db, discardLogger())
+
+	ctx := context.Background()
+	parent := &model.SchedulerTracker{
+		ScheduleID:           uuid.New(),
+		ScheduleName:         "tt-" + uuid.New().String()[:8],
+		Status:               model.SchedulerStatusPending,
+		CreatedAt:            time.Now(),
+		InitializationStatus: "pending",
+		Kind:                 "cron",
+	}
+	require.NoError(t, schedulerRepo.Create(ctx, parent))
+	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", parent.ScheduleID)
+
+	task := &model.TaskTracker{
+		TaskID:          uuid.New(),
+		ScheduleID:      parent.ScheduleID,
+		CreatedAt:       time.Now(),
+		ServiceName:     "service-1",
+		SchemaName:      "analytics",
+		TableName:       "daily_metrics",
+		JobName:         "job-x",
+		Status:          model.TaskStatusPending,
+		RetryCount:      0,
+		MaxRetries:      3,
+		ManifestVersion: "v5",
+		ImageTag:        "registry/img:abcdef",
+	}
+	require.NoError(t, repo.Create(ctx, task))
+	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
+
+	got, err := repo.GetByID(ctx, task.TaskID)
+	require.NoError(t, err)
+	assert.Equal(t, "v5", got.ManifestVersion)
+	assert.Equal(t, "registry/img:abcdef", got.ImageTag)
+}
+
 func TestTaskRepository_UpdateStatusIfChangedTx_DoesNotReviveCancelledTask(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
