@@ -103,27 +103,44 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.H
 		return fmt.Errorf("invalid run_id %q: %w", cmd.RunID, err)
 	}
 
-	// Outbox 1: run.initialized:v1
-	initEvt := pkgEvents.RunInitialized{
+	// Outbox 1: run.entries.dispatched:v1 — reuses the existing state consumer
+	// RunEntriesDispatchedHandler which:
+	//   1. creates the task_tracker row (with manifest_version + image_tag)
+	//   2. sets total_task_count = 1
+	//   3. sets initialization_status = "completed"
+	// This is required for the finalization guard (initCompleted) to pass.
+	dispatchedEvt := pkgEvents.RunEntriesDispatched{
 		ScheduleID:   cmd.RunID,
 		ScheduleName: cmd.ScheduleName,
+		AllTasks: []pkgEvents.DispatchedTask{
+			{
+				TaskID:          taskID,
+				ServiceName:     cmd.ServiceName,
+				SchemaName:      cmd.SchemaName,
+				TableName:       cmd.TableName,
+				NodeType:        nodeType,
+				ManifestVersion: manifestVersion,
+				ImageTag:        imageTag,
+			},
+		},
+		TotalTaskCount: 1,
 	}
-	initPayload, err := json.Marshal(initEvt)
+	dispatchedPayload, err := json.Marshal(dispatchedEvt)
 	if err != nil {
-		return fmt.Errorf("marshal run.initialized: %w", err)
+		return fmt.Errorf("marshal run.entries.dispatched: %w", err)
 	}
 	if err := h.uow.OutboxRepo().Create(ctx, &domain.OutboxEntry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
-		EventType:           "run_initialized",
-		Payload:             initPayload,
-		StreamName:          "run.initialized:v1",
+		EventType:           "run_entries_dispatched",
+		Payload:             dispatchedPayload,
+		StreamName:          "run.entries.dispatched:v1",
 		Status:              "pending",
 		MaxRetries:          3,
 	}); err != nil {
-		return fmt.Errorf("write run.initialized to outbox: %w", err)
+		return fmt.Errorf("write run.entries.dispatched to outbox: %w", err)
 	}
 
 	// Outbox 2: query.model:v1
