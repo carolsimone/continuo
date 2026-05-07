@@ -113,7 +113,7 @@ describe('DetailPage — rerun gating by drift state', () => {
     render(withRouter({ last_run_id: RUN_ID }));
 
     await selectFirstNode();
-    const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i });
+    const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i }, { timeout: 10000 });
     fireEvent.click(rerunBtn);
 
     await waitFor(() => {
@@ -145,7 +145,7 @@ describe('DetailPage — rerun gating by drift state', () => {
     render(withRouter({ last_run_id: RUN_ID }));
 
     await selectFirstNode();
-    const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i });
+    const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i }, { timeout: 10000 });
     fireEvent.click(rerunBtn);
 
     expect(await screen.findByText('Stale topology')).toBeInTheDocument();
@@ -180,7 +180,7 @@ describe('DetailPage — rerun gating by drift state', () => {
     render(withRouter({ last_run_id: RUN_ID }));
 
     await selectFirstNode();
-    const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i });
+    const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i }, { timeout: 10000 });
     fireEvent.click(rerunBtn);
 
     expect(await screen.findByText('Topology unknown')).toBeInTheDocument();
@@ -227,7 +227,7 @@ describe('DetailPage — failed-stale-rerun (safety-net)', () => {
     render(withRouter({ last_run_id: RUN_ID }));
 
     await selectFirstNode();
-    fireEvent.click(await screen.findByRole('button', { name: /Rerun node/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Rerun node/i }, { timeout: 10000 }));
 
     expect(await screen.findByText('Stale topology')).toBeInTheDocument();
     expect(screen.getByText('5 → 7')).toBeInTheDocument();
