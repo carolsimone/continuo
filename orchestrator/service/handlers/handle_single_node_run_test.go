@@ -9,6 +9,7 @@ import (
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
+	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -82,7 +83,7 @@ func makeSingleNodeCmd(runID string) domainCmd.HandleSingleNodeRunCmd {
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 // 1. Happy path: SnapshotSingleNodeRun returns concrete values.
-//    Expect TWO outbox entries: run.initialized:v1 and query.model:v1.
+//    Expect TWO outbox entries: run.entries.dispatched:v1 and query.model:v1.
 func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 	fx := newSingleNodeRunHandlerFixture(t)
 	scheduleID := uuid.New().String()
@@ -100,13 +101,28 @@ func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 	require.True(t, fx.UoW.CommittedTx, "transaction must be committed")
 
 	entries := fx.UoW.outboxRepo.CreatedEntries
-	require.Len(t, entries, 2, "expect 2 outbox entries: run.initialized + query.model")
+	require.Len(t, entries, 2, "expect 2 outbox entries: run.entries.dispatched + query.model")
 
-	// Entry 0: run.initialized:v1
-	require.Equal(t, "run.initialized:v1", entries[0].StreamName)
-	require.Equal(t, "run_initialized", entries[0].EventType)
+	// Entry 0: run.entries.dispatched:v1
+	require.Equal(t, "run.entries.dispatched:v1", entries[0].StreamName)
+	require.Equal(t, "run_entries_dispatched", entries[0].EventType)
 	require.Equal(t, "orchestrator", entries[0].AggregateType)
 	require.Equal(t, "pending", entries[0].Status)
+
+	var dispatchedEvt pkgEvents.RunEntriesDispatched
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &dispatchedEvt))
+	require.Equal(t, scheduleID, dispatchedEvt.ScheduleID)
+	require.Equal(t, cmd.ScheduleName, dispatchedEvt.ScheduleName)
+	require.Len(t, dispatchedEvt.AllTasks, 1, "exactly one task for single-node run")
+	require.Equal(t, int32(1), dispatchedEvt.TotalTaskCount)
+	task := dispatchedEvt.AllTasks[0]
+	require.Equal(t, taskID, task.TaskID)
+	require.Equal(t, "svcA", task.ServiceName)
+	require.Equal(t, "public", task.SchemaName)
+	require.Equal(t, "users", task.TableName)
+	require.Equal(t, "dbt-model", task.NodeType)
+	require.Equal(t, "m3", task.ManifestVersion)
+	require.Equal(t, "v3", task.ImageTag)
 
 	// Entry 1: query.model:v1
 	require.Equal(t, "query.model:v1", entries[1].StreamName)
