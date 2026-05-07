@@ -357,6 +357,52 @@ func main() {
 		logger,
 	)
 
+	// Consumer 7: trigger.single_node_run:v1 -> HandleSingleNodeRun
+	singleNodeRunHandler := func(ctx context.Context, msg goredis.XMessage) error {
+		scheduleID, _ := msg.Values["schedule_id"].(string)
+		scheduleName, _ := msg.Values["schedule_name"].(string)
+		schemaName, _ := msg.Values["schema_name"].(string)
+		tableName, _ := msg.Values["table_name"].(string)
+		serviceName, _ := msg.Values["service_name"].(string)
+		metadataSource, _ := msg.Values["metadata_source"].(string)
+		sourceRunID, _ := msg.Values["source_run_id"].(string)
+
+		if scheduleID == "" || scheduleName == "" || schemaName == "" || tableName == "" || serviceName == "" {
+			return fmt.Errorf("missing required fields in single_node_run message %s", msg.ID)
+		}
+		switch metadataSource {
+		case "latest":
+			if sourceRunID != "" {
+				return fmt.Errorf("source_run_id must be empty when metadata_source=latest in message %s", msg.ID)
+			}
+		case "snapshot_of_run":
+			if sourceRunID == "" {
+				return fmt.Errorf("source_run_id required when metadata_source=snapshot_of_run in message %s", msg.ID)
+			}
+		default:
+			return fmt.Errorf("invalid metadata_source %q in message %s", metadataSource, msg.ID)
+		}
+
+		cmd := domainCmd.HandleSingleNodeRunCmd{
+			RunID:          scheduleID,
+			ScheduleName:   scheduleName,
+			ServiceName:    serviceName,
+			SchemaName:     schemaName,
+			TableName:      tableName,
+			Kind:           "single_node_run",
+			MetadataSource: metadataSource,
+			SourceRunID:    sourceRunID,
+		}
+		return handleSingleNodeRunHandler.Handle(ctx, cmd, msg.ID)
+	}
+	singleNodeRunConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.SingleNodeRunStream,
+		cfg.SingleNodeRunGroup,
+		singleNodeRunHandler,
+		logger,
+	)
+
 	// Consumer 6: run.finalized:v1 -> FinalizeRun
 	runFinalizedHandler := redis.NewRunFinalizedHandler(runRepoWrite, logger)
 	runFinalizedConsumer := redis.NewStreamConsumer(
@@ -395,6 +441,12 @@ func main() {
 	go func() {
 		if err := rerunConsumer.Start(ctx); err != nil {
 			logger.Error("Rerun consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := singleNodeRunConsumer.Start(ctx); err != nil {
+			logger.Error("Single-node-run consumer error", "error", err)
 		}
 	}()
 
