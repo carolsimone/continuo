@@ -28,12 +28,12 @@ type stubActivator struct {
 	calledWith string
 }
 
-func (s *stubActivator) ActivateSchedule(_ context.Context, name string) (uuid.UUID, error) {
+func (s *stubActivator) ActivateSchedule(_ context.Context, name string, _ string, _ *uuid.UUID) (uuid.UUID, error) {
 	s.calledWith = name
 	return s.id, s.err
 }
 
-func (s *stubActivator) PrepareActivation(_ context.Context, _ string) (*model.SchedulerTracker, error) {
+func (s *stubActivator) PrepareActivation(_ context.Context, _ string, _ string, _ *uuid.UUID) (*model.SchedulerTracker, error) {
 	return nil, nil
 }
 

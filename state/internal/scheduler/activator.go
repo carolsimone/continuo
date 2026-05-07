@@ -13,8 +13,8 @@ import (
 
 // ScheduleActivator defines the interface for activating schedules.
 type ScheduleActivator interface {
-	ActivateSchedule(ctx context.Context, scheduleName string) (uuid.UUID, error)
-	PrepareActivation(ctx context.Context, scheduleName string) (*model.SchedulerTracker, error)
+	ActivateSchedule(ctx context.Context, scheduleName string, kind string, sourceRunID *uuid.UUID) (uuid.UUID, error)
+	PrepareActivation(ctx context.Context, scheduleName string, kind string, sourceRunID *uuid.UUID) (*model.SchedulerTracker, error)
 }
 
 // scheduleActivator implements ScheduleActivator.
@@ -38,7 +38,7 @@ func NewScheduleActivator(
 
 // PrepareActivation checks eligibility and returns a ready-to-insert SchedulerTracker,
 // or nil if a PENDING or RUNNING run already exists for this schedule name.
-func (a *scheduleActivator) PrepareActivation(ctx context.Context, scheduleName string) (*model.SchedulerTracker, error) {
+func (a *scheduleActivator) PrepareActivation(ctx context.Context, scheduleName string, kind string, sourceRunID *uuid.UUID) (*model.SchedulerTracker, error) {
 	hasActive, err := a.repo.HasActiveSchedule(ctx, scheduleName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check for active schedule: %w", err)
@@ -50,22 +50,27 @@ func (a *scheduleActivator) PrepareActivation(ctx context.Context, scheduleName 
 		)
 		return nil, nil
 	}
+	if kind == "" {
+		kind = "cron"
+	}
 	return &model.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         scheduleName,
 		Status:               model.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
+		Kind:                 kind,
+		SourceRunID:          sourceRunID,
 	}, nil
 }
 
 // ActivateSchedule checks eligibility, creates the tracker row, and returns the
 // new schedule ID. It does not publish to Redis — use ScheduleActivationService
 // for the production outbox path.
-func (a *scheduleActivator) ActivateSchedule(ctx context.Context, scheduleName string) (uuid.UUID, error) {
-	a.logger.Info("Attempting to activate schedule", "schedule_name", scheduleName)
+func (a *scheduleActivator) ActivateSchedule(ctx context.Context, scheduleName string, kind string, sourceRunID *uuid.UUID) (uuid.UUID, error) {
+	a.logger.Info("Attempting to activate schedule", "schedule_name", scheduleName, "kind", kind)
 
-	tracker, err := a.PrepareActivation(ctx, scheduleName)
+	tracker, err := a.PrepareActivation(ctx, scheduleName, kind, sourceRunID)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -86,6 +91,7 @@ func (a *scheduleActivator) ActivateSchedule(ctx context.Context, scheduleName s
 		"schedule_id", tracker.ScheduleID,
 		"schedule_name", scheduleName,
 		"status", tracker.Status,
+		"kind", tracker.Kind,
 	)
 	return tracker.ScheduleID, nil
 }

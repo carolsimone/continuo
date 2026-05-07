@@ -33,10 +33,10 @@ type fakeActivator struct {
 	err     error
 }
 
-func (f *fakeActivator) ActivateSchedule(_ context.Context, _ string) (uuid.UUID, error) {
+func (f *fakeActivator) ActivateSchedule(_ context.Context, _ string, _ string, _ *uuid.UUID) (uuid.UUID, error) {
 	return uuid.Nil, nil
 }
-func (f *fakeActivator) PrepareActivation(_ context.Context, _ string) (*model.SchedulerTracker, error) {
+func (f *fakeActivator) PrepareActivation(_ context.Context, _ string, _ string, _ *uuid.UUID) (*model.SchedulerTracker, error) {
 	return f.tracker, f.err
 }
 
@@ -92,7 +92,7 @@ func TestScheduleActivationService_NoopWhenAlreadyActive(t *testing.T) {
 		db, activator, &fakeCatalogRepoSvc{}, repo, outbox, "scheduler.started:v1", testLogger(),
 	)
 
-	id, err := svc.ActivateSchedule(context.Background(), "my-schedule")
+	id, err := svc.ActivateSchedule(context.Background(), "my-schedule", "cron", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, uuid.Nil, id)
@@ -107,7 +107,7 @@ func TestScheduleActivationService_PropagatesPrepareError(t *testing.T) {
 		db, activator, &fakeCatalogRepoSvc{}, &fakeCreateTxRepo{}, &fakeOutboxRepoSvc{}, "scheduler.started:v1", testLogger(),
 	)
 
-	_, err := svc.ActivateSchedule(context.Background(), "my-schedule")
+	_, err := svc.ActivateSchedule(context.Background(), "my-schedule", "cron", nil)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db check error")
@@ -136,7 +136,7 @@ func TestActivationService_TransitionsInitStatusAtomically(t *testing.T) {
 		db, activator, catalog, schedulerRepo, outboxRepo, "scheduler.started:v1", logger,
 	)
 
-	id, err := svc.ActivateSchedule(ctx, "atomic-init-test")
+	id, err := svc.ActivateSchedule(ctx, "atomic-init-test", "cron", nil)
 	require.NoError(t, err)
 	assert.Equal(t, scheduleID, id)
 
@@ -180,7 +180,7 @@ func TestScheduleActivationService_AtomicallyWritesTrackerAndOutbox(t *testing.T
 		db, activator, catalog, repo, outbox, "scheduler.started:v1", testLogger(),
 	)
 
-	id, err := svc.ActivateSchedule(context.Background(), "my-schedule")
+	id, err := svc.ActivateSchedule(context.Background(), "my-schedule", "cron", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, tracker.ScheduleID, id)
@@ -204,4 +204,47 @@ func TestScheduleActivationService_AtomicallyWritesTrackerAndOutbox(t *testing.T
 	svcA, ok := svcMeta["svc-a"].(map[string]any)
 	require.True(t, ok, "svc-a must be a map in service_metadata")
 	assert.Equal(t, "v3", svcA["manifest_version"])
+}
+
+func TestActivationService_OutboxPayloadCarriesKindAndSourceRunID(t *testing.T) {
+	db := getActivationTestDB(t)
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, testLogger())
+	catalogRepo := postgres.NewScheduleCatalogRepository(db, testLogger())
+	outboxRepo := postgres.NewOutboxRepository(db, testLogger())
+	activator := scheduler.NewScheduleActivator(schedulerRepo, testLogger())
+	svc := scheduler.NewScheduleActivationService(
+		db, activator, catalogRepo, schedulerRepo, outboxRepo,
+		"scheduler.started:v1", testLogger(),
+	)
+
+	scheduleName := "obx-" + uuid.New().String()[:8]
+	require.NoError(t, catalogRepo.UpsertAll(context.Background(), []string{scheduleName}, map[string]model.ServiceMetadata{}))
+
+	sourceRunID := uuid.New()
+	scheduleID, err := svc.ActivateSchedule(context.Background(), scheduleName, "rerun", &sourceRunID)
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, scheduleID)
+
+	// Read back the outbox row and assert payload contains kind + source_run_id.
+	var rawPayload []byte
+	require.NoError(t, db.GetContext(context.Background(), &rawPayload,
+		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 ORDER BY created_at DESC LIMIT 1`, scheduleID))
+	var outboxPayload map[string]interface{}
+	require.NoError(t, json.Unmarshal(rawPayload, &outboxPayload))
+	assert.Equal(t, "rerun", outboxPayload["kind"])
+	assert.Equal(t, sourceRunID.String(), outboxPayload["source_run_id"])
+
+	// Assert the tracker row also has kind + source_run_id.
+	tracker, err := schedulerRepo.GetByID(context.Background(), scheduleID)
+	require.NoError(t, err)
+	assert.Equal(t, "rerun", tracker.Kind)
+	require.NotNil(t, tracker.SourceRunID)
+	assert.Equal(t, sourceRunID, *tracker.SourceRunID)
+
+	// Cleanup.
+	t.Cleanup(func() {
+		db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
+		db.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		db.ExecContext(context.Background(), `DELETE FROM schedule_catalog WHERE schedule_name = $1`, scheduleName)
+	})
 }

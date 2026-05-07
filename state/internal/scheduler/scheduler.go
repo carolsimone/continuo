@@ -118,7 +118,7 @@ func (s *CronScheduler) activateSchedule(name string) {
 	s.logger.Info("Cron trigger fired", "schedule_name", name)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, err := s.activator.ActivateSchedule(ctx, name); err != nil {
+	if _, err := s.activator.ActivateSchedule(ctx, name, "cron", nil); err != nil {
 		s.logger.Error("Failed to activate schedule", "schedule_name", name, "error", err)
 	}
 }

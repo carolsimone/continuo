@@ -154,11 +154,11 @@ func TestMain(m *testing.M) {
 // noopScheduleActivator satisfies the scheduler.ScheduleActivator interface without I/O
 type noopScheduleActivator struct{}
 
-func (n *noopScheduleActivator) ActivateSchedule(_ context.Context, _ string) (uuid.UUID, error) {
+func (n *noopScheduleActivator) ActivateSchedule(_ context.Context, _ string, _ string, _ *uuid.UUID) (uuid.UUID, error) {
 	return uuid.New(), nil
 }
 
-func (n *noopScheduleActivator) PrepareActivation(_ context.Context, _ string) (*model.SchedulerTracker, error) {
+func (n *noopScheduleActivator) PrepareActivation(_ context.Context, _ string, _ string, _ *uuid.UUID) (*model.SchedulerTracker, error) {
 	return nil, nil
 }
 
