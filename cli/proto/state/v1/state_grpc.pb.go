@@ -34,6 +34,7 @@ const (
 	StateService_ResetTask_FullMethodName                = "/state.v1.StateService/ResetTask"
 	StateService_GetSchedulerInitStatus_FullMethodName   = "/state.v1.StateService/GetSchedulerInitStatus"
 	StateService_TriggerRerun_FullMethodName             = "/state.v1.StateService/TriggerRerun"
+	StateService_TriggerSingleNodeRun_FullMethodName     = "/state.v1.StateService/TriggerSingleNodeRun"
 	StateService_GetTaskExecution_FullMethodName         = "/state.v1.StateService/GetTaskExecution"
 	StateService_ListTaskExecutions_FullMethodName       = "/state.v1.StateService/ListTaskExecutions"
 )
@@ -68,8 +69,22 @@ type StateServiceClient interface {
 	// Used by orchestrator to guard premature finalization during re-run.
 	GetSchedulerInitStatus(ctx context.Context, in *GetSchedulerInitStatusRequest, opts ...grpc.CallOption) (*GetSchedulerInitStatusResponse, error)
 	// TriggerRerun atomically resets the scheduler + target task and enqueues a
-	// rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+	// trigger.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
 	TriggerRerun(ctx context.Context, in *TriggerRerunRequest, opts ...grpc.CallOption) (*TriggerRerunResponse, error)
+	// TriggerSingleNodeRun creates a synthesised single-node run that
+	// executes exactly one task with no downstream pickup. Two modes:
+	//   - latest (default): metadata pair from latest topology
+	//   - stale: metadata pair from the source run's :EXECUTES edge
+	//
+	// Errors:
+	//
+	//	INVALID_ARGUMENT — empty/malformed identity, unknown metadata_source,
+	//	                   stale mode without source_run_id, latest mode with
+	//	                   non-empty source_run_id.
+	//	NOT_FOUND — stale mode + source_run_id has no scheduler_tracker row,
+	//	            or no task_tracker row matching the identity.
+	//	FAILED_PRECONDITION — stale mode + source run not terminal.
+	TriggerSingleNodeRun(ctx context.Context, in *TriggerSingleNodeRunRequest, opts ...grpc.CallOption) (*TriggerSingleNodeRunResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error)
 	ListTaskExecutions(ctx context.Context, in *ListTaskExecutionsRequest, opts ...grpc.CallOption) (*ListTaskExecutionsResponse, error)
@@ -233,6 +248,16 @@ func (c *stateServiceClient) TriggerRerun(ctx context.Context, in *TriggerRerunR
 	return out, nil
 }
 
+func (c *stateServiceClient) TriggerSingleNodeRun(ctx context.Context, in *TriggerSingleNodeRunRequest, opts ...grpc.CallOption) (*TriggerSingleNodeRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TriggerSingleNodeRunResponse)
+	err := c.cc.Invoke(ctx, StateService_TriggerSingleNodeRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *stateServiceClient) GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TaskExecutionResponse)
@@ -283,8 +308,22 @@ type StateServiceServer interface {
 	// Used by orchestrator to guard premature finalization during re-run.
 	GetSchedulerInitStatus(context.Context, *GetSchedulerInitStatusRequest) (*GetSchedulerInitStatusResponse, error)
 	// TriggerRerun atomically resets the scheduler + target task and enqueues a
-	// rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+	// trigger.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
 	TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error)
+	// TriggerSingleNodeRun creates a synthesised single-node run that
+	// executes exactly one task with no downstream pickup. Two modes:
+	//   - latest (default): metadata pair from latest topology
+	//   - stale: metadata pair from the source run's :EXECUTES edge
+	//
+	// Errors:
+	//
+	//	INVALID_ARGUMENT — empty/malformed identity, unknown metadata_source,
+	//	                   stale mode without source_run_id, latest mode with
+	//	                   non-empty source_run_id.
+	//	NOT_FOUND — stale mode + source_run_id has no scheduler_tracker row,
+	//	            or no task_tracker row matching the identity.
+	//	FAILED_PRECONDITION — stale mode + source run not terminal.
+	TriggerSingleNodeRun(context.Context, *TriggerSingleNodeRunRequest) (*TriggerSingleNodeRunResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error)
 	ListTaskExecutions(context.Context, *ListTaskExecutionsRequest) (*ListTaskExecutionsResponse, error)
@@ -342,6 +381,9 @@ func (UnimplementedStateServiceServer) GetSchedulerInitStatus(context.Context, *
 }
 func (UnimplementedStateServiceServer) TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TriggerRerun not implemented")
+}
+func (UnimplementedStateServiceServer) TriggerSingleNodeRun(context.Context, *TriggerSingleNodeRunRequest) (*TriggerSingleNodeRunResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TriggerSingleNodeRun not implemented")
 }
 func (UnimplementedStateServiceServer) GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTaskExecution not implemented")
@@ -640,6 +682,24 @@ func _StateService_TriggerRerun_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_TriggerSingleNodeRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TriggerSingleNodeRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).TriggerSingleNodeRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_TriggerSingleNodeRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).TriggerSingleNodeRun(ctx, req.(*TriggerSingleNodeRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StateService_GetTaskExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTaskExecutionRequest)
 	if err := dec(in); err != nil {
@@ -742,6 +802,10 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TriggerRerun",
 			Handler:    _StateService_TriggerRerun_Handler,
+		},
+		{
+			MethodName: "TriggerSingleNodeRun",
+			Handler:    _StateService_TriggerSingleNodeRun_Handler,
 		},
 		{
 			MethodName: "GetTaskExecution",
