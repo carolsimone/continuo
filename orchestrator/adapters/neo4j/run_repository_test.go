@@ -180,7 +180,7 @@ func TestRunRepository_SnapshotGraph_ScopesExactlyToScheduleNodes(t *testing.T) 
 	repo := neo4jinfra.NewRunRepository(client, logger)
 	runID := uuid.New().String()
 
-	require.NoError(t, repo.SnapshotGraph(ctx, runID, schedA))
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, schedA, "cron", nil))
 
 	// Count EXECUTES edges to nodes that do NOT belong to schedA — must be zero.
 	sess2 := driver.NewSession(ctx, neo4j.AccessModeRead)
@@ -256,7 +256,7 @@ func TestRunRepository_SnapshotGraph_IncludesCrossScheduleSeed(t *testing.T) {
 	repo := neo4jinfra.NewRunRepository(client, logger)
 	runID := uuid.New().String()
 
-	require.NoError(t, repo.SnapshotGraph(ctx, runID, mainSched))
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, mainSched, "cron", nil))
 
 	// The seed node (schedule_name=seedSched) must have an EXECUTES edge with a valid task_id.
 	sess2 := driver.NewSession(ctx, neo4j.AccessModeRead)
@@ -346,7 +346,7 @@ func TestRunRepository_SnapshotGraph_NoSpuriousEdgesToDuplicateSeeds(t *testing.
 	repo := neo4jinfra.NewRunRepository(client, logger)
 	runID := uuid.New().String()
 
-	require.NoError(t, repo.SnapshotGraph(ctx, runID, mainSched))
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, mainSched, "cron", nil))
 
 	sess2 := driver.NewSession(ctx, neo4j.AccessModeRead)
 	defer sess2.Close(ctx)
@@ -370,6 +370,63 @@ func safeStringTest(v interface{}) string {
 		return s
 	}
 	return ""
+}
+
+func TestRunRepository_SnapshotGraph_StampsKindAndSourceRunID(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	repo := neo4jinfra.NewRunRepository(client, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	runID := uuid.New().String()
+	scheduleName := "snap-kind-" + uuid.New().String()[:8]
+	sourceRunID := uuid.New()
+
+	cleanup := seedScheduleNodes(t, ctx, client, scheduleName)
+	t.Cleanup(cleanup)
+
+	require.NoError(t, repo.SnapshotGraph(
+		ctx, runID, scheduleName, "rerun", &sourceRunID,
+	))
+
+	session := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+	result, err := session.Run(ctx,
+		`MATCH (r:Run {run_id: $run_id}) RETURN r.kind AS kind, r.source_run_id AS source_run_id`,
+		map[string]interface{}{"run_id": runID})
+	require.NoError(t, err)
+	require.True(t, result.Next(ctx))
+	rec := result.Record()
+	kindRaw, _ := rec.Get("kind")
+	sourceRaw, _ := rec.Get("source_run_id")
+	assert.Equal(t, "rerun", kindRaw)
+	assert.Equal(t, sourceRunID.String(), sourceRaw)
+}
+
+func TestRunRepository_SnapshotGraph_StampsKindButOmitsNilSourceRunID(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	repo := neo4jinfra.NewRunRepository(client, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	runID := uuid.New().String()
+	scheduleName := "snap-nilsrc-" + uuid.New().String()[:8]
+
+	cleanup := seedScheduleNodes(t, ctx, client, scheduleName)
+	t.Cleanup(cleanup)
+
+	require.NoError(t, repo.SnapshotGraph(
+		ctx, runID, scheduleName, "cron", nil,
+	))
+
+	session := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+	result, err := session.Run(ctx,
+		`MATCH (r:Run {run_id: $run_id}) RETURN r.kind AS kind, r.source_run_id AS source_run_id`,
+		map[string]interface{}{"run_id": runID})
+	require.NoError(t, err)
+	require.True(t, result.Next(ctx))
+	rec := result.Record()
+	kindRaw, _ := rec.Get("kind")
+	sourceRaw, _ := rec.Get("source_run_id")
+	assert.Equal(t, "cron", kindRaw)
+	assert.Nil(t, sourceRaw, "source_run_id property absent on the :Run node")
 }
 
 func TestSnapshotGraph_StampsGenerationAndServiceMetadataAndEdgeImageTag(t *testing.T) {
@@ -420,7 +477,7 @@ func TestSnapshotGraph_StampsGenerationAndServiceMetadataAndEdgeImageTag(t *test
 
 	repo := neo4jinfra.NewRunRepository(client, slog.Default())
 	runID := uuid.New().String()
-	require.NoError(t, repo.SnapshotGraph(ctx, runID, scheduleName))
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, scheduleName, "cron", nil))
 
 	readSession := client.NewSession(ctx, neo4j.AccessModeRead)
 	defer readSession.Close(ctx)
@@ -472,7 +529,7 @@ func TestRunRepository_SnapshotGraph_AssignsTaskUUIDs(t *testing.T) {
 	runID := uuid.New().String()
 
 	// ── First snapshot ────────────────────────────────────────────────────────
-	require.NoError(t, repo.SnapshotGraph(ctx, runID, scheduleName))
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, scheduleName, "cron", nil))
 
 	initNodes, err := repo.GetScheduleInitNodes(ctx, scheduleName, runID)
 	require.NoError(t, err)
@@ -508,7 +565,7 @@ func TestRunRepository_SnapshotGraph_AssignsTaskUUIDs(t *testing.T) {
 	}
 
 	// ── Second snapshot (idempotent) ──────────────────────────────────────────
-	require.NoError(t, repo.SnapshotGraph(ctx, runID, scheduleName),
+	require.NoError(t, repo.SnapshotGraph(ctx, runID, scheduleName, "cron", nil),
 		"second SnapshotGraph call (same runID) must succeed")
 
 	initNodes2, err := repo.GetScheduleInitNodes(ctx, scheduleName, runID)

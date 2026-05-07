@@ -243,3 +243,31 @@ func TestHandleSchedulerStarted_Idempotent(t *testing.T) {
 	assert.Len(t, u.outboxRepo.CreatedEntries, 0, "no outbox entries for duplicate")
 	assert.False(t, u.CommittedTx, "no commit for duplicate")
 }
+
+// TestHandleSchedulerStarted_PropagatesKindAndSourceRunID verifies that kind and
+// sourceRunID from SchedulerStartedCmd are threaded through to SnapshotGraph.
+func TestHandleSchedulerStarted_PropagatesKindAndSourceRunID(t *testing.T) {
+	ctx := context.Background()
+	u := newFakeUnitOfWork()
+	sourceRunID := uuid.New()
+
+	runRepo := &extendedFakeRunRepository{
+		getScheduleInitNodesFn: func(_ context.Context, _, _ string) (*run.ScheduleInitNodes, error) {
+			return makeSchedulerStartedNodes(), nil
+		},
+	}
+
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	cmd := domainCmd.SchedulerStartedCmd{
+		ScheduleID:   uuid.New(),
+		ScheduleName: "propagate-test",
+		Kind:         "rerun",
+		SourceRunID:  &sourceRunID,
+	}
+
+	require.NoError(t, h.Handle(ctx, cmd, "msg-propagate-1"))
+	require.Len(t, runRepo.snapshotCalls, 1)
+	assert.Equal(t, "rerun", runRepo.snapshotCalls[0].Kind)
+	require.NotNil(t, runRepo.snapshotCalls[0].SourceRunID)
+	assert.Equal(t, sourceRunID, *runRepo.snapshotCalls[0].SourceRunID)
+}

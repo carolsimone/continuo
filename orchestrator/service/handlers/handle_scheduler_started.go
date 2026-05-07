@@ -70,7 +70,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd domainCm
 	}
 
 	// Snapshot the graph for this run (creates Run + EXECUTES edges, pre-assigns task UUIDs).
-	if err := h.runRepo.SnapshotGraph(ctx, cmd.ScheduleID.String(), cmd.ScheduleName); err != nil {
+	if err := h.runRepo.SnapshotGraph(ctx, cmd.ScheduleID.String(), cmd.ScheduleName, cmd.Kind, cmd.SourceRunID); err != nil {
 		return fmt.Errorf("failed to snapshot graph: %w", err)
 	}
 

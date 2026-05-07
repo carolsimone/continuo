@@ -24,7 +24,8 @@ func NewRunRepository(client Neo4jClient, logger *slog.Logger) *RunRepository {
 // SnapshotGraph creates a Run node and EXECUTES edges for all nodes in a schedule.
 // Each edge gets a stable task_id UUID assigned at creation time; re-snapshots
 // (idempotent replay via MERGE) preserve the original task_id.
-func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName string) error {
+// kind is stamped onto the :Run node; sourceRunID is set only when non-nil.
+func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
@@ -88,6 +89,16 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 	// existing edges on replay keep their original task_id.
 	// topology_generation and service_metadata are copied from :TopologyRoot at
 	// snapshot time so the run is isolated from future topology changes.
+	// kind is stamped on the :Run node; source_run_id is written only when non-nil.
+
+	// sourceRunIDParam is interface{} so a nil maps cleanly to Cypher null.
+	var sourceRunIDParam interface{}
+	if sourceRunID != nil {
+		sourceRunIDParam = sourceRunID.String()
+	} else {
+		sourceRunIDParam = nil
+	}
+
 	mergeQuery := `
 		OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
 		WITH COALESCE(root.topology_generation, 0) AS topo_gen,
@@ -96,7 +107,13 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 		ON CREATE SET run.schedule_name = $schedule_name,
 		              run.created_at = datetime(),
 		              run.topology_generation = topo_gen,
-		              run.service_metadata = svc_meta
+		              run.service_metadata = svc_meta,
+		              run.kind = $kind
+		ON MATCH SET  run.kind = COALESCE(run.kind, $kind)
+		WITH run
+		FOREACH (_ IN CASE WHEN $source_run_id IS NULL THEN [] ELSE [1] END |
+		    SET run.source_run_id = $source_run_id
+		)
 		WITH run
 		UNWIND $assignments AS a
 		MATCH (node:Table {schema_name:   a.schema_name,
@@ -113,6 +130,8 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 	result, err := session.Run(ctx, mergeQuery, map[string]interface{}{
 		"run_id":        runID,
 		"schedule_name": scheduleName,
+		"kind":          kind,
+		"source_run_id": sourceRunIDParam,
 		"assignments":   assignments,
 	})
 	if err != nil {
@@ -123,6 +142,7 @@ func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName s
 		r.logger.Info("Graph snapshot created",
 			"run_id", runID,
 			"schedule_name", scheduleName,
+			"kind", kind,
 			"edges", count,
 		)
 	}
