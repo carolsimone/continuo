@@ -274,9 +274,9 @@ func TestTriggerRerun_Success(t *testing.T) {
 	// Task reset is handled by run_rerun_dispatched_handler, not here.
 	assert.Nil(t, task.updated)
 
-	// Outbox entry written to rerun:v1
+	// Outbox entry written to trigger.rerun:v1
 	require.NotNil(t, outbox.created)
-	assert.Equal(t, "rerun:v1", outbox.created.StreamName)
+	assert.Equal(t, "trigger.rerun:v1", outbox.created.StreamName)
 	assert.Equal(t, "rerun_node", outbox.created.EventType)
 	assert.Equal(t, scheduleID, outbox.created.AggregateID)
 }
