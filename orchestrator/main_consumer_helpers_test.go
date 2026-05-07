@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,12 +15,12 @@ func TestParseSchedulerStartedMessage_Defaults(t *testing.T) {
 		"runner_id":     runnerID.String(),
 		"schedule_name": "test_schedule",
 	}
-	cmd, err := parseSchedulerStartedMessage(msg)
+	evt, err := parseSchedulerStartedMessage(msg)
 	require.NoError(t, err)
-	assert.Equal(t, runnerID, cmd.ScheduleID)
-	assert.Equal(t, "test_schedule", cmd.ScheduleName)
-	assert.Equal(t, "cron", cmd.Kind)
-	assert.Nil(t, cmd.SourceRunID)
+	assert.Equal(t, runnerID, evt.ScheduleID)
+	assert.Equal(t, "test_schedule", evt.ScheduleName)
+	assert.Equal(t, "cron", evt.Kind)
+	assert.Nil(t, evt.SourceRunID)
 }
 
 func TestParseSchedulerStartedMessage_KindAndSource(t *testing.T) {
@@ -32,11 +32,11 @@ func TestParseSchedulerStartedMessage_KindAndSource(t *testing.T) {
 		"kind":          "rerun",
 		"source_run_id": sourceID.String(),
 	}
-	cmd, err := parseSchedulerStartedMessage(msg)
+	evt, err := parseSchedulerStartedMessage(msg)
 	require.NoError(t, err)
-	assert.Equal(t, "rerun", cmd.Kind)
-	require.NotNil(t, cmd.SourceRunID)
-	assert.Equal(t, sourceID, *cmd.SourceRunID)
+	assert.Equal(t, "rerun", evt.Kind)
+	require.NotNil(t, evt.SourceRunID)
+	assert.Equal(t, sourceID, *evt.SourceRunID)
 }
 
 func TestParseSchedulerStartedMessage_EmptySourceRunIDIsNil(t *testing.T) {
@@ -47,9 +47,9 @@ func TestParseSchedulerStartedMessage_EmptySourceRunIDIsNil(t *testing.T) {
 		"kind":          "cron",
 		"source_run_id": "",
 	}
-	cmd, err := parseSchedulerStartedMessage(msg)
+	evt, err := parseSchedulerStartedMessage(msg)
 	require.NoError(t, err)
-	assert.Nil(t, cmd.SourceRunID)
+	assert.Nil(t, evt.SourceRunID)
 }
 
 func TestParseSchedulerStartedMessage_InvalidRunnerID(t *testing.T) {
@@ -61,4 +61,4 @@ func TestParseSchedulerStartedMessage_InvalidRunnerID(t *testing.T) {
 	require.Error(t, err)
 }
 
-var _ = domainCmd.SchedulerStartedCmd{} // anchor import
+var _ = domain.SchedulerStarted{} // anchor import

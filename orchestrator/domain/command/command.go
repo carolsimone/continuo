@@ -4,14 +4,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// SchedulerStartedCmd carries the data from a scheduler.started:v1 event.
-type SchedulerStartedCmd struct {
-	ScheduleID   uuid.UUID
-	ScheduleName string
-	Kind         string     // "cron" | "trigger" | "rerun" | "rebase" | "single_node_run"; defaults to "cron" if missing on incoming message
-	SourceRunID  *uuid.UUID // populated for rerun, rebase, stale-mode single_node_run; nil otherwise
-}
-
 // HandleNodeCompletedCmd carries the data for a node-completed event.
 type HandleNodeCompletedCmd struct {
 	TaskID       uuid.UUID

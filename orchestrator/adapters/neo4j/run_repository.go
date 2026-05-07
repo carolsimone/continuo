@@ -24,7 +24,16 @@ func NewRunRepository(client Neo4jClient, logger *slog.Logger) *RunRepository {
 // SnapshotGraph creates a Run node and EXECUTES edges for all nodes in a schedule.
 // Each edge gets a stable task_id UUID assigned at creation time; re-snapshots
 // (idempotent replay via MERGE) preserve the original task_id.
-// kind is stamped onto the :Run node; sourceRunID is set only when non-nil.
+//
+// kind is the run-level discriminator stamped onto :Run.kind on CREATE
+// (preserved on replay via COALESCE in ON MATCH). One of: "cron", "trigger",
+// "rerun", "rebase", "single_node_run".
+//
+// sourceRunID is the schedule_id of the parent run this one derives from
+// (same UUID as scheduler_tracker.schedule_id on the source row, since
+// :Run.run_id == scheduler_tracker.schedule_id by construction). It is set
+// only when non-nil — populated for "rerun", "rebase", and stale-mode
+// "single_node_run"; nil for "cron" and "trigger".
 func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)

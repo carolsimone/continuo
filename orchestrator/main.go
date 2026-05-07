@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/config"
+	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/orchestrator/adapters/http"
@@ -31,22 +32,22 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// parseSchedulerStartedMessage extracts a SchedulerStartedCmd from a Redis
+// parseSchedulerStartedMessage extracts a domain.SchedulerStarted from a Redis
 // stream message's Values map. Missing kind defaults to "cron"; missing or
 // empty source_run_id yields nil. This shape is unit-tested in
 // main_consumer_helpers_test.go.
-func parseSchedulerStartedMessage(values map[string]interface{}) (domainCmd.SchedulerStartedCmd, error) {
+func parseSchedulerStartedMessage(values map[string]interface{}) (domain.SchedulerStarted, error) {
 	runnerID, ok := values["runner_id"].(string)
 	if !ok || runnerID == "" {
-		return domainCmd.SchedulerStartedCmd{}, fmt.Errorf("missing or invalid runner_id")
+		return domain.SchedulerStarted{}, fmt.Errorf("missing or invalid runner_id")
 	}
 	schedulerID, err := uuid.Parse(runnerID)
 	if err != nil {
-		return domainCmd.SchedulerStartedCmd{}, fmt.Errorf("invalid runner_id UUID %q: %w", runnerID, err)
+		return domain.SchedulerStarted{}, fmt.Errorf("invalid runner_id UUID %q: %w", runnerID, err)
 	}
 	scheduleName, ok2 := values["schedule_name"].(string)
 	if !ok2 || scheduleName == "" {
-		return domainCmd.SchedulerStartedCmd{}, fmt.Errorf("missing or invalid schedule_name")
+		return domain.SchedulerStarted{}, fmt.Errorf("missing or invalid schedule_name")
 	}
 
 	kind, _ := values["kind"].(string)
@@ -58,12 +59,12 @@ func parseSchedulerStartedMessage(values map[string]interface{}) (domainCmd.Sche
 	if raw, ok := values["source_run_id"].(string); ok && raw != "" {
 		parsed, err := uuid.Parse(raw)
 		if err != nil {
-			return domainCmd.SchedulerStartedCmd{}, fmt.Errorf("invalid source_run_id UUID %q: %w", raw, err)
+			return domain.SchedulerStarted{}, fmt.Errorf("invalid source_run_id UUID %q: %w", raw, err)
 		}
 		sourceRunID = &parsed
 	}
 
-	return domainCmd.SchedulerStartedCmd{
+	return domain.SchedulerStarted{
 		ScheduleID:   schedulerID,
 		ScheduleName: scheduleName,
 		Kind:         kind,

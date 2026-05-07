@@ -11,7 +11,6 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
@@ -40,18 +39,18 @@ func NewHandleSchedulerStartedHandler(
 	}
 }
 
-// Handle processes a SchedulerStartedCmd.
-func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd domainCmd.SchedulerStartedCmd, messageID string) error {
+// Handle processes a domain.SchedulerStarted event.
+func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.SchedulerStarted, messageID string) error {
 	h.logger.Info("Processing scheduler started",
 		"message_id", messageID,
-		"schedule_id", cmd.ScheduleID,
-		"schedule_name", cmd.ScheduleName,
+		"schedule_id", evt.ScheduleID,
+		"schedule_name", evt.ScheduleName,
 	)
 
-	// Marshal command payload for message_processing record.
-	payload, err := json.Marshal(cmd)
+	// Marshal event payload for message_processing record.
+	payload, err := json.Marshal(evt)
 	if err != nil {
-		return fmt.Errorf("failed to marshal command: %w", err)
+		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
 	// Begin transaction.
@@ -70,18 +69,18 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd domainCm
 	}
 
 	// Snapshot the graph for this run (creates Run + EXECUTES edges, pre-assigns task UUIDs).
-	if err := h.runRepo.SnapshotGraph(ctx, cmd.ScheduleID.String(), cmd.ScheduleName, cmd.Kind, cmd.SourceRunID); err != nil {
+	if err := h.runRepo.SnapshotGraph(ctx, evt.ScheduleID.String(), evt.ScheduleName, evt.Kind, evt.SourceRunID); err != nil {
 		return fmt.Errorf("failed to snapshot graph: %w", err)
 	}
 
 	// Get all/root/seed initialization nodes for the schedule.
-	initNodes, err := h.runRepo.GetScheduleInitNodes(ctx, cmd.ScheduleName, cmd.ScheduleID.String())
+	initNodes, err := h.runRepo.GetScheduleInitNodes(ctx, evt.ScheduleName, evt.ScheduleID.String())
 	if err != nil {
 		return fmt.Errorf("failed to get schedule init nodes: %w", err)
 	}
 
 	// Build and write run.entries.dispatched:v1 outbox entry.
-	dispatchedPayload, err := h.buildRunEntriesDispatchedPayload(cmd, initNodes)
+	dispatchedPayload, err := h.buildRunEntriesDispatchedPayload(evt, initNodes)
 	if err != nil {
 		return fmt.Errorf("failed to build run.entries.dispatched payload: %w", err)
 	}
@@ -90,7 +89,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd domainCm
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
-		AggregateID:         cmd.ScheduleID,
+		AggregateID:         evt.ScheduleID,
 		EventType:           "run_entries_dispatched",
 		Payload:             dispatchedPayload,
 		StreamName:          "run.entries.dispatched:v1",
@@ -116,13 +115,13 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd domainCm
 			continue
 		}
 
-		jobName, err := pkgDomain.ComputeJobName(node.ServiceName, node.SchemaName, node.TableName, cmd.ScheduleID.String())
+		jobName, err := pkgDomain.ComputeJobName(node.ServiceName, node.SchemaName, node.TableName, evt.ScheduleID.String())
 		if err != nil {
 			return fmt.Errorf("failed to compute job_name for %s.%s: %w", node.SchemaName, node.TableName, err)
 		}
 
-		evt := domain.NodeReadyForExecution{
-			ScheduleID:      cmd.ScheduleID.String(),
+		nodeEvt := domain.NodeReadyForExecution{
+			ScheduleID:      evt.ScheduleID.String(),
 			ScheduleName:    node.ScheduleName,
 			ServiceName:     node.ServiceName,
 			SchemaName:      node.SchemaName,
@@ -134,7 +133,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd domainCm
 			ImageTag:        node.ImageTag,
 		}
 
-		evtPayload, err := json.Marshal(evt)
+		evtPayload, err := json.Marshal(nodeEvt)
 		if err != nil {
 			return fmt.Errorf("failed to marshal NodeReadyForExecution for %s.%s: %w", node.SchemaName, node.TableName, err)
 		}
@@ -143,7 +142,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd domainCm
 			ID:                  uuid.New(),
 			MessageProcessingID: &msgProcessingID,
 			AggregateType:       "orchestrator",
-			AggregateID:         cmd.ScheduleID,
+			AggregateID:         evt.ScheduleID,
 			EventType:           "node_ready_for_execution",
 			Payload:             evtPayload,
 			StreamName:          "query.model:v1",
@@ -172,8 +171,8 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, cmd domainCm
 	}
 
 	h.logger.Info("Scheduler started processing finished",
-		"schedule_id", cmd.ScheduleID,
-		"schedule_name", cmd.ScheduleName,
+		"schedule_id", evt.ScheduleID,
+		"schedule_name", evt.ScheduleName,
 		"dispatched_count", len(dispatchNodes),
 	)
 
@@ -224,7 +223,7 @@ func (h *HandleSchedulerStartedHandler) dedup(
 
 // buildRunEntriesDispatchedPayload constructs the JSON payload for run.entries.dispatched:v1.
 func (h *HandleSchedulerStartedHandler) buildRunEntriesDispatchedPayload(
-	cmd domainCmd.SchedulerStartedCmd,
+	evt domain.SchedulerStarted,
 	initNodes *run.ScheduleInitNodes,
 ) ([]byte, error) {
 	var allTasks []pkgevents.DispatchedTask
@@ -242,12 +241,12 @@ func (h *HandleSchedulerStartedHandler) buildRunEntriesDispatchedPayload(
 		}
 	}
 
-	evt := pkgevents.RunEntriesDispatched{
-		ScheduleID:     cmd.ScheduleID.String(),
-		ScheduleName:   cmd.ScheduleName,
+	dispatched := pkgevents.RunEntriesDispatched{
+		ScheduleID:     evt.ScheduleID.String(),
+		ScheduleName:   evt.ScheduleName,
 		AllTasks:       allTasks,
 		TotalTaskCount: int32(len(allTasks)),
 	}
 
-	return json.Marshal(evt)
+	return json.Marshal(dispatched)
 }

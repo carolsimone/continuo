@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -86,12 +85,12 @@ func TestHandleSchedulerStarted_WritesEntriesDispatchedAndDispatches(t *testing.
 	}
 
 	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := domainCmd.SchedulerStartedCmd{
+	evt := domain.SchedulerStarted{
 		ScheduleID:   scheduleID,
 		ScheduleName: "daily",
 	}
 
-	err := h.Handle(ctx, cmd, "msg-start-1")
+	err := h.Handle(ctx, evt, "msg-start-1")
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, runRepo.snapshotGraphCalls, "SnapshotGraph must be called once")
@@ -189,9 +188,9 @@ func TestHandleSchedulerStarted_DispatchesSeedsWhenPresent(t *testing.T) {
 	}
 
 	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := domainCmd.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
+	evt := domain.SchedulerStarted{ScheduleID: scheduleID, ScheduleName: "daily"}
 
-	require.NoError(t, h.Handle(ctx, cmd, "msg-seeds-1"))
+	require.NoError(t, h.Handle(ctx, evt, "msg-seeds-1"))
 
 	var queryModelEntries []*domain.OutboxEntry
 	for _, e := range u.outboxRepo.CreatedEntries {
@@ -222,10 +221,10 @@ func TestHandleSchedulerStarted_Idempotent(t *testing.T) {
 	}
 
 	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := domainCmd.SchedulerStartedCmd{ScheduleID: scheduleID, ScheduleName: "daily"}
+	evt := domain.SchedulerStarted{ScheduleID: scheduleID, ScheduleName: "daily"}
 
 	// First call: processes normally
-	require.NoError(t, h.Handle(ctx, cmd, "msg-start-dup"))
+	require.NoError(t, h.Handle(ctx, evt, "msg-start-dup"))
 	firstCount := len(u.outboxRepo.CreatedEntries)
 	assert.Greater(t, firstCount, 0, "first call should produce outbox entries")
 
@@ -236,7 +235,7 @@ func TestHandleSchedulerStarted_Idempotent(t *testing.T) {
 	u.CommittedTx = false
 
 	// Second call with same message ID: must be skipped due to dedup
-	require.NoError(t, h.Handle(ctx, cmd, "msg-start-dup"))
+	require.NoError(t, h.Handle(ctx, evt, "msg-start-dup"))
 
 	assert.Equal(t, 0, runRepo.snapshotGraphCalls, "SnapshotGraph must NOT be called for duplicate")
 	assert.Equal(t, 0, runRepo.getScheduleInitNodesCalls, "GetScheduleInitNodes must NOT be called for duplicate")
@@ -245,7 +244,7 @@ func TestHandleSchedulerStarted_Idempotent(t *testing.T) {
 }
 
 // TestHandleSchedulerStarted_PropagatesKindAndSourceRunID verifies that kind and
-// sourceRunID from SchedulerStartedCmd are threaded through to SnapshotGraph.
+// sourceRunID from domain.SchedulerStarted are threaded through to SnapshotGraph.
 func TestHandleSchedulerStarted_PropagatesKindAndSourceRunID(t *testing.T) {
 	ctx := context.Background()
 	u := newFakeUnitOfWork()
@@ -258,14 +257,14 @@ func TestHandleSchedulerStarted_PropagatesKindAndSourceRunID(t *testing.T) {
 	}
 
 	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
-	cmd := domainCmd.SchedulerStartedCmd{
+	evt := domain.SchedulerStarted{
 		ScheduleID:   uuid.New(),
 		ScheduleName: "propagate-test",
 		Kind:         "rerun",
 		SourceRunID:  &sourceRunID,
 	}
 
-	require.NoError(t, h.Handle(ctx, cmd, "msg-propagate-1"))
+	require.NoError(t, h.Handle(ctx, evt, "msg-propagate-1"))
 	require.Len(t, runRepo.snapshotCalls, 1)
 	assert.Equal(t, "rerun", runRepo.snapshotCalls[0].Kind)
 	require.NotNil(t, runRepo.snapshotCalls[0].SourceRunID)
