@@ -18,11 +18,24 @@ It is responsible for:
 | Entity | Description |
 |---|---|
 | `Table` node | One per model/seed; carries topology metadata, `last_updated_at`, and an `active` flag for current-topology reconciliation |
-| `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at` |
+| `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at`, `kind`, `source_run_id`, `topology_generation` |
 | `DEPENDS_ON` relationship | Directed edge from downstream to upstream `Table` |
 | `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status` and pre-assigned `task_id` UUID |
 
 Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run snapshot initialization. This allows `run.entries.dispatched:v1` to carry canonical task IDs without a round-trip to `state`.
+
+#### `:Run` node properties
+
+| Property | Type | Notes |
+|---|---|---|
+| `terminal_status` | string | Set at run completion |
+| `created_at` | datetime | Stamped at `SnapshotGraph` time |
+| `completed_at` | datetime | Stamped at run finalization |
+| `topology_generation` | int64 | Copied from `:TopologyRoot` at `SnapshotGraph` time; `0` means drift unknown (pre-tracking run) |
+| `kind` | string | Mirrors `scheduler_tracker.kind` (`cron`, `trigger`, `rerun`, `rebase`, `single_node_run`). Stamped at `SnapshotGraph` time via `ON CREATE SET run.kind = $kind` / `ON MATCH SET run.kind = COALESCE(run.kind, $kind)` — the original kind survives idempotent replay. Reads should `COALESCE(r.kind, "cron")` for runs created pre-PR0. |
+| `source_run_id` | string (UUID) | Optional; set via Cypher `FOREACH` only when non-nil. Reads should `COALESCE(r.source_run_id, "")` for the absent case. NULL for `cron`/`trigger` runs. |
+
+`SnapshotGraph` signature: `SnapshotGraph(ctx, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error`
 
 The `run.Repository` interface exposes the following Neo4j read methods used during rerun handling:
 - `GetNodeType(ctx, schemaName, tableName) (string, error)` — reads `node_type` from the current `Table` node (queries by `schema_name` property)
@@ -79,10 +92,11 @@ Orchestrator no longer calls `state` gRPC for any internal writes. All state mut
 
 ### On `scheduler.started:v1` — HandleSchedulerStarted
 
-1. Creates a `Run` node in Neo4j.
-2. Creates `EXECUTES` edges (all initially PENDING) with pre-assigned task UUIDs stored on the edge.
-3. Identifies root and seed nodes.
-4. Produces `run.entries.dispatched:v1` via outbox with: `run_id`, `schedule_name`, `manifest_versions`, full task entry list (each with `task_id`, node coordinates, `node_type`, `service_name`).
+1. Parses `scheduler.started:v1` into `SchedulerStartedCmd{ ScheduleID, ScheduleName, Kind, SourceRunID }`.
+2. Creates a `Run` node in Neo4j via `SnapshotGraph(ctx, runID, scheduleName, kind, sourceRunID)`, stamping `:Run.kind` (always) and `:Run.source_run_id` (when non-nil).
+3. Creates `EXECUTES` edges (all initially PENDING) with pre-assigned task UUIDs stored on the edge.
+4. Identifies root and seed nodes.
+5. Produces `run.entries.dispatched:v1` via outbox with: `run_id`, `schedule_name`, `manifest_versions`, full task entry list (each with `task_id`, node coordinates, `node_type`, `service_name`).
 
 `state` consumes `run.entries.dispatched:v1` to create task rows, set `total_task_count`, and mark the run as initialized.
 

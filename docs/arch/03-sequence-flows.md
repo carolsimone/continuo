@@ -13,13 +13,15 @@ sequenceDiagram
   participant KC as k8s-controller
 
   Cron->>ST: activate schedule
-  ST->>ST: create scheduler_tracker + state_outbox
+  ST->>ST: create scheduler_tracker (kind='cron', source_run_id=NULL) + state_outbox
   ST->>R: publish scheduler.started:v1
+  note right of R: payload: { runner_id, schedule_name, manifest_versions, kind='cron', source_run_id='' }
   R->>SC: consume scheduler.started:v1
   SC->>ST: UpdateSchedulerInitStatus(in_progress)
   SC->>R: publish initialize.run:v1 (schedule_name, run_id)
   R->>OR: consume initialize.run:v1
-  OR->>OR: SnapshotGraph (Run node + EXECUTES edges)
+  OR->>OR: parseSchedulerStartedMessage → SchedulerStartedCmd{ ScheduleID, ScheduleName, Kind, SourceRunID }
+  OR->>OR: SnapshotGraph(ctx, runID, scheduleName, kind, sourceRunID) — stamps :Run.kind + :Run.source_run_id
   OR->>R: publish run.initialized:v1 (root/seed nodes, all nodes)
   R->>SC: consume run.initialized:v1
   SC->>ST: pre-register tasks for all nodes
@@ -127,10 +129,11 @@ sequenceDiagram
 
   U->>UI: POST /api/schedulers/{id}/rerun
   UI->>ST: TriggerRerun(schedule_id, schema, table_name, service_name)
-  ST->>ST: reset scheduler + target task + write state_outbox (atomic tx)
+  ST->>ST: reset scheduler (kind='rerun', source_run_id=original_run_id) + target task + write state_outbox (atomic tx)
   ST-->>UI: TriggerRerunResponse{}
   UI-->>U: 200 OK
   ST->>R: publish scheduler.started:v1 (via OutboxProcessor)
+  note right of R: payload: { runner_id, schedule_name, manifest_versions, kind='rerun', source_run_id=<original_run_id> }
   R->>SC: consume scheduler.started:v1
   SC->>ST: UpdateSchedulerInitStatus(in_progress)
   SC->>R: publish initialize.run:v1 (with rerun target fields)
