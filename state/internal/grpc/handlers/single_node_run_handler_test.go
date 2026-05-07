@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
+	"github.com/carolsimone/continuo/state/domain/model"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -106,5 +108,78 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
 		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+	})
+}
+
+func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
+	fx := setupSingleNodeRunFixture(t)
+	defer fx.Cleanup()
+
+	// Seed a terminal source run with a matching task.
+	srcID := uuid.New()
+	srcTracker := &model.SchedulerTracker{
+		ScheduleID:           srcID,
+		ScheduleName:         "src-schedule",
+		Status:               model.SchedulerStatusSucceeded,
+		CreatedAt:            time.Now().Add(-time.Hour),
+		Kind:                 "cron",
+		InitializationStatus: "completed",
+	}
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), srcTracker))
+
+	taskID := uuid.New()
+	srcTask := &model.TaskTracker{
+		TaskID:          taskID,
+		ScheduleID:      srcID,
+		ServiceName:     "svcA",
+		SchemaName:      "public",
+		TableName:       "users",
+		Status:          model.TaskStatusSucceeded,
+		ManifestVersion: "m1",
+		ImageTag:        "v1",
+		CreatedAt:       time.Now().Add(-time.Hour),
+	}
+	require.NoError(t, fx.TaskRepo.Create(context.Background(), srcTask))
+
+	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    "svcA",
+		SchemaName:     "public",
+		TableName:      "users",
+		MetadataSource: "snapshot_of_run",
+		SourceRunId:    srcID.String(),
+	})
+	require.NoError(t, err)
+
+	scheduleID := uuid.MustParse(resp.RunId)
+	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), scheduleID)
+	require.NoError(t, err)
+	require.Equal(t, "single_node_run", tracker.Kind)
+	require.NotNil(t, tracker.SourceRunID)
+	require.Equal(t, srcID, *tracker.SourceRunID)
+
+	entries, err := fx.OutboxRepo.ListPending(context.Background(), 10)
+	require.NoError(t, err)
+	// Stale-mode entry is the most recent.
+	var stale *postgres.OutboxEntry
+	for i := range entries {
+		if entries[i].AggregateID == scheduleID {
+			stale = entries[i]
+			break
+		}
+	}
+	require.NotNil(t, stale)
+	require.Equal(t, "trigger.single_node_run:v1", stale.StreamName)
+
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(stale.Payload, &payload))
+	require.Equal(t, "snapshot_of_run", payload["metadata_source"])
+	require.Equal(t, srcID.String(), payload["source_run_id"])
+
+	// Cleanup seeded rows.
+	t.Cleanup(func() {
+		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM task_tracker WHERE task_id = $1`, taskID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, srcID)
 	})
 }
