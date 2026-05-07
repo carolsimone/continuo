@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -278,4 +279,94 @@ func TestTriggerRerun_Success(t *testing.T) {
 	assert.Equal(t, "rerun:v1", outbox.created.StreamName)
 	assert.Equal(t, "rerun_node", outbox.created.EventType)
 	assert.Equal(t, scheduleID, outbox.created.AggregateID)
+}
+
+// buildRerunHandlerFullDB builds a handler backed entirely by real repositories and a
+// real DB connection. Used for integration tests that need to assert DB state after
+// the transaction commits.
+func buildRerunHandlerFullDB(t *testing.T) (*RerunHandler, *sqlx.DB) {
+	t.Helper()
+	db, err := database.GetPostgresConnection()
+	if err != nil {
+		t.Skip("no test DB available:", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	logger := newTestLogger()
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	outboxRepo := postgres.NewOutboxRepository(db, logger)
+	return NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger), db
+}
+
+// seedSchedulerForKindTest inserts a scheduler_tracker row with kind='cron' (the default),
+// returning its schedule_name for later assertions.
+func seedSchedulerForKindTest(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, scheduleName string) {
+	t.Helper()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO scheduler_tracker (
+			schedule_id, schedule_name, status, created_at,
+			initialization_status, service_metadata
+		) VALUES ($1, $2, $3, $4, $5, $6)
+	`,
+		scheduleID,
+		scheduleName,
+		string(model.SchedulerStatusFailed),
+		time.Now(),
+		"completed",
+		json.RawMessage(`{}`),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
+		db.ExecContext(context.Background(), `DELETE FROM task_tracker WHERE schedule_id = $1`, scheduleID)
+		db.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+	})
+}
+
+// seedFailedTaskForKindTest inserts a task_tracker row in FAILED state tied to the given schedule.
+func seedFailedTaskForKindTest(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, serviceName, schemaName, tableName string) {
+	t.Helper()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO task_tracker (
+			task_id, schedule_id, created_at, service_name, schema_name,
+			table_name, job_name, status, retry_count, max_retries
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`,
+		uuid.New(), scheduleID, time.Now(),
+		serviceName, schemaName, tableName,
+		"job_"+tableName,
+		string(model.TaskStatusFailed), 0, 3,
+	)
+	require.NoError(t, err)
+}
+
+func TestTriggerRerun_SetsKindRerunAndOutboxPayload(t *testing.T) {
+	handler, db := buildRerunHandlerFullDB(t)
+
+	scheduleID := uuid.New()
+	scheduleName := "rk-" + uuid.New().String()[:8]
+	seedSchedulerForKindTest(t, db, scheduleID, scheduleName)
+	seedFailedTaskForKindTest(t, db, scheduleID, "service-1", "schema-x", "table-y")
+
+	_, err := handler.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{
+		ScheduleId:  scheduleID.String(),
+		ServiceName: "service-1",
+		Schema:      "schema-x",
+		TableName:   "table-y",
+	})
+	require.NoError(t, err)
+
+	// Assert scheduler_tracker.kind was flipped to "rerun".
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, newTestLogger())
+	tracker, err := schedulerRepo.GetByID(context.Background(), scheduleID)
+	require.NoError(t, err)
+	assert.Equal(t, "rerun", tracker.Kind)
+
+	// Assert outbox payload contains kind="rerun".
+	var payloadRaw []byte
+	require.NoError(t, db.GetContext(context.Background(), &payloadRaw,
+		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 ORDER BY created_at DESC LIMIT 1`, scheduleID))
+	var payload map[string]interface{}
+	require.NoError(t, json.Unmarshal(payloadRaw, &payload))
+	assert.Equal(t, "rerun", payload["kind"])
 }

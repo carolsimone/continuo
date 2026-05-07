@@ -109,6 +109,7 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 	scheduler.Status = model.SchedulerStatusRunning
 	scheduler.CompletedAt = nil
 	scheduler.LastHeartbeatAt = &now
+	scheduler.Kind = "rerun" // PR0 — flip discriminator on rerun trigger
 	if err := h.schedulerRepo.UpdateTx(ctx, tx, scheduler); err != nil {
 		h.logger.Error("failed to reset scheduler", "error", err)
 		return nil, status.Errorf(codes.Internal, "internal error")
@@ -125,6 +126,7 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 		"schema_name":   req.Schema,
 		"table_name":    req.TableName,
 		"service_name":  req.ServiceName,
+		"kind":          "rerun", // PR0 — discriminator on outbox
 	})
 	if err := h.outboxRepo.Create(ctx, tx, &postgres.OutboxEntry{
 		ID:            uuid.New(),
