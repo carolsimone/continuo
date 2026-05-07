@@ -11,6 +11,10 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
+// must drops the bool return from neo4j.Record.Get — only call after
+// confirming the record exists (result.Next returned true).
+func must(v interface{}, _ bool) interface{} { return v }
+
 // RunRepository implements the write-side methods of run.Repository.
 type RunRepository struct {
 	client Neo4jClient
@@ -850,6 +854,146 @@ func (r *RunRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int
 		r.logger.Info("Swept expired run nodes", "deleted", deleted, "retention_days", retentionDays)
 	}
 	return nil
+}
+
+// SnapshotSingleNodeRun creates a one-task :Run + :Task + :EXECUTES edge for a
+// single-node run. It supports two metadata sources:
+//
+//   - "latest": reads :TopologyRoot for topology_generation + service_metadata and
+//     reads :Table for per-node image_tag, manifest_version, and node_type.
+//   - "snapshot_of_run": reads the :EXECUTES edge of the source :Run to inherit
+//     the frozen image_tag and manifest_version, and inherits topology_generation +
+//     service_metadata from the source :Run node.
+//
+// Returns run.ErrTargetNotFound when no matching :Table (latest) or no matching
+// source :Run/:EXECUTES edge (stale) is found.
+func (r *RunRepository) SnapshotSingleNodeRun(
+	ctx context.Context,
+	runID, scheduleName string,
+	sourceRunID *uuid.UUID,
+	serviceName, schemaName, tableName string,
+	metadataSource string,
+) (taskID, imageTag, manifestVersion, nodeType string, err error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	taskIDValue := uuid.New().String()
+
+	params := map[string]interface{}{
+		"run_id":        runID,
+		"schedule_name": scheduleName,
+		"service_name":  serviceName,
+		"schema_name":   schemaName,
+		"table_name":    tableName,
+		"task_id":       taskIDValue,
+	}
+
+	var query string
+	switch metadataSource {
+	case "latest":
+		params["source_run_id"] = nil
+		query = `
+			OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
+			WITH COALESCE(root.topology_generation, 0) AS topo_gen,
+			     COALESCE(root.service_metadata, '{}') AS svc_meta
+			MATCH (tbl:Table {service_name: $service_name,
+			                  schema_name:  $schema_name,
+			                  table_name:   $table_name})
+			WHERE COALESCE(tbl.active, true)
+			WITH topo_gen, svc_meta, tbl LIMIT 1
+			MERGE (run:Run {run_id: $run_id})
+			ON CREATE SET run.schedule_name      = $schedule_name,
+			              run.created_at         = datetime(),
+			              run.kind               = 'single_node_run',
+			              run.topology_generation = topo_gen,
+			              run.service_metadata    = svc_meta
+			ON MATCH SET  run.kind = COALESCE(run.kind, 'single_node_run')
+			WITH run, tbl, topo_gen, svc_meta
+			MERGE (task:Task {task_id: $task_id})
+			ON CREATE SET task.status       = 'PENDING',
+			              task.service_name = $service_name,
+			              task.schema_name  = $schema_name,
+			              task.table_name   = $table_name
+			WITH run, tbl, task
+			MERGE (run)-[e:EXECUTES]->(tbl)
+			ON CREATE SET e.status           = 'PENDING',
+			              e.task_id          = $task_id,
+			              e.image_tag        = COALESCE(tbl.image_tag, ''),
+			              e.manifest_version = COALESCE(tbl.manifest_version, '')
+			RETURN e.task_id          AS task_id,
+			       e.image_tag        AS image_tag,
+			       e.manifest_version AS manifest_version,
+			       COALESCE(tbl.node_type, 'dbt-model') AS node_type
+		`
+	case "snapshot_of_run":
+		if sourceRunID == nil {
+			return "", "", "", "", fmt.Errorf("source_run_id required for stale mode")
+		}
+		params["source_run_id"] = sourceRunID.String()
+		query = `
+			MATCH (src:Run {run_id: $source_run_id})-[srcEdge:EXECUTES]->
+			      (tbl:Table {service_name: $service_name,
+			                  schema_name:  $schema_name,
+			                  table_name:   $table_name})
+			WITH src, srcEdge, tbl LIMIT 1
+			MERGE (run:Run {run_id: $run_id})
+			ON CREATE SET run.schedule_name      = $schedule_name,
+			              run.created_at         = datetime(),
+			              run.kind               = 'single_node_run',
+			              run.topology_generation = src.topology_generation,
+			              run.service_metadata    = src.service_metadata,
+			              run.source_run_id       = $source_run_id
+			ON MATCH SET  run.kind = COALESCE(run.kind, 'single_node_run')
+			WITH run, tbl, src, srcEdge
+			MERGE (task:Task {task_id: $task_id})
+			ON CREATE SET task.status       = 'PENDING',
+			              task.service_name = $service_name,
+			              task.schema_name  = $schema_name,
+			              task.table_name   = $table_name
+			WITH run, tbl, task, srcEdge
+			MERGE (run)-[e:EXECUTES]->(tbl)
+			ON CREATE SET e.status           = 'PENDING',
+			              e.task_id          = $task_id,
+			              e.image_tag        = srcEdge.image_tag,
+			              e.manifest_version = srcEdge.manifest_version
+			RETURN e.task_id          AS task_id,
+			       e.image_tag        AS image_tag,
+			       e.manifest_version AS manifest_version,
+			       COALESCE(tbl.node_type, 'dbt-model') AS node_type
+		`
+	default:
+		return "", "", "", "", fmt.Errorf("SnapshotSingleNodeRun: invalid metadataSource %q", metadataSource)
+	}
+
+	result, err := session.Run(ctx, query, params)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("SnapshotSingleNodeRun: query failed: %w", err)
+	}
+	if !result.Next(ctx) {
+		// No matching row → target not found in the chosen source.
+		if rerr := result.Err(); rerr != nil {
+			return "", "", "", "", fmt.Errorf("SnapshotSingleNodeRun: result error: %w", rerr)
+		}
+		return "", "", "", "", run.ErrTargetNotFound
+	}
+	rec := result.Record()
+	taskID = safeString(must(rec.Get("task_id")))
+	imageTag = safeString(must(rec.Get("image_tag")))
+	manifestVersion = safeString(must(rec.Get("manifest_version")))
+	nodeType = safeString(must(rec.Get("node_type")))
+	if rerr := result.Err(); rerr != nil {
+		return "", "", "", "", fmt.Errorf("SnapshotSingleNodeRun: result error: %w", rerr)
+	}
+	r.logger.Info("Single-node run snapshot created",
+		"run_id", runID,
+		"schedule_name", scheduleName,
+		"metadata_source", metadataSource,
+		"task_id", taskID,
+		"image_tag", imageTag,
+		"manifest_version", manifestVersion,
+		"node_type", nodeType,
+	)
+	return taskID, imageTag, manifestVersion, nodeType, nil
 }
 
 // collectNodes drains a Neo4j result cursor into a []*domain.TableNode slice.

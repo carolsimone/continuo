@@ -372,6 +372,149 @@ func safeStringTest(v interface{}) string {
 	return ""
 }
 
+// ── Helpers for SnapshotSingleNodeRun tests ──────────────────────────────────
+
+// singleNodeRunFixture bundles the repo + raw client so test helpers can do
+// direct Neo4j queries without going through the RunRepository API.
+type singleNodeRunFixture struct {
+	repo   *neo4jinfra.RunRepository
+	client neo4jinfra.Neo4jClient
+}
+
+// newRunRepoWithNeo4j creates a RunRepository + raw client for integration tests
+// and returns a cleanup function.
+func newRunRepoWithNeo4j(t *testing.T) (*singleNodeRunFixture, func()) {
+	t.Helper()
+	client := newTestClient(t)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	repo := neo4jinfra.NewRunRepository(client, logger)
+	cleanup := func() { _ = client.Close(context.Background()) }
+	return &singleNodeRunFixture{repo: repo, client: client}, cleanup
+}
+
+// seedTopologyRoot upserts the :TopologyRoot singleton with given generation and metadata.
+func seedTopologyRoot(t *testing.T, fx *singleNodeRunFixture, topologyGen int64, serviceMetadata string) {
+	t.Helper()
+	ctx := context.Background()
+	session := fx.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `
+		MERGE (root:TopologyRoot {id: 'singleton'})
+		SET root.topology_generation = $gen,
+		    root.service_metadata    = $meta
+	`, map[string]interface{}{"gen": topologyGen, "meta": serviceMetadata})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		s := fx.client.NewSession(context.Background(), neo4j.AccessModeWrite)
+		defer s.Close(context.Background())
+		r, _ := s.Run(context.Background(), `
+			MATCH (root:TopologyRoot {id: 'singleton'})
+			REMOVE root.topology_generation, root.service_metadata
+		`, nil)
+		if r != nil {
+			_, _ = r.Consume(context.Background())
+		}
+	})
+}
+
+// seedTableNode upserts a :Table node with the given identity + metadata props.
+func seedTableNode(t *testing.T, fx *singleNodeRunFixture, serviceName, schemaName, tableName, nodeType, imageTag, manifestVersion string) {
+	t.Helper()
+	ctx := context.Background()
+	session := fx.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `
+		MERGE (t:Table {service_name: $svc, schema_name: $schema, table_name: $table})
+		SET t.node_type        = $node_type,
+		    t.image_tag        = $image_tag,
+		    t.manifest_version = $manifest_version,
+		    t.active           = true
+	`, map[string]interface{}{
+		"svc":              serviceName,
+		"schema":           schemaName,
+		"table":            tableName,
+		"node_type":        nodeType,
+		"image_tag":        imageTag,
+		"manifest_version": manifestVersion,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		s := fx.client.NewSession(context.Background(), neo4j.AccessModeWrite)
+		defer s.Close(context.Background())
+		r, _ := s.Run(context.Background(), `
+			MATCH (t:Table {service_name: $svc, schema_name: $schema, table_name: $table})
+			DETACH DELETE t
+		`, map[string]interface{}{"svc": serviceName, "schema": schemaName, "table": tableName})
+		if r != nil {
+			_, _ = r.Consume(context.Background())
+		}
+	})
+}
+
+// readRunProps returns a map of :Run node properties for the given runID and
+// registers a cleanup to delete the :Run node.
+func readRunProps(t *testing.T, fx *singleNodeRunFixture, runID string) map[string]interface{} {
+	t.Helper()
+	ctx := context.Background()
+	session := fx.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+	result, err := session.Run(ctx, `
+		MATCH (r:Run {run_id: $run_id})
+		RETURN r.kind               AS kind,
+		       r.topology_generation AS topology_generation,
+		       r.source_run_id      AS source_run_id,
+		       r.schedule_name      AS schedule_name,
+		       r.service_metadata   AS service_metadata
+	`, map[string]interface{}{"run_id": runID})
+	require.NoError(t, err)
+	require.True(t, result.Next(ctx), "expected :Run node for run_id=%s", runID)
+	rec := result.Record()
+	props := map[string]interface{}{}
+	for _, key := range []string{"kind", "topology_generation", "source_run_id", "schedule_name", "service_metadata"} {
+		v, _ := rec.Get(key)
+		props[key] = v
+	}
+	t.Cleanup(func() {
+		s := fx.client.NewSession(context.Background(), neo4j.AccessModeWrite)
+		defer s.Close(context.Background())
+		r, _ := s.Run(context.Background(), `
+			MATCH (r:Run {run_id: $run_id}) DETACH DELETE r
+		`, map[string]interface{}{"run_id": runID})
+		if r != nil {
+			_, _ = r.Consume(context.Background())
+		}
+	})
+	return props
+}
+
+// readExecutesEdges returns all :EXECUTES edge property maps for a given runID.
+func readExecutesEdges(t *testing.T, fx *singleNodeRunFixture, runID string) []map[string]interface{} {
+	t.Helper()
+	ctx := context.Background()
+	session := fx.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+	result, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(:Table)
+		RETURN e.task_id          AS task_id,
+		       e.image_tag        AS image_tag,
+		       e.manifest_version AS manifest_version,
+		       e.status           AS status
+	`, map[string]interface{}{"run_id": runID})
+	require.NoError(t, err)
+	var edges []map[string]interface{}
+	for result.Next(ctx) {
+		rec := result.Record()
+		edge := map[string]interface{}{}
+		for _, key := range []string{"task_id", "image_tag", "manifest_version", "status"} {
+			v, _ := rec.Get(key)
+			edge[key] = v
+		}
+		edges = append(edges, edge)
+	}
+	require.NoError(t, result.Err())
+	return edges
+}
+
 func TestRunRepository_SnapshotGraph_StampsKindAndSourceRunID(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
@@ -579,4 +722,48 @@ func TestRunRepository_SnapshotGraph_AssignsTaskUUIDs(t *testing.T) {
 		assert.Equal(t, original, n.TaskID,
 			"TaskID for %s.%s must be stable across re-snapshots", n.SchemaName, n.TableName)
 	}
+}
+
+// TestSnapshotSingleNodeRun_Latest verifies the latest-mode Cypher:
+//   - Reads :TopologyRoot for topology_generation + service_metadata
+//   - Creates :Run with kind="single_node_run", no source_run_id
+//   - Creates :EXECUTES edge with image_tag/manifest_version from :Table
+//   - Returns task_id, image_tag, manifest_version, node_type
+func TestSnapshotSingleNodeRun_Latest(t *testing.T) {
+	ctx := context.Background()
+	fx, cleanup := newRunRepoWithNeo4j(t)
+	defer cleanup()
+
+	// Seed :TopologyRoot + :Table for "svcA.public.users".
+	seedTopologyRoot(t, fx, /*topologyGen=*/ 7, /*serviceMetadata=*/ `{"svcA":{"image_tag":"v3","manifest_version":"m3"}}`)
+	seedTableNode(t, fx, "svcA", "public", "users", "dbt-model", "v3", "m3")
+
+	runID := uuid.New().String()
+	scheduleName := "single-node-run-" + runID[:8]
+
+	taskID, imageTag, manifestVersion, nodeType, err := fx.repo.SnapshotSingleNodeRun(
+		ctx, runID, scheduleName, nil,
+		"svcA", "public", "users",
+		"latest",
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, taskID, "task_id must be non-empty")
+	assert.True(t, isValidUUID(taskID), "task_id must be a valid UUID, got %q", taskID)
+	assert.Equal(t, "v3", imageTag)
+	assert.Equal(t, "m3", manifestVersion)
+	assert.Equal(t, "dbt-model", nodeType)
+
+	// :Run exists with topology_generation=7, kind=single_node_run, no source_run_id.
+	props := readRunProps(t, fx, runID)
+	assert.Equal(t, "single_node_run", props["kind"])
+	assert.Equal(t, int64(7), props["topology_generation"])
+	assert.Nil(t, props["source_run_id"], "source_run_id must be absent in latest mode")
+
+	// One :EXECUTES edge with image_tag=v3, manifest_version=m3, task_id matching.
+	edges := readExecutesEdges(t, fx, runID)
+	require.Len(t, edges, 1)
+	assert.Equal(t, "v3", edges[0]["image_tag"])
+	assert.Equal(t, "m3", edges[0]["manifest_version"])
+	assert.Equal(t, taskID, edges[0]["task_id"])
+	assert.Equal(t, "PENDING", edges[0]["status"])
 }
