@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/config"
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/orchestrator/adapters/http"
@@ -32,45 +31,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// parseSchedulerStartedMessage extracts a domain.SchedulerStarted from a Redis
-// stream message's Values map. Missing kind defaults to "cron"; missing or
-// empty source_run_id yields nil. This shape is unit-tested in
-// main_consumer_helpers_test.go.
-func parseSchedulerStartedMessage(values map[string]interface{}) (domain.SchedulerStarted, error) {
-	runnerID, ok := values["runner_id"].(string)
-	if !ok || runnerID == "" {
-		return domain.SchedulerStarted{}, fmt.Errorf("missing or invalid runner_id")
-	}
-	schedulerID, err := uuid.Parse(runnerID)
-	if err != nil {
-		return domain.SchedulerStarted{}, fmt.Errorf("invalid runner_id UUID %q: %w", runnerID, err)
-	}
-	scheduleName, ok2 := values["schedule_name"].(string)
-	if !ok2 || scheduleName == "" {
-		return domain.SchedulerStarted{}, fmt.Errorf("missing or invalid schedule_name")
-	}
-
-	kind, _ := values["kind"].(string)
-	if kind == "" {
-		kind = "cron"
-	}
-
-	var sourceRunID *uuid.UUID
-	if raw, ok := values["source_run_id"].(string); ok && raw != "" {
-		parsed, err := uuid.Parse(raw)
-		if err != nil {
-			return domain.SchedulerStarted{}, fmt.Errorf("invalid source_run_id UUID %q: %w", raw, err)
-		}
-		sourceRunID = &parsed
-	}
-
-	return domain.SchedulerStarted{
-		ScheduleID:   schedulerID,
-		ScheduleName: scheduleName,
-		Kind:         kind,
-		SourceRunID:  sourceRunID,
-	}, nil
-}
 
 func main() {
 	// Setup structured logger
@@ -356,11 +316,11 @@ func main() {
 
 	// Consumer 4: scheduler.started:v1 -> HandleSchedulerStarted
 	schedulerStartedHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		cmd, err := parseSchedulerStartedMessage(msg.Values)
+		evt, err := redis.ParseSchedulerStartedEvent(msg.Values)
 		if err != nil {
 			return fmt.Errorf("scheduler.started message %s: %w", msg.ID, err)
 		}
-		return handleSchedulerStartedHandler.Handle(ctx, cmd, msg.ID)
+		return handleSchedulerStartedHandler.Handle(ctx, evt, msg.ID)
 	}
 	schedulerStartedConsumer := redis.NewStreamConsumer(
 		redisClient,
