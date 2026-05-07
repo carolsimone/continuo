@@ -41,10 +41,12 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | Category | Owned / used surface |
 |---|---|
 | Durable state | `scheduler_tracker` (+ `service_metadata` JSONB column), `task_tracker` (+ `manifest_version` column), `task_execution`, `schedule_catalog` (+ `service_metadata` JSONB column), `state_outbox`, `processed_events` |
-| gRPC server methods owned | `CreateScheduler`, `GetScheduler`, `UpdateScheduler`, `CancelScheduler`, `UpdateSchedulerInitStatus`, `ResetInProgressInitializations`, `ActivateSchedule`, `ListAllSchedules`, `TriggerSchedule`, `CancelSchedule`, `CreateTask`, `GetTask`, `GetTaskByScheduleAndNode`, `UpdateTask`, `DeleteTask`, `ListTasks`, `ResetTask`, `GetSchedulerInitStatus`, `CreateTaskExecution`, `GetTaskExecution`, `ListTaskExecutions` |
-| Redis consumes | `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1` |
-| Redis produces | `scheduler.started:v1`, `rerun:v1` |
+| gRPC server methods owned | `CreateScheduler`, `GetScheduler`, `CancelScheduler`, `ActivateSchedule`, `ListAllSchedules`, `TriggerSchedule`, `CancelSchedule`, `TriggerRerun`, `CreateTask`, `GetTask`, `GetTaskByScheduleAndNode`, `DeleteTask`, `ListTasks`, `ResetTask`, `GetSchedulerInitStatus`, `GetTaskExecution`, `ListTaskExecutions` |
+| Redis consumes | `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1`, `task.status.updated:v1`, `task.execution.recorded:v1` |
+| Redis produces | `scheduler.started:v1`, `rerun:v1`, `run.finalized:v1`, `schedule.cancelled:v1` |
 | Outbound gRPC calls | none |
+
+> Internal pipeline writes that previously crossed gRPC (`UpdateScheduler`, `UpdateSchedulerInitStatus`, `UpdateTask`, `CreateTaskExecution`, `ResetInProgressInitializations`) are now event-driven via Redis consumers. The remaining gRPC surface is UI-facing reads + user-initiated commands only.
 
 ## `orchestrator`
 
@@ -54,7 +56,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
 | Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `rerun:v1` |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1` |
-| Outbound gRPC calls | `state`: `GetTaskByScheduleAndNode`, `GetSchedulerInitStatus`, `UpdateScheduler`, `ListAllSchedules`, `ListTasks`, `CancelSchedule` (last three are watchdog-only) |
+| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `CancelSchedule` (watchdog only) |
 
 ### Invariants
 
@@ -76,9 +78,9 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | `deployment_outbox` (+ `image_tag` column), `processed_events` |
 | gRPC server methods owned | none |
-| Redis consumes | `query.model:v1`, `retry.task:v1` |
-| Redis produces | `node.deployed:v1` |
-| Outbound gRPC calls | `state`: `UpdateTask` |
+| Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1` |
+| Redis produces | `node.deployed:v1`, `task.status.updated:v1` (RUNNING; **also FAILED on permanent dispatch error or retry-exhaustion**), `node.updated:v1` (FAILED on terminal dispatch failure only) |
+| Outbound gRPC calls | none |
 
 ### Invariants
 
@@ -100,9 +102,9 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | `k8s_status_outbox`, `processed_events` |
 | gRPC server methods owned | none |
-| Redis consumes | `node.deployed:v1`, `check.k8s:v1` |
-| Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `node.updated:v1` |
-| Outbound gRPC calls | `state`: `GetTask`, `UpdateTask`, `CreateTaskExecution` |
+| Redis consumes | `node.deployed:v1`, `check.k8s:v1`, `schedule.cancelled:v1` |
+| Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `task.status.updated:v1` (SUCCEEDED/FAILED), `task.execution.recorded:v1`, `node.updated:v1` |
+| Outbound gRPC calls | none |
 
 ## `manifest-controller`
 

@@ -7,34 +7,38 @@ sequenceDiagram
   participant Cron as state cron
   participant ST as state
   participant R as Redis
-  participant SC as startup-controller
   participant OR as orchestrator
   participant EC as executor-controller
   participant KC as k8s-controller
 
-  Cron->>ST: activate schedule
-  ST->>ST: create scheduler_tracker (kind='cron', source_run_id=NULL) + state_outbox
-  ST->>R: publish scheduler.started:v1
-  note right of R: payload: { runner_id, schedule_name, manifest_versions, kind='cron', source_run_id='' }
-  R->>SC: consume scheduler.started:v1
-  SC->>ST: UpdateSchedulerInitStatus(in_progress)
-  SC->>R: publish initialize.run:v1 (schedule_name, run_id)
-  R->>OR: consume initialize.run:v1
-  OR->>OR: parseSchedulerStartedMessage → SchedulerStartedCmd{ ScheduleID, ScheduleName, Kind, SourceRunID }
-  OR->>OR: SnapshotGraph(ctx, runID, scheduleName, kind, sourceRunID) — stamps :Run.kind + :Run.source_run_id
-  OR->>R: publish run.initialized:v1 (root/seed nodes, all nodes)
-  R->>SC: consume run.initialized:v1
-  SC->>ST: pre-register tasks for all nodes
-  SC->>SC: write startup_outbox for roots/seeds
-  SC->>ST: UpdateSchedulerInitStatus(completed)
-  SC->>R: publish query.model:v1
-  R->>EC: consume query.model:v1
-  EC->>EC: write deployment_outbox
-  EC->>KC: create K8s job and mark task RUNNING
-  EC->>R: publish node.deployed:v1
-  R->>KC: consume node.deployed:v1
-  KC->>KC: start runtime monitoring loop
+  Cron->>ST: CronScheduler.activateSchedule(name)
+  ST->>ST: ScheduleActivationService.ActivateSchedule (1 tx):
+  Note over ST: scheduler_tracker INSERT (status=PENDING, init_status=in_progress, kind='cron')<br/>+ state_outbox INSERT (scheduler.started:v1)
+  ST->>R: publish scheduler.started:v1 (state OutboxProcessor)
+  note right of R: payload: { runner_id, schedule_name, service_metadata, kind='cron', source_run_id='' }
+
+  R->>OR: consume scheduler.started:v1
+  OR->>OR: HandleSchedulerStartedHandler.Handle (1 tx):
+  Note over OR: SnapshotGraph (Neo4j: Run + EXECUTES with pre-assigned task UUIDs)<br/>GetScheduleInitNodes → AllNodes/RootNodes/SeedNodes<br/>orchestrator outbox: 1× run.entries.dispatched:v1<br/>orchestrator outbox: N× query.model:v1 (seeds, fallback to roots)
+  OR->>R: publish run.entries.dispatched:v1
+  OR->>R: publish query.model:v1 (per seed/root)
+
+  par state registers run skeleton
+    R->>ST: consume run.entries.dispatched:v1
+    ST->>ST: RunEntriesDispatchedHandler.Handle (1 tx):
+    Note over ST: row-lock scheduler_tracker (skip if cancelled)<br/>BulkCreate task_tracker (status=PENDING)<br/>SetTotalTaskCount, init_status=completed, status=RUNNING
+  and executor launches seed/root jobs
+    R->>EC: consume query.model:v1
+    EC->>EC: write deployment_outbox; OutboxProcessor:<br/>CreateQueryJob (idempotent on JobName)
+    EC->>R: publish task.status.updated:v1 (RUNNING)
+    EC->>R: publish node.deployed:v1
+    R->>ST: consume task.status.updated:v1 (RUNNING) → task_tracker.status=RUNNING
+    R->>KC: consume node.deployed:v1
+    KC->>KC: start poll loop (CheckJobStatus + check.k8s:v1 backoff)
+  end
 ```
+
+> Stages 2A (state) and 2B (executor) race — the seed K8s Job can start before the matching `task_tracker` row exists. `TaskStatusUpdatedHandler` tolerates this by NACKing until `RunEntriesDispatchedHandler` has caught up.
 
 ## 2. Steady-State Success Path
 
@@ -123,33 +127,35 @@ sequenceDiagram
   participant UI as ui-service (BFF)
   participant ST as state (gRPC)
   participant R as Redis
-  participant SC as startup-controller
   participant OR as orchestrator
   participant EC as executor-controller
 
   U->>UI: POST /api/schedulers/{id}/rerun
   UI->>ST: TriggerRerun(schedule_id, schema, table_name, service_name)
-  ST->>ST: reset scheduler (kind='rerun', source_run_id=original_run_id) + target task + write state_outbox (atomic tx)
+  ST->>ST: RerunHandler.TriggerRerun (sync, 1 tx):
+  Note over ST: validations: schedule exists, target task FAILED, no RUNNING tasks<br/>scheduler_tracker UPDATE (status=RUNNING, kind='rerun', completed_at=NULL)<br/>state_outbox INSERT (rerun:v1)<br/>initialization_status NOT reset — stays 'completed'
   ST-->>UI: TriggerRerunResponse{}
   UI-->>U: 200 OK
-  ST->>R: publish scheduler.started:v1 (via OutboxProcessor)
-  note right of R: payload: { runner_id, schedule_name, manifest_versions, kind='rerun', source_run_id=<original_run_id> }
-  R->>SC: consume scheduler.started:v1
-  SC->>ST: UpdateSchedulerInitStatus(in_progress)
-  SC->>R: publish initialize.run:v1 (with rerun target fields)
-  R->>OR: consume initialize.run:v1
-  OR->>OR: GetTransitiveDownstream(target)
-  OR->>OR: UpdateNodeStatus(target/downstream FAILED nodes -> PENDING)
-  OR->>OR: GetNodeType(schema_name, table_name) from Neo4j
-  OR->>OR: GetNodeServiceName(schema_name, table_name) from Neo4j
-  OR->>R: publish rerun.ready:v1 (target_nodes: service_name=current graph value)
-  R->>SC: consume rerun.ready:v1
-  SC->>ST: ResetTask(target/downstream FAILED tasks, lookup by service_name, schema_name, table_name)
-  SC->>SC: write startup_outbox for target only (dispatch uses service_name)
-  SC->>R: publish query.model:v1
-  SC->>ST: UpdateSchedulerInitStatus(completed)
-  R->>EC: consume query.model:v1
+  ST->>R: publish rerun:v1 (via state OutboxProcessor)
+  note right of R: payload: { schedule_id, schedule_name, scope='node', schema_name, table_name, service_name, kind='rerun' }
+
+  R->>OR: consume rerun:v1
+  OR->>OR: HandleRerunHandler.Handle (1 tx):
+  Note over OR: Neo4j: GetTaskIDForNode → targetTaskID<br/>Neo4j: GetSkippedDownstreamTaskIDs → [skipped descendants]<br/>Neo4j: ResetSkippedDownstreamToPending (EXECUTES status SKIPPED→PENDING)<br/>Neo4j: GetNodeType / GetNodeServiceName / GetNodeEdgeData<br/>orchestrator outbox: 1× run.rerun.dispatched:v1 (TasksToReset = target + skipped descendants)<br/>orchestrator outbox: 1× query.model:v1 (target node only)
+  OR->>R: publish run.rerun.dispatched:v1
+  OR->>R: publish query.model:v1 (target only)
+
+  par state revives task counters
+    R->>ST: consume run.rerun.dispatched:v1
+    ST->>ST: RunRerunDispatchedHandler.Handle (1 tx):
+    Note over ST: ResetTasksTx(taskUUIDs) → task_tracker.status=PENDING<br/>DecrementTerminalCountTx(scheduleID, resetCount)<br/>UpdateStatusTx(scheduleID, RUNNING) — idempotent
+  and executor relaunches the target K8s Job
+    R->>EC: consume query.model:v1
+    Note over EC: identical to Flow 1 from this point on<br/>(deployment_outbox → CreateQueryJob → task.status.updated:v1 RUNNING + node.deployed:v1)
+  end
 ```
+
+> Differences vs. Flow 1: synchronous gRPC entry; no `SnapshotGraph` (Run already exists); no bulk task creation (tasks already exist; only the target + previously-skipped descendants are flipped back to PENDING and `terminal_task_count` is decremented). Only the target gets `query.model:v1` — previously-skipped descendants ride on the orchestrator's `GetReadyDownstream` traversal once the target succeeds.
 
 ## 5. Service Process Startup (Pre-Flight)
 

@@ -104,7 +104,7 @@ The rerun trigger was migrated from HTTP to gRPC (`TriggerRerun`). Port 8082 now
 3. No tasks currently RUNNING in that run
 4. Target task must be in FAILED state
 
-On success: scheduler is reset to RUNNING, `initialization_status` reset to `pending`, target task reset to PENDING, `rerun:v1` outbox entry written — all in one transaction.
+On success: scheduler is set to `status=RUNNING, kind='rerun', completed_at=NULL` and a `rerun:v1` outbox entry is written — all in one transaction. `initialization_status` is **not** reset (intentionally stays `completed` so finalization still fires when the rerun's tasks reach terminal again). The target task and its previously-skipped descendants are **not** flipped here either — that happens later in `RunRerunDispatchedHandler` once the orchestrator emits `run.rerun.dispatched:v1` carrying the resolved task UUIDs.
 
 ### Redis consumers
 

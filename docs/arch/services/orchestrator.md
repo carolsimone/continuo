@@ -55,10 +55,11 @@ The `run.Repository` interface exposes the following Neo4j read methods used dur
 
 | Stream | Group | Handler |
 |---|---|---|
-| `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — initializes run snapshot, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` |
-| `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes |
+| `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — initializes run snapshot, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` + `query.model:v1` for seed/root nodes |
+| `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes (SUCCEEDED → `query.model:v1` for newly-ready nodes; FAILED → cascade-skip downstream + emit `task.status.updated:v1` for skipped tasks) |
 | `manifest.loaded:v1` | `orchestrator_manifest_loaded` | `IngestTopology` — applies the full manifest snapshot, rewrites `DEPENDS_ON`, retires missing `Table` nodes, then emits `schedules.loaded:v1` |
-| `initialize.run:v1` | `orchestrator_initialize_run` | `HandleRerun` — resets target/downstream nodes and produces `run.rerun.dispatched:v1` when a rerun target is present |
+| `rerun:v1` | `orchestrator_rerun` | `HandleRerun` — reads target task UUID + cascade-skipped descendants from Neo4j, resets EXECUTES status SKIPPED→PENDING, produces `run.rerun.dispatched:v1` (TasksToReset list) + `query.model:v1` for the target only |
+| `initialize.run:v1` | `orchestrator_initialize_run` | `InitializeRunHandler` — legacy entry path (no current producer). When `rerun_target` is present, delegates to `HandleRerun`; otherwise runs the same `SnapshotGraph` + dispatch logic as `HandleSchedulerStarted` |
 
 ### gRPC server — `OrchestratorQuery` (port 50052)
 
@@ -110,21 +111,20 @@ Receives a JSON payload of topology nodes representing the full current manifest
 
 Schedule graph reads and new run snapshots only consider `active=true` `Table` nodes, while historical `Run` graphs remain intact through their `EXECUTES` edges. Deduplication still keys off the Redis message ID via `message_processing`.
 
-### On `initialize.run:v1` (rerun path) — HandleRerun
+### On `rerun:v1` — HandleRerun
 
-When `initialize.run:v1` carries a `rerun_target`:
+The live rerun entry point. `state.RerunHandler.TriggerRerun` (gRPC) writes a `rerun:v1` outbox row in the same Postgres tx that flips `scheduler_tracker` to `status=RUNNING, kind='rerun'`. The orchestrator consumes the resulting Redis message and runs `HandleRerun` in one Postgres UoW transaction:
 
-1. Gets transitive downstream nodes from Neo4j via `GetTransitiveDownstream`.
-2. Resets the target node and any FAILED downstream nodes to PENDING in Neo4j via `UpdateNodeStatus`.
-3. Reads `node_type` for the target from Neo4j via `GetNodeType`.
-4. Reads `service_name` for the target from Neo4j via `GetNodeServiceName`.
-5. Builds the `run.rerun.dispatched:v1` payload with a `target_nodes` list. For the rerun target node:
-   - `service_name` = current graph value
-   - `schedule_name` = schedule name from the rerun command
-   - FAILED downstream nodes carry their current graph `service_name`.
-6. Writes the payload to the `run.rerun.dispatched:v1` outbox entry.
+1. Dedup on `message_processing`.
+2. Neo4j: `GetTaskIDForNode(runID, service, schema, table)` → target task UUID (read from the `EXECUTES` edge property assigned at the original `SnapshotGraph`).
+3. Neo4j: `GetSkippedDownstreamTaskIDs(runID, schema, table)` → task UUIDs of every transitively-downstream node whose EXECUTES edge is in `SKIPPED`.
+4. Neo4j: `ResetSkippedDownstreamToPending(runID, schema, table)` — flip those EXECUTES edges back to `PENDING` so a future `GetReadyDownstream` will dispatch them.
+5. Neo4j: `GetNodeType` / `GetNodeServiceName` / `GetNodeEdgeData` (returns `manifest_version` + `image_tag` pinned on the EXECUTES edge from the original snapshot — the rerun stays bound to the original run's `service_metadata`).
+6. orchestrator outbox writes (same tx):
+   - 1× `run.rerun.dispatched:v1` with `RunRerunDispatched{ScheduleID, ScheduleName, TasksToReset: [target] + skipped descendants, EntryTaskID: target}` — consumed by `state` to flip the matching `task_tracker` rows back to PENDING and decrement `terminal_task_count`.
+   - 1× `query.model:v1` with `NodeReadyForExecution` for the **target node only**. Previously-skipped descendants are revived in both stores but are not dispatched up-front; they ride on `HandleNodeCompleted.GetReadyDownstream` once the target succeeds.
 
-`state` consumes `run.rerun.dispatched:v1` to reset the target task(s) to PENDING.
+No `SnapshotGraph` is performed — the `Run` node and its `EXECUTES` edges already exist from the original execution.
 
 ### On `node.updated:v1` — HandleNodeCompleted
 
@@ -151,7 +151,8 @@ When `initialize.run:v1` carries a `rerun_target`:
 | Redis consumer (`scheduler.started:v1`) | Reads and dispatches to HandleSchedulerStarted handler |
 | Redis consumer (`node.updated:v1`) | Reads and dispatches to HandleNodeCompleted handler |
 | Redis consumer (`manifest.loaded:v1`) | Reads and dispatches to IngestTopology handler |
-| Redis consumer (`initialize.run:v1`) | Reads and dispatches to HandleRerun handler |
+| Redis consumer (`rerun:v1`) | Reads and dispatches to HandleRerun handler |
+| Redis consumer (`initialize.run:v1`) | Legacy entry; dispatches to InitializeRunHandler (delegates to HandleRerun if `rerun_target` present, else runs SnapshotGraph + dispatch). No current producer. |
 | Outbox processor | Polls outbox for pending entries; publishes to `query.model:v1`, `run.entries.dispatched:v1`, `run.rerun.dispatched:v1`; records in `published_messages` |
 | RunSweeper | Periodically deletes expired `Run` nodes (and their `EXECUTES` edges) older than `retention_days` |
 
