@@ -330,7 +330,7 @@ func main() {
 		logger,
 	)
 
-	// Consumer 5: rerun:v1 -> HandleRerun
+	// Consumer 5: trigger.rerun:v1 -> HandleRerun
 	rerunHandler := func(ctx context.Context, msg goredis.XMessage) error {
 		scheduleID, _ := msg.Values["schedule_id"].(string)
 		scheduleName, _ := msg.Values["schedule_name"].(string)

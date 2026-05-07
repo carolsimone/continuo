@@ -16,7 +16,7 @@ type publishFn func(ctx context.Context, stream string, fields map[string]interf
 
 // OutboxProcessor polls the state_outbox table and publishes pending entries to
 // Redis Streams, implementing the transactional outbox pattern. It handles all
-// event types stored in state_outbox (e.g. rerun:v1, scheduler.started:v1).
+// event types stored in state_outbox (e.g. trigger.rerun:v1, scheduler.started:v1).
 type OutboxProcessor struct {
 	outboxRepo postgres.OutboxRepository
 	publish    publishFn
