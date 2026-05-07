@@ -166,6 +166,7 @@ var _ scheduler.ScheduleActivator = (*noopScheduleActivator)(nil)
 
 // integrationSchema is the full DDL for tables exercised by integration tests.
 // Matches the schema from repository_test.go.
+// NOTE: keep this DDL in sync with db/migration/state/V*.sql (currently V1–V16).
 const integrationSchema = `
 CREATE TABLE IF NOT EXISTS scheduler_tracker (
 	schedule_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -186,6 +187,10 @@ CREATE TABLE IF NOT EXISTS scheduler_tracker (
 	service_metadata    JSONB NOT NULL DEFAULT '{}',
 	total_task_count    INTEGER,
 	terminal_task_count INTEGER NOT NULL DEFAULT 0,
+	kind                VARCHAR(20) NOT NULL DEFAULT 'cron' CHECK (kind IN (
+							'cron', 'trigger', 'rerun', 'rebase', 'single_node_run'
+						)),
+	source_run_id       UUID NULL,
 	CONSTRAINT valid_timestamps CHECK (
 		(started_at IS NULL OR started_at >= created_at) AND
 		(completed_at IS NULL OR completed_at >= started_at)
@@ -193,6 +198,9 @@ CREATE TABLE IF NOT EXISTS scheduler_tracker (
 );
 
 CREATE INDEX IF NOT EXISTS idx_int_scheduler_tracker_init_status ON scheduler_tracker(schedule_id, initialization_status);
+CREATE INDEX IF NOT EXISTS idx_int_scheduler_tracker_kind ON scheduler_tracker (kind);
+CREATE INDEX IF NOT EXISTS idx_int_scheduler_tracker_source_run_id ON scheduler_tracker (source_run_id)
+	WHERE source_run_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS task_tracker (
 	task_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -208,7 +216,9 @@ CREATE TABLE IF NOT EXISTS task_tracker (
 	max_retries         INTEGER NOT NULL,
 	job_name            VARCHAR(63) NOT NULL,
 	cancelled_at        TIMESTAMPTZ,
-	cancelled_by        VARCHAR(255)
+	cancelled_by        VARCHAR(255),
+	manifest_version    VARCHAR(50) NOT NULL DEFAULT '',
+	image_tag           VARCHAR(255) NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_int_task_tracker_schedule_id ON task_tracker(schedule_id);

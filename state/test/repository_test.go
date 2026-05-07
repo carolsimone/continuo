@@ -71,6 +71,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	require.NoError(t, err, "Failed to connect to database after retries")
 
 	// Run migration - create scheduler_tracker table
+	// NOTE: keep this DDL in sync with db/migration/state/V*.sql (currently V1–V16).
 	migrationSQL := `
 		CREATE TABLE scheduler_tracker (
 			schedule_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -98,6 +99,10 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 			service_metadata    JSONB NOT NULL DEFAULT '{}',
 			total_task_count    INTEGER,
 			terminal_task_count INTEGER NOT NULL DEFAULT 0,
+			kind                VARCHAR(20) NOT NULL DEFAULT 'cron' CHECK (kind IN (
+									'cron', 'trigger', 'rerun', 'rebase', 'single_node_run'
+								)),
+			source_run_id       UUID NULL,
 			CONSTRAINT valid_timestamps CHECK (
 				(started_at IS NULL OR started_at >= created_at) AND
 				(completed_at IS NULL OR completed_at >= started_at)
@@ -105,6 +110,9 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 		);
 
 		CREATE INDEX idx_scheduler_tracker_init_status ON scheduler_tracker(schedule_id, initialization_status);
+		CREATE INDEX idx_scheduler_tracker_kind ON scheduler_tracker (kind);
+		CREATE INDEX idx_scheduler_tracker_source_run_id ON scheduler_tracker (source_run_id)
+			WHERE source_run_id IS NOT NULL;
 
 		CREATE TABLE task_tracker (
 			task_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -125,7 +133,9 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 			max_retries         INTEGER NOT NULL,
 			job_name            VARCHAR(63) NOT NULL,
 			cancelled_at        TIMESTAMPTZ,
-			cancelled_by        VARCHAR(255)
+			cancelled_by        VARCHAR(255),
+			manifest_version    VARCHAR(50) NOT NULL DEFAULT '',
+			image_tag           VARCHAR(255) NOT NULL DEFAULT ''
 		);
 
 		CREATE INDEX idx_task_tracker_schedule_id ON task_tracker(schedule_id);
