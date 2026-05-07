@@ -296,6 +296,49 @@ cancellations use), so no new publisher or terminal state is introduced.
 Defaults: 60s polling, 30 min no-progress threshold. Toggle via
 `ORCHESTRATOR_WATCHDOG_ENABLED` (default `true`).
 
+## 9. Single-Node Run (Feature 4 / PR1)
+
+An ad-hoc, one-task run for a single dbt node. No schedule catalog entry is created; the synthesised run is excluded from `ListAllSchedules` by construction.
+
+```mermaid
+sequenceDiagram
+  participant U as user/API client
+  participant UI as ui-service (BFF)
+  participant ST as state (gRPC)
+  participant R as Redis
+  participant OR as orchestrator
+  participant EC as executor-controller
+
+  U->>UI: POST /api/nodes/{node}/run (out of scope for this flow)
+  UI->>ST: TriggerSingleNodeRun(service_name, schema_name, table_name, metadata_source, source_run_id?)
+  Note over ST: SingleNodeRunHandler.Handle (sync, 1 tx)<br/>validate fields (INVALID_ARGUMENT on bad input)<br/>scheduler_tracker INSERT — kind='single_node_run', schedule_name='single-node-run-<8hex>'<br/>state_outbox INSERT for trigger.single_node_run:v1<br/>synthesised schedule_name NOT inserted into schedule_catalog
+  ST-->>UI: TriggerSingleNodeRunResponse { run_id, schedule_name }
+  UI-->>U: 200 OK
+
+  ST->>R: publish trigger.single_node_run:v1 (via state OutboxProcessor)
+  Note right of R: payload — schedule_id, schedule_name, service_name,<br/>schema_name, table_name, metadata_source, source_run_id?
+
+  R->>OR: consume trigger.single_node_run:v1
+  Note over OR: HandleSingleNodeRunHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Neo4j: SnapshotSingleNodeRun(runID, scheduleName, kind, metadataSource, sourceRunID)<br/>  latest mode → reads :TopologyRoot + :Table for metadata<br/>  stale mode  → reads source :Run's EXECUTES edge (image_tag + manifest_version)
+  alt ErrTargetNotFound (node absent in Neo4j)
+    OR->>R: publish run.failed:v1 (synthesised run marked terminal-failed)
+    Note over OR: no executor dispatch; state marks run FAILED
+  else node found
+    OR->>R: publish run.entries.dispatched:v1 (1 task entry)
+    OR->>R: publish query.model:v1 (single dispatch)
+  end
+
+  par state registers run skeleton
+    R->>ST: consume run.entries.dispatched:v1
+    Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker row (1 row)<br/>SetTotalTaskCount=1, init_status=completed, status=RUNNING
+  and executor launches the job
+    R->>EC: consume query.model:v1
+    Note over EC: identical to Flow 1 from here<br/>deployment_outbox → CreateQueryJob → task.status.updated:v1 RUNNING + node.deployed:v1
+  end
+```
+
+> Differences vs. Flow 1 (schedule startup): synchronous gRPC entry; synthesised `schedule_name` is not in `schedule_catalog`; `SnapshotSingleNodeRun` creates exactly one `EXECUTES` edge (no full topology snapshot); only a single `query.model:v1` is produced; on `ErrTargetNotFound` the synthesised run is immediately failed.
+
 ## Why These Diagrams Are Not Enough On Their Own
 
 These diagrams show timing and ordering well, but they do not fully show:
