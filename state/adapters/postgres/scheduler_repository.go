@@ -102,13 +102,15 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
-			total_task_count, terminal_task_count
+			total_task_count, terminal_task_count,
+			kind, source_run_id
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
 			$11, $12,
-			$13, $14
+			$13, $14,
+			$15, $16
 		)
 	`
 
@@ -118,6 +120,7 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
 		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
+		kindWithDefault(tracker.Kind), tracker.SourceRunID,
 	)
 	if err != nil {
 		// Check for duplicate key error (PostgreSQL error code 23505)
@@ -158,13 +161,15 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
-			total_task_count, terminal_task_count
+			total_task_count, terminal_task_count,
+			kind, source_run_id
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
 			$11, $12,
-			$13, $14
+			$13, $14,
+			$15, $16
 		)
 	`,
 		tracker.ScheduleID, tracker.ScheduleName, tracker.Status, tracker.CreatedAt,
@@ -172,6 +177,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
 		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
+		kindWithDefault(tracker.Kind), tracker.SourceRunID,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505") {
@@ -190,7 +196,8 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
-			total_task_count, terminal_task_count
+			total_task_count, terminal_task_count,
+			kind, source_run_id
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 	`
@@ -370,7 +377,8 @@ func (r *schedulerTrackerRepository) List(ctx context.Context, filters Scheduler
 		SELECT schedule_id, schedule_name, status, created_at, started_at,
 		       completed_at, last_heartbeat_at, cancelled_at, cancelled_by,
 		       cancellation_reason, initialization_status, service_metadata,
-		       total_task_count, terminal_task_count
+		       total_task_count, terminal_task_count,
+		       kind, source_run_id
 		FROM scheduler_tracker
 		%s
 		ORDER BY created_at DESC
@@ -501,7 +509,8 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
-			total_task_count, terminal_task_count
+			total_task_count, terminal_task_count,
+			kind, source_run_id
 		FROM scheduler_tracker
 		WHERE schedule_name = $1
 		  AND status IN ('pending', 'running')
@@ -533,17 +542,26 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 	return &tracker, nil
 }
 
-// UpdateTx updates scheduler status and timestamps within an existing transaction.
+// UpdateTx updates scheduler status, timestamps, kind, and source_run_id within an existing transaction.
 func (r *schedulerTrackerRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, tracker *model.SchedulerTracker) error {
-	query := `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
-		SET status = :status,
-			started_at = :started_at,
-			completed_at = :completed_at,
-			last_heartbeat_at = :last_heartbeat_at
-		WHERE schedule_id = :schedule_id
-	`
-	result, err := tx.NamedExecContext(ctx, query, tracker)
+		SET status            = $2,
+			started_at        = $3,
+			completed_at      = $4,
+			last_heartbeat_at = $5,
+			kind              = $6,
+			source_run_id     = $7
+		WHERE schedule_id = $1
+	`,
+		tracker.ScheduleID,
+		tracker.Status,
+		tracker.StartedAt,
+		tracker.CompletedAt,
+		tracker.LastHeartbeatAt,
+		kindWithDefault(tracker.Kind),
+		tracker.SourceRunID,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to update scheduler_tracker: %w", err)
 	}
@@ -635,7 +653,8 @@ func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx 
 			started_at, completed_at, last_heartbeat_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
-			total_task_count, terminal_task_count
+			total_task_count, terminal_task_count,
+			kind, source_run_id
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 		FOR UPDATE
@@ -686,6 +705,16 @@ func (r *schedulerTrackerRepository) FinalizeRunTx(ctx context.Context, tx *sqlx
 		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
 	}
 	return nil
+}
+
+// kindWithDefault returns "cron" if kind is empty, else kind. Allows callers
+// that pre-date PR0 (constructing SchedulerTracker without setting Kind) to
+// land on the same default the V15 migration uses.
+func kindWithDefault(kind string) string {
+	if kind == "" {
+		return "cron"
+	}
+	return kind
 }
 
 // GetLastRunPerSchedule returns the most recent row per schedule_name.
