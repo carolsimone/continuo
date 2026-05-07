@@ -37,27 +37,13 @@ func verifyServicesHealthy(t *testing.T) {
 	}
 
 	for deployment, port := range k8sControllers {
-		portForwardCmd := exec.Command("kubectl", "port-forward",
-			fmt.Sprintf("deployment/%s", deployment),
-			fmt.Sprintf("%d:%d", port, port),
-			"-n", "default",
-		)
-		err := portForwardCmd.Start()
-		require.NoError(t, err, "Failed to start port-forward for %s", deployment)
-		defer func() {
-			portForwardCmd.Process.Kill() //nolint:errcheck
-			portForwardCmd.Wait()        //nolint:errcheck
-		}()
-
-		// Poll until health endpoint responds or times out
-		pollUntil(t, context.Background(), 30*time.Second, time.Second, func() (bool, error) {
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
-			if err != nil {
-				return false, nil // transient — retry
-			}
-			resp.Body.Close()
-			return resp.StatusCode == http.StatusOK, nil
-		}, fmt.Sprintf("K8s service unhealthy after port-forward: %s", deployment))
+		// `kubectl port-forward deployment/X` attaches to whatever pod the API
+		// server picks — which during/after a rolling restart can be a dying
+		// pod. If /health keeps failing on the same port-forward, the pod is
+		// likely terminating; tear it down and retry with a fresh port-forward
+		// (which re-resolves to a currently-healthy pod). The outer attempt
+		// loop owns the port-forward lifecycle so each retry is clean.
+		portForwardHealthy(t, deployment, port)
 	}
 	t.Log("✅ All services healthy (docker-compose + K8s)")
 }
@@ -68,6 +54,77 @@ func verifyK8sAvailable(t *testing.T, ctx context.Context) {
 	err := cmd.Run()
 	require.NoError(t, err, "kubectl cannot reach cluster - is kind running?")
 	t.Log("✅ Kubernetes cluster available")
+}
+
+// portForwardHealthy ensures `deployment` is serving 200 OK on /health via a
+// kubectl port-forward. If a single port-forward keeps failing /health (e.g.
+// it landed on a terminating pod after a rolling restart), the port-forward
+// is killed and re-established to re-resolve to a currently-healthy pod.
+//
+// Total wall-clock budget: up to 6 attempts × 20 s probe window = 120 s.
+func portForwardHealthy(t *testing.T, deployment string, port int) {
+	t.Helper()
+
+	const maxAttempts = 6
+	const probeWindow = 20 * time.Second
+	const probeInterval = 1 * time.Second
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		pf := exec.Command("kubectl", "port-forward",
+			fmt.Sprintf("deployment/%s", deployment),
+			fmt.Sprintf("%d:%d", port, port),
+			"-n", "default",
+		)
+		if err := pf.Start(); err != nil {
+			lastErr = fmt.Errorf("attempt %d: failed to start port-forward: %w", attempt, err)
+			continue
+		}
+
+		// Probe /health for up to probeWindow on this port-forward.
+		deadline := time.After(probeWindow)
+		ticker := time.NewTicker(probeInterval)
+		ok := false
+	probeLoop:
+		for {
+			select {
+			case <-deadline:
+				break probeLoop
+			case <-ticker.C:
+				resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
+				if err != nil {
+					lastErr = err
+					continue
+				}
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					ok = true
+					break probeLoop
+				}
+				lastErr = fmt.Errorf("health returned status %d", resp.StatusCode)
+			}
+		}
+		ticker.Stop()
+
+		if ok {
+			// Keep this port-forward running for the rest of the test; tear
+			// it down only when the test completes.
+			t.Cleanup(func() {
+				pf.Process.Kill() //nolint:errcheck
+				pf.Wait()         //nolint:errcheck
+			})
+			return
+		}
+
+		// This attempt failed — kill the port-forward and try again with a
+		// fresh one (which re-resolves the deployment to a healthy pod).
+		pf.Process.Kill() //nolint:errcheck
+		pf.Wait()         //nolint:errcheck
+		t.Logf("port-forward attempt %d for %s failed (last error: %v) — retrying with fresh port-forward", attempt, deployment, lastErr)
+	}
+
+	require.FailNow(t,
+		fmt.Sprintf("K8s service unhealthy after port-forward: %s (after %d attempts; last error: %v)", deployment, maxAttempts, lastErr))
 }
 
 // pollUntil polls a condition until it succeeds or times out.
