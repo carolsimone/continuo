@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
+	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -766,4 +767,183 @@ func TestSnapshotSingleNodeRun_Latest(t *testing.T) {
 	assert.Equal(t, "m3", edges[0]["manifest_version"])
 	assert.Equal(t, taskID, edges[0]["task_id"])
 	assert.Equal(t, "PENDING", edges[0]["status"])
+}
+
+// ── Additional helpers for stale-mode tests ──────────────────────────────────
+
+// seedRunWithExecutesEdge creates a :Run node and a :EXECUTES edge from it to
+// the specified :Table node. The :Table is looked up by (serviceName, schemaName,
+// tableName); the Table must already exist (call seedTableNode first).
+// topologyGen and serviceMetadata are stamped on the :Run directly.
+func seedRunWithExecutesEdge(
+	t *testing.T,
+	fx *singleNodeRunFixture,
+	runID, scheduleName, kind string,
+	topologyGen int64,
+	serviceMetadata string,
+	serviceName, schemaName, tableName string,
+	imageTag, manifestVersion string,
+) {
+	t.Helper()
+	ctx := context.Background()
+	session := fx.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	taskID := uuid.New().String()
+	_, err := session.Run(ctx, `
+		MATCH (tbl:Table {service_name: $svc, schema_name: $schema, table_name: $table})
+		MERGE (r:Run {run_id: $run_id})
+		ON CREATE SET r.schedule_name       = $schedule_name,
+		              r.created_at          = datetime(),
+		              r.kind                = $kind,
+		              r.topology_generation = $topo_gen,
+		              r.service_metadata    = $svc_meta
+		MERGE (r)-[e:EXECUTES]->(tbl)
+		ON CREATE SET e.task_id          = $task_id,
+		              e.image_tag        = $image_tag,
+		              e.manifest_version = $manifest_version,
+		              e.status           = 'SUCCEEDED'
+	`, map[string]interface{}{
+		"run_id":        runID,
+		"schedule_name": scheduleName,
+		"kind":          kind,
+		"topo_gen":      topologyGen,
+		"svc_meta":      serviceMetadata,
+		"svc":           serviceName,
+		"schema":        schemaName,
+		"table":         tableName,
+		"task_id":       taskID,
+		"image_tag":     imageTag,
+		"manifest_version": manifestVersion,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		s := fx.client.NewSession(context.Background(), neo4j.AccessModeWrite)
+		defer s.Close(context.Background())
+		r, _ := s.Run(context.Background(), `
+			MATCH (r:Run {run_id: $run_id}) DETACH DELETE r
+		`, map[string]interface{}{"run_id": runID})
+		if r != nil {
+			_, _ = r.Consume(context.Background())
+		}
+	})
+}
+
+// updateTableNode updates the image_tag and manifest_version on an existing :Table node.
+func updateTableNode(
+	t *testing.T,
+	fx *singleNodeRunFixture,
+	serviceName, schemaName, tableName string,
+	imageTag, manifestVersion string,
+) {
+	t.Helper()
+	ctx := context.Background()
+	session := fx.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `
+		MATCH (t:Table {service_name: $svc, schema_name: $schema, table_name: $table})
+		SET t.image_tag        = $image_tag,
+		    t.manifest_version = $manifest_version
+	`, map[string]interface{}{
+		"svc":              serviceName,
+		"schema":           schemaName,
+		"table":            tableName,
+		"image_tag":        imageTag,
+		"manifest_version": manifestVersion,
+	})
+	require.NoError(t, err)
+}
+
+// updateTopologyRoot updates the topology_generation and service_metadata on
+// the :TopologyRoot singleton.
+func updateTopologyRoot(
+	t *testing.T,
+	fx *singleNodeRunFixture,
+	topologyGen int64,
+	serviceMetadata string,
+) {
+	t.Helper()
+	ctx := context.Background()
+	session := fx.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `
+		MERGE (root:TopologyRoot {id: 'singleton'})
+		SET root.topology_generation = $gen,
+		    root.service_metadata    = $meta
+	`, map[string]interface{}{"gen": topologyGen, "meta": serviceMetadata})
+	require.NoError(t, err)
+}
+
+// ── Stale-mode + target-missing integration tests ────────────────────────────
+
+// TestSnapshotSingleNodeRun_Stale verifies that in stale mode the new :Run
+// inherits image_tag/manifest_version from the source run's :EXECUTES edge
+// (NOT from the latest :Table or :TopologyRoot).
+func TestSnapshotSingleNodeRun_Stale(t *testing.T) {
+	ctx := context.Background()
+	fx, cleanup := newRunRepoWithNeo4j(t)
+	defer cleanup()
+
+	// Seed source run with an :EXECUTES edge to svcA.public.users at v1/m1.
+	seedTopologyRoot(t, fx, 5, `{"svcA":{"image_tag":"v1","manifest_version":"m1"}}`)
+	seedTableNode(t, fx, "svcA", "public", "users", "dbt-model", "v1", "m1")
+	srcRunID := uuid.New().String()
+	seedRunWithExecutesEdge(t, fx, srcRunID, /*scheduleName=*/ "src-schedule", /*kind=*/ "cron",
+		/*topologyGen=*/ 5,
+		/*serviceMetadata=*/ `{"svcA":{"image_tag":"v1","manifest_version":"m1"}}`,
+		"svcA", "public", "users", "v1", "m1")
+
+	// Move latest topology forward — simulating a manifest deploy to v2/m2.
+	updateTableNode(t, fx, "svcA", "public", "users", "v2", "m2")
+	updateTopologyRoot(t, fx, 6, `{"svcA":{"image_tag":"v2","manifest_version":"m2"}}`)
+
+	srcUUID := uuid.MustParse(srcRunID)
+	newRunID := uuid.New().String()
+	taskID, imageTag, manifestVersion, _, err := fx.repo.SnapshotSingleNodeRun(
+		ctx, newRunID, "single-node-run-"+newRunID[:8], &srcUUID,
+		"svcA", "public", "users",
+		"snapshot_of_run",
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, taskID)
+	assert.Equal(t, "v1", imageTag,        "imageTag must come from source run, not latest")
+	assert.Equal(t, "m1", manifestVersion, "manifestVersion must come from source run, not latest")
+
+	// :Run.topology_generation inherited from source (5, not 6).
+	props := readRunProps(t, fx, newRunID)
+	assert.Equal(t, int64(5), props["topology_generation"])
+	assert.Equal(t, srcRunID, props["source_run_id"])
+}
+
+// TestSnapshotSingleNodeRun_LatestMissing verifies that latest mode returns
+// run.ErrTargetNotFound when the target :Table does not exist.
+func TestSnapshotSingleNodeRun_LatestMissing(t *testing.T) {
+	ctx := context.Background()
+	fx, cleanup := newRunRepoWithNeo4j(t)
+	defer cleanup()
+
+	seedTopologyRoot(t, fx, 1, `{}`)
+	// No :Table seeded for "svcA.public.missing".
+
+	_, _, _, _, err := fx.repo.SnapshotSingleNodeRun(
+		ctx, uuid.NewString(), "single-node-run-xxx", nil,
+		"svcA", "public", "missing",
+		"latest",
+	)
+	require.ErrorIs(t, err, run.ErrTargetNotFound)
+}
+
+// TestSnapshotSingleNodeRun_StaleSourceMissing verifies that stale mode returns
+// run.ErrTargetNotFound when the source :Run does not exist in Neo4j.
+func TestSnapshotSingleNodeRun_StaleSourceMissing(t *testing.T) {
+	ctx := context.Background()
+	fx, cleanup := newRunRepoWithNeo4j(t)
+	defer cleanup()
+
+	missingSrc := uuid.New()
+	_, _, _, _, err := fx.repo.SnapshotSingleNodeRun(
+		ctx, uuid.NewString(), "single-node-run-xxx", &missingSrc,
+		"svcA", "public", "users",
+		"snapshot_of_run",
+	)
+	require.ErrorIs(t, err, run.ErrTargetNotFound)
 }
