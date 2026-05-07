@@ -95,6 +95,8 @@ services:
       SCHEDULER_STARTED_GROUP: orchestrator_scheduler_started
       RERUN_STREAM: trigger.rerun:v1
       RERUN_GROUP: orchestrator_rerun
+      SINGLE_NODE_RUN_STREAM: trigger.single_node_run:v1
+      SINGLE_NODE_RUN_GROUP: orchestrator_single_node_run
       RUN_FINALIZED_STREAM: run.finalized:v1
       RUN_FINALIZED_GROUP: orchestrator-run-finalized
       SCHEDULE_CANCELLED_STREAM: schedule.cancelled:v1
