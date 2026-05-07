@@ -51,10 +51,10 @@ func NewScheduleActivationService(
 // ActivateSchedule checks if a schedule is already active and, if not, atomically
 // creates a scheduler_tracker row and an outbox entry within a single transaction.
 // The background OutboxProcessor picks up the entry and publishes to Redis.
-func (s *ScheduleActivationService) ActivateSchedule(ctx context.Context, scheduleName string) (uuid.UUID, error) {
-	s.logger.Info("Attempting to activate schedule", "schedule_name", scheduleName)
+func (s *ScheduleActivationService) ActivateSchedule(ctx context.Context, scheduleName string, kind string, sourceRunID *uuid.UUID) (uuid.UUID, error) {
+	s.logger.Info("Attempting to activate schedule", "schedule_name", scheduleName, "kind", kind)
 
-	tracker, err := s.activator.PrepareActivation(ctx, scheduleName)
+	tracker, err := s.activator.PrepareActivation(ctx, scheduleName, kind, sourceRunID)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -91,10 +91,16 @@ func (s *ScheduleActivationService) ActivateSchedule(ctx context.Context, schedu
 	}
 	tracker.InitializationStatus = "in_progress"
 
+	sourceRunIDStr := ""
+	if sourceRunID != nil {
+		sourceRunIDStr = sourceRunID.String()
+	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"runner_id":        tracker.ScheduleID.String(),
 		"schedule_name":    tracker.ScheduleName,
 		"service_metadata": serviceMetadata,
+		"kind":             tracker.Kind,
+		"source_run_id":    sourceRunIDStr,
 	})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to marshal outbox payload: %w", err)
@@ -121,11 +127,12 @@ func (s *ScheduleActivationService) ActivateSchedule(ctx context.Context, schedu
 	s.logger.Info("Schedule activated successfully",
 		"schedule_id", tracker.ScheduleID,
 		"schedule_name", scheduleName,
+		"kind", tracker.Kind,
 	)
 	return tracker.ScheduleID, nil
 }
 
 // PrepareActivation delegates to the wrapped activator, satisfying ScheduleActivator.
-func (s *ScheduleActivationService) PrepareActivation(ctx context.Context, scheduleName string) (*model.SchedulerTracker, error) {
-	return s.activator.PrepareActivation(ctx, scheduleName)
+func (s *ScheduleActivationService) PrepareActivation(ctx context.Context, scheduleName string, kind string, sourceRunID *uuid.UUID) (*model.SchedulerTracker, error) {
+	return s.activator.PrepareActivation(ctx, scheduleName, kind, sourceRunID)
 }

@@ -24,10 +24,28 @@ State mutates these records in two ways: via gRPC for UI-facing reads and user-i
 
 ### New columns on `scheduler_tracker`
 
-| Column | Purpose |
-|---|---|
-| `total_task_count` | Set when `run.entries.dispatched:v1` is consumed; total number of tasks in the run |
-| `terminal_task_count` | Incremented by the finalization state machine each time a task reaches a terminal state |
+| Column | Type | Purpose |
+|---|---|---|
+| `total_task_count` | `integer` | Set when `run.entries.dispatched:v1` is consumed; total number of tasks in the run |
+| `terminal_task_count` | `integer` | Incremented by the finalization state machine each time a task reaches a terminal state |
+| `kind` | `character varying(20)` NOT NULL DEFAULT `'cron'` | Run discriminator. CHECK constraint allows: `cron`, `trigger`, `rerun`, `rebase`, `single_node_run`. Set at activation; the rerun handler may flip an existing tracker's kind from `'cron'` to `'rerun'` on `TriggerRerun`. Migration: V15. |
+| `source_run_id` | `uuid` NULL | Lineage pointer to a parent run. NULL for `cron`/`trigger`. Populated for `rerun`, `rebase`, and stale-mode `single_node_run`. Not a foreign key — orphans are fine. Migration: V15. |
+
+### New columns on `task_tracker`
+
+| Column | Type | Purpose |
+|---|---|---|
+| `image_tag` | `character varying(255)` NOT NULL DEFAULT `''` | Per-task audit pair to `manifest_version`. Pinned at task creation by `task_repository.Create` from the upstream event payload; never mutated. Migration: V16. |
+
+### Run kind values
+
+The `scheduler_tracker.kind` enum (also surfaced as the `kind` field on `:Run` in Neo4j and in the `scheduler.started:v1` outbox payload) discriminates run semantics:
+
+- `cron` — cron-triggered activation; uniform metadata. Today every non-rerun run lands here.
+- `trigger` — manual API trigger (reserved; not yet wired in v1).
+- `rerun` — re-execute failed node + downstream against the run's pinned snapshot. PR0 flips `kind` from `cron` to `rerun` on the existing tracker via `UpdateTx`.
+- `rebase` — Feature 2 (planned PR2): re-execute failed/cancelled tasks + descendants + new arrivals against latest topology; inherit successful tasks with old metadata.
+- `single_node_run` — Feature 4 (planned PR1): exactly one task; latest metadata by default, stale via picker.
 
 ## Inbound Interfaces
 
@@ -112,8 +130,10 @@ Payload fields:
 - `runner_id` — schedule UUID
 - `schedule_name`
 - `manifest_versions` — map of service → manifest hash read from `schedule_catalog`
+- `kind` — run discriminator string (`cron`, `trigger`, `rerun`, etc.); sourced from `scheduler_tracker.kind`
+- `source_run_id` — optional UUID string; omitted or empty for `cron`/`trigger` runs; set for `rerun` and `rebase` runs
 
-Effect: `orchestrator` begins task graph initialization.
+Effect: `orchestrator` begins task graph initialization, stamping `:Run.kind` and `:Run.source_run_id` in Neo4j.
 
 #### `rerun:v1`
 

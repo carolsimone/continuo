@@ -7,6 +7,7 @@ import (
 
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,6 +62,21 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// Verify ui-service HTTP API returns the correct data
 	t.Log("Verifying ui-service HTTP API...")
 	verifyUIService(t, ctx, schedulerIDStr)
+
+	// ── PR0 audit assertions: kind stamped on both stores; per-task metadata populated ──
+	t.Log("Verifying PR0 audit fields (kind, image_tag, manifest_version)...")
+
+	runKind := queryNeo4jRunKind(t, clients, schedulerID)
+	assert.Equal(t, "cron", runKind, "fresh schedule trigger must stamp :Run.kind = cron")
+
+	trackerKind := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
+	assert.Equal(t, "cron", trackerKind, "scheduler_tracker.kind must be cron after fresh activation")
+
+	manifestVersion, imageTag := queryFirstTaskTrackerMetadata(t, clients.stateDB, schedulerID)
+	assert.NotEmpty(t, manifestVersion, "task_tracker.manifest_version must be populated")
+	assert.NotEmpty(t, imageTag, "task_tracker.image_tag must be populated")
+
+	t.Log("✅ PR0 audit assertions passed")
 
 	t.Log("🎉 E2E test completed successfully!")
 }

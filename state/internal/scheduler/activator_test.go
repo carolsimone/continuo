@@ -82,7 +82,7 @@ func (r *stubRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ str
 func TestPrepareActivation_ReturnsTracker_WhenNoActiveSchedule(t *testing.T) {
 	a := scheduler.NewScheduleActivator(&stubRepo{hasActive: false}, testLogger())
 
-	tracker, err := a.PrepareActivation(context.Background(), "my-schedule")
+	tracker, err := a.PrepareActivation(context.Background(), "my-schedule", "cron", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, tracker)
@@ -96,7 +96,7 @@ func TestPrepareActivation_ReturnsTracker_WhenNoActiveSchedule(t *testing.T) {
 func TestPrepareActivation_ReturnsNil_WhenActiveScheduleExists(t *testing.T) {
 	a := scheduler.NewScheduleActivator(&stubRepo{hasActive: true}, testLogger())
 
-	tracker, err := a.PrepareActivation(context.Background(), "my-schedule")
+	tracker, err := a.PrepareActivation(context.Background(), "my-schedule", "cron", nil)
 
 	require.NoError(t, err)
 	assert.Nil(t, tracker)
@@ -105,7 +105,7 @@ func TestPrepareActivation_ReturnsNil_WhenActiveScheduleExists(t *testing.T) {
 func TestPrepareActivation_PropagatesRepoError(t *testing.T) {
 	a := scheduler.NewScheduleActivator(&stubRepo{hasActiveErr: errors.New("db error")}, testLogger())
 
-	_, err := a.PrepareActivation(context.Background(), "my-schedule")
+	_, err := a.PrepareActivation(context.Background(), "my-schedule", "cron", nil)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to check for active schedule")

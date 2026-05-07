@@ -130,6 +130,7 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 				Status:          model.TaskStatusPending,
 				MaxRetries:      int(t.MaxRetries),
 				ManifestVersion: t.ManifestVersion,
+				ImageTag:        t.ImageTag,
 			})
 	}
 

@@ -4,11 +4,17 @@ import (
 	"context"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/google/uuid"
 )
 
 type Repository interface {
 	// Write-side: snapshot and mutation
-	SnapshotGraph(ctx context.Context, runID, scheduleName string) error
+
+	// SnapshotGraph stamps a :Run node with kind (run-level discriminator) and
+	// optionally source_run_id (the schedule_id of the parent run this one
+	// derives from; nil for cron/trigger). See adapters/neo4j/run_repository.go
+	// for the Cypher details.
+	SnapshotGraph(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error
 	UpdateNodeStatus(ctx context.Context, runID, scheduleName, schema, tableName, status string) error
 	GetReadyDownstream(ctx context.Context, runID, scheduleName, schema, tableName string) ([]*DownstreamNode, error)
 	CheckScheduleCompletion(ctx context.Context, runID, scheduleName string) (isComplete bool, hasFailed bool, err error)

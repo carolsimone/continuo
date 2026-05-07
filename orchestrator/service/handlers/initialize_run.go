@@ -76,7 +76,8 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainCmd.Initial
 	}
 
 	// Snapshot the graph for this run (creates Run + EXECUTES edges).
-	if err := h.runRepo.SnapshotGraph(ctx, cmd.RunID, cmd.ScheduleName); err != nil {
+	// InitializeRunCmd carries no kind/sourceRunID; default to "cron" / nil.
+	if err := h.runRepo.SnapshotGraph(ctx, cmd.RunID, cmd.ScheduleName, "cron", nil); err != nil {
 		return fmt.Errorf("failed to snapshot graph: %w", err)
 	}
 

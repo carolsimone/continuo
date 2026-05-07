@@ -194,6 +194,7 @@ func TestRunEntriesDispatchedHandler_PersistsManifestVersionPerTask(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, created, 1)
 	assert.Equal(t, "v7", created[0].ManifestVersion, "manifest_version must be persisted from the event payload")
+	assert.Equal(t, "abc123-1714300000", created[0].ImageTag, "image_tag must be persisted from the event payload")
 }
 
 func TestRunEntriesDispatchedHandler_NoopWhenSchedulerCancelled(t *testing.T) {

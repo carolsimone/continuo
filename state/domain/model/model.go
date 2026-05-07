@@ -132,21 +132,23 @@ type ServiceMetadata struct {
 // SchedulerTracker represents a scheduler execution run
 // Maps to the scheduler_tracker table in PostgreSQL
 type SchedulerTracker struct {
-	ScheduleID           uuid.UUID         `json:"schedule_id" db:"schedule_id"`
-	ScheduleName         string            `json:"schedule_name" db:"schedule_name"`
-	Status               SchedulerStatus   `json:"status" db:"status"`
-	CreatedAt            time.Time         `json:"created_at" db:"created_at"`
-	StartedAt            *time.Time        `json:"started_at,omitempty" db:"started_at"`
-	CompletedAt          *time.Time        `json:"completed_at,omitempty" db:"completed_at"`
-	LastHeartbeatAt      *time.Time        `json:"last_heartbeat_at,omitempty" db:"last_heartbeat_at"`
-	CancelledAt          *time.Time        `json:"cancelled_at,omitempty" db:"cancelled_at"`
-	CancelledBy          *string           `json:"cancelled_by,omitempty" db:"cancelled_by"`
-	CancellationReason   *string           `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
-	InitializationStatus string            `json:"initialization_status" db:"initialization_status"`
-	TotalTaskCount       sql.NullInt32     `json:"total_task_count,omitempty" db:"total_task_count"`
-	TerminalTaskCount    int32             `json:"terminal_task_count" db:"terminal_task_count"`
-	ServiceMetadata    map[string]ServiceMetadata `json:"service_metadata"`
-	ServiceMetadataRaw json.RawMessage            `json:"-" db:"service_metadata"`
+	ScheduleID           uuid.UUID                  `json:"schedule_id" db:"schedule_id"`
+	ScheduleName         string                     `json:"schedule_name" db:"schedule_name"`
+	Status               SchedulerStatus            `json:"status" db:"status"`
+	CreatedAt            time.Time                  `json:"created_at" db:"created_at"`
+	StartedAt            *time.Time                 `json:"started_at,omitempty" db:"started_at"`
+	CompletedAt          *time.Time                 `json:"completed_at,omitempty" db:"completed_at"`
+	LastHeartbeatAt      *time.Time                 `json:"last_heartbeat_at,omitempty" db:"last_heartbeat_at"`
+	CancelledAt          *time.Time                 `json:"cancelled_at,omitempty" db:"cancelled_at"`
+	CancelledBy          *string                    `json:"cancelled_by,omitempty" db:"cancelled_by"`
+	CancellationReason   *string                    `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
+	InitializationStatus string                     `json:"initialization_status" db:"initialization_status"`
+	TotalTaskCount       sql.NullInt32              `json:"total_task_count,omitempty" db:"total_task_count"`
+	TerminalTaskCount    int32                      `json:"terminal_task_count" db:"terminal_task_count"`
+	Kind                 string                     `json:"kind" db:"kind"`
+	SourceRunID          *uuid.UUID                 `json:"source_run_id,omitempty" db:"source_run_id"`
+	ServiceMetadata      map[string]ServiceMetadata `json:"service_metadata"`
+	ServiceMetadataRaw   json.RawMessage            `json:"-" db:"service_metadata"`
 }
 
 func (s *SchedulerTracker) GetServiceMetadata() map[string]ServiceMetadata {
@@ -182,6 +184,7 @@ type TaskTracker struct {
 	CancelledAt     *time.Time `json:"cancelled_at,omitempty" db:"cancelled_at"`
 	CancelledBy     *string    `json:"cancelled_by,omitempty" db:"cancelled_by"`
 	ManifestVersion string     `json:"manifest_version" db:"manifest_version"`
+	ImageTag        string     `json:"image_tag" db:"image_tag"`
 }
 
 // TaskExecution represents a single execution attempt of a task

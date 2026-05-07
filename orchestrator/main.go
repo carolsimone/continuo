@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+
 func main() {
 	// Setup structured logger
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -315,23 +316,11 @@ func main() {
 
 	// Consumer 4: scheduler.started:v1 -> HandleSchedulerStarted
 	schedulerStartedHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		runnerID, ok := msg.Values["runner_id"].(string)
-		if !ok || runnerID == "" {
-			return fmt.Errorf("missing or invalid runner_id in scheduler.started message %s", msg.ID)
-		}
-		schedulerID, err := uuid.Parse(runnerID)
+		evt, err := redis.ParseSchedulerStartedEvent(msg.Values)
 		if err != nil {
-			return fmt.Errorf("invalid runner_id UUID %q in message %s: %w", runnerID, msg.ID, err)
+			return fmt.Errorf("scheduler.started message %s: %w", msg.ID, err)
 		}
-		scheduleName, ok2 := msg.Values["schedule_name"].(string)
-		if !ok2 || scheduleName == "" {
-			return fmt.Errorf("missing or invalid schedule_name in scheduler.started message %s", msg.ID)
-		}
-		cmd := domainCmd.SchedulerStartedCmd{
-			ScheduleID:   schedulerID,
-			ScheduleName: scheduleName,
-		}
-		return handleSchedulerStartedHandler.Handle(ctx, cmd, msg.ID)
+		return handleSchedulerStartedHandler.Handle(ctx, evt, msg.ID)
 	}
 	schedulerStartedConsumer := redis.NewStreamConsumer(
 		redisClient,

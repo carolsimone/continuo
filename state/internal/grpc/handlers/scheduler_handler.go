@@ -261,7 +261,7 @@ func (h *SchedulerHandler) ActivateSchedule(
 
 	h.logger.Info("ActivateSchedule called", "schedule_name", req.ScheduleName)
 
-	scheduleID, err := h.activator.ActivateSchedule(ctx, req.ScheduleName)
+	scheduleID, err := h.activator.ActivateSchedule(ctx, req.ScheduleName, "cron", nil)
 	if err != nil {
 		h.logger.Error("Failed to activate schedule", "schedule_name", req.ScheduleName, "error", err)
 		return nil, status.Errorf(codes.Internal, "failed to activate schedule: %v", err)
@@ -348,7 +348,7 @@ func (h *SchedulerHandler) TriggerSchedule(
 			"schedule %q already has an active run", req.ScheduleName)
 	}
 
-	scheduleID, err := h.activator.ActivateSchedule(ctx, req.ScheduleName)
+	scheduleID, err := h.activator.ActivateSchedule(ctx, req.ScheduleName, "cron", nil)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "activate schedule: %v", err)
 	}

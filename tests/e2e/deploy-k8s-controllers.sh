@@ -66,25 +66,30 @@ kubectl rollout restart deployment/executor-controller deployment/k8s-controller
     exit 1
 }
 
-# Step 5: Wait for deployments to be ready
-log_info "Waiting for deployments to be ready (timeout: 120s)..."
+# Step 5: Wait for rollout to fully complete (all old pods terminated, all new
+# pods Ready). `rollout status` is stricter than `wait --for=condition=available`,
+# which only requires minReplicas Ready and can return while old pods are still
+# terminating — leaving a window where `kubectl port-forward deployment/...`
+# from the e2e suite can attach to a dying pod, producing a "K8s service
+# unhealthy after port-forward" failure on the first test that runs.
+log_info "Waiting for rollout to complete (timeout: 120s)..."
 
-kubectl wait --for=condition=available --timeout=120s deployment/executor-controller -n default || {
-    log_error "executor-controller deployment did not become ready"
+kubectl rollout status deployment/executor-controller -n default --timeout=120s || {
+    log_error "executor-controller rollout did not complete"
     log_info "Pod logs:"
     kubectl logs -l app=executor-controller -n default --tail=50 || true
     exit 1
 }
 
-kubectl wait --for=condition=available --timeout=120s deployment/k8s-controller -n default || {
-    log_error "k8s-controller deployment did not become ready"
+kubectl rollout status deployment/k8s-controller -n default --timeout=120s || {
+    log_error "k8s-controller rollout did not complete"
     log_info "Pod logs:"
     kubectl logs -l app=k8s-controller -n default --tail=50 || true
     exit 1
 }
 
-log_info "Deployments are ready"
+log_info "Rollouts complete (no terminating pods, all new pods Ready)"
 
-# kubectl wait --for=condition=available already verified the readinessProbe
-# (which hits /health) for both deployments above, so the controllers are healthy.
-log_info "Controllers verified healthy via readinessProbe (kubectl wait passed)"
+# rollout status passing implies the readinessProbe (which hits /health) has
+# succeeded for every new pod and no old pods remain.
+log_info "Controllers verified healthy via readinessProbe (kubectl rollout status passed)"

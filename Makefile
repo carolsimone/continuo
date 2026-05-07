@@ -31,7 +31,6 @@ build: build-dev
 build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-state:prod -f state/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-executor-controller:prod -f executor-controller/Dockerfile.prod .
-	DOCKER_BUILDKIT=1 docker build -t continuo-startup-controller:prod -f startup-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-k8s-controller:prod -f k8s-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
 

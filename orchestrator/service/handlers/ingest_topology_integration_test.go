@@ -174,7 +174,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	require.Len(t, graph.Nodes, 2, "initial manifest load should expose both nodes")
 
 	historicalRunID := uuid.New().String()
-	require.NoError(t, runRepo.SnapshotGraph(ctx, historicalRunID, scheduleName))
+	require.NoError(t, runRepo.SnapshotGraph(ctx, historicalRunID, scheduleName, "cron", nil))
 
 	updatedLoad := domainCmd.IngestTopologyCmd{
 		Nodes: []domainCmd.TopologyNodePayload{
@@ -200,7 +200,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	assert.Equal(t, keepTable, graph.Nodes[0].TableName)
 
 	runID := uuid.New().String()
-	require.NoError(t, runRepo.SnapshotGraph(ctx, runID, scheduleName))
+	require.NoError(t, runRepo.SnapshotGraph(ctx, runID, scheduleName, "cron", nil))
 
 	initNodes, err := runRepo.GetScheduleInitNodes(ctx, scheduleName, runID)
 	require.NoError(t, err)

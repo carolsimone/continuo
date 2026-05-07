@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,20 +18,32 @@ import (
 // We reuse fakeRunRepository from handle_node_completed_test.go but need to
 // extend it with configurable behaviour for SnapshotGraph and GetScheduleInitNodes.
 
+// snapshotCall records the arguments passed to SnapshotGraph for assertion.
+type snapshotCall struct {
+	RunID        string
+	ScheduleName string
+	Kind         string
+	SourceRunID  *uuid.UUID
+}
+
 // extendedFakeRunRepository wraps fakeRunRepository and adds configurable fns.
 type extendedFakeRunRepository struct {
 	fakeRunRepository
-	snapshotGraphFn      func(ctx context.Context, runID, scheduleName string) error
+	snapshotGraphFn        func(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error
 	getScheduleInitNodesFn func(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error)
 
-	snapshotGraphCalls       int
+	snapshotGraphCalls        int
 	getScheduleInitNodesCalls int
+	snapshotCalls             []snapshotCall
 }
 
-func (f *extendedFakeRunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName string) error {
+func (f *extendedFakeRunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error {
 	f.snapshotGraphCalls++
+	f.snapshotCalls = append(f.snapshotCalls, snapshotCall{
+		RunID: runID, ScheduleName: scheduleName, Kind: kind, SourceRunID: sourceRunID,
+	})
 	if f.snapshotGraphFn != nil {
-		return f.snapshotGraphFn(ctx, runID, scheduleName)
+		return f.snapshotGraphFn(ctx, runID, scheduleName, kind, sourceRunID)
 	}
 	return nil
 }
