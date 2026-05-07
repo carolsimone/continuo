@@ -101,6 +101,116 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	t.Log("TestSingleNodeRunLatest passed")
 }
 
+// TestSingleNodeRunStale verifies the single-node-run flow in "snapshot_of_run"
+// (stale) metadata mode:
+//
+//  1. Triggers a normal cron-style run on the "seed" schedule so that a real
+//     source run exists with stamped image_tag / manifest_version.
+//  2. Waits for that source run to reach SUCCEEDED.
+//  3. Reads the source run's task_tracker row for the target node to capture
+//     the "old" image_tag and manifest_version pair.
+//  4. Calls TriggerSingleNodeRun with metadata_source="snapshot_of_run" and
+//     source_run_id = the source schedule_id.
+//  5. Waits for the new single-node run to reach SUCCEEDED.
+//  6. Asserts that the new run inherits the source's image_tag and
+//     manifest_version, and that :Run.source_run_id in Neo4j equals the source
+//     schedule_id.
+func TestSingleNodeRunStale(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	const (
+		targetService  = "service-1"
+		targetSchema   = "e2e_schema"
+		targetTable    = "seed_table_1"
+		srcSchedule    = "seed"
+	)
+
+	// Verify infrastructure is up before proceeding.
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+
+	// Ensure we have a clean slate for the source schedule and graph topology.
+	cleanupTestData(t, ctx, clients, srcSchedule)
+	defer cleanupTestData(t, ctx, clients, srcSchedule)
+	triggerGraphLoad(t, ctx, clients)
+
+	// ── Step 1: Trigger the source cron run ───────────────────────────────────
+	t.Log("=== Step 1: Triggering source seed run ===")
+	srcResp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+		ScheduleName: srcSchedule,
+	})
+	require.NoError(t, err, "TriggerSchedule(%q) failed", srcSchedule)
+	require.NotEmpty(t, srcResp.ScheduleId, "TriggerSchedule must return a non-empty schedule_id")
+
+	srcID, err := uuid.Parse(srcResp.ScheduleId)
+	require.NoError(t, err, "source schedule_id must be a valid UUID")
+	t.Logf("Source run created: schedule_id=%s", srcID)
+
+	// ── Step 2: Wait for source run to succeed ────────────────────────────────
+	t.Log("=== Step 2: Waiting for source run to reach 'succeeded' ===")
+	verifySchedulerSucceeded(t, ctx, clients, srcID)
+	t.Log("Source run reached 'succeeded'")
+
+	// ── Step 3: Read source's image_tag + manifest_version for the target ─────
+	t.Log("=== Step 3: Reading source task metadata ===")
+	srcImage, srcManifest := readTaskMetadata(t, ctx, clients, srcID, targetService, targetSchema, targetTable)
+	require.NotEmpty(t, srcImage, "source task_tracker.image_tag must be non-empty")
+	require.NotEmpty(t, srcManifest, "source task_tracker.manifest_version must be non-empty")
+	t.Logf("Source metadata: image_tag=%s manifest_version=%s", srcImage, srcManifest)
+
+	// ── Step 4: Trigger single-node run in stale mode ─────────────────────────
+	t.Log("=== Step 4: Triggering single-node run in stale (snapshot_of_run) mode ===")
+	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    targetService,
+		SchemaName:     targetSchema,
+		TableName:      targetTable,
+		MetadataSource: "snapshot_of_run",
+		SourceRunId:    srcResp.ScheduleId,
+	})
+	require.NoError(t, err, "TriggerSingleNodeRun (stale) gRPC call failed")
+	require.NotEmpty(t, resp.RunId, "TriggerSingleNodeRun must return a non-empty run_id")
+	require.NotEmpty(t, resp.ScheduleName, "TriggerSingleNodeRun must return a non-empty schedule_name")
+	t.Logf("Stale single-node run created: run_id=%s schedule_name=%s", resp.RunId, resp.ScheduleName)
+
+	runID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
+
+	// Register cleanup for the synthesised single-node-run row.
+	defer func() {
+		cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
+	}()
+
+	// ── Step 5: Wait for the new single-node run to succeed ───────────────────
+	t.Log("=== Step 5: Waiting for stale single-node run to reach 'succeeded' ===")
+	verifySchedulerSucceeded(t, ctx, clients, runID)
+	t.Log("Stale single-node run reached 'succeeded'")
+
+	// ── Step 6: Assert new run inherited source metadata ─────────────────────
+	t.Log("=== Step 6: Asserting stale metadata inheritance ===")
+	newImage, newManifest := readTaskMetadata(t, ctx, clients, runID, targetService, targetSchema, targetTable)
+	require.Equal(t, srcImage, newImage,
+		"stale mode must inherit source's image_tag: got %q, want %q", newImage, srcImage)
+	require.Equal(t, srcManifest, newManifest,
+		"stale mode must inherit source's manifest_version: got %q, want %q", newManifest, srcManifest)
+	t.Logf("New run metadata matches source: image_tag=%s manifest_version=%s", newImage, newManifest)
+
+	// Assert :Run.source_run_id in Neo4j equals the source schedule_id string.
+	sourceRunID := readNeo4jRunSourceRunID(t, ctx, clients, runID)
+	require.Equal(t, srcResp.ScheduleId, sourceRunID,
+		":Run.source_run_id must equal source schedule_id: got %q, want %q", sourceRunID, srcResp.ScheduleId)
+	t.Logf(":Run.source_run_id correctly set to %s", sourceRunID)
+
+	t.Log("TestSingleNodeRunStale passed")
+}
+
 // queryNeo4jRunHasSourceRunID returns true if the :Run node with the given
 // run_id has a non-null source_run_id property set in Neo4j.
 func queryNeo4jRunHasSourceRunID(t *testing.T, clients *testClients, runID uuid.UUID) bool {
@@ -162,4 +272,63 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	cleanupK8s(t, ctx)
 
 	t.Log("Single-node run cleanup complete")
+}
+
+// readTaskMetadata returns the image_tag and manifest_version from the
+// task_tracker row that matches the given schedule_id and target identity
+// (service_name, schema_name, table_name). Fails the test if no row is found.
+func readTaskMetadata(
+	t *testing.T,
+	_ context.Context,
+	clients *testClients,
+	scheduleID uuid.UUID,
+	serviceName, schemaName, tableName string,
+) (imageTag, manifestVersion string) {
+	t.Helper()
+	var row struct {
+		ImageTag        string `db:"image_tag"`
+		ManifestVersion string `db:"manifest_version"`
+	}
+	err := clients.stateDB.GetContext(context.Background(), &row,
+		`SELECT image_tag, manifest_version
+		   FROM task_tracker
+		  WHERE schedule_id   = $1
+		    AND service_name  = $2
+		    AND schema_name   = $3
+		    AND table_name    = $4
+		  LIMIT 1`,
+		scheduleID, serviceName, schemaName, tableName,
+	)
+	require.NoError(t, err,
+		"readTaskMetadata: no task_tracker row for schedule_id=%s service=%s schema=%s table=%s",
+		scheduleID, serviceName, schemaName, tableName,
+	)
+	return row.ImageTag, row.ManifestVersion
+}
+
+// readNeo4jRunSourceRunID returns the value of :Run.source_run_id for the
+// given run_id, or "" if the property is absent or the node is not found.
+func readNeo4jRunSourceRunID(t *testing.T, _ context.Context, clients *testClients, runID uuid.UUID) string {
+	t.Helper()
+	session := clients.neo4jDriver.NewSession(context.Background(), neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeRead,
+	})
+	defer session.Close(context.Background())
+
+	result, err := session.Run(
+		context.Background(),
+		`MATCH (r:Run {run_id: $run_id})
+		 RETURN COALESCE(r.source_run_id, "") AS source_run_id`,
+		map[string]interface{}{"run_id": runID.String()},
+	)
+	require.NoError(t, err, "Neo4j query for source_run_id value failed")
+	if !result.Next(context.Background()) {
+		return ""
+	}
+	raw, ok := result.Record().Get("source_run_id")
+	if !ok {
+		return ""
+	}
+	v, _ := raw.(string)
+	return v
 }
