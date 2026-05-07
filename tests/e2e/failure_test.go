@@ -7,6 +7,7 @@ import (
 
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,6 +60,25 @@ func TestE2E_FailurePath_NodeFailureDrainsSchedule(t *testing.T) {
 
 	t.Log("Verifying scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, schedulerID)
+
+	// ── PR0 rerun audit assertion: TriggerRerun must flip scheduler_tracker.kind to 'rerun' ──
+	// ftable_e is permanently FAILED and the scheduler is FAILED, so there are no
+	// running tasks — the preconditions for TriggerRerun are satisfied.
+	t.Log("Triggering rerun on ftable_e via gRPC TriggerRerun...")
+	_, err = clients.stateClient.TriggerRerun(ctx, &statev1.TriggerRerunRequest{
+		ScheduleId:  schedulerIDStr,
+		Schema:      testSchemaName,
+		TableName:   "ftable_e",
+		ServiceName: "service-2",
+	})
+	require.NoError(t, err, "TriggerRerun(ftable_e) must succeed on a permanently-failed task")
+
+	// NOTE: :Run.kind stays 'cron' on rerun — SnapshotGraph's ON MATCH preserves
+	// the original kind via COALESCE for replay-safety. The Postgres tracker
+	// (mutated by the rerun handler) is the canonical kind=rerun signal for now.
+	// A follow-up PR may revisit this if rerun semantics evolve.
+	trackerKindAfterRerun := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
+	assert.Equal(t, "rerun", trackerKindAfterRerun, "rerun must flip scheduler_tracker.kind to rerun")
 
 	t.Log("✅ Failure path test completed successfully")
 }

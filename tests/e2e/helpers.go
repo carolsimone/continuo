@@ -10,6 +10,9 @@ import (
 	"time"
 
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
@@ -296,6 +299,51 @@ func triggerSchedule(t *testing.T, ctx context.Context, clients *testClients, sc
 	})
 	require.NoError(t, err, "TriggerSchedule(%q) failed", scheduleName)
 	return resp.GetScheduleId()
+}
+
+// queryNeo4jRunKind returns the :Run.kind property for a run, or "" if the node
+// is not found. Used by PR0 audit assertions to verify the kind is stamped on
+// the Neo4j run snapshot.
+func queryNeo4jRunKind(t *testing.T, clients *testClients, runID uuid.UUID) string {
+	t.Helper()
+	session := clients.neo4jDriver.NewSession(context.Background(), neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeRead,
+	})
+	defer session.Close(context.Background())
+	result, err := session.Run(context.Background(),
+		`MATCH (r:Run {run_id: $run_id}) RETURN COALESCE(r.kind, "") AS kind`,
+		map[string]interface{}{"run_id": runID.String()})
+	require.NoError(t, err)
+	if !result.Next(context.Background()) {
+		return ""
+	}
+	raw, _ := result.Record().Get("kind")
+	s, _ := raw.(string)
+	return s
+}
+
+// queryPostgresTrackerKind returns scheduler_tracker.kind for a run identified by
+// its schedule_id. Used by PR0 audit assertions.
+func queryPostgresTrackerKind(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
+	t.Helper()
+	var kind string
+	require.NoError(t, db.GetContext(context.Background(), &kind,
+		`SELECT kind FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID))
+	return kind
+}
+
+// queryFirstTaskTrackerMetadata returns the manifest_version and image_tag of
+// any task_tracker row for the given schedule_id. Used by PR0 audit assertions to
+// verify per-task metadata is populated after a successful run.
+func queryFirstTaskTrackerMetadata(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) (manifestVersion, imageTag string) {
+	t.Helper()
+	var sample struct {
+		ManifestVersion string `db:"manifest_version"`
+		ImageTag        string `db:"image_tag"`
+	}
+	require.NoError(t, db.GetContext(context.Background(), &sample,
+		`SELECT manifest_version, image_tag FROM task_tracker WHERE schedule_id = $1 LIMIT 1`, scheduleID))
+	return sample.ManifestVersion, sample.ImageTag
 }
 
 // deleteS3Sidecar removes service_metadata.json from localstack S3 for a
