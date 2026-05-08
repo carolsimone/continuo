@@ -17,8 +17,8 @@ import (
 // ── fake run repository for single-node-run tests ─────────────────────────────
 
 // singleNodeFakeRunRepository wraps fakeRunRepository, overriding Snapshot so
-// the handler's snapshot call can be stubbed. PR2: handle_single_node_run
-// migrated from SnapshotSingleNodeRun to Snapshot(SingleNode{...}).
+// the handler's snapshot call can be stubbed. handle_single_node_run uses
+// Snapshot(SingleNode{...}) under the umbrella snapshot routine.
 type singleNodeFakeRunRepository struct {
 	fakeRunRepository
 
@@ -112,7 +112,7 @@ func makeSingleNodeCmd(runID string) domainCmd.SingleNodeRunRequest {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-// 1. Happy path: SnapshotSingleNodeRun returns concrete values.
+// 1. Happy path: Snapshot(SingleNode) returns concrete values.
 //    Expect TWO outbox entries: run.entries.dispatched:v1 and query.model:v1.
 func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 	fx := newSingleNodeRunHandlerFixture(t)
@@ -173,7 +173,7 @@ func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 	require.Equal(t, "dbt-model", queryEvt.NodeType)
 }
 
-// 2. SnapshotSingleNodeRun returns ErrTargetNotFound.
+// 2. Snapshot(SingleNode) returns ErrTargetNotFound.
 //    Expect ONE outbox entry with stream run.entries.dispatch_failed:v1; handler returns nil.
 func TestHandleSingleNodeRun_TargetNotFound(t *testing.T) {
 	fx := newSingleNodeRunHandlerFixture(t)
@@ -217,6 +217,6 @@ func TestHandleSingleNodeRun_DedupSecondDelivery(t *testing.T) {
 
 	// Second delivery with the same message ID: must be skipped.
 	require.NoError(t, fx.Handler.Handle(context.Background(), cmd, "msg-snr-dup"))
-	require.Equal(t, 1, fx.RunRepo.snapshotCalls, "SnapshotSingleNodeRun must NOT be called again")
+	require.Equal(t, 1, fx.RunRepo.snapshotCalls, "Snapshot must NOT be called again")
 	require.Len(t, fx.UoW.outboxRepo.CreatedEntries, firstCount, "outbox count must not grow on duplicate")
 }

@@ -2,18 +2,10 @@ package run
 
 import (
 	"context"
-	"errors"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
-	"github.com/google/uuid"
 )
-
-// ErrTargetNotFound is returned by SnapshotSingleNodeRun when the requested
-// target node (latest mode) or :EXECUTES edge of the source run (stale
-// mode) cannot be located. Callers should convert this into a run.failed:v1
-// outcome rather than retrying.
-var ErrTargetNotFound = errors.New("single-node run target not found")
 
 type Repository interface {
 	// Write-side: snapshot and mutation
@@ -31,24 +23,6 @@ type Repository interface {
 	MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*CascadedFailureNode, error)
 	ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error
 	GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (manifestVersion, imageTag string, err error)
-
-	// SnapshotSingleNodeRun creates a one-task :Run + :Task + :EXECUTES edge
-	// for a single-node run.
-	//
-	// metadataSource: "latest" reads :TopologyRoot + :Table for the metadata
-	// pair; "snapshot_of_run" reads the :EXECUTES edge of :Run{run_id: sourceRunID}.
-	// Returns the created task_id, image_tag, manifest_version, and the
-	// node_type (used to compose the dispatch event).
-	//
-	// Returns ErrTargetNotFound if the requested target doesn't exist in the
-	// chosen source — the orchestrator handler converts this into run.failed:v1.
-	SnapshotSingleNodeRun(
-		ctx context.Context,
-		runID, scheduleName string,
-		sourceRunID *uuid.UUID,
-		serviceName, schemaName, tableName string,
-		metadataSource string,
-	) (taskID, imageTag, manifestVersion, nodeType string, err error)
 
 	// Snapshot is the unified per-run snapshot routine (umbrella §3). Selector
 	// inside params reads source/topology and returns the projection; the

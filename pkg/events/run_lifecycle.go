@@ -34,7 +34,7 @@ type RunEntriesDispatched struct {
 
 // RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1
 // Published by: orchestrator when it cannot produce dispatch work for a run
-// (e.g. SnapshotSingleNodeRun → ErrTargetNotFound). Symmetric to
+// (e.g. Snapshot+SingleNode → ErrTargetNotFound). Symmetric to
 // RunEntriesDispatched: that one creates tasks + flips scheduler_tracker to
 // running; this one writes no tasks + flips scheduler_tracker to failed.
 // Consumed by: state.

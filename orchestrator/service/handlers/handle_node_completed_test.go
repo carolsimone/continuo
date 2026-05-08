@@ -104,10 +104,6 @@ func (f *fakeRunRepository) ResetSkippedDownstreamToPending(ctx context.Context,
 func (f *fakeRunRepository) GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (string, string, error) {
 	return "v1-stub", "tag-stub", nil
 }
-func (f *fakeRunRepository) SnapshotSingleNodeRun(ctx context.Context, runID, scheduleName string, sourceRunID *uuid.UUID, serviceName, schemaName, tableName string, metadataSource string) (taskID, imageTag, manifestVersion, nodeType string, err error) {
-	return "", "", "", "", nil
-}
-
 func (f *fakeRunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
 	return nil, nil
 }

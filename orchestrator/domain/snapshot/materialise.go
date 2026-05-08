@@ -69,8 +69,8 @@ func Materialise(ctx context.Context, tx neo4j.ManagedTransaction, p Params, pro
 	//   - source_run_id IS NULL  (cron/trigger/latest-single-node)   → :TopologyRoot
 	//   - source_run_id non-NULL (rerun/rebase/stale-single-node)    → source :Run
 	// If source_run_id is set but the source :Run was pruned, fall back to
-	// :TopologyRoot rather than fail (matches legacy SnapshotSingleNodeRun's
-	// graceful behaviour for missing source nodes).
+	// :TopologyRoot rather than fail (graceful behaviour for missing source
+	// nodes).
 	const query = `
 		OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
 		OPTIONAL MATCH (src:Run {run_id: $source_run_id})
