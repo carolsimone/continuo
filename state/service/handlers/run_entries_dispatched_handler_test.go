@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -10,9 +11,9 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/model"
+	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -230,4 +231,91 @@ func TestRunEntriesDispatchedHandler_NoopWhenSchedulerCancelled(t *testing.T) {
 	got, err := schedRepo.GetByID(ctx, schedID)
 	require.NoError(t, err)
 	assert.Equal(t, model.SchedulerStatusCancelled, got.Status)
+}
+
+// TestRunEntriesDispatched_PR2_PerTaskStatus verifies that the handler honors
+// the per-task Status and InheritedFromTaskID fields introduced by PR2 (rebase
+// from failed). A mixed-status payload (one rebased + one inherited-succeeded)
+// must produce task_tracker rows that mirror the wire-format values verbatim.
+func TestRunEntriesDispatched_PR2_PerTaskStatus(t *testing.T) {
+	db := setupRunEntriesDispatchedTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	h := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+
+	scheduleID := uuid.New()
+	seedSchedulerTracker(t, db, scheduleID, "in_progress")
+	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
+
+	rootTaskID := uuid.New()
+	rebasedTaskID := uuid.New()
+	inheritedTaskID := uuid.New()
+
+	evt := events.RunEntriesDispatched{
+		ScheduleID:   scheduleID.String(),
+		ScheduleName: "rebase-test",
+		AllTasks: []events.DispatchedTask{
+			{
+				TaskID: rebasedTaskID.String(), ServiceName: "svc", SchemaName: "s", TableName: "rebased",
+				NodeType: "dbt-model", MaxRetries: 2, ManifestVersion: "v2", ImageTag: "img:2",
+				Status: "pending",
+			},
+			{
+				TaskID: inheritedTaskID.String(), ServiceName: "svc", SchemaName: "s", TableName: "inherited",
+				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
+				Status: "succeeded", InheritedFromTaskID: rootTaskID.String(),
+			},
+		},
+		TotalTaskCount: 2,
+	}
+	payload, err := json.Marshal(evt)
+	require.NoError(t, err)
+
+	ack, err := h.Handle(context.Background(), "msg-perTaskStatus-"+uuid.New().String(), string(payload))
+	require.NoError(t, err)
+	require.True(t, ack)
+
+	rebased, err := taskRepo.GetByID(context.Background(), rebasedTaskID)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusPending, rebased.Status)
+	assert.Nil(t, rebased.InheritedFromTaskID)
+
+	inherited, err := taskRepo.GetByID(context.Background(), inheritedTaskID)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSucceeded, inherited.Status)
+	require.NotNil(t, inherited.InheritedFromTaskID)
+	assert.Equal(t, rootTaskID, *inherited.InheritedFromTaskID)
+}
+
+// TestRunEntriesDispatched_PR2_BackwardCompatDefaultsPending verifies that a
+// pre-PR2 producer (one that omits Status from the JSON payload) still
+// produces task_tracker rows in 'pending' state — never the empty string,
+// never an invalid zero-value.
+func TestRunEntriesDispatched_PR2_BackwardCompatDefaultsPending(t *testing.T) {
+	db := setupRunEntriesDispatchedTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	h := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+
+	scheduleID := uuid.New()
+	seedSchedulerTracker(t, db, scheduleID, "in_progress")
+	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
+
+	taskID := uuid.New()
+	// Pre-PR2 producer: omit Status entirely from JSON.
+	payload := fmt.Sprintf(`{"schedule_id":%q,"schedule_name":"cron-test","total_task_count":1,"all_tasks":[{"task_id":%q,"service_name":"svc","schema_name":"s","table_name":"x","node_type":"dbt-model","max_retries":2,"manifest_version":"v1","image_tag":"img:1"}]}`,
+		scheduleID.String(), taskID.String())
+
+	ack, err := h.Handle(context.Background(), "msg-bc-"+uuid.New().String(), payload)
+	require.NoError(t, err)
+	require.True(t, ack)
+
+	got, err := taskRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusPending, got.Status, "missing Status must default to pending")
+	assert.Nil(t, got.InheritedFromTaskID)
 }

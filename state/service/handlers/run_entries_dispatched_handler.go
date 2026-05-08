@@ -119,19 +119,49 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 			_ = tx.Rollback()
 			return true, nil
 		}
-			tasks = append(tasks, &model.TaskTracker{
-				TaskID:          taskID,
-				ScheduleID:      scheduleID,
-				CreatedAt:       now,
-				ServiceName:     t.ServiceName,
-				SchemaName:      t.SchemaName,
-				TableName:       t.TableName,
-				JobName:         jobName,
-				Status:          model.TaskStatusPending,
-				MaxRetries:      int(t.MaxRetries),
-				ManifestVersion: t.ManifestVersion,
-				ImageTag:        t.ImageTag,
-			})
+
+		// PR2: per-task Status (default "pending" for backward-compat with pre-PR2 producers).
+		// Rebased tasks arrive as "pending"; tasks inherited from a previous successful run
+		// arrive as "succeeded" (carrying their original task_id via InheritedFromTaskID).
+		domainStatus := model.TaskStatusPending
+		if t.Status != "" {
+			s, statusErr := model.ParseTaskStatus(t.Status)
+			if statusErr != nil {
+				h.logger.Error("run.entries.dispatched: invalid per-task status — discarding message",
+					"task_id", t.TaskID, "status", t.Status, "error", statusErr)
+				_ = tx.Rollback()
+				return true, nil
+			}
+			domainStatus = s
+		}
+
+		// PR2: optional lineage pointer to the root task this row inherits from.
+		var inheritedFrom *uuid.UUID
+		if t.InheritedFromTaskID != "" {
+			parsed, perr := uuid.Parse(t.InheritedFromTaskID)
+			if perr != nil {
+				h.logger.Error("run.entries.dispatched: invalid inherited_from_task_id — discarding message",
+					"task_id", t.TaskID, "inherited_from", t.InheritedFromTaskID, "error", perr)
+				_ = tx.Rollback()
+				return true, nil
+			}
+			inheritedFrom = &parsed
+		}
+
+		tasks = append(tasks, &model.TaskTracker{
+			TaskID:              taskID,
+			ScheduleID:          scheduleID,
+			CreatedAt:           now,
+			ServiceName:         t.ServiceName,
+			SchemaName:          t.SchemaName,
+			TableName:           t.TableName,
+			JobName:             jobName,
+			Status:              domainStatus,
+			MaxRetries:          int(t.MaxRetries),
+			ManifestVersion:     t.ManifestVersion,
+			ImageTag:            t.ImageTag,
+			InheritedFromTaskID: inheritedFrom,
+		})
 	}
 
 	if txErr := h.taskRepo.BulkCreateTx(ctx, tx, tasks); txErr != nil {

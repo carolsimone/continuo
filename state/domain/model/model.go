@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,6 +51,17 @@ func (t TaskStatus) IsValid() bool {
 		return true
 	}
 	return false
+}
+
+// ParseTaskStatus converts a lowercase status string to a TaskStatus, returning
+// an error for unknown values. Used at the wire-format boundary (e.g. parsing
+// per-task Status from a run.entries.dispatched:v1 event payload).
+func ParseTaskStatus(s string) (TaskStatus, error) {
+	t := TaskStatus(s)
+	if !t.IsValid() {
+		return "", fmt.Errorf("unknown task status %q", s)
+	}
+	return t, nil
 }
 
 // CallerID identifies which service is performing a task state transition.
