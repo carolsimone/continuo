@@ -3,12 +3,14 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
@@ -75,10 +77,22 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainCmd.Initial
 		return nil
 	}
 
-	// Snapshot the graph for this run (creates Run + EXECUTES edges).
+	// Snapshot the graph via the unified Snapshot+LatestFullDAG routine.
 	// InitializeRunCmd carries no kind/sourceRunID; default to "cron" / nil.
-	if err := h.runRepo.SnapshotGraph(ctx, cmd.RunID, cmd.ScheduleName, "cron", nil); err != nil {
-		return fmt.Errorf("failed to snapshot graph: %w", err)
+	if _, err := h.runRepo.Snapshot(ctx, snapshot.Params{
+		RunID:        cmd.RunID,
+		ScheduleName: cmd.ScheduleName,
+		Kind:         "cron",
+		Selector:     snapshot.LatestFullDAG{},
+	}); err != nil {
+		if errors.Is(err, snapshot.ErrEmptyProjection) {
+			h.logger.Warn("Snapshot: no nodes for schedule, run will have no EXECUTES edges",
+				"schedule_name", cmd.ScheduleName, "run_id", cmd.RunID)
+			// Continue — preserve the legacy SnapshotGraph behaviour (warn + carry on
+			// to write run.initialized:v1 with empty node lists).
+		} else {
+			return fmt.Errorf("failed to snapshot graph: %w", err)
+		}
 	}
 
 	// Get all/root/seed initialization nodes for the schedule.

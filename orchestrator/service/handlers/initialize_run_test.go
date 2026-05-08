@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,6 +47,50 @@ func (f *extendedFakeRunRepository) SnapshotGraph(ctx context.Context, runID, sc
 		return f.snapshotGraphFn(ctx, runID, scheduleName, kind, sourceRunID)
 	}
 	return nil
+}
+
+// Snapshot is the unified routine that callers migrated to in PR2. The fake
+// records the call (same counter as SnapshotGraph for backward-compat with
+// existing assertions) and returns a projection derived from the configured
+// getScheduleInitNodesFn — so a single test fixture drives both
+// `Snapshot()` (for the AllTasks payload) and `GetScheduleInitNodes()` (for
+// the seed/root dispatch ordering).
+func (f *extendedFakeRunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
+	f.snapshotGraphCalls++
+	f.snapshotCalls = append(f.snapshotCalls, snapshotCall{
+		RunID: params.RunID, ScheduleName: params.ScheduleName, Kind: params.Kind, SourceRunID: params.SourceRunID,
+	})
+	// Build projection from the configured init-nodes fixture.
+	if f.getScheduleInitNodesFn == nil {
+		return nil, snapshot.ErrEmptyProjection
+	}
+	initNodes, err := f.getScheduleInitNodesFn(ctx, params.ScheduleName, params.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if initNodes == nil || len(initNodes.AllNodes) == 0 {
+		return nil, snapshot.ErrEmptyProjection
+	}
+	projection := make([]snapshot.TaskProjection, 0, len(initNodes.AllNodes))
+	for _, n := range initNodes.AllNodes {
+		taskID, _ := uuid.Parse(n.TaskID)
+		if taskID == uuid.Nil {
+			taskID = uuid.New()
+		}
+		projection = append(projection, snapshot.TaskProjection{
+			TaskID:          taskID,
+			ServiceName:     n.ServiceName,
+			SchemaName:      n.SchemaName,
+			TableName:       n.TableName,
+			ScheduleName:    n.ScheduleName,
+			NodeType:        n.NodeType,
+			InitialStatus:   "PENDING",
+			ImageTag:        n.ImageTag,
+			ManifestVersion: n.ManifestVersion,
+			MaxRetries:      2, // pkgevents.DefaultTaskMaxRetries
+		})
+	}
+	return projection, nil
 }
 
 func (f *extendedFakeRunRepository) GetScheduleInitNodes(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error) {

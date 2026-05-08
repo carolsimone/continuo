@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
@@ -68,19 +70,41 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		return nil
 	}
 
-	// Snapshot the graph for this run (creates Run + EXECUTES edges, pre-assigns task UUIDs).
-	if err := h.runRepo.SnapshotGraph(ctx, evt.ScheduleID.String(), evt.ScheduleName, evt.Kind, evt.SourceRunID); err != nil {
+	// Snapshot the graph for this run via the unified routine: LatestFullDAG
+	// selector enumerates active :Tables + upstream dbt-seeds, mints fresh
+	// task_ids, and the materialiser writes :Run + :EXECUTES edges in one tx.
+	projection, err := h.runRepo.Snapshot(ctx, snapshot.Params{
+		RunID:        evt.ScheduleID.String(),
+		ScheduleName: evt.ScheduleName,
+		Kind:         evt.Kind,
+		SourceRunID:  evt.SourceRunID,
+		Selector:     snapshot.LatestFullDAG{},
+	})
+	if err != nil {
+		if errors.Is(err, snapshot.ErrEmptyProjection) {
+			// Preserve the legacy SnapshotGraph behaviour: warn + return nil
+			// (the run row exists but has no work to do; finalisation logic
+			// elsewhere handles the empty-DAG case).
+			h.logger.Warn("Snapshot: no nodes for schedule, run will have no EXECUTES edges",
+				"schedule_name", evt.ScheduleName, "run_id", evt.ScheduleID.String())
+			if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
+				return fmt.Errorf("failed to update message state: %w", err)
+			}
+			return h.uow.Commit()
+		}
 		return fmt.Errorf("failed to snapshot graph: %w", err)
 	}
 
-	// Get all/root/seed initialization nodes for the schedule.
+	// Get root/seed dispatch ordering for the schedule. The AllNodes data is
+	// redundant with the projection above; we ignore it. Only RootNodes/SeedNodes
+	// are used (seeds dispatch first, otherwise roots).
 	initNodes, err := h.runRepo.GetScheduleInitNodes(ctx, evt.ScheduleName, evt.ScheduleID.String())
 	if err != nil {
 		return fmt.Errorf("failed to get schedule init nodes: %w", err)
 	}
 
-	// Build and write run.entries.dispatched:v1 outbox entry.
-	dispatchedPayload, err := h.buildRunEntriesDispatchedPayload(evt, initNodes)
+	// Build and write run.entries.dispatched:v1 outbox entry from the projection.
+	dispatchedPayload, err := h.buildRunEntriesDispatchedPayload(evt, projection)
 	if err != nil {
 		return fmt.Errorf("failed to build run.entries.dispatched payload: %w", err)
 	}
@@ -221,25 +245,26 @@ func (h *HandleSchedulerStartedHandler) dedup(
 	return id, false, nil
 }
 
-// buildRunEntriesDispatchedPayload constructs the JSON payload for run.entries.dispatched:v1.
+// buildRunEntriesDispatchedPayload constructs the JSON payload for run.entries.dispatched:v1
+// from the snapshot projection. All cron-path tasks are PENDING with no inherit
+// pointer — Status defaults to "" (omitted) on the wire, which the consumer
+// treats as PENDING (backward-compat).
 func (h *HandleSchedulerStartedHandler) buildRunEntriesDispatchedPayload(
 	evt domain.SchedulerStarted,
-	initNodes *run.ScheduleInitNodes,
+	projection []snapshot.TaskProjection,
 ) ([]byte, error) {
-	var allTasks []pkgevents.DispatchedTask
-	if initNodes != nil {
-		for _, node := range initNodes.AllNodes {
-			allTasks = append(allTasks, pkgevents.DispatchedTask{
-				TaskID:          node.TaskID,
-				ServiceName:     node.ServiceName,
-				SchemaName:      node.SchemaName,
-				TableName:       node.TableName,
-				NodeType:        node.NodeType,
-				MaxRetries:      pkgevents.DefaultTaskMaxRetries,
-				ManifestVersion: node.ManifestVersion,
-				ImageTag:        node.ImageTag,
-			})
-		}
+	allTasks := make([]pkgevents.DispatchedTask, 0, len(projection))
+	for _, t := range projection {
+		allTasks = append(allTasks, pkgevents.DispatchedTask{
+			TaskID:          t.TaskID.String(),
+			ServiceName:     t.ServiceName,
+			SchemaName:      t.SchemaName,
+			TableName:       t.TableName,
+			NodeType:        t.NodeType,
+			MaxRetries:      t.MaxRetries,
+			ManifestVersion: t.ManifestVersion,
+			ImageTag:        t.ImageTag,
+		})
 	}
 
 	dispatched := pkgevents.RunEntriesDispatched{
