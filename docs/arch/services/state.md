@@ -127,7 +127,8 @@ On success: scheduler is set to `status=RUNNING, kind='rerun', completed_at=NULL
 | Stream | Consumer group | Handler |
 |---|---|---|
 | `schedules.loaded:v1` | state service | `ScheduleCatalogHandler` — reconciles `schedule_catalog` |
-| `run.entries.dispatched:v1` | state service | `RunEntriesDispatchedHandler` — creates tasks, sets `total_task_count`, marks `init_status=completed`, `status=running` |
+| `run.entries.dispatched:v1` | state service | `RunEntriesDispatchedHandler` — creates tasks (each carries the orchestrator-stamped `MaxRetries=DefaultTaskMaxRetries`), sets `total_task_count`, marks `init_status=completed`, `status=running` |
+| `run.entries.dispatch_failed:v1` | state service | `RunEntriesDispatchFailedHandler` — symmetric counterpart of `RunEntriesDispatchedHandler`. Row-locks `scheduler_tracker`, marks status=`failed`, emits `run.finalized:v1`. Idempotent on already-terminal rows. |
 | `run.rerun.dispatched:v1` | state service | `RunRerunDispatchedHandler` — resets tasks for rerun |
 | `task.status.updated:v1` | state service | `TaskStatusUpdatedHandler` — updates task status, drives finalization state machine |
 | `task.execution.recorded:v1` | state service | `TaskExecutionRecordedHandler` — persists task execution records |

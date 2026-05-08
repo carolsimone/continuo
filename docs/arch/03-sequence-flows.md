@@ -321,10 +321,11 @@ sequenceDiagram
   R->>OR: consume trigger.single_node_run:v1
   Note over OR: HandleSingleNodeRunHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Neo4j: SnapshotSingleNodeRun(runID, scheduleName, kind, metadataSource, sourceRunID)<br/>  latest mode → reads :TopologyRoot + :Table for metadata<br/>  stale mode  → reads source :Run's EXECUTES edge (image_tag + manifest_version)
   alt ErrTargetNotFound (node absent in Neo4j)
-    OR->>R: publish run.failed:v1 (synthesised run marked terminal-failed)
-    Note over OR: no executor dispatch; state marks run FAILED
+    OR->>R: publish run.entries.dispatch_failed:v1 (synthesised run will be marked terminal-failed)
+    R->>ST: consume run.entries.dispatch_failed:v1
+    Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, FinalizeRunTx → status='failed'<br/>state_outbox INSERT for run.finalized:v1
   else node found
-    OR->>R: publish run.entries.dispatched:v1 (1 task entry)
+    OR->>R: publish run.entries.dispatched:v1 (1 task entry, MaxRetries=DefaultTaskMaxRetries)
     OR->>R: publish query.model:v1 (single dispatch)
   end
 

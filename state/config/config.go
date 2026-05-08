@@ -10,12 +10,13 @@ type Config struct {
 	Postgres pkgconfig.PostgresConfig
 
 	// Redis streams
-	RedisStreamSchedulerStarted          string
-	RedisStreamSchedulesLoaded           string
-	RedisStreamRunEntriesDispatched      string
-	RedisStreamRunRerunDispatched        string
-	RedisStreamTaskStatusUpdated         string
-	RedisStreamTaskExecutionRecorded     string
+	RedisStreamSchedulerStarted            string
+	RedisStreamSchedulesLoaded             string
+	RedisStreamRunEntriesDispatched        string
+	RedisStreamRunEntriesDispatchFailed    string
+	RedisStreamRunRerunDispatched          string
+	RedisStreamTaskStatusUpdated           string
+	RedisStreamTaskExecutionRecorded       string
 
 	// gRPC
 	GRPCPort int
@@ -37,6 +38,7 @@ func Load(v *pkgconfig.Validator) Config {
 		RedisStreamSchedulerStarted:         v.Require("REDIS_STREAM_SCHEDULER_STARTED"),
 		RedisStreamSchedulesLoaded:          v.Require("REDIS_STREAM_SCHEDULES_LOADED"),
 		RedisStreamRunEntriesDispatched:     v.Require("REDIS_STREAM_RUN_ENTRIES_DISPATCHED"),
+		RedisStreamRunEntriesDispatchFailed: v.Require("REDIS_STREAM_RUN_ENTRIES_DISPATCH_FAILED"),
 		RedisStreamRunRerunDispatched:       v.Require("REDIS_STREAM_RUN_RERUN_DISPATCHED"),
 		RedisStreamTaskStatusUpdated:        v.Require("REDIS_STREAM_TASK_STATUS_UPDATED"),
 		RedisStreamTaskExecutionRecorded:    v.Require("REDIS_STREAM_TASK_EXECUTION_RECORDED"),

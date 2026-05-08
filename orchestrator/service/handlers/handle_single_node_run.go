@@ -37,9 +37,10 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, log
 //  3. Dedup on messageID with stream "trigger.single_node_run:v1".
 //  4. Parse cmd.SourceRunID → *uuid.UUID (nil if empty).
 //  5. Call runRepo.SnapshotSingleNodeRun.
-//     - ErrTargetNotFound: emit run.failed:v1, mark dedup completed, commit, return nil.
+//     - ErrTargetNotFound: emit run.entries.dispatch_failed:v1, mark dedup
+//       completed, commit, return nil.
 //     - Other errors: return wrapped error (triggers retry).
-//  6. Emit run.initialized:v1.
+//  6. Emit run.entries.dispatched:v1.
 //  7. Emit query.model:v1 with NodeReadyForExecution payload.
 //  8. Mark dedup state="completed".
 //  9. Commit.
@@ -87,7 +88,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.H
 	)
 	if snapErr != nil {
 		if errors.Is(snapErr, run.ErrTargetNotFound) {
-			if ferr := h.emitRunFailed(ctx, cmd, msgProcessingID, "target_not_found"); ferr != nil {
+			if ferr := h.emitDispatchFailed(ctx, cmd, msgProcessingID, "target_not_found"); ferr != nil {
 				return ferr
 			}
 			if cerr := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); cerr != nil {
@@ -119,6 +120,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.H
 				SchemaName:      cmd.SchemaName,
 				TableName:       cmd.TableName,
 				NodeType:        nodeType,
+				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
 				ManifestVersion: manifestVersion,
 				ImageTag:        imageTag,
 			},
@@ -236,8 +238,10 @@ func (h *HandleSingleNodeRunHandler) dedup(
 	return id, false, nil
 }
 
-// emitRunFailed writes a run.failed:v1 outbox entry.
-func (h *HandleSingleNodeRunHandler) emitRunFailed(
+// emitDispatchFailed writes a run.entries.dispatch_failed:v1 outbox entry.
+// Symmetric to run.entries.dispatched:v1: same scheduler_tracker target,
+// opposite outcome (state will mark the row as failed and emit run.finalized:v1).
+func (h *HandleSingleNodeRunHandler) emitDispatchFailed(
 	ctx context.Context,
 	cmd domainCmd.HandleSingleNodeRunCmd,
 	msgProcessingID uuid.UUID,
@@ -248,13 +252,14 @@ func (h *HandleSingleNodeRunHandler) emitRunFailed(
 		return fmt.Errorf("invalid run_id %q: %w", cmd.RunID, err)
 	}
 
-	failedPayload, err := json.Marshal(map[string]string{
-		"schedule_id":   cmd.RunID,
-		"schedule_name": cmd.ScheduleName,
-		"reason":        reason,
-	})
+	evt := pkgEvents.RunEntriesDispatchFailed{
+		ScheduleID:   cmd.RunID,
+		ScheduleName: cmd.ScheduleName,
+		Reason:       reason,
+	}
+	failedPayload, err := json.Marshal(evt)
 	if err != nil {
-		return fmt.Errorf("marshal run.failed payload: %w", err)
+		return fmt.Errorf("marshal run.entries.dispatch_failed payload: %w", err)
 	}
 
 	if err := h.uow.OutboxRepo().Create(ctx, &domain.OutboxEntry{
@@ -262,16 +267,16 @@ func (h *HandleSingleNodeRunHandler) emitRunFailed(
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
-		EventType:           "run_failed",
+		EventType:           "run_entries_dispatch_failed",
 		Payload:             failedPayload,
-		StreamName:          "run.failed:v1",
+		StreamName:          "run.entries.dispatch_failed:v1",
 		Status:              "pending",
 		MaxRetries:          3,
 	}); err != nil {
-		return fmt.Errorf("write run.failed to outbox: %w", err)
+		return fmt.Errorf("write run.entries.dispatch_failed to outbox: %w", err)
 	}
 
-	h.logger.Info("Emitted run.failed:v1",
+	h.logger.Info("Emitted run.entries.dispatch_failed:v1",
 		"run_id", cmd.RunID,
 		"reason", reason,
 	)

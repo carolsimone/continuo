@@ -31,7 +31,8 @@ Legend:
 | `manifest.loaded:v1` | `manifest-controller` | `orchestrator` | Topology payload for graph ingestion; each node carries image_tag per-service. **ACK on permanent**: handler returns `events.ErrPermanent`-wrapped error → consumer logs ERROR, writes forensics row to `rejected_topology_messages`, ACKs (no XCLAIM loop). |
 | `schedules.loaded:v1` | `orchestrator` | `state` | Reconcile `schedule_catalog` |
 | `scheduler.started:v1` | `state` | `orchestrator` | Start schedule initialization; orchestrator creates run snapshot and emits `run.entries.dispatched:v1` |
-| `run.entries.dispatched:v1` | `orchestrator` | `state` | All task entries with pre-assigned UUIDs and per-task manifest_version + image_tag; state creates task rows, sets total_task_count, marks run as initialized |
+| `run.entries.dispatched:v1` | `orchestrator` | `state` | All task entries with pre-assigned UUIDs and per-task manifest_version + image_tag (each carries the canonical k8s retry budget `pkg/events.DefaultTaskMaxRetries = 2`); state creates task rows, sets total_task_count, marks run as initialized |
+| `run.entries.dispatch_failed:v1` | `orchestrator` | `state` | Symmetric counterpart of `run.entries.dispatched:v1`. Emitted when orchestrator cannot produce dispatch work for a run (e.g. single-node-run target not found). State row-locks `scheduler_tracker`, finalizes it as `failed`, and writes `run.finalized:v1`. Idempotent on already-terminal rows. |
 | `initialize.run:v1` | *(rerun command path)* | `orchestrator` | Request rerun scope resolution |
 | `run.rerun.dispatched:v1` | `orchestrator` | `state` | Rerun scope resolved; state resets target task(s) to PENDING |
 | `query.model:v1` | `orchestrator` | `executor-controller` | Dispatch executable nodes; carries image_tag and manifest_version as stream fields |

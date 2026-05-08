@@ -219,7 +219,8 @@ func (p *OutboxProcessor) payloadToValues(entry *domain.OutboxEntry) (map[string
 		}, nil
 
 	case "topology_ingested", "run_initialized", "rerun_ready",
-		"run_entries_dispatched", "run_rerun_dispatched":
+		"run_entries_dispatched", "run_rerun_dispatched",
+		"run_entries_dispatch_failed":
 		// These event types use a generic payload field consumed by state
 		return map[string]interface{}{
 			"outbox_entry_id": entry.ID.String(),

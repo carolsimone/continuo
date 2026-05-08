@@ -211,6 +211,72 @@ func TestSingleNodeRunStale(t *testing.T) {
 	t.Log("TestSingleNodeRunStale passed")
 }
 
+// TestSingleNodeRunTargetNotFound verifies that triggering a single-node run
+// against a target that does not exist in the loaded topology terminates the
+// run as 'failed' rather than getting stuck in 'pending'. This guards
+// against the previous bug where orchestrator emitted run.failed:v1 with no
+// consumer, leaving the synthesised scheduler_tracker row stuck.
+func TestSingleNodeRunTargetNotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+
+	// Make sure the topology is loaded — the failure path runs through
+	// SnapshotSingleNodeRun's "target not found" branch when the requested
+	// node is absent from the loaded graph.
+	cleanupTestData(t, ctx, clients, "single-node-run")
+	triggerGraphLoad(t, ctx, clients)
+
+	// Use a service/schema/table triple that is guaranteed to be absent.
+	const (
+		ghostService = "service-does-not-exist"
+		ghostSchema  = "no_such_schema"
+		ghostTable   = "no_such_table"
+	)
+
+	t.Logf("Calling TriggerSingleNodeRun against missing target: %s.%s.%s",
+		ghostService, ghostSchema, ghostTable)
+	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    ghostService,
+		SchemaName:     ghostSchema,
+		TableName:      ghostTable,
+		MetadataSource: "latest",
+	})
+	require.NoError(t, err, "TriggerSingleNodeRun must succeed even for unknown targets — failure routes through events")
+	require.NotEmpty(t, resp.RunId, "TriggerSingleNodeRun must return a non-empty run_id")
+
+	runID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
+
+	defer func() {
+		cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
+	}()
+
+	t.Log("Waiting for scheduler_tracker to reach 'failed'...")
+	verifySchedulerFailed(t, ctx, clients, runID)
+
+	// The orchestrator must NOT create a task_tracker row when there is no
+	// target to dispatch. A leftover row would mean the system actually
+	// created phantom work.
+	var taskCount int
+	err = clients.stateDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`,
+		runID,
+	).Scan(&taskCount)
+	require.NoError(t, err, "failed to count task_tracker rows")
+	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for a target-not-found run")
+
+	t.Log("TestSingleNodeRunTargetNotFound passed")
+}
+
 // queryNeo4jRunHasSourceRunID returns true if the :Run node with the given
 // run_id has a non-null source_run_id property set in Neo4j.
 func queryNeo4jRunHasSourceRunID(t *testing.T, clients *testClients, runID uuid.UUID) bool {

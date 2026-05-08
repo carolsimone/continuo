@@ -121,6 +121,8 @@ func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 	require.Equal(t, "public", task.SchemaName)
 	require.Equal(t, "users", task.TableName)
 	require.Equal(t, "dbt-model", task.NodeType)
+	require.Equal(t, pkgEvents.DefaultTaskMaxRetries, task.MaxRetries,
+		"single-node DispatchedTask must carry the canonical k8s retry budget")
 	require.Equal(t, "m3", task.ManifestVersion)
 	require.Equal(t, "v3", task.ImageTag)
 
@@ -142,7 +144,7 @@ func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 }
 
 // 2. SnapshotSingleNodeRun returns ErrTargetNotFound.
-//    Expect ONE outbox entry with stream run.failed:v1; handler returns nil.
+//    Expect ONE outbox entry with stream run.entries.dispatch_failed:v1; handler returns nil.
 func TestHandleSingleNodeRun_TargetNotFound(t *testing.T) {
 	fx := newSingleNodeRunHandlerFixture(t)
 	cmd := makeSingleNodeCmd(uuid.New().String())
@@ -153,15 +155,16 @@ func TestHandleSingleNodeRun_TargetNotFound(t *testing.T) {
 	require.True(t, fx.UoW.CommittedTx, "transaction must still be committed")
 
 	entries := fx.UoW.outboxRepo.CreatedEntries
-	require.Len(t, entries, 1, "expect exactly 1 outbox entry: run.failed:v1")
-	require.Equal(t, "run.failed:v1", entries[0].StreamName)
-	require.Equal(t, "run_failed", entries[0].EventType)
+	require.Len(t, entries, 1, "expect exactly 1 outbox entry: run.entries.dispatch_failed:v1")
+	require.Equal(t, "run.entries.dispatch_failed:v1", entries[0].StreamName)
+	require.Equal(t, "run_entries_dispatch_failed", entries[0].EventType)
 	require.Equal(t, "pending", entries[0].Status)
 
-	var payload map[string]string
+	var payload pkgEvents.RunEntriesDispatchFailed
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
-	require.Equal(t, cmd.RunID, payload["schedule_id"])
-	require.Equal(t, "target_not_found", payload["reason"])
+	require.Equal(t, cmd.RunID, payload.ScheduleID)
+	require.Equal(t, cmd.ScheduleName, payload.ScheduleName)
+	require.Equal(t, "target_not_found", payload.Reason)
 }
 
 // 3. Second delivery of the same messageID is a no-op (dedup).

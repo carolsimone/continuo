@@ -83,9 +83,9 @@ The `run.Repository` interface exposes the following Neo4j read methods used dur
 |---|---|
 | `query.model:v1` | One message per newly-ready downstream node after a SUCCEEDED node is processed |
 | `schedules.loaded:v1` | Produced by IngestTopology after successful topology load (schedule names list) |
-| `run.entries.dispatched:v1` | Produced by HandleSchedulerStarted after run snapshot is created; carries all task entries with pre-assigned UUIDs, root/seed node lists |
+| `run.entries.dispatched:v1` | Produced by HandleSchedulerStarted after run snapshot is created; carries all task entries with pre-assigned UUIDs, root/seed node lists. Each `DispatchedTask` stamps `MaxRetries = pkg/events.DefaultTaskMaxRetries (= 2)` so state's `task_tracker.max_retries` matches the k8s retry budget — prevents `HasRetryableFailedTaskTx` from finalizing the run mid-retry. |
 | `run.rerun.dispatched:v1` | Produced by HandleRerun; carries the rerun scope and target task IDs for state to reset |
-| `run.failed:v1` | Produced by HandleSingleNodeRunHandler when `ErrTargetNotFound` — signals state to mark the run terminal-failed |
+| `run.entries.dispatch_failed:v1` | Produced by HandleSingleNodeRunHandler when `ErrTargetNotFound`. Symmetric counterpart of `run.entries.dispatched:v1`: same `scheduler_tracker` target, opposite outcome. State row-locks the row, marks status=`failed`, emits `run.finalized:v1`. |
 
 ### No gRPC calls to `state`
 
@@ -136,7 +136,7 @@ Entry point for a single-node ad-hoc run (Feature 4 / PR1). The handler runs in 
 2. Neo4j: `SnapshotSingleNodeRun(ctx, runID, scheduleName, kind, metadataSource, sourceRunID)` — creates a `:Run` node and exactly one `EXECUTES` edge with a pre-assigned task UUID.
    - **latest mode** (`metadata_source=latest`): reads metadata from `:TopologyRoot` + the current `:Table` node; run is not bound to any prior snapshot.
    - **stale mode** (`metadata_source=snapshot_of_run`): reads metadata from the source `:Run`'s `EXECUTES` edge for the same node (`MATCH (r:Run)-[e:EXECUTES]->(t:Table)`), preserving the original run's `image_tag` and `manifest_version`.
-3. On `ErrTargetNotFound` (node absent in Neo4j): orchestrator outbox writes `run.failed:v1` for the synthesised run — no further dispatch; the synthesised `scheduler_tracker` row is left for `state` to mark terminal.
+3. On `ErrTargetNotFound` (node absent in Neo4j): orchestrator outbox writes `run.entries.dispatch_failed:v1` for the synthesised run — no further dispatch. State's `RunEntriesDispatchFailedConsumer` row-locks the synthesised `scheduler_tracker`, marks it `failed`, and writes `run.finalized:v1`. Idempotent on already-terminal rows.
 4. On success, orchestrator outbox writes (same tx):
    - 1× `run.entries.dispatched:v1` with the single task entry — consumed by `state` to create the `task_tracker` row, set `total_task_count=1`, and mark `init_status=completed, status=RUNNING`.
    - 1× `query.model:v1` for the single target node — consumed by `executor-controller` to launch the K8s job.

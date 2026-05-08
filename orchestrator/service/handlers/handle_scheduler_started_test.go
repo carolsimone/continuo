@@ -139,6 +139,8 @@ func TestHandleSchedulerStarted_WritesEntriesDispatchedAndDispatches(t *testing.
 	for _, task := range dispatched.AllTasks {
 		assert.NotEmpty(t, task.ManifestVersion, "every dispatched task must carry manifest_version from EXECUTES edge")
 		assert.NotEmpty(t, task.ImageTag, "every dispatched task must carry image_tag from EXECUTES edge")
+		assert.Equal(t, pkgevents.DefaultTaskMaxRetries, task.MaxRetries,
+			"every dispatched task must carry the canonical k8s retry budget")
 	}
 
 	var nodeReady domain.NodeReadyForExecution

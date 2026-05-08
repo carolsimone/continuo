@@ -235,6 +235,7 @@ func (h *HandleSchedulerStartedHandler) buildRunEntriesDispatchedPayload(
 				SchemaName:      node.SchemaName,
 				TableName:       node.TableName,
 				NodeType:        node.NodeType,
+				MaxRetries:      pkgevents.DefaultTaskMaxRetries,
 				ManifestVersion: node.ManifestVersion,
 				ImageTag:        node.ImageTag,
 			})
