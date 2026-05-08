@@ -7,7 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
-	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
@@ -16,8 +16,9 @@ import (
 
 // ── fake run repository for single-node-run tests ─────────────────────────────
 
-// singleNodeFakeRunRepository wraps fakeRunRepository, overriding
-// SnapshotSingleNodeRun so the handler's snapshot call can be stubbed.
+// singleNodeFakeRunRepository wraps fakeRunRepository, overriding Snapshot so
+// the handler's snapshot call can be stubbed. PR2: handle_single_node_run
+// migrated from SnapshotSingleNodeRun to Snapshot(SingleNode{...}).
 type singleNodeFakeRunRepository struct {
 	fakeRunRepository
 
@@ -31,20 +32,49 @@ type singleNodeSnapshotResult struct {
 	ImageTag        string
 	ManifestVersion string
 	NodeType        string
+	ScheduleName    string
+	ServiceName     string
+	SchemaName      string
+	TableName       string
 }
 
-func (f *singleNodeFakeRunRepository) SnapshotSingleNodeRun(
-	_ context.Context,
-	_, _ string,
-	_ *uuid.UUID,
-	_, _, _ string,
-	_ string,
-) (taskID, imageTag, manifestVersion, nodeType string, err error) {
+func (f *singleNodeFakeRunRepository) Snapshot(_ context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
 	f.snapshotCalls++
 	if f.snapshotErr != nil {
-		return "", "", "", "", f.snapshotErr
+		return nil, f.snapshotErr
 	}
-	return f.snapshotResult.TaskID, f.snapshotResult.ImageTag, f.snapshotResult.ManifestVersion, f.snapshotResult.NodeType, nil
+	taskID, _ := uuid.Parse(f.snapshotResult.TaskID)
+	if taskID == uuid.Nil {
+		taskID = uuid.New()
+	}
+	// Pull identity from the SingleNode selector if present; fall back to
+	// snapshotResult fields so existing test setups keep working.
+	svc := f.snapshotResult.ServiceName
+	schema := f.snapshotResult.SchemaName
+	tbl := f.snapshotResult.TableName
+	if sel, ok := params.Selector.(snapshot.SingleNode); ok {
+		if svc == "" {
+			svc = sel.ServiceName
+		}
+		if schema == "" {
+			schema = sel.SchemaName
+		}
+		if tbl == "" {
+			tbl = sel.TableName
+		}
+	}
+	return []snapshot.TaskProjection{{
+		TaskID:          taskID,
+		ServiceName:     svc,
+		SchemaName:      schema,
+		TableName:       tbl,
+		ScheduleName:    f.snapshotResult.ScheduleName,
+		NodeType:        f.snapshotResult.NodeType,
+		InitialStatus:   "PENDING",
+		ImageTag:        f.snapshotResult.ImageTag,
+		ManifestVersion: f.snapshotResult.ManifestVersion,
+		MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+	}}, nil
 }
 
 // ── fixture ───────────────────────────────────────────────────────────────────
@@ -148,7 +178,7 @@ func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 func TestHandleSingleNodeRun_TargetNotFound(t *testing.T) {
 	fx := newSingleNodeRunHandlerFixture(t)
 	cmd := makeSingleNodeCmd(uuid.New().String())
-	fx.RunRepo.snapshotErr = run.ErrTargetNotFound
+	fx.RunRepo.snapshotErr = snapshot.ErrTargetNotFound
 
 	err := fx.Handler.Handle(context.Background(), cmd, "msg-snr-2")
 	require.NoError(t, err, "ErrTargetNotFound must not surface as a handler error")

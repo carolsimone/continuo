@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
@@ -80,15 +81,20 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.S
 		sourceRunUUID = &parsed
 	}
 
-	taskID, imageTag, manifestVersion, nodeType, snapErr := h.runRepo.SnapshotSingleNodeRun(
-		ctx,
-		cmd.RunID, cmd.ScheduleName,
-		sourceRunUUID,
-		cmd.ServiceName, cmd.SchemaName, cmd.TableName,
-		cmd.MetadataSource,
-	)
+	projection, snapErr := h.runRepo.Snapshot(ctx, snapshot.Params{
+		RunID:        cmd.RunID,
+		ScheduleName: cmd.ScheduleName,
+		Kind:         "single_node_run",
+		SourceRunID:  sourceRunUUID,
+		Selector: snapshot.SingleNode{
+			ServiceName:    cmd.ServiceName,
+			SchemaName:     cmd.SchemaName,
+			TableName:      cmd.TableName,
+			MetadataSource: cmd.MetadataSource,
+		},
+	})
 	if snapErr != nil {
-		if errors.Is(snapErr, run.ErrTargetNotFound) {
+		if errors.Is(snapErr, snapshot.ErrTargetNotFound) || errors.Is(snapErr, snapshot.ErrEmptyProjection) {
 			if ferr := h.emitDispatchFailed(ctx, cmd, msgProcessingID, "target_not_found"); ferr != nil {
 				return ferr
 			}
@@ -99,6 +105,14 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.S
 		}
 		return fmt.Errorf("snapshot single-node run: %w", snapErr)
 	}
+	if len(projection) != 1 {
+		return fmt.Errorf("single-node-run: expected exactly 1 task in projection, got %d", len(projection))
+	}
+	sole := projection[0]
+	taskID := sole.TaskID.String()
+	imageTag := sole.ImageTag
+	manifestVersion := sole.ManifestVersion
+	nodeType := sole.NodeType
 
 	scheduleUUID, err := uuid.Parse(cmd.RunID)
 	if err != nil {
