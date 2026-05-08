@@ -2073,7 +2073,12 @@ func (x *TriggerRerunRequest) GetServiceName() string {
 }
 
 type TriggerRerunResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// PR2 unification: TriggerRerun now creates a NEW run on the source's
+	// schedule (kind='rerun', source_run_id=<source>) rather than mutating
+	// the source row in place. Returns the new run's identifiers.
+	RunId         string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`                      // schedule_id of the new rerun run
+	ScheduleName  string `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // copied verbatim from source's schedule_name
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2106,6 +2111,20 @@ func (x *TriggerRerunResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use TriggerRerunResponse.ProtoReflect.Descriptor instead.
 func (*TriggerRerunResponse) Descriptor() ([]byte, []int) {
 	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *TriggerRerunResponse) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *TriggerRerunResponse) GetScheduleName() string {
+	if x != nil {
+		return x.ScheduleName
+	}
+	return ""
 }
 
 type TriggerSingleNodeRunRequest struct {
@@ -2505,8 +2524,10 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x06schema\x18\x02 \x01(\tR\x06schema\x12\x1d\n" +
 	"\n" +
 	"table_name\x18\x03 \x01(\tR\ttableName\x12!\n" +
-	"\fservice_name\x18\x04 \x01(\tR\vserviceName\"\x16\n" +
-	"\x14TriggerRerunResponse\"\xcd\x01\n" +
+	"\fservice_name\x18\x04 \x01(\tR\vserviceName\"R\n" +
+	"\x14TriggerRerunResponse\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
+	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\xcd\x01\n" +
 	"\x1bTriggerSingleNodeRunRequest\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
