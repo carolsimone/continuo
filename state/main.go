@@ -177,33 +177,11 @@ func main() {
 		}
 	}()
 
-	// Initialize run.rerun.dispatched:v1 consumer
-	runRerunConsumer, err := redis.NewRunRerunDispatchedConsumer(
-		redisClient,
-		cfg.RedisStreamRunRerunDispatched,
-		db,
-		schedulerRepo,
-		taskRepo,
-		logger,
-	)
-	if err != nil {
-		logger.Error("Failed to create run rerun dispatched consumer", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("Run rerun dispatched consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping run rerun dispatched consumer")
-		runRerunConsumer.Stop()
-		return nil
-	})
-
-	// Start run rerun dispatched consumer in background
-	go func() {
-		if err := runRerunConsumer.Start(ctx); err != nil {
-			logger.Error("Run rerun dispatched consumer error", "error", err)
-		}
-	}()
+	// PR2: run.rerun.dispatched:v1 consumer removed. The unified rerun path
+	// (orchestrator's handle_rerun → Snapshot(SourcePinnedDAG)) emits
+	// run.entries.dispatched:v1 just like cron / single-node-run / rebase, so
+	// state's existing run_entries_dispatched_handler now handles rerun task
+	// creation too. The legacy in-place reset path is gone.
 
 	// Initialize task.status.updated:v1 consumer
 	taskStatusConsumer, err := redis.NewTaskStatusUpdatedConsumer(

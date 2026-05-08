@@ -44,16 +44,6 @@ type RunEntriesDispatchFailed struct {
 	Reason       string `json:"reason"`
 }
 
-// RunRerunDispatched — stream: run.rerun.dispatched:v1
-// Published by: orchestrator
-// Consumed by: state
-type RunRerunDispatched struct {
-	ScheduleID   string   `json:"schedule_id"`
-	ScheduleName string   `json:"schedule_name"`
-	TasksToReset []string `json:"tasks_to_reset"`
-	EntryTaskID  string   `json:"entry_task_id"`
-}
-
 // RunFinalized — stream: run.finalized:v1
 // Published by: state
 // Consumed by: UI, analytics
