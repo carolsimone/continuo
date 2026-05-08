@@ -49,7 +49,7 @@ func discardLogger() *slog.Logger {
 func pendingEntry() *postgres.OutboxEntry {
 	return &postgres.OutboxEntry{
 		ID:         uuid.New(),
-		StreamName: "rerun:v1",
+		StreamName: "trigger.rerun:v1",
 		Payload:    []byte(`{"schedule_id":"abc"}`),
 		Status:     "pending",
 		MaxRetries: 3,
@@ -64,7 +64,7 @@ func TestOutboxProcessor_PublishesAndMarksPublished(t *testing.T) {
 
 	published := false
 	processor := statehandlers.NewOutboxProcessorWithPublisher(repo, func(_ context.Context, stream string, _ map[string]interface{}) error {
-		assert.Equal(t, "rerun:v1", stream)
+		assert.Equal(t, "trigger.rerun:v1", stream)
 		published = true
 		return nil
 	}, discardLogger())

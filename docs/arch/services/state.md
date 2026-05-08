@@ -81,7 +81,23 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 | `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema_name, table_name)` |
 | `DeleteTask` | Delete a task row |
 | `ListTasks` | Paginated list with filters |
-| `TriggerRerun` | Atomically reset scheduler + target task + write `rerun:v1` outbox entry |
+| `TriggerRerun` | Atomically reset scheduler + target task + write `trigger.rerun:v1` outbox entry |
+| `TriggerSingleNodeRun` | Create a one-task run for a single node; write `trigger.single_node_run:v1` outbox entry |
+
+##### `TriggerSingleNodeRun`
+
+Request fields: `service_name`, `schema_name`, `table_name`, `metadata_source` (enum: `latest` / `snapshot_of_run`), `source_run_id` (UUID string; required when `metadata_source=snapshot_of_run`).
+
+Response fields: `run_id` (UUID of the new `scheduler_tracker` row), `schedule_name` (synthesised as `"single-node-run-<8 random hex chars>"`).
+
+Error contract:
+- `INVALID_ARGUMENT` — missing required fields or `metadata_source` unknown
+- `NOT_FOUND` — target node does not exist in the topology
+- `FAILED_PRECONDITION` — `source_run_id` references a run that does not exist (stale mode only)
+
+On success: a new `scheduler_tracker` row is inserted with `kind='single_node_run'` and a `trigger.single_node_run:v1` outbox entry is written — both in one transaction.
+
+The synthesised `schedule_name` is not inserted into `schedule_catalog`, so the run is excluded from `ListAllSchedules` by construction (catalog-driven listing).
 
 #### Task execution reads
 
@@ -104,14 +120,15 @@ The rerun trigger was migrated from HTTP to gRPC (`TriggerRerun`). Port 8082 now
 3. No tasks currently RUNNING in that run
 4. Target task must be in FAILED state
 
-On success: scheduler is set to `status=RUNNING, kind='rerun', completed_at=NULL` and a `rerun:v1` outbox entry is written — all in one transaction. `initialization_status` is **not** reset (intentionally stays `completed` so finalization still fires when the rerun's tasks reach terminal again). The target task and its previously-skipped descendants are **not** flipped here either — that happens later in `RunRerunDispatchedHandler` once the orchestrator emits `run.rerun.dispatched:v1` carrying the resolved task UUIDs.
+On success: scheduler is set to `status=RUNNING, kind='rerun', completed_at=NULL` and a `trigger.rerun:v1` outbox entry is written — all in one transaction. `initialization_status` is **not** reset (intentionally stays `completed` so finalization still fires when the rerun's tasks reach terminal again). The target task and its previously-skipped descendants are **not** flipped here either — that happens later in `RunRerunDispatchedHandler` once the orchestrator emits `run.rerun.dispatched:v1` carrying the resolved task UUIDs.
 
 ### Redis consumers
 
 | Stream | Consumer group | Handler |
 |---|---|---|
 | `schedules.loaded:v1` | state service | `ScheduleCatalogHandler` — reconciles `schedule_catalog` |
-| `run.entries.dispatched:v1` | state service | `RunEntriesDispatchedHandler` — creates tasks, sets `total_task_count`, marks `init_status=completed`, `status=running` |
+| `run.entries.dispatched:v1` | state service | `RunEntriesDispatchedHandler` — creates tasks (each carries the orchestrator-stamped `MaxRetries=DefaultTaskMaxRetries`), sets `total_task_count`, marks `init_status=completed`, `status=running` |
+| `run.entries.dispatch_failed:v1` | state service | `RunEntriesDispatchFailedHandler` — symmetric counterpart of `RunEntriesDispatchedHandler`. Row-locks `scheduler_tracker`, marks status=`failed`, emits `run.finalized:v1`. Idempotent on already-terminal rows. |
 | `run.rerun.dispatched:v1` | state service | `RunRerunDispatchedHandler` — resets tasks for rerun |
 | `task.status.updated:v1` | state service | `TaskStatusUpdatedHandler` — updates task status, drives finalization state machine |
 | `task.execution.recorded:v1` | state service | `TaskExecutionRecordedHandler` — persists task execution records |
@@ -135,7 +152,7 @@ Payload fields:
 
 Effect: `orchestrator` begins task graph initialization, stamping `:Run.kind` and `:Run.source_run_id` in Neo4j.
 
-#### `rerun:v1`
+#### `trigger.rerun:v1`
 
 Emitted on: `TriggerRerun` gRPC call
 
@@ -148,6 +165,19 @@ Payload fields:
 - `service_name`
 
 Effect: `orchestrator` re-initializes the single failed node.
+
+#### `trigger.single_node_run:v1`
+
+Emitted on: `TriggerSingleNodeRun` gRPC call
+
+Payload fields:
+- `schedule_id` — UUID of the newly created `scheduler_tracker` row
+- `schedule_name` — synthesised name (`"single-node-run-<8hex>"`)
+- `service_name`, `schema_name`, `table_name` — target node coordinates
+- `metadata_source` — `"latest"` or `"snapshot_of_run"`
+- `source_run_id` — source run UUID (stale mode only; omitted for latest)
+
+Effect: `orchestrator` snapshots the single node and dispatches it for execution.
 
 #### `run.finalized:v1`
 
@@ -283,7 +313,7 @@ Effects:
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule` |
+| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`, `TriggerSingleNodeRun` |
 | `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
 
 State calls no external gRPC services.

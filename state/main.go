@@ -150,6 +150,33 @@ func main() {
 		}
 	}()
 
+	// Initialize run.entries.dispatch_failed:v1 consumer
+	runEntriesDispatchFailedConsumer, err := redis.NewRunEntriesDispatchFailedConsumer(
+		redisClient,
+		cfg.RedisStreamRunEntriesDispatchFailed,
+		db,
+		schedulerRepo,
+		outboxRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create run entries dispatch failed consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Run entries dispatch failed consumer initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Stopping run entries dispatch failed consumer")
+		runEntriesDispatchFailedConsumer.Stop()
+		return nil
+	})
+
+	go func() {
+		if err := runEntriesDispatchFailedConsumer.Start(ctx); err != nil {
+			logger.Error("Run entries dispatch failed consumer error", "error", err)
+		}
+	}()
+
 	// Initialize run.rerun.dispatched:v1 consumer
 	runRerunConsumer, err := redis.NewRunRerunDispatchedConsumer(
 		redisClient,
@@ -281,9 +308,10 @@ func main() {
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
 
 	// Create gRPC server
-	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, logger)
+	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, logger)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

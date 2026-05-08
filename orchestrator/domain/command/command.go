@@ -76,3 +76,18 @@ type DependencyPayload struct {
 	SchemaName  string `json:"schema_name"`
 	TableName   string `json:"table_name"`
 }
+
+// SingleNodeRunRequest is the parsed payload of a trigger.single_node_run:v1
+// message — everything orchestrator needs to snapshot a one-task run for the
+// identified node. RunID equals the synthesised scheduler_tracker.schedule_id
+// (string UUID); ScheduleName is the "single-node-run-<short-uuid>" identifier
+// minted by state when it accepted the gRPC TriggerSingleNodeRun call.
+type SingleNodeRunRequest struct {
+	RunID          string // == ScheduleID.String()
+	ScheduleName   string
+	ServiceName    string
+	SchemaName     string
+	TableName      string
+	MetadataSource string // "latest" | "snapshot_of_run"
+	SourceRunID    string // empty in latest mode
+}

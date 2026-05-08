@@ -30,6 +30,8 @@ type Config struct {
 	SchedulerStartedGroup   string
 	RerunStream             string
 	RerunGroup              string
+	SingleNodeRunStream     string
+	SingleNodeRunGroup      string
 	RunFinalizedStream      string
 	RunFinalizedGroup       string
 
@@ -83,6 +85,8 @@ func Load(v *pkgconfig.Validator) Config {
 		SchedulerStartedGroup:  v.Require("SCHEDULER_STARTED_GROUP"),
 		RerunStream:            v.Require("RERUN_STREAM"),
 		RerunGroup:             v.Require("RERUN_GROUP"),
+		SingleNodeRunStream:    v.Require("SINGLE_NODE_RUN_STREAM"),
+		SingleNodeRunGroup:     v.Require("SINGLE_NODE_RUN_GROUP"),
 		RunFinalizedStream:     v.Require("RUN_FINALIZED_STREAM"),
 		RunFinalizedGroup:      v.Require("RUN_FINALIZED_GROUP"),
 

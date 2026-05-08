@@ -1,5 +1,13 @@
 package events
 
+// DefaultTaskMaxRetries is the canonical retry budget that the orchestrator
+// stamps onto every DispatchedTask. It MUST match k8s-controller's
+// DefaultTaskMaxRetries (k8s-controller/config/config.go) and
+// executor-controller's deploy_handler default — otherwise state's
+// HasRetryableFailedTaskTx and the k8s retry loop drift apart and runs
+// finalize as failed mid-retry.
+const DefaultTaskMaxRetries int32 = 2
+
 // DispatchedTask is one row in RunEntriesDispatched.AllTasks.
 type DispatchedTask struct {
 	TaskID          string `json:"task_id"`
@@ -20,6 +28,18 @@ type RunEntriesDispatched struct {
 	ScheduleName   string           `json:"schedule_name"`
 	AllTasks       []DispatchedTask `json:"all_tasks"`
 	TotalTaskCount int32            `json:"total_task_count"`
+}
+
+// RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1
+// Published by: orchestrator when it cannot produce dispatch work for a run
+// (e.g. SnapshotSingleNodeRun → ErrTargetNotFound). Symmetric to
+// RunEntriesDispatched: that one creates tasks + flips scheduler_tracker to
+// running; this one writes no tasks + flips scheduler_tracker to failed.
+// Consumed by: state.
+type RunEntriesDispatchFailed struct {
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+	Reason       string `json:"reason"`
 }
 
 // RunRerunDispatched — stream: run.rerun.dispatched:v1

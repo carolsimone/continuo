@@ -18,7 +18,7 @@ func newOutboxEntry() *postgres.OutboxEntry {
 		AggregateID:   uuid.New(),
 		EventType:     "rerun_node",
 		Payload:       []byte(`{"schedule_id":"test"}`),
-		StreamName:    "rerun:v1",
+		StreamName:    "trigger.rerun:v1",
 		Status:        "pending",
 		MaxRetries:    3,
 		RetryCount:    0,

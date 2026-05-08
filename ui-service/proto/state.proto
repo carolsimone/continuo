@@ -39,6 +39,22 @@ service StateService {
 
   // TriggerRerun enqueues a node-level rerun via the state service gRPC interface.
   rpc TriggerRerun(TriggerRerunRequest) returns (TriggerRerunResponse);
+
+  // TriggerSingleNodeRun creates a synthesised single-node run that
+  // executes exactly one task with no downstream pickup. Two modes,
+  // selected via the `metadata_source` field on the request:
+  //   - "latest" (default): metadata pair from latest topology
+  //   - "snapshot_of_run" (stale): metadata pair from the source run's
+  //     :EXECUTES edge; requires `source_run_id`
+  // Errors:
+  //   INVALID_ARGUMENT — empty/malformed identity, unknown metadata_source,
+  //                      "snapshot_of_run" without source_run_id, "latest"
+  //                      with non-empty source_run_id.
+  //   NOT_FOUND — "snapshot_of_run" + source_run_id has no scheduler_tracker
+  //               row, or no task_tracker row matching the identity.
+  //   FAILED_PRECONDITION — "snapshot_of_run" + source run not terminal.
+  rpc TriggerSingleNodeRun(TriggerSingleNodeRunRequest)
+      returns (TriggerSingleNodeRunResponse);
 }
 
 // ============================================================================
@@ -297,6 +313,19 @@ message TriggerRerunRequest {
 }
 
 message TriggerRerunResponse {}
+
+message TriggerSingleNodeRunRequest {
+  string service_name    = 1;  // Required
+  string schema_name     = 2;  // Required
+  string table_name      = 3;  // Required
+  string metadata_source = 4;  // Required: "latest" | "snapshot_of_run"
+  string source_run_id   = 5;  // Required iff metadata_source == "snapshot_of_run"
+}
+
+message TriggerSingleNodeRunResponse {
+  string run_id        = 1;  // synthesized scheduler_tracker.schedule_id (uuid)
+  string schedule_name = 2;  // "single-node-run-<short-uuid>"
+}
 
 // ============================================================================
 // TRIGGER SCHEDULE REQUESTS/RESPONSES
