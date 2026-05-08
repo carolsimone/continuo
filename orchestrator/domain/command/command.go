@@ -30,10 +30,15 @@ type RerunTarget struct {
 }
 
 // HandleRerunCmd carries the data for a rerun command.
+//
+// PR2 unification: rerun now mints a new :Run on the source's schedule with
+// kind='rerun'. The cmd includes SourceRunID — the source run's schedule_id —
+// which the orchestrator handler uses to drive Snapshot(SourcePinnedDAG{...}).
 type HandleRerunCmd struct {
 	ScheduleName string
-	RunID        string
-	ServiceName  string
+	RunID        string // schedule_id of the NEW run (target of Snapshot)
+	SourceRunID  string // schedule_id of the SOURCE run (read by SourcePinnedDAG)
+	ServiceName  string // target node identity
 	SchemaName   string
 	TableName    string
 }
