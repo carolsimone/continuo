@@ -143,6 +143,7 @@ func main() {
 	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 	handleRerunHandler := handlers.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
+	handleRebaseHandler := handlers.NewHandleRebaseHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 
 	// ========================================================================
@@ -361,6 +362,29 @@ func main() {
 		logger,
 	)
 
+	// Consumer 8: trigger.rebase:v1 -> HandleRebase
+	rebaseHandler := func(ctx context.Context, msg goredis.XMessage) error {
+		scheduleID, _ := msg.Values["schedule_id"].(string)
+		scheduleName, _ := msg.Values["schedule_name"].(string)
+		sourceRunID, _ := msg.Values["source_run_id"].(string)
+		if scheduleID == "" || scheduleName == "" || sourceRunID == "" {
+			return fmt.Errorf("missing required fields in rebase message %s", msg.ID)
+		}
+		cmd := domainCmd.RebaseRequest{
+			RunID:        scheduleID,
+			ScheduleName: scheduleName,
+			SourceRunID:  sourceRunID,
+		}
+		return handleRebaseHandler.Handle(ctx, cmd, msg.ID)
+	}
+	rebaseConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.RebaseStream,
+		cfg.RebaseGroup,
+		rebaseHandler,
+		logger,
+	)
+
 	// Consumer 7: trigger.single_node_run:v1 -> HandleSingleNodeRun
 	singleNodeRunHandler := func(ctx context.Context, msg goredis.XMessage) error {
 		scheduleID, _ := msg.Values["schedule_id"].(string)
@@ -444,6 +468,12 @@ func main() {
 	go func() {
 		if err := rerunConsumer.Start(ctx); err != nil {
 			logger.Error("Rerun consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := rebaseConsumer.Start(ctx); err != nil {
+			logger.Error("Rebase consumer error", "error", err)
 		}
 	}()
 

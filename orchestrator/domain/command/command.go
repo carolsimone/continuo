@@ -82,6 +82,16 @@ type DependencyPayload struct {
 	TableName   string `json:"table_name"`
 }
 
+// RebaseRequest is the parsed payload of a trigger.rebase:v1 message.
+// The orchestrator handler reads source's :EXECUTES set + latest topology
+// via Snapshot(RebasePartition{...}) — no target identity is carried because
+// the rebase partition is computed deterministically from source state.
+type RebaseRequest struct {
+	RunID        string // == new ScheduleID.String()
+	ScheduleName string // copied from source
+	SourceRunID  string // schedule_id of the failed/cancelled source run
+}
+
 // SingleNodeRunRequest is the parsed payload of a trigger.single_node_run:v1
 // message — everything orchestrator needs to snapshot a one-task run for the
 // identified node. RunID equals the synthesised scheduler_tracker.schedule_id
