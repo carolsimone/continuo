@@ -61,24 +61,31 @@ func TestE2E_FailurePath_NodeFailureDrainsSchedule(t *testing.T) {
 	t.Log("Verifying scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, schedulerID)
 
-	// ── PR0 rerun audit assertion: TriggerRerun must flip scheduler_tracker.kind to 'rerun' ──
-	// ftable_e is permanently FAILED and the scheduler is FAILED, so there are no
-	// running tasks — the preconditions for TriggerRerun are satisfied.
+	// ── PR2 rerun semantics: TriggerRerun mints a NEW scheduler_tracker row ──
+	// (kind='rerun', source_run_id=<source>) on the source's schedule_name.
+	// The source row stays UNCHANGED at FAILED forever — it's an immutable
+	// historical record. The new run carries the kind='rerun' discriminator.
 	t.Log("Triggering rerun on ftable_e via gRPC TriggerRerun...")
-	_, err = clients.stateClient.TriggerRerun(ctx, &statev1.TriggerRerunRequest{
+	rerunResp, err := clients.stateClient.TriggerRerun(ctx, &statev1.TriggerRerunRequest{
 		ScheduleId:  schedulerIDStr,
 		Schema:      testSchemaName,
 		TableName:   "ftable_e",
 		ServiceName: "service-2",
 	})
 	require.NoError(t, err, "TriggerRerun(ftable_e) must succeed on a permanently-failed task")
+	require.NotEmpty(t, rerunResp.RunId, "TriggerRerun must return the new run's id")
+	require.NotEqual(t, schedulerIDStr, rerunResp.RunId, "rerun must mint a NEW run id, not mutate the source")
 
-	// NOTE: :Run.kind stays 'cron' on rerun — SnapshotGraph's ON MATCH preserves
-	// the original kind via COALESCE for replay-safety. The Postgres tracker
-	// (mutated by the rerun handler) is the canonical kind=rerun signal for now.
-	// A follow-up PR may revisit this if rerun semantics evolve.
-	trackerKindAfterRerun := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
-	assert.Equal(t, "rerun", trackerKindAfterRerun, "rerun must flip scheduler_tracker.kind to rerun")
+	newRunID, err := uuid.Parse(rerunResp.RunId)
+	require.NoError(t, err)
+
+	// Source row unchanged: still kind='cron'.
+	sourceKind := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
+	assert.Equal(t, "cron", sourceKind, "source row must NOT be mutated — its kind stays 'cron'")
+
+	// New run row: kind='rerun', source_run_id matches the source.
+	newKind := queryPostgresTrackerKind(t, clients.stateDB, newRunID)
+	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
 
 	t.Log("✅ Failure path test completed successfully")
 }
