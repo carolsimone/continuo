@@ -10,14 +10,16 @@ const DefaultTaskMaxRetries int32 = 2
 
 // DispatchedTask is one row in RunEntriesDispatched.AllTasks.
 type DispatchedTask struct {
-	TaskID          string `json:"task_id"`
-	ServiceName     string `json:"service_name"`
-	SchemaName      string `json:"schema_name"`
-	TableName       string `json:"table_name"`
-	NodeType        string `json:"node_type"`
-	MaxRetries      int32  `json:"max_retries"`
-	ManifestVersion string `json:"manifest_version"`
-	ImageTag        string `json:"image_tag"`
+	TaskID              string `json:"task_id"`
+	ServiceName         string `json:"service_name"`
+	SchemaName          string `json:"schema_name"`
+	TableName           string `json:"table_name"`
+	NodeType            string `json:"node_type"`
+	MaxRetries          int32  `json:"max_retries"`
+	ManifestVersion     string `json:"manifest_version"`
+	ImageTag            string `json:"image_tag"`
+	Status              string `json:"status,omitempty"`                 // PR2: "pending" (default) | "succeeded" (inherited)
+	InheritedFromTaskID string `json:"inherited_from_task_id,omitempty"` // PR2: empty for rebased; root task_id (uuid) for inherited
 }
 
 // RunEntriesDispatched — stream: run.entries.dispatched:v1
