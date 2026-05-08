@@ -241,6 +241,72 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 	assert.Equal(t, "registry/img:abcdef", got.ImageTag)
 }
 
+func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T) {
+	db := newTestDB(t)
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewTaskTrackerRepository(db, discardLogger())
+
+	ctx := context.Background()
+	parent := &model.SchedulerTracker{
+		ScheduleID:           uuid.New(),
+		ScheduleName:         "tt-inh-" + uuid.New().String()[:8],
+		Status:               model.SchedulerStatusPending,
+		CreatedAt:            time.Now(),
+		InitializationStatus: "pending",
+		Kind:                 "rebase",
+	}
+	require.NoError(t, schedulerRepo.Create(ctx, parent))
+	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", parent.ScheduleID)
+
+	// Inherited row: non-NULL pointer.
+	rootTaskID := uuid.New()
+	inherited := &model.TaskTracker{
+		TaskID:              uuid.New(),
+		ScheduleID:          parent.ScheduleID,
+		CreatedAt:           time.Now(),
+		ServiceName:         "svc",
+		SchemaName:          "s",
+		TableName:           "inherited_table",
+		JobName:             "job-i",
+		Status:              model.TaskStatusSucceeded,
+		RetryCount:          0,
+		MaxRetries:          0,
+		ManifestVersion:     "vOLD",
+		ImageTag:            "img:OLD",
+		InheritedFromTaskID: &rootTaskID,
+	}
+	require.NoError(t, repo.Create(ctx, inherited))
+	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", inherited.TaskID)
+
+	gotInherited, err := repo.GetByID(ctx, inherited.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, gotInherited.InheritedFromTaskID, "InheritedFromTaskID round-trip lost the pointer")
+	assert.Equal(t, rootTaskID, *gotInherited.InheritedFromTaskID)
+
+	// Real-execution row: NULL pointer should round-trip as nil.
+	real := &model.TaskTracker{
+		TaskID:          uuid.New(),
+		ScheduleID:      parent.ScheduleID,
+		CreatedAt:       time.Now(),
+		ServiceName:     "svc",
+		SchemaName:      "s",
+		TableName:       "real_table",
+		JobName:         "job-r",
+		Status:          model.TaskStatusPending,
+		RetryCount:      0,
+		MaxRetries:      3,
+		ManifestVersion: "vNEW",
+		ImageTag:        "img:NEW",
+		// InheritedFromTaskID intentionally nil
+	}
+	require.NoError(t, repo.Create(ctx, real))
+	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", real.TaskID)
+
+	gotReal, err := repo.GetByID(ctx, real.TaskID)
+	require.NoError(t, err)
+	assert.Nil(t, gotReal.InheritedFromTaskID, "real-execution row should round-trip InheritedFromTaskID as nil")
+}
+
 func TestTaskRepository_UpdateStatusIfChangedTx_DoesNotReviveCancelledTask(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
