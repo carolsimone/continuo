@@ -384,17 +384,16 @@ func main() {
 			return fmt.Errorf("invalid metadata_source %q in message %s", metadataSource, msg.ID)
 		}
 
-		cmd := domainCmd.HandleSingleNodeRunCmd{
+		req := domainCmd.SingleNodeRunRequest{
 			RunID:          scheduleID,
 			ScheduleName:   scheduleName,
 			ServiceName:    serviceName,
 			SchemaName:     schemaName,
 			TableName:      tableName,
-			Kind:           "single_node_run",
 			MetadataSource: metadataSource,
 			SourceRunID:    sourceRunID,
 		}
-		return handleSingleNodeRunHandler.Handle(ctx, cmd, msg.ID)
+		return handleSingleNodeRunHandler.Handle(ctx, req, msg.ID)
 	}
 	singleNodeRunConsumer := redis.NewStreamConsumer(
 		redisClient,

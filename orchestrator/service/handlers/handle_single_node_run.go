@@ -29,7 +29,8 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, log
 	return &HandleSingleNodeRunHandler{uow: u, runRepo: runRepo, logger: logger}
 }
 
-// Handle processes the HandleSingleNodeRunCmd command.
+// Handle processes a SingleNodeRunRequest derived from a
+// trigger.single_node_run:v1 message.
 //
 // It runs the dedup→snapshot→outbox flow:
 //  1. Marshal cmd for dedup record.
@@ -44,7 +45,7 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, log
 //  7. Emit query.model:v1 with NodeReadyForExecution payload.
 //  8. Mark dedup state="completed".
 //  9. Commit.
-func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.HandleSingleNodeRunCmd, messageID string) error {
+func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.SingleNodeRunRequest, messageID string) error {
 	h.logger.Info("Processing single-node run",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
@@ -243,7 +244,7 @@ func (h *HandleSingleNodeRunHandler) dedup(
 // opposite outcome (state will mark the row as failed and emit run.finalized:v1).
 func (h *HandleSingleNodeRunHandler) emitDispatchFailed(
 	ctx context.Context,
-	cmd domainCmd.HandleSingleNodeRunCmd,
+	cmd domainCmd.SingleNodeRunRequest,
 	msgProcessingID uuid.UUID,
 	reason string,
 ) error {

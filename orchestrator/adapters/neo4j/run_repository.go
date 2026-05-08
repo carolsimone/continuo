@@ -11,10 +11,6 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// must drops the bool return from neo4j.Record.Get — only call after
-// confirming the record exists (result.Next returned true).
-func must(v interface{}, _ bool) interface{} { return v }
-
 // RunRepository implements the write-side methods of run.Repository.
 type RunRepository struct {
 	client Neo4jClient
@@ -977,10 +973,10 @@ func (r *RunRepository) SnapshotSingleNodeRun(
 		return "", "", "", "", run.ErrTargetNotFound
 	}
 	rec := result.Record()
-	taskID = safeString(must(rec.Get("task_id")))
-	imageTag = safeString(must(rec.Get("image_tag")))
-	manifestVersion = safeString(must(rec.Get("manifest_version")))
-	nodeType = safeString(must(rec.Get("node_type")))
+	taskID = safeString(recordValue(rec, "task_id"))
+	imageTag = safeString(recordValue(rec, "image_tag"))
+	manifestVersion = safeString(recordValue(rec, "manifest_version"))
+	nodeType = safeString(recordValue(rec, "node_type"))
 	if rerr := result.Err(); rerr != nil {
 		return "", "", "", "", fmt.Errorf("SnapshotSingleNodeRun: result error: %w", rerr)
 	}

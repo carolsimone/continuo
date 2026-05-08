@@ -68,8 +68,8 @@ func newSingleNodeRunHandlerFixture(_ *testing.T) *singleNodeRunHandlerFixture {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func makeSingleNodeCmd(runID string) domainCmd.HandleSingleNodeRunCmd {
-	return domainCmd.HandleSingleNodeRunCmd{
+func makeSingleNodeCmd(runID string) domainCmd.SingleNodeRunRequest {
+	return domainCmd.SingleNodeRunRequest{
 		RunID:          runID,
 		ScheduleName:   "single-node-run-" + runID[:8],
 		ServiceName:    "svcA",
