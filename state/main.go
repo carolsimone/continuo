@@ -309,9 +309,10 @@ func main() {
 	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	rebaseHandler := handlers.NewRebaseHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
 
 	// Create gRPC server
-	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, logger)
+	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, logger)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)
