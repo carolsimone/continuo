@@ -319,3 +319,123 @@ func TestRunEntriesDispatched_PR2_BackwardCompatDefaultsPending(t *testing.T) {
 	assert.Equal(t, model.TaskStatusPending, got.Status, "missing Status must default to pending")
 	assert.Nil(t, got.InheritedFromTaskID)
 }
+
+// newTestHandlerWithRepos builds a fresh handler with real Postgres-backed
+// repos for tests that need to assert post-handle scheduler/task state.
+func newTestHandlerWithRepos(t *testing.T) (*statehandlers.RunEntriesDispatchedHandler, *sqlx.DB, postgres.SchedulerTrackerRepository, postgres.TaskTrackerRepository) {
+	t.Helper()
+	db := setupRunEntriesDispatchedTestDB(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	h := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
+	return h, db, schedulerRepo, taskRepo
+}
+
+// seedSchedulerWithKind inserts a scheduler_tracker row with explicit kind
+// (cron / trigger / rerun / rebase / single_node_run) and returns its id.
+func seedSchedulerWithKind(t *testing.T, db *sqlx.DB, name, kind string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	_, err := db.Exec(`
+		INSERT INTO scheduler_tracker (
+			schedule_id, schedule_name, status, created_at,
+			initialization_status, service_metadata, total_task_count, terminal_task_count, kind
+		) VALUES ($1, $2, $3, $4, $5, $6, NULL, 0, $7)
+	`,
+		id,
+		name,
+		string(model.SchedulerStatusPending),
+		time.Now(),
+		"in_progress",
+		json.RawMessage(`{}`),
+		kind,
+	)
+	require.NoError(t, err)
+	return id
+}
+
+// TestRunEntriesDispatched_PR2_AllSucceededAutoRollup verifies that when every
+// projected task arrives in a terminal-succeeded state (the rebase-of-only-
+// inherited-tasks edge case), the scheduler is auto-rolled-up to SUCCEEDED
+// with completed_at set, rather than being routed through RUNNING.
+func TestRunEntriesDispatched_PR2_AllSucceededAutoRollup(t *testing.T) {
+	h, db, schedulerRepo, _ := newTestHandlerWithRepos(t)
+	scheduleID := seedSchedulerWithKind(t, db, "rebase-rollup-"+uuid.New().String()[:8], "rebase")
+	t.Cleanup(func() {
+		db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
+		db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	})
+
+	root1 := uuid.New()
+	root2 := uuid.New()
+	t1 := uuid.New()
+	t2 := uuid.New()
+
+	evt := events.RunEntriesDispatched{
+		ScheduleID:   scheduleID.String(),
+		ScheduleName: "rebase-rollup",
+		AllTasks: []events.DispatchedTask{
+			{TaskID: t1.String(), ServiceName: "svc", SchemaName: "s", TableName: "a",
+				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
+				Status: "succeeded", InheritedFromTaskID: root1.String()},
+			{TaskID: t2.String(), ServiceName: "svc", SchemaName: "s", TableName: "b",
+				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
+				Status: "succeeded", InheritedFromTaskID: root2.String()},
+		},
+		TotalTaskCount: 2,
+	}
+	payload, err := json.Marshal(evt)
+	require.NoError(t, err)
+
+	ack, err := h.Handle(context.Background(), "msg-rollup-"+uuid.New().String(), string(payload))
+	require.NoError(t, err)
+	require.True(t, ack)
+
+	scheduler, err := schedulerRepo.GetByID(context.Background(), scheduleID)
+	require.NoError(t, err)
+	assert.Equal(t, model.SchedulerStatusSucceeded, scheduler.Status, "all-succeeded projection should auto-rollup to SUCCEEDED")
+	require.NotNil(t, scheduler.CompletedAt, "auto-rollup must set CompletedAt")
+}
+
+// TestRunEntriesDispatched_PR2_MixedPendingDoesNotRollup verifies that a
+// projection containing at least one PENDING task continues to route through
+// RUNNING (no auto-rollup, no completed_at) — preserving cron, trigger, rerun
+// and partial-rebase semantics.
+func TestRunEntriesDispatched_PR2_MixedPendingDoesNotRollup(t *testing.T) {
+	h, db, schedulerRepo, _ := newTestHandlerWithRepos(t)
+	scheduleID := seedSchedulerWithKind(t, db, "rebase-mixed-"+uuid.New().String()[:8], "rebase")
+	t.Cleanup(func() {
+		db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
+		db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	})
+
+	t1 := uuid.New()
+	t2 := uuid.New()
+	root := uuid.New()
+	evt := events.RunEntriesDispatched{
+		ScheduleID:   scheduleID.String(),
+		ScheduleName: "rebase-mixed",
+		AllTasks: []events.DispatchedTask{
+			{TaskID: t1.String(), ServiceName: "svc", SchemaName: "s", TableName: "rebased",
+				NodeType: "dbt-model", MaxRetries: 2, ManifestVersion: "v2", ImageTag: "img:2",
+				Status: "pending"},
+			{TaskID: t2.String(), ServiceName: "svc", SchemaName: "s", TableName: "inherited",
+				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
+				Status: "succeeded", InheritedFromTaskID: root.String()},
+		},
+		TotalTaskCount: 2,
+	}
+	payload, err := json.Marshal(evt)
+	require.NoError(t, err)
+
+	ack, err := h.Handle(context.Background(), "msg-mixed-rollup-"+uuid.New().String(), string(payload))
+	require.NoError(t, err)
+	require.True(t, ack)
+
+	scheduler, err := schedulerRepo.GetByID(context.Background(), scheduleID)
+	require.NoError(t, err)
+	assert.Equal(t, model.SchedulerStatusRunning, scheduler.Status, "mixed projection (>=1 PENDING) should still go to RUNNING")
+	assert.Nil(t, scheduler.CompletedAt, "RUNNING transition must NOT set CompletedAt")
+}

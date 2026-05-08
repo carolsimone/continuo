@@ -176,8 +176,36 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 		return false, fmt.Errorf("update initialization_status: %w", txErr)
 	}
 
-	if txErr := h.schedulerRepo.UpdateStatusTx(ctx, tx, scheduleID, string(model.SchedulerStatusRunning)); txErr != nil {
-		return false, fmt.Errorf("update status to running: %w", txErr)
+	// PR2 auto-rollup: if every projected task is already terminal, the run is
+	// born complete. Transition straight to a terminal status (with completed_at)
+	// rather than going through RUNNING. Mixed-terminal (some failed/cancelled)
+	// is treated as FAILED conservatively. The all-PENDING / mixed-with-PENDING
+	// case keeps existing cron/single-node-run/rerun behaviour: go to RUNNING.
+	allTerminal := true
+	allSucceeded := true
+	for _, task := range tasks {
+		if task.Status == model.TaskStatusPending || task.Status == model.TaskStatusRunning {
+			allTerminal = false
+			allSucceeded = false
+			break
+		}
+		if task.Status != model.TaskStatusSucceeded {
+			allSucceeded = false
+		}
+	}
+
+	if allTerminal {
+		terminal := string(model.SchedulerStatusFailed)
+		if allSucceeded {
+			terminal = string(model.SchedulerStatusSucceeded)
+		}
+		if txErr := h.schedulerRepo.FinalizeRunTx(ctx, tx, scheduleID, terminal); txErr != nil {
+			return false, fmt.Errorf("finalize scheduler to %s: %w", terminal, txErr)
+		}
+	} else {
+		if txErr := h.schedulerRepo.UpdateStatusTx(ctx, tx, scheduleID, string(model.SchedulerStatusRunning)); txErr != nil {
+			return false, fmt.Errorf("update status to running: %w", txErr)
+		}
 	}
 
 	// Record processed message for dedup.
