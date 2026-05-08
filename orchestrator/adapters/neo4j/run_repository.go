@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -990,6 +991,41 @@ func (r *RunRepository) SnapshotSingleNodeRun(
 		"node_type", nodeType,
 	)
 	return taskID, imageTag, manifestVersion, nodeType, nil
+}
+
+// Snapshot is the unified per-run snapshot routine (umbrella §3). Plan/materialise:
+//   - the selector inside params reads source/topology and returns a projection
+//   - the materialiser writes :Run + per-task :EXECUTES edges in one Cypher tx
+//
+// Returns the projection unchanged so the caller can build outbox events
+// (run.entries.dispatched:v1 with per-task Status + InheritedFromTaskID;
+// query.model:v1 only for PENDING rows) without re-reading Neo4j.
+func (r *RunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	var projection []snapshot.TaskProjection
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		var inner error
+		projection, inner = params.Selector.SelectTasks(ctx, tx, params)
+		if inner != nil {
+			return nil, inner
+		}
+		if len(projection) == 0 {
+			return nil, snapshot.ErrEmptyProjection
+		}
+		return nil, snapshot.Materialise(ctx, tx, params, projection)
+	})
+	if err != nil {
+		return nil, err
+	}
+	r.logger.Info("Snapshot created",
+		"run_id", params.RunID,
+		"schedule_name", params.ScheduleName,
+		"kind", params.Kind,
+		"tasks", len(projection),
+	)
+	return projection, nil
 }
 
 // collectNodes drains a Neo4j result cursor into a []*domain.TableNode slice.

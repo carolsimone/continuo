@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/google/uuid"
 )
 
@@ -53,6 +54,17 @@ type Repository interface {
 		serviceName, schemaName, tableName string,
 		metadataSource string,
 	) (taskID, imageTag, manifestVersion, nodeType string, err error)
+
+	// Snapshot is the unified per-run snapshot routine (umbrella §3). Selector
+	// inside params reads source/topology and returns the projection; the
+	// kind-agnostic materialiser writes :Run + :EXECUTES edges in one Cypher tx.
+	// Returns the projection so the caller can build downstream outbox events
+	// (run.entries.dispatched:v1, query.model:v1) without re-reading Neo4j.
+	//
+	// Returns snapshot.ErrEmptyProjection if the selector returns zero entries.
+	// Returns snapshot.ErrTargetNotFound if a target-resolving selector
+	// (e.g. SingleNode) cannot find its target.
+	Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error)
 
 	// Read-side: queries (CQRS — called directly, not through aggregate)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)

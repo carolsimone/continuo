@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -108,6 +109,10 @@ func (f *fakeRunRepository) GetNodeEdgeData(ctx context.Context, runID, schemaNa
 }
 func (f *fakeRunRepository) SnapshotSingleNodeRun(ctx context.Context, runID, scheduleName string, sourceRunID *uuid.UUID, serviceName, schemaName, tableName string, metadataSource string) (taskID, imageTag, manifestVersion, nodeType string, err error) {
 	return "", "", "", "", nil
+}
+
+func (f *fakeRunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
+	return nil, nil
 }
 
 // ── fakes: outbox and message processing repos ────────────────────────────────
