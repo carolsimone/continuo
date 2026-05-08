@@ -41,6 +41,9 @@ type TaskTrackerRepository interface {
 	// HasRetryableFailedTaskTx reports whether any task for the given schedule has
 	// status = 'failed' AND retry_count < max_retries (i.e. k8s will retry it).
 	HasRetryableFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
+	// HasNonSucceededTask returns true iff at least one task for the given schedule_id
+	// has a status other than 'succeeded'. Used by rebase eligibility (PR2).
+	HasNonSucceededTask(ctx context.Context, scheduleID uuid.UUID) (bool, error)
 	// BulkCancelByScheduleIDTx sets status='cancelled' for all pending/running tasks
 	// in a schedule. Returns the number of rows updated.
 	BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string) (int64, error)
@@ -441,6 +444,22 @@ func (r *taskTrackerRepository) HasRetryableFailedTaskTx(ctx context.Context, tx
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("has retryable failed task check for schedule_id %s: %w", scheduleID, err)
+	}
+	return exists, nil
+}
+
+// HasNonSucceededTask returns true iff at least one task_tracker row for the given
+// schedule_id has a status other than 'succeeded'. Used by rebase eligibility (PR2 §10
+// UI rule): "visible iff source run is terminal AND has ≥1 non-SUCCEEDED task".
+func (r *taskTrackerRepository) HasNonSucceededTask(ctx context.Context, scheduleID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.GetContext(ctx, &exists, `
+		SELECT EXISTS(SELECT 1 FROM task_tracker
+		              WHERE schedule_id = $1 AND status != 'succeeded')`,
+		scheduleID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("HasNonSucceededTask: %w", err)
 	}
 	return exists, nil
 }

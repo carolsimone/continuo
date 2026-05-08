@@ -359,6 +359,9 @@ func (s *cancelTaskStub) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.U
 func (s *cancelTaskStub) HasRetryableFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
 }
+func (s *cancelTaskStub) HasNonSucceededTask(_ context.Context, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
 func (s *cancelTaskStub) BulkCancelByScheduleIDTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) (int64, error) {
 	s.bulkCancelCalled = true
 	return s.bulkCancelN, s.bulkCancelErr
