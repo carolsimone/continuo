@@ -65,9 +65,6 @@ func (f *fakeRunRepository) FinalizeRun(ctx context.Context, runID, terminalStat
 }
 
 // Stubs for read-side methods (unused by the handler)
-func (f *fakeRunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error {
-	return nil
-}
 func (f *fakeRunRepository) GetScheduleInitNodes(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error) {
 	return nil, nil
 }

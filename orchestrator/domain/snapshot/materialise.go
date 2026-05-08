@@ -63,11 +63,32 @@ func Materialise(ctx context.Context, tx neo4j.ManagedTransaction, p Params, pro
 		}
 	}
 
+	// :Run.topology_generation + :Run.service_metadata are stamped on CREATE so
+	// the run is isolated from future topology changes. Source depends on whether
+	// this is a derived run:
+	//   - source_run_id IS NULL  (cron/trigger/latest-single-node)   → :TopologyRoot
+	//   - source_run_id non-NULL (rerun/rebase/stale-single-node)    → source :Run
+	// If source_run_id is set but the source :Run was pruned, fall back to
+	// :TopologyRoot rather than fail (matches legacy SnapshotSingleNodeRun's
+	// graceful behaviour for missing source nodes).
 	const query = `
+		OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
+		OPTIONAL MATCH (src:Run {run_id: $source_run_id})
+		WITH root, src,
+		     CASE
+		         WHEN src IS NULL THEN COALESCE(root.topology_generation, 0)
+		         ELSE src.topology_generation
+		     END AS topo_gen,
+		     CASE
+		         WHEN src IS NULL THEN COALESCE(root.service_metadata, '{}')
+		         ELSE src.service_metadata
+		     END AS svc_meta
 		MERGE (run:Run {run_id: $run_id})
-		ON CREATE SET run.schedule_name = $schedule_name,
-		              run.created_at    = datetime(),
-		              run.kind          = $kind
+		ON CREATE SET run.schedule_name      = $schedule_name,
+		              run.created_at         = datetime(),
+		              run.kind               = $kind,
+		              run.topology_generation = topo_gen,
+		              run.service_metadata    = svc_meta
 		ON MATCH SET  run.kind = COALESCE(run.kind, $kind)
 		FOREACH (_ IN CASE WHEN $source_run_id IS NULL THEN [] ELSE [1] END |
 		    SET run.source_run_id = $source_run_id

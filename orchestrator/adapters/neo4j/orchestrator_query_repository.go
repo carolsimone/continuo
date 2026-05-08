@@ -230,7 +230,7 @@ func (r *OrchestratorQueryRepository) GetRunGraph(ctx context.Context, runID str
 }
 
 // GetRunTopologyGeneration returns the topology_generation stamped on the :Run
-// node at SnapshotGraph time. Returns 0 when the run does not exist OR when
+// node at Snapshot time. Returns 0 when the run does not exist OR when
 // the property is unset (pre-tracking runs). The 0-vs-missing-vs-unset
 // ambiguity is resolved at the service layer with a documented contract:
 // 0 means "drift unknown".

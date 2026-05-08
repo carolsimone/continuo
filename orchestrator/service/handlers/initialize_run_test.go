@@ -17,9 +17,9 @@ import (
 
 // ── extended fakeRunRepository for InitializeRun ─────────────────────────────
 // We reuse fakeRunRepository from handle_node_completed_test.go but need to
-// extend it with configurable behaviour for SnapshotGraph and GetScheduleInitNodes.
+// extend it with configurable behaviour for Snapshot and GetScheduleInitNodes.
 
-// snapshotCall records the arguments passed to SnapshotGraph for assertion.
+// snapshotCall records the arguments passed to Snapshot for assertion.
 type snapshotCall struct {
 	RunID        string
 	ScheduleName string
@@ -30,7 +30,6 @@ type snapshotCall struct {
 // extendedFakeRunRepository wraps fakeRunRepository and adds configurable fns.
 type extendedFakeRunRepository struct {
 	fakeRunRepository
-	snapshotGraphFn        func(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error
 	getScheduleInitNodesFn func(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error)
 
 	snapshotGraphCalls        int
@@ -38,23 +37,12 @@ type extendedFakeRunRepository struct {
 	snapshotCalls             []snapshotCall
 }
 
-func (f *extendedFakeRunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error {
-	f.snapshotGraphCalls++
-	f.snapshotCalls = append(f.snapshotCalls, snapshotCall{
-		RunID: runID, ScheduleName: scheduleName, Kind: kind, SourceRunID: sourceRunID,
-	})
-	if f.snapshotGraphFn != nil {
-		return f.snapshotGraphFn(ctx, runID, scheduleName, kind, sourceRunID)
-	}
-	return nil
-}
-
-// Snapshot is the unified routine that callers migrated to in PR2. The fake
-// records the call (same counter as SnapshotGraph for backward-compat with
-// existing assertions) and returns a projection derived from the configured
+// Snapshot is the unified routine callers migrated to in PR2. The fake
+// records the call and returns a projection derived from the configured
 // getScheduleInitNodesFn — so a single test fixture drives both
 // `Snapshot()` (for the AllTasks payload) and `GetScheduleInitNodes()` (for
-// the seed/root dispatch ordering).
+// the seed/root dispatch ordering). The snapshotGraphCalls counter is kept
+// (for backward-compat with existing assertions) and incremented here.
 func (f *extendedFakeRunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
 	f.snapshotGraphCalls++
 	f.snapshotCalls = append(f.snapshotCalls, snapshotCall{
