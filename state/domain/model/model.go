@@ -171,20 +171,21 @@ func (s *SchedulerTracker) GetServiceMetadata() map[string]ServiceMetadata {
 // TaskTracker represents a task execution within a schedule
 // Maps to the task_tracker table in PostgreSQL
 type TaskTracker struct {
-	TaskID          uuid.UUID  `json:"task_id" db:"task_id"`
-	ScheduleID      uuid.UUID  `json:"schedule_id" db:"schedule_id"`
-	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
-	ServiceName     string     `json:"service_name" db:"service_name"`
-	SchemaName      string     `json:"schema_name" db:"schema_name"`
-	TableName       string     `json:"table_name" db:"table_name"`
-	JobName         string     `json:"job_name" db:"job_name"`
-	Status          TaskStatus `json:"status" db:"status"`
-	RetryCount      int        `json:"retry_count" db:"retry_count"`
-	MaxRetries      int        `json:"max_retries" db:"max_retries"`
-	CancelledAt     *time.Time `json:"cancelled_at,omitempty" db:"cancelled_at"`
-	CancelledBy     *string    `json:"cancelled_by,omitempty" db:"cancelled_by"`
-	ManifestVersion string     `json:"manifest_version" db:"manifest_version"`
-	ImageTag        string     `json:"image_tag" db:"image_tag"`
+	TaskID              uuid.UUID  `json:"task_id" db:"task_id"`
+	ScheduleID          uuid.UUID  `json:"schedule_id" db:"schedule_id"`
+	CreatedAt           time.Time  `json:"created_at" db:"created_at"`
+	ServiceName         string     `json:"service_name" db:"service_name"`
+	SchemaName          string     `json:"schema_name" db:"schema_name"`
+	TableName           string     `json:"table_name" db:"table_name"`
+	JobName             string     `json:"job_name" db:"job_name"`
+	Status              TaskStatus `json:"status" db:"status"`
+	RetryCount          int        `json:"retry_count" db:"retry_count"`
+	MaxRetries          int        `json:"max_retries" db:"max_retries"`
+	CancelledAt         *time.Time `json:"cancelled_at,omitempty" db:"cancelled_at"`
+	CancelledBy         *string    `json:"cancelled_by,omitempty" db:"cancelled_by"`
+	ManifestVersion     string     `json:"manifest_version" db:"manifest_version"`
+	ImageTag            string     `json:"image_tag" db:"image_tag"`
+	InheritedFromTaskID *uuid.UUID `json:"inherited_from_task_id,omitempty" db:"inherited_from_task_id"`
 }
 
 // TaskExecution represents a single execution attempt of a task
