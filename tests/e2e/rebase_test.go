@@ -7,6 +7,7 @@ import (
 
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
+	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -132,6 +133,165 @@ func TestRebaseFromFailedRun(t *testing.T) {
 		}
 	}
 	t.Log("Rebase partition shape verified")
+}
+
+// TestRebaseAllInheritedFinalizes verifies that a rebase whose projection
+// contains a mix of inherited-terminal and rebased rows finalizes correctly
+// — exercising the bug fixed in T3 (B1: state seeds terminal_task_count
+// for inherited rows so the mixed-projection rollup math closes).
+//
+// Setup mirrors TestRebaseFromFailedRun: the failure schedule's source run
+// ends in FAILED with ftable_a/b/c/d=succeeded, ftable_e=failed,
+// ftable_f=skipped. The rebase produces:
+//
+//	ftable_a/b/c/d  →  inherited (succeeded)
+//	ftable_e/f      →  rebased   (PENDING)
+//
+// Because the dbt fixture for ftable_e is permanently broken (JOIN
+// public.wrong_name) the rebased ftable_e fails again and the rebase run
+// reaches FAILED. Without B1's fix, terminal_task_count would start at 0
+// and the rollup would expect 6 terminal events but only ever observe
+// 2 (e=failed, f=cascade-skipped) — leaving the run hung indefinitely.
+//
+// Assertions:
+//   - rebase scheduler_tracker.status reaches a terminal state (failed)
+//   - rebase scheduler_tracker.completed_at is non-NULL
+//   - state_outbox carries a 'run.finalized:v1' entry for the rebase run
+//     (T4/B3 — the dispatched-handler auto-rollup branch is exercised
+//     elsewhere via unit tests; here the normal task-status path must
+//     emit run.finalized:v1 as well)
+//   - orchestrator's Neo4j :Run for the rebase has completed_at set
+//     (orchestrator processed run.finalized:v1 and finalized its projection)
+//
+// The all-inherited (no rebased rows) variant of B3 is NOT exercised here
+// because the rebase precondition rejects sources with zero non-SUCCEEDED
+// tasks (TriggerRebase against an all-succeeded source returns an error).
+// That branch is covered by the run_entries_dispatched_handler unit test
+// TestRunEntriesDispatchedHandler_AllInherited_AutoRollupEmitsFinalize.
+func TestRebaseAllInheritedFinalizes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+
+	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)
+	cleanupTestData(t, ctx, clients, failureTestScheduleName)
+
+	triggerGraphLoad(t, ctx, clients)
+
+	// ── Drive the source run to FAILED ──────────────────────────────────────
+	srcIDStr := createAndActivateFailureScheduler(t, ctx, clients)
+	srcID, err := uuid.Parse(srcIDStr)
+	require.NoError(t, err)
+	t.Logf("Source schedule created: schedule_id=%s", srcIDStr)
+
+	t.Log("Waiting for ftable_e to exhaust retries...")
+	verifyNodeExhaustedRetries(t, ctx, clients, srcID, "ftable_e")
+
+	t.Log("Verifying source scheduler reaches FAILED state...")
+	verifySchedulerFailed(t, ctx, clients, srcID)
+
+	// ── Trigger rebase against the failed source ────────────────────────────
+	t.Log("Triggering rebase against failed source run...")
+	rebaseResp, err := clients.stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
+		SourceRunId: srcIDStr,
+	})
+	require.NoError(t, err, "TriggerRebase must succeed against a FAILED source")
+	require.NotEmpty(t, rebaseResp.RunId)
+
+	rebaseRunID, err := uuid.Parse(rebaseResp.RunId)
+	require.NoError(t, err)
+	t.Logf("Rebase run created: run_id=%s", rebaseRunID)
+
+	// ── Wait for the rebase run to reach a terminal state ───────────────────
+	// The rebased ftable_e will fail again under the same fixture, so the
+	// rebase run lands in FAILED. The critical check: terminal_task_count
+	// must close (B1's fix). Without it, this poll hangs.
+	t.Log("Waiting for rebase scheduler_tracker to reach terminal status...")
+	pollUntil(t, ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
+		var status string
+		var completedAt *time.Time
+		qErr := clients.stateDB.QueryRowContext(ctx,
+			`SELECT status, completed_at FROM scheduler_tracker WHERE schedule_id = $1`,
+			rebaseRunID,
+		).Scan(&status, &completedAt)
+		if qErr != nil {
+			return false, qErr
+		}
+		// Terminal = succeeded | failed | cancelled, plus completed_at set.
+		isTerminal := status == "failed" || status == "succeeded" || status == "cancelled"
+		return isTerminal && completedAt != nil, nil
+	}, "rebase scheduler_tracker did not reach terminal status — likely B1 regression "+
+		"(terminal_task_count not seeded for inherited rows; rollup never closes)")
+
+	// Read the final state for assertions.
+	var finalStatus string
+	var finalCompletedAt *time.Time
+	require.NoError(t, clients.stateDB.QueryRowContext(ctx,
+		`SELECT status, completed_at FROM scheduler_tracker WHERE schedule_id = $1`,
+		rebaseRunID,
+	).Scan(&finalStatus, &finalCompletedAt))
+
+	t.Logf("Rebase run finalized: status=%s completed_at=%v", finalStatus, finalCompletedAt)
+	assert.Contains(t, []string{"failed", "succeeded", "cancelled"}, finalStatus,
+		"rebase run must be in a terminal status")
+	assert.NotNil(t, finalCompletedAt, "completed_at must be non-NULL once the run is terminal")
+
+	// ── Assert run.finalized:v1 was emitted via state_outbox ────────────────
+	// Whether the entry is still 'pending' or already 'published', its presence
+	// is what proves the finalization handler ran. The B3 fix specifically
+	// added this emission to the dispatched-handler auto-rollup branch, but
+	// the regular task-status finalization path (which closes this run)
+	// emits it via state's task_status_updated_handler.
+	t.Log("Verifying run.finalized:v1 outbox entry exists for the rebase run...")
+	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
+		var n int
+		qErr := clients.stateDB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM state_outbox
+			   WHERE aggregate_id = $1 AND stream_name = 'run.finalized:v1'`,
+			rebaseRunID,
+		).Scan(&n)
+		if qErr != nil {
+			return false, qErr
+		}
+		return n >= 1, nil
+	}, "no run.finalized:v1 outbox entry for the rebase run")
+
+	// ── Assert orchestrator finalized the Neo4j :Run ────────────────────────
+	// orchestrator consumes run.finalized:v1 and stamps :Run.completed_at.
+	// If completed_at stays NULL, the run is still 'active' in the
+	// orchestrator's projection — exactly the regression B3 fixed for the
+	// auto-rollup branch (and which we want to keep working in this branch).
+	t.Log("Verifying orchestrator stamped Neo4j :Run.completed_at for the rebase run...")
+	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
+		session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
+			AccessMode: neo4jdriver.AccessModeRead,
+		})
+		defer session.Close(ctx)
+		result, qErr := session.Run(ctx,
+			`MATCH (r:Run {run_id: $run_id}) RETURN r.completed_at IS NOT NULL AS done`,
+			map[string]interface{}{"run_id": rebaseRunID.String()})
+		if qErr != nil {
+			return false, qErr
+		}
+		if !result.Next(ctx) {
+			return false, nil
+		}
+		raw, _ := result.Record().Get("done")
+		done, _ := raw.(bool)
+		return done, nil
+	}, "orchestrator did not stamp completed_at on the rebase :Run — "+
+		"orchestrator never finalized its projection (likely missed run.finalized:v1)")
+
+	t.Log("Rebase run finalized end-to-end: state + orchestrator agree")
 }
 
 // TestRebaseFromCancelledRun is intentionally skipped.
