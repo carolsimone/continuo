@@ -22,6 +22,7 @@ type RunEntriesDispatchedHandler struct {
 	db            *sqlx.DB
 	schedulerRepo postgres.SchedulerTrackerRepository
 	taskRepo      postgres.TaskTrackerRepository
+	outboxRepo    postgres.OutboxRepository
 	logger        *slog.Logger
 }
 
@@ -30,12 +31,14 @@ func NewRunEntriesDispatchedHandler(
 	db *sqlx.DB,
 	schedulerRepo postgres.SchedulerTrackerRepository,
 	taskRepo postgres.TaskTrackerRepository,
+	outboxRepo postgres.OutboxRepository,
 	logger *slog.Logger,
 ) *RunEntriesDispatchedHandler {
 	return &RunEntriesDispatchedHandler{
 		db:            db,
 		schedulerRepo: schedulerRepo,
 		taskRepo:      taskRepo,
+		outboxRepo:    outboxRepo,
 		logger:        logger,
 	}
 }
@@ -203,6 +206,42 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 		}
 		if txErr := h.schedulerRepo.FinalizeRunTx(ctx, tx, scheduleID, terminal); txErr != nil {
 			return false, fmt.Errorf("finalize scheduler to %s: %w", terminal, txErr)
+		}
+		// Seed terminal_task_count for observability — FinalizeRunTx only updates
+		// status + completed_at, so without this the rolled-up row carries
+		// terminal_task_count=0 despite all tasks being terminal.
+		if terminalCount > 0 {
+			if txErr := h.schedulerRepo.SetTerminalTaskCountTx(ctx, tx, scheduleID, terminalCount); txErr != nil {
+				return false, fmt.Errorf("seed terminal_task_count on rollup: %w", txErr)
+			}
+		}
+
+		// Emit run.finalized:v1 in the same tx so orchestrator finalizes the
+		// Neo4j :Run. Without this, the auto-rollup run stays "active" in the
+		// orchestrator's projection forever.
+		finalizedEvt := events.RunFinalized{
+			ScheduleID:   scheduleID.String(),
+			ScheduleName: scheduler.ScheduleName,
+			Status:       terminal,
+		}
+		finalizedPayload, marshalErr := json.Marshal(finalizedEvt)
+		if marshalErr != nil {
+			return false, fmt.Errorf("marshal run.finalized payload: %w", marshalErr)
+		}
+		outboxEntry := &postgres.OutboxEntry{
+			ID:            uuid.New(),
+			AggregateType: "scheduler_tracker",
+			AggregateID:   scheduleID,
+			EventType:     "run.finalized:v1",
+			Payload:       finalizedPayload,
+			StreamName:    "run.finalized:v1",
+			Status:        "pending",
+			MaxRetries:    5,
+			RetryCount:    0,
+			CreatedAt:     time.Now(),
+		}
+		if txErr := h.outboxRepo.Create(ctx, tx, outboxEntry); txErr != nil {
+			return false, fmt.Errorf("create outbox entry for run.finalized: %w", txErr)
 		}
 	} else {
 		// Seed terminal_task_count from inherited terminal rows so the run can

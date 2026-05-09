@@ -129,6 +129,7 @@ func main() {
 		db,
 		schedulerRepo,
 		taskRepo,
+		outboxRepo,
 		logger,
 	)
 	if err != nil {
