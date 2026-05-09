@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`orchestrator` is the merged replacement for the former `graph`, `dependency-controller`, and `startup-controller` services. It owns the dependency topology in Neo4j, handles run initialization and node completion events, and serves gRPC queries for the UI.
+`orchestrator` owns the dependency topology in Neo4j, handles run initialization and node completion events, and serves gRPC queries for the UI.
 
 It is responsible for:
 - ingesting topology from manifest-controller (via `manifest.loaded:v1`)
