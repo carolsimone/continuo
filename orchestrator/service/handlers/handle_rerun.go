@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
@@ -124,10 +125,6 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 	allTasks := make([]pkgEvents.DispatchedTask, 0, len(projection))
 	queryModelTasks := make([]snapshot.TaskProjection, 0)
 	for _, t := range projection {
-		statusLower := "pending"
-		if t.InitialStatus == "SUCCEEDED" {
-			statusLower = "succeeded"
-		}
 		inheritedStr := ""
 		if t.InheritedFromTaskID != nil {
 			inheritedStr = t.InheritedFromTaskID.String()
@@ -141,10 +138,13 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 			MaxRetries:          t.MaxRetries,
 			ManifestVersion:     t.ManifestVersion,
 			ImageTag:            t.ImageTag,
-			Status:              statusLower,
+			Status:              projectionStatusLower(t.InitialStatus),
 			InheritedFromTaskID: inheritedStr,
 		})
-		// Only PENDING (rebased) rows need dispatch.
+		// Only PENDING (rebased) rows need dispatch. Inherited terminal rows
+		// (SUCCEEDED/FAILED/CANCELLED/SKIPPED) keep their source status verbatim
+		// so state's task_tracker is seeded with the right terminal state and
+		// the rollup math closes — no zombie pending rows.
 		if t.InitialStatus == "PENDING" {
 			queryModelTasks = append(queryModelTasks, t)
 		}
@@ -225,6 +225,28 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 		"dispatched_tasks", len(queryModelTasks),
 	)
 	return nil
+}
+
+// projectionStatusLower maps a SourcePinnedDAG projection's InitialStatus to
+// its wire-format (lowercased) value used in run.entries.dispatched:v1.
+// Inherited terminal rows (FAILED/CANCELLED/SKIPPED outside the rerun target's
+// downstream cone) MUST round-trip verbatim — coercing them to "pending" would
+// create a task_tracker row no controller ever executes, blocking run finalize.
+func projectionStatusLower(initialStatus string) string {
+	switch initialStatus {
+	case "PENDING":
+		return "pending"
+	case "SUCCEEDED":
+		return "succeeded"
+	case "FAILED":
+		return "failed"
+	case "CANCELLED":
+		return "cancelled"
+	case "SKIPPED":
+		return "skipped"
+	default:
+		return strings.ToLower(initialStatus)
+	}
 }
 
 // dedup mirrors handle_single_node_run.go.

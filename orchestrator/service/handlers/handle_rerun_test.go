@@ -251,7 +251,118 @@ func TestHandleRerun_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	assert.Equal(t, "rerun_yielded_empty_projection", failed.Reason)
 }
 
-// 4. Second delivery of the same messageID is a no-op (dedup).
+// 4. Non-target terminal statuses (FAILED/CANCELLED/SKIPPED) inherited from the
+//    source pinned DAG must be preserved verbatim in run.entries.dispatched:v1
+//    and must NOT trigger query.model:v1 dispatch. Bug B2 (cycle 2): the
+//    handler used to coerce any non-SUCCEEDED InitialStatus to "pending",
+//    creating a zombie task_tracker row state would never finalize.
+func TestHandleRerun_PreservesNonTargetTerminalStatuses(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name           string
+		terminalStatus string
+		wantStatusWire string
+	}{
+		{name: "failed", terminalStatus: "FAILED", wantStatusWire: "failed"},
+		{name: "cancelled", terminalStatus: "CANCELLED", wantStatusWire: "cancelled"},
+		{name: "skipped", terminalStatus: "SKIPPED", wantStatusWire: "skipped"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			uow := newFakeUnitOfWork()
+
+			targetTaskID := uuid.New()
+			succTaskID := uuid.New()
+			termTaskID := uuid.New()
+			succInheritedRoot := uuid.New()
+			termInheritedRoot := uuid.New()
+
+			runRepo := &rerunFakeRunRepository{
+				snapshotFn: func(_ context.Context, _ snapshot.Params) ([]snapshot.TaskProjection, error) {
+					return []snapshot.TaskProjection{
+						{
+							TaskID:          targetTaskID,
+							ServiceName:     "svc1",
+							SchemaName:      "public",
+							TableName:       "orders",
+							ScheduleName:    "daily",
+							NodeType:        "dbt-model",
+							InitialStatus:   "PENDING",
+							ImageTag:        "v3-pinned",
+							ManifestVersion: "m3-pinned",
+							MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+						},
+						{
+							TaskID:              succTaskID,
+							ServiceName:         "svc1",
+							SchemaName:          "public",
+							TableName:           "users",
+							ScheduleName:        "daily",
+							NodeType:            "dbt-model",
+							InitialStatus:       "SUCCEEDED",
+							ImageTag:            "v3-pinned",
+							ManifestVersion:     "m3-pinned",
+							InheritedFromTaskID: &succInheritedRoot,
+							MaxRetries:          0,
+						},
+						{
+							TaskID:              termTaskID,
+							ServiceName:         "svc1",
+							SchemaName:          "public",
+							TableName:           "events",
+							ScheduleName:        "daily",
+							NodeType:            "dbt-model",
+							InitialStatus:       tc.terminalStatus,
+							ImageTag:            "v3-pinned",
+							ManifestVersion:     "m3-pinned",
+							InheritedFromTaskID: &termInheritedRoot,
+							MaxRetries:          0,
+						},
+					}, nil
+				},
+			}
+
+			h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+			require.NoError(t, h.Handle(ctx, makeRerunCmd(), "msg-rerun-term-"+tc.name))
+			require.True(t, uow.CommittedTx)
+
+			entries := uow.outboxRepo.CreatedEntries
+			// Expect: 1 run.entries.dispatched:v1 + 1 query.model:v1 (only PENDING row).
+			require.Len(t, entries, 2, "expect 1 dispatched + 1 query.model (only the PENDING target)")
+
+			require.Equal(t, "run.entries.dispatched:v1", entries[0].StreamName)
+			var dispatched pkgEvents.RunEntriesDispatched
+			require.NoError(t, json.Unmarshal(entries[0].Payload, &dispatched))
+			require.Equal(t, int32(3), dispatched.TotalTaskCount)
+			require.Len(t, dispatched.AllTasks, 3)
+
+			byTable := make(map[string]pkgEvents.DispatchedTask, 3)
+			for _, dt := range dispatched.AllTasks {
+				byTable[dt.TableName] = dt
+			}
+			require.Contains(t, byTable, "orders")
+			require.Contains(t, byTable, "users")
+			require.Contains(t, byTable, "events")
+
+			assert.Equal(t, "pending", byTable["orders"].Status, "PENDING (rebased target) → pending")
+			assert.Equal(t, "succeeded", byTable["users"].Status, "SUCCEEDED → succeeded")
+			assert.Equal(t, tc.wantStatusWire, byTable["events"].Status,
+				"non-target terminal status %q must be preserved verbatim (lowercased), not coerced to pending",
+				tc.terminalStatus)
+
+			// query.model:v1 must fire ONLY for the PENDING row.
+			require.Equal(t, "query.model:v1", entries[1].StreamName)
+			var qevt domain.NodeReadyForExecution
+			require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
+			assert.Equal(t, "orders", qevt.TableName,
+				"only the rebased PENDING target should receive a query.model:v1 dispatch")
+		})
+	}
+}
+
+// 5. Second delivery of the same messageID is a no-op (dedup).
 func TestHandleRerun_DedupSecondDelivery(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
