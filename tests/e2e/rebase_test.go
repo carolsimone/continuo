@@ -136,9 +136,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 }
 
 // TestRebaseAllInheritedFinalizes verifies that a rebase whose projection
-// contains a mix of inherited-terminal and rebased rows finalizes correctly
-// — exercising the bug fixed in T3 (B1: state seeds terminal_task_count
-// for inherited rows so the mixed-projection rollup math closes).
+// contains a mix of inherited-terminal and rebased rows finalizes correctly.
 //
 // Setup mirrors TestRebaseFromFailedRun: the failure schedule's source run
 // ends in FAILED with ftable_a/b/c/d=succeeded, ftable_e=failed,
@@ -147,27 +145,33 @@ func TestRebaseFromFailedRun(t *testing.T) {
 //	ftable_a/b/c/d  →  inherited (succeeded)
 //	ftable_e/f      →  rebased   (PENDING)
 //
-// Because the dbt fixture for ftable_e is permanently broken (JOIN
-// public.wrong_name) the rebased ftable_e fails again and the rebase run
-// reaches FAILED. Without B1's fix, terminal_task_count would start at 0
-// and the rollup would expect 6 terminal events but only ever observe
-// 2 (e=failed, f=cascade-skipped) — leaving the run hung indefinitely.
+// The rebased ftable_e fails again under the same broken dbt fixture
+// (JOIN public.wrong_name), exhausts retries, and the rebase run reaches
+// FAILED via the normal task-status finalization path.
 //
-// Assertions:
-//   - rebase scheduler_tracker.status reaches a terminal state (failed)
-//   - rebase scheduler_tracker.completed_at is non-NULL
-//   - state_outbox carries a 'run.finalized:v1' entry for the rebase run
-//     (T4/B3 — the dispatched-handler auto-rollup branch is exercised
-//     elsewhere via unit tests; here the normal task-status path must
-//     emit run.finalized:v1 as well)
-//   - orchestrator's Neo4j :Run for the rebase has completed_at set
-//     (orchestrator processed run.finalized:v1 and finalized its projection)
+// What this test bites on:
+//   - B1 (terminal_task_count seeding for inherited rows). Without the
+//     seeding fix, terminal_task_count starts at 0 and the rollup expects
+//     6 terminal events while only ever observing 2 (e=failed,
+//     f=cascade-skipped) — the run hangs indefinitely. The terminal-status
+//     poll plus the explicit terminal_task_count==total_task_count
+//     assertion below cover this.
+//   - B4 (rebase-scoped 'latest' read). Implicit: the projection partition
+//     materialises with the corrected scope; without it, the partition
+//     shape would be wrong and the run would not finalize cleanly.
 //
-// The all-inherited (no rebased rows) variant of B3 is NOT exercised here
-// because the rebase precondition rejects sources with zero non-SUCCEEDED
-// tasks (TriggerRebase against an all-succeeded source returns an error).
-// That branch is covered by the run_entries_dispatched_handler unit test
-// TestRunEntriesDispatchedHandler_AllInherited_AutoRollupEmitsFinalize.
+// What this test does NOT cover:
+//   - B3 (the dispatched-handler auto-rollup branch's run.finalized:v1
+//     emit). The fixture finalizes through the task-status path, which
+//     already emitted run.finalized:v1 before this branch — the
+//     auto-rollup path is not hit. The all-inherited variant is
+//     precondition-rejected at the gRPC layer (TriggerRebase against an
+//     all-succeeded source returns an error), so B3 is unit-tested only
+//     via TestRunEntriesDispatchedHandler_AllInherited_AutoRollupEmitsFinalize.
+//
+// Cross-component assertion: orchestrator's Neo4j :Run for the rebase has
+// completed_at set, confirming orchestrator consumed run.finalized:v1 and
+// finalized its projection.
 func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -245,12 +249,28 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 		"rebase run must be in a terminal status")
 	assert.NotNil(t, finalCompletedAt, "completed_at must be non-NULL once the run is terminal")
 
+	// ── Assert B1 invariant directly: terminal_task_count == total_task_count ─
+	// The terminal-status poll above already implies this (the run could not
+	// have finalized otherwise), but checking the column directly documents
+	// the seeding invariant: inherited rows must contribute to
+	// terminal_task_count at projection time, not at task-status time.
+	var terminalCount, totalCount int32
+	require.NoError(t, clients.stateDB.QueryRowContext(ctx,
+		`SELECT terminal_task_count, total_task_count
+		   FROM scheduler_tracker WHERE schedule_id = $1`,
+		rebaseRunID,
+	).Scan(&terminalCount, &totalCount))
+	assert.Equal(t, totalCount, terminalCount,
+		"terminal_task_count must equal total_task_count post-finalization (B1 invariant)")
+	assert.Equal(t, int32(6), totalCount,
+		"expected partition: 4 inherited + 2 rebased = 6 total")
+
 	// ── Assert run.finalized:v1 was emitted via state_outbox ────────────────
 	// Whether the entry is still 'pending' or already 'published', its presence
-	// is what proves the finalization handler ran. The B3 fix specifically
-	// added this emission to the dispatched-handler auto-rollup branch, but
-	// the regular task-status finalization path (which closes this run)
-	// emits it via state's task_status_updated_handler.
+	// is what proves the finalization handler ran. Here that handler is
+	// state's task_status_updated_handler (the normal task-status path),
+	// which already emitted run.finalized:v1 before this branch — the
+	// auto-rollup branch's emission is not exercised by this fixture.
 	t.Log("Verifying run.finalized:v1 outbox entry exists for the rebase run...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var n int
@@ -268,8 +288,8 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	// ── Assert orchestrator finalized the Neo4j :Run ────────────────────────
 	// orchestrator consumes run.finalized:v1 and stamps :Run.completed_at.
 	// If completed_at stays NULL, the run is still 'active' in the
-	// orchestrator's projection — exactly the regression B3 fixed for the
-	// auto-rollup branch (and which we want to keep working in this branch).
+	// orchestrator's projection — i.e. the cross-component finalization
+	// contract is broken.
 	t.Log("Verifying orchestrator stamped Neo4j :Run.completed_at for the rebase run...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
