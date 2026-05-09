@@ -183,12 +183,14 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 	// case keeps existing cron/single-node-run/rerun behaviour: go to RUNNING.
 	allTerminal := true
 	allSucceeded := true
+	terminalCount := int32(0)
 	for _, task := range tasks {
 		if task.Status == model.TaskStatusPending || task.Status == model.TaskStatusRunning {
 			allTerminal = false
 			allSucceeded = false
-			break
+			continue
 		}
+		terminalCount++
 		if task.Status != model.TaskStatusSucceeded {
 			allSucceeded = false
 		}
@@ -203,6 +205,13 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 			return false, fmt.Errorf("finalize scheduler to %s: %w", terminal, txErr)
 		}
 	} else {
+		// Seed terminal_task_count from inherited terminal rows so the run can
+		// finalize when the remaining pending tasks reach terminal status.
+		if terminalCount > 0 {
+			if txErr := h.schedulerRepo.SetTerminalTaskCountTx(ctx, tx, scheduleID, terminalCount); txErr != nil {
+				return false, fmt.Errorf("seed terminal_task_count: %w", txErr)
+			}
+		}
 		if txErr := h.schedulerRepo.UpdateStatusTx(ctx, tx, scheduleID, string(model.SchedulerStatusRunning)); txErr != nil {
 			return false, fmt.Errorf("update status to running: %w", txErr)
 		}

@@ -439,3 +439,55 @@ func TestRunEntriesDispatched_PR2_MixedPendingDoesNotRollup(t *testing.T) {
 	assert.Equal(t, model.SchedulerStatusRunning, scheduler.Status, "mixed projection (>=1 PENDING) should still go to RUNNING")
 	assert.Nil(t, scheduler.CompletedAt, "RUNNING transition must NOT set CompletedAt")
 }
+
+// TestRunEntriesDispatched_SeedsTerminalCountForInheritedTasks asserts that
+// when a mixed projection (one PENDING + N SUCCEEDED inherits) is dispatched,
+// scheduler_tracker.terminal_task_count is seeded with N — so that when the
+// remaining PENDING task transitions to terminal via task.status.updated:v1,
+// terminal_task_count == total_task_count and the run finalizes normally.
+func TestRunEntriesDispatched_SeedsTerminalCountForInheritedTasks(t *testing.T) {
+	h, db, schedulerRepo, _ := newTestHandlerWithRepos(t)
+	scheduleID := seedSchedulerWithKind(t, db, "rebase-seedterm-"+uuid.New().String()[:8], "rebase")
+	t.Cleanup(func() {
+		db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
+		db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	})
+
+	pending := uuid.New()
+	inherit1 := uuid.New()
+	inherit2 := uuid.New()
+	root1 := uuid.New()
+	root2 := uuid.New()
+
+	evt := events.RunEntriesDispatched{
+		ScheduleID:   scheduleID.String(),
+		ScheduleName: "rebase-seedterm",
+		AllTasks: []events.DispatchedTask{
+			{TaskID: pending.String(), ServiceName: "svc", SchemaName: "s", TableName: "rebased",
+				NodeType: "dbt-model", MaxRetries: 2, ManifestVersion: "v2", ImageTag: "img:2",
+				Status: "pending"},
+			{TaskID: inherit1.String(), ServiceName: "svc", SchemaName: "s", TableName: "ok1",
+				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
+				Status: "succeeded", InheritedFromTaskID: root1.String()},
+			{TaskID: inherit2.String(), ServiceName: "svc", SchemaName: "s", TableName: "ok2",
+				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
+				Status: "succeeded", InheritedFromTaskID: root2.String()},
+		},
+		TotalTaskCount: 3,
+	}
+	payload, err := json.Marshal(evt)
+	require.NoError(t, err)
+
+	ack, err := h.Handle(context.Background(), "msg-seedterm-"+uuid.New().String(), string(payload))
+	require.NoError(t, err)
+	require.True(t, ack)
+
+	tracker, err := schedulerRepo.GetByID(context.Background(), scheduleID)
+	require.NoError(t, err)
+	assert.Equal(t, model.SchedulerStatusRunning, tracker.Status,
+		"mixed pending+terminal must still go to RUNNING")
+	assert.True(t, tracker.TotalTaskCount.Valid)
+	assert.Equal(t, int32(3), tracker.TotalTaskCount.Int32)
+	assert.Equal(t, int32(2), tracker.TerminalTaskCount,
+		"terminal_task_count must be seeded with the count of pre-terminal task rows")
+}

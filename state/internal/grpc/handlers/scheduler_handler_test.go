@@ -178,6 +178,9 @@ func (s *stubSchedulerRepo) DecrementTerminalCountTx(_ context.Context, _ *sqlx.
 func (s *stubSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
 	return nil
 }
+func (s *stubSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
 func (s *stubSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
@@ -582,6 +585,9 @@ func (f *fakeSchedulerRepo) DecrementTerminalCountTx(_ context.Context, _ *sqlx.
 	return nil
 }
 func (f *fakeSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+	return nil
+}
+func (f *fakeSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
 	return nil
 }
 func (f *fakeSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
