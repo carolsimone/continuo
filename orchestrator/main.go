@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/orchestrator/config"
-	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
-	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/orchestrator/adapters/http"
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
+	"github.com/carolsimone/continuo/orchestrator/config"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/internal/lifecycle"
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
@@ -31,7 +31,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
-
 
 func main() {
 	// Setup structured logger
@@ -246,7 +245,7 @@ func main() {
 	}()
 
 	// ========================================================================
-	// INITIALIZE REDIS CONSUMERS (3 streams)
+	// INITIALIZE REDIS CONSUMERS
 	// ========================================================================
 
 	// Consumer 1: node.updated:v1 -> HandleNodeCompleted
