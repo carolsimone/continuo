@@ -114,6 +114,19 @@ describe('DetailPage — rerun gating by drift state', () => {
 
     await selectFirstNode();
     const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i }, { timeout: 10000 });
+
+    // Wait for the live run graph fetch to resolve before clicking. handleRerun
+    // reads liveRunGraph?.run_topology_generation; if the fetch hasn't settled
+    // yet getDriftState(undefined, undefined) returns 'unknown' and the click
+    // opens the dialog instead of firing the immediate POST this test asserts.
+    // The Rerun button mounts as soon as the focus legend renders (which only
+    // depends on selectedNodeId + lastRunId), so on a slow CI runner it can
+    // appear before /api/runs/:id/graph has resolved.
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map(c => String(c[0]));
+      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}/graph`))).toBe(true);
+    });
+
     fireEvent.click(rerunBtn);
 
     await waitFor(() => {
