@@ -34,16 +34,12 @@ func (RebasePartition) SelectTasks(ctx context.Context, tx neo4j.ManagedTransact
 	if err != nil {
 		return nil, err
 	}
-	// Scope "latest" to the schedules the source run touched. This is the
-	// rebase domain: a rebase replays the source with latest topology under
-	// the same schedule(s); unrelated schedules are out of scope.
-	scheduleScope := map[string]struct{}{}
-	for _, st := range source {
-		if st.scheduleName != "" {
-			scheduleScope[st.scheduleName] = struct{}{}
-		}
-	}
-	latest, err := readLatestTables(ctx, tx, scheduleScope)
+	// "Latest" for a rebase = the source schedule's full DAG shape:
+	// the source schedule's own :Tables, plus their transitive upstream
+	// dependencies (typically seeds in other schedules). Tables that
+	// happen to live in a touched seed schedule but are not in this DAG
+	// are NOT in scope.
+	latest, err := readLatestSourceDAG(ctx, tx, p.ScheduleName)
 	if err != nil {
 		return nil, err
 	}
@@ -122,21 +118,22 @@ func (RebasePartition) SelectTasks(ctx context.Context, tx neo4j.ManagedTransact
 	return projection, nil
 }
 
-// readLatestTables loads active :Table nodes keyed by FQN, restricted to the
-// given schedule_name scope (the schedules touched by the source run). An
-// empty scope returns no rows — a source run with no edges has nothing to
-// rebase against.
-func readLatestTables(ctx context.Context, tx neo4j.ManagedTransaction, scheduleScope map[string]struct{}) (map[fqnKey]latestTableRow, error) {
-	if len(scheduleScope) == 0 {
+// readLatestSourceDAG returns every active :Table in the source schedule
+// plus every active :Table that any of those tables transitively
+// DEPENDS_ON (upstream seeds, possibly in other schedules). Tables that
+// share a seed's schedule but are not part of this DAG are excluded.
+func readLatestSourceDAG(ctx context.Context, tx neo4j.ManagedTransaction, scheduleName string) (map[fqnKey]latestTableRow, error) {
+	if scheduleName == "" {
 		return map[fqnKey]latestTableRow{}, nil
 	}
-	schedules := make([]string, 0, len(scheduleScope))
-	for s := range scheduleScope {
-		schedules = append(schedules, s)
-	}
 	const q = `
-		MATCH (t:Table)
-		WHERE COALESCE(t.active, true) AND t.schedule_name IN $schedules
+		MATCH (root:Table {schedule_name: $sched})
+		WHERE COALESCE(root.active, true)
+		OPTIONAL MATCH (root)-[:DEPENDS_ON*0..]->(t:Table)
+		WHERE COALESCE(t.active, true)
+		WITH COLLECT(DISTINCT t) + COLLECT(DISTINCT root) AS all_tables
+		UNWIND all_tables AS t
+		WITH DISTINCT t
 		RETURN t.service_name AS service,
 		       t.schema_name  AS schema,
 		       t.table_name   AS tbl,
@@ -145,9 +142,9 @@ func readLatestTables(ctx context.Context, tx neo4j.ManagedTransaction, schedule
 		       COALESCE(t.image_tag, '')          AS image_tag,
 		       COALESCE(t.manifest_version, '')   AS manifest_version
 	`
-	result, err := tx.Run(ctx, q, map[string]interface{}{"schedules": schedules})
+	result, err := tx.Run(ctx, q, map[string]interface{}{"sched": scheduleName})
 	if err != nil {
-		return nil, fmt.Errorf("readLatestTables: %w", err)
+		return nil, fmt.Errorf("readLatestSourceDAG: %w", err)
 	}
 	out := make(map[fqnKey]latestTableRow)
 	for result.Next(ctx) {

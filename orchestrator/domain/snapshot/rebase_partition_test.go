@@ -33,7 +33,7 @@ func TestRebasePartition_OneFailureNoDescendants(t *testing.T) {
 			TaskID: srcB.String(), ImageTag: "img:OLD", ManifestVersion: "vOLD"},
 	})
 
-	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{SourceRunID: &srcRunID})
+	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{ScheduleName: sched, SourceRunID: &srcRunID})
 	require.Len(t, got, 2)
 	by := indexProjectionByTable(got)
 
@@ -80,7 +80,7 @@ func TestRebasePartition_FailureCascadesToLatestDescendants(t *testing.T) {
 			TaskID: srcC.String(), ImageTag: "img:OLD", ManifestVersion: "vOLD"},
 	})
 
-	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{SourceRunID: &srcRunID})
+	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{ScheduleName: sched, SourceRunID: &srcRunID})
 	require.Len(t, got, 3)
 	by := indexProjectionByTable(got)
 
@@ -114,7 +114,7 @@ func TestRebasePartition_NewArrival_RebasedPending(t *testing.T) {
 			TaskID: uuid.New().String(), ImageTag: "img:OLD", ManifestVersion: "vOLD"},
 	})
 
-	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{SourceRunID: &srcRunID})
+	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{ScheduleName: sched, SourceRunID: &srcRunID})
 	by := indexProjectionByTable(got)
 
 	require.Contains(t, by, "d", "new arrival 'd' must appear in projection")
@@ -146,7 +146,7 @@ func TestRebasePartition_DropSet_SilentlyExcluded(t *testing.T) {
 			TaskID: uuid.New().String(), ImageTag: "img:OLD", ManifestVersion: "vOLD"},
 	})
 
-	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{SourceRunID: &srcRunID})
+	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{ScheduleName: sched, SourceRunID: &srcRunID})
 	by := indexProjectionByTable(got)
 
 	require.NotContains(t, by, "x", "dropped table x must NOT appear in projection")
@@ -175,12 +175,61 @@ func TestRebasePartition_RebaseOfRebase_RootForwarding(t *testing.T) {
 			TaskID: uuid.New().String(), ImageTag: "img:OLD", ManifestVersion: "vOLD"},
 	})
 
-	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{SourceRunID: &srcRunID})
+	got := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{ScheduleName: sched, SourceRunID: &srcRunID})
 	by := indexProjectionByTable(got)
 
 	require.NotNil(t, by["a"].InheritedFromTaskID)
 	assert.Equal(t, rootA, *by["a"].InheritedFromTaskID,
 		"resolve-to-root: inherit pointer must skip the intermediate task_id")
+}
+
+// TestRebasePartition_LatestScopedToSourceDAG asserts that the rebase selector
+// does NOT pull unrelated tables from a touched seed schedule into the
+// projection. Concretely: source schedule A consumes one seed from schedule S;
+// schedule S also has an unrelated seed table. After rebase, the unrelated
+// seed must NOT appear as a "new arrival".
+func TestRebasePartition_LatestScopedToSourceDAG(t *testing.T) {
+	driver := newDriver(t)
+	schedA := "test-rp-scope-A-" + uuid.New().String()[:8]
+	schedS := "test-rp-scope-S-" + uuid.New().String()[:8]
+	t.Cleanup(func() {
+		cleanupRunAndTables(t, driver, "", "test-rp-scope-")
+	})
+
+	// Schedule A: one model "users" depending on seed S.dim_dates.
+	seedTable(t, driver, schedA, "svc-a", "public", "users", "img:NEW", "vNEW")
+	// Schedule S: the referenced seed, plus an unrelated seed (the bug case).
+	seedTable(t, driver, schedS, "seeds", "raw", "dim_dates", "img:NEW", "vNEW")
+	seedTable(t, driver, schedS, "seeds", "raw", "unrelated", "img:NEW", "vNEW")
+
+	// DEPENDS_ON edge: A.users → S.dim_dates.
+	addDependency(t, driver,
+		schedA, "public", "users",
+		schedS, "raw", "dim_dates",
+	)
+
+	srcRunID := uuid.New()
+	srcUsers := uuid.New()
+	srcSeed := uuid.New()
+	seedSourceRunWithEdges(t, driver, srcRunID.String(), schedA, []seededEdge{
+		{Service: "svc-a", Schema: "public", Table: "users", Status: "FAILED", TaskID: srcUsers.String(), ImageTag: "img:OLD", ManifestVersion: "vOLD", ScheduleName: schedA},
+		{Service: "seeds", Schema: "raw", Table: "dim_dates", Status: "SUCCEEDED", TaskID: srcSeed.String(), ImageTag: "img:OLD", ManifestVersion: "vOLD", ScheduleName: schedS},
+	})
+
+	proj := runSelector(t, driver, snapshot.RebasePartition{}, snapshot.Params{
+		RunID:        uuid.New().String(),
+		ScheduleName: schedA,
+		Kind:         "rebase",
+		SourceRunID:  &srcRunID,
+	})
+
+	byTable := indexProjectionByTable(proj)
+	assert.Contains(t, byTable, "users", "FAILED source row should rebase")
+	assert.Contains(t, byTable, "dim_dates", "SUCCEEDED seed should inherit")
+	assert.NotContains(t, byTable, "unrelated",
+		"unrelated table in a touched seed schedule MUST NOT be dispatched as a new arrival")
+
+	require.Equal(t, 2, len(proj), "projection must contain only the source DAG: users + dim_dates")
 }
 
 // ── seedInactiveTable helper (mirrors seedTable but sets active=false) ──
