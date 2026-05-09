@@ -28,7 +28,7 @@ State mutates these records in two ways: via gRPC for UI-facing reads and user-i
 |---|---|---|
 | `total_task_count` | `integer` | Set when `run.entries.dispatched:v1` is consumed; total number of tasks in the run |
 | `terminal_task_count` | `integer` | Incremented by the finalization state machine each time a task reaches a terminal state |
-| `kind` | `character varying(20)` NOT NULL DEFAULT `'cron'` | Run discriminator. CHECK constraint allows: `cron`, `trigger`, `rerun`, `rebase`, `single_node_run`. Set at activation; the rerun handler may flip an existing tracker's kind from `'cron'` to `'rerun'` on `TriggerRerun`. Migration: V15. |
+| `kind` | `character varying(20)` NOT NULL DEFAULT `'cron'` | Run discriminator. CHECK constraint allows: `cron`, `trigger`, `rerun`, `rebase`, `single_node_run`. Set when the row is inserted and immutable thereafter — `rerun` and `rebase` rows are minted as fresh trackers, never by mutating an existing one. Migration: V15. |
 | `source_run_id` | `uuid` NULL | Lineage pointer to a parent run. NULL for `cron`/`trigger`. Populated for `rerun`, `rebase`, and stale-mode `single_node_run`. Not a foreign key — orphans are fine. Migration: V15. |
 
 ### New columns on `task_tracker`
@@ -44,9 +44,9 @@ The `scheduler_tracker.kind` enum (also surfaced as the `kind` field on `:Run` i
 
 - `cron` — cron-triggered activation; uniform metadata. Today every non-rerun run lands here.
 - `trigger` — manual API trigger (reserved; not yet wired in v1).
-- `rerun` — re-execute failed node + downstream against the source run's pinned snapshot. **PR2 semantic shift:** `TriggerRerun` now mints a NEW `scheduler_tracker` row on the source's schedule (`kind='rerun'`, `source_run_id=<source>`). The source run row stays at `FAILED`/`CANCELLED` forever — it is now an immutable historical record. Pre-PR2 `kind='cron'` → `kind='rerun'` flip on the existing tracker is gone.
-- `rebase` — Feature 2 (PR2 — 2026-05-08): re-execute failed/cancelled tasks + descendants + new arrivals against latest topology; inherit successful tasks with old metadata. New `scheduler_tracker` row on source's schedule (`kind='rebase'`, `source_run_id=<source>`).
-- `single_node_run` — Feature 4 (PR1): exactly one task; latest metadata by default, stale via picker.
+- `rerun` — re-execute failed node + downstream against the source run's pinned snapshot. `TriggerRerun` mints a new `scheduler_tracker` row on the source's schedule (`kind='rerun'`, `source_run_id=<source>`). The source row is left at its terminal `FAILED`/`CANCELLED` status as an immutable historical record.
+- `rebase` — re-execute failed/cancelled tasks + their descendants + new arrivals against latest topology; inherit successful tasks with their pinned metadata. `TriggerRebase` mints a new `scheduler_tracker` row on the source's schedule (`kind='rebase'`, `source_run_id=<source>`).
+- `single_node_run` — exactly one task; latest metadata by default, stale via picker.
 
 ## Inbound Interfaces
 
@@ -135,7 +135,7 @@ The rerun trigger was migrated from HTTP to gRPC (`TriggerRerun`). Port 8082 now
 3. Source run must be terminal (no tasks currently RUNNING)
 4. Target task must be in FAILED state
 
-On success (PR2 semantics): a NEW `scheduler_tracker` row is inserted with `kind='rerun'`, `source_run_id=<src>`, `schedule_name=<src.schedule_name>`, `status=PENDING`, `init_status=in_progress`. The source row is left untouched — it stays at its terminal `FAILED` status as the immutable historical record. A `trigger.rerun:v1` outbox entry is written in the same transaction. The orchestrator's `HandleRerun` consumer then runs `Snapshot(SourcePinnedDAG)` against the new run, projecting the source's pinned DAG with the target node + non-SUCCEEDED descendants flipped to PENDING (rebased) and the rest carried forward as SUCCEEDED inherits. `task_tracker` rows for the new run are created by `RunEntriesDispatchedHandler` from the orchestrator's `run.entries.dispatched:v1` payload — there is no longer an in-place reset of the source's task rows.
+On success: a new `scheduler_tracker` row is inserted with `kind='rerun'`, `source_run_id=<src>`, `schedule_name=<src.schedule_name>`, `status=PENDING`, `init_status=in_progress`. The source row is left untouched — it stays at its terminal `FAILED` status as the immutable historical record. A `trigger.rerun:v1` outbox entry is written in the same transaction. The orchestrator's `HandleRerun` consumer then runs `Snapshot(SourcePinnedDAG)` against the new run, projecting the source's pinned DAG with the target node + non-SUCCEEDED descendants flipped to PENDING (rebased) and the rest carried forward as SUCCEEDED inherits. `task_tracker` rows for the new run are created by `RunEntriesDispatchedHandler` from the orchestrator's `run.entries.dispatched:v1` payload.
 
 ### Redis consumers
 
@@ -171,7 +171,7 @@ Effect: `orchestrator` begins task graph initialization, stamping `:Run.kind` an
 Emitted on: `TriggerRerun` gRPC call
 
 Payload fields:
-- `schedule_id` — UUID of the **newly-minted** `scheduler_tracker` row (PR2; previously the source run's id)
+- `schedule_id` — UUID of the **newly-minted** `scheduler_tracker` row
 - `schedule_name`
 - `scope` — always `"node"`
 - `schema_name`
@@ -226,11 +226,11 @@ When `task.status.updated:v1` is processed and the new status is terminal (SUCCE
 
 The check is performed atomically within the same transaction as the task status update and the `terminal_task_count` increment.
 
-### Auto-rollup at dispatch time (PR2)
+### Auto-rollup at dispatch time
 
-`RunEntriesDispatchedHandler` now honours per-task `Status` in the dispatched payload. When the orchestrator's projection contains tasks that are already terminal at dispatch time (typically `SUCCEEDED` inherits in a rebase or rerun snapshot), `task_tracker` rows are inserted at that terminal status — the executor pipeline never touches them.
+`RunEntriesDispatchedHandler` honours per-task `Status` in the dispatched payload. When the orchestrator's projection contains tasks that are already terminal at dispatch time (typically `SUCCEEDED` inherits in a rebase or rerun snapshot), `task_tracker` rows are inserted at that terminal status — the executor pipeline never touches them.
 
-If **every** dispatched task is in a terminal state (i.e. there is nothing to execute), the handler short-circuits the normal `status='running'` transition and instead transitions the `scheduler_tracker` directly to a terminal status (`SUCCEEDED` if every projected task is `SUCCEEDED`, `FAILED` otherwise) with `completed_at` set. `init_status='completed'` is still set, and `run.finalized:v1` is emitted via the outbox in the same transaction. This avoids a transient `status=running` flicker on no-op rebases (e.g. user rebased a run with zero non-SUCCEEDED tasks; rejected upstream by `TriggerRebase` precondition checks but the auto-rollup is the last line of defence).
+If **every** dispatched task is in a terminal state (i.e. there is nothing to execute), the handler short-circuits the normal `status='running'` transition and instead transitions the `scheduler_tracker` directly to a terminal status (`SUCCEEDED` if every projected task is `SUCCEEDED`, `FAILED` otherwise) with `completed_at` set. `init_status='completed'` is still set, and `run.finalized:v1` is emitted via the outbox in the same transaction. This avoids a transient `status=running` flicker on no-op rebases (e.g. a rebase whose projection contains only inherited rows — rejected upstream by `TriggerRebase` precondition checks, but the auto-rollup is the last line of defence).
 
 ## What It Reads
 
@@ -358,5 +358,5 @@ State calls no external gRPC services.
 - Scheduler and task status are owned exclusively by `state` — no other service updates these rows directly
 - Internal pipeline writes reach `state` via Redis events (`run.entries.dispatched:v1`, `task.status.updated:v1`, `task.execution.recorded:v1`)
 - gRPC write surface is limited to user-initiated commands (`TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `CancelScheduler`, etc.) and schedule activation
-- The legacy `run.rerun.dispatched:v1` consumer + handler were deleted in PR2 — rerun now mints a new `scheduler_tracker` row + new `:Run` and uses the same `run.entries.dispatched:v1` pipeline as every other run kind
+- Rerun, rebase, and single-node runs all flow through the same `run.entries.dispatched:v1` pipeline as cron/trigger runs — there is no separate dispatch stream per run kind
 - `schedule_catalog` is the authoritative list of known schedules; `ListAllSchedules` reads from it — a running schedule not yet in the catalog will not appear in the UI

@@ -117,7 +117,7 @@ sequenceDiagram
   end
 ```
 
-## 4. Rerun Flow (PR2 — new run on source's schedule)
+## 4. Rerun Flow (new run on source's schedule)
 
 ```mermaid
 sequenceDiagram
@@ -150,7 +150,7 @@ sequenceDiagram
   end
 ```
 
-> Differences vs. Flow 1: synchronous gRPC entry; new `:Run` is minted but inherits `topology_generation` + `service_metadata` from the **source** `:Run` (not `:TopologyRoot`), so the rerun stays bound to the original snapshot's metadata. The legacy `run.rerun.dispatched:v1` stream + handler were deleted in PR2 — rerun now flows through the same `run.entries.dispatched:v1` pipeline as every other run kind. The source run is never mutated; the schedule's run history grows by one entry per rerun trigger.
+> Differences vs. Flow 1: synchronous gRPC entry; the new `:Run` inherits `topology_generation` + `service_metadata` from the **source** `:Run` (not `:TopologyRoot`), so the rerun stays bound to the source's snapshot metadata. The source run is never mutated; the schedule's run history grows by one entry per rerun trigger. Rerun shares the same `run.entries.dispatched:v1` pipeline as every other run kind.
 
 ## 5. Service Process Startup (Pre-Flight)
 
@@ -296,7 +296,7 @@ cancellations use), so no new publisher or terminal state is introduced.
 Defaults: 60s polling, 30 min no-progress threshold. Toggle via
 `ORCHESTRATOR_WATCHDOG_ENABLED` (default `true`).
 
-## 9. Single-Node Run (Feature 4 / PR1)
+## 9. Single-Node Run
 
 An ad-hoc, one-task run for a single dbt node. No schedule catalog entry is created; the synthesised run is excluded from `ListAllSchedules` by construction.
 
@@ -340,7 +340,7 @@ sequenceDiagram
 
 > Differences vs. Flow 1 (schedule startup): synchronous gRPC entry; synthesised `schedule_name` is not in `schedule_catalog`; `Snapshot(SingleNode)` creates exactly one `EXECUTES` edge (no full topology snapshot); only a single `query.model:v1` is produced; on `ErrTargetNotFound` the synthesised run is immediately failed.
 
-## 10. Rebase from Failed/Cancelled Run (Feature 2 / PR2)
+## 10. Rebase from Failed/Cancelled Run
 
 A new run on the source's schedule that re-executes the failed/cancelled tasks + descendants + new arrivals against the latest topology, while inheriting everything that succeeded. The source run is never mutated; the schedule's run history grows by one row per rebase trigger.
 
