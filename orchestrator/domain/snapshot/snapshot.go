@@ -32,7 +32,7 @@ var ErrTargetNotFound = errors.New("snapshot: target table not found")
 // Params is the input to Snapshot.
 type Params struct {
 	RunID        string
-	ScheduleName string
+	ScheduleName string     // required by LatestFullDAG and RebasePartition (identifies the schedule whose DAG is snapshotted); ignored by SourcePinnedDAG and SingleNode
 	Kind         string     // "cron" | "trigger" | "rerun" | "single_node_run" | "rebase"
 	SourceRunID  *uuid.UUID // nil for cron/trigger and latest-mode single-node-run
 	Selector     TaskSetSelector

@@ -232,6 +232,26 @@ func TestRebasePartition_LatestScopedToSourceDAG(t *testing.T) {
 	require.Equal(t, 2, len(proj), "projection must contain only the source DAG: users + dim_dates")
 }
 
+// TestRebasePartition_RequiresScheduleName asserts that the selector returns an
+// explicit error (not a misleading ErrEmptyProjection) when the caller forgets
+// to populate ScheduleName. The guard runs before any tx work, so no driver is
+// needed.
+func TestRebasePartition_RequiresScheduleName(t *testing.T) {
+	srcRunID := uuid.New()
+	_, err := snapshot.RebasePartition{}.SelectTasks(
+		context.Background(),
+		nil, // tx unused since guards run first
+		snapshot.Params{
+			RunID:        uuid.New().String(),
+			ScheduleName: "",
+			Kind:         "rebase",
+			SourceRunID:  &srcRunID,
+		},
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "ScheduleName required")
+}
+
 // ── seedInactiveTable helper (mirrors seedTable but sets active=false) ──
 
 func seedInactiveTable(t *testing.T, driver neo4j.DriverWithContext, scheduleName, service, schema, table, image, manifest string) {

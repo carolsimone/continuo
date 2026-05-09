@@ -29,6 +29,9 @@ func (RebasePartition) SelectTasks(ctx context.Context, tx neo4j.ManagedTransact
 	if p.SourceRunID == nil {
 		return nil, fmt.Errorf("RebasePartition: SourceRunID required")
 	}
+	if p.ScheduleName == "" {
+		return nil, fmt.Errorf("RebasePartition: ScheduleName required")
+	}
 
 	source, err := readSourceTasks(ctx, tx, p.SourceRunID.String())
 	if err != nil {
