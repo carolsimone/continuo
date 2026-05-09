@@ -8,7 +8,8 @@ import (
 	"testing"
 
 	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/pkg/events"
@@ -57,9 +58,9 @@ func (f *fakeTopologyStateRepository) GetGeneration(ctx context.Context) (int64,
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
-	return domainCmd.IngestTopologyCmd{
-		Nodes: []domainCmd.TopologyNodePayload{
+func makeIngestTopologyCmd() domainModel.IngestTopologyInput {
+	return domainModel.IngestTopologyInput{
+		Nodes: []domainEvent.ManifestLoadedNode{
 			{
 				ServiceName:     "svc1",
 				SchemaName:      "public",
@@ -70,7 +71,7 @@ func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
 				NodeType:        "dbt-model",
 				ManifestVersion: "v1",
 				ImageTag:        "sha256:abc",
-				Dependencies:    []domainCmd.DependencyPayload{},
+				Dependencies:    []domainEvent.ManifestLoadedDependency{},
 			},
 			{
 				ServiceName:     "svc1",
@@ -82,7 +83,7 @@ func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
 				NodeType:        "dbt-model",
 				ManifestVersion: "v1",
 				ImageTag:        "sha256:abc",
-				Dependencies: []domainCmd.DependencyPayload{
+				Dependencies: []domainEvent.ManifestLoadedDependency{
 					{ServiceName: "svc1", SchemaName: "public", TableName: "orders"},
 				},
 			},
@@ -96,7 +97,7 @@ func makeIngestTopologyCmd() domainCmd.IngestTopologyCmd {
 				NodeType:        "dbt-model",
 				ManifestVersion: "v2",
 				ImageTag:        "sha256:def",
-				Dependencies:    []domainCmd.DependencyPayload{},
+				Dependencies:    []domainEvent.ManifestLoadedDependency{},
 			},
 		},
 	}
@@ -212,7 +213,7 @@ func TestIngestTopology_BadPayload_ReturnsWrappedPermanent(t *testing.T) {
 	rejectedRepo := &fakeRejectedTopologyRepo{}
 
 	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
-	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+	cmd := domainModel.IngestTopologyInput{Nodes: []domainEvent.ManifestLoadedNode{
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 
@@ -230,7 +231,7 @@ func TestIngestTopology_BadPayload_SkipsUnitOfWork(t *testing.T) {
 	rejectedRepo := &fakeRejectedTopologyRepo{}
 
 	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
-	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+	cmd := domainModel.IngestTopologyInput{Nodes: []domainEvent.ManifestLoadedNode{
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 
@@ -252,7 +253,7 @@ func TestIngestTopology_BadPayload_WritesForensicsRow(t *testing.T) {
 	rejectedRepo := &fakeRejectedTopologyRepo{}
 
 	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
-	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+	cmd := domainModel.IngestTopologyInput{Nodes: []domainEvent.ManifestLoadedNode{
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 
@@ -285,7 +286,7 @@ func TestIngestTopology_MultipleBadNodes_WritesSingleAggregatedForensicsRow(t *t
 	rejectedRepo := &fakeRejectedTopologyRepo{}
 
 	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
-	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+	cmd := domainModel.IngestTopologyInput{Nodes: []domainEvent.ManifestLoadedNode{
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 		{ServiceName: "svc-2", SchemaName: "raw", TableName: "orders", ImageTag: ""},
 		{ServiceName: "svc-3", SchemaName: "raw", TableName: "items", ImageTag: ""},
@@ -313,7 +314,7 @@ func TestIngestTopology_BadPayload_SkipsApplySnapshot(t *testing.T) {
 	rejectedRepo := &fakeRejectedTopologyRepo{}
 
 	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
-	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+	cmd := domainModel.IngestTopologyInput{Nodes: []domainEvent.ManifestLoadedNode{
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 
@@ -332,7 +333,7 @@ func TestIngestTopology_BadPayload_ForensicsFailureStillReturnsPermanent(t *test
 	rejectedRepo := &fakeRejectedTopologyRepo{InsertErr: errors.New("postgres blip")}
 
 	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
-	cmd := domainCmd.IngestTopologyCmd{Nodes: []domainCmd.TopologyNodePayload{
+	cmd := domainModel.IngestTopologyInput{Nodes: []domainEvent.ManifestLoadedNode{
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 

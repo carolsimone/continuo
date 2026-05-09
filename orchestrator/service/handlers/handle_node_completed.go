@@ -10,14 +10,14 @@ import (
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
 
-// HandleNodeCompletedHandler handles the HandleNodeCompleted command.
+// HandleNodeCompletedHandler handles a node-completed input.
 type HandleNodeCompletedHandler struct {
 	uow                uow.UnitOfWork
 	runRepo            run.Repository
@@ -40,8 +40,8 @@ func NewHandleNodeCompletedHandler(
 	}
 }
 
-// Handle processes the HandleNodeCompleted command.
-func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.HandleNodeCompletedCmd, messageID string) error {
+// Handle processes a node-completed input.
+func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainModel.NodeCompletedInput, messageID string) error {
 	h.logger.Info("Processing node completed",
 		"message_id", messageID,
 		"task_id", cmd.TaskID,
@@ -52,10 +52,10 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainCmd.H
 		"status", cmd.Status,
 	)
 
-	// Marshal command payload for message_processing record.
+	// Marshal input payload for message_processing record.
 	payload, err := json.Marshal(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to marshal command: %w", err)
+		return fmt.Errorf("failed to marshal input: %w", err)
 	}
 
 	// Begin transaction.

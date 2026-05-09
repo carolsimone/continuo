@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
@@ -42,8 +42,8 @@ func (f *rebaseFakeRunRepository) Snapshot(
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func makeRebaseCmd() domainCmd.RebaseRequest {
-	return domainCmd.RebaseRequest{
+func makeRebaseCmd() domainModel.RebaseInput {
+	return domainModel.RebaseInput{
 		ScheduleName: "daily",
 		RunID:        "00000000-0000-0000-0000-000000000001",
 		SourceRunID:  "00000000-0000-0000-0000-000000000999",

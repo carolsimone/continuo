@@ -11,7 +11,7 @@ import (
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
@@ -56,8 +56,8 @@ func NewHandleRebaseHandler(
 	}
 }
 
-// Handle processes a RebaseRequest derived from a trigger.rebase:v1 message.
-func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainCmd.RebaseRequest, messageID string) error {
+// Handle processes a RebaseInput derived from a trigger.rebase:v1 message.
+func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainModel.RebaseInput, messageID string) error {
 	h.logger.Info("Processing rebase",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
@@ -66,7 +66,7 @@ func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainCmd.RebaseRe
 
 	cmdPayload, err := json.Marshal(cmd)
 	if err != nil {
-		return fmt.Errorf("marshal command: %w", err)
+		return fmt.Errorf("marshal input: %w", err)
 	}
 
 	if err := h.uow.Begin(ctx); err != nil {
@@ -257,7 +257,7 @@ func (h *HandleRebaseHandler) dedup(
 // Mirrors handle_rerun.emitRerunDispatchFailed.
 func (h *HandleRebaseHandler) emitRebaseDispatchFailed(
 	ctx context.Context,
-	cmd domainCmd.RebaseRequest,
+	cmd domainModel.RebaseInput,
 	msgProcessingID uuid.UUID,
 	reason string,
 ) error {

@@ -8,7 +8,8 @@ import (
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	pginfra "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/google/uuid"
@@ -141,8 +142,8 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(client, newTestLogger())
 	runRepo := neo4jinfra.NewRunRepository(client, newTestLogger())
 
-	initialLoad := domainCmd.IngestTopologyCmd{
-		Nodes: []domainCmd.TopologyNodePayload{
+	initialLoad := domainModel.IngestTopologyInput{
+		Nodes: []domainEvent.ManifestLoadedNode{
 			{
 				ServiceName:     "svc-a",
 				SchemaName:      "public",
@@ -184,8 +185,8 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	})
 	require.NoError(t, err)
 
-	updatedLoad := domainCmd.IngestTopologyCmd{
-		Nodes: []domainCmd.TopologyNodePayload{
+	updatedLoad := domainModel.IngestTopologyInput{
+		Nodes: []domainEvent.ManifestLoadedNode{
 			{
 				ServiceName:     "svc-a",
 				SchemaName:      "public",

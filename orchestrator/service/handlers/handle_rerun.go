@@ -12,7 +12,7 @@ import (
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
@@ -55,8 +55,8 @@ func NewHandleRerunHandler(
 	}
 }
 
-// Handle processes a HandleRerunCmd derived from a trigger.rerun:v1 message.
-func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRerunCmd, messageID string) error {
+// Handle processes a RerunInput derived from a trigger.rerun:v1 message.
+func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunInput, messageID string) error {
 	h.logger.Info("Processing rerun",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
@@ -66,7 +66,7 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRer
 
 	cmdPayload, err := json.Marshal(cmd)
 	if err != nil {
-		return fmt.Errorf("marshal command: %w", err)
+		return fmt.Errorf("marshal input: %w", err)
 	}
 
 	if err := h.uow.Begin(ctx); err != nil {
@@ -286,7 +286,7 @@ func (h *HandleRerunHandler) dedup(
 // Mirrors handle_single_node_run.emitDispatchFailed.
 func (h *HandleRerunHandler) emitRerunDispatchFailed(
 	ctx context.Context,
-	cmd domainCmd.HandleRerunCmd,
+	cmd domainModel.RerunInput,
 	msgProcessingID uuid.UUID,
 	reason string,
 ) error {

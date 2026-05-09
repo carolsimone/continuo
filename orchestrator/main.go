@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/config"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/orchestrator/adapters/http"
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
@@ -250,7 +251,7 @@ func main() {
 
 	// Consumer 1: node.updated:v1 -> HandleNodeCompleted
 	nodeUpdatedHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		cmd := domainCmd.HandleNodeCompletedCmd{
+		cmd := domainModel.NodeCompletedInput{
 			TaskID:       uuid.MustParse(msg.Values["task_id"].(string)),
 			ScheduleID:   uuid.MustParse(msg.Values["schedule_id"].(string)),
 			ScheduleName: msg.Values["schedule_name"].(string),
@@ -275,11 +276,11 @@ func main() {
 		if !ok {
 			return fmt.Errorf("missing or invalid payload in manifest.loaded message %s", msg.ID)
 		}
-		var nodes []domainCmd.TopologyNodePayload
+		var nodes []domainEvent.ManifestLoadedNode
 		if err := json.Unmarshal([]byte(payloadStr), &nodes); err != nil {
 			return fmt.Errorf("failed to unmarshal manifest.loaded payload: %w", err)
 		}
-		cmd := domainCmd.IngestTopologyCmd{Nodes: nodes}
+		cmd := domainModel.IngestTopologyInput{Nodes: nodes}
 		return ingestTopologyHandler.Handle(ctx, cmd, msg.ID)
 	}
 	manifestLoadedConsumer := redis.NewStreamConsumer(
@@ -294,13 +295,13 @@ func main() {
 	initRunHandler := func(ctx context.Context, msg goredis.XMessage) error {
 		scheduleName, _ := msg.Values["schedule_name"].(string)
 		runID, _ := msg.Values["run_id"].(string)
-		cmd := domainCmd.InitializeRunCmd{
+		cmd := domainModel.InitializeRunInput{
 			ScheduleName: scheduleName,
 			RunID:        runID,
 		}
 		// Check for rerun target fields
 		if svc, ok := msg.Values["rerun_service_name"].(string); ok && svc != "" {
-			cmd.RerunTarget = &domainCmd.RerunTarget{
+			cmd.RerunTarget = &domainModel.RerunTarget{
 				ServiceName: svc,
 				SchemaName:  msg.Values["rerun_schema_name"].(string),
 				TableName:   msg.Values["rerun_table_name"].(string),
@@ -344,7 +345,7 @@ func main() {
 			schemaName == "" || tableName == "" || serviceName == "" {
 			return fmt.Errorf("missing required fields in rerun message %s", msg.ID)
 		}
-		cmd := domainCmd.HandleRerunCmd{
+		cmd := domainModel.RerunInput{
 			RunID:        scheduleID,
 			ScheduleName: scheduleName,
 			SourceRunID:  sourceRunID,
@@ -370,7 +371,7 @@ func main() {
 		if scheduleID == "" || scheduleName == "" || sourceRunID == "" {
 			return fmt.Errorf("missing required fields in rebase message %s", msg.ID)
 		}
-		cmd := domainCmd.RebaseRequest{
+		cmd := domainModel.RebaseInput{
 			RunID:        scheduleID,
 			ScheduleName: scheduleName,
 			SourceRunID:  sourceRunID,
@@ -411,7 +412,7 @@ func main() {
 			return fmt.Errorf("invalid metadata_source %q in message %s", metadataSource, msg.ID)
 		}
 
-		req := domainCmd.SingleNodeRunRequest{
+		req := domainModel.SingleNodeRunInput{
 			RunID:          scheduleID,
 			ScheduleName:   scheduleName,
 			ServiceName:    serviceName,

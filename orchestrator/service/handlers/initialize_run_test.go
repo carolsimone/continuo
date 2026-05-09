@@ -7,7 +7,8 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/google/uuid"
@@ -128,7 +129,7 @@ func TestInitializeRun_FreshInit(t *testing.T) {
 	}
 
 	h := handlers.NewInitializeRunHandler(uow, runRepo, newTestLogger())
-	cmd := domainCmd.InitializeRunCmd{
+	cmd := domainModel.InitializeRunInput{
 		ScheduleName: "daily",
 		RunID:        "run-123",
 	}
@@ -156,16 +157,16 @@ func TestInitializeRun_FreshInit(t *testing.T) {
 	require.NoError(t, json.Unmarshal(payload["run_id"], &runID))
 	assert.Equal(t, "run-123", runID)
 
-	var allNodes []domainCmd.NodePayload
+	var allNodes []domainEvent.RunInitializedNode
 	require.NoError(t, json.Unmarshal(payload["all_nodes"], &allNodes))
 	assert.Len(t, allNodes, 3, "all_nodes should have 3 entries")
 
-	var rootNodes []domainCmd.NodePayload
+	var rootNodes []domainEvent.RunInitializedNode
 	require.NoError(t, json.Unmarshal(payload["root_nodes"], &rootNodes))
 	assert.Len(t, rootNodes, 1, "root_nodes should have 1 entry")
 	assert.Equal(t, "orders", rootNodes[0].TableName)
 
-	var seedNodes []domainCmd.NodePayload
+	var seedNodes []domainEvent.RunInitializedNode
 	require.NoError(t, json.Unmarshal(payload["seed_nodes"], &seedNodes))
 	assert.Len(t, seedNodes, 1, "seed_nodes should have 1 entry")
 	assert.Equal(t, "seeds_data", seedNodes[0].TableName)
@@ -178,7 +179,7 @@ func TestInitializeRun_DuplicateMessage(t *testing.T) {
 	runRepo := &extendedFakeRunRepository{}
 
 	h := handlers.NewInitializeRunHandler(uow, runRepo, newTestLogger())
-	cmd := domainCmd.InitializeRunCmd{
+	cmd := domainModel.InitializeRunInput{
 		ScheduleName: "daily",
 		RunID:        "run-456",
 	}

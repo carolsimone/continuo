@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
@@ -98,8 +98,8 @@ func newSingleNodeRunHandlerFixture(_ *testing.T) *singleNodeRunHandlerFixture {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func makeSingleNodeCmd(runID string) domainCmd.SingleNodeRunRequest {
-	return domainCmd.SingleNodeRunRequest{
+func makeSingleNodeCmd(runID string) domainModel.SingleNodeRunInput {
+	return domainModel.SingleNodeRunInput{
 		RunID:          runID,
 		ScheduleName:   "single-node-run-" + runID[:8],
 		ServiceName:    "svcA",
