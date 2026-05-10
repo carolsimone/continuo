@@ -12,9 +12,16 @@ import (
 // from the source :Run's frozen :EXECUTES set, with uniform OLD metadata.
 //
 // Behaviour:
-//   - Target node                                       → PENDING, fresh task_id, source's pinned (image_tag, manifest_version).
-//   - Non-SUCCEEDED descendants of target in source set → PENDING, fresh task_id (typically the cascade-skipped set).
-//   - Every other source task                           → inherited (status carried forward, root-forwarded pointer).
+//   - The target node (TargetService/Schema/Table) → InitialStatus=PENDING,
+//     fresh task_id, source's pinned (image_tag, manifest_version), no inherit.
+//   - Non-SUCCEEDED descendants of the target in source's :EXECUTES set
+//     (typically SKIPPED — the cascade-skipped set when target failed) →
+//     PENDING, fresh task_id, no inherit.
+//   - Every other source task (incl. SUCCEEDED descendants of target and
+//     unrelated SUCCEEDED rows) → inherited. InitialStatus = source's
+//     stored status. Source's pinned metadata. InheritedFromTaskID points
+//     to the root-resolved task_id (forwards when source row was itself
+//     inherited).
 //
 // Returns ErrTargetNotFound if the target FQN is not in the source's :EXECUTES set.
 type SourcePinnedDAG struct {

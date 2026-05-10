@@ -18,10 +18,9 @@ import (
 
 // RerunHandler implements the TriggerRerun gRPC method.
 //
-// PR2 unification: TriggerRerun now mints a NEW scheduler_tracker row on the
-// source's schedule (kind='rerun', source_run_id=<source>) rather than
-// mutating the source row in place. The source row stays at its terminal
-// status forever — it's an immutable historical record. The new run reuses
+// TriggerRerun mints a new scheduler_tracker row on the source's schedule
+// (kind='rerun', source_run_id=<source>); the source row stays at its
+// terminal status as an immutable historical record. The new run reuses
 // the source's schedule_name so it appears in the same schedule's history.
 type RerunHandler struct {
 	db            *sqlx.DB

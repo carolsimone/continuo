@@ -58,8 +58,9 @@ flowchart TD
   SL[schedules.loaded:v1]
   SS[scheduler.started:v1]
   RED[run.entries.dispatched:v1]
-  RN[rerun:v1]
-  RRD[run.rerun.dispatched:v1]
+  TRR[trigger.rerun:v1]
+  TRB[trigger.rebase:v1]
+  TSN[trigger.single_node_run:v1]
   QM[query.model:v1]
   ED[node.deployed:v1]
   KCV[check.k8s:v1]
@@ -78,10 +79,14 @@ flowchart TD
   OR --> RED
   RED --> ST
 
-  ST --> RN
-  RN --> OR
-  OR --> RRD
-  RRD --> ST
+  ST --> TRR
+  TRR --> OR
+
+  ST --> TRB
+  TRB --> OR
+
+  ST --> TSN
+  TSN --> OR
 
   OR --> QM
 

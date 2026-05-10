@@ -21,17 +21,16 @@ import (
 
 // HandleRerunHandler consumes trigger.rerun:v1 messages.
 //
-// PR2 unification: replaces the legacy in-place edge reset path. The cmd
-// carries the SOURCE run's schedule_id (SourceRunID) and the NEW run's
-// schedule_id (RunID — minted by state's TriggerRerun). This handler:
-//  1. Dedups on Redis message ID (mirrors handle_single_node_run).
+// The cmd carries the SOURCE run's schedule_id (SourceRunID) and the NEW
+// run's schedule_id (RunID — minted by state's TriggerRerun). This handler:
+//  1. Dedups on Redis message ID.
 //  2. Calls Snapshot(SourcePinnedDAG{Target...}) — projects source's pinned
 //     task set with the target node + non-SUCCEEDED descendants flipped to
 //     PENDING (rebased), all other source tasks inherited at source's pinned
 //     (image_tag, manifest_version).
 //  3. On ErrTargetNotFound / ErrEmptyProjection: emits
 //     run.entries.dispatch_failed:v1, marks completed, commits. The new run
-//     goes to FAILED via state's existing dispatch_failed handler.
+//     goes to FAILED via state's dispatch_failed handler.
 //  4. On success: emits ONE run.entries.dispatched:v1 covering the full
 //     projection (per-task Status: "pending" for rebased, "succeeded" for
 //     inherited; InheritedFromTaskID populated for inherited rows), then
@@ -252,7 +251,7 @@ func projectionStatusLower(initialStatus string) string {
 	}
 }
 
-// dedup mirrors handle_single_node_run.go.
+// dedup ensures the rerun is processed exactly once per Redis message ID.
 func (h *HandleRerunHandler) dedup(
 	ctx context.Context,
 	messageID string,
@@ -286,7 +285,6 @@ func (h *HandleRerunHandler) dedup(
 }
 
 // emitRerunDispatchFailed writes a run.entries.dispatch_failed:v1 outbox entry.
-// Mirrors handle_single_node_run.emitDispatchFailed.
 func (h *HandleRerunHandler) emitRerunDispatchFailed(
 	ctx context.Context,
 	cmd domainModel.RerunInput,

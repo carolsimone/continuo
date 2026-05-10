@@ -319,8 +319,6 @@ func TestTaskStatusUpdatedHandler_ExhaustedRetriesFinalizeFailed(t *testing.T) {
 	assert.Equal(t, 1, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
 }
 
-// ── helpers (relocated from deleted run_rerun_dispatched_handler_test.go) ──
-
 func getTerminalTaskCount(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) int32 {
 	t.Helper()
 	var count int32

@@ -41,9 +41,9 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | Category | Owned / used surface |
 |---|---|
 | Durable state | `scheduler_tracker` (+ `service_metadata` JSONB column), `task_tracker` (+ `manifest_version` column), `task_execution`, `schedule_catalog` (+ `service_metadata` JSONB column), `state_outbox`, `processed_events` |
-| gRPC server methods owned | `CreateScheduler`, `GetScheduler`, `CancelScheduler`, `ActivateSchedule`, `ListAllSchedules`, `TriggerSchedule`, `CancelSchedule`, `TriggerRerun`, `CreateTask`, `GetTask`, `GetTaskByScheduleAndNode`, `DeleteTask`, `ListTasks`, `ResetTask`, `GetSchedulerInitStatus`, `GetTaskExecution`, `ListTaskExecutions` |
-| Redis consumes | `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `run.rerun.dispatched:v1`, `task.status.updated:v1`, `task.execution.recorded:v1` |
-| Redis produces | `scheduler.started:v1`, `rerun:v1`, `run.finalized:v1`, `schedule.cancelled:v1` |
+| gRPC server methods owned | `CreateScheduler`, `GetScheduler`, `CancelScheduler`, `ActivateSchedule`, `ListAllSchedules`, `TriggerSchedule`, `CancelSchedule`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `CreateTask`, `GetTask`, `GetTaskByScheduleAndNode`, `DeleteTask`, `ListTasks`, `ResetTask`, `GetSchedulerInitStatus`, `GetTaskExecution`, `ListTaskExecutions` |
+| Redis consumes | `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1`, `task.execution.recorded:v1` |
+| Redis produces | `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1`, `schedule.cancelled:v1` |
 | Outbound gRPC calls | none |
 
 > All internal pipeline writes (scheduler/task/init-status updates, task-execution records, in-progress initialisation resets) flow through Redis consumers. The gRPC surface is UI-facing reads + user-initiated commands only.
@@ -54,8 +54,8 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | Neo4j `Table` nodes (+ `image_tag`, `topology_generation` props), `Run` nodes (+ `topology_generation`, `service_metadata` props), `DEPENDS_ON` edges, `EXECUTES` edges (+ `image_tag` prop); Neo4j `:TopologyRoot {id:'singleton'}` (generation + service_metadata); Postgres `topology_state`, `message_processing`, `outbox`, `published_messages` |
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
-| Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `rerun:v1` |
-| Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `run.rerun.dispatched:v1` |
+| Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1` |
+| Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1` |
 | Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `CancelSchedule` (watchdog only) |
 
 ### Invariants

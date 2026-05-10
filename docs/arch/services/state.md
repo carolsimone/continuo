@@ -127,7 +127,7 @@ On success: a new `scheduler_tracker` row is inserted with `kind='rebase'`, `sou
 |---|---|---|
 | `/health` | GET | Liveness probe |
 
-The rerun trigger was migrated from HTTP to gRPC (`TriggerRerun`). Port 8082 now serves health checks only.
+Port 8082 serves health checks only; trigger commands run over gRPC on 50051.
 
 **TriggerRerun preconditions (enforced atomically):**
 1. Source scheduler run must exist
@@ -340,8 +340,9 @@ Effects:
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`, `TriggerSingleNodeRun`, `TriggerRebase` |
+| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`, `CancelSchedule` |
 | `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
+| `tests/e2e` | `TriggerSingleNodeRun`, `TriggerRebase` (no production caller wires these yet; `state` exposes them for direct gRPC use) |
 
 State calls no external gRPC services.
 

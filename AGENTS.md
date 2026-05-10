@@ -59,11 +59,12 @@ Please read: `tests/e2e/README.md`.
    `KUBECONFIG=~/.kube/hetzner-continuo.yaml kubectl get nodes`
 
 # IMPORTANT
-As the very last step before finishing a branch and pushing the last commit it, LLM must:
-* only merge to main from a PR.
-* run e2e tests (read tests/e2e/README.md for how to do that).
-* update `docs/arch/*` documentations.
-* whenever you find edge cases on the logic and you solve the problem, let's build a proper test to avoid this issue will resurface again.
+* As the very last step before finishing a branch and pushing the last commit it, LLM must:
+  * only merge to main from a PR.
+  * run e2e tests (read tests/e2e/README.md for how to do that).
+  * update `docs/arch/*` documentations.
+  * whenever you find edge cases on the logic and you solve the problem, let's build a proper test to avoid this issue will resurface again.
+* Comments in the code must be reflecting what the code does, not referring to PRs, deprecated features, or other irrelevant information. A new user reading the code must understand what the code does without having prior knowledge.
 
 <!-- rtk-instructions v2 -->
 # RTK (Rust Token Killer) - Token-Optimized Commands

@@ -18,8 +18,8 @@ type DispatchedTask struct {
 	MaxRetries          int32  `json:"max_retries"`
 	ManifestVersion     string `json:"manifest_version"`
 	ImageTag            string `json:"image_tag"`
-	Status              string `json:"status,omitempty"`                 // PR2: "pending" (default) | "succeeded" (inherited)
-	InheritedFromTaskID string `json:"inherited_from_task_id,omitempty"` // PR2: empty for rebased; root task_id (uuid) for inherited
+	Status              string `json:"status,omitempty"`                 // "pending" (default) | "succeeded" (inherited)
+	InheritedFromTaskID string `json:"inherited_from_task_id,omitempty"` // empty for rebased; root task_id (uuid) for inherited
 }
 
 // RunEntriesDispatched — stream: run.entries.dispatched:v1

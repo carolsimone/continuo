@@ -123,9 +123,9 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 			return true, nil
 		}
 
-		// PR2: per-task Status (default "pending" for backward-compat with pre-PR2 producers).
-		// Rebased tasks arrive as "pending"; tasks inherited from a previous successful run
-		// arrive as "succeeded" (carrying their original task_id via InheritedFromTaskID).
+		// Per-task Status: rebased tasks arrive as "pending"; tasks inherited
+		// from a previous successful run arrive as "succeeded" (carrying their
+		// original task_id via InheritedFromTaskID). Empty defaults to "pending".
 		domainStatus := model.TaskStatusPending
 		if t.Status != "" {
 			s, statusErr := model.ParseTaskStatus(t.Status)
@@ -138,7 +138,7 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 			domainStatus = s
 		}
 
-		// PR2: optional lineage pointer to the root task this row inherits from.
+		// Optional lineage pointer to the root task this row inherits from.
 		var inheritedFrom *uuid.UUID
 		if t.InheritedFromTaskID != "" {
 			parsed, perr := uuid.Parse(t.InheritedFromTaskID)
@@ -179,11 +179,11 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 		return false, fmt.Errorf("update initialization_status: %w", txErr)
 	}
 
-	// PR2 auto-rollup: if every projected task is already terminal, the run is
-	// born complete. Transition straight to a terminal status (with completed_at)
+	// Auto-rollup: if every projected task is already terminal, the run is born
+	// complete and transitions straight to a terminal status (with completed_at)
 	// rather than going through RUNNING. Mixed-terminal (some failed/cancelled)
-	// is treated as FAILED conservatively. The all-PENDING / mixed-with-PENDING
-	// case keeps existing cron/single-node-run/rerun behaviour: go to RUNNING.
+	// is treated as FAILED conservatively. Any PENDING in the projection keeps
+	// the standard cron/single-node-run/rerun behaviour: go to RUNNING.
 	allTerminal := true
 	allSucceeded := true
 	terminalCount := int32(0)
