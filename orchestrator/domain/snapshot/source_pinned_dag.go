@@ -17,7 +17,7 @@ import (
 //     fresh task_id, source's pinned (image_tag, manifest_version), no inherit.
 //   - Non-SUCCEEDED descendants of the target in source's :EXECUTES set
 //     (typically SKIPPED — the cascade-skipped set when target failed) →
-//     PENDING, fresh task_id, no inherit. Mirrors legacy rerun behaviour.
+//     PENDING, fresh task_id, no inherit.
 //   - Every other source task (incl. SUCCEEDED descendants of target and
 //     unrelated SUCCEEDED rows) → inherited. InitialStatus = source's
 //     stored status. Source's pinned metadata. InheritedFromTaskID points

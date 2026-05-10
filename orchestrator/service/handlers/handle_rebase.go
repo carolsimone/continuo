@@ -20,18 +20,17 @@ import (
 
 // HandleRebaseHandler consumes trigger.rebase:v1 messages.
 //
-// PR2 Feature 2 (rebase): the cmd carries the SOURCE run's schedule_id
-// (SourceRunID) and the NEW run's schedule_id (RunID — minted by state's
-// TriggerRebase). Unlike rerun, no target identity is carried — the rebase
-// partition is computed deterministically from source state + latest
-// topology. This handler:
-//  1. Dedups on Redis message ID (mirrors handle_rerun).
+// The cmd carries the SOURCE run's schedule_id (SourceRunID) and the NEW
+// run's schedule_id (RunID — minted by state's TriggerRebase). Unlike
+// rerun, no target identity is carried — the rebase partition is computed
+// deterministically from source state + latest topology. This handler:
+//  1. Dedups on Redis message ID.
 //  2. Calls Snapshot(RebasePartition{}) — projects the rebase partition:
 //     non-SUCCEEDED source tasks (+ descendants in latest topology + new
-//     arrivals) flipped to PENDING; previously-SUCCEEDED tasks inherited at
-//     source's pinned (image_tag, manifest_version).
+//     arrivals) flipped to PENDING; SUCCEEDED tasks inherited at source's
+//     pinned (image_tag, manifest_version).
 //  3. On ErrEmptyProjection: emits run.entries.dispatch_failed:v1, marks
-//     completed, commits. The new run goes to FAILED via state's existing
+//     completed, commits. The new run goes to FAILED via state's
 //     dispatch_failed handler.
 //  4. On success: emits ONE run.entries.dispatched:v1 covering the full
 //     projection (per-task Status: "pending" for rebased, "succeeded" for

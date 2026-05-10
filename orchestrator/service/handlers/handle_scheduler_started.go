@@ -21,7 +21,6 @@ import (
 // HandleSchedulerStartedHandler consumes scheduler.started:v1 events.
 // It snapshots the run graph, emits run.entries.dispatched:v1 with all tasks,
 // and dispatches the initial seed/root nodes via query.model:v1.
-// This absorbs the role previously owned by startup-controller.
 type HandleSchedulerStartedHandler struct {
 	uow     uow.UnitOfWork
 	runRepo run.Repository
@@ -82,9 +81,9 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 	})
 	if err != nil {
 		if errors.Is(err, snapshot.ErrEmptyProjection) {
-			// Preserve the legacy SnapshotGraph behaviour: warn + return nil
-			// (the run row exists but has no work to do; finalisation logic
-			// elsewhere handles the empty-DAG case).
+			// Empty DAG: the run row exists but has no work to do. Warn and
+			// return nil — finalisation logic elsewhere handles the empty-DAG
+			// case.
 			h.logger.Warn("Snapshot: no nodes for schedule, run will have no EXECUTES edges",
 				"schedule_name", evt.ScheduleName, "run_id", evt.ScheduleID.String())
 			if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {

@@ -730,9 +730,8 @@ func (r *schedulerTrackerRepository) FinalizeRunTx(ctx context.Context, tx *sqlx
 	return nil
 }
 
-// kindWithDefault returns "cron" if kind is empty, else kind. Allows callers
-// that pre-date PR0 (constructing SchedulerTracker without setting Kind) to
-// land on the same default the V15 migration uses.
+// kindWithDefault returns "cron" if kind is empty, else kind — matching the
+// schema-level default applied by the migration.
 func kindWithDefault(kind string) string {
 	if kind == "" {
 		return "cron"

@@ -178,12 +178,6 @@ func main() {
 		}
 	}()
 
-	// PR2: run.rerun.dispatched:v1 consumer removed. The unified rerun path
-	// (orchestrator's handle_rerun → Snapshot(SourcePinnedDAG)) emits
-	// run.entries.dispatched:v1 just like cron / single-node-run / rebase, so
-	// state's existing run_entries_dispatched_handler now handles rerun task
-	// creation too. The legacy in-place reset path is gone.
-
 	// Initialize task.status.updated:v1 consumer
 	taskStatusConsumer, err := redis.NewTaskStatusUpdatedConsumer(
 		redisClient,
