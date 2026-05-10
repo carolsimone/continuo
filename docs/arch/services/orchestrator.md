@@ -40,17 +40,31 @@ The `run.Repository` interface exposes the following Neo4j read methods used dur
 - `GetNodeType(ctx, schemaName, tableName) (string, error)` — reads `node_type` from the current `Table` node (queries by `schema_name` property)
 - `GetNodeServiceName(ctx, schemaName, tableName) (string, error)` — reads `service_name` from the current `Table` node (queries by `schema_name` property)
 
-### `Snapshot` — unified plan/materialise routine
+### Snapshot — domain ports, adapters, and application service
 
-`RunRepository` exposes a single materialisation entry point:
+The snapshot pipeline follows a strict layered model:
 
-```go
-RunRepository.Snapshot(ctx context.Context, params Params) error
-```
+**Domain ports** (`orchestrator/domain/snapshot/ports.go`):
+- `TopologyReader` — read-only port for snapshot selectors; implementations live in the Neo4j adapter and are bound to a single Neo4j `ManagedTransaction`.
+- `SnapshotWriter` — write-only port; `WriteRunAndExecutesEdges` MERGEs the `:Run` node (with the metadata-source rule from the table above) and creates one `:EXECUTES` edge per projection entry.
+- `TxRunner` — opens a single Neo4j write transaction and hands the caller a paired `TopologyReader` + `SnapshotWriter` scoped to that tx. The caller's `fn` commits on `nil`, rolls back on error.
 
-The `Params` struct (defined in `orchestrator/domain/snapshot/`) carries `RunID`, `ScheduleName`, `Kind`, `SourceRunID`, plus a `Selector` interface that decides which tasks land in the projection and with which `(initial_status, image_tag, manifest_version, inherited_from_task_id?)`. Materialisation is a single Cypher write tx that MERGEs the `:Run` (with the metadata-source rule from the table above) and creates one `:EXECUTES` edge per `Selector` entry.
+**Adapter implementations** (`orchestrator/adapters/neo4j/`):
+- `TopologyReader` implemented in `topology_reader.go` — all Cypher reads for snapshot policies (DAG loading, source task loading, descendant walks, single-table lookups) live here.
+- `SnapshotWriter` implemented in `snapshot_writer.go` — all Cypher writes for run+EXECUTES materialisation live here.
+- `SnapshotTxRunner` implemented in `snapshot_tx_runner.go` — opens one Neo4j session/write tx, instantiates the paired reader+writer, and runs the caller's function.
 
-Four selectors live in `orchestrator/domain/snapshot/`:
+**Application service** (`orchestrator/service/snapshotsvc/Service`):
+- `Snapshot(ctx, Params)` — calls `p.Selector.SelectTasks(ctx, reader, p)` then `writer.WriteRunAndExecutesEdges(ctx, p, projection)` inside a single `TxRunner.Run` call. Returns the full projection so handlers can build outbox events without re-reading Neo4j.
+- Constructed via `snapshotsvc.NewService(snapshotTxRunner, logger)` in `main.go`.
+
+**Handler interface** (`orchestrator/service/handlers/deps.go`):
+- `handlers.SnapshotService` is a narrow handler-local interface `{ Snapshot(ctx, snapshot.Params) ([]snapshot.TaskProjection, error) }`, satisfied by `*snapshotsvc.Service`. Defined here so handler tests can substitute a fake.
+- Five handlers receive a `SnapshotService`: `InitializeRunHandler`, `HandleSchedulerStartedHandler`, `HandleRerunHandler`, `HandleRebaseHandler`, `HandleSingleNodeRunHandler`. `HandleNodeCompleted` does not snapshot.
+
+The `Params` struct (defined in `orchestrator/domain/snapshot/`) carries `RunID`, `ScheduleName`, `Kind`, `SourceRunID`, plus a `Selector` interface that decides which tasks land in the projection and with which `(initial_status, image_tag, manifest_version, inherited_from_task_id?)`.
+
+Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read all topology data through the `TopologyReader` port:
 
 | Selector | Used by | Source of topology | Per-task projection |
 |---|---|---|---|
@@ -114,8 +128,8 @@ Orchestrator no longer calls `state` gRPC for any internal writes. All state mut
 ### On `scheduler.started:v1` — HandleSchedulerStarted
 
 1. Parses `scheduler.started:v1` into `SchedulerStartedCmd{ ScheduleID, ScheduleName, Kind, SourceRunID }`.
-2. Creates a `Run` node in Neo4j via `RunRepository.Snapshot(ctx, Params{...})` with selector `LatestFullDAG`, stamping `:Run.kind`, `:Run.source_run_id` (when non-nil), and copying `topology_generation` + `service_metadata` from `:TopologyRoot` (since `source_run_id` is empty for cron/trigger).
-3. Materialiser creates `EXECUTES` edges (all initially PENDING) with pre-assigned task UUIDs stored on the edge.
+2. Creates a `Run` node in Neo4j via `snapshotService.Snapshot(ctx, Params{...})` with selector `LatestFullDAG`, stamping `:Run.kind`, `:Run.source_run_id` (when non-nil), and copying `topology_generation` + `service_metadata` from `:TopologyRoot` (since `source_run_id` is empty for cron/trigger).
+3. `SnapshotWriter.WriteRunAndExecutesEdges` creates `EXECUTES` edges (all initially PENDING) with pre-assigned task UUIDs stored on the edge.
 4. Identifies root and seed nodes.
 5. Produces `run.entries.dispatched:v1` via outbox with: `run_id`, `schedule_name`, `manifest_versions`, full task entry list (each with `task_id`, node coordinates, `node_type`, `service_name`, `Status="pending"`, `InheritedFromTaskID=""`).
 
@@ -137,7 +151,7 @@ The rerun entry point materialises a fresh `Snapshot(SourcePinnedDAG)` against a
 
 1. Dedup on `message_processing`.
 2. Build `Params{ RunID: newRunID, ScheduleName, Kind: "rerun", SourceRunID: src }` with selector `SourcePinnedDAG{Source: src, Target: (service, schema, table)}`.
-3. `RunRepository.Snapshot(ctx, params)` — selector reads the source `:Run`'s `:EXECUTES` set, classifies each task as either **rebased** (target + transitively-downstream non-SUCCEEDED) or **inherited** (everything else, carried forward as SUCCEEDED with the source's `task_id` resolved to its lineage root via `inherited_from_task_id`). Materialiser MERGEs the new `:Run` (inheriting `topology_generation` + `service_metadata` from source `:Run`, NOT from `:TopologyRoot`) and writes one `:EXECUTES` edge per projected task, all with the source's pinned `image_tag` + `manifest_version`.
+3. `snapshotService.Snapshot(ctx, params)` — `SourcePinnedDAG.SelectTasks` reads the source `:Run`'s `:EXECUTES` set via `TopologyReader`, classifies each task as either **rebased** (target + transitively-downstream non-SUCCEEDED) or **inherited** (everything else, carried forward as SUCCEEDED with the source's `task_id` resolved to its lineage root via `inherited_from_task_id`). `SnapshotWriter.WriteRunAndExecutesEdges` MERGEs the new `:Run` (inheriting `topology_generation` + `service_metadata` from source `:Run`, NOT from `:TopologyRoot`) and writes one `:EXECUTES` edge per projected task, all with the source's pinned `image_tag` + `manifest_version`.
 4. orchestrator outbox writes (same tx):
    - 1× `run.entries.dispatched:v1` with the FULL projection — both rebased (Status="pending") and inherited (Status="succeeded", `InheritedFromTaskID=<root>`) rows. State's `RunEntriesDispatchedHandler` creates `task_tracker` rows honouring per-task status, and may auto-rollup directly to terminal if every task is already terminal.
    - N× `query.model:v1` for the **rebased rows only** (inherited rows are already SUCCEEDED and never enter the executor pipeline).
@@ -150,11 +164,11 @@ Entry point for rebase from a terminal `FAILED`/`CANCELLED` run. `state.RebaseHa
 
 1. Dedup on `message_processing`.
 2. Build `Params{ RunID: newRunID, ScheduleName, Kind: "rebase", SourceRunID: src }` with selector `RebasePartition{Source: src}`.
-3. `RunRepository.Snapshot(ctx, params)` — selector reads the source `:Run`'s `:EXECUTES` set + the latest `:Table`s for the schedule and computes:
+3. `snapshotService.Snapshot(ctx, params)` — `RebasePartition.SelectTasks` reads the source `:Run`'s `:EXECUTES` set + the latest `:Table`s via `TopologyReader` and computes:
    - **rebase_set**: every source task with status ≠ SUCCEEDED, plus their descendants in the latest topology, plus new arrivals (nodes in latest not in source).
    - **inherit_set**: SUCCEEDED tasks in source that still exist in latest, minus rebase_set.
    - **drop_set**: tasks in source absent from latest (silently dropped).
-   Rebased rows project as PENDING with **latest** `image_tag` + `manifest_version`. Inherited rows project as SUCCEEDED with the **source's** pinned pair plus a root-resolved `inherited_from_task_id` (the projector resolves transitively, so chain depth stays ≤ 1 even for rebase-of-rebase). Materialiser MERGEs the new `:Run` (inheriting `topology_generation` + `service_metadata` from source `:Run`) and writes the projected `:EXECUTES` edges.
+   Rebased rows project as PENDING with **latest** `image_tag` + `manifest_version`. Inherited rows project as SUCCEEDED with the **source's** pinned pair plus a root-resolved `inherited_from_task_id` (the projector resolves transitively, so chain depth stays ≤ 1 even for rebase-of-rebase). `SnapshotWriter.WriteRunAndExecutesEdges` MERGEs the new `:Run` (inheriting `topology_generation` + `service_metadata` from source `:Run`) and writes the projected `:EXECUTES` edges.
 4. orchestrator outbox writes (same tx):
    - 1× `run.entries.dispatched:v1` with the FULL projection — rebased (`Status="pending"`) + inherited (`Status="succeeded"`, `InheritedFromTaskID=<root>`).
    - N× `query.model:v1` for rebased rows only.
@@ -166,7 +180,7 @@ If `rebase_set ∩ inherit_set` is empty (selector returns zero entries — shou
 Entry point for a single-node ad-hoc run. The handler runs in one Postgres UoW transaction:
 
 1. Dedup on `message_processing`.
-2. Neo4j: `RunRepository.Snapshot(ctx, Params{...})` with selector `SingleNode{Target, MetadataSource, SourceRunID?}` — creates a `:Run` node and exactly one `EXECUTES` edge with a pre-assigned task UUID.
+2. `snapshotService.Snapshot(ctx, Params{...})` with selector `SingleNode{Target, MetadataSource, SourceRunID?}` — creates a `:Run` node and exactly one `EXECUTES` edge with a pre-assigned task UUID.
    - **latest mode** (`metadata_source=latest`): selector reads metadata from `:TopologyRoot` + the current `:Table` node; new `:Run` inherits topology fields from `:TopologyRoot`.
    - **stale mode** (`metadata_source=snapshot_of_run`): selector reads metadata from the source `:Run`'s `EXECUTES` edge for the same node (preserving the original run's `image_tag` and `manifest_version`); new `:Run` inherits `topology_generation` + `service_metadata` from the source `:Run` instead of `:TopologyRoot`.
 3. On `ErrTargetNotFound` (node absent in Neo4j): orchestrator outbox writes `run.entries.dispatch_failed:v1` for the synthesised run — no further dispatch. State's `RunEntriesDispatchFailedConsumer` row-locks the synthesised `scheduler_tracker`, marks it `failed`, and writes `run.finalized:v1`. Idempotent on already-terminal rows.
