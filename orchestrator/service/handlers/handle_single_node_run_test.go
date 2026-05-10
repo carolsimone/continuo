@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
-	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
@@ -16,8 +16,9 @@ import (
 
 // ── fake run repository for single-node-run tests ─────────────────────────────
 
-// singleNodeFakeRunRepository wraps fakeRunRepository, overriding
-// SnapshotSingleNodeRun so the handler's snapshot call can be stubbed.
+// singleNodeFakeRunRepository wraps fakeRunRepository, overriding Snapshot so
+// the handler's snapshot call can be stubbed. handle_single_node_run uses
+// Snapshot(SingleNode{...}) under the umbrella snapshot routine.
 type singleNodeFakeRunRepository struct {
 	fakeRunRepository
 
@@ -31,20 +32,49 @@ type singleNodeSnapshotResult struct {
 	ImageTag        string
 	ManifestVersion string
 	NodeType        string
+	ScheduleName    string
+	ServiceName     string
+	SchemaName      string
+	TableName       string
 }
 
-func (f *singleNodeFakeRunRepository) SnapshotSingleNodeRun(
-	_ context.Context,
-	_, _ string,
-	_ *uuid.UUID,
-	_, _, _ string,
-	_ string,
-) (taskID, imageTag, manifestVersion, nodeType string, err error) {
+func (f *singleNodeFakeRunRepository) Snapshot(_ context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
 	f.snapshotCalls++
 	if f.snapshotErr != nil {
-		return "", "", "", "", f.snapshotErr
+		return nil, f.snapshotErr
 	}
-	return f.snapshotResult.TaskID, f.snapshotResult.ImageTag, f.snapshotResult.ManifestVersion, f.snapshotResult.NodeType, nil
+	taskID, _ := uuid.Parse(f.snapshotResult.TaskID)
+	if taskID == uuid.Nil {
+		taskID = uuid.New()
+	}
+	// Pull identity from the SingleNode selector if present; fall back to
+	// snapshotResult fields so existing test setups keep working.
+	svc := f.snapshotResult.ServiceName
+	schema := f.snapshotResult.SchemaName
+	tbl := f.snapshotResult.TableName
+	if sel, ok := params.Selector.(snapshot.SingleNode); ok {
+		if svc == "" {
+			svc = sel.ServiceName
+		}
+		if schema == "" {
+			schema = sel.SchemaName
+		}
+		if tbl == "" {
+			tbl = sel.TableName
+		}
+	}
+	return []snapshot.TaskProjection{{
+		TaskID:          taskID,
+		ServiceName:     svc,
+		SchemaName:      schema,
+		TableName:       tbl,
+		ScheduleName:    f.snapshotResult.ScheduleName,
+		NodeType:        f.snapshotResult.NodeType,
+		InitialStatus:   "PENDING",
+		ImageTag:        f.snapshotResult.ImageTag,
+		ManifestVersion: f.snapshotResult.ManifestVersion,
+		MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+	}}, nil
 }
 
 // ── fixture ───────────────────────────────────────────────────────────────────
@@ -68,8 +98,8 @@ func newSingleNodeRunHandlerFixture(_ *testing.T) *singleNodeRunHandlerFixture {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func makeSingleNodeCmd(runID string) domainCmd.SingleNodeRunRequest {
-	return domainCmd.SingleNodeRunRequest{
+func makeSingleNodeCmd(runID string) domainModel.SingleNodeRunInput {
+	return domainModel.SingleNodeRunInput{
 		RunID:          runID,
 		ScheduleName:   "single-node-run-" + runID[:8],
 		ServiceName:    "svcA",
@@ -82,7 +112,7 @@ func makeSingleNodeCmd(runID string) domainCmd.SingleNodeRunRequest {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-// 1. Happy path: SnapshotSingleNodeRun returns concrete values.
+// 1. Happy path: Snapshot(SingleNode) returns concrete values.
 //    Expect TWO outbox entries: run.entries.dispatched:v1 and query.model:v1.
 func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 	fx := newSingleNodeRunHandlerFixture(t)
@@ -143,12 +173,12 @@ func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 	require.Equal(t, "dbt-model", queryEvt.NodeType)
 }
 
-// 2. SnapshotSingleNodeRun returns ErrTargetNotFound.
+// 2. Snapshot(SingleNode) returns ErrTargetNotFound.
 //    Expect ONE outbox entry with stream run.entries.dispatch_failed:v1; handler returns nil.
 func TestHandleSingleNodeRun_TargetNotFound(t *testing.T) {
 	fx := newSingleNodeRunHandlerFixture(t)
 	cmd := makeSingleNodeCmd(uuid.New().String())
-	fx.RunRepo.snapshotErr = run.ErrTargetNotFound
+	fx.RunRepo.snapshotErr = snapshot.ErrTargetNotFound
 
 	err := fx.Handler.Handle(context.Background(), cmd, "msg-snr-2")
 	require.NoError(t, err, "ErrTargetNotFound must not surface as a handler error")
@@ -187,6 +217,6 @@ func TestHandleSingleNodeRun_DedupSecondDelivery(t *testing.T) {
 
 	// Second delivery with the same message ID: must be skipped.
 	require.NoError(t, fx.Handler.Handle(context.Background(), cmd, "msg-snr-dup"))
-	require.Equal(t, 1, fx.RunRepo.snapshotCalls, "SnapshotSingleNodeRun must NOT be called again")
+	require.Equal(t, 1, fx.RunRepo.snapshotCalls, "Snapshot must NOT be called again")
 	require.Len(t, fx.UoW.outboxRepo.CreatedEntries, firstCount, "outbox count must not grow on duplicate")
 }

@@ -10,13 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/orchestrator/config"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/orchestrator/adapters/http"
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
+	"github.com/carolsimone/continuo/orchestrator/config"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/internal/lifecycle"
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
@@ -30,7 +31,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
-
 
 func main() {
 	// Setup structured logger
@@ -143,6 +143,7 @@ func main() {
 	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 	handleRerunHandler := handlers.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
+	handleRebaseHandler := handlers.NewHandleRebaseHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
 
 	// ========================================================================
@@ -244,12 +245,12 @@ func main() {
 	}()
 
 	// ========================================================================
-	// INITIALIZE REDIS CONSUMERS (3 streams)
+	// INITIALIZE REDIS CONSUMERS
 	// ========================================================================
 
 	// Consumer 1: node.updated:v1 -> HandleNodeCompleted
 	nodeUpdatedHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		cmd := domainCmd.HandleNodeCompletedCmd{
+		cmd := domainModel.NodeCompletedInput{
 			TaskID:       uuid.MustParse(msg.Values["task_id"].(string)),
 			ScheduleID:   uuid.MustParse(msg.Values["schedule_id"].(string)),
 			ScheduleName: msg.Values["schedule_name"].(string),
@@ -274,11 +275,11 @@ func main() {
 		if !ok {
 			return fmt.Errorf("missing or invalid payload in manifest.loaded message %s", msg.ID)
 		}
-		var nodes []domainCmd.TopologyNodePayload
+		var nodes []domainEvent.ManifestLoadedNode
 		if err := json.Unmarshal([]byte(payloadStr), &nodes); err != nil {
 			return fmt.Errorf("failed to unmarshal manifest.loaded payload: %w", err)
 		}
-		cmd := domainCmd.IngestTopologyCmd{Nodes: nodes}
+		cmd := domainModel.IngestTopologyInput{Nodes: nodes}
 		return ingestTopologyHandler.Handle(ctx, cmd, msg.ID)
 	}
 	manifestLoadedConsumer := redis.NewStreamConsumer(
@@ -293,13 +294,13 @@ func main() {
 	initRunHandler := func(ctx context.Context, msg goredis.XMessage) error {
 		scheduleName, _ := msg.Values["schedule_name"].(string)
 		runID, _ := msg.Values["run_id"].(string)
-		cmd := domainCmd.InitializeRunCmd{
+		cmd := domainModel.InitializeRunInput{
 			ScheduleName: scheduleName,
 			RunID:        runID,
 		}
 		// Check for rerun target fields
 		if svc, ok := msg.Values["rerun_service_name"].(string); ok && svc != "" {
-			cmd.RerunTarget = &domainCmd.RerunTarget{
+			cmd.RerunTarget = &domainModel.RerunTarget{
 				ServiceName: svc,
 				SchemaName:  msg.Values["rerun_schema_name"].(string),
 				TableName:   msg.Values["rerun_table_name"].(string),
@@ -335,15 +336,18 @@ func main() {
 	rerunHandler := func(ctx context.Context, msg goredis.XMessage) error {
 		scheduleID, _ := msg.Values["schedule_id"].(string)
 		scheduleName, _ := msg.Values["schedule_name"].(string)
+		sourceRunID, _ := msg.Values["source_run_id"].(string)
 		schemaName, _ := msg.Values["schema_name"].(string)
 		tableName, _ := msg.Values["table_name"].(string)
 		serviceName, _ := msg.Values["service_name"].(string)
-		if scheduleID == "" || scheduleName == "" || schemaName == "" || tableName == "" {
+		if scheduleID == "" || scheduleName == "" || sourceRunID == "" ||
+			schemaName == "" || tableName == "" || serviceName == "" {
 			return fmt.Errorf("missing required fields in rerun message %s", msg.ID)
 		}
-		cmd := domainCmd.HandleRerunCmd{
+		cmd := domainModel.RerunInput{
 			RunID:        scheduleID,
 			ScheduleName: scheduleName,
+			SourceRunID:  sourceRunID,
 			ServiceName:  serviceName,
 			SchemaName:   schemaName,
 			TableName:    tableName,
@@ -355,6 +359,29 @@ func main() {
 		cfg.RerunStream,
 		cfg.RerunGroup,
 		rerunHandler,
+		logger,
+	)
+
+	// Consumer 8: trigger.rebase:v1 -> HandleRebase
+	rebaseHandler := func(ctx context.Context, msg goredis.XMessage) error {
+		scheduleID, _ := msg.Values["schedule_id"].(string)
+		scheduleName, _ := msg.Values["schedule_name"].(string)
+		sourceRunID, _ := msg.Values["source_run_id"].(string)
+		if scheduleID == "" || scheduleName == "" || sourceRunID == "" {
+			return fmt.Errorf("missing required fields in rebase message %s", msg.ID)
+		}
+		cmd := domainModel.RebaseInput{
+			RunID:        scheduleID,
+			ScheduleName: scheduleName,
+			SourceRunID:  sourceRunID,
+		}
+		return handleRebaseHandler.Handle(ctx, cmd, msg.ID)
+	}
+	rebaseConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.RebaseStream,
+		cfg.RebaseGroup,
+		rebaseHandler,
 		logger,
 	)
 
@@ -384,7 +411,7 @@ func main() {
 			return fmt.Errorf("invalid metadata_source %q in message %s", metadataSource, msg.ID)
 		}
 
-		req := domainCmd.SingleNodeRunRequest{
+		req := domainModel.SingleNodeRunInput{
 			RunID:          scheduleID,
 			ScheduleName:   scheduleName,
 			ServiceName:    serviceName,
@@ -441,6 +468,12 @@ func main() {
 	go func() {
 		if err := rerunConsumer.Start(ctx); err != nil {
 			logger.Error("Rerun consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := rebaseConsumer.Start(ctx); err != nil {
+			logger.Error("Rebase consumer error", "error", err)
 		}
 	}()
 

@@ -10,14 +10,16 @@ const DefaultTaskMaxRetries int32 = 2
 
 // DispatchedTask is one row in RunEntriesDispatched.AllTasks.
 type DispatchedTask struct {
-	TaskID          string `json:"task_id"`
-	ServiceName     string `json:"service_name"`
-	SchemaName      string `json:"schema_name"`
-	TableName       string `json:"table_name"`
-	NodeType        string `json:"node_type"`
-	MaxRetries      int32  `json:"max_retries"`
-	ManifestVersion string `json:"manifest_version"`
-	ImageTag        string `json:"image_tag"`
+	TaskID              string `json:"task_id"`
+	ServiceName         string `json:"service_name"`
+	SchemaName          string `json:"schema_name"`
+	TableName           string `json:"table_name"`
+	NodeType            string `json:"node_type"`
+	MaxRetries          int32  `json:"max_retries"`
+	ManifestVersion     string `json:"manifest_version"`
+	ImageTag            string `json:"image_tag"`
+	Status              string `json:"status,omitempty"`                 // PR2: "pending" (default) | "succeeded" (inherited)
+	InheritedFromTaskID string `json:"inherited_from_task_id,omitempty"` // PR2: empty for rebased; root task_id (uuid) for inherited
 }
 
 // RunEntriesDispatched — stream: run.entries.dispatched:v1
@@ -32,7 +34,7 @@ type RunEntriesDispatched struct {
 
 // RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1
 // Published by: orchestrator when it cannot produce dispatch work for a run
-// (e.g. SnapshotSingleNodeRun → ErrTargetNotFound). Symmetric to
+// (e.g. Snapshot+SingleNode → ErrTargetNotFound). Symmetric to
 // RunEntriesDispatched: that one creates tasks + flips scheduler_tracker to
 // running; this one writes no tasks + flips scheduler_tracker to failed.
 // Consumed by: state.
@@ -40,16 +42,6 @@ type RunEntriesDispatchFailed struct {
 	ScheduleID   string `json:"schedule_id"`
 	ScheduleName string `json:"schedule_name"`
 	Reason       string `json:"reason"`
-}
-
-// RunRerunDispatched — stream: run.rerun.dispatched:v1
-// Published by: orchestrator
-// Consumed by: state
-type RunRerunDispatched struct {
-	ScheduleID   string   `json:"schedule_id"`
-	ScheduleName string   `json:"schedule_name"`
-	TasksToReset []string `json:"tasks_to_reset"`
-	EntryTaskID  string   `json:"entry_task_id"`
 }
 
 // RunFinalized — stream: run.finalized:v1

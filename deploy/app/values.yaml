@@ -96,6 +96,8 @@ services:
       SCHEDULER_STARTED_GROUP: orchestrator_scheduler_started
       RERUN_STREAM: trigger.rerun:v1
       RERUN_GROUP: orchestrator_rerun
+      REBASE_STREAM: trigger.rebase:v1
+      REBASE_GROUP: orchestrator_rebase
       SINGLE_NODE_RUN_STREAM: trigger.single_node_run:v1
       SINGLE_NODE_RUN_GROUP: orchestrator_single_node_run
       RUN_FINALIZED_STREAM: run.finalized:v1

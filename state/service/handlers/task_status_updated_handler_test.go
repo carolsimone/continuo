@@ -318,3 +318,25 @@ func TestTaskStatusUpdatedHandler_ExhaustedRetriesFinalizeFailed(t *testing.T) {
 	assert.Equal(t, model.SchedulerStatusFailed, getSchedulerStatus(t, db, scheduleID))
 	assert.Equal(t, 1, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
 }
+
+// ── helpers (relocated from deleted run_rerun_dispatched_handler_test.go) ──
+
+func getTerminalTaskCount(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) int32 {
+	t.Helper()
+	var count int32
+	err := db.QueryRowContext(context.Background(),
+		`SELECT terminal_task_count FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID,
+	).Scan(&count)
+	require.NoError(t, err)
+	return count
+}
+
+func getSchedulerStatus(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) model.SchedulerStatus {
+	t.Helper()
+	var statusStr string
+	err := db.QueryRowContext(context.Background(),
+		`SELECT status FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID,
+	).Scan(&statusStr)
+	require.NoError(t, err)
+	return model.SchedulerStatus(statusStr)
+}

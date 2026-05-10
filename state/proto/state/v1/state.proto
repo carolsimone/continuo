@@ -56,6 +56,19 @@ service StateService {
   rpc TriggerSingleNodeRun(TriggerSingleNodeRunRequest)
       returns (TriggerSingleNodeRunResponse);
 
+  // TriggerRebase creates a new run on the source's schedule that re-executes
+  // everything that didn't succeed in the source (failed/cancelled/skipped),
+  // descendants of those, plus new arrivals from the latest topology.
+  // SUCCEEDED tasks from the source are inherited at their pinned metadata.
+  // The new run reuses the source's schedule_name (umbrella §4 — Option A).
+  // Errors:
+  //   INVALID_ARGUMENT — empty or malformed source_run_id.
+  //   NOT_FOUND — source_run_id doesn't exist in scheduler_tracker.
+  //   FAILED_PRECONDITION — source not in {FAILED, CANCELLED}; OR source has
+  //                         zero non-SUCCEEDED tasks; OR an active run already
+  //                         exists on the source's schedule_name.
+  rpc TriggerRebase(TriggerRebaseRequest) returns (TriggerRebaseResponse);
+
   // TaskExecution operations
   rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
@@ -310,7 +323,13 @@ message TriggerRerunRequest {
   string service_name = 4;
 }
 
-message TriggerRerunResponse {}
+message TriggerRerunResponse {
+  // PR2 unification: TriggerRerun now creates a NEW run on the source's
+  // schedule (kind='rerun', source_run_id=<source>) rather than mutating
+  // the source row in place. Returns the new run's identifiers.
+  string run_id        = 1;  // schedule_id of the new rerun run
+  string schedule_name = 2;  // copied verbatim from source's schedule_name
+}
 
 message TriggerSingleNodeRunRequest {
   string service_name    = 1;  // Required
@@ -323,4 +342,13 @@ message TriggerSingleNodeRunRequest {
 message TriggerSingleNodeRunResponse {
   string run_id        = 1;  // synthesized scheduler_tracker.schedule_id (uuid)
   string schedule_name = 2;  // "single-node-run-<short-uuid>"
+}
+
+message TriggerRebaseRequest {
+  string source_run_id = 1;  // schedule_id of the failed/cancelled run to rebase from
+}
+
+message TriggerRebaseResponse {
+  string run_id        = 1;  // schedule_id of the new rebase run
+  string schedule_name = 2;  // copied verbatim from source's schedule_name
 }

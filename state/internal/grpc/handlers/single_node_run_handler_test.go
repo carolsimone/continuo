@@ -29,6 +29,24 @@ type singleNodeRunFixture struct {
 	Cleanup       func()
 }
 
+// getOutboxByAggregate reads the (typically single) state_outbox row for the
+// given aggregate_id. Used in place of OutboxRepo.ListPending(N) when the test
+// only cares about a specific schedule's row, so accumulated unrelated pending
+// rows on the shared test DB don't cause overflow-past-limit flakes.
+func getOutboxByAggregate(t *testing.T, db *sqlx.DB, aggregateID uuid.UUID) *postgres.OutboxEntry {
+	t.Helper()
+	var entry postgres.OutboxEntry
+	err := db.GetContext(context.Background(), &entry,
+		`SELECT id, aggregate_type, aggregate_id, event_type, payload, stream_name, status, max_retries, retry_count, created_at
+		 FROM state_outbox WHERE aggregate_id = $1 LIMIT 1`,
+		aggregateID,
+	)
+	if err != nil {
+		return nil
+	}
+	return &entry
+}
+
 // setupSingleNodeRunFixture builds a postgres-backed SingleNodeRunHandler
 // using the same DB/repo construction as buildRerunHandlerFullDB.
 func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
@@ -83,17 +101,10 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 
 	// Outbox row exists with stream "trigger.single_node_run:v1" and
 	// payload carries metadata_source = "latest".
-	entries, err := fx.OutboxRepo.ListPending(context.Background(), 10)
-	require.NoError(t, err)
-
-	// Find the outbox entry for this specific schedule (may be mixed with others on shared DB).
-	var found *postgres.OutboxEntry
-	for i := range entries {
-		if entries[i].AggregateID == scheduleID {
-			found = entries[i]
-			break
-		}
-	}
+	// Query the outbox row directly by aggregate_id rather than ListPending(10),
+	// because the shared test DB can accumulate stale pending rows from prior
+	// runs that overflow the small limit and mask the row we're asserting on.
+	found := getOutboxByAggregate(t, fx.DB, scheduleID)
 	require.NotNil(t, found, "expected outbox entry for schedule %s", scheduleID)
 	require.Equal(t, "trigger.single_node_run:v1", found.StreamName)
 
@@ -159,17 +170,9 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	require.NotNil(t, tracker.SourceRunID)
 	require.Equal(t, srcID, *tracker.SourceRunID)
 
-	entries, err := fx.OutboxRepo.ListPending(context.Background(), 10)
-	require.NoError(t, err)
-	// Stale-mode entry is the most recent.
-	var stale *postgres.OutboxEntry
-	for i := range entries {
-		if entries[i].AggregateID == scheduleID {
-			stale = entries[i]
-			break
-		}
-	}
-	require.NotNil(t, stale)
+	// Query directly by aggregate_id (see getOutboxByAggregate rationale).
+	stale := getOutboxByAggregate(t, fx.DB, scheduleID)
+	require.NotNil(t, stale, "expected outbox entry for schedule %s", scheduleID)
 	require.Equal(t, "trigger.single_node_run:v1", stale.StreamName)
 
 	var payload map[string]string

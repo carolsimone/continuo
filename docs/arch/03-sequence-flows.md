@@ -17,7 +17,7 @@ sequenceDiagram
   Note right of R: payload — runner_id, schedule_name, service_metadata, kind='cron', source_run_id=''
 
   R->>OR: consume scheduler.started v1
-  Note over OR: HandleSchedulerStartedHandler.Handle (1 tx)<br/>SnapshotGraph in Neo4j — Run + EXECUTES with pre-assigned task UUIDs<br/>GetScheduleInitNodes — AllNodes, RootNodes, SeedNodes<br/>orchestrator outbox — 1x run.entries.dispatched v1<br/>orchestrator outbox — Nx query.model v1 (seeds, fallback to roots)
+  Note over OR: HandleSchedulerStartedHandler.Handle (1 tx)<br/>Snapshot(LatestFullDAG) in Neo4j — Run + EXECUTES with pre-assigned task UUIDs<br/>GetScheduleInitNodes — AllNodes, RootNodes, SeedNodes<br/>orchestrator outbox — 1x run.entries.dispatched v1<br/>orchestrator outbox — Nx query.model v1 (seeds, fallback to roots)
   OR->>R: publish run.entries.dispatched v1
   OR->>R: publish query.model v1 (per seed/root)
 
@@ -117,7 +117,7 @@ sequenceDiagram
   end
 ```
 
-## 4. Rerun Flow
+## 4. Rerun Flow (new run on source's schedule)
 
 ```mermaid
 sequenceDiagram
@@ -129,28 +129,28 @@ sequenceDiagram
   participant EC as executor-controller
 
   U->>UI: POST /api/schedulers/{id}/rerun
-  UI->>ST: TriggerRerun(schedule_id, schema, table_name, service_name)
-  Note over ST: RerunHandler.TriggerRerun (sync, 1 tx)<br/>validations — schedule exists, target task FAILED, no RUNNING tasks<br/>scheduler_tracker UPDATE — status=RUNNING, kind='rerun', completed_at=NULL<br/>state_outbox INSERT for rerun v1<br/>initialization_status NOT reset — stays 'completed'
-  ST-->>UI: TriggerRerunResponse
+  UI->>ST: TriggerRerun(source_run_id, schema, table_name, service_name)
+  Note over ST: RerunHandler.TriggerRerun (sync, 1 tx)<br/>validations — source run exists, target task FAILED, source terminal<br/>scheduler_tracker INSERT — new row, kind='rerun', source_run_id=src, schedule_name=src.schedule_name, status=PENDING<br/>state_outbox INSERT for trigger.rerun v1<br/>source row left untouched — stays at terminal FAILED forever
+  ST-->>UI: TriggerRerunResponse { run_id, schedule_name }
   UI-->>U: 200 OK
-  ST->>R: publish rerun v1 (via state OutboxProcessor)
-  Note right of R: payload — schedule_id, schedule_name, scope='node', schema_name, table_name, service_name, kind='rerun'
+  ST->>R: publish trigger.rerun v1 (via state OutboxProcessor)
+  Note right of R: payload — schedule_id (NEW run), schedule_name, scope='node', schema_name, table_name, service_name, source_run_id
 
-  R->>OR: consume rerun v1
-  Note over OR: HandleRerunHandler.Handle (1 tx)<br/>Neo4j GetTaskIDForNode — targetTaskID<br/>Neo4j GetSkippedDownstreamTaskIDs — skipped descendants<br/>Neo4j ResetSkippedDownstreamToPending — EXECUTES SKIPPED to PENDING<br/>Neo4j GetNodeType / GetNodeServiceName / GetNodeEdgeData<br/>orchestrator outbox — 1x run.rerun.dispatched v1 with TasksToReset = target + skipped descendants<br/>orchestrator outbox — 1x query.model v1 for target node only
-  OR->>R: publish run.rerun.dispatched v1
-  OR->>R: publish query.model v1 (target only)
+  R->>OR: consume trigger.rerun v1
+  Note over OR: HandleRerunHandler.Handle (1 tx)<br/>Snapshot(SourcePinnedDAG) in Neo4j —<br/>  read source :Run's :EXECUTES set<br/>  MERGE new :Run inheriting topology_generation + service_metadata from source :Run<br/>  project target + non-SUCCEEDED descendants → rebased PENDING (source's pinned image_tag/manifest_version)<br/>  project everything else → SUCCEEDED inherit + inherited_from_task_id (root-resolved)<br/>orchestrator outbox — 1x run.entries.dispatched v1 (full projection, per-task Status + InheritedFromTaskID)<br/>orchestrator outbox — Nx query.model v1 (rebased rows only)
+  OR->>R: publish run.entries.dispatched v1
+  OR->>R: publish query.model v1 (rebased only)
 
-  par state revives task counters
-    R->>ST: consume run.rerun.dispatched v1
-    Note over ST: RunRerunDispatchedHandler.Handle (1 tx)<br/>ResetTasksTx(taskUUIDs) — task_tracker.status=PENDING<br/>DecrementTerminalCountTx(scheduleID, resetCount)<br/>UpdateStatusTx(scheduleID, RUNNING) — idempotent
-  and executor relaunches the target K8s Job
+  par state registers run skeleton
+    R->>ST: consume run.entries.dispatched v1
+    Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker — honour per-task Status + inherited_from_task_id<br/>SetTotalTaskCount, init_status=completed<br/>auto-rollup if every task already terminal (else status=RUNNING)
+  and executor relaunches rebased K8s Jobs
     R->>EC: consume query.model v1
     Note over EC: identical to Flow 1 from here<br/>deployment_outbox to CreateQueryJob to task.status.updated v1 RUNNING + node.deployed v1
   end
 ```
 
-> Differences vs. Flow 1: synchronous gRPC entry; no `SnapshotGraph` (Run already exists); no bulk task creation (tasks already exist; only the target + previously-skipped descendants are flipped back to PENDING and `terminal_task_count` is decremented). Only the target gets `query.model:v1` — previously-skipped descendants ride on the orchestrator's `GetReadyDownstream` traversal once the target succeeds.
+> Differences vs. Flow 1: synchronous gRPC entry; the new `:Run` inherits `topology_generation` + `service_metadata` from the **source** `:Run` (not `:TopologyRoot`), so the rerun stays bound to the source's snapshot metadata. The source run is never mutated; the schedule's run history grows by one entry per rerun trigger. Rerun shares the same `run.entries.dispatched:v1` pipeline as every other run kind.
 
 ## 5. Service Process Startup (Pre-Flight)
 
@@ -236,7 +236,7 @@ sequenceDiagram
   participant ORPG as orchestrator Postgres
   participant NEO as Neo4j
 
-  note over MC,NEO: Run S1 is already in-flight — SnapshotGraph already committed
+  note over MC,NEO: Run S1 is already in-flight — Snapshot already committed
 
   MC->>R: manifest.loaded:v1 (image_tag=T2, manifest_version=V2)
   R->>OR: consume manifest.loaded:v1
@@ -249,12 +249,12 @@ sequenceDiagram
 
   OR->>R: publish schedules.loaded:v1 (catalog update)
 
-  note over OR,NEO: Next run (S2) triggers SnapshotGraph
+  note over OR,NEO: Next run (S2) triggers Snapshot(LatestFullDAG)
   OR->>NEO: MATCH :TopologyRoot → copy topology_generation=G1+1, service_metadata to Run S2
   OR->>NEO: EXECUTES edges for S2 get image_tag=T2 from Table nodes
 ```
 
-Key invariant: `SnapshotGraph` reads `:TopologyRoot` at call time. Any in-flight run's `Run` node and its `EXECUTES` edges are immutable after creation.
+Key invariant: `Snapshot(LatestFullDAG)` reads `:TopologyRoot` at call time. Derived runs (rerun / rebase / stale-mode single-node) instead inherit `topology_generation` + `service_metadata` from their source `:Run`. Any in-flight run's `Run` node and its `EXECUTES` edges are immutable after creation.
 
 ## 8. Dispatch Watchdog Termination
 
@@ -296,7 +296,7 @@ cancellations use), so no new publisher or terminal state is introduced.
 Defaults: 60s polling, 30 min no-progress threshold. Toggle via
 `ORCHESTRATOR_WATCHDOG_ENABLED` (default `true`).
 
-## 9. Single-Node Run (Feature 4 / PR1)
+## 9. Single-Node Run
 
 An ad-hoc, one-task run for a single dbt node. No schedule catalog entry is created; the synthesised run is excluded from `ListAllSchedules` by construction.
 
@@ -319,7 +319,7 @@ sequenceDiagram
   Note right of R: payload — schedule_id, schedule_name, service_name,<br/>schema_name, table_name, metadata_source, source_run_id?
 
   R->>OR: consume trigger.single_node_run:v1
-  Note over OR: HandleSingleNodeRunHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Neo4j: SnapshotSingleNodeRun(runID, scheduleName, kind, metadataSource, sourceRunID)<br/>  latest mode → reads :TopologyRoot + :Table for metadata<br/>  stale mode  → reads source :Run's EXECUTES edge (image_tag + manifest_version)
+  Note over OR: HandleSingleNodeRunHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Neo4j: Snapshot(SingleNode{Target, MetadataSource, SourceRunID?})<br/>  latest mode → selector reads :TopologyRoot + :Table for metadata; new :Run inherits from :TopologyRoot<br/>  stale mode  → selector reads source :Run's EXECUTES edge; new :Run inherits topology_generation + service_metadata from source :Run
   alt ErrTargetNotFound (node absent in Neo4j)
     OR->>R: publish run.entries.dispatch_failed:v1 (synthesised run will be marked terminal-failed)
     R->>ST: consume run.entries.dispatch_failed:v1
@@ -338,7 +338,49 @@ sequenceDiagram
   end
 ```
 
-> Differences vs. Flow 1 (schedule startup): synchronous gRPC entry; synthesised `schedule_name` is not in `schedule_catalog`; `SnapshotSingleNodeRun` creates exactly one `EXECUTES` edge (no full topology snapshot); only a single `query.model:v1` is produced; on `ErrTargetNotFound` the synthesised run is immediately failed.
+> Differences vs. Flow 1 (schedule startup): synchronous gRPC entry; synthesised `schedule_name` is not in `schedule_catalog`; `Snapshot(SingleNode)` creates exactly one `EXECUTES` edge (no full topology snapshot); only a single `query.model:v1` is produced; on `ErrTargetNotFound` the synthesised run is immediately failed.
+
+## 10. Rebase from Failed/Cancelled Run
+
+A new run on the source's schedule that re-executes the failed/cancelled tasks + descendants + new arrivals against the latest topology, while inheriting everything that succeeded. The source run is never mutated; the schedule's run history grows by one row per rebase trigger.
+
+```mermaid
+sequenceDiagram
+  participant U as user/API client
+  participant UI as ui-service (BFF)
+  participant ST as state (gRPC)
+  participant R as Redis
+  participant OR as orchestrator
+  participant NEO as Neo4j
+  participant EC as executor-controller
+
+  U->>UI: POST /api/schedulers/{src_run_id}/rebase
+  UI->>ST: TriggerRebase(source_run_id)
+  Note over ST: RebaseHandler.TriggerRebase (sync, 1 tx)<br/>eligibility — source exists, terminal FAILED|CANCELLED, ≥1 non-SUCCEEDED task<br/>scheduler_tracker INSERT — new row, kind='rebase', source_run_id=src, schedule_name=src.schedule_name, status=PENDING<br/>state_outbox INSERT for trigger.rebase v1<br/>source row left untouched
+  ST-->>UI: TriggerRebaseResponse { run_id, schedule_name }
+  UI-->>U: 200 OK
+  ST->>R: publish trigger.rebase v1 (via state OutboxProcessor)
+  Note right of R: payload — schedule_id (NEW run), schedule_name, source_run_id
+
+  R->>OR: consume trigger.rebase v1
+  Note over OR: HandleRebaseHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Snapshot(RebasePartition)
+  OR->>NEO: read source :Run's :EXECUTES set + latest :Tables for schedule
+  Note over OR: rebase_set = (source.status ≠ SUCCEEDED) ∪ descendants(latest) ∪ new_arrivals<br/>inherit_set = SUCCEEDED in source ∩ exists_in_latest \ rebase_set<br/>drop_set = exists_in_source \ exists_in_latest (silently dropped)<br/>inherited rows: root-resolve inherited_from_task_id (chain depth ≤ 1 forever)
+  OR->>NEO: MERGE new :Run (inherit topology_generation + service_metadata from source :Run)<br/>MERGE :EXECUTES per projection<br/>  rebased = PENDING + latest image_tag/manifest_version<br/>  inherited = SUCCEEDED + source's pinned pair + inherited_from_task_id
+
+  OR->>R: publish run.entries.dispatched v1 (full projection — per-task Status + InheritedFromTaskID)
+  OR->>R: publish query.model v1 (rebased rows only)
+
+  par state registers run skeleton
+    R->>ST: consume run.entries.dispatched v1
+    Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker — inherited rows land at SUCCEEDED with inherited_from_task_id<br/>rebased rows land at PENDING<br/>SetTotalTaskCount, init_status=completed<br/>auto-rollup if every task already terminal (defensive — no-op rebase)<br/>else status=RUNNING
+  and executor launches rebased K8s Jobs
+    R->>EC: consume query.model v1
+    Note over EC: identical to Flow 1 from here<br/>deployment_outbox → CreateQueryJob → task.status.updated v1 RUNNING + node.deployed v1
+  end
+```
+
+> Differences vs. Flow 4 (rerun): rebase reads against the **latest** topology, so new arrivals and topology drift land in the projection; rerun reads strictly against the source's pinned `:EXECUTES` set. Both share the same materialiser, the same `:Run` MERGE, and the same `run.entries.dispatched:v1` pipeline.
 
 ## Why These Diagrams Are Not Enough On Their Own
 

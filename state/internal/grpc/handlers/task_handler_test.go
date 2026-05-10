@@ -99,6 +99,9 @@ func (s *stubTaskRepo) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUI
 func (s *stubTaskRepo) HasRetryableFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
 }
+func (s *stubTaskRepo) HasNonSucceededTask(_ context.Context, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
 func (s *stubTaskRepo) BulkCancelByScheduleIDTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) (int64, error) {
 	return 0, nil
 }

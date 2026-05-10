@@ -43,7 +43,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
-	// Ensure graph topology is loaded so that SnapshotSingleNodeRun can resolve
+	// Ensure graph topology is loaded so that Snapshot+SingleNode can resolve
 	// the target node in Neo4j.
 	cleanupTestData(t, ctx, clients, "single-node-run")
 	triggerGraphLoad(t, ctx, clients)
@@ -230,7 +230,7 @@ func TestSingleNodeRunTargetNotFound(t *testing.T) {
 	verifyServicesHealthy(t)
 
 	// Make sure the topology is loaded — the failure path runs through
-	// SnapshotSingleNodeRun's "target not found" branch when the requested
+	// Snapshot+SingleNode's "target not found" branch when the requested
 	// node is absent from the loaded graph.
 	cleanupTestData(t, ctx, clients, "single-node-run")
 	triggerGraphLoad(t, ctx, clients)

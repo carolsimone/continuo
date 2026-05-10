@@ -338,12 +338,16 @@ export default function DetailPage() {
 
   // handleRerun is the dispatcher: fresh runs short-circuit to doRerun;
   // stale or unknown drift opens RerunConfirmDialog instead, which calls
-  // doRerun on Confirm.
+  // doRerun on Confirm. Bails when liveRunGraph is null (still loading or
+  // failed to load) so we don't show a misleading "Topology unknown"
+  // dialog when we just don't have the data yet — the button below is
+  // also disabled in this state, this is defense in depth.
   const handleRerun = useCallback(() => {
     if (!selectedNodeId || !lastRunId) return;
+    if (liveRunGraph === null) return;
     const driftState = getDriftState(
-      liveRunGraph?.run_topology_generation,
-      liveRunGraph?.latest_topology_generation,
+      liveRunGraph.run_topology_generation,
+      liveRunGraph.latest_topology_generation,
     );
     if (driftState === 'fresh') {
       void doRerun();
@@ -513,7 +517,7 @@ export default function DetailPage() {
                       <button
                         type="button"
                         className="dag-rerun-btn"
-                        disabled={rerunState === 'loading'}
+                        disabled={rerunState === 'loading' || liveRunGraph === null}
                         onClick={handleRerun}
                       >
                         {rerunState === 'loading' ? 'Running…' : '↺ Rerun node'}

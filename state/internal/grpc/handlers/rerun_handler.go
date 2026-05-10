@@ -17,6 +17,12 @@ import (
 )
 
 // RerunHandler implements the TriggerRerun gRPC method.
+//
+// PR2 unification: TriggerRerun now mints a NEW scheduler_tracker row on the
+// source's schedule (kind='rerun', source_run_id=<source>) rather than
+// mutating the source row in place. The source row stays at its terminal
+// status forever — it's an immutable historical record. The new run reuses
+// the source's schedule_name so it appears in the same schedule's history.
 type RerunHandler struct {
 	db            *sqlx.DB
 	schedulerRepo postgres.SchedulerTrackerRepository
@@ -42,97 +48,112 @@ func NewRerunHandler(
 	}
 }
 
-// TriggerRerun atomically resets the scheduler + target task and writes a
-// trigger.rerun:v1 outbox entry — all in a single Postgres transaction.
+// TriggerRerun creates a new run on the source's schedule that re-executes
+// the target failed task (and its cascade-skipped descendants) against the
+// source's pinned (image_tag, manifest_version). Inherits SUCCEEDED tasks
+// at their pinned metadata. Atomic: new scheduler_tracker row + trigger.rerun:v1
+// outbox entry in a single Postgres transaction.
+//
+// Eligibility:
+//   - Source schedule must exist and be in {FAILED, CANCELLED}.
+//   - Target task must exist on the source and be in {FAILED, CANCELLED}.
+//   - No active run on the source's schedule_name (concurrency guard).
 func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
-	h.logger.Info("TriggerRerun called", "schedule_id", req.ScheduleId)
+	h.logger.Info("TriggerRerun called",
+		"schedule_id", req.ScheduleId,
+		"target", req.ServiceName+"."+req.Schema+"."+req.TableName,
+	)
 
+	// ── Validate inputs ──────────────────────────────────────────────────────
 	if req.ScheduleId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
 	}
-
-	scheduleID, err := uuid.Parse(req.ScheduleId)
+	if req.ServiceName == "" || req.Schema == "" || req.TableName == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "service_name, schema, and table_name are required")
+	}
+	srcID, err := uuid.Parse(req.ScheduleId)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	// 1. Schedule must exist.
-	scheduler, err := h.schedulerRepo.GetByID(ctx, scheduleID)
+	// ── Eligibility: source must exist and be terminal ───────────────────────
+	src, err := h.schedulerRepo.GetByID(ctx, srcID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "schedule not found")
+			return nil, status.Errorf(codes.NotFound, "source run not found")
 		}
-		h.logger.Error("failed to get scheduler", "schedule_id", scheduleID, "error", err)
+		h.logger.Error("failed to get source scheduler", "schedule_id", srcID, "error", err)
 		return nil, status.Errorf(codes.Internal, "internal error")
 	}
+	if src.Status != model.SchedulerStatusFailed && src.Status != model.SchedulerStatusCancelled {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"source run must be FAILED or CANCELLED, got %s", src.Status)
+	}
 
-	// 2. Target task must exist.
-	task, err := h.taskRepo.GetByScheduleAndNode(ctx, scheduleID, req.ServiceName, req.Schema, req.TableName)
+	// ── Eligibility: target task exists and is FAILED/CANCELLED ──────────────
+	targetTask, err := h.taskRepo.GetByScheduleAndNode(ctx, srcID, req.ServiceName, req.Schema, req.TableName)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "task not found")
+			return nil, status.Errorf(codes.NotFound, "target task not found on source run")
 		}
-		h.logger.Error("failed to get task", "schedule_id", scheduleID, "error", err)
+		h.logger.Error("failed to get target task", "schedule_id", srcID, "error", err)
 		return nil, status.Errorf(codes.Internal, "internal error")
 	}
+	if targetTask.Status != model.TaskStatusFailed && targetTask.Status != model.TaskStatusCancelled {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"target task must be FAILED or CANCELLED, got %s", targetTask.Status)
+	}
 
-	// 3. No tasks currently RUNNING.
-	runningStatus := model.TaskStatusRunning
-	runningTasks, _, err := h.taskRepo.List(ctx, postgres.TaskFilters{
-		ScheduleID: &scheduleID,
-		Status:     &runningStatus,
-		Limit:      1,
-		Offset:     0,
-	})
+	// ── Concurrency guard: no active run on the same schedule_name ──────────
+	hasActive, err := h.schedulerRepo.HasActiveSchedule(ctx, src.ScheduleName)
 	if err != nil {
-		h.logger.Error("failed to list running tasks", "schedule_id", scheduleID, "error", err)
+		h.logger.Error("HasActiveSchedule failed", "schedule_name", src.ScheduleName, "error", err)
 		return nil, status.Errorf(codes.Internal, "internal error")
 	}
-	if len(runningTasks) > 0 {
-		return nil, status.Errorf(codes.FailedPrecondition, "schedule has running tasks")
+	if hasActive {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"an active run already exists on schedule %q", src.ScheduleName)
 	}
 
-	// 4. Target task must be FAILED.
-	if task.Status != model.TaskStatusFailed {
-		return nil, status.Errorf(codes.FailedPrecondition, "target task is not in FAILED state")
-	}
-
-	// 5. Atomic transaction — reset scheduler, reset task, write outbox.
+	// ── Atomic write: new scheduler_tracker row + outbox entry ──────────────
+	newID := uuid.New()
 	tx, err := h.db.BeginTxx(ctx, nil)
 	if err != nil {
 		h.logger.Error("failed to begin tx", "error", err)
 		return nil, status.Errorf(codes.Internal, "internal error")
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	now := time.Now()
-	scheduler.Status = model.SchedulerStatusRunning
-	scheduler.CompletedAt = nil
-	scheduler.LastHeartbeatAt = &now
-	scheduler.Kind = "rerun" // PR0 — flip discriminator on rerun trigger
-	if err := h.schedulerRepo.UpdateTx(ctx, tx, scheduler); err != nil {
-		h.logger.Error("failed to reset scheduler", "error", err)
+	tracker := &model.SchedulerTracker{
+		ScheduleID:           newID,
+		ScheduleName:         src.ScheduleName,
+		Status:               model.SchedulerStatusPending,
+		CreatedAt:            now,
+		LastHeartbeatAt:      &now,
+		Kind:                 "rerun",
+		SourceRunID:          &srcID,
+		InitializationStatus: "pending",
+	}
+	if err := h.schedulerRepo.CreateTx(ctx, tx, tracker); err != nil {
+		h.logger.Error("failed to create scheduler_tracker", "error", err)
 		return nil, status.Errorf(codes.Internal, "internal error")
 	}
-	// NOTE: initialization_status intentionally NOT reset to "pending" here.
-	// Task resets and terminal_count adjustment are handled by run_rerun_dispatched_handler
-	// when it consumes the outbox entry below, keeping initialization_status = "completed"
-	// so that finalization can trigger once all tasks reach terminal state.
 
 	payload, _ := json.Marshal(map[string]string{
-		"schedule_id":   scheduleID.String(),
-		"schedule_name": scheduler.ScheduleName,
-		"scope":         "node",
+		"schedule_id":   newID.String(),
+		"schedule_name": src.ScheduleName,
+		"kind":          "rerun",
+		"source_run_id": srcID.String(),
+		"service_name":  req.ServiceName,
 		"schema_name":   req.Schema,
 		"table_name":    req.TableName,
-		"service_name":  req.ServiceName,
-		"kind":          "rerun", // PR0 — discriminator on outbox
 	})
 	if err := h.outboxRepo.Create(ctx, tx, &postgres.OutboxEntry{
 		ID:            uuid.New(),
 		AggregateType: "scheduler",
-		AggregateID:   scheduleID,
-		EventType:     "rerun_node",
+		AggregateID:   newID,
+		EventType:     "rerun",
 		Payload:       payload,
 		StreamName:    "trigger.rerun:v1",
 		Status:        "pending",
@@ -148,5 +169,8 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 		return nil, status.Errorf(codes.Internal, "internal error")
 	}
 
-	return &statev1.TriggerRerunResponse{}, nil
+	return &statev1.TriggerRerunResponse{
+		RunId:        newID.String(),
+		ScheduleName: src.ScheduleName,
+	}, nil
 }

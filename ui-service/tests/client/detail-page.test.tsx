@@ -51,6 +51,20 @@ async function selectFirstNode() {
   fireEvent.click(row);
 }
 
+// findEnabledRerunButton waits for the Rerun button to mount AND for
+// liveRunGraph to load (the button is disabled until the graph fetch resolves).
+// Using button.disabled === false as the gate is the only DOM-observable signal
+// that handleRerun will see liveRunGraph != null and compute drift correctly.
+async function findEnabledRerunButton(): Promise<HTMLButtonElement> {
+  const btn = (await screen.findByRole(
+    'button',
+    { name: /Rerun node/i },
+    { timeout: 10000 },
+  )) as HTMLButtonElement;
+  await waitFor(() => expect(btn.disabled).toBe(false), { timeout: 10000 });
+  return btn;
+}
+
 function freshRoutes() {
   return {
     [`/api/runs/${RUN_ID}/graph`]: async () => ({
@@ -113,7 +127,7 @@ describe('DetailPage — rerun gating by drift state', () => {
     render(withRouter({ last_run_id: RUN_ID }));
 
     await selectFirstNode();
-    const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i }, { timeout: 10000 });
+    const rerunBtn = await findEnabledRerunButton();
     fireEvent.click(rerunBtn);
 
     await waitFor(() => {
@@ -145,7 +159,7 @@ describe('DetailPage — rerun gating by drift state', () => {
     render(withRouter({ last_run_id: RUN_ID }));
 
     await selectFirstNode();
-    const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i }, { timeout: 10000 });
+    const rerunBtn = await findEnabledRerunButton();
     fireEvent.click(rerunBtn);
 
     expect(await screen.findByText('Stale topology')).toBeInTheDocument();
@@ -180,7 +194,7 @@ describe('DetailPage — rerun gating by drift state', () => {
     render(withRouter({ last_run_id: RUN_ID }));
 
     await selectFirstNode();
-    const rerunBtn = await screen.findByRole('button', { name: /Rerun node/i }, { timeout: 10000 });
+    const rerunBtn = await findEnabledRerunButton();
     fireEvent.click(rerunBtn);
 
     expect(await screen.findByText('Topology unknown')).toBeInTheDocument();
@@ -227,7 +241,7 @@ describe('DetailPage — failed-stale-rerun (safety-net)', () => {
     render(withRouter({ last_run_id: RUN_ID }));
 
     await selectFirstNode();
-    fireEvent.click(await screen.findByRole('button', { name: /Rerun node/i }, { timeout: 10000 }));
+    fireEvent.click(await findEnabledRerunButton());
 
     expect(await screen.findByText('Stale topology')).toBeInTheDocument();
     expect(screen.getByText('5 → 7')).toBeInTheDocument();

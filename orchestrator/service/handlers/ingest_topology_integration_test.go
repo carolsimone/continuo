@@ -8,7 +8,9 @@ import (
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	pginfra "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -140,8 +142,8 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(client, newTestLogger())
 	runRepo := neo4jinfra.NewRunRepository(client, newTestLogger())
 
-	initialLoad := domainCmd.IngestTopologyCmd{
-		Nodes: []domainCmd.TopologyNodePayload{
+	initialLoad := domainModel.IngestTopologyInput{
+		Nodes: []domainEvent.ManifestLoadedNode{
 			{
 				ServiceName:     "svc-a",
 				SchemaName:      "public",
@@ -174,10 +176,17 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	require.Len(t, graph.Nodes, 2, "initial manifest load should expose both nodes")
 
 	historicalRunID := uuid.New().String()
-	require.NoError(t, runRepo.SnapshotGraph(ctx, historicalRunID, scheduleName, "cron", nil))
+	_, err = runRepo.Snapshot(ctx, snapshot.Params{
+		RunID:        historicalRunID,
+		ScheduleName: scheduleName,
+		Kind:         "cron",
+		SourceRunID:  nil,
+		Selector:     snapshot.LatestFullDAG{},
+	})
+	require.NoError(t, err)
 
-	updatedLoad := domainCmd.IngestTopologyCmd{
-		Nodes: []domainCmd.TopologyNodePayload{
+	updatedLoad := domainModel.IngestTopologyInput{
+		Nodes: []domainEvent.ManifestLoadedNode{
 			{
 				ServiceName:     "svc-a",
 				SchemaName:      "public",
@@ -200,7 +209,14 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	assert.Equal(t, keepTable, graph.Nodes[0].TableName)
 
 	runID := uuid.New().String()
-	require.NoError(t, runRepo.SnapshotGraph(ctx, runID, scheduleName, "cron", nil))
+	_, err = runRepo.Snapshot(ctx, snapshot.Params{
+		RunID:        runID,
+		ScheduleName: scheduleName,
+		Kind:         "cron",
+		SourceRunID:  nil,
+		Selector:     snapshot.LatestFullDAG{},
+	})
+	require.NoError(t, err)
 
 	initNodes, err := runRepo.GetScheduleInitNodes(ctx, scheduleName, runID)
 	require.NoError(t, err)

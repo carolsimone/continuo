@@ -7,7 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
-	"github.com/google/uuid"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -19,143 +19,6 @@ type RunRepository struct {
 
 func NewRunRepository(client Neo4jClient, logger *slog.Logger) *RunRepository {
 	return &RunRepository{client: client, logger: logger}
-}
-
-// SnapshotGraph creates a Run node and EXECUTES edges for all nodes in a schedule.
-// Each edge gets a stable task_id UUID assigned at creation time; re-snapshots
-// (idempotent replay via MERGE) preserve the original task_id.
-//
-// kind is the run-level discriminator stamped onto :Run.kind on CREATE
-// (preserved on replay via COALESCE in ON MATCH). One of: "cron", "trigger",
-// "rerun", "rebase", "single_node_run".
-//
-// sourceRunID is the schedule_id of the parent run this one derives from
-// (same UUID as scheduler_tracker.schedule_id on the source row, since
-// :Run.run_id == scheduler_tracker.schedule_id by construction). It is set
-// only when non-nil — populated for "rerun", "rebase", and stale-mode
-// "single_node_run"; nil for "cron" and "trigger".
-func (r *RunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error {
-	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer session.Close(ctx)
-
-	// Step 1: collect all node identities for this schedule so we can build
-	// UUID assignments in Go before writing.
-	listQuery := `
-		CALL {
-			MATCH (t:Table {schedule_name: $schedule_name})
-			WHERE COALESCE(t.active, true)
-			RETURN t.schema_name   AS schema_name,
-			       t.table_name    AS table_name,
-			       t.service_name  AS service_name,
-			       t.schedule_name AS schedule_name
-
-			UNION
-
-			MATCH (t:Table {schedule_name: $schedule_name})
-			WHERE COALESCE(t.active, true)
-			MATCH (t)-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
-			WHERE COALESCE(s.active, true)
-			RETURN s.schema_name   AS schema_name,
-			       s.table_name    AS table_name,
-			       s.service_name  AS service_name,
-			       s.schedule_name AS schedule_name
-		}
-		RETURN DISTINCT schema_name, table_name, service_name, schedule_name
-	`
-	listResult, err := session.Run(ctx, listQuery, map[string]interface{}{
-		"schedule_name": scheduleName,
-	})
-	if err != nil {
-		return fmt.Errorf("SnapshotGraph: failed to list nodes: %w", err)
-	}
-
-	assignments := make([]map[string]interface{}, 0)
-	for listResult.Next(ctx) {
-		record := listResult.Record()
-		schemaRaw, _ := record.Get("schema_name")
-		tableRaw, _ := record.Get("table_name")
-		serviceRaw, _ := record.Get("service_name")
-		scheduleRaw, _ := record.Get("schedule_name")
-		assignments = append(assignments, map[string]interface{}{
-			"schema_name":   safeString(schemaRaw),
-			"table_name":    safeString(tableRaw),
-			"service_name":  safeString(serviceRaw),
-			"schedule_name": safeString(scheduleRaw),
-			"task_id":       uuid.New().String(),
-		})
-	}
-	if err := listResult.Err(); err != nil {
-		return fmt.Errorf("SnapshotGraph: error iterating nodes: %w", err)
-	}
-
-	if len(assignments) == 0 {
-		r.logger.Warn("SnapshotGraph: no nodes found for schedule, run will have no EXECUTES edges",
-			"schedule_name", scheduleName, "run_id", runID)
-		return nil
-	}
-
-	// Step 2: MERGE Run node and EXECUTES edges; ON CREATE sets task_id so
-	// existing edges on replay keep their original task_id.
-	// topology_generation and service_metadata are copied from :TopologyRoot at
-	// snapshot time so the run is isolated from future topology changes.
-	// kind is stamped on the :Run node; source_run_id is written only when non-nil.
-
-	// sourceRunIDParam is interface{} so a nil maps cleanly to Cypher null.
-	var sourceRunIDParam interface{}
-	if sourceRunID != nil {
-		sourceRunIDParam = sourceRunID.String()
-	} else {
-		sourceRunIDParam = nil
-	}
-
-	mergeQuery := `
-		OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
-		WITH COALESCE(root.topology_generation, 0) AS topo_gen,
-		     COALESCE(root.service_metadata, '{}') AS svc_meta
-		MERGE (run:Run {run_id: $run_id})
-		ON CREATE SET run.schedule_name = $schedule_name,
-		              run.created_at = datetime(),
-		              run.topology_generation = topo_gen,
-		              run.service_metadata = svc_meta,
-		              run.kind = $kind
-		ON MATCH SET  run.kind = COALESCE(run.kind, $kind)
-		WITH run
-		FOREACH (_ IN CASE WHEN $source_run_id IS NULL THEN [] ELSE [1] END |
-		    SET run.source_run_id = $source_run_id
-		)
-		WITH run
-		UNWIND $assignments AS a
-		MATCH (node:Table {schema_name:   a.schema_name,
-		                   table_name:    a.table_name,
-		                   service_name:  a.service_name,
-		                   schedule_name: a.schedule_name})
-		MERGE (run)-[e:EXECUTES]->(node)
-		ON CREATE SET e.status = 'PENDING',
-		              e.manifest_version = COALESCE(node.manifest_version, ''),
-		              e.image_tag = COALESCE(node.image_tag, ''),
-		              e.task_id = a.task_id
-		RETURN count(e) AS edges_created
-	`
-	result, err := session.Run(ctx, mergeQuery, map[string]interface{}{
-		"run_id":        runID,
-		"schedule_name": scheduleName,
-		"kind":          kind,
-		"source_run_id": sourceRunIDParam,
-		"assignments":   assignments,
-	})
-	if err != nil {
-		return fmt.Errorf("SnapshotGraph: failed to create snapshot: %w", err)
-	}
-	if result.Next(ctx) {
-		count, _ := result.Record().Get("edges_created")
-		r.logger.Info("Graph snapshot created",
-			"run_id", runID,
-			"schedule_name", scheduleName,
-			"kind", kind,
-			"edges", count,
-		)
-	}
-	return result.Err()
 }
 
 // UpdateNodeStatus sets the execution status on a Table node via the EXECUTES edge.
@@ -852,144 +715,39 @@ func (r *RunRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int
 	return nil
 }
 
-// SnapshotSingleNodeRun creates a one-task :Run + :Task + :EXECUTES edge for a
-// single-node run. It supports two metadata sources:
+// Snapshot is the unified per-run snapshot routine (umbrella §3). Plan/materialise:
+//   - the selector inside params reads source/topology and returns a projection
+//   - the materialiser writes :Run + per-task :EXECUTES edges in one Cypher tx
 //
-//   - "latest": reads :TopologyRoot for topology_generation + service_metadata and
-//     reads :Table for per-node image_tag, manifest_version, and node_type.
-//   - "snapshot_of_run": reads the :EXECUTES edge of the source :Run to inherit
-//     the frozen image_tag and manifest_version, and inherits topology_generation +
-//     service_metadata from the source :Run node.
-//
-// Returns run.ErrTargetNotFound when no matching :Table (latest) or no matching
-// source :Run/:EXECUTES edge (stale) is found.
-func (r *RunRepository) SnapshotSingleNodeRun(
-	ctx context.Context,
-	runID, scheduleName string,
-	sourceRunID *uuid.UUID,
-	serviceName, schemaName, tableName string,
-	metadataSource string,
-) (taskID, imageTag, manifestVersion, nodeType string, err error) {
+// Returns the projection unchanged so the caller can build outbox events
+// (run.entries.dispatched:v1 with per-task Status + InheritedFromTaskID;
+// query.model:v1 only for PENDING rows) without re-reading Neo4j.
+func (r *RunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
-	taskIDValue := uuid.New().String()
-
-	params := map[string]interface{}{
-		"run_id":        runID,
-		"schedule_name": scheduleName,
-		"service_name":  serviceName,
-		"schema_name":   schemaName,
-		"table_name":    tableName,
-		"task_id":       taskIDValue,
-	}
-
-	var query string
-	switch metadataSource {
-	case "latest":
-		params["source_run_id"] = nil
-		query = `
-			OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
-			WITH COALESCE(root.topology_generation, 0) AS topo_gen,
-			     COALESCE(root.service_metadata, '{}') AS svc_meta
-			MATCH (tbl:Table {service_name: $service_name,
-			                  schema_name:  $schema_name,
-			                  table_name:   $table_name})
-			WHERE COALESCE(tbl.active, true)
-			WITH topo_gen, svc_meta, tbl LIMIT 1
-			MERGE (run:Run {run_id: $run_id})
-			ON CREATE SET run.schedule_name      = $schedule_name,
-			              run.created_at         = datetime(),
-			              run.kind               = 'single_node_run',
-			              run.topology_generation = topo_gen,
-			              run.service_metadata    = svc_meta
-			ON MATCH SET  run.kind = COALESCE(run.kind, 'single_node_run')
-			WITH run, tbl, topo_gen, svc_meta
-			MERGE (task:Task {task_id: $task_id})
-			ON CREATE SET task.status       = 'PENDING',
-			              task.service_name = $service_name,
-			              task.schema_name  = $schema_name,
-			              task.table_name   = $table_name
-			WITH run, tbl, task
-			MERGE (run)-[e:EXECUTES]->(tbl)
-			ON CREATE SET e.status           = 'PENDING',
-			              e.task_id          = $task_id,
-			              e.image_tag        = COALESCE(tbl.image_tag, ''),
-			              e.manifest_version = COALESCE(tbl.manifest_version, '')
-			RETURN e.task_id          AS task_id,
-			       e.image_tag        AS image_tag,
-			       e.manifest_version AS manifest_version,
-			       COALESCE(tbl.node_type, 'dbt-model') AS node_type
-		`
-	case "snapshot_of_run":
-		if sourceRunID == nil {
-			return "", "", "", "", fmt.Errorf("source_run_id required for stale mode")
+	var projection []snapshot.TaskProjection
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		var inner error
+		projection, inner = params.Selector.SelectTasks(ctx, tx, params)
+		if inner != nil {
+			return nil, inner
 		}
-		params["source_run_id"] = sourceRunID.String()
-		query = `
-			MATCH (src:Run {run_id: $source_run_id})-[srcEdge:EXECUTES]->
-			      (tbl:Table {service_name: $service_name,
-			                  schema_name:  $schema_name,
-			                  table_name:   $table_name})
-			WITH src, srcEdge, tbl LIMIT 1
-			MERGE (run:Run {run_id: $run_id})
-			ON CREATE SET run.schedule_name      = $schedule_name,
-			              run.created_at         = datetime(),
-			              run.kind               = 'single_node_run',
-			              run.topology_generation = src.topology_generation,
-			              run.service_metadata    = src.service_metadata,
-			              run.source_run_id       = $source_run_id
-			ON MATCH SET  run.kind = COALESCE(run.kind, 'single_node_run')
-			WITH run, tbl, src, srcEdge
-			MERGE (task:Task {task_id: $task_id})
-			ON CREATE SET task.status       = 'PENDING',
-			              task.service_name = $service_name,
-			              task.schema_name  = $schema_name,
-			              task.table_name   = $table_name
-			WITH run, tbl, task, srcEdge
-			MERGE (run)-[e:EXECUTES]->(tbl)
-			ON CREATE SET e.status           = 'PENDING',
-			              e.task_id          = $task_id,
-			              e.image_tag        = srcEdge.image_tag,
-			              e.manifest_version = srcEdge.manifest_version
-			RETURN e.task_id          AS task_id,
-			       e.image_tag        AS image_tag,
-			       e.manifest_version AS manifest_version,
-			       COALESCE(tbl.node_type, 'dbt-model') AS node_type
-		`
-	default:
-		return "", "", "", "", fmt.Errorf("SnapshotSingleNodeRun: invalid metadataSource %q", metadataSource)
-	}
-
-	result, err := session.Run(ctx, query, params)
+		if len(projection) == 0 {
+			return nil, snapshot.ErrEmptyProjection
+		}
+		return nil, snapshot.Materialise(ctx, tx, params, projection)
+	})
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("SnapshotSingleNodeRun: query failed: %w", err)
+		return nil, err
 	}
-	if !result.Next(ctx) {
-		// No matching row → target not found in the chosen source.
-		if rerr := result.Err(); rerr != nil {
-			return "", "", "", "", fmt.Errorf("SnapshotSingleNodeRun: result error: %w", rerr)
-		}
-		return "", "", "", "", run.ErrTargetNotFound
-	}
-	rec := result.Record()
-	taskID = safeString(recordValue(rec, "task_id"))
-	imageTag = safeString(recordValue(rec, "image_tag"))
-	manifestVersion = safeString(recordValue(rec, "manifest_version"))
-	nodeType = safeString(recordValue(rec, "node_type"))
-	if rerr := result.Err(); rerr != nil {
-		return "", "", "", "", fmt.Errorf("SnapshotSingleNodeRun: result error: %w", rerr)
-	}
-	r.logger.Info("Single-node run snapshot created",
-		"run_id", runID,
-		"schedule_name", scheduleName,
-		"metadata_source", metadataSource,
-		"task_id", taskID,
-		"image_tag", imageTag,
-		"manifest_version", manifestVersion,
-		"node_type", nodeType,
+	r.logger.Info("Snapshot created",
+		"run_id", params.RunID,
+		"schedule_name", params.ScheduleName,
+		"kind", params.Kind,
+		"tasks", len(projection),
 	)
-	return taskID, imageTag, manifestVersion, nodeType, nil
+	return projection, nil
 }
 
 // collectNodes drains a Neo4j result cursor into a []*domain.TableNode slice.

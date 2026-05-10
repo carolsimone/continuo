@@ -50,6 +50,7 @@ type SchedulerTrackerRepository interface {
 	IncrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (terminal, total int32, err error)
 	DecrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, n int32) error
 	SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error
+	SetTerminalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, terminal int32) error
 	// UpdateStatusTx updates the status column within an existing transaction.
 	UpdateStatusTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
 	// FinalizeRunTx sets status and completed_at = NOW() for terminal-state transitions.
@@ -632,6 +633,28 @@ func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx
 	`, id, total)
 	if err != nil {
 		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// SetTerminalTaskCountTx sets terminal_task_count for the given schedule.
+// Used by RunEntriesDispatchedHandler to seed the count when a projection
+// includes already-terminal task rows (e.g. SUCCEEDED inherits in a rebase).
+func (r *schedulerTrackerRepository) SetTerminalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, terminal int32) error {
+	res, err := tx.ExecContext(ctx, `
+		UPDATE scheduler_tracker
+		SET terminal_task_count = $2
+		WHERE schedule_id = $1
+	`, id, terminal)
+	if err != nil {
+		return fmt.Errorf("set terminal_task_count: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {

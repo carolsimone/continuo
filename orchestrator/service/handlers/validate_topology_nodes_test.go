@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	"github.com/carolsimone/continuo/pkg/events"
 )
 
 func TestValidateTopologyNodes_AllPopulated_ReturnsNil(t *testing.T) {
-	nodes := []domainCmd.TopologyNodePayload{
+	nodes := []domainEvent.ManifestLoadedNode{
 		{ServiceName: "svc-a", SchemaName: "raw", TableName: "users", ImageTag: "abc123"},
 		{ServiceName: "svc-b", SchemaName: "raw", TableName: "orders", ImageTag: "def456"},
 	}
@@ -27,7 +27,7 @@ func TestValidateTopologyNodes_EmptyInput_ReturnsNil(t *testing.T) {
 }
 
 func TestValidateTopologyNodes_SingleEmpty_ReturnsWrappedPermanent(t *testing.T) {
-	nodes := []domainCmd.TopologyNodePayload{
+	nodes := []domainEvent.ManifestLoadedNode{
 		{ServiceName: "svc-a", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}
 	err := validateTopologyNodes(nodes)
@@ -43,7 +43,7 @@ func TestValidateTopologyNodes_SingleEmpty_ReturnsWrappedPermanent(t *testing.T)
 }
 
 func TestValidateTopologyNodes_MultipleEmpty_AggregatedAndSorted(t *testing.T) {
-	nodes := []domainCmd.TopologyNodePayload{
+	nodes := []domainEvent.ManifestLoadedNode{
 		{ServiceName: "z-svc", SchemaName: "raw", TableName: "z-tbl", ImageTag: ""},
 		{ServiceName: "a-svc", SchemaName: "raw", TableName: "a-tbl", ImageTag: ""},
 		{ServiceName: "m-svc", SchemaName: "raw", TableName: "m-tbl", ImageTag: ""},
@@ -62,9 +62,9 @@ func TestValidateTopologyNodes_MultipleEmpty_AggregatedAndSorted(t *testing.T) {
 }
 
 func TestValidateTopologyNodes_OverTen_Truncated(t *testing.T) {
-	nodes := make([]domainCmd.TopologyNodePayload, 12)
+	nodes := make([]domainEvent.ManifestLoadedNode, 12)
 	for i := range nodes {
-		nodes[i] = domainCmd.TopologyNodePayload{
+		nodes[i] = domainEvent.ManifestLoadedNode{
 			ServiceName: fmt.Sprintf("svc-%02d", i),
 			SchemaName:  "raw",
 			TableName:   fmt.Sprintf("tbl-%02d", i),
@@ -90,9 +90,9 @@ func TestValidateTopologyNodes_OverTen_Truncated(t *testing.T) {
 }
 
 func TestValidateTopologyNodes_ExactlyTen_NoTruncation(t *testing.T) {
-	nodes := make([]domainCmd.TopologyNodePayload, 10)
+	nodes := make([]domainEvent.ManifestLoadedNode, 10)
 	for i := range nodes {
-		nodes[i] = domainCmd.TopologyNodePayload{
+		nodes[i] = domainEvent.ManifestLoadedNode{
 			ServiceName: fmt.Sprintf("svc-%02d", i),
 			SchemaName:  "raw",
 			TableName:   fmt.Sprintf("tbl-%02d", i),

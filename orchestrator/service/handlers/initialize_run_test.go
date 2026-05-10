@@ -7,8 +7,10 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,9 +18,9 @@ import (
 
 // ── extended fakeRunRepository for InitializeRun ─────────────────────────────
 // We reuse fakeRunRepository from handle_node_completed_test.go but need to
-// extend it with configurable behaviour for SnapshotGraph and GetScheduleInitNodes.
+// extend it with configurable behaviour for Snapshot and GetScheduleInitNodes.
 
-// snapshotCall records the arguments passed to SnapshotGraph for assertion.
+// snapshotCall records the arguments passed to Snapshot for assertion.
 type snapshotCall struct {
 	RunID        string
 	ScheduleName string
@@ -29,7 +31,6 @@ type snapshotCall struct {
 // extendedFakeRunRepository wraps fakeRunRepository and adds configurable fns.
 type extendedFakeRunRepository struct {
 	fakeRunRepository
-	snapshotGraphFn        func(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error
 	getScheduleInitNodesFn func(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error)
 
 	snapshotGraphCalls        int
@@ -37,15 +38,48 @@ type extendedFakeRunRepository struct {
 	snapshotCalls             []snapshotCall
 }
 
-func (f *extendedFakeRunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error {
+// Snapshot is the unified routine callers migrated to in PR2. The fake
+// records the call and returns a projection derived from the configured
+// getScheduleInitNodesFn — so a single test fixture drives both
+// `Snapshot()` (for the AllTasks payload) and `GetScheduleInitNodes()` (for
+// the seed/root dispatch ordering). The snapshotGraphCalls counter is kept
+// (for backward-compat with existing assertions) and incremented here.
+func (f *extendedFakeRunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
 	f.snapshotGraphCalls++
 	f.snapshotCalls = append(f.snapshotCalls, snapshotCall{
-		RunID: runID, ScheduleName: scheduleName, Kind: kind, SourceRunID: sourceRunID,
+		RunID: params.RunID, ScheduleName: params.ScheduleName, Kind: params.Kind, SourceRunID: params.SourceRunID,
 	})
-	if f.snapshotGraphFn != nil {
-		return f.snapshotGraphFn(ctx, runID, scheduleName, kind, sourceRunID)
+	// Build projection from the configured init-nodes fixture.
+	if f.getScheduleInitNodesFn == nil {
+		return nil, snapshot.ErrEmptyProjection
 	}
-	return nil
+	initNodes, err := f.getScheduleInitNodesFn(ctx, params.ScheduleName, params.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if initNodes == nil || len(initNodes.AllNodes) == 0 {
+		return nil, snapshot.ErrEmptyProjection
+	}
+	projection := make([]snapshot.TaskProjection, 0, len(initNodes.AllNodes))
+	for _, n := range initNodes.AllNodes {
+		taskID, _ := uuid.Parse(n.TaskID)
+		if taskID == uuid.Nil {
+			taskID = uuid.New()
+		}
+		projection = append(projection, snapshot.TaskProjection{
+			TaskID:          taskID,
+			ServiceName:     n.ServiceName,
+			SchemaName:      n.SchemaName,
+			TableName:       n.TableName,
+			ScheduleName:    n.ScheduleName,
+			NodeType:        n.NodeType,
+			InitialStatus:   "PENDING",
+			ImageTag:        n.ImageTag,
+			ManifestVersion: n.ManifestVersion,
+			MaxRetries:      2, // pkgevents.DefaultTaskMaxRetries
+		})
+	}
+	return projection, nil
 }
 
 func (f *extendedFakeRunRepository) GetScheduleInitNodes(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error) {
@@ -95,7 +129,7 @@ func TestInitializeRun_FreshInit(t *testing.T) {
 	}
 
 	h := handlers.NewInitializeRunHandler(uow, runRepo, newTestLogger())
-	cmd := domainCmd.InitializeRunCmd{
+	cmd := domainModel.InitializeRunInput{
 		ScheduleName: "daily",
 		RunID:        "run-123",
 	}
@@ -123,16 +157,16 @@ func TestInitializeRun_FreshInit(t *testing.T) {
 	require.NoError(t, json.Unmarshal(payload["run_id"], &runID))
 	assert.Equal(t, "run-123", runID)
 
-	var allNodes []domainCmd.NodePayload
+	var allNodes []domainEvent.RunInitializedNode
 	require.NoError(t, json.Unmarshal(payload["all_nodes"], &allNodes))
 	assert.Len(t, allNodes, 3, "all_nodes should have 3 entries")
 
-	var rootNodes []domainCmd.NodePayload
+	var rootNodes []domainEvent.RunInitializedNode
 	require.NoError(t, json.Unmarshal(payload["root_nodes"], &rootNodes))
 	assert.Len(t, rootNodes, 1, "root_nodes should have 1 entry")
 	assert.Equal(t, "orders", rootNodes[0].TableName)
 
-	var seedNodes []domainCmd.NodePayload
+	var seedNodes []domainEvent.RunInitializedNode
 	require.NoError(t, json.Unmarshal(payload["seed_nodes"], &seedNodes))
 	assert.Len(t, seedNodes, 1, "seed_nodes should have 1 entry")
 	assert.Equal(t, "seeds_data", seedNodes[0].TableName)
@@ -145,7 +179,7 @@ func TestInitializeRun_DuplicateMessage(t *testing.T) {
 	runRepo := &extendedFakeRunRepository{}
 
 	h := handlers.NewInitializeRunHandler(uow, runRepo, newTestLogger())
-	cmd := domainCmd.InitializeRunCmd{
+	cmd := domainModel.InitializeRunInput{
 		ScheduleName: "daily",
 		RunID:        "run-456",
 	}

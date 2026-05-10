@@ -6,61 +6,47 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
-	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // ── extended fakeRunRepository for HandleRerun ────────────────────────────────
+//
+// PR2 unification: rerun handler now drives runRepo.Snapshot via the
+// SourcePinnedDAG selector. The fake overrides Snapshot to return a
+// configurable projection (or error). All other read methods are stubbed by
+// the embedded fakeRunRepository.
 
 type rerunFakeRunRepository struct {
 	fakeRunRepository
 
-	getTaskIDForNodeFn            func(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error)
-	getSkippedDownstreamTaskIDsFn func(ctx context.Context, runID, schemaName, tableName string) ([]string, error)
-	getNodeEdgeDataFn             func(ctx context.Context, runID, schemaName, tableName string) (string, string, error)
-
-	getTaskIDForNodeCalls            int
-	getSkippedDownstreamTaskIDsCalls int
+	snapshotFn    func(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error)
+	snapshotCalls int
 }
 
-func (f *rerunFakeRunRepository) GetTaskIDForNode(ctx context.Context, runID, serviceName, schemaName, tableName string) (string, error) {
-	f.getTaskIDForNodeCalls++
-	if f.getTaskIDForNodeFn != nil {
-		return f.getTaskIDForNodeFn(ctx, runID, serviceName, schemaName, tableName)
-	}
-	return "task-id-target", nil
-}
-
-func (f *rerunFakeRunRepository) GetSkippedDownstreamTaskIDs(ctx context.Context, runID, schemaName, tableName string) ([]string, error) {
-	f.getSkippedDownstreamTaskIDsCalls++
-	if f.getSkippedDownstreamTaskIDsFn != nil {
-		return f.getSkippedDownstreamTaskIDsFn(ctx, runID, schemaName, tableName)
+func (f *rerunFakeRunRepository) Snapshot(
+	ctx context.Context,
+	params snapshot.Params,
+) ([]snapshot.TaskProjection, error) {
+	f.snapshotCalls++
+	if f.snapshotFn != nil {
+		return f.snapshotFn(ctx, params)
 	}
 	return nil, nil
-}
-func (f *rerunFakeRunRepository) MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*run.CascadedFailureNode, error) {
-	return nil, nil
-}
-func (f *rerunFakeRunRepository) ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error {
-	return nil
-}
-func (f *rerunFakeRunRepository) GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (string, string, error) {
-	if f.getNodeEdgeDataFn != nil {
-		return f.getNodeEdgeDataFn(ctx, runID, schemaName, tableName)
-	}
-	return "v3-stub", "tag-stub", nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func makeRerunCmd() domainCmd.HandleRerunCmd {
-	return domainCmd.HandleRerunCmd{
+func makeRerunCmd() domainModel.RerunInput {
+	return domainModel.RerunInput{
 		ScheduleName: "daily",
 		RunID:        "00000000-0000-0000-0000-000000000001",
+		SourceRunID:  "00000000-0000-0000-0000-000000000999",
 		ServiceName:  "svc1",
 		SchemaName:   "public",
 		TableName:    "orders",
@@ -69,134 +55,350 @@ func makeRerunCmd() domainCmd.HandleRerunCmd {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-// 1. Happy path: target + 2 failed downstream → 2 outbox entries, NO UpdateNodeStatus calls.
-func TestHandleRerun_WritesRunRerunDispatchedAndQueryModel(t *testing.T) {
+// 1. Happy path. Snapshot returns 3 rows: target (PENDING/rebased) +
+//    descendant (PENDING/rebased) + sibling (SUCCEEDED/inherited).
+//    Expect: ONE run.entries.dispatched:v1 with all 3 rows + TWO query.model:v1
+//    entries (only PENDING rows).
+func TestHandleRerun_HappyPath_ProjectsAndDispatches(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 
-	const targetTaskID = "task-orders"
-	const ds1TaskID = "task-downstream1"
-	const ds2TaskID = "task-downstream2"
+	targetTaskID := uuid.New()
+	descTaskID := uuid.New()
+	siblingTaskID := uuid.New()
+	inheritedRoot := uuid.New()
 
 	runRepo := &rerunFakeRunRepository{
-		getTaskIDForNodeFn: func(_ context.Context, runID, _, schema, table string) (string, error) {
-			assert.Equal(t, "00000000-0000-0000-0000-000000000001", runID)
-			assert.Equal(t, "public", schema)
-			assert.Equal(t, "orders", table)
-			return targetTaskID, nil
-		},
-		getSkippedDownstreamTaskIDsFn: func(_ context.Context, runID, schema, table string) ([]string, error) {
-			return []string{ds1TaskID, ds2TaskID}, nil
+		snapshotFn: func(_ context.Context, p snapshot.Params) ([]snapshot.TaskProjection, error) {
+			// Sanity-check the params the handler hands us.
+			assert.Equal(t, "rerun", p.Kind)
+			assert.Equal(t, "00000000-0000-0000-0000-000000000001", p.RunID)
+			require.NotNil(t, p.SourceRunID)
+			assert.Equal(t, "00000000-0000-0000-0000-000000000999", p.SourceRunID.String())
+			sel, ok := p.Selector.(snapshot.SourcePinnedDAG)
+			require.True(t, ok, "selector must be SourcePinnedDAG")
+			assert.Equal(t, "svc1", sel.TargetService)
+			assert.Equal(t, "public", sel.TargetSchema)
+			assert.Equal(t, "orders", sel.TargetTable)
+
+			return []snapshot.TaskProjection{
+				{
+					TaskID:          targetTaskID,
+					ServiceName:     "svc1",
+					SchemaName:      "public",
+					TableName:       "orders",
+					ScheduleName:    "daily",
+					NodeType:        "dbt-model",
+					InitialStatus:   "PENDING",
+					ImageTag:        "v3-pinned",
+					ManifestVersion: "m3-pinned",
+					MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				},
+				{
+					TaskID:          descTaskID,
+					ServiceName:     "svc1",
+					SchemaName:      "public",
+					TableName:       "order_lines",
+					ScheduleName:    "daily",
+					NodeType:        "dbt-model",
+					InitialStatus:   "PENDING",
+					ImageTag:        "v3-pinned",
+					ManifestVersion: "m3-pinned",
+					MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				},
+				{
+					TaskID:              siblingTaskID,
+					ServiceName:         "svc1",
+					SchemaName:          "public",
+					TableName:           "users",
+					ScheduleName:        "daily",
+					NodeType:            "dbt-model",
+					InitialStatus:       "SUCCEEDED",
+					ImageTag:            "v3-pinned",
+					ManifestVersion:     "m3-pinned",
+					InheritedFromTaskID: &inheritedRoot,
+					MaxRetries:          0,
+				},
+			}, nil
 		},
 	}
 
 	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
-	cmd := makeRerunCmd()
+	require.NoError(t, h.Handle(ctx, makeRerunCmd(), "msg-rerun-happy"))
+	require.True(t, uow.CommittedTx, "transaction must be committed")
+	require.Equal(t, 1, runRepo.snapshotCalls)
 
-	err := h.Handle(ctx, cmd, "msg-rerun-1")
-	require.NoError(t, err)
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 3, "expect 1 run.entries.dispatched + 2 query.model entries")
 
-	// No direct node status mutations — those are handled by state via the event.
-	assert.Equal(t, 0, runRepo.updateNodeStatusCalls, "UpdateNodeStatus must NOT be called")
+	// ── Entry 0: run.entries.dispatched:v1 ─────────────────────────────────────
+	require.Equal(t, "run.entries.dispatched:v1", entries[0].StreamName)
+	require.Equal(t, "run_entries_dispatched", entries[0].EventType)
+	require.Equal(t, "orchestrator", entries[0].AggregateType)
+	require.Equal(t, "pending", entries[0].Status)
 
-	assert.True(t, uow.CommittedTx, "transaction should be committed")
-
-	// Exactly 2 outbox entries: run.rerun.dispatched + query.model
-	require.Len(t, uow.outboxRepo.CreatedEntries, 2, "expected exactly 2 outbox entries")
-
-	// ── Entry 0: run.rerun.dispatched:v1 ─────────────────────────────────────
-	dispatchedEntry := uow.outboxRepo.CreatedEntries[0]
-	assert.Equal(t, "run_rerun_dispatched", dispatchedEntry.EventType)
-	assert.Equal(t, "run.rerun.dispatched:v1", dispatchedEntry.StreamName)
-	assert.Equal(t, "orchestrator", dispatchedEntry.AggregateType)
-	assert.Equal(t, "pending", dispatchedEntry.Status)
-
-	var dispatched pkgEvents.RunRerunDispatched
-	require.NoError(t, json.Unmarshal(dispatchedEntry.Payload, &dispatched))
+	var dispatched pkgEvents.RunEntriesDispatched
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &dispatched))
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", dispatched.ScheduleID)
 	assert.Equal(t, "daily", dispatched.ScheduleName)
-	assert.Equal(t, targetTaskID, dispatched.EntryTaskID)
-	require.Len(t, dispatched.TasksToReset, 3, "target + 2 downstream")
-	assert.Equal(t, targetTaskID, dispatched.TasksToReset[0], "target task must be first")
-	assert.Contains(t, dispatched.TasksToReset, ds1TaskID)
-	assert.Contains(t, dispatched.TasksToReset, ds2TaskID)
+	assert.Equal(t, int32(3), dispatched.TotalTaskCount)
+	require.Len(t, dispatched.AllTasks, 3)
 
-	// ── Entry 1: query.model:v1 ───────────────────────────────────────────────
-	queryModelEntry := uow.outboxRepo.CreatedEntries[1]
-	assert.Equal(t, "node_ready_for_execution", queryModelEntry.EventType)
-	assert.Equal(t, "query.model:v1", queryModelEntry.StreamName)
-	assert.Equal(t, "orchestrator", queryModelEntry.AggregateType)
-	assert.Equal(t, "pending", queryModelEntry.Status)
+	// Per-task assertions: rebased rows are "pending" with empty inherited;
+	// inherited rows are "succeeded" with InheritedFromTaskID == root.
+	byTable := make(map[string]pkgEvents.DispatchedTask, 3)
+	for _, dt := range dispatched.AllTasks {
+		byTable[dt.TableName] = dt
+	}
+	require.Contains(t, byTable, "orders")
+	require.Contains(t, byTable, "order_lines")
+	require.Contains(t, byTable, "users")
 
-	var queryModel domain.NodeReadyForExecution
-	require.NoError(t, json.Unmarshal(queryModelEntry.Payload, &queryModel))
-	assert.Equal(t, "00000000-0000-0000-0000-000000000001", queryModel.ScheduleID)
-	assert.Equal(t, "daily", queryModel.ScheduleName)
-	assert.Equal(t, targetTaskID, queryModel.TaskID)
-	assert.Equal(t, "public", queryModel.SchemaName)
-	assert.Equal(t, "orders", queryModel.TableName)
-	// service_name comes from the graph mock (fakeRunRepository.GetNodeServiceName returns "test-service")
-	assert.Equal(t, "test-service", queryModel.ServiceName)
-	assert.NotEmpty(t, queryModel.ManifestVersion, "rerun query.model must carry manifest_version")
-	assert.NotEmpty(t, queryModel.ImageTag, "rerun query.model must carry image_tag")
+	tgt := byTable["orders"]
+	assert.Equal(t, targetTaskID.String(), tgt.TaskID)
+	assert.Equal(t, "pending", tgt.Status)
+	assert.Empty(t, tgt.InheritedFromTaskID, "rebased rows must NOT carry InheritedFromTaskID")
+	assert.Equal(t, pkgEvents.DefaultTaskMaxRetries, tgt.MaxRetries)
+	assert.Equal(t, "v3-pinned", tgt.ImageTag)
+	assert.Equal(t, "m3-pinned", tgt.ManifestVersion)
+
+	desc := byTable["order_lines"]
+	assert.Equal(t, descTaskID.String(), desc.TaskID)
+	assert.Equal(t, "pending", desc.Status)
+	assert.Empty(t, desc.InheritedFromTaskID)
+
+	inh := byTable["users"]
+	assert.Equal(t, siblingTaskID.String(), inh.TaskID)
+	assert.Equal(t, "succeeded", inh.Status)
+	assert.Equal(t, inheritedRoot.String(), inh.InheritedFromTaskID,
+		"inherited rows must carry the root task_id")
+	assert.Equal(t, int32(0), inh.MaxRetries, "inherited rows do not retry")
+
+	// ── Entries 1 & 2: query.model:v1 — only for PENDING (rebased) rows ────────
+	queryEntries := entries[1:]
+	require.Len(t, queryEntries, 2)
+	dispatchedTables := map[string]bool{}
+	for _, qe := range queryEntries {
+		require.Equal(t, "query.model:v1", qe.StreamName)
+		require.Equal(t, "node_ready_for_execution", qe.EventType)
+		require.Equal(t, "pending", qe.Status)
+		var qevt domain.NodeReadyForExecution
+		require.NoError(t, json.Unmarshal(qe.Payload, &qevt))
+		assert.Equal(t, "00000000-0000-0000-0000-000000000001", qevt.ScheduleID)
+		assert.Equal(t, "daily", qevt.ScheduleName)
+		assert.Equal(t, "v3-pinned", qevt.ImageTag)
+		assert.Equal(t, "m3-pinned", qevt.ManifestVersion)
+		assert.NotEmpty(t, qevt.JobName, "computed job name must be present")
+		dispatchedTables[qevt.TableName] = true
+	}
+	assert.True(t, dispatchedTables["orders"], "target must be dispatched")
+	assert.True(t, dispatchedTables["order_lines"], "rebased descendant must be dispatched")
+	assert.False(t, dispatchedTables["users"], "inherited row must NOT be dispatched")
 }
 
-// 2. Target only, no failed downstream → 2 outbox entries, TasksToReset has 1 entry.
-func TestHandleRerun_NoFailedDownstream(t *testing.T) {
+// 2. ErrTargetNotFound from Snapshot → ONE run.entries.dispatch_failed:v1
+//    outbox entry; tx committed; no query.model.
+func TestHandleRerun_TargetNotFound_EmitsDispatchFailed(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 
-	const targetTaskID = "task-orders"
-
 	runRepo := &rerunFakeRunRepository{
-		getTaskIDForNodeFn: func(_ context.Context, _, _, _, _ string) (string, error) {
-			return targetTaskID, nil
-		},
-		getSkippedDownstreamTaskIDsFn: func(_ context.Context, _, _, _ string) ([]string, error) {
-			return nil, nil // no skipped downstream
+		snapshotFn: func(_ context.Context, _ snapshot.Params) ([]snapshot.TaskProjection, error) {
+			return nil, snapshot.ErrTargetNotFound
 		},
 	}
 
 	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+	require.NoError(t, h.Handle(ctx, makeRerunCmd(), "msg-rerun-tnf"),
+		"ErrTargetNotFound must not surface as a handler error")
+	require.True(t, uow.CommittedTx, "transaction must still be committed")
 
-	err := h.Handle(ctx, makeRerunCmd(), "msg-rerun-2")
-	require.NoError(t, err)
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 1, "expect exactly 1 outbox entry: run.entries.dispatch_failed:v1")
+	require.Equal(t, "run.entries.dispatch_failed:v1", entries[0].StreamName)
+	require.Equal(t, "run_entries_dispatch_failed", entries[0].EventType)
+	require.Equal(t, "pending", entries[0].Status)
 
-	require.Len(t, uow.outboxRepo.CreatedEntries, 2)
-
-	var dispatched pkgEvents.RunRerunDispatched
-	require.NoError(t, json.Unmarshal(uow.outboxRepo.CreatedEntries[0].Payload, &dispatched))
-	require.Len(t, dispatched.TasksToReset, 1, "only the target task should be reset")
-	assert.Equal(t, targetTaskID, dispatched.TasksToReset[0])
-	assert.Equal(t, targetTaskID, dispatched.EntryTaskID)
+	var failed pkgEvents.RunEntriesDispatchFailed
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", failed.ScheduleID)
+	assert.Equal(t, "daily", failed.ScheduleName)
+	assert.Equal(t, "target_not_found", failed.Reason)
 }
 
-// 3. Duplicate message → skip processing entirely.
-func TestHandleRerun_DuplicateMessage(t *testing.T) {
+// 3. ErrEmptyProjection from Snapshot → run.entries.dispatch_failed with
+//    reason="rerun_yielded_empty_projection".
+func TestHandleRerun_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
-	runRepo := &rerunFakeRunRepository{}
+
+	runRepo := &rerunFakeRunRepository{
+		snapshotFn: func(_ context.Context, _ snapshot.Params) ([]snapshot.TaskProjection, error) {
+			return nil, snapshot.ErrEmptyProjection
+		},
+	}
+
+	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+	require.NoError(t, h.Handle(ctx, makeRerunCmd(), "msg-rerun-empty"))
+	require.True(t, uow.CommittedTx)
+
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 1)
+	require.Equal(t, "run.entries.dispatch_failed:v1", entries[0].StreamName)
+
+	var failed pkgEvents.RunEntriesDispatchFailed
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
+	assert.Equal(t, "rerun_yielded_empty_projection", failed.Reason)
+}
+
+// 4. Non-target terminal statuses (FAILED/CANCELLED/SKIPPED) inherited from the
+//    source pinned DAG must be preserved verbatim in run.entries.dispatched:v1
+//    and must NOT trigger query.model:v1 dispatch. Bug B2 (cycle 2): the
+//    handler used to coerce any non-SUCCEEDED InitialStatus to "pending",
+//    creating a zombie task_tracker row state would never finalize.
+func TestHandleRerun_PreservesNonTargetTerminalStatuses(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name           string
+		terminalStatus string
+		wantStatusWire string
+	}{
+		{name: "failed", terminalStatus: "FAILED", wantStatusWire: "failed"},
+		{name: "cancelled", terminalStatus: "CANCELLED", wantStatusWire: "cancelled"},
+		{name: "skipped", terminalStatus: "SKIPPED", wantStatusWire: "skipped"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			uow := newFakeUnitOfWork()
+
+			targetTaskID := uuid.New()
+			succTaskID := uuid.New()
+			termTaskID := uuid.New()
+			succInheritedRoot := uuid.New()
+			termInheritedRoot := uuid.New()
+
+			runRepo := &rerunFakeRunRepository{
+				snapshotFn: func(_ context.Context, _ snapshot.Params) ([]snapshot.TaskProjection, error) {
+					return []snapshot.TaskProjection{
+						{
+							TaskID:          targetTaskID,
+							ServiceName:     "svc1",
+							SchemaName:      "public",
+							TableName:       "orders",
+							ScheduleName:    "daily",
+							NodeType:        "dbt-model",
+							InitialStatus:   "PENDING",
+							ImageTag:        "v3-pinned",
+							ManifestVersion: "m3-pinned",
+							MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+						},
+						{
+							TaskID:              succTaskID,
+							ServiceName:         "svc1",
+							SchemaName:          "public",
+							TableName:           "users",
+							ScheduleName:        "daily",
+							NodeType:            "dbt-model",
+							InitialStatus:       "SUCCEEDED",
+							ImageTag:            "v3-pinned",
+							ManifestVersion:     "m3-pinned",
+							InheritedFromTaskID: &succInheritedRoot,
+							MaxRetries:          0,
+						},
+						{
+							TaskID:              termTaskID,
+							ServiceName:         "svc1",
+							SchemaName:          "public",
+							TableName:           "events",
+							ScheduleName:        "daily",
+							NodeType:            "dbt-model",
+							InitialStatus:       tc.terminalStatus,
+							ImageTag:            "v3-pinned",
+							ManifestVersion:     "m3-pinned",
+							InheritedFromTaskID: &termInheritedRoot,
+							MaxRetries:          0,
+						},
+					}, nil
+				},
+			}
+
+			h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
+			require.NoError(t, h.Handle(ctx, makeRerunCmd(), "msg-rerun-term-"+tc.name))
+			require.True(t, uow.CommittedTx)
+
+			entries := uow.outboxRepo.CreatedEntries
+			// Expect: 1 run.entries.dispatched:v1 + 1 query.model:v1 (only PENDING row).
+			require.Len(t, entries, 2, "expect 1 dispatched + 1 query.model (only the PENDING target)")
+
+			require.Equal(t, "run.entries.dispatched:v1", entries[0].StreamName)
+			var dispatched pkgEvents.RunEntriesDispatched
+			require.NoError(t, json.Unmarshal(entries[0].Payload, &dispatched))
+			require.Equal(t, int32(3), dispatched.TotalTaskCount)
+			require.Len(t, dispatched.AllTasks, 3)
+
+			byTable := make(map[string]pkgEvents.DispatchedTask, 3)
+			for _, dt := range dispatched.AllTasks {
+				byTable[dt.TableName] = dt
+			}
+			require.Contains(t, byTable, "orders")
+			require.Contains(t, byTable, "users")
+			require.Contains(t, byTable, "events")
+
+			assert.Equal(t, "pending", byTable["orders"].Status, "PENDING (rebased target) → pending")
+			assert.Equal(t, "succeeded", byTable["users"].Status, "SUCCEEDED → succeeded")
+			assert.Equal(t, tc.wantStatusWire, byTable["events"].Status,
+				"non-target terminal status %q must be preserved verbatim (lowercased), not coerced to pending",
+				tc.terminalStatus)
+
+			// query.model:v1 must fire ONLY for the PENDING row.
+			require.Equal(t, "query.model:v1", entries[1].StreamName)
+			var qevt domain.NodeReadyForExecution
+			require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
+			assert.Equal(t, "orders", qevt.TableName,
+				"only the rebased PENDING target should receive a query.model:v1 dispatch")
+		})
+	}
+}
+
+// 5. Second delivery of the same messageID is a no-op (dedup).
+func TestHandleRerun_DedupSecondDelivery(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+
+	taskID := uuid.New()
+	runRepo := &rerunFakeRunRepository{
+		snapshotFn: func(_ context.Context, _ snapshot.Params) ([]snapshot.TaskProjection, error) {
+			return []snapshot.TaskProjection{
+				{
+					TaskID:          taskID,
+					ServiceName:     "svc1",
+					SchemaName:      "public",
+					TableName:       "orders",
+					ScheduleName:    "daily",
+					NodeType:        "dbt-model",
+					InitialStatus:   "PENDING",
+					ImageTag:        "v3",
+					ManifestVersion: "m3",
+					MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				},
+			}, nil
+		},
+	}
 
 	h := handlers.NewHandleRerunHandler(uow, runRepo, newTestLogger())
 	cmd := makeRerunCmd()
 
-	// First call: processes normally.
-	err := h.Handle(ctx, cmd, "dup-rerun-1")
-	require.NoError(t, err)
-	assert.Equal(t, 1, runRepo.getTaskIDForNodeCalls)
+	// First delivery: processes normally.
+	require.NoError(t, h.Handle(ctx, cmd, "msg-rerun-dup"))
+	require.Equal(t, 1, runRepo.snapshotCalls)
+	firstCount := len(uow.outboxRepo.CreatedEntries)
+	require.Equal(t, 2, firstCount, "1 dispatched + 1 query.model")
 
-	// Reset tracking.
-	runRepo.getTaskIDForNodeCalls = 0
-	runRepo.getSkippedDownstreamTaskIDsCalls = 0
-	uow.outboxRepo.CreatedEntries = nil
-	uow.CommittedTx = false
-
-	// Second call with same message ID: should be skipped.
-	err = h.Handle(ctx, cmd, "dup-rerun-1")
-	require.NoError(t, err)
-
-	assert.Equal(t, 0, runRepo.getTaskIDForNodeCalls, "GetTaskIDForNode must NOT be called for duplicate")
-	assert.Equal(t, 0, runRepo.getSkippedDownstreamTaskIDsCalls, "GetSkippedDownstreamTaskIDs must NOT be called for duplicate")
-	assert.Equal(t, 0, runRepo.updateNodeStatusCalls, "UpdateNodeStatus must NOT be called for duplicate")
-	assert.Len(t, uow.outboxRepo.CreatedEntries, 0, "no outbox entries for duplicate")
+	// Second delivery with the same message ID: must be skipped.
+	require.NoError(t, h.Handle(ctx, cmd, "msg-rerun-dup"))
+	assert.Equal(t, 1, runRepo.snapshotCalls, "Snapshot must NOT be called again")
+	assert.Len(t, uow.outboxRepo.CreatedEntries, firstCount,
+		"outbox count must not grow on duplicate delivery")
 }

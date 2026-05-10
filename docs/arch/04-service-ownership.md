@@ -46,7 +46,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | Redis produces | `scheduler.started:v1`, `rerun:v1`, `run.finalized:v1`, `schedule.cancelled:v1` |
 | Outbound gRPC calls | none |
 
-> Internal pipeline writes that previously crossed gRPC (`UpdateScheduler`, `UpdateSchedulerInitStatus`, `UpdateTask`, `CreateTaskExecution`, `ResetInProgressInitializations`) are now event-driven via Redis consumers. The remaining gRPC surface is UI-facing reads + user-initiated commands only.
+> All internal pipeline writes (scheduler/task/init-status updates, task-execution records, in-progress initialisation resets) flow through Redis consumers. The gRPC surface is UI-facing reads + user-initiated commands only.
 
 ## `orchestrator`
 

@@ -16,7 +16,7 @@ import (
 
 // RunEntriesDispatchFailedHandler processes run.entries.dispatch_failed:v1 events.
 // Counterpart of RunEntriesDispatchedHandler: when orchestrator cannot produce
-// dispatch work for a run (e.g. SnapshotSingleNodeRun → ErrTargetNotFound),
+// dispatch work for a run (e.g. Snapshot+SingleNode → ErrTargetNotFound),
 // state finalizes the scheduler_tracker as failed and emits run.finalized:v1.
 type RunEntriesDispatchFailedHandler struct {
 	db            *sqlx.DB

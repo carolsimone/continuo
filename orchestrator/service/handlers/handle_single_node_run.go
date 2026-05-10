@@ -11,8 +11,9 @@ import (
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
@@ -29,7 +30,7 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, log
 	return &HandleSingleNodeRunHandler{uow: u, runRepo: runRepo, logger: logger}
 }
 
-// Handle processes a SingleNodeRunRequest derived from a
+// Handle processes a SingleNodeRunInput derived from a
 // trigger.single_node_run:v1 message.
 //
 // It runs the dedup→snapshot→outbox flow:
@@ -37,7 +38,7 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, log
 //  2. Begin transaction; defer Rollback.
 //  3. Dedup on messageID with stream "trigger.single_node_run:v1".
 //  4. Parse cmd.SourceRunID → *uuid.UUID (nil if empty).
-//  5. Call runRepo.SnapshotSingleNodeRun.
+//  5. Call runRepo.Snapshot with a SingleNode selector.
 //     - ErrTargetNotFound: emit run.entries.dispatch_failed:v1, mark dedup
 //       completed, commit, return nil.
 //     - Other errors: return wrapped error (triggers retry).
@@ -45,7 +46,7 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, log
 //  7. Emit query.model:v1 with NodeReadyForExecution payload.
 //  8. Mark dedup state="completed".
 //  9. Commit.
-func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.SingleNodeRunRequest, messageID string) error {
+func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel.SingleNodeRunInput, messageID string) error {
 	h.logger.Info("Processing single-node run",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
@@ -55,7 +56,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.S
 
 	cmdPayload, err := json.Marshal(cmd)
 	if err != nil {
-		return fmt.Errorf("marshal command: %w", err)
+		return fmt.Errorf("marshal input: %w", err)
 	}
 
 	if err := h.uow.Begin(ctx); err != nil {
@@ -80,15 +81,20 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.S
 		sourceRunUUID = &parsed
 	}
 
-	taskID, imageTag, manifestVersion, nodeType, snapErr := h.runRepo.SnapshotSingleNodeRun(
-		ctx,
-		cmd.RunID, cmd.ScheduleName,
-		sourceRunUUID,
-		cmd.ServiceName, cmd.SchemaName, cmd.TableName,
-		cmd.MetadataSource,
-	)
+	projection, snapErr := h.runRepo.Snapshot(ctx, snapshot.Params{
+		RunID:        cmd.RunID,
+		ScheduleName: cmd.ScheduleName,
+		Kind:         "single_node_run",
+		SourceRunID:  sourceRunUUID,
+		Selector: snapshot.SingleNode{
+			ServiceName:    cmd.ServiceName,
+			SchemaName:     cmd.SchemaName,
+			TableName:      cmd.TableName,
+			MetadataSource: cmd.MetadataSource,
+		},
+	})
 	if snapErr != nil {
-		if errors.Is(snapErr, run.ErrTargetNotFound) {
+		if errors.Is(snapErr, snapshot.ErrTargetNotFound) || errors.Is(snapErr, snapshot.ErrEmptyProjection) {
 			if ferr := h.emitDispatchFailed(ctx, cmd, msgProcessingID, "target_not_found"); ferr != nil {
 				return ferr
 			}
@@ -99,6 +105,14 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainCmd.S
 		}
 		return fmt.Errorf("snapshot single-node run: %w", snapErr)
 	}
+	if len(projection) != 1 {
+		return fmt.Errorf("single-node-run: expected exactly 1 task in projection, got %d", len(projection))
+	}
+	sole := projection[0]
+	taskID := sole.TaskID.String()
+	imageTag := sole.ImageTag
+	manifestVersion := sole.ManifestVersion
+	nodeType := sole.NodeType
 
 	scheduleUUID, err := uuid.Parse(cmd.RunID)
 	if err != nil {
@@ -244,7 +258,7 @@ func (h *HandleSingleNodeRunHandler) dedup(
 // opposite outcome (state will mark the row as failed and emit run.finalized:v1).
 func (h *HandleSingleNodeRunHandler) emitDispatchFailed(
 	ctx context.Context,
-	cmd domainCmd.SingleNodeRunRequest,
+	cmd domainModel.SingleNodeRunInput,
 	msgProcessingID uuid.UUID,
 	reason string,
 ) error {

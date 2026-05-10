@@ -33,9 +33,10 @@ func NewRunEntriesDispatchedConsumer(
 	db *sqlx.DB,
 	schedulerRepo postgres.SchedulerTrackerRepository,
 	taskRepo postgres.TaskTrackerRepository,
+	outboxRepo postgres.OutboxRepository,
 	logger *slog.Logger,
 ) (*RunEntriesDispatchedConsumer, error) {
-	handler := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, logger)
+	handler := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
 	c := &RunEntriesDispatchedConsumer{
 		client:        client,
 		streamName:    streamName,

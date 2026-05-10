@@ -22,6 +22,7 @@ type RunEntriesDispatchedHandler struct {
 	db            *sqlx.DB
 	schedulerRepo postgres.SchedulerTrackerRepository
 	taskRepo      postgres.TaskTrackerRepository
+	outboxRepo    postgres.OutboxRepository
 	logger        *slog.Logger
 }
 
@@ -30,12 +31,14 @@ func NewRunEntriesDispatchedHandler(
 	db *sqlx.DB,
 	schedulerRepo postgres.SchedulerTrackerRepository,
 	taskRepo postgres.TaskTrackerRepository,
+	outboxRepo postgres.OutboxRepository,
 	logger *slog.Logger,
 ) *RunEntriesDispatchedHandler {
 	return &RunEntriesDispatchedHandler{
 		db:            db,
 		schedulerRepo: schedulerRepo,
 		taskRepo:      taskRepo,
+		outboxRepo:    outboxRepo,
 		logger:        logger,
 	}
 }
@@ -119,19 +122,49 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 			_ = tx.Rollback()
 			return true, nil
 		}
-			tasks = append(tasks, &model.TaskTracker{
-				TaskID:          taskID,
-				ScheduleID:      scheduleID,
-				CreatedAt:       now,
-				ServiceName:     t.ServiceName,
-				SchemaName:      t.SchemaName,
-				TableName:       t.TableName,
-				JobName:         jobName,
-				Status:          model.TaskStatusPending,
-				MaxRetries:      int(t.MaxRetries),
-				ManifestVersion: t.ManifestVersion,
-				ImageTag:        t.ImageTag,
-			})
+
+		// PR2: per-task Status (default "pending" for backward-compat with pre-PR2 producers).
+		// Rebased tasks arrive as "pending"; tasks inherited from a previous successful run
+		// arrive as "succeeded" (carrying their original task_id via InheritedFromTaskID).
+		domainStatus := model.TaskStatusPending
+		if t.Status != "" {
+			s, statusErr := model.ParseTaskStatus(t.Status)
+			if statusErr != nil {
+				h.logger.Error("run.entries.dispatched: invalid per-task status — discarding message",
+					"task_id", t.TaskID, "status", t.Status, "error", statusErr)
+				_ = tx.Rollback()
+				return true, nil
+			}
+			domainStatus = s
+		}
+
+		// PR2: optional lineage pointer to the root task this row inherits from.
+		var inheritedFrom *uuid.UUID
+		if t.InheritedFromTaskID != "" {
+			parsed, perr := uuid.Parse(t.InheritedFromTaskID)
+			if perr != nil {
+				h.logger.Error("run.entries.dispatched: invalid inherited_from_task_id — discarding message",
+					"task_id", t.TaskID, "inherited_from", t.InheritedFromTaskID, "error", perr)
+				_ = tx.Rollback()
+				return true, nil
+			}
+			inheritedFrom = &parsed
+		}
+
+		tasks = append(tasks, &model.TaskTracker{
+			TaskID:              taskID,
+			ScheduleID:          scheduleID,
+			CreatedAt:           now,
+			ServiceName:         t.ServiceName,
+			SchemaName:          t.SchemaName,
+			TableName:           t.TableName,
+			JobName:             jobName,
+			Status:              domainStatus,
+			MaxRetries:          int(t.MaxRetries),
+			ManifestVersion:     t.ManifestVersion,
+			ImageTag:            t.ImageTag,
+			InheritedFromTaskID: inheritedFrom,
+		})
 	}
 
 	if txErr := h.taskRepo.BulkCreateTx(ctx, tx, tasks); txErr != nil {
@@ -146,8 +179,81 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 		return false, fmt.Errorf("update initialization_status: %w", txErr)
 	}
 
-	if txErr := h.schedulerRepo.UpdateStatusTx(ctx, tx, scheduleID, string(model.SchedulerStatusRunning)); txErr != nil {
-		return false, fmt.Errorf("update status to running: %w", txErr)
+	// PR2 auto-rollup: if every projected task is already terminal, the run is
+	// born complete. Transition straight to a terminal status (with completed_at)
+	// rather than going through RUNNING. Mixed-terminal (some failed/cancelled)
+	// is treated as FAILED conservatively. The all-PENDING / mixed-with-PENDING
+	// case keeps existing cron/single-node-run/rerun behaviour: go to RUNNING.
+	allTerminal := true
+	allSucceeded := true
+	terminalCount := int32(0)
+	for _, task := range tasks {
+		if task.Status == model.TaskStatusPending || task.Status == model.TaskStatusRunning {
+			allTerminal = false
+			allSucceeded = false
+			continue
+		}
+		terminalCount++
+		if task.Status != model.TaskStatusSucceeded {
+			allSucceeded = false
+		}
+	}
+
+	if allTerminal {
+		terminal := string(model.SchedulerStatusFailed)
+		if allSucceeded {
+			terminal = string(model.SchedulerStatusSucceeded)
+		}
+		if txErr := h.schedulerRepo.FinalizeRunTx(ctx, tx, scheduleID, terminal); txErr != nil {
+			return false, fmt.Errorf("finalize scheduler to %s: %w", terminal, txErr)
+		}
+		// Seed terminal_task_count for observability — FinalizeRunTx only updates
+		// status + completed_at, so without this the rolled-up row carries
+		// terminal_task_count=0 despite all tasks being terminal.
+		if terminalCount > 0 {
+			if txErr := h.schedulerRepo.SetTerminalTaskCountTx(ctx, tx, scheduleID, terminalCount); txErr != nil {
+				return false, fmt.Errorf("seed terminal_task_count on rollup: %w", txErr)
+			}
+		}
+
+		// Emit run.finalized:v1 in the same tx so orchestrator finalizes the
+		// Neo4j :Run. Without this, the auto-rollup run stays "active" in the
+		// orchestrator's projection forever.
+		finalizedEvt := events.RunFinalized{
+			ScheduleID:   scheduleID.String(),
+			ScheduleName: scheduler.ScheduleName,
+			Status:       terminal,
+		}
+		finalizedPayload, marshalErr := json.Marshal(finalizedEvt)
+		if marshalErr != nil {
+			return false, fmt.Errorf("marshal run.finalized payload: %w", marshalErr)
+		}
+		outboxEntry := &postgres.OutboxEntry{
+			ID:            uuid.New(),
+			AggregateType: "scheduler_tracker",
+			AggregateID:   scheduleID,
+			EventType:     "run.finalized:v1",
+			Payload:       finalizedPayload,
+			StreamName:    "run.finalized:v1",
+			Status:        "pending",
+			MaxRetries:    5,
+			RetryCount:    0,
+			CreatedAt:     time.Now(),
+		}
+		if txErr := h.outboxRepo.Create(ctx, tx, outboxEntry); txErr != nil {
+			return false, fmt.Errorf("create outbox entry for run.finalized: %w", txErr)
+		}
+	} else {
+		// Seed terminal_task_count from inherited terminal rows so the run can
+		// finalize when the remaining pending tasks reach terminal status.
+		if terminalCount > 0 {
+			if txErr := h.schedulerRepo.SetTerminalTaskCountTx(ctx, tx, scheduleID, terminalCount); txErr != nil {
+				return false, fmt.Errorf("seed terminal_task_count: %w", txErr)
+			}
+		}
+		if txErr := h.schedulerRepo.UpdateStatusTx(ctx, tx, scheduleID, string(model.SchedulerStatusRunning)); txErr != nil {
+			return false, fmt.Errorf("update status to running: %w", txErr)
+		}
 	}
 
 	// Record processed message for dedup.

@@ -3,17 +3,20 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
 
-// InitializeRunHandler handles the InitializeRun command.
+// InitializeRunHandler handles the initialize-run input.
 type InitializeRunHandler struct {
 	uow           uow.UnitOfWork
 	runRepo       run.Repository
@@ -35,8 +38,8 @@ func NewInitializeRunHandler(
 	}
 }
 
-// Handle processes the InitializeRun command.
-func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainCmd.InitializeRunCmd, messageID string) error {
+// Handle processes the initialize-run input.
+func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.InitializeRunInput, messageID string) error {
 	h.logger.Info("Processing run initialization",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
@@ -45,7 +48,7 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainCmd.Initial
 
 	// Delegate to rerun handler if a rerun target is provided.
 	if cmd.RerunTarget != nil {
-		return h.rerunHandler.Handle(ctx, domainCmd.HandleRerunCmd{
+		return h.rerunHandler.Handle(ctx, domainModel.RerunInput{
 			ScheduleName: cmd.ScheduleName,
 			RunID:        cmd.RunID,
 			ServiceName:  cmd.RerunTarget.ServiceName,
@@ -54,10 +57,10 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainCmd.Initial
 		}, messageID)
 	}
 
-	// Marshal command payload for message_processing record.
+	// Marshal input payload for message_processing record.
 	payload, err := json.Marshal(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to marshal command: %w", err)
+		return fmt.Errorf("failed to marshal input: %w", err)
 	}
 
 	// Begin transaction.
@@ -75,10 +78,22 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainCmd.Initial
 		return nil
 	}
 
-	// Snapshot the graph for this run (creates Run + EXECUTES edges).
-	// InitializeRunCmd carries no kind/sourceRunID; default to "cron" / nil.
-	if err := h.runRepo.SnapshotGraph(ctx, cmd.RunID, cmd.ScheduleName, "cron", nil); err != nil {
-		return fmt.Errorf("failed to snapshot graph: %w", err)
+	// Snapshot the graph via the unified Snapshot+LatestFullDAG routine.
+	// InitializeRunInput carries no kind/sourceRunID; default to "cron" / nil.
+	if _, err := h.runRepo.Snapshot(ctx, snapshot.Params{
+		RunID:        cmd.RunID,
+		ScheduleName: cmd.ScheduleName,
+		Kind:         "cron",
+		Selector:     snapshot.LatestFullDAG{},
+	}); err != nil {
+		if errors.Is(err, snapshot.ErrEmptyProjection) {
+			h.logger.Warn("Snapshot: no nodes for schedule, run will have no EXECUTES edges",
+				"schedule_name", cmd.ScheduleName, "run_id", cmd.RunID)
+			// Continue and write run.initialized:v1 with empty node lists rather
+			// than failing the run; downstream consumers handle empty payloads.
+		} else {
+			return fmt.Errorf("failed to snapshot graph: %w", err)
+		}
 	}
 
 	// Get all/root/seed initialization nodes for the schedule.
@@ -171,10 +186,10 @@ func (h *InitializeRunHandler) handleInitRunDedup(
 
 // buildRunInitializedPayload serializes run init nodes into the outbox JSON payload.
 func buildRunInitializedPayload(runID string, initNodes *run.ScheduleInitNodes) ([]byte, error) {
-	toNodePayloads := func(nodes []*domain.TableNode) []domainCmd.NodePayload {
-		out := make([]domainCmd.NodePayload, 0, len(nodes))
+	toNodePayloads := func(nodes []*domain.TableNode) []domainEvent.RunInitializedNode {
+		out := make([]domainEvent.RunInitializedNode, 0, len(nodes))
 		for _, n := range nodes {
-			out = append(out, domainCmd.NodePayload{
+			out = append(out, domainEvent.RunInitializedNode{
 				TableName:    n.TableName,
 				SchemaName:   n.SchemaName,
 				ServiceName:  n.ServiceName,
@@ -189,7 +204,7 @@ func buildRunInitializedPayload(runID string, initNodes *run.ScheduleInitNodes) 
 		return out
 	}
 
-	var allNodes, rootNodes, seedNodes []domainCmd.NodePayload
+	var allNodes, rootNodes, seedNodes []domainEvent.RunInitializedNode
 	if initNodes != nil {
 		allNodes = toNodePayloads(initNodes.AllNodes)
 		rootNodes = toNodePayloads(initNodes.RootNodes)

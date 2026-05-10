@@ -10,8 +10,9 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -64,9 +65,6 @@ func (f *fakeRunRepository) FinalizeRun(ctx context.Context, runID, terminalStat
 }
 
 // Stubs for read-side methods (unused by the handler)
-func (f *fakeRunRepository) SnapshotGraph(ctx context.Context, runID, scheduleName, kind string, sourceRunID *uuid.UUID) error {
-	return nil
-}
 func (f *fakeRunRepository) GetScheduleInitNodes(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error) {
 	return nil, nil
 }
@@ -106,8 +104,8 @@ func (f *fakeRunRepository) ResetSkippedDownstreamToPending(ctx context.Context,
 func (f *fakeRunRepository) GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (string, string, error) {
 	return "v1-stub", "tag-stub", nil
 }
-func (f *fakeRunRepository) SnapshotSingleNodeRun(ctx context.Context, runID, scheduleName string, sourceRunID *uuid.UUID, serviceName, schemaName, tableName string, metadataSource string) (taskID, imageTag, manifestVersion, nodeType string, err error) {
-	return "", "", "", "", nil
+func (f *fakeRunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
+	return nil, nil
 }
 
 // ── fakes: outbox and message processing repos ────────────────────────────────
@@ -224,8 +222,8 @@ func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
-func baseCmd() domainCmd.HandleNodeCompletedCmd {
-	return domainCmd.HandleNodeCompletedCmd{
+func baseCmd() domainModel.NodeCompletedInput {
+	return domainModel.NodeCompletedInput{
 		TaskID:       uuid.New(),
 		ScheduleID:   uuid.New(),
 		ScheduleName: "daily",

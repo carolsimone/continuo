@@ -3,21 +3,39 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
-	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	domainCmd "github.com/carolsimone/continuo/orchestrator/domain/command"
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
 
-// HandleRerunHandler handles the HandleRerun command.
+// HandleRerunHandler consumes trigger.rerun:v1 messages.
+//
+// PR2 unification: replaces the legacy in-place edge reset path. The cmd
+// carries the SOURCE run's schedule_id (SourceRunID) and the NEW run's
+// schedule_id (RunID — minted by state's TriggerRerun). This handler:
+//  1. Dedups on Redis message ID (mirrors handle_single_node_run).
+//  2. Calls Snapshot(SourcePinnedDAG{Target...}) — projects source's pinned
+//     task set with the target node + non-SUCCEEDED descendants flipped to
+//     PENDING (rebased), all other source tasks inherited at source's pinned
+//     (image_tag, manifest_version).
+//  3. On ErrTargetNotFound / ErrEmptyProjection: emits
+//     run.entries.dispatch_failed:v1, marks completed, commits. The new run
+//     goes to FAILED via state's existing dispatch_failed handler.
+//  4. On success: emits ONE run.entries.dispatched:v1 covering the full
+//     projection (per-task Status: "pending" for rebased, "succeeded" for
+//     inherited; InheritedFromTaskID populated for inherited rows), then
+//     N × query.model:v1 for the PENDING (rebased) rows only.
 type HandleRerunHandler struct {
 	uow     uow.UnitOfWork
 	runRepo run.Repository
@@ -37,214 +55,270 @@ func NewHandleRerunHandler(
 	}
 }
 
-// Handle processes the HandleRerun command.
-//
-// It emits two outbox entries:
-//  1. run.rerun.dispatched:v1 — consumed by state to reset task counters
-//  2. query.model:v1          — triggers execution of the entry (target) node
-//
-// State gRPC is NOT called; task resets are handled by the state service
-// when it consumes run.rerun.dispatched:v1.
-func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainCmd.HandleRerunCmd, messageID string) error {
+// Handle processes a RerunInput derived from a trigger.rerun:v1 message.
+func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunInput, messageID string) error {
 	h.logger.Info("Processing rerun",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
-		"schedule_name", cmd.ScheduleName,
-		"schema", cmd.SchemaName,
-		"table_name", cmd.TableName,
+		"source_run_id", cmd.SourceRunID,
+		"target", fmt.Sprintf("%s.%s.%s", cmd.ServiceName, cmd.SchemaName, cmd.TableName),
 	)
 
-	// Marshal command payload for message_processing record.
-	payload, err := json.Marshal(cmd)
+	cmdPayload, err := json.Marshal(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to marshal command: %w", err)
+		return fmt.Errorf("marshal input: %w", err)
 	}
 
-	// Begin transaction.
 	if err := h.uow.Begin(ctx); err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	// Check for duplicate message.
-	msgProcessingID, shouldSkip, err := h.handleRerunDedup(ctx, messageID, payload)
+	msgProcessingID, shouldSkip, err := h.dedup(ctx, messageID, cmdPayload)
 	if err != nil {
-		return fmt.Errorf("message deduplication failed: %w", err)
+		return fmt.Errorf("dedup: %w", err)
 	}
 	if shouldSkip {
 		return nil
 	}
 
-	// ── Resolve target task ID from Neo4j ────────────────────────────────────
-	targetTaskID, err := h.runRepo.GetTaskIDForNode(ctx, cmd.RunID, cmd.ServiceName, cmd.SchemaName, cmd.TableName)
+	sourceRunUUID, err := uuid.Parse(cmd.SourceRunID)
 	if err != nil {
-		return fmt.Errorf("failed to get task_id for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
+		return fmt.Errorf("invalid source_run_id %q: %w", cmd.SourceRunID, err)
 	}
-
-	// ── Resolve skipped downstream task IDs ──────────────────────────────────
-	downstreamTaskIDs, err := h.runRepo.GetSkippedDownstreamTaskIDs(ctx, cmd.RunID, cmd.SchemaName, cmd.TableName)
-	if err != nil {
-		return fmt.Errorf("failed to get skipped downstream task IDs for %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
-	}
-
-	// Reset cascade-skipped downstream EXECUTES edges back to PENDING so that
-	// when the target node succeeds, GetReadyDownstream can dispatch them.
-	if err := h.runRepo.ResetSkippedDownstreamToPending(ctx, cmd.RunID, cmd.SchemaName, cmd.TableName); err != nil {
-		return fmt.Errorf("failed to reset cascade-skipped downstream nodes for %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
-	}
-
-	tasksToReset := append([]string{targetTaskID}, downstreamTaskIDs...)
-
-	// ── Outbox entry 1: run.rerun.dispatched:v1 ──────────────────────────────
-	dispatchedEvt := pkgEvents.RunRerunDispatched{
-		ScheduleID:   cmd.RunID, // RunID == ScheduleID.String() in this domain
-		ScheduleName: cmd.ScheduleName,
-		TasksToReset: tasksToReset,
-		EntryTaskID:  targetTaskID,
-	}
-	dispatchedPayload, err := json.Marshal(dispatchedEvt)
-	if err != nil {
-		return fmt.Errorf("failed to marshal run.rerun.dispatched payload: %w", err)
-	}
-
-	dispatchedEntry := &domain.OutboxEntry{
-		ID:                  uuid.New(),
-		MessageProcessingID: &msgProcessingID,
-		AggregateType:       "orchestrator",
-		AggregateID:         uuid.New(),
-		EventType:           "run_rerun_dispatched",
-		Payload:             dispatchedPayload,
-		StreamName:          "run.rerun.dispatched:v1",
-		Status:              "pending",
-		MaxRetries:          3,
-	}
-
-	if err := h.uow.OutboxRepo().Create(ctx, dispatchedEntry); err != nil {
-		return fmt.Errorf("failed to write run.rerun.dispatched to outbox: %w", err)
-	}
-
-	// ── Outbox entry 2: query.model:v1 for the target node ───────────────────
-	targetNodeType, err := h.runRepo.GetNodeType(ctx, cmd.SchemaName, cmd.TableName)
-	if err != nil {
-		return fmt.Errorf("failed to get node_type for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
-	}
-
-	parsedNodeType, err := pkgModel.ParseNodeType(targetNodeType)
-	if err != nil {
-		return fmt.Errorf("invalid node_type %q for rerun target %s.%s: %w", targetNodeType, cmd.SchemaName, cmd.TableName, err)
-	}
-
-	targetServiceName, err := h.runRepo.GetNodeServiceName(ctx, cmd.SchemaName, cmd.TableName)
-	if err != nil {
-		return fmt.Errorf("failed to get service_name for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
-	}
-
-	jobName, err := pkgDomain.ComputeJobName(targetServiceName, cmd.SchemaName, cmd.TableName, cmd.RunID)
-	if err != nil {
-		return fmt.Errorf("failed to compute job_name for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
-	}
-
-	manifestVersion, imageTag, err := h.runRepo.GetNodeEdgeData(ctx, cmd.RunID, cmd.SchemaName, cmd.TableName)
-	if err != nil {
-		return fmt.Errorf("failed to get edge data for rerun target %s.%s: %w", cmd.SchemaName, cmd.TableName, err)
-	}
-
-	queryModelEvt := domain.NodeReadyForExecution{
-		ScheduleID:      cmd.RunID,
-		ScheduleName:    cmd.ScheduleName,
-		ServiceName:     targetServiceName,
-		SchemaName:      cmd.SchemaName,
-		TableName:       cmd.TableName,
-		TaskID:          targetTaskID,
-		JobName:         jobName,
-		NodeType:        string(parsedNodeType),
-		ManifestVersion: manifestVersion,
-		ImageTag:        imageTag,
-	}
-	queryModelPayload, err := json.Marshal(queryModelEvt)
-	if err != nil {
-		return fmt.Errorf("failed to marshal query.model payload: %w", err)
-	}
-
 	scheduleUUID, err := uuid.Parse(cmd.RunID)
 	if err != nil {
 		return fmt.Errorf("invalid run_id %q: %w", cmd.RunID, err)
 	}
 
-	queryModelEntry := &domain.OutboxEntry{
+	projection, snapErr := h.runRepo.Snapshot(ctx, snapshot.Params{
+		RunID:        cmd.RunID,
+		ScheduleName: cmd.ScheduleName,
+		Kind:         "rerun",
+		SourceRunID:  &sourceRunUUID,
+		Selector: snapshot.SourcePinnedDAG{
+			TargetService: cmd.ServiceName,
+			TargetSchema:  cmd.SchemaName,
+			TargetTable:   cmd.TableName,
+		},
+	})
+	if snapErr != nil {
+		if errors.Is(snapErr, snapshot.ErrTargetNotFound) || errors.Is(snapErr, snapshot.ErrEmptyProjection) {
+			reason := "target_not_found"
+			if errors.Is(snapErr, snapshot.ErrEmptyProjection) {
+				reason = "rerun_yielded_empty_projection"
+			}
+			if ferr := h.emitRerunDispatchFailed(ctx, cmd, msgProcessingID, reason); ferr != nil {
+				return ferr
+			}
+			if cerr := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); cerr != nil {
+				return fmt.Errorf("mark completed after %s: %w", reason, cerr)
+			}
+			return h.uow.Commit()
+		}
+		return fmt.Errorf("snapshot rerun: %w", snapErr)
+	}
+
+	// Build run.entries.dispatched:v1 covering ALL projection rows.
+	// Per-task Status drives state's task_tracker.status: "pending" for rebased,
+	// "succeeded" for inherited (auto-rollup eligible if every row is terminal).
+	allTasks := make([]pkgEvents.DispatchedTask, 0, len(projection))
+	queryModelTasks := make([]snapshot.TaskProjection, 0)
+	for _, t := range projection {
+		inheritedStr := ""
+		if t.InheritedFromTaskID != nil {
+			inheritedStr = t.InheritedFromTaskID.String()
+		}
+		allTasks = append(allTasks, pkgEvents.DispatchedTask{
+			TaskID:              t.TaskID.String(),
+			ServiceName:         t.ServiceName,
+			SchemaName:          t.SchemaName,
+			TableName:           t.TableName,
+			NodeType:            t.NodeType,
+			MaxRetries:          t.MaxRetries,
+			ManifestVersion:     t.ManifestVersion,
+			ImageTag:            t.ImageTag,
+			Status:              projectionStatusLower(t.InitialStatus),
+			InheritedFromTaskID: inheritedStr,
+		})
+		// Only PENDING (rebased) rows need dispatch. Inherited terminal rows
+		// (SUCCEEDED/FAILED/CANCELLED/SKIPPED) keep their source status verbatim
+		// so state's task_tracker is seeded with the right terminal state and
+		// the rollup math closes — no zombie pending rows.
+		if t.InitialStatus == "PENDING" {
+			queryModelTasks = append(queryModelTasks, t)
+		}
+	}
+
+	dispatchedEvt := pkgEvents.RunEntriesDispatched{
+		ScheduleID:     cmd.RunID,
+		ScheduleName:   cmd.ScheduleName,
+		AllTasks:       allTasks,
+		TotalTaskCount: int32(len(allTasks)),
+	}
+	dispatchedPayload, err := json.Marshal(dispatchedEvt)
+	if err != nil {
+		return fmt.Errorf("marshal run.entries.dispatched: %w", err)
+	}
+	if err := h.uow.OutboxRepo().Create(ctx, &domain.OutboxEntry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
-		EventType:           "node_ready_for_execution",
-		Payload:             queryModelPayload,
-		StreamName:          "query.model:v1",
+		EventType:           "run_entries_dispatched",
+		Payload:             dispatchedPayload,
+		StreamName:          "run.entries.dispatched:v1",
 		Status:              "pending",
 		MaxRetries:          3,
+	}); err != nil {
+		return fmt.Errorf("write run.entries.dispatched to outbox: %w", err)
 	}
 
-	if err := h.uow.OutboxRepo().Create(ctx, queryModelEntry); err != nil {
-		return fmt.Errorf("failed to write query.model to outbox: %w", err)
+	// Per-rebased-task query.model:v1 dispatch.
+	for _, t := range queryModelTasks {
+		jobName, err := pkgDomain.ComputeJobName(t.ServiceName, t.SchemaName, t.TableName, cmd.RunID)
+		if err != nil {
+			return fmt.Errorf("compute job name for %s.%s: %w", t.SchemaName, t.TableName, err)
+		}
+		queryEvt := domain.NodeReadyForExecution{
+			ScheduleID:      cmd.RunID,
+			ScheduleName:    cmd.ScheduleName,
+			ServiceName:     t.ServiceName,
+			SchemaName:      t.SchemaName,
+			TableName:       t.TableName,
+			TaskID:          t.TaskID.String(),
+			JobName:         jobName,
+			NodeType:        t.NodeType,
+			ManifestVersion: t.ManifestVersion,
+			ImageTag:        t.ImageTag,
+		}
+		queryPayload, err := json.Marshal(queryEvt)
+		if err != nil {
+			return fmt.Errorf("marshal query.model: %w", err)
+		}
+		if err := h.uow.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+			ID:                  uuid.New(),
+			MessageProcessingID: &msgProcessingID,
+			AggregateType:       "orchestrator",
+			AggregateID:         scheduleUUID,
+			EventType:           "node_ready_for_execution",
+			Payload:             queryPayload,
+			StreamName:          "query.model:v1",
+			Status:              "pending",
+			MaxRetries:          3,
+		}); err != nil {
+			return fmt.Errorf("write query.model for %s.%s: %w", t.SchemaName, t.TableName, err)
+		}
 	}
 
-	// Mark message processing as completed.
 	if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
-		return fmt.Errorf("failed to update message state: %w", err)
+		return fmt.Errorf("mark completed: %w", err)
 	}
-
-	// Commit the Postgres transaction.
 	if err := h.uow.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("commit: %w", err)
 	}
 
 	h.logger.Info("Rerun processing finished",
 		"run_id", cmd.RunID,
 		"target", fmt.Sprintf("%s.%s", cmd.SchemaName, cmd.TableName),
-		"target_task_id", targetTaskID,
-		"tasks_to_reset", len(tasksToReset),
+		"total_tasks", len(allTasks),
+		"dispatched_tasks", len(queryModelTasks),
 	)
-
 	return nil
 }
 
-// handleRerunDedup checks if message was already processed.
-// Returns (messageProcessingID, shouldSkip, error).
-func (h *HandleRerunHandler) handleRerunDedup(
+// projectionStatusLower maps a SourcePinnedDAG projection's InitialStatus to
+// its wire-format (lowercased) value used in run.entries.dispatched:v1.
+// Inherited terminal rows (FAILED/CANCELLED/SKIPPED outside the rerun target's
+// downstream cone) MUST round-trip verbatim — coercing them to "pending" would
+// create a task_tracker row no controller ever executes, blocking run finalize.
+func projectionStatusLower(initialStatus string) string {
+	switch initialStatus {
+	case "PENDING":
+		return "pending"
+	case "SUCCEEDED":
+		return "succeeded"
+	case "FAILED":
+		return "failed"
+	case "CANCELLED":
+		return "cancelled"
+	case "SKIPPED":
+		return "skipped"
+	default:
+		return strings.ToLower(initialStatus)
+	}
+}
+
+// dedup mirrors handle_single_node_run.go.
+func (h *HandleRerunHandler) dedup(
 	ctx context.Context,
 	messageID string,
-	messagePayload []byte,
+	payload []byte,
 ) (uuid.UUID, bool, error) {
 	msgProc := &domain.MessageProcessing{
 		MessageID:  messageID,
-		StreamName: "rerun.ready:v1",
+		StreamName: "trigger.rerun:v1",
 		State:      "processing",
-		Payload:    messagePayload,
+		Payload:    payload,
 	}
-
 	id, inserted, err := h.uow.MessageProcessingRepo().InsertIfNotExists(ctx, msgProc)
 	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("failed to insert message processing: %w", err)
+		return uuid.Nil, false, fmt.Errorf("insert message processing: %w", err)
 	}
-
 	if !inserted {
 		existing, err := h.uow.MessageProcessingRepo().GetByMessageID(ctx, messageID)
 		if err != nil {
-			return uuid.Nil, false, fmt.Errorf("failed to get existing message: %w", err)
+			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
 		}
-
 		if existing.State == "completed" || existing.State == "acked" {
 			h.logger.Info("Message already processed, skipping",
-				"message_id", messageID,
-				"state", existing.State,
-			)
+				"message_id", messageID, "state", existing.State)
 			return existing.ID, true, nil
 		}
-
 		h.logger.Warn("Message being processed by another instance",
-			"message_id", messageID,
-		)
+			"message_id", messageID)
 		return existing.ID, true, nil
 	}
-
 	return id, false, nil
+}
+
+// emitRerunDispatchFailed writes a run.entries.dispatch_failed:v1 outbox entry.
+// Mirrors handle_single_node_run.emitDispatchFailed.
+func (h *HandleRerunHandler) emitRerunDispatchFailed(
+	ctx context.Context,
+	cmd domainModel.RerunInput,
+	msgProcessingID uuid.UUID,
+	reason string,
+) error {
+	scheduleUUID, err := uuid.Parse(cmd.RunID)
+	if err != nil {
+		return fmt.Errorf("invalid run_id %q: %w", cmd.RunID, err)
+	}
+	evt := pkgEvents.RunEntriesDispatchFailed{
+		ScheduleID:   cmd.RunID,
+		ScheduleName: cmd.ScheduleName,
+		Reason:       reason,
+	}
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := h.uow.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+		ID:                  uuid.New(),
+		MessageProcessingID: &msgProcessingID,
+		AggregateType:       "orchestrator",
+		AggregateID:         scheduleUUID,
+		EventType:           "run_entries_dispatch_failed",
+		Payload:             payload,
+		StreamName:          "run.entries.dispatch_failed:v1",
+		Status:              "pending",
+		MaxRetries:          3,
+	}); err != nil {
+		return fmt.Errorf("write run.entries.dispatch_failed to outbox: %w", err)
+	}
+	h.logger.Info("Emitted run.entries.dispatch_failed:v1",
+		"run_id", cmd.RunID,
+		"reason", reason,
+	)
+	return nil
 }
