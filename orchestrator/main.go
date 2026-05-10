@@ -22,6 +22,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
+	snapshotsvc "github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -123,6 +124,8 @@ func main() {
 	runRepoWrite := neo4jinfra.NewRunRepository(neo4jClient, logger)
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
 	runRepo := neo4jinfra.NewCompositeRunRepository(runRepoWrite, queryRepo)
+	snapshotTxRunner := neo4jinfra.NewSnapshotTxRunner(neo4jClient)
+	snapshotService := snapshotsvc.NewService(snapshotTxRunner, logger)
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
 	publishedRepo := postgres.NewPublishedMessagesRepository(pgDB, logger)
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
@@ -139,12 +142,12 @@ func main() {
 	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
 	rejectedTopologyRepo := postgres.NewRejectedTopologyRepository(pgDB)
 	ingestTopologyHandler := handlers.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, rejectedTopologyRepo, logger)
-	initializeRunHandler := handlers.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
+	initializeRunHandler := handlers.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
 	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, cancelledSchedulesRepo, logger)
-	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
-	handleRerunHandler := handlers.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
-	handleRebaseHandler := handlers.NewHandleRebaseHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
-	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, logger)
+	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
+	handleRerunHandler := handlers.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
+	handleRebaseHandler := handlers.NewHandleRebaseHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
+	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR

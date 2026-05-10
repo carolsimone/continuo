@@ -38,21 +38,24 @@ import (
 //     inherited; InheritedFromTaskID populated for inherited rows), then
 //     N × query.model:v1 for the PENDING (rebased) rows only.
 type HandleRebaseHandler struct {
-	uow     uow.UnitOfWork
-	runRepo run.Repository
-	logger  *slog.Logger
+	uow         uow.UnitOfWork
+	runRepo     run.Repository
+	snapshotSvc SnapshotService
+	logger      *slog.Logger
 }
 
 // NewHandleRebaseHandler creates a new HandleRebaseHandler.
 func NewHandleRebaseHandler(
 	u uow.UnitOfWork,
 	runRepo run.Repository,
+	snapshotSvc SnapshotService,
 	logger *slog.Logger,
 ) *HandleRebaseHandler {
 	return &HandleRebaseHandler{
-		uow:     u,
-		runRepo: runRepo,
-		logger:  logger,
+		uow:         u,
+		runRepo:     runRepo,
+		snapshotSvc: snapshotSvc,
+		logger:      logger,
 	}
 }
 
@@ -91,7 +94,7 @@ func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainModel.Rebase
 		return fmt.Errorf("invalid run_id %q: %w", cmd.RunID, err)
 	}
 
-	projection, snapErr := h.runRepo.Snapshot(ctx, snapshot.Params{
+	projection, snapErr := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        cmd.RunID,
 		ScheduleName: cmd.ScheduleName,
 		Kind:         "rebase",

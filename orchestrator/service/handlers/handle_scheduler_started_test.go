@@ -83,8 +83,13 @@ func TestHandleSchedulerStarted_WritesEntriesDispatchedAndDispatches(t *testing.
 			return nodes, nil
 		},
 	}
+	snapSvc := &initRunFakeSnapshotService{
+		getScheduleInitNodesFn: func(_ context.Context, _, _ string) (*run.ScheduleInitNodes, error) {
+			return nodes, nil
+		},
+	}
 
-	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, snapSvc, newTestLogger())
 	evt := domain.SchedulerStarted{
 		ScheduleID:   scheduleID,
 		ScheduleName: "daily",
@@ -93,7 +98,7 @@ func TestHandleSchedulerStarted_WritesEntriesDispatchedAndDispatches(t *testing.
 	err := h.Handle(ctx, evt, "msg-start-1")
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, runRepo.snapshotGraphCalls, "SnapshotGraph must be called once")
+	assert.Equal(t, 1, snapSvc.snapshotGraphCalls, "SnapshotGraph must be called once")
 	assert.Equal(t, 1, runRepo.getScheduleInitNodesCalls, "GetScheduleInitNodes must be called once")
 	assert.True(t, u.CommittedTx, "transaction must be committed")
 
@@ -188,8 +193,13 @@ func TestHandleSchedulerStarted_DispatchesSeedsWhenPresent(t *testing.T) {
 			return nodes, nil
 		},
 	}
+	snapSvc := &initRunFakeSnapshotService{
+		getScheduleInitNodesFn: func(_ context.Context, _, _ string) (*run.ScheduleInitNodes, error) {
+			return nodes, nil
+		},
+	}
 
-	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, snapSvc, newTestLogger())
 	evt := domain.SchedulerStarted{ScheduleID: scheduleID, ScheduleName: "daily"}
 
 	require.NoError(t, h.Handle(ctx, evt, "msg-seeds-1"))
@@ -221,8 +231,13 @@ func TestHandleSchedulerStarted_Idempotent(t *testing.T) {
 			return makeSchedulerStartedNodes(), nil
 		},
 	}
+	snapSvc := &initRunFakeSnapshotService{
+		getScheduleInitNodesFn: func(_ context.Context, _, _ string) (*run.ScheduleInitNodes, error) {
+			return makeSchedulerStartedNodes(), nil
+		},
+	}
 
-	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, snapSvc, newTestLogger())
 	evt := domain.SchedulerStarted{ScheduleID: scheduleID, ScheduleName: "daily"}
 
 	// First call: processes normally
@@ -231,7 +246,7 @@ func TestHandleSchedulerStarted_Idempotent(t *testing.T) {
 	assert.Greater(t, firstCount, 0, "first call should produce outbox entries")
 
 	// Reset tracking between calls
-	runRepo.snapshotGraphCalls = 0
+	snapSvc.snapshotGraphCalls = 0
 	runRepo.getScheduleInitNodesCalls = 0
 	u.outboxRepo.CreatedEntries = nil
 	u.CommittedTx = false
@@ -239,7 +254,7 @@ func TestHandleSchedulerStarted_Idempotent(t *testing.T) {
 	// Second call with same message ID: must be skipped due to dedup
 	require.NoError(t, h.Handle(ctx, evt, "msg-start-dup"))
 
-	assert.Equal(t, 0, runRepo.snapshotGraphCalls, "SnapshotGraph must NOT be called for duplicate")
+	assert.Equal(t, 0, snapSvc.snapshotGraphCalls, "SnapshotGraph must NOT be called for duplicate")
 	assert.Equal(t, 0, runRepo.getScheduleInitNodesCalls, "GetScheduleInitNodes must NOT be called for duplicate")
 	assert.Len(t, u.outboxRepo.CreatedEntries, 0, "no outbox entries for duplicate")
 	assert.False(t, u.CommittedTx, "no commit for duplicate")
@@ -257,8 +272,13 @@ func TestHandleSchedulerStarted_PropagatesKindAndSourceRunID(t *testing.T) {
 			return makeSchedulerStartedNodes(), nil
 		},
 	}
+	snapSvc := &initRunFakeSnapshotService{
+		getScheduleInitNodesFn: func(_ context.Context, _, _ string) (*run.ScheduleInitNodes, error) {
+			return makeSchedulerStartedNodes(), nil
+		},
+	}
 
-	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, newTestLogger())
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, snapSvc, newTestLogger())
 	evt := domain.SchedulerStarted{
 		ScheduleID:   uuid.New(),
 		ScheduleName: "propagate-test",
@@ -267,8 +287,8 @@ func TestHandleSchedulerStarted_PropagatesKindAndSourceRunID(t *testing.T) {
 	}
 
 	require.NoError(t, h.Handle(ctx, evt, "msg-propagate-1"))
-	require.Len(t, runRepo.snapshotCalls, 1)
-	assert.Equal(t, "rerun", runRepo.snapshotCalls[0].Kind)
-	require.NotNil(t, runRepo.snapshotCalls[0].SourceRunID)
-	assert.Equal(t, sourceRunID, *runRepo.snapshotCalls[0].SourceRunID)
+	require.Len(t, snapSvc.snapshotCalls, 1)
+	assert.Equal(t, "rerun", snapSvc.snapshotCalls[0].Kind)
+	require.NotNil(t, snapSvc.snapshotCalls[0].SourceRunID)
+	assert.Equal(t, sourceRunID, *snapSvc.snapshotCalls[0].SourceRunID)
 }

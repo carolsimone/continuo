@@ -7,7 +7,6 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
-	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -713,26 +712,6 @@ func (r *RunRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int
 		r.logger.Info("Swept expired run nodes", "deleted", deleted, "retention_days", retentionDays)
 	}
 	return nil
-}
-
-func (r *RunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
-	runner := NewSnapshotTxRunner(r.client)
-	var projection []snapshot.TaskProjection
-	err := runner.Run(ctx, func(rd snapshot.TopologyReader, w snapshot.SnapshotWriter) error {
-		sel, err := params.Selector.SelectTasks(ctx, rd, params)
-		if err != nil { return err }
-		if len(sel) == 0 { return snapshot.ErrEmptyProjection }
-		projection = sel
-		return w.WriteRunAndExecutesEdges(ctx, params, sel)
-	})
-	if err != nil { return nil, err }
-	r.logger.Info("Snapshot created",
-		"run_id", params.RunID,
-		"schedule_name", params.ScheduleName,
-		"kind", params.Kind,
-		"tasks", len(projection),
-	)
-	return projection, nil
 }
 
 // collectNodes drains a Neo4j result cursor into a []*domain.TableNode slice.

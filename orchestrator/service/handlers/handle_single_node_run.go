@@ -20,14 +20,15 @@ import (
 
 // HandleSingleNodeRunHandler consumes trigger.single_node_run:v1 messages.
 type HandleSingleNodeRunHandler struct {
-	uow     uow.UnitOfWork
-	runRepo run.Repository
-	logger  *slog.Logger
+	uow         uow.UnitOfWork
+	runRepo     run.Repository
+	snapshotSvc SnapshotService
+	logger      *slog.Logger
 }
 
 // NewHandleSingleNodeRunHandler creates a new HandleSingleNodeRunHandler.
-func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, logger *slog.Logger) *HandleSingleNodeRunHandler {
-	return &HandleSingleNodeRunHandler{uow: u, runRepo: runRepo, logger: logger}
+func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, snapshotSvc SnapshotService, logger *slog.Logger) *HandleSingleNodeRunHandler {
+	return &HandleSingleNodeRunHandler{uow: u, runRepo: runRepo, snapshotSvc: snapshotSvc, logger: logger}
 }
 
 // Handle processes a SingleNodeRunInput derived from a
@@ -81,7 +82,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		sourceRunUUID = &parsed
 	}
 
-	projection, snapErr := h.runRepo.Snapshot(ctx, snapshot.Params{
+	projection, snapErr := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        cmd.RunID,
 		ScheduleName: cmd.ScheduleName,
 		Kind:         "single_node_run",

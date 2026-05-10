@@ -12,7 +12,6 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
-	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -103,9 +102,6 @@ func (f *fakeRunRepository) ResetSkippedDownstreamToPending(ctx context.Context,
 }
 func (f *fakeRunRepository) GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (string, string, error) {
 	return "v1-stub", "tag-stub", nil
-}
-func (f *fakeRunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
-	return nil, nil
 }
 
 // ── fakes: outbox and message processing repos ────────────────────────────────

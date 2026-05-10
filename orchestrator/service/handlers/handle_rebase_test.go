@@ -15,21 +15,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ── extended fakeRunRepository for HandleRebase ───────────────────────────────
+// ── fakeSnapshotService for HandleRebase tests ────────────────────────────────
 //
-// PR2 Feature 2: rebase handler drives runRepo.Snapshot via the
-// RebasePartition selector. The fake overrides Snapshot to return a
-// configurable projection (or error). All other read methods are stubbed by
-// the embedded fakeRunRepository.
+// PR2 Feature 2: rebase handler drives snapshotSvc.Snapshot via the
+// RebasePartition selector. The fake returns a configurable projection (or error).
 
-type rebaseFakeRunRepository struct {
-	fakeRunRepository
-
+type rebaseFakeSnapshotService struct {
 	snapshotFn    func(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error)
 	snapshotCalls int
 }
 
-func (f *rebaseFakeRunRepository) Snapshot(
+func (f *rebaseFakeSnapshotService) Snapshot(
 	ctx context.Context,
 	params snapshot.Params,
 ) ([]snapshot.TaskProjection, error) {
@@ -66,7 +62,8 @@ func TestHandleRebase_HappyPath_ProjectsAndDispatches(t *testing.T) {
 	inheritedTaskID := uuid.New()
 	inheritedRoot := uuid.New()
 
-	runRepo := &rebaseFakeRunRepository{
+	runRepo := &fakeRunRepository{}
+	snapSvc := &rebaseFakeSnapshotService{
 		snapshotFn: func(_ context.Context, p snapshot.Params) ([]snapshot.TaskProjection, error) {
 			// Sanity-check the params the handler hands us.
 			assert.Equal(t, "rebase", p.Kind)
@@ -118,10 +115,10 @@ func TestHandleRebase_HappyPath_ProjectsAndDispatches(t *testing.T) {
 		},
 	}
 
-	h := handlers.NewHandleRebaseHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewHandleRebaseHandler(uow, runRepo, snapSvc, newTestLogger())
 	require.NoError(t, h.Handle(ctx, makeRebaseCmd(), "msg-rebase-happy"))
 	require.True(t, uow.CommittedTx, "transaction must be committed")
-	require.Equal(t, 1, runRepo.snapshotCalls)
+	require.Equal(t, 1, snapSvc.snapshotCalls)
 
 	entries := uow.outboxRepo.CreatedEntries
 	require.Len(t, entries, 3, "expect 1 run.entries.dispatched + 2 query.model entries")
@@ -199,13 +196,14 @@ func TestHandleRebase_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 
-	runRepo := &rebaseFakeRunRepository{
+	runRepo := &fakeRunRepository{}
+	snapSvc := &rebaseFakeSnapshotService{
 		snapshotFn: func(_ context.Context, _ snapshot.Params) ([]snapshot.TaskProjection, error) {
 			return nil, snapshot.ErrEmptyProjection
 		},
 	}
 
-	h := handlers.NewHandleRebaseHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewHandleRebaseHandler(uow, runRepo, snapSvc, newTestLogger())
 	require.NoError(t, h.Handle(ctx, makeRebaseCmd(), "msg-rebase-empty"),
 		"ErrEmptyProjection must not surface as a handler error")
 	require.True(t, uow.CommittedTx, "transaction must still be committed")
@@ -229,7 +227,8 @@ func TestHandleRebase_DedupSecondDelivery(t *testing.T) {
 	uow := newFakeUnitOfWork()
 
 	taskID := uuid.New()
-	runRepo := &rebaseFakeRunRepository{
+	runRepo := &fakeRunRepository{}
+	snapSvc := &rebaseFakeSnapshotService{
 		snapshotFn: func(_ context.Context, _ snapshot.Params) ([]snapshot.TaskProjection, error) {
 			return []snapshot.TaskProjection{
 				{
@@ -248,18 +247,18 @@ func TestHandleRebase_DedupSecondDelivery(t *testing.T) {
 		},
 	}
 
-	h := handlers.NewHandleRebaseHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewHandleRebaseHandler(uow, runRepo, snapSvc, newTestLogger())
 	cmd := makeRebaseCmd()
 
 	// First delivery: processes normally.
 	require.NoError(t, h.Handle(ctx, cmd, "msg-rebase-dup"))
-	require.Equal(t, 1, runRepo.snapshotCalls)
+	require.Equal(t, 1, snapSvc.snapshotCalls)
 	firstCount := len(uow.outboxRepo.CreatedEntries)
 	require.Equal(t, 2, firstCount, "1 dispatched + 1 query.model")
 
 	// Second delivery with the same message ID: must be skipped.
 	require.NoError(t, h.Handle(ctx, cmd, "msg-rebase-dup"))
-	assert.Equal(t, 1, runRepo.snapshotCalls, "Snapshot must NOT be called again")
+	assert.Equal(t, 1, snapSvc.snapshotCalls, "Snapshot must NOT be called again")
 	assert.Len(t, uow.outboxRepo.CreatedEntries, firstCount,
 		"outbox count must not grow on duplicate delivery")
 }
