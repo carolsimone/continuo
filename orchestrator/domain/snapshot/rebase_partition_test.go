@@ -11,9 +11,9 @@ import (
 
 func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *testing.T) {
 	srcID := uuid.New()
-	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"} // failed → rebase
-	b := snapshot.FQN{Service: "svc", Schema: "sch", Table: "b"} // descendant of a → rebase
-	c := snapshot.FQN{Service: "svc", Schema: "sch", Table: "c"} // unrelated SUCCEEDED → inherit
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"} // failed → rebase
+	b := snapshot.FQN{Service: "svc", Schema: "sch", Table: "b", ScheduleName: "x"} // descendant of a → rebase
+	c := snapshot.FQN{Service: "svc", Schema: "sch", Table: "c", ScheduleName: "x"} // unrelated SUCCEEDED → inherit
 
 	rootC := uuid.New()
 	r := &fakeTopologyReader{
@@ -35,7 +35,9 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 	if err != nil { t.Fatal(err) }
 
 	by := map[snapshot.FQN]snapshot.TaskProjection{}
-	for _, p := range got { by[snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName}] = p }
+	for _, p := range got {
+		by[snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName, ScheduleName: p.ScheduleName}] = p
+	}
 	if by[a].InitialStatus != "PENDING" { t.Errorf("a: %+v", by[a]) }
 	if by[b].InitialStatus != "PENDING" { t.Errorf("b (descendant of failed a): %+v", by[b]) }
 	if by[c].InitialStatus != "SUCCEEDED" || by[c].InheritedFromTaskID == nil || *by[c].InheritedFromTaskID != rootC {
@@ -47,8 +49,8 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 
 func TestRebasePartition_NewArrivals_AreRebased(t *testing.T) {
 	srcID := uuid.New()
-	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
-	new := snapshot.FQN{Service: "svc", Schema: "sch", Table: "new"}
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+	new := snapshot.FQN{Service: "svc", Schema: "sch", Table: "new", ScheduleName: "x"}
 	r := &fakeTopologyReader{
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {a: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"}},
@@ -69,7 +71,7 @@ func TestRebasePartition_NewArrivals_AreRebased(t *testing.T) {
 
 func TestRebasePartition_DroppedSourceRowsExcluded(t *testing.T) {
 	srcID := uuid.New()
-	dropped := snapshot.FQN{Service: "svc", Schema: "sch", Table: "dropped"}
+	dropped := snapshot.FQN{Service: "svc", Schema: "sch", Table: "dropped", ScheduleName: "x"}
 	r := &fakeTopologyReader{
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {dropped: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x"}},

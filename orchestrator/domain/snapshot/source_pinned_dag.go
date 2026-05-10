@@ -34,8 +34,19 @@ func (s SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Pa
 	source, err := r.LoadSourceTasks(ctx, p.SourceRunID.String())
 	if err != nil { return nil, err }
 
-	target := FQN{Service: s.TargetService, Schema: s.TargetSchema, Table: s.TargetTable}
-	if _, ok := source[target]; !ok {
+	// P2 fix: source map keys include ScheduleName which the caller doesn't know.
+	// Iterate to find the matching entry by 3-tuple; capture the full key so that
+	// DescendantsInSourceRun gets the precise 4-field FQN.
+	var target FQN
+	matched := false
+	for f := range source {
+		if f.Service == s.TargetService && f.Schema == s.TargetSchema && f.Table == s.TargetTable {
+			target = f
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return nil, ErrTargetNotFound
 	}
 

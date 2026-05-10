@@ -23,10 +23,10 @@ func TestSourcePinnedDAG_TargetMissing_ReturnsErrTargetNotFound(t *testing.T) {
 
 func TestSourcePinnedDAG_RebasesTargetAndNonSucceededDescendants_InheritsRest(t *testing.T) {
 	srcID := uuid.New()
-	target := snapshot.FQN{Service: "svc", Schema: "sch", Table: "tgt"}
-	descSkipped := snapshot.FQN{Service: "svc", Schema: "sch", Table: "skip"}
-	descSucceeded := snapshot.FQN{Service: "svc", Schema: "sch", Table: "ok"}
-	unrelatedSucceeded := snapshot.FQN{Service: "svc", Schema: "sch", Table: "u"}
+	target := snapshot.FQN{Service: "svc", Schema: "sch", Table: "tgt", ScheduleName: "x"}
+	descSkipped := snapshot.FQN{Service: "svc", Schema: "sch", Table: "skip", ScheduleName: "x"}
+	descSucceeded := snapshot.FQN{Service: "svc", Schema: "sch", Table: "ok", ScheduleName: "x"}
+	unrelatedSucceeded := snapshot.FQN{Service: "svc", Schema: "sch", Table: "u", ScheduleName: "x"}
 
 	rootTaskID := uuid.New()
 	r := &fakeTopologyReader{
@@ -47,7 +47,9 @@ func TestSourcePinnedDAG_RebasesTargetAndNonSucceededDescendants_InheritsRest(t 
 	if err != nil { t.Fatal(err) }
 
 	by := map[snapshot.FQN]snapshot.TaskProjection{}
-	for _, p := range got { by[snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName}] = p }
+	for _, p := range got {
+		by[snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName, ScheduleName: p.ScheduleName}] = p
+	}
 
 	if by[target].InitialStatus != "PENDING" || by[target].InheritedFromTaskID != nil { t.Errorf("target: %+v", by[target]) }
 	if by[descSkipped].InitialStatus != "PENDING" || by[descSkipped].InheritedFromTaskID != nil { t.Errorf("skipped: %+v", by[descSkipped]) }
@@ -60,9 +62,9 @@ func TestSourcePinnedDAG_RebasesTargetAndNonSucceededDescendants_InheritsRest(t 
 
 func TestSourcePinnedDAG_RootForwarding(t *testing.T) {
 	srcID := uuid.New()
-	target := snapshot.FQN{Service: "svc", Schema: "sch", Table: "tgt"}
+	target := snapshot.FQN{Service: "svc", Schema: "sch", Table: "tgt", ScheduleName: "x"}
 	pinnedRoot := uuid.New()
-	otherFQN := snapshot.FQN{Service: "svc", Schema: "sch", Table: "other"}
+	otherFQN := snapshot.FQN{Service: "svc", Schema: "sch", Table: "other", ScheduleName: "x"}
 
 	r := &fakeTopologyReader{
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{

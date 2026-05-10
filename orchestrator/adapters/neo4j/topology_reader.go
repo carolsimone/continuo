@@ -24,36 +24,56 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 	if scheduleName == "" {
 		return map[snapshot.FQN]snapshot.LatestTableRow{}, nil
 	}
+	// P1 fix: restored pre-refactor UNION semantics.
+	// Returns every active :Table in the schedule PLUS the direct (one-hop)
+	// dbt-seed upstreams of those tables.  Transitive walk was removed because
+	// it picked up non-seed cross-schedule upstreams that HandleSchedulerStarted
+	// never dispatches, causing the run to stall.
 	const q = `
-		MATCH (root:Table {schedule_name: $sched})
-		WHERE COALESCE(root.active, true)
-		OPTIONAL MATCH (root)-[:DEPENDS_ON*0..]->(t:Table)
-		WHERE COALESCE(t.active, true)
-		WITH COLLECT(DISTINCT t) + COLLECT(DISTINCT root) AS all_tables
-		UNWIND all_tables AS t
-		WITH DISTINCT t
-		RETURN t.service_name AS service,
-		       t.schema_name  AS schema,
-		       t.table_name   AS tbl,
-		       t.schedule_name AS schedule_name,
-		       COALESCE(t.node_type, 'dbt-model') AS node_type,
-		       COALESCE(t.image_tag, '')          AS image_tag,
-		       COALESCE(t.manifest_version, '')   AS manifest_version
+		CALL {
+		    MATCH (t:Table {schedule_name: $schedule_name})
+		    WHERE COALESCE(t.active, true)
+		    RETURN t.schema_name   AS schema_name,
+		           t.table_name    AS table_name,
+		           t.service_name  AS service_name,
+		           t.schedule_name AS schedule_name,
+		           COALESCE(t.node_type, 'dbt-model')      AS node_type,
+		           COALESCE(t.image_tag, '')                AS image_tag,
+		           COALESCE(t.manifest_version, '')         AS manifest_version
+
+		    UNION
+
+		    MATCH (t:Table {schedule_name: $schedule_name})
+		    WHERE COALESCE(t.active, true)
+		    MATCH (t)-[:DEPENDS_ON]->(s:Table {node_type: "dbt-seed"})
+		    WHERE COALESCE(s.active, true)
+		    RETURN s.schema_name   AS schema_name,
+		           s.table_name    AS table_name,
+		           s.service_name  AS service_name,
+		           s.schedule_name AS schedule_name,
+		           s.node_type     AS node_type,
+		           COALESCE(s.image_tag, '')        AS image_tag,
+		           COALESCE(s.manifest_version, '') AS manifest_version
+		}
+		RETURN DISTINCT schema_name, table_name, service_name, schedule_name,
+		                node_type, image_tag, manifest_version
 	`
-	result, err := r.tx.Run(ctx, q, map[string]interface{}{"sched": scheduleName})
+	result, err := r.tx.Run(ctx, q, map[string]interface{}{"schedule_name": scheduleName})
 	if err != nil {
 		return nil, fmt.Errorf("topology_reader: LoadLatestSourceDAG: %w", err)
 	}
 	out := make(map[snapshot.FQN]snapshot.LatestTableRow)
 	for result.Next(ctx) {
 		rec := result.Record()
+		schedName := stringField(rec, "schedule_name")
 		f := snapshot.FQN{
-			Service: stringField(rec, "service"),
-			Schema:  stringField(rec, "schema"),
-			Table:   stringField(rec, "tbl"),
+			Service:      stringField(rec, "service_name"),
+			Schema:       stringField(rec, "schema_name"),
+			Table:        stringField(rec, "table_name"),
+			ScheduleName: schedName,
 		}
 		out[f] = snapshot.LatestTableRow{
-			ScheduleName:    stringField(rec, "schedule_name"),
+			ScheduleName:    schedName,
 			NodeType:        stringField(rec, "node_type"),
 			ImageTag:        stringField(rec, "image_tag"),
 			ManifestVersion: stringField(rec, "manifest_version"),
@@ -89,9 +109,10 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 		taskIDStr := stringField(rec, "task_id")
 		taskID, _ := uuid.Parse(taskIDStr)
 		f := snapshot.FQN{
-			Service: stringField(rec, "service"),
-			Schema:  stringField(rec, "schema"),
-			Table:   stringField(rec, "tbl"),
+			Service:      stringField(rec, "service"),
+			Schema:       stringField(rec, "schema"),
+			Table:        stringField(rec, "tbl"),
+			ScheduleName: stringField(rec, "schedule_name"),
 		}
 		st := snapshot.SourceTaskRow{
 			TaskID:          taskID,
@@ -117,14 +138,18 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 }
 
 func (r *topologyReader) DescendantsInLatestTopology(ctx context.Context, start snapshot.FQN) ([]snapshot.FQN, error) {
+	// Empty ScheduleName means "any schedule" (callers like SingleNode don't know it).
 	const q = `
 		MATCH (start:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
+		WHERE ($sched = '' OR start.schedule_name = $sched) AND COALESCE(start.active, true)
 		MATCH (d:Table)-[:DEPENDS_ON*1..]->(start)
 		WHERE COALESCE(d.active, true)
-		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl
+		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl,
+		                d.schedule_name AS schedule_name
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
 		"svc": start.Service, "schema": start.Schema, "tbl": start.Table,
+		"sched": start.ScheduleName,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("topology_reader: DescendantsInLatestTopology: %w", err)
@@ -133,9 +158,10 @@ func (r *topologyReader) DescendantsInLatestTopology(ctx context.Context, start 
 	for result.Next(ctx) {
 		rec := result.Record()
 		out = append(out, snapshot.FQN{
-			Service: stringField(rec, "svc"),
-			Schema:  stringField(rec, "schema"),
-			Table:   stringField(rec, "tbl"),
+			Service:      stringField(rec, "svc"),
+			Schema:       stringField(rec, "schema"),
+			Table:        stringField(rec, "tbl"),
+			ScheduleName: stringField(rec, "schedule_name"),
 		})
 	}
 	if err := result.Err(); err != nil {
@@ -145,15 +171,19 @@ func (r *topologyReader) DescendantsInLatestTopology(ctx context.Context, start 
 }
 
 func (r *topologyReader) DescendantsInSourceRun(ctx context.Context, sourceRunID string, start snapshot.FQN) ([]snapshot.FQN, error) {
+	// Empty ScheduleName means "any schedule" (callers like SingleNode don't know it).
 	const q = `
 		MATCH (start:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
+		WHERE ($sched = '' OR start.schedule_name = $sched)
 		MATCH (d:Table)-[:DEPENDS_ON*1..]->(start)
 		MATCH (sr:Run {run_id: $source_run_id})-[:EXECUTES]->(d)
-		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl
+		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl,
+		                d.schedule_name AS schedule_name
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
 		"source_run_id": sourceRunID,
 		"svc":           start.Service, "schema": start.Schema, "tbl": start.Table,
+		"sched":         start.ScheduleName,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("topology_reader: DescendantsInSourceRun: %w", err)
@@ -162,9 +192,10 @@ func (r *topologyReader) DescendantsInSourceRun(ctx context.Context, sourceRunID
 	for result.Next(ctx) {
 		rec := result.Record()
 		out = append(out, snapshot.FQN{
-			Service: stringField(rec, "svc"),
-			Schema:  stringField(rec, "schema"),
-			Table:   stringField(rec, "tbl"),
+			Service:      stringField(rec, "svc"),
+			Schema:       stringField(rec, "schema"),
+			Table:        stringField(rec, "tbl"),
+			ScheduleName: stringField(rec, "schedule_name"),
 		})
 	}
 	if err := result.Err(); err != nil {
@@ -174,9 +205,10 @@ func (r *topologyReader) DescendantsInSourceRun(ctx context.Context, sourceRunID
 }
 
 func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot.FQN) (snapshot.LatestTableRow, bool, error) {
+	// Empty ScheduleName means "any schedule" (SingleNode doesn't know it).
 	const q = `
 		MATCH (tbl:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
-		WHERE COALESCE(tbl.active, true)
+		WHERE ($sched = '' OR tbl.schedule_name = $sched) AND COALESCE(tbl.active, true)
 		RETURN tbl.schedule_name AS schedule_name,
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
 		       COALESCE(tbl.image_tag, '')          AS image_tag,
@@ -185,6 +217,7 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
 		"svc": fqn.Service, "schema": fqn.Schema, "tbl": fqn.Table,
+		"sched": fqn.ScheduleName,
 	})
 	if err != nil {
 		return snapshot.LatestTableRow{}, false, fmt.Errorf("topology_reader: LoadSingleLatestTable: %w", err)
@@ -205,9 +238,11 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 }
 
 func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourceRunID string, fqn snapshot.FQN) (snapshot.LatestTableRow, bool, error) {
+	// Empty ScheduleName means "any schedule" (SingleNode doesn't know it).
 	const q = `
 		MATCH (src:Run {run_id: $source_run_id})-[srcEdge:EXECUTES]->
 		      (tbl:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
+		WHERE ($sched = '' OR tbl.schedule_name = $sched)
 		RETURN tbl.schedule_name AS schedule_name,
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
 		       COALESCE(srcEdge.image_tag, '')        AS image_tag,
@@ -217,6 +252,7 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
 		"source_run_id": sourceRunID,
 		"svc":           fqn.Service, "schema": fqn.Schema, "tbl": fqn.Table,
+		"sched":         fqn.ScheduleName,
 	})
 	if err != nil {
 		return snapshot.LatestTableRow{}, false, fmt.Errorf("topology_reader: LoadSingleTableFromSourceRun: %w", err)

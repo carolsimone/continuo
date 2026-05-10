@@ -155,8 +155,8 @@ func TestTopologyReader_LoadLatestSourceDAG(t *testing.T) {
 				t.Errorf("expected 2 rows, got %d", len(got))
 				return nil
 			}
-			fqnA := snapshot.FQN{Service: "svc", Schema: "s", Table: "a"}
-			fqnB := snapshot.FQN{Service: "svc", Schema: "s", Table: "b"}
+			fqnA := snapshot.FQN{Service: "svc", Schema: "s", Table: "a", ScheduleName: sched}
+			fqnB := snapshot.FQN{Service: "svc", Schema: "s", Table: "b", ScheduleName: sched}
 			rowA, ok := got[fqnA]
 			if !ok {
 				t.Error("missing row for table a")
@@ -203,12 +203,61 @@ func TestTopologyReader_LoadLatestSourceDAG_InactiveTablesExcluded(t *testing.T)
 			got, err := r.LoadLatestSourceDAG(ctx, sched)
 			require.NoError(t, err)
 			assert.Len(t, got, 1, "inactive table must be excluded")
-			fqnActive := snapshot.FQN{Service: "svc", Schema: "s", Table: "active"}
+			fqnActive := snapshot.FQN{Service: "svc", Schema: "s", Table: "active", ScheduleName: sched}
 			_, ok := got[fqnActive]
 			assert.True(t, ok, "active table must be present")
-			fqnInactive := snapshot.FQN{Service: "svc", Schema: "s", Table: "inactive"}
+			fqnInactive := snapshot.FQN{Service: "svc", Schema: "s", Table: "inactive", ScheduleName: sched}
 			_, ok = got[fqnInactive]
 			assert.False(t, ok, "inactive table must not be present")
+			return nil
+		},
+	)
+}
+
+// Regression test for P1: a non-seed :Table in a different schedule that is a
+// transitive upstream of a schedule-x table must NOT appear in
+// LoadLatestSourceDAG("x").  The pre-refactor UNION query only includes direct
+// dbt-seed upstreams; the broken transitive walk included any upstream table.
+func TestTopologyReader_LoadLatestSourceDAG_NonSeedCrossScheduleUpstreamExcluded(t *testing.T) {
+	schedX := "test-p1-x-" + uuid.New().String()[:8]
+	schedY := "test-p1-y-" + uuid.New().String()[:8]
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			// Table A in schedule x (the schedule under test).
+			if err := txMergeTable(ctx, tx, schedX, "svc", "s", "a", "img:1", "v1", true); err != nil {
+				return err
+			}
+			// Table U in schedule y — a dbt-model (NOT a seed) that A depends on.
+			if err := txMergeTable(ctx, tx, schedY, "svc", "s", "u", "img:2", "v2", true); err != nil {
+				return err
+			}
+			// Update U's node_type to ensure it is explicitly a non-seed model.
+			_, err := tx.Run(ctx, `
+				MATCH (t:Table {schedule_name: $sched, table_name: "u"})
+				SET t.node_type = 'dbt-model'`,
+				map[string]interface{}{"sched": schedY})
+			if err != nil {
+				return err
+			}
+			// a --> u (cross-schedule non-seed dependency)
+			return txAddDependency(ctx, tx, schedX, "s", "a", schedY, "s", "u")
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			got, err := r.LoadLatestSourceDAG(ctx, schedX)
+			if err != nil {
+				return err
+			}
+			// Only table A should be returned; U is a non-seed cross-schedule upstream.
+			if len(got) != 1 {
+				t.Errorf("want 1 row (schedule-x table only), got %d: %+v", len(got), got)
+				return nil
+			}
+			for f := range got {
+				if f.Table == "u" {
+					t.Errorf("non-seed cross-schedule upstream u must NOT be included in LoadLatestSourceDAG(%q)", schedX)
+				}
+			}
 			return nil
 		},
 	)
@@ -246,7 +295,7 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 			require.NoError(t, err)
 			require.Len(t, got, 2, "expected 2 source tasks")
 
-			fqnA := snapshot.FQN{Service: "svc", Schema: "s", Table: "a"}
+			fqnA := snapshot.FQN{Service: "svc", Schema: "s", Table: "a", ScheduleName: sched}
 			rowA, ok := got[fqnA]
 			require.True(t, ok, "missing row for a")
 			assert.Equal(t, "SUCCEEDED", rowA.Status)
@@ -254,7 +303,7 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 			require.NotNil(t, rowA.InheritedFromRoot, "inherited_from_task_id must be populated")
 			assert.Equal(t, rootA, rowA.InheritedFromRoot.String())
 
-			fqnB := snapshot.FQN{Service: "svc", Schema: "s", Table: "b"}
+			fqnB := snapshot.FQN{Service: "svc", Schema: "s", Table: "b", ScheduleName: sched}
 			rowB, ok := got[fqnB]
 			require.True(t, ok, "missing row for b")
 			assert.Equal(t, "FAILED", rowB.Status)
