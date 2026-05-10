@@ -187,7 +187,6 @@ func TestRunRepository_SnapshotGraph_ScopesExactlyToScheduleNodes(t *testing.T) 
 	})
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	_ = neo4jinfra.NewRunRepository(client, logger)
 	runID := uuid.New().String()
 
 	_, err = snapshotViaService(ctx, client, logger, snapshot.Params{
@@ -270,7 +269,6 @@ func TestRunRepository_SnapshotGraph_IncludesCrossScheduleSeed(t *testing.T) {
 	})
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	_ = neo4jinfra.NewRunRepository(client, logger)
 	runID := uuid.New().String()
 
 	_, err = snapshotViaService(ctx, client, logger, snapshot.Params{
@@ -367,7 +365,6 @@ func TestRunRepository_SnapshotGraph_NoSpuriousEdgesToDuplicateSeeds(t *testing.
 	})
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	_ = neo4jinfra.NewRunRepository(client, logger)
 	runID := uuid.New().String()
 
 	_, err = snapshotViaService(ctx, client, logger, snapshot.Params{
