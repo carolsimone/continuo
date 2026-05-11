@@ -332,20 +332,13 @@ func main() {
 		scheduleID, _ := msg.Values["schedule_id"].(string)
 		scheduleName, _ := msg.Values["schedule_name"].(string)
 		sourceRunID, _ := msg.Values["source_run_id"].(string)
-		schemaName, _ := msg.Values["schema_name"].(string)
-		tableName, _ := msg.Values["table_name"].(string)
-		serviceName, _ := msg.Values["service_name"].(string)
-		if scheduleID == "" || scheduleName == "" || sourceRunID == "" ||
-			schemaName == "" || tableName == "" || serviceName == "" {
+		if scheduleID == "" || scheduleName == "" || sourceRunID == "" {
 			return fmt.Errorf("missing required fields in rerun message %s", msg.ID)
 		}
 		cmd := domainModel.RerunInput{
 			RunID:        scheduleID,
 			ScheduleName: scheduleName,
 			SourceRunID:  sourceRunID,
-			ServiceName:  serviceName,
-			SchemaName:   schemaName,
-			TableName:    tableName,
 		}
 		return handleRerunHandler.Handle(ctx, cmd, msg.ID)
 	}
