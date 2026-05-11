@@ -69,7 +69,7 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 | Selector | Used by | Source of topology | Per-task projection |
 |---|---|---|---|
 | `LatestFullDAG` | `HandleSchedulerStarted` (cron / trigger) | latest `:Table`s for the schedule + upstream dbt-seeds | every task PENDING with the latest `image_tag` + `manifest_version` |
-| `SourcePinnedDAG` | `HandleRerun` | source `:Run`'s `:EXECUTES` set | target node + non-SUCCEEDED descendants → rebased PENDING with **source's** pinned metadata; everything else → SUCCEEDED inherit with the same pinned pair + `inherited_from_task_id` pointing at the source's executed `task_id` |
+| `SourcePinnedDAG` | `HandleRerun` | source `:Run`'s `:EXECUTES` set | non-SUCCEEDED source tasks + their descendants within the source's pinned `:EXECUTES` set → rebased PENDING with **source's** pinned `(image_tag, manifest_version)`; everything else → InitialStatus preserved from source with `inherited_from_task_id` pointing at the source's executed `task_id` (root-resolved) |
 | `SingleNode` | `HandleSingleNodeRun` | exactly one node | latest mode reads metadata from `:TopologyRoot` + the `:Table`; `snapshot_of_run` mode reads metadata from the source `:Run`'s `:EXECUTES` edge for that node |
 | `RebasePartition` | `HandleRebase` | rebase set ∪ inherit set against latest `:Table`s | rebased rows = PENDING with **latest** metadata; inherited rows = SUCCEEDED with **source's** pinned metadata + root-resolved `inherited_from_task_id` (always points at the lineage-root executed `task_id` — chain depth ≤ 1 even for rebase-of-rebase) |
 
@@ -90,7 +90,7 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 | `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — runs `Snapshot(LatestFullDAG)`, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` + `query.model:v1` for seed/root nodes |
 | `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes (SUCCEEDED → `query.model:v1` for newly-ready nodes; FAILED → cascade-skip downstream + emit `task.status.updated:v1` for skipped tasks) |
 | `manifest.loaded:v1` | `orchestrator_manifest_loaded` | `IngestTopology` — applies the full manifest snapshot, rewrites `DEPENDS_ON`, retires missing `Table` nodes, then emits `schedules.loaded:v1` |
-| `trigger.rerun:v1` | `orchestrator_rerun` | `HandleRerun` — runs `Snapshot(SourcePinnedDAG)` against the **new** `:Run` minted by state's `TriggerRerun`, projecting the source's full pinned DAG with target + non-SUCCEEDED descendants as rebased PENDING and everything else as SUCCEEDED inherits; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for rebased rows only |
+| `trigger.rerun:v1` | `orchestrator_rerun` | `HandleRerun` — runs `Snapshot(SourcePinnedDAG{})` against the **new** `:Run` minted by state's `TriggerRerun`, projecting the source's pinned DAG with non-SUCCEEDED tasks + their descendants as rebased PENDING and the rest as inherited at source's stored status; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for rebased rows only |
 | `trigger.rebase:v1` | `orchestrator-rebase` (env: `REBASE_GROUP`) | `HandleRebaseHandler` — runs `Snapshot(RebasePartition)` against the new `:Run`; projects rebase_set ∪ inherit_set against the latest topology; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for rebased rows only |
 | `initialize.run:v1` | `orchestrator_initialize_run` | `InitializeRunHandler` — secondary entry point (no active producer); runs `Snapshot(LatestFullDAG)` + dispatch, same shape as `HandleSchedulerStarted` |
 | `trigger.single_node_run:v1` | `orchestrator_single_node_run` | `HandleSingleNodeRunHandler` — runs `Snapshot(SingleNode)` and dispatches the one task; see details below |
@@ -150,8 +150,8 @@ Schedule graph reads and new run snapshots only consider `active=true` `Table` n
 The rerun entry point materialises a fresh `Snapshot(SourcePinnedDAG)` against a newly-minted `:Run`. `state.RerunHandler.TriggerRerun` (gRPC) writes a `trigger.rerun:v1` outbox row in the same Postgres tx that **inserts a new** `scheduler_tracker` row (`kind='rerun'`, `source_run_id=<src>`); the source row is left untouched at its terminal state. The orchestrator consumes the resulting Redis message and runs `HandleRerun` in one Postgres UoW transaction:
 
 1. Dedup on `message_processing`.
-2. Build `Params{ RunID: newRunID, ScheduleName, Kind: "rerun", SourceRunID: src }` with selector `SourcePinnedDAG{Source: src, Target: (service, schema, table)}`.
-3. `snapshotService.Snapshot(ctx, params)` — `SourcePinnedDAG.SelectTasks` reads the source `:Run`'s `:EXECUTES` set via `TopologyReader`, classifies each task as either **rebased** (target + transitively-downstream non-SUCCEEDED) or **inherited** (everything else, carried forward as SUCCEEDED with the source's `task_id` resolved to its lineage root via `inherited_from_task_id`). `SnapshotWriter.WriteRunAndExecutesEdges` MERGEs the new `:Run` (inheriting `topology_generation` + `service_metadata` from source `:Run`, NOT from `:TopologyRoot`) and writes one `:EXECUTES` edge per projected task, all with the source's pinned `image_tag` + `manifest_version`.
+2. Build `Params{ RunID, ScheduleName, Kind: "rerun", SourceRunID: src }` with selector `SourcePinnedDAG{}`.
+3. `snapshotService.Snapshot(ctx, params)` — `SourcePinnedDAG.SelectTasks` reads the source `:Run`'s `:EXECUTES` set via `TopologyReader`, seeds the rebase set with all non-SUCCEEDED source tasks, grows it via `DescendantsInSourceRun`, and classifies the rest as **inherited** (carried forward with the source's stored status and `task_id` resolved to its lineage root via `inherited_from_task_id`). `SnapshotWriter.WriteRunAndExecutesEdges` MERGEs the new `:Run` (inheriting `topology_generation` + `service_metadata` from source `:Run`, NOT from `:TopologyRoot`) and writes one `:EXECUTES` edge per projected task, all with the source's pinned `image_tag` + `manifest_version`.
 4. orchestrator outbox writes (same tx):
    - 1× `run.entries.dispatched:v1` with the FULL projection — both rebased (Status="pending") and inherited (Status="succeeded", `InheritedFromTaskID=<root>`) rows. State's `RunEntriesDispatchedHandler` creates `task_tracker` rows honouring per-task status, and may auto-rollup directly to terminal if every task is already terminal.
    - N× `query.model:v1` for the **rebased rows only** (inherited rows are already SUCCEEDED and never enter the executor pipeline).
@@ -174,6 +174,10 @@ Entry point for rebase from a terminal `FAILED`/`CANCELLED` run. `state.RebaseHa
    - N× `query.model:v1` for rebased rows only.
 
 If `rebase_set ∩ inherit_set` is empty (selector returns zero entries — should never happen given upstream eligibility checks but guarded defensively), the handler still emits `run.entries.dispatched:v1` with an empty list and lets state's auto-rollup terminate the run.
+
+### Shared helpers
+
+Both consumer handlers (`HandleRerun`, `HandleRebase`) delegate the projection-to-outbox pipeline to `service/handlers/dispatch_derived_run.go`. The helper takes the materialised projection and emits the run-level `run.entries.dispatched:v1` outbox entry plus one `query.model:v1` entry per PENDING row. Inherited terminal rows (`FAILED` / `CANCELLED` / `SKIPPED`) round-trip their status verbatim — coercing them to `pending` would create `task_tracker` rows the executor never runs. `EmitDispatchFailed` in the same file writes a `run.entries.dispatch_failed:v1` outbox entry when a selector returns `ErrEmptyProjection`.
 
 ### On `trigger.single_node_run:v1` — HandleSingleNodeRunHandler
 

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import {
@@ -11,12 +10,11 @@ import {
   Task,
   TaskExecution,
 } from './types';
-import { parseNodeId, resolveActiveGraph } from './detail-page-helpers';
-import { getDriftState } from './drift-helpers';
+import { resolveActiveGraph } from './detail-page-helpers';
+import { getDriftState, getDriftBadge } from './drift-helpers';
 import DAGPanel from './DAGPanel';
 import NodesPanel from './NodesPanel';
 import PastRunsPanel from './PastRunsPanel';
-import RerunConfirmDialog from './RerunConfirmDialog';
 
 function initialLastRunId(locationState: unknown): string | null | undefined {
   if (locationState == null) return undefined;
@@ -79,6 +77,23 @@ function deriveHistoricalTasks(runGraph: RunGraph | null): Task[] {
   });
 }
 
+function isSuccessStatus(status: string | null | undefined): boolean {
+  if (!status) return false;
+  return status.toLowerCase().includes('succeed');
+}
+
+function RerunBadge({ runGraph }: { runGraph: RunGraph | null }) {
+  if (!runGraph) return null;
+  const state = getDriftState(runGraph.run_topology_generation, runGraph.latest_topology_generation);
+  if (state === 'fresh') return null;
+  const label = getDriftBadge(
+    state,
+    Number(runGraph.run_topology_generation ?? 0),
+    Number(runGraph.latest_topology_generation ?? 0),
+  );
+  return <span className={`drift-badge drift-badge--${state}`}>{label}</span>;
+}
+
 export default function DetailPage() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
@@ -98,8 +113,6 @@ export default function DetailPage() {
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunState, setRerunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [rerunError, setRerunError] = useState<string | null>(null);
-  const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
-  const rerunGenRef = useRef(0);
 
   useEffect(() => {
     resolvedRef.current = false;
@@ -299,62 +312,29 @@ export default function DetailPage() {
     };
   }, [selectedRunId]);
 
-  useEffect(() => {
-    rerunGenRef.current += 1;
-    setRerunState('idle');
-    setRerunError(null);
-  }, [selectedNodeId]);
-
-  const doRerun = useCallback(async () => {
-    if (!selectedNodeId || !lastRunId) return;
-    const gen = (rerunGenRef.current += 1);
-    const { service_name, schema_name, table_name } = parseNodeId(selectedNodeId);
+  const handleRerunRun = useCallback(async () => {
+    if (!lastRunId) return;
     setRerunState('loading');
     setRerunError(null);
     try {
       const res = await fetch(`/api/schedulers/${lastRunId}/rerun`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service_name, schema: schema_name, table_name }),
+        body: '{}',
       });
-      if (gen !== rerunGenRef.current) return;
       if (res.ok) {
         setRerunState('success');
-        setTimeout(() => {
-          if (gen === rerunGenRef.current) setRerunState('idle');
-        }, 3000);
+        setTimeout(() => setRerunState('idle'), 3000);
       } else {
         const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
-        if (gen !== rerunGenRef.current) return;
         setRerunError(body.error ?? 'Request failed — please try again');
         setRerunState('error');
       }
     } catch {
-      if (gen !== rerunGenRef.current) return;
       setRerunError('Request failed — please try again');
       setRerunState('error');
     }
-  }, [selectedNodeId, lastRunId]);
-
-  // handleRerun is the dispatcher: fresh runs short-circuit to doRerun;
-  // stale or unknown drift opens RerunConfirmDialog instead, which calls
-  // doRerun on Confirm. Bails when liveRunGraph is null (still loading or
-  // failed to load) so we don't show a misleading "Topology unknown"
-  // dialog when we just don't have the data yet — the button below is
-  // also disabled in this state, this is defense in depth.
-  const handleRerun = useCallback(() => {
-    if (!selectedNodeId || !lastRunId) return;
-    if (liveRunGraph === null) return;
-    const driftState = getDriftState(
-      liveRunGraph.run_topology_generation,
-      liveRunGraph.latest_topology_generation,
-    );
-    if (driftState === 'fresh') {
-      void doRerun();
-      return;
-    }
-    setRerunDialogOpen(true);
-  }, [doRerun, liveRunGraph, selectedNodeId, lastRunId]);
+  }, [lastRunId]);
 
   const latestExecutions = Array.from(
     executions.reduce((map, execution) => {
@@ -430,25 +410,6 @@ export default function DetailPage() {
   };
 
   return (
-    <>
-      {rerunDialogOpen && createPortal(
-        <RerunConfirmDialog
-          state={
-            getDriftState(
-              liveRunGraph?.run_topology_generation,
-              liveRunGraph?.latest_topology_generation,
-            ) as 'stale' | 'unknown'
-          }
-          runGen={Number(liveRunGraph?.run_topology_generation ?? 0)}
-          latestGen={Number(liveRunGraph?.latest_topology_generation ?? 0)}
-          onConfirm={() => {
-            setRerunDialogOpen(false);
-            void doRerun();
-          }}
-          onCancel={() => setRerunDialogOpen(false)}
-        />,
-        document.body,
-      )}
     <div className="detail-page">
       <div className="detail-topbar">
         <button className="detail-back-link" onClick={() => navigate('/')}>
@@ -458,6 +419,26 @@ export default function DetailPage() {
         <span className={`pill ${pillClass(selectedRun ? selectedRun.terminal_status : schedulerStatus)}`}>
           {selectedRun ? formatStatusLabel(selectedRun.terminal_status) : formatStatusLabel(schedulerStatus)}
         </span>
+        {isTerminalStatus(scheduler?.status) && !isSuccessStatus(scheduler?.status) && lastRunId && (
+          <div className="rerun-control">
+            <RerunBadge runGraph={liveRunGraph} />
+            {rerunState === 'success' ? (
+              <span className="rerun-feedback rerun-feedback--success">✓ Rerun triggered</span>
+            ) : (
+              <button
+                type="button"
+                className="rerun-btn"
+                disabled={rerunState === 'loading'}
+                onClick={handleRerunRun}
+              >
+                {rerunState === 'loading' ? 'Triggering…' : '↺ Rerun'}
+              </button>
+            )}
+            {rerunState === 'error' && rerunError && (
+              <span className="rerun-feedback rerun-feedback--error">{rerunError}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {snapshotRun && (
@@ -507,22 +488,6 @@ export default function DetailPage() {
                     <div className="dag-focus-legend-row">
                       <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
                     </div>
-                    <hr className="dag-rerun-divider" />
-                    {rerunState === 'error' && rerunError && (
-                      <div className="dag-rerun-feedback dag-rerun-feedback--error">{rerunError}</div>
-                    )}
-                    {rerunState === 'success' ? (
-                      <div className="dag-rerun-feedback dag-rerun-feedback--success">✓ Rerun triggered</div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="dag-rerun-btn"
-                        disabled={rerunState === 'loading' || liveRunGraph === null}
-                        onClick={handleRerun}
-                      >
-                        {rerunState === 'loading' ? 'Running…' : '↺ Rerun node'}
-                      </button>
-                    )}
                   </div>
                 )}
               </>
@@ -582,6 +547,5 @@ export default function DetailPage() {
         </div>
       </div>
     </div>
-    </>
   );
 }

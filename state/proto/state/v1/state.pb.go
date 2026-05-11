@@ -2006,10 +2006,7 @@ func (x *GetSchedulerInitStatusResponse) GetInitializationStatus() string {
 
 type TriggerRerunRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ScheduleId    string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`
-	Schema        string                 `protobuf:"bytes,2,opt,name=schema,proto3" json:"schema,omitempty"`
-	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
-	ServiceName   string                 `protobuf:"bytes,4,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	SourceRunId   string                 `protobuf:"bytes,1,opt,name=source_run_id,json=sourceRunId,proto3" json:"source_run_id,omitempty"` // schedule_id of the failed/cancelled run to rerun
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2044,41 +2041,17 @@ func (*TriggerRerunRequest) Descriptor() ([]byte, []int) {
 	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{31}
 }
 
-func (x *TriggerRerunRequest) GetScheduleId() string {
+func (x *TriggerRerunRequest) GetSourceRunId() string {
 	if x != nil {
-		return x.ScheduleId
-	}
-	return ""
-}
-
-func (x *TriggerRerunRequest) GetSchema() string {
-	if x != nil {
-		return x.Schema
-	}
-	return ""
-}
-
-func (x *TriggerRerunRequest) GetTableName() string {
-	if x != nil {
-		return x.TableName
-	}
-	return ""
-}
-
-func (x *TriggerRerunRequest) GetServiceName() string {
-	if x != nil {
-		return x.ServiceName
+		return x.SourceRunId
 	}
 	return ""
 }
 
 type TriggerRerunResponse struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// PR2 unification: TriggerRerun now creates a NEW run on the source's
-	// schedule (kind='rerun', source_run_id=<source>) rather than mutating
-	// the source row in place. Returns the new run's identifiers.
-	RunId         string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`                      // schedule_id of the new rerun run
-	ScheduleName  string `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // copied verbatim from source's schedule_name
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`                      // schedule_id of the new rerun run
+	ScheduleName  string                 `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // copied verbatim from source's schedule_name
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2517,14 +2490,9 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\vschedule_id\x18\x01 \x01(\tR\n" +
 	"scheduleId\"U\n" +
 	"\x1eGetSchedulerInitStatusResponse\x123\n" +
-	"\x15initialization_status\x18\x01 \x01(\tR\x14initializationStatus\"\x90\x01\n" +
-	"\x13TriggerRerunRequest\x12\x1f\n" +
-	"\vschedule_id\x18\x01 \x01(\tR\n" +
-	"scheduleId\x12\x16\n" +
-	"\x06schema\x18\x02 \x01(\tR\x06schema\x12\x1d\n" +
-	"\n" +
-	"table_name\x18\x03 \x01(\tR\ttableName\x12!\n" +
-	"\fservice_name\x18\x04 \x01(\tR\vserviceName\"R\n" +
+	"\x15initialization_status\x18\x01 \x01(\tR\x14initializationStatus\"9\n" +
+	"\x13TriggerRerunRequest\x12\"\n" +
+	"\rsource_run_id\x18\x01 \x01(\tR\vsourceRunId\"R\n" +
 	"\x14TriggerRerunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\xcd\x01\n" +

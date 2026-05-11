@@ -35,9 +35,7 @@ describe('SchedulerCard — stale strip', () => {
       baseSchedule({ active_run_id: 'run-1', active_run_topology_generation: 5 }),
       7,
     );
-    const strip = screen.getByText(
-      /Stale — pinned to topology gen 5; latest is 7\. Rerun will use the older snapshot\./,
-    );
+    const strip = screen.getByText(/source 2 gen behind latest/);
     expect(strip).toBeInTheDocument();
     expect(strip.closest('.scheduler-card-stale-strip')).toBeInTheDocument();
     expect(strip.closest('.scheduler-card-stale-strip--unknown')).toBeNull();
@@ -48,9 +46,7 @@ describe('SchedulerCard — stale strip', () => {
       baseSchedule({ active_run_id: 'run-1', active_run_topology_generation: 0 }),
       7,
     );
-    const strip = screen.getByText(
-      'Topology version unknown for this run. May not match the current topology.',
-    );
+    const strip = screen.getByText('topology version unknown');
     expect(strip.closest('.scheduler-card-stale-strip--unknown')).toBeInTheDocument();
   });
 
@@ -59,8 +55,8 @@ describe('SchedulerCard — stale strip', () => {
       baseSchedule({ active_run_id: null, active_run_topology_generation: null }),
       7,
     );
-    expect(screen.queryByText(/Stale/i)).toBeNull();
-    expect(screen.queryByText(/Topology version unknown/i)).toBeNull();
+    expect(screen.queryByText(/gen behind latest/i)).toBeNull();
+    expect(screen.queryByText(/topology version unknown/i)).toBeNull();
   });
 
   it('does NOT render the strip when drift is fresh', () => {
@@ -68,7 +64,7 @@ describe('SchedulerCard — stale strip', () => {
       baseSchedule({ active_run_id: 'run-1', active_run_topology_generation: 7 }),
       7,
     );
-    expect(screen.queryByText(/Stale/i)).toBeNull();
-    expect(screen.queryByText(/Topology version unknown/i)).toBeNull();
+    expect(screen.queryByText(/gen behind latest/i)).toBeNull();
+    expect(screen.queryByText(/topology version unknown/i)).toBeNull();
   });
 });

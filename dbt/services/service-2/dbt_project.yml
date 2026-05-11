@@ -19,3 +19,5 @@ models:
       +tags: ["e2e-schedule-failure"]
     ftable_e:
       +tags: ["e2e-schedule-failure"]
+    ftable_h:
+      +tags: ["e2e-schedule-failure"]

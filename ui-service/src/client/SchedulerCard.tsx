@@ -5,7 +5,7 @@ import {
   getScheduleProgressLabel,
   getScheduleProgressPercent,
 } from './scheduler-card-helpers';
-import { getDriftState, getDriftMessage } from './drift-helpers';
+import { getDriftState, getDriftBadge } from './drift-helpers';
 import { ScheduleSummary, Task } from './types';
 import CancelDialog from './CancelDialog';
 
@@ -69,8 +69,8 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
       ? getDriftState(schedule.active_run_topology_generation, latestTopologyGeneration)
       : 'fresh';
   const showDriftStrip = driftState !== 'fresh';
-  const driftMsg = showDriftStrip
-    ? getDriftMessage(
+  const driftBadge = showDriftStrip
+    ? getDriftBadge(
         driftState,
         Number(schedule.active_run_topology_generation ?? 0),
         latestTopologyGeneration,
@@ -148,13 +148,13 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
             </button>
           )}
         </div>
-        {showDriftStrip && driftMsg && (
+        {showDriftStrip && driftBadge && (
           <div
             className={`scheduler-card-stale-strip${driftState === 'unknown' ? ' scheduler-card-stale-strip--unknown' : ''}`}
             onClick={e => e.stopPropagation()}
           >
             <span aria-hidden="true">{driftState === 'unknown' ? '?' : '⚠'}</span>
-            <span>{driftMsg.stripLine}</span>
+            <span>{driftBadge}</span>
           </div>
         )}
         {triggerError && <div className="trigger-error">{triggerError}</div>}

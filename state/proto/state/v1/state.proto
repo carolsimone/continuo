@@ -317,16 +317,10 @@ message GetSchedulerInitStatusResponse {
 }
 
 message TriggerRerunRequest {
-  string schedule_id  = 1;
-  string schema       = 2;
-  string table_name   = 3;
-  string service_name = 4;
+  string source_run_id = 1;  // schedule_id of the failed/cancelled run to rerun
 }
 
 message TriggerRerunResponse {
-  // PR2 unification: TriggerRerun now creates a NEW run on the source's
-  // schedule (kind='rerun', source_run_id=<source>) rather than mutating
-  // the source row in place. Returns the new run's identifiers.
   string run_id        = 1;  // schedule_id of the new rerun run
   string schedule_name = 2;  // copied verbatim from source's schedule_name
 }

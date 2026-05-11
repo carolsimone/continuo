@@ -8,66 +8,68 @@ import (
 	"github.com/google/uuid"
 )
 
-// SourcePinnedDAG is the rerun selector. It produces a full DAG projection
-// from the source :Run's frozen :EXECUTES set, with uniform OLD metadata.
+// SourcePinnedDAG is the rerun selector. It produces a projection bound to the
+// source :Run's frozen :EXECUTES set — same topology the source ran against,
+// no drift, no new arrivals from latest.
 //
 // Behaviour:
-//   - The target node (TargetService/Schema/Table) → InitialStatus=PENDING,
-//     fresh task_id, source's pinned (image_tag, manifest_version), no inherit.
-//   - Non-SUCCEEDED descendants of the target in source's :EXECUTES set
-//     (typically SKIPPED — the cascade-skipped set when target failed) →
-//     PENDING, fresh task_id, no inherit.
-//   - Every other source task (incl. SUCCEEDED descendants of target and
-//     unrelated SUCCEEDED rows) → inherited. InitialStatus = source's
-//     stored status. Source's pinned metadata. InheritedFromTaskID points
-//     to the root-resolved task_id (forwards when source row was itself
-//     inherited).
+//   - Every non-SUCCEEDED source task is seeded into the rebase set.
+//   - Every descendant of a seeded task (in the source's pinned :EXECUTES set)
+//     joins the rebase set, regardless of its source status.
+//   - Rebase-set rows → PENDING, fresh task_id, source's pinned
+//     (image_tag, manifest_version), InheritedFromTaskID = nil.
+//   - Every other source task → InitialStatus = source's stored status,
+//     source's pinned metadata, InheritedFromTaskID = root-resolved source
+//     task_id (forwards when the source row was itself inherited).
 //
-// Returns ErrTargetNotFound if the target FQN is not in the source's :EXECUTES set.
-type SourcePinnedDAG struct {
-	TargetService string
-	TargetSchema  string
-	TargetTable   string
-}
+// Returns ErrEmptyProjection when the source has zero tasks — defensive only;
+// state's TriggerRerun eligibility (≥1 non-SUCCEEDED task) makes this
+// unreachable in production.
+type SourcePinnedDAG struct{}
 
-func (s SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params) ([]TaskProjection, error) {
+func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params) ([]TaskProjection, error) {
 	if p.SourceRunID == nil {
 		return nil, fmt.Errorf("SourcePinnedDAG: SourceRunID required")
 	}
-	if s.TargetService == "" || s.TargetSchema == "" || s.TargetTable == "" {
-		return nil, fmt.Errorf("SourcePinnedDAG: target identity required")
-	}
 
 	source, err := r.LoadSourceTasks(ctx, p.SourceRunID.String())
-	if err != nil { return nil, err }
-
-	// P2 fix: source map keys include ScheduleName which the caller doesn't know.
-	// Iterate to find the matching entry by 3-tuple; capture the full key so that
-	// DescendantsInSourceRun gets the precise 4-field FQN.
-	var target FQN
-	matched := false
-	for f := range source {
-		if f.Service == s.TargetService && f.Schema == s.TargetSchema && f.Table == s.TargetTable {
-			target = f
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		return nil, ErrTargetNotFound
+	if err != nil {
+		return nil, err
 	}
 
-	rebaseFQNs := map[FQN]struct{}{target: {}}
-	descendants, err := r.DescendantsInSourceRun(ctx, p.SourceRunID.String(), target)
-	if err != nil { return nil, err }
-	for _, d := range descendants {
-		st, ok := source[d]
-		if !ok { continue }
+	// Pass 1: seed with all non-SUCCEEDED source tasks.
+	rebaseFQNs := map[FQN]struct{}{}
+	for f, st := range source {
 		if st.Status != "SUCCEEDED" {
-			rebaseFQNs[d] = struct{}{}
+			rebaseFQNs[f] = struct{}{}
 		}
 	}
 
+	// No non-SUCCEEDED tasks means nothing to rerun; guard here so we don't
+	// emit a projection that consists entirely of inherited rows.
+	if len(rebaseFQNs) == 0 {
+		return nil, ErrEmptyProjection
+	}
+
+	// Pass 2: add descendants WITHIN the source's pinned :EXECUTES set.
+	// Snapshot the keys first so the iteration is stable.
+	seeds := make([]FQN, 0, len(rebaseFQNs))
+	for f := range rebaseFQNs {
+		seeds = append(seeds, f)
+	}
+	for _, seed := range seeds {
+		descendants, err := r.DescendantsInSourceRun(ctx, p.SourceRunID.String(), seed)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range descendants {
+			if _, ok := source[d]; ok {
+				rebaseFQNs[d] = struct{}{}
+			}
+		}
+	}
+
+	// Pass 3: emit projection.
 	var projection []TaskProjection
 	for f, st := range source {
 		if _, isRebased := rebaseFQNs[f]; isRebased {
@@ -102,6 +104,10 @@ func (s SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Pa
 			InheritedFromTaskID: &root,
 			MaxRetries:          0,
 		})
+	}
+
+	if len(projection) == 0 {
+		return nil, ErrEmptyProjection
 	}
 	return projection, nil
 }

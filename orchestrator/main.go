@@ -301,14 +301,6 @@ func main() {
 			ScheduleName: scheduleName,
 			RunID:        runID,
 		}
-		// Check for rerun target fields
-		if svc, ok := msg.Values["rerun_service_name"].(string); ok && svc != "" {
-			cmd.RerunTarget = &domainModel.RerunTarget{
-				ServiceName: svc,
-				SchemaName:  msg.Values["rerun_schema_name"].(string),
-				TableName:   msg.Values["rerun_table_name"].(string),
-			}
-		}
 		return initializeRunHandler.Handle(ctx, cmd, msg.ID)
 	}
 	initRunConsumer := redis.NewStreamConsumer(
@@ -340,20 +332,13 @@ func main() {
 		scheduleID, _ := msg.Values["schedule_id"].(string)
 		scheduleName, _ := msg.Values["schedule_name"].(string)
 		sourceRunID, _ := msg.Values["source_run_id"].(string)
-		schemaName, _ := msg.Values["schema_name"].(string)
-		tableName, _ := msg.Values["table_name"].(string)
-		serviceName, _ := msg.Values["service_name"].(string)
-		if scheduleID == "" || scheduleName == "" || sourceRunID == "" ||
-			schemaName == "" || tableName == "" || serviceName == "" {
+		if scheduleID == "" || scheduleName == "" || sourceRunID == "" {
 			return fmt.Errorf("missing required fields in rerun message %s", msg.ID)
 		}
 		cmd := domainModel.RerunInput{
 			RunID:        scheduleID,
 			ScheduleName: scheduleName,
 			SourceRunID:  sourceRunID,
-			ServiceName:  serviceName,
-			SchemaName:   schemaName,
-			TableName:    tableName,
 		}
 		return handleRerunHandler.Handle(ctx, cmd, msg.ID)
 	}

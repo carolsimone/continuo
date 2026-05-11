@@ -43,9 +43,6 @@ func makeRerunCmd() domainModel.RerunInput {
 		ScheduleName: "daily",
 		RunID:        "00000000-0000-0000-0000-000000000001",
 		SourceRunID:  "00000000-0000-0000-0000-000000000999",
-		ServiceName:  "svc1",
-		SchemaName:   "public",
-		TableName:    "orders",
 	}
 }
 
@@ -72,11 +69,8 @@ func TestHandleRerun_HappyPath_ProjectsAndDispatches(t *testing.T) {
 			assert.Equal(t, "00000000-0000-0000-0000-000000000001", p.RunID)
 			require.NotNil(t, p.SourceRunID)
 			assert.Equal(t, "00000000-0000-0000-0000-000000000999", p.SourceRunID.String())
-			sel, ok := p.Selector.(snapshot.SourcePinnedDAG)
+			_, ok := p.Selector.(snapshot.SourcePinnedDAG)
 			require.True(t, ok, "selector must be SourcePinnedDAG")
-			assert.Equal(t, "svc1", sel.TargetService)
-			assert.Equal(t, "public", sel.TargetSchema)
-			assert.Equal(t, "orders", sel.TargetTable)
 
 			return []snapshot.TaskProjection{
 				{
@@ -193,38 +187,7 @@ func TestHandleRerun_HappyPath_ProjectsAndDispatches(t *testing.T) {
 	assert.False(t, dispatchedTables["users"], "inherited row must NOT be dispatched")
 }
 
-// 2. ErrTargetNotFound from Snapshot → ONE run.entries.dispatch_failed:v1
-//    outbox entry; tx committed; no query.model.
-func TestHandleRerun_TargetNotFound_EmitsDispatchFailed(t *testing.T) {
-	ctx := context.Background()
-	uow := newFakeUnitOfWork()
-
-	runRepo := &fakeRunRepository{}
-	snapSvc := &rerunFakeSnapshotService{
-		snapshotFn: func(_ context.Context, _ snapshot.Params) ([]snapshot.TaskProjection, error) {
-			return nil, snapshot.ErrTargetNotFound
-		},
-	}
-
-	h := handlers.NewHandleRerunHandler(uow, runRepo, snapSvc, newTestLogger())
-	require.NoError(t, h.Handle(ctx, makeRerunCmd(), "msg-rerun-tnf"),
-		"ErrTargetNotFound must not surface as a handler error")
-	require.True(t, uow.CommittedTx, "transaction must still be committed")
-
-	entries := uow.outboxRepo.CreatedEntries
-	require.Len(t, entries, 1, "expect exactly 1 outbox entry: run.entries.dispatch_failed:v1")
-	require.Equal(t, "run.entries.dispatch_failed:v1", entries[0].StreamName)
-	require.Equal(t, "run_entries_dispatch_failed", entries[0].EventType)
-	require.Equal(t, "pending", entries[0].Status)
-
-	var failed pkgEvents.RunEntriesDispatchFailed
-	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
-	assert.Equal(t, "00000000-0000-0000-0000-000000000001", failed.ScheduleID)
-	assert.Equal(t, "daily", failed.ScheduleName)
-	assert.Equal(t, "target_not_found", failed.Reason)
-}
-
-// 3. ErrEmptyProjection from Snapshot → run.entries.dispatch_failed with
+// 2. ErrEmptyProjection from Snapshot → run.entries.dispatch_failed with
 //    reason="rerun_yielded_empty_projection".
 func TestHandleRerun_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	ctx := context.Background()
@@ -250,7 +213,7 @@ func TestHandleRerun_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	assert.Equal(t, "rerun_yielded_empty_projection", failed.Reason)
 }
 
-// 4. Non-target terminal statuses (FAILED/CANCELLED/SKIPPED) inherited from the
+// 3. Non-target terminal statuses (FAILED/CANCELLED/SKIPPED) inherited from the
 //    source pinned DAG must be preserved verbatim in run.entries.dispatched:v1
 //    and must NOT trigger query.model:v1 dispatch. Bug B2 (cycle 2): the
 //    handler used to coerce any non-SUCCEEDED InitialStatus to "pending",
@@ -362,7 +325,7 @@ func TestHandleRerun_PreservesNonTargetTerminalStatuses(t *testing.T) {
 	}
 }
 
-// 5. Second delivery of the same messageID is a no-op (dedup).
+// 4. Second delivery of the same messageID is a no-op (dedup).
 func TestHandleRerun_DedupSecondDelivery(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()

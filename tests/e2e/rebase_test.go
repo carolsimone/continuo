@@ -93,7 +93,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 		if qErr != nil {
 			return false, qErr
 		}
-		return count >= 6, nil // 6 ftable_* nodes in the failure topology
+		return count >= 8, nil // 8 ftable_* nodes in the failure topology (a-h)
 	}, "task_tracker rows for rebase run did not materialise")
 
 	// ── Assert partition shape ──────────────────────────────────────────────
@@ -118,14 +118,18 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 
+	if len(rebaseTasks) != 8 {
+		dumpRebaseRowsForDebug(t, ctx, clients, newRunID)
+	}
+
 	// Categorize: ftable_a/b/c/d should be inherited (status=succeeded, is_real=false).
-	// ftable_e/f should be rebased (is_real=true; status starts as 'pending').
+	// ftable_e/f/g/h should be rebased (is_real=true; status starts as 'pending').
 	for _, r := range rebaseTasks {
 		switch r.tableName {
 		case "ftable_a", "ftable_b", "ftable_c", "ftable_d":
 			assert.False(t, r.isReal, "%s should be inherited (inherited_from_task_id non-NULL)", r.tableName)
 			assert.Equal(t, "succeeded", r.status, "%s should be inherited as succeeded", r.tableName)
-		case "ftable_e", "ftable_f":
+		case "ftable_e", "ftable_f", "ftable_g", "ftable_h":
 			assert.True(t, r.isReal, "%s should be rebased (inherited_from_task_id NULL)", r.tableName)
 			// Status may be 'pending', 'running', or terminal — don't pin it here.
 		default:
@@ -199,6 +203,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 
 	t.Log("Waiting for ftable_e to exhaust retries...")
 	verifyNodeExhaustedRetries(t, ctx, clients, srcID, "ftable_e")
+	verifyNodeExhaustedRetries(t, ctx, clients, srcID, "ftable_g")
 
 	t.Log("Verifying source scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, srcID)
@@ -260,10 +265,13 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 		   FROM scheduler_tracker WHERE schedule_id = $1`,
 		rebaseRunID,
 	).Scan(&terminalCount, &totalCount))
+	if totalCount != 8 {
+		dumpRebaseRowsForDebug(t, ctx, clients, rebaseRunID)
+	}
 	assert.Equal(t, totalCount, terminalCount,
 		"terminal_task_count must equal total_task_count post-finalization (B1 invariant)")
-	assert.Equal(t, int32(6), totalCount,
-		"expected partition: 4 inherited + 2 rebased = 6 total")
+	assert.Equal(t, int32(8), totalCount,
+		"expected partition: 4 inherited + 4 rebased = 8 total")
 
 	// ── Assert run.finalized:v1 was emitted via state_outbox ────────────────
 	// Whether the entry is still 'pending' or already 'published', its presence
@@ -348,4 +356,42 @@ func TestRebaseOfRebase(t *testing.T) {
 		t.Skip("Skipping E2E test in short mode")
 	}
 	t.Skip("TODO: requires waiting for chained terminal states; root-forwarding semantics covered by TestRebasePartition_RebaseOfRebase_RootForwarding unit test")
+}
+
+// dumpRebaseRowsForDebug logs every task_tracker row attached to a rebase
+// run so an unexpected row count on CI surfaces the offending row's identity
+// (table_name + service + schema + image_tag + manifest_version). Called only
+// on assertion mismatch — no-op when counts match.
+func dumpRebaseRowsForDebug(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
+	t.Helper()
+	rows, err := clients.stateDB.QueryContext(ctx, `
+		SELECT table_name, service_name, schema_name, status,
+		       inherited_from_task_id IS NULL AS is_real,
+		       COALESCE(image_tag, '') AS image_tag,
+		       COALESCE(manifest_version, '') AS manifest_version
+		  FROM task_tracker
+		 WHERE schedule_id = $1
+		 ORDER BY table_name, service_name`, runID)
+	if err != nil {
+		t.Logf("dumpRebaseRowsForDebug: query failed: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var n int
+	for rows.Next() {
+		var tn, svc, sch, status, img, ver string
+		var isReal bool
+		if scanErr := rows.Scan(&tn, &svc, &sch, &status, &isReal, &img, &ver); scanErr != nil {
+			t.Logf("dumpRebaseRowsForDebug: scan failed: %v", scanErr)
+			return
+		}
+		n++
+		t.Logf("rebase row %d: table=%s svc=%s sch=%s status=%s real=%v img=%q ver=%q",
+			n, tn, svc, sch, status, isReal, img, ver)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		t.Logf("dumpRebaseRowsForDebug: rows.Err: %v", rowsErr)
+	}
+	t.Logf("dumpRebaseRowsForDebug: total rows seen = %d", n)
 }
