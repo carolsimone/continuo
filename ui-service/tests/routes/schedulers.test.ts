@@ -82,12 +82,17 @@ describe('POST /api/schedulers/:id/rerun', () => {
 
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('returns 200 on success', async () => {
-    mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(null));
-    const res = await request(app)
-      .post(`/api/schedulers/${VALID_ID}/rerun`)
-      .send({ schema: 'analytics', table_name: 'users', service_name: 'dbt' });
+  it('returns 200 on success and forwards source_run_id from path', async () => {
+    mockTriggerRerun.mockImplementation((req: any, cb: any) => {
+      expect(req).toEqual({ source_run_id: VALID_ID });
+      cb(null);
+    });
+    const res = await request(app).post(`/api/schedulers/${VALID_ID}/rerun`).send({});
     expect(res.status).toBe(200);
+    expect(mockTriggerRerun).toHaveBeenCalledWith(
+      { source_run_id: VALID_ID },
+      expect.any(Function),
+    );
   });
 
   it('returns 400 for INVALID_ARGUMENT', async () => {
@@ -109,7 +114,7 @@ describe('POST /api/schedulers/:id/rerun', () => {
     mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(err));
     const res = await request(app)
       .post(`/api/schedulers/${VALID_ID}/rerun`)
-      .send({ schema: 'analytics', table_name: 'users', service_name: 'dbt' });
+      .send({});
     expect(res.status).toBe(404);
     expect(res.body.error).toMatch(/schedule not found/);
   });
@@ -121,20 +126,9 @@ describe('POST /api/schedulers/:id/rerun', () => {
     mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(err));
     const res = await request(app)
       .post(`/api/schedulers/${VALID_ID}/rerun`)
-      .send({ schema: 'analytics', table_name: 'users', service_name: 'dbt' });
+      .send({});
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/running tasks/);
-  });
-
-  it('returns 409 for FAILED_PRECONDITION (task not FAILED)', async () => {
-    const err = Object.assign(new Error('target task is not in FAILED state'), {
-      code: grpc.status.FAILED_PRECONDITION,
-    });
-    mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(err));
-    const res = await request(app)
-      .post(`/api/schedulers/${VALID_ID}/rerun`)
-      .send({ schema: 'analytics', table_name: 'users', service_name: 'dbt' });
-    expect(res.status).toBe(409);
   });
 
   it('returns 500 for INTERNAL', async () => {
@@ -144,7 +138,7 @@ describe('POST /api/schedulers/:id/rerun', () => {
     mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(err));
     const res = await request(app)
       .post(`/api/schedulers/${VALID_ID}/rerun`)
-      .send({ schema: 'analytics', table_name: 'users', service_name: 'dbt' });
+      .send({});
     expect(res.status).toBe(500);
   });
 
