@@ -9,94 +9,144 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestSourcePinnedDAG_TargetMissing_ReturnsErrTargetNotFound(t *testing.T) {
+func TestSourcePinnedDAG_SingleFailedTask_NoDescendants_RebasesOnlyThat(t *testing.T) {
 	srcID := uuid.New()
-	r := &fakeTopologyReader{
-		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
-			srcID.String(): {},
-		},
-	}
-	sel := snapshot.SourcePinnedDAG{TargetService: "svc", TargetSchema: "sch", TargetTable: "missing"}
-	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
-	if !errors.Is(err, snapshot.ErrTargetNotFound) { t.Fatalf("got %v", err) }
-}
+	failed := snapshot.FQN{Service: "svc", Schema: "sch", Table: "f", ScheduleName: "x"}
+	succA := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
 
-func TestSourcePinnedDAG_RebasesTargetAndNonSucceededDescendants_InheritsRest(t *testing.T) {
-	srcID := uuid.New()
-	target := snapshot.FQN{Service: "svc", Schema: "sch", Table: "tgt", ScheduleName: "x"}
-	descSkipped := snapshot.FQN{Service: "svc", Schema: "sch", Table: "skip", ScheduleName: "x"}
-	descSucceeded := snapshot.FQN{Service: "svc", Schema: "sch", Table: "ok", ScheduleName: "x"}
-	unrelatedSucceeded := snapshot.FQN{Service: "svc", Schema: "sch", Table: "u", ScheduleName: "x"}
-
-	rootTaskID := uuid.New()
+	rootA := uuid.New()
 	r := &fakeTopologyReader{
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {
-				target:             {TaskID: uuid.New(), Status: "FAILED",    ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
-				descSkipped:        {TaskID: uuid.New(), Status: "SKIPPED",   ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
-				descSucceeded:      {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
-				unrelatedSucceeded: {TaskID: rootTaskID,   Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
+				failed: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
+				succA:  {TaskID: rootA, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
+			},
+		},
+		DescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{srcID.String(): {failed: nil}},
+	}
+	got, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := indexByFQN(got)
+	if by[failed].InitialStatus != "PENDING" || by[failed].InheritedFromTaskID != nil {
+		t.Errorf("failed: want PENDING/no-inherit, got %+v", by[failed])
+	}
+	if by[succA].InitialStatus != "SUCCEEDED" || by[succA].InheritedFromTaskID == nil || *by[succA].InheritedFromTaskID != rootA {
+		t.Errorf("succA: want SUCCEEDED inherit pointing at rootA, got %+v", by[succA])
+	}
+}
+
+func TestSourcePinnedDAG_TwoIndependentFailedSubtrees_BothRebased(t *testing.T) {
+	srcID := uuid.New()
+	// Subtree 1: e (FAILED) → f (SKIPPED).
+	e := snapshot.FQN{Service: "svc", Schema: "sch", Table: "e", ScheduleName: "x"}
+	f := snapshot.FQN{Service: "svc", Schema: "sch", Table: "f", ScheduleName: "x"}
+	// Subtree 2: g (FAILED) → h (SKIPPED).
+	g := snapshot.FQN{Service: "svc", Schema: "sch", Table: "g", ScheduleName: "x"}
+	h := snapshot.FQN{Service: "svc", Schema: "sch", Table: "h", ScheduleName: "x"}
+	// SUCCEEDED ancestors.
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+
+	r := &fakeTopologyReader{
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {
+				a: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"},
+				e: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
+				f: {TaskID: uuid.New(), Status: "SKIPPED", ScheduleName: "x", NodeType: "dbt-model"},
+				g: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
+				h: {TaskID: uuid.New(), Status: "SKIPPED", ScheduleName: "x", NodeType: "dbt-model"},
 			},
 		},
 		DescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{
-			srcID.String(): {target: {descSkipped, descSucceeded}},
-		},
-	}
-	sel := snapshot.SourcePinnedDAG{TargetService: "svc", TargetSchema: "sch", TargetTable: "tgt"}
-	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
-	if err != nil { t.Fatal(err) }
-
-	by := map[snapshot.FQN]snapshot.TaskProjection{}
-	for _, p := range got {
-		by[snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName, ScheduleName: p.ScheduleName}] = p
-	}
-
-	if by[target].InitialStatus != "PENDING" || by[target].InheritedFromTaskID != nil { t.Errorf("target: %+v", by[target]) }
-	if by[descSkipped].InitialStatus != "PENDING" || by[descSkipped].InheritedFromTaskID != nil { t.Errorf("skipped: %+v", by[descSkipped]) }
-	if by[descSucceeded].InitialStatus != "SUCCEEDED" || by[descSucceeded].InheritedFromTaskID == nil { t.Errorf("succeeded desc: %+v", by[descSucceeded]) }
-	if by[unrelatedSucceeded].InitialStatus != "SUCCEEDED" || by[unrelatedSucceeded].InheritedFromTaskID == nil ||
-		*by[unrelatedSucceeded].InheritedFromTaskID != rootTaskID {
-		t.Errorf("unrelated: %+v", by[unrelatedSucceeded])
-	}
-}
-
-func TestSourcePinnedDAG_RootForwarding(t *testing.T) {
-	srcID := uuid.New()
-	target := snapshot.FQN{Service: "svc", Schema: "sch", Table: "tgt", ScheduleName: "x"}
-	pinnedRoot := uuid.New()
-	otherFQN := snapshot.FQN{Service: "svc", Schema: "sch", Table: "other", ScheduleName: "x"}
-
-	r := &fakeTopologyReader{
-		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {
-				target:   {TaskID: uuid.New(), Status: "FAILED",    ScheduleName: "x"},
-				otherFQN: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", InheritedFromRoot: &pinnedRoot},
+				e: {f},
+				g: {h},
+				f: nil,
+				h: nil,
 			},
 		},
 	}
-	sel := snapshot.SourcePinnedDAG{TargetService: "svc", TargetSchema: "sch", TargetTable: "tgt"}
-	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
-	if err != nil { t.Fatal(err) }
-	for _, p := range got {
-		if p.TableName == "other" {
-			if p.InheritedFromTaskID == nil || *p.InheritedFromTaskID != pinnedRoot {
-				t.Errorf("root not forwarded: %+v", p)
-			}
+	got, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := indexByFQN(got)
+	for _, fqn := range []snapshot.FQN{e, f, g, h} {
+		if by[fqn].InitialStatus != "PENDING" || by[fqn].InheritedFromTaskID != nil {
+			t.Errorf("%s: want PENDING/no-inherit, got %+v", fqn.Table, by[fqn])
 		}
+	}
+	if by[a].InitialStatus != "SUCCEEDED" || by[a].InheritedFromTaskID == nil {
+		t.Errorf("a: want SUCCEEDED inherit, got %+v", by[a])
+	}
+}
+
+// Regression bite: a SUCCEEDED descendant of a FAILED root is added to the
+// rebase set via Pass 2 (descendants of non-SUCCEEDED) and flipped to PENDING
+// with source's pinned metadata. This documents the new rule explicitly so a
+// future implementer doesn't misread it as "only non-SUCCEEDED descendants
+// rebase".
+func TestSourcePinnedDAG_SucceededDescendantOfFailedRoot_IsRebased(t *testing.T) {
+	srcID := uuid.New()
+	failedRoot := snapshot.FQN{Service: "svc", Schema: "sch", Table: "root", ScheduleName: "x"}
+	succDesc := snapshot.FQN{Service: "svc", Schema: "sch", Table: "ok", ScheduleName: "x"}
+
+	rootSuccID := uuid.New()
+	r := &fakeTopologyReader{
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {
+				failedRoot: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
+				succDesc:   {TaskID: rootSuccID, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"},
+			},
+		},
+		DescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{
+			srcID.String(): {failedRoot: {succDesc}},
+		},
+	}
+	got, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := indexByFQN(got)
+	if by[failedRoot].InitialStatus != "PENDING" {
+		t.Errorf("failedRoot: want PENDING, got %+v", by[failedRoot])
+	}
+	if by[succDesc].InitialStatus != "PENDING" {
+		t.Errorf("succDesc: want PENDING (descendant of failed root), got %+v", by[succDesc])
+	}
+}
+
+func TestSourcePinnedDAG_AllSucceeded_ReturnsErrEmptyProjection(t *testing.T) {
+	srcID := uuid.New()
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+	b := snapshot.FQN{Service: "svc", Schema: "sch", Table: "b", ScheduleName: "x"}
+	r := &fakeTopologyReader{
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {
+				a: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x"},
+				b: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x"},
+			},
+		},
+	}
+	_, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
+	if !errors.Is(err, snapshot.ErrEmptyProjection) {
+		t.Fatalf("want ErrEmptyProjection, got %v", err)
 	}
 }
 
 func TestSourcePinnedDAG_NoSourceRunID_Errors(t *testing.T) {
 	r := &fakeTopologyReader{}
-	sel := snapshot.SourcePinnedDAG{TargetService: "s", TargetSchema: "c", TargetTable: "t"}
-	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{})
-	if err == nil { t.Fatal("expected error") }
+	_, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
 }
 
-func TestSourcePinnedDAG_BlankTarget_Errors(t *testing.T) {
-	srcID := uuid.New()
-	r := &fakeTopologyReader{}
-	sel := snapshot.SourcePinnedDAG{}
-	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
-	if err == nil { t.Fatal("expected error") }
+func indexByFQN(projection []snapshot.TaskProjection) map[snapshot.FQN]snapshot.TaskProjection {
+	out := map[snapshot.FQN]snapshot.TaskProjection{}
+	for _, p := range projection {
+		out[snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName, ScheduleName: p.ScheduleName}] = p
+	}
+	return out
 }
