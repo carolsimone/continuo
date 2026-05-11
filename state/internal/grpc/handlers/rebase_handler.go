@@ -36,6 +36,8 @@ func NewRebaseHandler(
 	return &RebaseHandler{db: db, schedulerRepo: schedulerRepo, taskRepo: taskRepo, outboxRepo: outboxRepo, logger: logger}
 }
 
+// TriggerRebase validates the request and delegates to synthesiseDerivedRun
+// with rebase-specific spec constants (kind='rebase', stream='trigger.rebase:v1').
 func (h *RebaseHandler) TriggerRebase(ctx context.Context, req *statev1.TriggerRebaseRequest) (*statev1.TriggerRebaseResponse, error) {
 	h.logger.Info("TriggerRebase called", "source_run_id", req.SourceRunId)
 

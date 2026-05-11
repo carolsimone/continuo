@@ -39,6 +39,8 @@ func NewRerunHandler(
 	return &RerunHandler{db: db, schedulerRepo: schedulerRepo, taskRepo: taskRepo, outboxRepo: outboxRepo, logger: logger}
 }
 
+// TriggerRerun validates the request and delegates to synthesiseDerivedRun
+// with rerun-specific spec constants (kind='rerun', stream='trigger.rerun:v1').
 func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
 	h.logger.Info("TriggerRerun called", "source_run_id", req.SourceRunId)
 
