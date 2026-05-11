@@ -24,7 +24,7 @@ function renderPage() {
   );
 }
 
-const mkRun = (over: Partial<{ run_id: string; kind: string; task_status: string; created_at: string; started_at: string | null; completed_at: string | null; error_message: string | null }>) => ({
+const mkRun = (over: Partial<{ run_id: string; task_id: string; kind: string; task_status: string; created_at: string; started_at: string | null; completed_at: string | null; error_message: string | null }>) => ({
   run_id: 'r1', schedule_name: 'daily', kind: 'cron',
   terminal_status: 'succeeded', task_id: 't1',
   task_status: 'succeeded', retry_count: 0,
@@ -71,8 +71,8 @@ describe('NodeDetailPage', () => {
   it('shows node-history table with kindLabel and computed stats', async () => {
     mockFetch.mockImplementation(() => jsonResp({
       runs: [
-        mkRun({ run_id: 'r1', kind: 'cron', task_status: 'succeeded' }),
-        mkRun({ run_id: 'r2', kind: 'rerun', task_status: 'failed',
+        mkRun({ run_id: 'r1', task_id: 't1', kind: 'cron', task_status: 'succeeded' }),
+        mkRun({ run_id: 'r2', task_id: 't2', kind: 'rerun', task_status: 'failed',
                 created_at: '2026-05-10T11:00:00Z',
                 started_at: '2026-05-10T11:00:05Z',
                 completed_at: '2026-05-10T11:02:00Z',
