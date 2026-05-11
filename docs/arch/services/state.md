@@ -82,6 +82,7 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 | `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema_name, table_name)` |
 | `DeleteTask` | Delete a task row |
 | `ListTasks` | Paginated list with filters |
+| `ListNodeRuns` | Read-only query returning the most recent task instances that executed on a given node, ordered by `scheduler_tracker.created_at DESC`. See `ListNodeRuns` detail below. |
 | `TriggerRerun` | Mint a new `scheduler_tracker` row (`kind='rerun'`, `source_run_id=src`) on the source's schedule + write `trigger.rerun:v1` outbox entry. Same eligibility as `TriggerRebase`: source FAILED/CANCELLED, has ≥1 non-SUCCEEDED task, no active run on `schedule_name`. Backed by the shared `synthesise_derived_run.go` helper. Returns `run_id` + `schedule_name`. |
 | `TriggerSingleNodeRun` | Create a one-task run for a single node; write `trigger.single_node_run:v1` outbox entry |
 | `TriggerRebase` | Mint a new `scheduler_tracker` row (`kind='rebase'`, `source_run_id=src`) on the source's schedule + write `trigger.rebase:v1` outbox entry. Source row is left untouched. Returns `run_id` + `schedule_name`. |
@@ -113,6 +114,23 @@ Error contract:
 - `FAILED_PRECONDITION` — source run is not terminal, or is terminal in a state other than `FAILED` / `CANCELLED`, or already has zero non-SUCCEEDED tasks (nothing to rebase)
 
 On success: a new `scheduler_tracker` row is inserted with `kind='rebase'`, `source_run_id=<src>`, `schedule_name=<src.schedule_name>`, `status=PENDING`, `init_status=in_progress`, and a `trigger.rebase:v1` outbox entry is written — both in one transaction. The source `scheduler_tracker` row is **not** mutated; it remains at its terminal status forever as the historical record.
+
+##### `ListNodeRuns`
+
+Request fields: `service_name`, `schema_name`, `table_name`, `limit` (capped server-side at 50; passing 0 or a value greater than 50 yields 50).
+
+Response: an ordered list of node-run rows, most recent first (`scheduler_tracker.created_at DESC`). Each row joins `task_tracker × scheduler_tracker × task_execution` (latest execution per task via `DISTINCT ON`) and carries:
+
+- run-level: `run_id` (= `scheduler_tracker.schedule_id`), `schedule_name`, `kind` (`cron` | `trigger` | `rerun` | `rebase` | `single_node_run`), `terminal_status` (empty string while the run is in flight)
+- task-level: `task_id`, `task_status`, `retry_count`, `image_tag`, `manifest_version`
+- exec-level: `started_at`, `completed_at`, `error_message`, `log_s3_key` — empty/null when no execution record has been written yet (e.g. a task still in `PENDING`)
+
+All timestamps are RFC3339 strings; empty string indicates the field is not yet populated.
+
+Implementation: `postgres.NodeRunRepository.List`. A single SQL query uses a `target_tasks → latest_exec` CTE chain: `target_tasks` filters `task_tracker` to the node coordinates; `latest_exec` applies `DISTINCT ON (task_id)` scoped to the matched task set only (not the full `task_execution` table). The two CTEs join with `scheduler_tracker` to produce the response rows in one round-trip.
+
+Error contract:
+- `INVALID_ARGUMENT` — any of `service_name`, `schema_name`, `table_name` missing
 
 ##### Shared gRPC handler helpers
 
@@ -341,9 +359,9 @@ Effects:
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`, `CancelSchedule` |
+| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `ListNodeRuns`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule` |
 | `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
-| `tests/e2e` | `TriggerSingleNodeRun`, `TriggerRebase` (no production caller wires these yet; `state` exposes them for direct gRPC use) |
+| `tests/e2e` | `TriggerSingleNodeRun`, `TriggerRebase` |
 
 State calls no external gRPC services.
 
