@@ -98,6 +98,30 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	hasSourceRunID := queryNeo4jRunHasSourceRunID(t, clients, runID)
 	assert.False(t, hasSourceRunID, ":Run.source_run_id must not be present for a latest-mode single-node run")
 
+	// Assert the new state.ListNodeRuns RPC returns this run as the most recent
+	// row for the target node, with the right kind, image_tag, manifest_version,
+	// and non-nil timings (the single-node-run executed, so task_execution exists
+	// with started_at / completed_at populated).
+	t.Log("Calling state.ListNodeRuns and asserting the new run appears...")
+	listResp, err := clients.stateClient.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{
+		ServiceName: targetService,
+		SchemaName:  targetSchema,
+		TableName:   targetTable,
+		Limit:       50,
+	})
+	require.NoError(t, err, "ListNodeRuns gRPC call failed")
+	require.NotEmpty(t, listResp.Runs, "ListNodeRuns must return at least one row for this node")
+
+	// The newest row (index 0) must be our just-completed run.
+	top := listResp.Runs[0]
+	assert.Equal(t, runID.String(), top.RunId, "ListNodeRuns[0].run_id must match the run we just triggered")
+	assert.Equal(t, "single_node_run", top.Kind, "ListNodeRuns[0].kind must be 'single_node_run'")
+	assert.NotEmpty(t, top.ImageTag, "ListNodeRuns[0].image_tag must be populated")
+	assert.NotEmpty(t, top.ManifestVersion, "ListNodeRuns[0].manifest_version must be populated")
+	assert.NotEmpty(t, top.StartedAt, "ListNodeRuns[0].started_at must be populated (execution completed)")
+	assert.NotEmpty(t, top.CompletedAt, "ListNodeRuns[0].completed_at must be populated (execution completed)")
+	assert.Equal(t, "succeeded", top.TaskStatus, "ListNodeRuns[0].task_status must be 'succeeded'")
+
 	t.Log("TestSingleNodeRunLatest passed")
 }
 
