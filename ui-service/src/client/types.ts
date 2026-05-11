@@ -93,3 +93,24 @@ export interface TaskExecution {
   completed_at: string | null;
   log_s3_key: string | null;
 }
+
+export interface NodeRun {
+  run_id: string;
+  schedule_name: string;
+  kind: string;             // cron | trigger | rerun | rebase | single_node_run
+  terminal_status: string;  // "" if in flight
+  task_id: string;
+  task_status: string;      // pending | running | succeeded | failed | cancelled
+  retry_count: number;
+  image_tag: string;
+  manifest_version: string;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  log_s3_key: string | null;
+}
+
+export interface NodeRunsResponse {
+  runs: NodeRun[];
+}
