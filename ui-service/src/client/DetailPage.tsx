@@ -113,6 +113,8 @@ export default function DetailPage() {
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunState, setRerunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [rerunError, setRerunError] = useState<string | null>(null);
+  const [rebaseState, setRebaseState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [rebaseError, setRebaseError] = useState<string | null>(null);
   const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
 
@@ -338,6 +340,26 @@ export default function DetailPage() {
     }
   }, [lastRunId]);
 
+  const handleRebaseRun = useCallback(async () => {
+    if (!lastRunId) return;
+    setRebaseState('loading');
+    setRebaseError(null);
+    try {
+      const res = await fetch(`/api/schedulers/${lastRunId}/rebase`, { method: 'POST' });
+      if (res.ok) {
+        setRebaseState('success');
+        setTimeout(() => setRebaseState('idle'), 3000);
+      } else {
+        const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
+        setRebaseError(body.error ?? 'Request failed — please try again');
+        setRebaseState('error');
+      }
+    } catch {
+      setRebaseError('Request failed — please try again');
+      setRebaseState('error');
+    }
+  }, [lastRunId]);
+
   const handleTriggerRun = useCallback(async () => {
     if (!name) return;
     setTriggerState('loading');
@@ -457,21 +479,40 @@ export default function DetailPage() {
         )}
         {isTerminalStatus(scheduler?.status) && !isSuccessStatus(scheduler?.status) && lastRunId && (
           <div className="rerun-control">
-            <RerunBadge runGraph={liveRunGraph} />
-            {rerunState === 'success' ? (
-              <span className="rerun-feedback rerun-feedback--success">✓ Rerun triggered</span>
+            <div className="rerun-this-snapshot-group">
+              {rerunState === 'success' ? (
+                <span className="rerun-feedback rerun-feedback--success">✓ Rerun triggered</span>
+              ) : (
+                <button
+                  type="button"
+                  className="rerun-btn rerun-btn--this-snapshot"
+                  disabled={rerunState === 'loading'}
+                  onClick={handleRerunRun}
+                  title="Re-execute non-succeeded tasks against this run's pinned snapshot"
+                >
+                  {rerunState === 'loading' ? 'Triggering…' : '↺ Rerun failed (this snapshot)'}
+                </button>
+              )}
+              <RerunBadge runGraph={liveRunGraph} />
+              {rerunState === 'error' && rerunError && (
+                <span className="rerun-feedback rerun-feedback--error">{rerunError}</span>
+              )}
+            </div>
+            {rebaseState === 'success' ? (
+              <span className="rerun-feedback rerun-feedback--success">✓ Rebase triggered</span>
             ) : (
               <button
                 type="button"
-                className="rerun-btn"
-                disabled={rerunState === 'loading'}
-                onClick={handleRerunRun}
+                className="rerun-btn rerun-btn--rebase"
+                disabled={rebaseState === 'loading'}
+                onClick={handleRebaseRun}
+                title="Re-execute non-succeeded tasks against the latest topology"
               >
-                {rerunState === 'loading' ? 'Triggering…' : '↺ Rerun'}
+                {rebaseState === 'loading' ? 'Triggering…' : '↪ Rerun failed (latest snapshot)'}
               </button>
             )}
-            {rerunState === 'error' && rerunError && (
-              <span className="rerun-feedback rerun-feedback--error">{rerunError}</span>
+            {rebaseState === 'error' && rebaseError && (
+              <span className="rerun-feedback rerun-feedback--error">{rebaseError}</span>
             )}
           </div>
         )}
