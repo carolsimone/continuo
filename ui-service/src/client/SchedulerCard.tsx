@@ -135,7 +135,7 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
             onClick={handleTrigger}
             title={schedule.is_running ? 'A run is already active' : 'Trigger a full DAG run'}
           >
-            {triggerLoading ? 'Starting...' : 'Run'}
+            {triggerLoading ? 'Triggering…' : 'Trigger run'}
           </button>
           {schedule.is_running && (
             <button
