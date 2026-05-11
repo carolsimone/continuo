@@ -27,7 +27,7 @@ func NewNodeRunHandler(repo postgres.NodeRunRepository, logger *slog.Logger) *No
 
 // ListNodeRuns returns the most recent task instances for a node, ordered by
 // scheduler_tracker.created_at DESC. Identity fields are required; an empty
-// triple returns InvalidArgument. The server caps limit at 50.
+// triple returns InvalidArgument. limit is clamped to (0, 50] by the repository — passing 0 or >50 yields 50.
 func (h *NodeRunHandler) ListNodeRuns(
 	ctx context.Context,
 	req *statev1.ListNodeRunsRequest,
