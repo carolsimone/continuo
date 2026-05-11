@@ -307,3 +307,35 @@ describe('DetailPage — Trigger run topbar button', () => {
     expect(btn).toBeDisabled();
   });
 });
+
+describe('DetailPage — Open node detail link', () => {
+  it('renders an "Open node detail" link when a node is selected and links to the node page', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    // Wait for graph + nodes panel to render then select the node from the NodesPanel.
+    // The node row contains table_name "orders" in nodes-node-name, and "svc1 · public" in nodes-node-schema
+    const nodeButton = await screen.findByRole('button', { name: /orders/i });
+    fireEvent.click(nodeButton);
+
+    const link = await screen.findByRole('link', { name: /open node detail/i });
+    expect(link.getAttribute('href')).toBe(`/schedule/${SCHED}/node/${SAMPLE_NODE_ID}`);
+  });
+
+  it('does NOT show the link when no node is selected', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    // Without clicking any node, the link should not be rendered.
+    // Use waitFor to give the page time to finish initial fetches.
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map(c => String(c[0]));
+      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}/graph`))).toBe(true);
+    });
+    expect(screen.queryByRole('link', { name: /open node detail/i })).toBeNull();
+  });
+});

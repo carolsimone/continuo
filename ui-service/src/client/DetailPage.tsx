@@ -565,6 +565,18 @@ export default function DetailPage() {
                     <div className="dag-focus-legend-row">
                       <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
                     </div>
+                    {selectedNodeId && name && (
+                      <a
+                        className="dag-focus-open-link"
+                        href={`/schedule/${encodeURIComponent(name)}/node/${encodeURIComponent(selectedNodeId)}`}
+                        onClick={e => {
+                          e.preventDefault();
+                          navigate(`/schedule/${encodeURIComponent(name)}/node/${encodeURIComponent(selectedNodeId)}`);
+                        }}
+                      >
+                        Open node detail →
+                      </a>
+                    )}
                   </div>
                 )}
               </>
