@@ -218,6 +218,10 @@ func projectionStatusLower(initialStatus string) string {
 	}
 }
 
+// dedup ensures the rerun is processed exactly once per Redis message ID.
+// Returns the message_processing row id, a shouldSkip flag (true when the
+// message was already processed or is in flight on another instance), and any
+// repository error.
 func (h *HandleRerunHandler) dedup(ctx context.Context, messageID string, payload []byte) (uuid.UUID, bool, error) {
 	msgProc := &domain.MessageProcessing{
 		MessageID:  messageID,
@@ -245,6 +249,8 @@ func (h *HandleRerunHandler) dedup(ctx context.Context, messageID string, payloa
 	return id, false, nil
 }
 
+// emitRerunDispatchFailed writes a run.entries.dispatch_failed:v1 outbox entry.
+// The state side handles this event by moving the new run to FAILED.
 func (h *HandleRerunHandler) emitRerunDispatchFailed(
 	ctx context.Context,
 	cmd domainModel.RerunInput,
