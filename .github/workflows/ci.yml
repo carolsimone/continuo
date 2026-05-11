@@ -149,6 +149,12 @@ jobs:
       - name: Test manifest-controller
         run: docker exec manifest-controller uv run pytest -v
 
+      - name: Verify ui-service proto is in sync with canonical
+        # Drift in ui-service/proto/state.proto silently drops fields on the
+        # wire — @grpc/proto-loader reads this copy at boot, so any divergence
+        # from state/proto/state/v1/state.proto must fail loudly here.
+        run: diff state/proto/state/v1/state.proto ui-service/proto/state.proto
+
       - name: Test ui-service
         # Run vitest unit tests directly on the CI runner (devDependencies are
         # not installed in the production container image).
