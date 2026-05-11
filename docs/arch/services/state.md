@@ -44,7 +44,7 @@ The `scheduler_tracker.kind` enum (also surfaced as the `kind` field on `:Run` i
 
 - `cron` — cron-triggered activation; uniform metadata. Today every non-rerun run lands here.
 - `trigger` — manual API trigger (reserved; not yet wired in v1).
-- `rerun` — re-execute failed node + downstream against the source run's pinned snapshot. `TriggerRerun` mints a new `scheduler_tracker` row on the source's schedule (`kind='rerun'`, `source_run_id=<source>`). The source row is left at its terminal `FAILED`/`CANCELLED` status as an immutable historical record.
+- `rerun` — re-execute non-SUCCEEDED tasks + their descendants against the source run's pinned snapshot. `TriggerRerun` mints a new `scheduler_tracker` row on the source's schedule (`kind='rerun'`, `source_run_id=<source>`). The source row is left at its terminal `FAILED`/`CANCELLED` status as an immutable historical record.
 - `rebase` — re-execute failed/cancelled tasks + their descendants + new arrivals against latest topology; inherit successful tasks with their pinned metadata. `TriggerRebase` mints a new `scheduler_tracker` row on the source's schedule (`kind='rebase'`, `source_run_id=<source>`).
 - `single_node_run` — exactly one task; latest metadata by default, stale via picker.
 
@@ -82,7 +82,7 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 | `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema_name, table_name)` |
 | `DeleteTask` | Delete a task row |
 | `ListTasks` | Paginated list with filters |
-| `TriggerRerun` | Mint a new `scheduler_tracker` row (`kind='rerun'`, `source_run_id=src`) on the source's schedule + write `trigger.rerun:v1` outbox entry. Source row is left untouched. Returns `run_id` + `schedule_name`. |
+| `TriggerRerun` | Mint a new `scheduler_tracker` row (`kind='rerun'`, `source_run_id=src`) on the source's schedule + write `trigger.rerun:v1` outbox entry. Same eligibility as `TriggerRebase`: source FAILED/CANCELLED, has ≥1 non-SUCCEEDED task, no active run on `schedule_name`. Backed by the shared `synthesise_derived_run.go` helper. Returns `run_id` + `schedule_name`. |
 | `TriggerSingleNodeRun` | Create a one-task run for a single node; write `trigger.single_node_run:v1` outbox entry |
 | `TriggerRebase` | Mint a new `scheduler_tracker` row (`kind='rebase'`, `source_run_id=src`) on the source's schedule + write `trigger.rebase:v1` outbox entry. Source row is left untouched. Returns `run_id` + `schedule_name`. |
 
@@ -114,6 +114,10 @@ Error contract:
 
 On success: a new `scheduler_tracker` row is inserted with `kind='rebase'`, `source_run_id=<src>`, `schedule_name=<src.schedule_name>`, `status=PENDING`, `init_status=in_progress`, and a `trigger.rebase:v1` outbox entry is written — both in one transaction. The source `scheduler_tracker` row is **not** mutated; it remains at its terminal status forever as the historical record.
 
+##### Shared gRPC handler helpers
+
+The `internal/grpc/handlers/synthesise_derived_run.go` helper backs both `RerunHandler` and `RebaseHandler`. It performs the four-step eligibility check (source exists, source terminal, source has ≥1 non-SUCCEEDED task, no active run on `schedule_name`) and the atomic write (new `scheduler_tracker` row + outbox entry) in one Postgres transaction. Per-handler files are ~20-line wrappers that name their `kind` / `stream` / `event` and delegate.
+
 #### Task execution reads
 
 | Method | Description |
@@ -131,11 +135,11 @@ Port 8082 serves health checks only; trigger commands run over gRPC on 50051.
 
 **TriggerRerun preconditions (enforced atomically):**
 1. Source scheduler run must exist
-2. Target task must exist within that run
-3. Source run must be terminal (no tasks currently RUNNING)
-4. Target task must be in FAILED state
+2. Source run must be terminal (`FAILED` or `CANCELLED`)
+3. Source run must have at least one non-SUCCEEDED task
+4. No active run on `schedule_name`
 
-On success: a new `scheduler_tracker` row is inserted with `kind='rerun'`, `source_run_id=<src>`, `schedule_name=<src.schedule_name>`, `status=PENDING`, `init_status=in_progress`. The source row is left untouched — it stays at its terminal `FAILED` status as the immutable historical record. A `trigger.rerun:v1` outbox entry is written in the same transaction. The orchestrator's `HandleRerun` consumer then runs `Snapshot(SourcePinnedDAG)` against the new run, projecting the source's pinned DAG with the target node + non-SUCCEEDED descendants flipped to PENDING (rebased) and the rest carried forward as SUCCEEDED inherits. `task_tracker` rows for the new run are created by `RunEntriesDispatchedHandler` from the orchestrator's `run.entries.dispatched:v1` payload.
+On success: a new `scheduler_tracker` row is inserted with `kind='rerun'`, `source_run_id=<src>`, `schedule_name=<src.schedule_name>`, `status=PENDING`, `init_status=in_progress`. The source row is left untouched — it stays at its terminal status as the immutable historical record. A `trigger.rerun:v1` outbox entry is written in the same transaction. The orchestrator's `HandleRerun` consumer then runs `Snapshot(SourcePinnedDAG{})` against the new run, projecting the source's pinned DAG with all non-SUCCEEDED tasks + their descendants flipped to PENDING (rebased) and the rest carried forward as inherited at their source status. `task_tracker` rows for the new run are created by `RunEntriesDispatchedHandler` from the orchestrator's `run.entries.dispatched:v1` payload.
 
 ### Redis consumers
 
@@ -173,13 +177,10 @@ Emitted on: `TriggerRerun` gRPC call
 Payload fields:
 - `schedule_id` — UUID of the **newly-minted** `scheduler_tracker` row
 - `schedule_name`
-- `scope` — always `"node"`
-- `schema_name`
-- `table_name`
-- `service_name`
+- `kind` — always `"rerun"`
 - `source_run_id` — UUID of the source run (carries the pinned snapshot)
 
-Effect: `orchestrator.HandleRerun` runs `Snapshot(SourcePinnedDAG)` against the new run, producing a `:Run` node + `:EXECUTES` edges that mirror the source's DAG, with the target + non-SUCCEEDED descendants flipped to PENDING (rebased, will dispatch) and the rest carried forward as SUCCEEDED inherits.
+Effect: `orchestrator.HandleRerun` runs `Snapshot(SourcePinnedDAG{})` against the new run, producing a `:Run` node + `:EXECUTES` edges that mirror the source's DAG, with all non-SUCCEEDED tasks + their descendants flipped to PENDING (rebased, will dispatch) and the rest carried forward as inherited at their source status.
 
 #### `trigger.rebase:v1`
 

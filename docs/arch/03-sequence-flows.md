@@ -121,36 +121,27 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-  participant U as user/API client
-  participant UI as ui-service (BFF)
-  participant ST as state (gRPC)
+  participant U as User
+  participant UI as ui-service
+  participant ST as state
   participant R as Redis
   participant OR as orchestrator
-  participant EC as executor-controller
+  participant N4 as Neo4j
 
-  U->>UI: POST /api/schedulers/{id}/rerun
-  UI->>ST: TriggerRerun(source_run_id, schema, table_name, service_name)
-  Note over ST: RerunHandler.TriggerRerun (sync, 1 tx)<br/>validations — source run exists, target task FAILED, source terminal<br/>scheduler_tracker INSERT — new row, kind='rerun', source_run_id=src, schedule_name=src.schedule_name, status=PENDING<br/>state_outbox INSERT for trigger.rerun v1<br/>source row left untouched — stays at terminal FAILED forever
+  U->>UI: POST /api/schedulers/{id}/rerun (empty body)
+  UI->>ST: TriggerRerun(source_run_id)
+  Note over ST: RerunHandler.TriggerRerun (sync, 1 tx) — delegates to<br/>synthesiseDerivedRun(kind='rerun', stream='trigger.rerun:v1'):<br/>validations — source exists / source FAILED|CANCELLED / source has ≥1 non-SUCCEEDED task / no active run on schedule_name<br/>scheduler_tracker INSERT — new row, kind='rerun', source_run_id=src, schedule_name=src.schedule_name, status=PENDING<br/>state_outbox INSERT for trigger.rerun:v1 with payload {schedule_id, schedule_name, kind, source_run_id}<br/>source row left untouched — stays at terminal status forever
   ST-->>UI: TriggerRerunResponse { run_id, schedule_name }
-  UI-->>U: 200 OK
-  ST->>R: publish trigger.rerun v1 (via state OutboxProcessor)
-  Note right of R: payload — schedule_id (NEW run), schedule_name, scope='node', schema_name, table_name, service_name, source_run_id
 
-  R->>OR: consume trigger.rerun v1
-  Note over OR: HandleRerunHandler.Handle (1 tx)<br/>Snapshot(SourcePinnedDAG) in Neo4j —<br/>  read source :Run's :EXECUTES set<br/>  MERGE new :Run inheriting topology_generation + service_metadata from source :Run<br/>  project target + non-SUCCEEDED descendants → rebased PENDING (source's pinned image_tag/manifest_version)<br/>  project everything else → SUCCEEDED inherit + inherited_from_task_id (root-resolved)<br/>orchestrator outbox — 1x run.entries.dispatched v1 (full projection, per-task Status + InheritedFromTaskID)<br/>orchestrator outbox — Nx query.model v1 (rebased rows only)
-  OR->>R: publish run.entries.dispatched v1
-  OR->>R: publish query.model v1 (rebased only)
+  ST->>R: publish trigger.rerun:v1 (via state OutboxProcessor)
 
-  par state registers run skeleton
-    R->>ST: consume run.entries.dispatched v1
-    Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker — honour per-task Status + inherited_from_task_id<br/>SetTotalTaskCount, init_status=completed<br/>auto-rollup if every task already terminal (else status=RUNNING)
-  and executor relaunches rebased K8s Jobs
-    R->>EC: consume query.model v1
-    Note over EC: identical to Flow 1 from here<br/>deployment_outbox to CreateQueryJob to task.status.updated v1 RUNNING + node.deployed v1
-  end
+  R->>OR: consume trigger.rerun:v1
+  Note over OR: HandleRerunHandler.Handle (1 tx)<br/>Snapshot(SourcePinnedDAG{}) in Neo4j —<br/>  read source :Run's :EXECUTES set<br/>  seed rebase set with non-SUCCEEDED source tasks<br/>  grow rebase set by DescendantsInSourceRun<br/>  MERGE new :Run inheriting topology_generation + service_metadata from source :Run<br/>  project rebased rows → PENDING with source's pinned (image_tag, manifest_version)<br/>  project everything else → InitialStatus = source's stored status, with inherited_from_task_id (root-resolved)<br/>DispatchDerivedRun helper writes 1× run.entries.dispatched:v1 (full projection, per-task Status + InheritedFromTaskID) + N× query.model:v1 (rebased rows only)
 ```
 
-> Differences vs. Flow 1: synchronous gRPC entry; the new `:Run` inherits `topology_generation` + `service_metadata` from the **source** `:Run` (not `:TopologyRoot`), so the rerun stays bound to the source's snapshot metadata. The source run is never mutated; the schedule's run history grows by one entry per rerun trigger. Rerun shares the same `run.entries.dispatched:v1` pipeline as every other run kind.
+**Differences vs. Flow 1 (cron/trigger):** the new `:Run` inherits `topology_generation` + `service_metadata` from the **source** `:Run` (not `:TopologyRoot`), so the rerun stays bound to the source's snapshot metadata. The source run is never mutated; the schedule's run history grows by one entry per rerun trigger.
+
+**Differences vs. Flow 5 (rebase):** rerun reads against the source's pinned `:EXECUTES` set (no drift, no new arrivals), whereas rebase reads against latest topology and adds new arrivals. The eligibility checks, payload shape, helper code paths, and downstream pipeline (`run.entries.dispatched:v1` + `query.model:v1`) are otherwise identical.
 
 ## 5. Service Process Startup (Pre-Flight)
 
