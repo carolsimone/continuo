@@ -83,5 +83,15 @@ export function createSchedulersRouter(client: GrpcClient) {
     );
   });
 
+  router.post('/:id/rebase', (req, res) => {
+    client.triggerRebase(
+      { source_run_id: req.params.id },
+      (err: any) => {
+        if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+        res.sendStatus(200);
+      }
+    );
+  });
+
   return router;
 }
