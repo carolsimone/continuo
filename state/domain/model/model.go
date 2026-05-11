@@ -228,7 +228,7 @@ type TaskExecution struct {
 // timings and an empty ErrorMessage / LogS3Key. The Kind and TerminalStatus
 // fields come from the parent scheduler_tracker.
 type NodeRun struct {
-	RunID           uuid.UUID  `db:"run_id"`            // scheduler_tracker.schedule_id
+	ScheduleID      uuid.UUID  `db:"run_id"`            // scheduler_tracker.schedule_id
 	ScheduleName    string     `db:"schedule_name"`
 	Kind            string     `db:"kind"`              // cron | trigger | rerun | rebase | single_node_run
 	TerminalStatus  string     `db:"terminal_status"`   // scheduler_tracker.status — "" while in flight
