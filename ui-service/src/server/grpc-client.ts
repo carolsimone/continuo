@@ -26,6 +26,9 @@ export interface GrpcClient {
   triggerRerun: (request: any, callback: (err: any) => void) => void;
   triggerSchedule: (request: any, callback: (err: any, res: any) => void) => void;
   cancelSchedule: (request: any, callback: (err: any, res: any) => void) => void;
+  triggerSingleNodeRun: (request: any, callback: (err: any, res: any) => void) => void;
+  triggerRebase: (request: any, callback: (err: any, res: any) => void) => void;
+  listNodeRuns: (request: any, callback: (err: any, res: any) => void) => void;
 }
 
 export function createGrpcClient(address: string): GrpcClient {
