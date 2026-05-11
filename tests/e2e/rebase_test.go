@@ -93,7 +93,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 		if qErr != nil {
 			return false, qErr
 		}
-		return count >= 6, nil // 6 ftable_* nodes in the failure topology
+		return count >= 8, nil // 8 ftable_* nodes in the failure topology (a-h)
 	}, "task_tracker rows for rebase run did not materialise")
 
 	// ── Assert partition shape ──────────────────────────────────────────────
@@ -119,13 +119,13 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	require.NoError(t, rows.Err())
 
 	// Categorize: ftable_a/b/c/d should be inherited (status=succeeded, is_real=false).
-	// ftable_e/f should be rebased (is_real=true; status starts as 'pending').
+	// ftable_e/f/g/h should be rebased (is_real=true; status starts as 'pending').
 	for _, r := range rebaseTasks {
 		switch r.tableName {
 		case "ftable_a", "ftable_b", "ftable_c", "ftable_d":
 			assert.False(t, r.isReal, "%s should be inherited (inherited_from_task_id non-NULL)", r.tableName)
 			assert.Equal(t, "succeeded", r.status, "%s should be inherited as succeeded", r.tableName)
-		case "ftable_e", "ftable_f":
+		case "ftable_e", "ftable_f", "ftable_g", "ftable_h":
 			assert.True(t, r.isReal, "%s should be rebased (inherited_from_task_id NULL)", r.tableName)
 			// Status may be 'pending', 'running', or terminal — don't pin it here.
 		default:
@@ -199,6 +199,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 
 	t.Log("Waiting for ftable_e to exhaust retries...")
 	verifyNodeExhaustedRetries(t, ctx, clients, srcID, "ftable_e")
+	verifyNodeExhaustedRetries(t, ctx, clients, srcID, "ftable_g")
 
 	t.Log("Verifying source scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, srcID)
@@ -262,8 +263,8 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	).Scan(&terminalCount, &totalCount))
 	assert.Equal(t, totalCount, terminalCount,
 		"terminal_task_count must equal total_task_count post-finalization (B1 invariant)")
-	assert.Equal(t, int32(6), totalCount,
-		"expected partition: 4 inherited + 2 rebased = 6 total")
+	assert.Equal(t, int32(8), totalCount,
+		"expected partition: 4 inherited + 4 rebased = 8 total")
 
 	// ── Assert run.finalized:v1 was emitted via state_outbox ────────────────
 	// Whether the entry is still 'pending' or already 'published', its presence
