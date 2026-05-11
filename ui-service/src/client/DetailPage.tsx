@@ -113,6 +113,8 @@ export default function DetailPage() {
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunState, setRerunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [rerunError, setRerunError] = useState<string | null>(null);
+  const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [triggerError, setTriggerError] = useState<string | null>(null);
 
   useEffect(() => {
     resolvedRef.current = false;
@@ -336,6 +338,26 @@ export default function DetailPage() {
     }
   }, [lastRunId]);
 
+  const handleTriggerRun = useCallback(async () => {
+    if (!name) return;
+    setTriggerState('loading');
+    setTriggerError(null);
+    try {
+      const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, { method: 'POST' });
+      if (res.ok) {
+        setTriggerState('success');
+        setTimeout(() => setTriggerState('idle'), 3000);
+      } else {
+        const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
+        setTriggerError(body.error ?? 'Request failed — please try again');
+        setTriggerState('error');
+      }
+    } catch {
+      setTriggerError('Request failed — please try again');
+      setTriggerState('error');
+    }
+  }, [name]);
+
   const latestExecutions = Array.from(
     executions.reduce((map, execution) => {
       const existing = map.get(execution.task_id);
@@ -419,6 +441,20 @@ export default function DetailPage() {
         <span className={`pill ${pillClass(selectedRun ? selectedRun.terminal_status : schedulerStatus)}`}>
           {selectedRun ? formatStatusLabel(selectedRun.terminal_status) : formatStatusLabel(schedulerStatus)}
         </span>
+        {name && (
+          <button
+            type="button"
+            className={`trigger-run-btn${triggerState === 'loading' ? ' loading' : ''}`}
+            disabled={liveRunExists || triggerState === 'loading'}
+            onClick={handleTriggerRun}
+            title={liveRunExists ? 'A run is already active' : 'Trigger a full DAG run'}
+          >
+            {triggerState === 'loading' ? 'Triggering…' : '▶ Trigger run'}
+          </button>
+        )}
+        {triggerState === 'error' && triggerError && (
+          <span className="rerun-feedback rerun-feedback--error">{triggerError}</span>
+        )}
         {isTerminalStatus(scheduler?.status) && !isSuccessStatus(scheduler?.status) && lastRunId && (
           <div className="rerun-control">
             <RerunBadge runGraph={liveRunGraph} />

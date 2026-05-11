@@ -190,3 +190,56 @@ describe('DetailPage — run-level Rerun button', () => {
     expect(await screen.findByText(/source 3 gen behind latest/)).toBeInTheDocument();
   });
 });
+
+describe('DetailPage — Trigger run topbar button', () => {
+  it('renders Trigger run in the topbar and POSTs /api/schedules/:name/trigger', async () => {
+    const fetchMock = mockFetchSequence({
+      ...failedRoutes(),
+      [`/api/schedules/${SCHED}/trigger`]: async () => ({ schedule_id: 'new-id' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const btn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
+      const triggerCall = calls.find(c => String(c[0]).includes(`/api/schedules/${SCHED}/trigger`));
+      expect(triggerCall).toBeDefined();
+      expect(triggerCall![1]).toMatchObject({ method: 'POST' });
+    });
+  });
+
+  it('disables the topbar Trigger run button while a run is live', async () => {
+    // Use freshRoutes() but override the scheduler endpoint to return a
+    // non-terminal status so liveRunExists becomes true.
+    const fetchMock = mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/schedulers/${RUN_ID}`]: async () => ({
+        scheduler: {
+          schedule_id: RUN_ID,
+          schedule_name: SCHED,
+          status: 'SCHEDULER_STATUS_RUNNING',
+          created_at: null,
+          started_at: null,
+          completed_at: null,
+          cancelled_at: null,
+          cancelled_by: '',
+        },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    // Wait for scheduler fetch to land so liveRunExists is computed.
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map(c => String(c[0]));
+      expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
+    });
+    const btn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    expect(btn).toBeDisabled();
+  });
+});
