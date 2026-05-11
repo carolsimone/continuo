@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 
@@ -143,5 +142,3 @@ func createAndActivateFailureScheduler(
 	t.Logf("Activated failure schedule: schedule_id=%s", resp.ScheduleId)
 	return resp.ScheduleId
 }
-
-var _ = sql.Drivers
