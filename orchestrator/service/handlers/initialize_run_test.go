@@ -16,40 +16,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ── extended fakeRunRepository for InitializeRun ─────────────────────────────
-// We reuse fakeRunRepository from handle_node_completed_test.go but need to
-// extend it with configurable behaviour for Snapshot and GetScheduleInitNodes.
+// ── fakeSnapshotService for InitializeRun tests ───────────────────────────────
 
-// snapshotCall records the arguments passed to Snapshot for assertion.
-type snapshotCall struct {
-	RunID        string
-	ScheduleName string
-	Kind         string
-	SourceRunID  *uuid.UUID
-}
-
-// extendedFakeRunRepository wraps fakeRunRepository and adds configurable fns.
-type extendedFakeRunRepository struct {
-	fakeRunRepository
+// initRunFakeSnapshotService wraps the init-nodes fixture to satisfy
+// handlers.SnapshotService. The snapshotGraphCalls counter is kept for
+// backward-compat with existing assertions.
+type initRunFakeSnapshotService struct {
 	getScheduleInitNodesFn func(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error)
 
-	snapshotGraphCalls        int
-	getScheduleInitNodesCalls int
-	snapshotCalls             []snapshotCall
+	snapshotGraphCalls int
+	snapshotCalls      []snapshotCall
 }
 
-// Snapshot is the unified routine callers migrated to in PR2. The fake
-// records the call and returns a projection derived from the configured
-// getScheduleInitNodesFn — so a single test fixture drives both
-// `Snapshot()` (for the AllTasks payload) and `GetScheduleInitNodes()` (for
-// the seed/root dispatch ordering). The snapshotGraphCalls counter is kept
-// (for backward-compat with existing assertions) and incremented here.
-func (f *extendedFakeRunRepository) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
+func (f *initRunFakeSnapshotService) Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
 	f.snapshotGraphCalls++
 	f.snapshotCalls = append(f.snapshotCalls, snapshotCall{
 		RunID: params.RunID, ScheduleName: params.ScheduleName, Kind: params.Kind, SourceRunID: params.SourceRunID,
 	})
-	// Build projection from the configured init-nodes fixture.
 	if f.getScheduleInitNodesFn == nil {
 		return nil, snapshot.ErrEmptyProjection
 	}
@@ -80,6 +63,26 @@ func (f *extendedFakeRunRepository) Snapshot(ctx context.Context, params snapsho
 		})
 	}
 	return projection, nil
+}
+
+// ── extended fakeRunRepository for InitializeRun ─────────────────────────────
+// We reuse fakeRunRepository from handle_node_completed_test.go but need to
+// extend it with configurable behaviour for GetScheduleInitNodes.
+
+// snapshotCall records the arguments passed to Snapshot for assertion.
+type snapshotCall struct {
+	RunID        string
+	ScheduleName string
+	Kind         string
+	SourceRunID  *uuid.UUID
+}
+
+// extendedFakeRunRepository wraps fakeRunRepository and adds configurable fns.
+type extendedFakeRunRepository struct {
+	fakeRunRepository
+	getScheduleInitNodesFn func(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error)
+
+	getScheduleInitNodesCalls int
 }
 
 func (f *extendedFakeRunRepository) GetScheduleInitNodes(ctx context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error) {
@@ -127,8 +130,13 @@ func TestInitializeRun_FreshInit(t *testing.T) {
 			return initNodes, nil
 		},
 	}
+	snapSvc := &initRunFakeSnapshotService{
+		getScheduleInitNodesFn: func(_ context.Context, scheduleName, runID string) (*run.ScheduleInitNodes, error) {
+			return initNodes, nil
+		},
+	}
 
-	h := handlers.NewInitializeRunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewInitializeRunHandler(uow, runRepo, snapSvc, newTestLogger())
 	cmd := domainModel.InitializeRunInput{
 		ScheduleName: "daily",
 		RunID:        "run-123",
@@ -137,7 +145,7 @@ func TestInitializeRun_FreshInit(t *testing.T) {
 	err := h.Handle(ctx, cmd, "msg-init-1")
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, runRepo.snapshotGraphCalls, "SnapshotGraph should be called once")
+	assert.Equal(t, 1, snapSvc.snapshotGraphCalls, "SnapshotGraph should be called once")
 	assert.Equal(t, 1, runRepo.getScheduleInitNodesCalls, "GetScheduleInitNodes should be called once")
 	assert.True(t, uow.CommittedTx, "transaction should be committed")
 
@@ -177,8 +185,9 @@ func TestInitializeRun_DuplicateMessage(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 	runRepo := &extendedFakeRunRepository{}
+	snapSvc := &initRunFakeSnapshotService{}
 
-	h := handlers.NewInitializeRunHandler(uow, runRepo, newTestLogger())
+	h := handlers.NewInitializeRunHandler(uow, runRepo, snapSvc, newTestLogger())
 	cmd := domainModel.InitializeRunInput{
 		ScheduleName: "daily",
 		RunID:        "run-456",
@@ -187,10 +196,10 @@ func TestInitializeRun_DuplicateMessage(t *testing.T) {
 	// First call: processes normally
 	err := h.Handle(ctx, cmd, "dup-init-1")
 	require.NoError(t, err)
-	assert.Equal(t, 1, runRepo.snapshotGraphCalls)
+	assert.Equal(t, 1, snapSvc.snapshotGraphCalls)
 
 	// Reset tracking
-	runRepo.snapshotGraphCalls = 0
+	snapSvc.snapshotGraphCalls = 0
 	runRepo.getScheduleInitNodesCalls = 0
 	uow.outboxRepo.CreatedEntries = nil
 	uow.CommittedTx = false
@@ -199,7 +208,7 @@ func TestInitializeRun_DuplicateMessage(t *testing.T) {
 	err = h.Handle(ctx, cmd, "dup-init-1")
 	require.NoError(t, err)
 
-	assert.Equal(t, 0, runRepo.snapshotGraphCalls, "SnapshotGraph must NOT be called for duplicate")
+	assert.Equal(t, 0, snapSvc.snapshotGraphCalls, "SnapshotGraph must NOT be called for duplicate")
 	assert.Equal(t, 0, runRepo.getScheduleInitNodesCalls, "GetScheduleInitNodes must NOT be called for duplicate")
 	assert.Len(t, uow.outboxRepo.CreatedEntries, 0, "no outbox entries for duplicate")
 }

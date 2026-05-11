@@ -1,39 +1,16 @@
-package snapshot_test
+package neo4jinfra_test
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
+	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
-
-// neo4jURI mirrors the convention used by orchestrator/adapters/neo4j/run_repository_test.go.
-// Defaults to localhost so this test can run against a host-side Neo4j; CI overrides via env.
-func neo4jURI() string {
-	if u := os.Getenv("NEO4J_URI"); u != "" {
-		return u
-	}
-	return "bolt://localhost:7687"
-}
-
-func neo4jUser() string {
-	if u := os.Getenv("NEO4J_USER"); u != "" {
-		return u
-	}
-	return "neo4j"
-}
-
-func neo4jPassword() string {
-	if p := os.Getenv("NEO4J_PASSWORD"); p != "" {
-		return p
-	}
-	return "atlas_password"
-}
 
 // newDriver returns a Neo4j driver for tests; skips if Neo4j is unreachable.
 func newDriver(t *testing.T) neo4j.DriverWithContext {
@@ -80,7 +57,7 @@ func cleanupRunAndTables(t *testing.T, driver neo4j.DriverWithContext, runID, sc
 	})
 }
 
-func TestMaterialise_CreatesRunAndEdges(t *testing.T) {
+func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	driver := newDriver(t)
 	scheduleName := "test-mat-" + uuid.New().String()[:8]
 
@@ -126,7 +103,7 @@ func TestMaterialise_CreatesRunAndEdges(t *testing.T) {
 	session := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(context.Background())
 	_, err := session.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		return nil, snapshot.Materialise(context.Background(), tx, params, projection)
+		return nil, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(context.Background(), params, projection)
 	})
 	require.NoError(t, err)
 
@@ -201,13 +178,13 @@ func TestMaterialise_CreatesRunAndEdges(t *testing.T) {
 	require.Equal(t, rootB.String(), rows[1]["inh"])
 }
 
-func TestMaterialise_EmptyProjectionReturnsErr(t *testing.T) {
+func TestSnapshotWriter_EmptyProjectionReturnsErr(t *testing.T) {
 	driver := newDriver(t)
 	session := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(context.Background())
 
 	_, err := session.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		return nil, snapshot.Materialise(context.Background(), tx, snapshot.Params{
+		return nil, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(context.Background(), snapshot.Params{
 			RunID: uuid.New().String(), ScheduleName: "x", Kind: "rebase",
 		}, nil)
 	})

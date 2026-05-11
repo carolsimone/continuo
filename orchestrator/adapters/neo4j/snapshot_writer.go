@@ -1,51 +1,46 @@
-package snapshot
+package neo4jinfra
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// Materialise writes the :Run node and one :EXECUTES edge per projection entry
-// in a single Neo4j transaction. Kind-agnostic — branching lives in selectors.
-//
-// :Run properties: run_id, schedule_name, kind, created_at, source_run_id?
-//
-//	(source_run_id is set only when params.SourceRunID is non-nil)
-//
-// :EXECUTES edge properties: task_id, status, image_tag, manifest_version,
-//
-//	inherited_from_task_id?
-//
-// Convention: edge.status is uppercase ("PENDING" / "SUCCEEDED"). The wire
-// format that crosses to state (run.entries.dispatched:v1) uses lowercase;
-// callers translate at that boundary. Inside Neo4j we keep the existing
-// uppercase convention used by SnapshotGraph + UpdateNodeStatus.
-//
-// The MATCH on :Table uses (service_name, schema_name, table_name, schedule_name)
-// to mirror the existing SnapshotGraph approach (handles cross-schedule seed
-// dependencies — same Table FQN can appear under multiple schedule_names).
-//
-// Re-running with the same (run_id, projection) is idempotent — MERGE preserves
-// existing rows. ON CREATE clauses on the edge ensure status/task_id/image_tag/
-// manifest_version are stamped only on first write.
-func Materialise(ctx context.Context, tx neo4j.ManagedTransaction, p Params, projection []TaskProjection) error {
-	if len(projection) == 0 {
-		return ErrEmptyProjection
-	}
+// snapshotWriter implements snapshot.SnapshotWriter against a Neo4j managed
+// transaction. The Cypher is identical to today's domain/snapshot.Materialise.
+type snapshotWriter struct {
+	tx neo4j.ManagedTransaction
+}
 
-	// sourceRunIDParam is interface{} so a nil maps cleanly to a Cypher null.
+func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
+	return &snapshotWriter{tx: tx}
+}
+
+// WriteRunAndExecutesEdges writes the :Run node and one :EXECUTES edge per
+// projection entry. Idempotent on rerun.
+//
+// :Run properties: run_id, schedule_name, kind, created_at, source_run_id?,
+//                  topology_generation, service_metadata
+// :EXECUTES edge:  task_id, status, image_tag, manifest_version,
+//                  inherited_from_task_id?
+//
+// topology_generation + service_metadata are stamped on CREATE from the source
+// :Run if source_run_id is set, otherwise from :TopologyRoot. Falls back to
+// :TopologyRoot if source :Run was pruned.
+func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapshot.Params, projection []snapshot.TaskProjection) error {
+	if len(projection) == 0 {
+		return snapshot.ErrEmptyProjection
+	}
 	var sourceRunIDParam interface{}
 	if p.SourceRunID != nil {
 		sourceRunIDParam = p.SourceRunID.String()
 	} else {
 		sourceRunIDParam = nil
 	}
-
 	tasks := make([]map[string]interface{}, len(projection))
 	for i, t := range projection {
-		// inheritedFrom is interface{} so a nil maps cleanly to a Cypher null.
 		var inheritedFrom interface{}
 		if t.InheritedFromTaskID != nil {
 			inheritedFrom = t.InheritedFromTaskID.String()
@@ -62,15 +57,6 @@ func Materialise(ctx context.Context, tx neo4j.ManagedTransaction, p Params, pro
 			"inherited_from_task_id": inheritedFrom,
 		}
 	}
-
-	// :Run.topology_generation + :Run.service_metadata are stamped on CREATE so
-	// the run is isolated from future topology changes. Source depends on whether
-	// this is a derived run:
-	//   - source_run_id IS NULL  (cron/trigger/latest-single-node)   → :TopologyRoot
-	//   - source_run_id non-NULL (rerun/rebase/stale-single-node)    → source :Run
-	// If source_run_id is set but the source :Run was pruned, fall back to
-	// :TopologyRoot rather than fail (graceful behaviour for missing source
-	// nodes).
 	const query = `
 		OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
 		OPTIONAL MATCH (src:Run {run_id: $source_run_id})
@@ -109,8 +95,7 @@ func Materialise(ctx context.Context, tx neo4j.ManagedTransaction, p Params, pro
 		)
 		RETURN count(e) AS edges_created
 	`
-
-	result, err := tx.Run(ctx, query, map[string]interface{}{
+	result, err := w.tx.Run(ctx, query, map[string]interface{}{
 		"run_id":        p.RunID,
 		"schedule_name": p.ScheduleName,
 		"kind":          p.Kind,
@@ -118,18 +103,19 @@ func Materialise(ctx context.Context, tx neo4j.ManagedTransaction, p Params, pro
 		"tasks":         tasks,
 	})
 	if err != nil {
-		return fmt.Errorf("Materialise: query failed: %w", err)
+		return fmt.Errorf("snapshot_writer: query failed: %w", err)
 	}
 	if !result.Next(ctx) {
-		return fmt.Errorf("Materialise: no result")
+		return fmt.Errorf("snapshot_writer: no result")
 	}
 	count, _ := result.Record().Get("edges_created")
-	// edges_created counts how many MATCH+MERGE'd edges the query found/created.
-	// If it's less than projection length, some :Table MATCHes failed — meaning
-	// callers projected a node that doesn't exist in latest topology with the
-	// given schedule_name. Surface this as an error so the handler can react.
 	if c, ok := count.(int64); ok && int(c) < len(projection) {
-		return fmt.Errorf("Materialise: wrote %d edges, expected %d (likely missing :Table)", c, len(projection))
+		return fmt.Errorf("snapshot_writer: wrote %d edges, expected %d (likely missing :Table)", c, len(projection))
 	}
 	return result.Err()
+}
+
+// NewSnapshotWriterForTest exposes newSnapshotWriter to package-external tests.
+func NewSnapshotWriterForTest(tx neo4j.ManagedTransaction) snapshot.SnapshotWriter {
+	return newSnapshotWriter(tx)
 }

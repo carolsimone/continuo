@@ -14,14 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ── fake run repository for single-node-run tests ─────────────────────────────
+// ── fakeSnapshotService for single-node-run tests ─────────────────────────────
 
-// singleNodeFakeRunRepository wraps fakeRunRepository, overriding Snapshot so
-// the handler's snapshot call can be stubbed. handle_single_node_run uses
-// Snapshot(SingleNode{...}) under the umbrella snapshot routine.
-type singleNodeFakeRunRepository struct {
-	fakeRunRepository
-
+// singleNodeFakeSnapshotService satisfies handlers.SnapshotService for
+// handle_single_node_run tests.
+type singleNodeFakeSnapshotService struct {
 	snapshotResult singleNodeSnapshotResult
 	snapshotErr    error
 	snapshotCalls  int
@@ -38,7 +35,7 @@ type singleNodeSnapshotResult struct {
 	TableName       string
 }
 
-func (f *singleNodeFakeRunRepository) Snapshot(_ context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
+func (f *singleNodeFakeSnapshotService) Snapshot(_ context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error) {
 	f.snapshotCalls++
 	if f.snapshotErr != nil {
 		return nil, f.snapshotErr
@@ -81,17 +78,18 @@ func (f *singleNodeFakeRunRepository) Snapshot(_ context.Context, params snapsho
 
 type singleNodeRunHandlerFixture struct {
 	Handler *handlers.HandleSingleNodeRunHandler
-	RunRepo *singleNodeFakeRunRepository
+	SnapSvc *singleNodeFakeSnapshotService
 	UoW     *fakeUnitOfWork
 }
 
 func newSingleNodeRunHandlerFixture(_ *testing.T) *singleNodeRunHandlerFixture {
 	uow := newFakeUnitOfWork()
-	runRepo := &singleNodeFakeRunRepository{}
-	h := handlers.NewHandleSingleNodeRunHandler(uow, runRepo, newTestLogger())
+	runRepo := &fakeRunRepository{}
+	snapSvc := &singleNodeFakeSnapshotService{}
+	h := handlers.NewHandleSingleNodeRunHandler(uow, runRepo, snapSvc, newTestLogger())
 	return &singleNodeRunHandlerFixture{
 		Handler: h,
-		RunRepo: runRepo,
+		SnapSvc: snapSvc,
 		UoW:     uow,
 	}
 }
@@ -120,7 +118,7 @@ func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 	cmd := makeSingleNodeCmd(scheduleID)
 
 	taskID := uuid.NewString()
-	fx.RunRepo.snapshotResult = singleNodeSnapshotResult{
+	fx.SnapSvc.snapshotResult = singleNodeSnapshotResult{
 		TaskID:          taskID,
 		ImageTag:        "v3",
 		ManifestVersion: "m3",
@@ -178,7 +176,7 @@ func TestHandleSingleNodeRun_Latest_HappyPath(t *testing.T) {
 func TestHandleSingleNodeRun_TargetNotFound(t *testing.T) {
 	fx := newSingleNodeRunHandlerFixture(t)
 	cmd := makeSingleNodeCmd(uuid.New().String())
-	fx.RunRepo.snapshotErr = snapshot.ErrTargetNotFound
+	fx.SnapSvc.snapshotErr = snapshot.ErrTargetNotFound
 
 	err := fx.Handler.Handle(context.Background(), cmd, "msg-snr-2")
 	require.NoError(t, err, "ErrTargetNotFound must not surface as a handler error")
@@ -202,7 +200,7 @@ func TestHandleSingleNodeRun_TargetNotFound(t *testing.T) {
 func TestHandleSingleNodeRun_DedupSecondDelivery(t *testing.T) {
 	fx := newSingleNodeRunHandlerFixture(t)
 	cmd := makeSingleNodeCmd(uuid.New().String())
-	fx.RunRepo.snapshotResult = singleNodeSnapshotResult{
+	fx.SnapSvc.snapshotResult = singleNodeSnapshotResult{
 		TaskID:          uuid.NewString(),
 		ImageTag:        "v1",
 		ManifestVersion: "m1",
@@ -211,12 +209,12 @@ func TestHandleSingleNodeRun_DedupSecondDelivery(t *testing.T) {
 
 	// First delivery: processes normally.
 	require.NoError(t, fx.Handler.Handle(context.Background(), cmd, "msg-snr-dup"))
-	require.Equal(t, 1, fx.RunRepo.snapshotCalls)
+	require.Equal(t, 1, fx.SnapSvc.snapshotCalls)
 	firstCount := len(fx.UoW.outboxRepo.CreatedEntries)
 	require.Equal(t, 2, firstCount)
 
 	// Second delivery with the same message ID: must be skipped.
 	require.NoError(t, fx.Handler.Handle(context.Background(), cmd, "msg-snr-dup"))
-	require.Equal(t, 1, fx.RunRepo.snapshotCalls, "Snapshot must NOT be called again")
+	require.Equal(t, 1, fx.SnapSvc.snapshotCalls, "Snapshot must NOT be called again")
 	require.Len(t, fx.UoW.outboxRepo.CreatedEntries, firstCount, "outbox count must not grow on duplicate")
 }

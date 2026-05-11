@@ -4,11 +4,10 @@ import (
 	"context"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 )
 
 type Repository interface {
-	// Write-side: snapshot and mutation
+	// Write-side: mutation
 
 	UpdateNodeStatus(ctx context.Context, runID, scheduleName, schema, tableName, status string) error
 	GetReadyDownstream(ctx context.Context, runID, scheduleName, schema, tableName string) ([]*DownstreamNode, error)
@@ -23,17 +22,6 @@ type Repository interface {
 	MarkPendingDownstreamSkipped(ctx context.Context, runID, scheduleName, schemaName, tableName string) ([]*CascadedFailureNode, error)
 	ResetSkippedDownstreamToPending(ctx context.Context, runID, schemaName, tableName string) error
 	GetNodeEdgeData(ctx context.Context, runID, schemaName, tableName string) (manifestVersion, imageTag string, err error)
-
-	// Snapshot is the unified per-run snapshot routine (umbrella §3). Selector
-	// inside params reads source/topology and returns the projection; the
-	// kind-agnostic materialiser writes :Run + :EXECUTES edges in one Cypher tx.
-	// Returns the projection so the caller can build downstream outbox events
-	// (run.entries.dispatched:v1, query.model:v1) without re-reading Neo4j.
-	//
-	// Returns snapshot.ErrEmptyProjection if the selector returns zero entries.
-	// Returns snapshot.ErrTargetNotFound if a target-resolving selector
-	// (e.g. SingleNode) cannot find its target.
-	Snapshot(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error)
 
 	// Read-side: queries (CQRS — called directly, not through aggregate)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)

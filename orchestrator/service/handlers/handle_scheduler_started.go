@@ -22,21 +22,24 @@ import (
 // It snapshots the run graph, emits run.entries.dispatched:v1 with all tasks,
 // and dispatches the initial seed/root nodes via query.model:v1.
 type HandleSchedulerStartedHandler struct {
-	uow     uow.UnitOfWork
-	runRepo run.Repository
-	logger  *slog.Logger
+	uow         uow.UnitOfWork
+	runRepo     run.Repository
+	snapshotSvc SnapshotService
+	logger      *slog.Logger
 }
 
 // NewHandleSchedulerStartedHandler creates a new HandleSchedulerStartedHandler.
 func NewHandleSchedulerStartedHandler(
 	u uow.UnitOfWork,
 	runRepo run.Repository,
+	snapshotSvc SnapshotService,
 	logger *slog.Logger,
 ) *HandleSchedulerStartedHandler {
 	return &HandleSchedulerStartedHandler{
-		uow:     u,
-		runRepo: runRepo,
-		logger:  logger,
+		uow:         u,
+		runRepo:     runRepo,
+		snapshotSvc: snapshotSvc,
+		logger:      logger,
 	}
 }
 
@@ -72,7 +75,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 	// Snapshot the graph for this run via the unified routine: LatestFullDAG
 	// selector enumerates active :Tables + upstream dbt-seeds, mints fresh
 	// task_ids, and the materialiser writes :Run + :EXECUTES edges in one tx.
-	projection, err := h.runRepo.Snapshot(ctx, snapshot.Params{
+	projection, err := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        evt.ScheduleID.String(),
 		ScheduleName: evt.ScheduleName,
 		Kind:         evt.Kind,

@@ -18,22 +18,25 @@ import (
 
 // InitializeRunHandler handles the initialize-run input.
 type InitializeRunHandler struct {
-	uow           uow.UnitOfWork
-	runRepo       run.Repository
-	rerunHandler  *HandleRerunHandler
-	logger        *slog.Logger
+	uow          uow.UnitOfWork
+	runRepo      run.Repository
+	snapshotSvc  SnapshotService
+	rerunHandler *HandleRerunHandler
+	logger       *slog.Logger
 }
 
 // NewInitializeRunHandler creates a new InitializeRunHandler.
 func NewInitializeRunHandler(
 	u uow.UnitOfWork,
 	runRepo run.Repository,
+	snapshotSvc SnapshotService,
 	logger *slog.Logger,
 ) *InitializeRunHandler {
 	return &InitializeRunHandler{
 		uow:          u,
 		runRepo:      runRepo,
-		rerunHandler: NewHandleRerunHandler(u, runRepo, logger),
+		snapshotSvc:  snapshotSvc,
+		rerunHandler: NewHandleRerunHandler(u, runRepo, snapshotSvc, logger),
 		logger:       logger,
 	}
 }
@@ -80,7 +83,7 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.Initi
 
 	// Snapshot the graph via the unified Snapshot+LatestFullDAG routine.
 	// InitializeRunInput carries no kind/sourceRunID; default to "cron" / nil.
-	if _, err := h.runRepo.Snapshot(ctx, snapshot.Params{
+	if _, err := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        cmd.RunID,
 		ScheduleName: cmd.ScheduleName,
 		Kind:         "cron",

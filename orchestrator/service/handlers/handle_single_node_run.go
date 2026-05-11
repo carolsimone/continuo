@@ -20,14 +20,15 @@ import (
 
 // HandleSingleNodeRunHandler consumes trigger.single_node_run:v1 messages.
 type HandleSingleNodeRunHandler struct {
-	uow     uow.UnitOfWork
-	runRepo run.Repository
-	logger  *slog.Logger
+	uow         uow.UnitOfWork
+	runRepo     run.Repository
+	snapshotSvc SnapshotService
+	logger      *slog.Logger
 }
 
 // NewHandleSingleNodeRunHandler creates a new HandleSingleNodeRunHandler.
-func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, logger *slog.Logger) *HandleSingleNodeRunHandler {
-	return &HandleSingleNodeRunHandler{uow: u, runRepo: runRepo, logger: logger}
+func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, snapshotSvc SnapshotService, logger *slog.Logger) *HandleSingleNodeRunHandler {
+	return &HandleSingleNodeRunHandler{uow: u, runRepo: runRepo, snapshotSvc: snapshotSvc, logger: logger}
 }
 
 // Handle processes a SingleNodeRunInput derived from a
@@ -38,7 +39,7 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, log
 //  2. Begin transaction; defer Rollback.
 //  3. Dedup on messageID with stream "trigger.single_node_run:v1".
 //  4. Parse cmd.SourceRunID → *uuid.UUID (nil if empty).
-//  5. Call runRepo.Snapshot with a SingleNode selector.
+//  5. Call snapshotSvc.Snapshot with a SingleNode selector.
 //     - ErrTargetNotFound: emit run.entries.dispatch_failed:v1, mark dedup
 //       completed, commit, return nil.
 //     - Other errors: return wrapped error (triggers retry).
@@ -81,7 +82,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		sourceRunUUID = &parsed
 	}
 
-	projection, snapErr := h.runRepo.Snapshot(ctx, snapshot.Params{
+	projection, snapErr := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        cmd.RunID,
 		ScheduleName: cmd.ScheduleName,
 		Kind:         "single_node_run",

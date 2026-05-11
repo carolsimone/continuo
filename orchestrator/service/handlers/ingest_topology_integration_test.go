@@ -12,6 +12,7 @@ import (
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
+	snapshotsvc "github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -141,6 +142,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	)
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(client, newTestLogger())
 	runRepo := neo4jinfra.NewRunRepository(client, newTestLogger())
+	snapSvc := snapshotsvc.NewService(neo4jinfra.NewSnapshotTxRunner(client), newTestLogger())
 
 	initialLoad := domainModel.IngestTopologyInput{
 		Nodes: []domainEvent.ManifestLoadedNode{
@@ -176,7 +178,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	require.Len(t, graph.Nodes, 2, "initial manifest load should expose both nodes")
 
 	historicalRunID := uuid.New().String()
-	_, err = runRepo.Snapshot(ctx, snapshot.Params{
+	_, err = snapSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        historicalRunID,
 		ScheduleName: scheduleName,
 		Kind:         "cron",
@@ -209,7 +211,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	assert.Equal(t, keepTable, graph.Nodes[0].TableName)
 
 	runID := uuid.New().String()
-	_, err = runRepo.Snapshot(ctx, snapshot.Params{
+	_, err = snapSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        runID,
 		ScheduleName: scheduleName,
 		Kind:         "cron",

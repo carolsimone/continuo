@@ -9,11 +9,20 @@ import (
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	snapshotsvc "github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// snapshotViaService is a test helper that exercises the full
+// SnapshotTxRunner → snapshotsvc.Service pipeline (the path that replaced
+// the now-deleted RunRepository.Snapshot method).
+func snapshotViaService(ctx context.Context, client neo4jinfra.Neo4jClient, logger *slog.Logger, params snapshot.Params) ([]snapshot.TaskProjection, error) {
+	svc := snapshotsvc.NewService(neo4jinfra.NewSnapshotTxRunner(client), logger)
+	return svc.Snapshot(ctx, params)
+}
 
 // neo4jURI returns the Neo4j bolt URI from the environment, defaulting to the
 // docker-compose service name used in CI / local development.
@@ -178,10 +187,9 @@ func TestRunRepository_SnapshotGraph_ScopesExactlyToScheduleNodes(t *testing.T) 
 	})
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	repo := neo4jinfra.NewRunRepository(client, logger)
 	runID := uuid.New().String()
 
-	_, err = repo.Snapshot(ctx, snapshot.Params{
+	_, err = snapshotViaService(ctx, client, logger, snapshot.Params{
 		RunID:        runID,
 		ScheduleName: schedA,
 		Kind:         "cron",
@@ -261,10 +269,9 @@ func TestRunRepository_SnapshotGraph_IncludesCrossScheduleSeed(t *testing.T) {
 	})
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	repo := neo4jinfra.NewRunRepository(client, logger)
 	runID := uuid.New().String()
 
-	_, err = repo.Snapshot(ctx, snapshot.Params{
+	_, err = snapshotViaService(ctx, client, logger, snapshot.Params{
 		RunID:        runID,
 		ScheduleName: mainSched,
 		Kind:         "cron",
@@ -358,10 +365,9 @@ func TestRunRepository_SnapshotGraph_NoSpuriousEdgesToDuplicateSeeds(t *testing.
 	})
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	repo := neo4jinfra.NewRunRepository(client, logger)
 	runID := uuid.New().String()
 
-	_, err = repo.Snapshot(ctx, snapshot.Params{
+	_, err = snapshotViaService(ctx, client, logger, snapshot.Params{
 		RunID:        runID,
 		ScheduleName: mainSched,
 		Kind:         "cron",
@@ -397,7 +403,7 @@ func safeStringTest(v interface{}) string {
 func TestRunRepository_SnapshotGraph_StampsKindAndSourceRunID(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
-	repo := neo4jinfra.NewRunRepository(client, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	runID := uuid.New().String()
 	scheduleName := "snap-kind-" + uuid.New().String()[:8]
 	sourceRunID := uuid.New()
@@ -405,7 +411,7 @@ func TestRunRepository_SnapshotGraph_StampsKindAndSourceRunID(t *testing.T) {
 	cleanup := seedScheduleNodes(t, ctx, client, scheduleName)
 	t.Cleanup(cleanup)
 
-	_, err := repo.Snapshot(ctx, snapshot.Params{
+	_, err := snapshotViaService(ctx, client, logger, snapshot.Params{
 		RunID:        runID,
 		ScheduleName: scheduleName,
 		Kind:         "rerun",
@@ -431,14 +437,14 @@ func TestRunRepository_SnapshotGraph_StampsKindAndSourceRunID(t *testing.T) {
 func TestRunRepository_SnapshotGraph_StampsKindButOmitsNilSourceRunID(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
-	repo := neo4jinfra.NewRunRepository(client, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	runID := uuid.New().String()
 	scheduleName := "snap-nilsrc-" + uuid.New().String()[:8]
 
 	cleanup := seedScheduleNodes(t, ctx, client, scheduleName)
 	t.Cleanup(cleanup)
 
-	_, err := repo.Snapshot(ctx, snapshot.Params{
+	_, err := snapshotViaService(ctx, client, logger, snapshot.Params{
 		RunID:        runID,
 		ScheduleName: scheduleName,
 		Kind:         "cron",
@@ -507,9 +513,9 @@ func TestSnapshotGraph_StampsGenerationAndServiceMetadataAndEdgeImageTag(t *test
 		`, nil)
 	})
 
-	repo := neo4jinfra.NewRunRepository(client, slog.Default())
+	svcLogger := slog.Default()
 	runID := uuid.New().String()
-	_, err = repo.Snapshot(ctx, snapshot.Params{
+	_, err = snapshotViaService(ctx, client, svcLogger, snapshot.Params{
 		RunID:        runID,
 		ScheduleName: scheduleName,
 		Kind:         "cron",
@@ -568,7 +574,7 @@ func TestRunRepository_SnapshotGraph_AssignsTaskUUIDs(t *testing.T) {
 	runID := uuid.New().String()
 
 	// ── First snapshot ────────────────────────────────────────────────────────
-	_, err := repo.Snapshot(ctx, snapshot.Params{
+	_, err := snapshotViaService(ctx, client, logger, snapshot.Params{
 		RunID:        runID,
 		ScheduleName: scheduleName,
 		Kind:         "cron",
@@ -611,7 +617,7 @@ func TestRunRepository_SnapshotGraph_AssignsTaskUUIDs(t *testing.T) {
 	}
 
 	// ── Second snapshot (idempotent) ──────────────────────────────────────────
-	_, err = repo.Snapshot(ctx, snapshot.Params{
+	_, err = snapshotViaService(ctx, client, logger, snapshot.Params{
 		RunID:        runID,
 		ScheduleName: scheduleName,
 		Kind:         "cron",
