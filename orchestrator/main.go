@@ -301,14 +301,6 @@ func main() {
 			ScheduleName: scheduleName,
 			RunID:        runID,
 		}
-		// Check for rerun target fields
-		if svc, ok := msg.Values["rerun_service_name"].(string); ok && svc != "" {
-			cmd.RerunTarget = &domainModel.RerunTarget{
-				ServiceName: svc,
-				SchemaName:  msg.Values["rerun_schema_name"].(string),
-				TableName:   msg.Values["rerun_table_name"].(string),
-			}
-		}
 		return initializeRunHandler.Handle(ctx, cmd, msg.ID)
 	}
 	initRunConsumer := redis.NewStreamConsumer(

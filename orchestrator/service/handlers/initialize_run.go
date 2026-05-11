@@ -18,11 +18,10 @@ import (
 
 // InitializeRunHandler handles the initialize-run input.
 type InitializeRunHandler struct {
-	uow          uow.UnitOfWork
-	runRepo      run.Repository
-	snapshotSvc  SnapshotService
-	rerunHandler *HandleRerunHandler
-	logger       *slog.Logger
+	uow         uow.UnitOfWork
+	runRepo     run.Repository
+	snapshotSvc SnapshotService
+	logger      *slog.Logger
 }
 
 // NewInitializeRunHandler creates a new InitializeRunHandler.
@@ -33,11 +32,10 @@ func NewInitializeRunHandler(
 	logger *slog.Logger,
 ) *InitializeRunHandler {
 	return &InitializeRunHandler{
-		uow:          u,
-		runRepo:      runRepo,
-		snapshotSvc:  snapshotSvc,
-		rerunHandler: NewHandleRerunHandler(u, runRepo, snapshotSvc, logger),
-		logger:       logger,
+		uow:         u,
+		runRepo:     runRepo,
+		snapshotSvc: snapshotSvc,
+		logger:      logger,
 	}
 }
 
@@ -48,17 +46,6 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.Initi
 		"run_id", cmd.RunID,
 		"schedule_name", cmd.ScheduleName,
 	)
-
-	// Delegate to rerun handler if a rerun target is provided.
-	if cmd.RerunTarget != nil {
-		return h.rerunHandler.Handle(ctx, domainModel.RerunInput{
-			ScheduleName: cmd.ScheduleName,
-			RunID:        cmd.RunID,
-			ServiceName:  cmd.RerunTarget.ServiceName,
-			SchemaName:   cmd.RerunTarget.SchemaName,
-			TableName:    cmd.RerunTarget.TableName,
-		}, messageID)
-	}
 
 	// Marshal input payload for message_processing record.
 	payload, err := json.Marshal(cmd)
