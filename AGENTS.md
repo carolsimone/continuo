@@ -1,5 +1,5 @@
 # Structure
-This is a monorepo with multiple micro-services.
+This is a monorepo with multiple microservices.
 
 Service at the moment are:
 * `state`
@@ -8,12 +8,15 @@ Service at the moment are:
 * `k8s-controller`
 * `manifest-controller` — Python 3.12/uv service (not Go); consumes `update.graph:v1` Redis Stream events, batch-loads all dbt manifest.json files from `/manifests` (mounted from `dbt/services/`), resolves cross-service upstream deps via sqlglot, and publishes topology to `manifest.loaded:v1` for the orchestrator. Run tests with `docker exec manifest-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.
 
-Fundamentally, in terms of architecture we use event-driven design and CQRS, always keeping things aligned with
-DDD philosophy. I believe CQRS is only applicable when the service has various consumer and producer components;
-otherwise simply DDD is enough, like in the `state` service.
+# Architecture
+This repository follows an event-driven, DDD-oriented architecture using Clean Architecture boundaries.
+Domain code must stay independent of infrastructure concerns. Databases, Redis, gRPC, Kubernetes, S3, framework code, and serialization details belong in adapters. Application and domain code should depend on ports/interfaces, not concrete infrastructure implementations.
+Use CQRS only when it provides a clear benefit: separate write and read models, projections, asynchronous event consumers/producers, or different consistency/read requirements. Simpler services should use a straightforward DDD/application-service structure instead of unnecessary CQRS.
+Handlers should be thin and delegate to application/use-case services. Use repositories and other ports to express persistence and external dependencies. Keep adapter implementations behind those ports.
+Apply SOLID, clean code, repository, service-layer, and design-pattern practices pragmatically. Prefer clear, testable, explicit code over abstraction for its own sake.
+Shared cross-service logic belongs in `pkg`; service-specific logic belongs inside the owning service.
 
 # graphify
-
 This project has a graphify knowledge graph at graphify-out/.
 
 Rules:
