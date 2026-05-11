@@ -118,6 +118,10 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 
+	if len(rebaseTasks) != 8 {
+		dumpRebaseRowsForDebug(t, ctx, clients, newRunID)
+	}
+
 	// Categorize: ftable_a/b/c/d should be inherited (status=succeeded, is_real=false).
 	// ftable_e/f/g/h should be rebased (is_real=true; status starts as 'pending').
 	for _, r := range rebaseTasks {
@@ -261,6 +265,9 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 		   FROM scheduler_tracker WHERE schedule_id = $1`,
 		rebaseRunID,
 	).Scan(&terminalCount, &totalCount))
+	if totalCount != 8 {
+		dumpRebaseRowsForDebug(t, ctx, clients, rebaseRunID)
+	}
 	assert.Equal(t, totalCount, terminalCount,
 		"terminal_task_count must equal total_task_count post-finalization (B1 invariant)")
 	assert.Equal(t, int32(8), totalCount,
@@ -349,4 +356,42 @@ func TestRebaseOfRebase(t *testing.T) {
 		t.Skip("Skipping E2E test in short mode")
 	}
 	t.Skip("TODO: requires waiting for chained terminal states; root-forwarding semantics covered by TestRebasePartition_RebaseOfRebase_RootForwarding unit test")
+}
+
+// dumpRebaseRowsForDebug logs every task_tracker row attached to a rebase
+// run so an unexpected row count on CI surfaces the offending row's identity
+// (table_name + service + schema + image_tag + manifest_version). Called only
+// on assertion mismatch — no-op when counts match.
+func dumpRebaseRowsForDebug(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
+	t.Helper()
+	rows, err := clients.stateDB.QueryContext(ctx, `
+		SELECT table_name, service_name, schema_name, status,
+		       inherited_from_task_id IS NULL AS is_real,
+		       COALESCE(image_tag, '') AS image_tag,
+		       COALESCE(manifest_version, '') AS manifest_version
+		  FROM task_tracker
+		 WHERE schedule_id = $1
+		 ORDER BY table_name, service_name`, runID)
+	if err != nil {
+		t.Logf("dumpRebaseRowsForDebug: query failed: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var n int
+	for rows.Next() {
+		var tn, svc, sch, status, img, ver string
+		var isReal bool
+		if scanErr := rows.Scan(&tn, &svc, &sch, &status, &isReal, &img, &ver); scanErr != nil {
+			t.Logf("dumpRebaseRowsForDebug: scan failed: %v", scanErr)
+			return
+		}
+		n++
+		t.Logf("rebase row %d: table=%s svc=%s sch=%s status=%s real=%v img=%q ver=%q",
+			n, tn, svc, sch, status, isReal, img, ver)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		t.Logf("dumpRebaseRowsForDebug: rows.Err: %v", rowsErr)
+	}
+	t.Logf("dumpRebaseRowsForDebug: total rows seen = %d", n)
 }
