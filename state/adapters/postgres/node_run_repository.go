@@ -59,32 +59,39 @@ func (r *nodeRunRepository) List(
 	}
 
 	const query = `
-		WITH latest_exec AS (
-			SELECT DISTINCT ON (task_id)
-			       task_id, started_at, completed_at, error_message, log_s3_key
-			FROM task_execution
-			ORDER BY task_id, created_at DESC
+		WITH target_tasks AS (
+			SELECT t.task_id, t.schedule_id, t.status AS task_status,
+			       t.retry_count, t.image_tag, t.manifest_version
+			FROM task_tracker t
+			WHERE t.service_name = $1
+			  AND t.schema_name  = $2
+			  AND t.table_name   = $3
+		),
+		latest_exec AS (
+			SELECT DISTINCT ON (te.task_id)
+			       te.task_id, te.started_at, te.completed_at,
+			       te.error_message, te.log_s3_key
+			FROM task_execution te
+			JOIN target_tasks tt ON tt.task_id = te.task_id
+			ORDER BY te.task_id, te.created_at DESC
 		)
 		SELECT s.schedule_id        AS run_id,
 		       s.schedule_name      AS schedule_name,
 		       s.kind               AS kind,
 		       s.status             AS terminal_status,
-		       t.task_id            AS task_id,
-		       t.status             AS task_status,
-		       t.retry_count        AS retry_count,
-		       t.image_tag          AS image_tag,
-		       t.manifest_version   AS manifest_version,
+		       tt.task_id           AS task_id,
+		       tt.task_status       AS task_status,
+		       tt.retry_count       AS retry_count,
+		       tt.image_tag         AS image_tag,
+		       tt.manifest_version  AS manifest_version,
 		       s.created_at         AS created_at,
 		       le.started_at        AS started_at,
 		       le.completed_at      AS completed_at,
 		       le.error_message     AS error_message,
 		       le.log_s3_key        AS log_s3_key
-		FROM task_tracker t
-		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
-		LEFT JOIN latest_exec le ON le.task_id = t.task_id
-		WHERE t.service_name = $1
-		  AND t.schema_name  = $2
-		  AND t.table_name   = $3
+		FROM target_tasks tt
+		JOIN scheduler_tracker s ON s.schedule_id = tt.schedule_id
+		LEFT JOIN latest_exec le ON le.task_id = tt.task_id
 		ORDER BY s.created_at DESC
 		LIMIT $4
 	`
