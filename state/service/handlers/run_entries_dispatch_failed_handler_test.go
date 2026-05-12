@@ -56,7 +56,7 @@ func buildDispatchFailedPayload(t *testing.T, scheduleID uuid.UUID, scheduleName
 	evt := events.RunEntriesDispatchFailed{
 		ScheduleID:   scheduleID.String(),
 		ScheduleName: scheduleName,
-		Reason:       reason,
+		Reason:       events.DispatchFailedReason(reason),
 	}
 	b, err := json.Marshal(evt)
 	require.NoError(t, err)
