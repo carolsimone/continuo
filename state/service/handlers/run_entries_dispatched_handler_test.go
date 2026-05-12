@@ -578,7 +578,8 @@ func TestRunEntriesDispatched_AutoRollupEmitsRunFinalized(t *testing.T) {
 // bypassing processed_events dedup) is silently dropped when the scheduler is
 // already in a terminal state (failed or succeeded). Without this guard the
 // duplicate would call SetTerminalTaskCountTx and overwrite an already-correct
-// terminal_task_count, breaking the B1 finalization invariant.
+// terminal_task_count, causing terminal_task_count < total_task_count and
+// preventing the run from ever being considered fully finalized.
 func TestRunEntriesDispatchedHandler_NoopWhenSchedulerTerminal(t *testing.T) {
 	for _, terminalStatus := range []model.SchedulerStatus{
 		model.SchedulerStatusFailed,
