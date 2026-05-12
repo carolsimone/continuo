@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -64,13 +63,12 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunIn
 		Selector:     snapshot.SourcePinnedDAG{},
 	})
 	if snapErr != nil {
-		if errors.Is(snapErr, snapshot.ErrEmptyProjection) {
-			if ferr := EmitDispatchFailed(ctx, h.uow, h.logger, DispatchFailed{
-				RunID: cmd.RunID, ScheduleName: cmd.ScheduleName,
-				Reason:              "rerun_yielded_empty_projection",
-				StreamName:          "run.entries.dispatch_failed:v1",
-				EventType:           "run_entries_dispatch_failed",
+		if reason, ok := dispatchFailedReason(snapErr); ok {
+			if ferr := EmitDispatchFailed(ctx, h.uow, h.logger, DispatchFailedParams{
+				RunID:               cmd.RunID,
+				ScheduleName:        cmd.ScheduleName,
 				MessageProcessingID: msgProcessingID,
+				Reason:              reason,
 			}); ferr != nil {
 				return ferr
 			}
@@ -83,9 +81,9 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunIn
 	}
 
 	if err := DispatchDerivedRun(ctx, h.uow, h.logger, DerivedRunDispatch{
-		RunID: cmd.RunID, ScheduleName: cmd.ScheduleName, Kind: "rerun",
-		StreamForFailed:     "run.entries.dispatch_failed:v1",
-		EventTypeForFailed:  "run_entries_dispatch_failed",
+		RunID:               cmd.RunID,
+		ScheduleName:        cmd.ScheduleName,
+		Kind:                "rerun",
 		MessageProcessingID: msgProcessingID,
 		Projection:          projection,
 	}); err != nil {

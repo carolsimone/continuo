@@ -1,12 +1,80 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 
+	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/orchestrator/service/uow"
+	"github.com/google/uuid"
 )
+
+// DispatchFailedParams carries the inputs for EmitDispatchFailed.
+//
+// StreamName and EventType are NOT parameters: they are constants
+// ("run.entries.dispatch_failed:v1" and "run_entries_dispatch_failed")
+// owned by EmitDispatchFailed itself.
+type DispatchFailedParams struct {
+	RunID               string
+	ScheduleName        string
+	MessageProcessingID uuid.UUID
+	Reason              pkgEvents.DispatchFailedReason
+}
+
+// EmitDispatchFailed writes one run.entries.dispatch_failed:v1 outbox
+// entry. Callers MUST only invoke this when dispatchFailedReason(err)
+// returned (reason, true). Calling it for a transient or permanent error
+// would terminally fail a run that could otherwise self-heal (transient)
+// or mask the upstream signal (permanent).
+func EmitDispatchFailed(
+	ctx context.Context,
+	u uow.UnitOfWork,
+	logger *slog.Logger,
+	p DispatchFailedParams,
+) error {
+	scheduleUUID, err := uuid.Parse(p.RunID)
+	if err != nil {
+		return fmt.Errorf("invalid run_id %q: %w", p.RunID, err)
+	}
+
+	evt := pkgEvents.RunEntriesDispatchFailed{
+		ScheduleID:   p.RunID,
+		ScheduleName: p.ScheduleName,
+		Reason:       p.Reason,
+	}
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("marshal run.entries.dispatch_failed payload: %w", err)
+	}
+
+	msgProcID := p.MessageProcessingID
+	if err := u.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+		ID:                  uuid.New(),
+		MessageProcessingID: &msgProcID,
+		AggregateType:       "orchestrator",
+		AggregateID:         scheduleUUID,
+		EventType:           "run_entries_dispatch_failed",
+		Payload:             payload,
+		StreamName:          "run.entries.dispatch_failed:v1",
+		Status:              "pending",
+		MaxRetries:          3,
+	}); err != nil {
+		return fmt.Errorf("write run.entries.dispatch_failed to outbox: %w", err)
+	}
+
+	logger.Info("Emitted run.entries.dispatch_failed:v1",
+		"run_id", p.RunID,
+		"schedule_name", p.ScheduleName,
+		"reason", string(p.Reason),
+	)
+	return nil
+}
 
 // dispatchFailedReason maps an error returned by SnapshotService.Snapshot
 // to a DispatchFailedReason for the run.entries.dispatch_failed:v1 stream.

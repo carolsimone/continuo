@@ -210,7 +210,7 @@ func TestHandleRerun_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 
 	var failed pkgEvents.RunEntriesDispatchFailed
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
-	assert.Equal(t, pkgEvents.DispatchFailedReason("rerun_yielded_empty_projection"), failed.Reason)
+	assert.Equal(t, pkgEvents.DispatchFailedReasonEmptyProjection, failed.Reason)
 }
 
 // 3. Non-target terminal statuses (FAILED/CANCELLED/SKIPPED) inherited from the
