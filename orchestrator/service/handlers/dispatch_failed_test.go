@@ -1,0 +1,65 @@
+package handlers
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+
+	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+)
+
+func TestDispatchFailedReason(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantReason pkgEvents.DispatchFailedReason
+		wantOK     bool
+	}{
+		{
+			name:       "ErrTargetNotFound maps to target_not_found",
+			err:        snapshot.ErrTargetNotFound,
+			wantReason: pkgEvents.DispatchFailedReasonTargetNotFound,
+			wantOK:     true,
+		},
+		{
+			name:       "ErrEmptyProjection maps to empty_projection",
+			err:        snapshot.ErrEmptyProjection,
+			wantReason: pkgEvents.DispatchFailedReasonEmptyProjection,
+			wantOK:     true,
+		},
+		{
+			name:       "wrapped ErrTargetNotFound still matches",
+			err:        fmt.Errorf("snapshot failed: %w", snapshot.ErrTargetNotFound),
+			wantReason: pkgEvents.DispatchFailedReasonTargetNotFound,
+			wantOK:     true,
+		},
+		{
+			name:       "wrapped ErrEmptyProjection still matches",
+			err:        fmt.Errorf("snapshot failed: %w", snapshot.ErrEmptyProjection),
+			wantReason: pkgEvents.DispatchFailedReasonEmptyProjection,
+			wantOK:     true,
+		},
+		{
+			name:       "unknown error returns false",
+			err:        errors.New("boom"),
+			wantReason: "",
+			wantOK:     false,
+		},
+		{
+			name:       "ErrPermanent-wrapped error returns false (consumer handles ACK+drop)",
+			err:        fmt.Errorf("validation: %w", pkgEvents.ErrPermanent),
+			wantReason: "",
+			wantOK:     false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotReason, gotOK := dispatchFailedReason(tc.err)
+			if gotReason != tc.wantReason || gotOK != tc.wantOK {
+				t.Fatalf("dispatchFailedReason(%v) = (%q, %v), want (%q, %v)",
+					tc.err, gotReason, gotOK, tc.wantReason, tc.wantOK)
+			}
+		})
+	}
+}
