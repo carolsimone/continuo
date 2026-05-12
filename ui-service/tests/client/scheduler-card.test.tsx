@@ -29,6 +29,17 @@ function renderCard(schedule: ScheduleSummary, latestGen: number) {
   );
 }
 
+describe('SchedulerCard — trigger button', () => {
+  it('renders the Trigger run button with the renamed label', () => {
+    renderCard(
+      baseSchedule({ is_running: false, last_run_id: 'r1' }),
+      0,
+    );
+    const button = screen.getByTitle('Trigger a full DAG run');
+    expect(button).toHaveTextContent('Trigger run');
+  });
+});
+
 describe('SchedulerCard — stale strip', () => {
   it('renders the stale strip with gen N/M when active run drift is stale', () => {
     renderCard(

@@ -24,6 +24,7 @@ type Server struct {
 	rerunHandler          *handlers.RerunHandler
 	singleNodeRunHandler  *handlers.SingleNodeRunHandler
 	rebaseHandler         *handlers.RebaseHandler
+	nodeRunHandler        *handlers.NodeRunHandler
 }
 
 // NewServer creates a new gRPC server
@@ -35,6 +36,7 @@ func NewServer(
 	rerunHandler *handlers.RerunHandler,
 	singleNodeRunHandler *handlers.SingleNodeRunHandler,
 	rebaseHandler *handlers.RebaseHandler,
+	nodeRunHandler *handlers.NodeRunHandler,
 	logger *slog.Logger,
 ) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -56,6 +58,7 @@ func NewServer(
 		rerunHandler:         rerunHandler,
 		singleNodeRunHandler: singleNodeRunHandler,
 		rebaseHandler:        rebaseHandler,
+		nodeRunHandler:       nodeRunHandler,
 	}
 
 	statev1.RegisterStateServiceServer(grpcServer, server)
@@ -184,6 +187,11 @@ func (s *Server) TriggerSingleNodeRun(ctx context.Context, req *statev1.TriggerS
 // TriggerRebase delegates to rebase handler
 func (s *Server) TriggerRebase(ctx context.Context, req *statev1.TriggerRebaseRequest) (*statev1.TriggerRebaseResponse, error) {
 	return s.rebaseHandler.TriggerRebase(ctx, req)
+}
+
+// ListNodeRuns delegates to node run handler
+func (s *Server) ListNodeRuns(ctx context.Context, req *statev1.ListNodeRunsRequest) (*statev1.ListNodeRunsResponse, error) {
+	return s.nodeRunHandler.ListNodeRuns(ctx, req)
 }
 
 // ============================================================================

@@ -864,3 +864,9 @@ body {
   background: #fef2f2;
   border: 1px solid #fca5a5;
 }
+
+.rerun-this-snapshot-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}

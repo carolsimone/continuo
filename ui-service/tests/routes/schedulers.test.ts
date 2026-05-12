@@ -7,11 +7,13 @@ import { createSchedulersRouter } from '../../src/server/routes/schedulers';
 const mockListTasks = vi.fn();
 const mockGetScheduler = vi.fn();
 const mockTriggerRerun = vi.fn();
+const mockTriggerRebase = vi.fn();
 
 const mockClient = {
   listTasks: mockListTasks,
   getScheduler: mockGetScheduler,
   triggerRerun: mockTriggerRerun,
+  triggerRebase: mockTriggerRebase,
 };
 
 const app = express();
@@ -149,5 +151,36 @@ describe('POST /api/schedulers/:id/rerun', () => {
       .post(`/api/schedulers/${VALID_ID}/rerun`)
       .send({});
     expect(res.status).toBe(500);
+  });
+});
+
+describe('POST /api/schedulers/:id/rebase', () => {
+  const VALID_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('forwards source_run_id and returns 200 on success', async () => {
+    mockTriggerRebase.mockImplementation((req: any, cb: any) => {
+      expect(req).toEqual({ source_run_id: VALID_ID });
+      cb(null);
+    });
+
+    const res = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send({});
+
+    expect(res.status).toBe(200);
+    expect(mockTriggerRebase).toHaveBeenCalledWith(
+      { source_run_id: VALID_ID },
+      expect.any(Function),
+    );
+  });
+
+  it('maps FAILED_PRECONDITION to 409', async () => {
+    const err = Object.assign(new Error('source not terminal'), {
+      code: grpc.status.FAILED_PRECONDITION,
+    });
+    mockTriggerRebase.mockImplementation((_req: any, cb: any) => cb(err));
+
+    const res = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send({});
+    expect(res.status).toBe(409);
   });
 });

@@ -69,6 +69,11 @@ service StateService {
   //                         exists on the source's schedule_name.
   rpc TriggerRebase(TriggerRebaseRequest) returns (TriggerRebaseResponse);
 
+  // ListNodeRuns returns the most recent task instances for a node, ordered by
+  // scheduler_tracker.created_at DESC. Identity fields are required; limit is
+  // capped server-side at 50 (0 uses the default of 50).
+  rpc ListNodeRuns(ListNodeRunsRequest) returns (ListNodeRunsResponse);
+
   // TaskExecution operations
   rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
@@ -345,4 +350,32 @@ message TriggerRebaseRequest {
 message TriggerRebaseResponse {
   string run_id        = 1;  // schedule_id of the new rebase run
   string schedule_name = 2;  // copied verbatim from source's schedule_name
+}
+
+message ListNodeRunsRequest {
+  string service_name = 1;
+  string schema_name  = 2;
+  string table_name   = 3;
+  int32  limit        = 4;  // 0 → server default 50; max 50
+}
+
+message ListNodeRunsResponse {
+  repeated NodeRun runs = 1;
+}
+
+message NodeRun {
+  string run_id           = 1;
+  string schedule_name    = 2;
+  string kind             = 3;  // cron | trigger | rerun | rebase | single_node_run
+  string terminal_status  = 4;  // "" while in flight
+  string task_id          = 5;
+  string task_status      = 6;  // pending | running | succeeded | failed | cancelled
+  int32  retry_count      = 7;
+  string image_tag        = 8;
+  string manifest_version = 9;
+  string created_at       = 10; // RFC3339
+  string started_at       = 11; // RFC3339, "" if no execution yet
+  string completed_at     = 12; // RFC3339, "" if not finished
+  string error_message    = 13; // "" when none
+  string log_s3_key       = 14; // "" when none
 }

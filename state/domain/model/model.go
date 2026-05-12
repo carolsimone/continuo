@@ -217,3 +217,29 @@ type TaskExecution struct {
 	CancellationReason   *string    `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
 	LogS3Key             *string    `json:"log_s3_key,omitempty" db:"log_s3_key"`
 }
+
+// NodeRun is one row in a node's execution history — the audit-loud projection
+// of a (scheduler_tracker × task_tracker × task_execution) join filtered by
+// node identity (service_name, schema_name, table_name).
+//
+// One NodeRun corresponds to one task_tracker row (i.e. one task instance), not
+// one scheduler run. Per-task timing comes from the latest task_execution row
+// for that task_id; rows with no execution yet (PENDING tasks) carry nil
+// timings and an empty ErrorMessage / LogS3Key. The Kind and TerminalStatus
+// fields come from the parent scheduler_tracker.
+type NodeRun struct {
+	ScheduleID      uuid.UUID  `db:"run_id"`            // scheduler_tracker.schedule_id
+	ScheduleName    string     `db:"schedule_name"`
+	Kind            string     `db:"kind"`              // cron | trigger | rerun | rebase | single_node_run
+	TerminalStatus  string     `db:"terminal_status"`   // scheduler_tracker.status — "" while in flight
+	TaskID          uuid.UUID  `db:"task_id"`
+	TaskStatus      TaskStatus `db:"task_status"`
+	RetryCount      int        `db:"retry_count"`
+	ImageTag        string     `db:"image_tag"`
+	ManifestVersion string     `db:"manifest_version"`
+	CreatedAt       time.Time  `db:"created_at"`        // scheduler_tracker.created_at — the user-visible "when"
+	StartedAt       *time.Time `db:"started_at"`        // task_execution.started_at
+	CompletedAt    *time.Time `db:"completed_at"`       // task_execution.completed_at
+	ErrorMessage    *string    `db:"error_message"`
+	LogS3Key        *string    `db:"log_s3_key"`
+}

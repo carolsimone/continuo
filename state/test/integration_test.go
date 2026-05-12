@@ -122,9 +122,11 @@ func TestMain(m *testing.M) {
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, nil, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
 	rebaseHandler := handlers.NewRebaseHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
+	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
 
 	// ---- Create gRPC server on a random port ----
-	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, execHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, logger)
+	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, execHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, logger)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

@@ -113,6 +113,10 @@ export default function DetailPage() {
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunState, setRerunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [rerunError, setRerunError] = useState<string | null>(null);
+  const [rebaseState, setRebaseState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [rebaseError, setRebaseError] = useState<string | null>(null);
+  const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [triggerError, setTriggerError] = useState<string | null>(null);
 
   useEffect(() => {
     resolvedRef.current = false;
@@ -336,6 +340,46 @@ export default function DetailPage() {
     }
   }, [lastRunId]);
 
+  const handleRebaseRun = useCallback(async () => {
+    if (!lastRunId) return;
+    setRebaseState('loading');
+    setRebaseError(null);
+    try {
+      const res = await fetch(`/api/schedulers/${lastRunId}/rebase`, { method: 'POST' });
+      if (res.ok) {
+        setRebaseState('success');
+        setTimeout(() => setRebaseState('idle'), 3000);
+      } else {
+        const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
+        setRebaseError(body.error ?? 'Request failed — please try again');
+        setRebaseState('error');
+      }
+    } catch {
+      setRebaseError('Request failed — please try again');
+      setRebaseState('error');
+    }
+  }, [lastRunId]);
+
+  const handleTriggerRun = useCallback(async () => {
+    if (!name) return;
+    setTriggerState('loading');
+    setTriggerError(null);
+    try {
+      const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, { method: 'POST' });
+      if (res.ok) {
+        setTriggerState('success');
+        setTimeout(() => setTriggerState('idle'), 3000);
+      } else {
+        const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
+        setTriggerError(body.error ?? 'Request failed — please try again');
+        setTriggerState('error');
+      }
+    } catch {
+      setTriggerError('Request failed — please try again');
+      setTriggerState('error');
+    }
+  }, [name]);
+
   const latestExecutions = Array.from(
     executions.reduce((map, execution) => {
       const existing = map.get(execution.task_id);
@@ -419,23 +463,56 @@ export default function DetailPage() {
         <span className={`pill ${pillClass(selectedRun ? selectedRun.terminal_status : schedulerStatus)}`}>
           {selectedRun ? formatStatusLabel(selectedRun.terminal_status) : formatStatusLabel(schedulerStatus)}
         </span>
+        {name && (
+          <button
+            type="button"
+            className={`trigger-run-btn${triggerState === 'loading' ? ' loading' : ''}`}
+            disabled={liveRunExists || triggerState === 'loading'}
+            onClick={handleTriggerRun}
+            title={liveRunExists ? 'A run is already active' : 'Trigger a full DAG run'}
+          >
+            {triggerState === 'loading' ? 'Triggering…' : '▶ Trigger run'}
+          </button>
+        )}
+        {triggerState === 'error' && triggerError && (
+          <span className="rerun-feedback rerun-feedback--error">{triggerError}</span>
+        )}
         {isTerminalStatus(scheduler?.status) && !isSuccessStatus(scheduler?.status) && lastRunId && (
           <div className="rerun-control">
-            <RerunBadge runGraph={liveRunGraph} />
-            {rerunState === 'success' ? (
-              <span className="rerun-feedback rerun-feedback--success">✓ Rerun triggered</span>
+            <div className="rerun-this-snapshot-group">
+              {rerunState === 'success' ? (
+                <span className="rerun-feedback rerun-feedback--success">✓ Rerun triggered</span>
+              ) : (
+                <button
+                  type="button"
+                  className="rerun-btn rerun-btn--this-snapshot"
+                  disabled={rerunState === 'loading'}
+                  onClick={handleRerunRun}
+                  title="Re-execute non-succeeded tasks against this run's pinned snapshot"
+                >
+                  {rerunState === 'loading' ? 'Triggering…' : '↺ Rerun failed (this snapshot)'}
+                </button>
+              )}
+              <RerunBadge runGraph={liveRunGraph} />
+              {rerunState === 'error' && rerunError && (
+                <span className="rerun-feedback rerun-feedback--error">{rerunError}</span>
+              )}
+            </div>
+            {rebaseState === 'success' ? (
+              <span className="rerun-feedback rerun-feedback--success">✓ Rebase triggered</span>
             ) : (
               <button
                 type="button"
-                className="rerun-btn"
-                disabled={rerunState === 'loading'}
-                onClick={handleRerunRun}
+                className="rerun-btn rerun-btn--rebase"
+                disabled={rebaseState === 'loading'}
+                onClick={handleRebaseRun}
+                title="Re-execute non-succeeded tasks against the latest topology"
               >
-                {rerunState === 'loading' ? 'Triggering…' : '↺ Rerun'}
+                {rebaseState === 'loading' ? 'Triggering…' : '↪ Rerun failed (latest snapshot)'}
               </button>
             )}
-            {rerunState === 'error' && rerunError && (
-              <span className="rerun-feedback rerun-feedback--error">{rerunError}</span>
+            {rebaseState === 'error' && rebaseError && (
+              <span className="rerun-feedback rerun-feedback--error">{rebaseError}</span>
             )}
           </div>
         )}
@@ -488,6 +565,18 @@ export default function DetailPage() {
                     <div className="dag-focus-legend-row">
                       <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
                     </div>
+                    {selectedNodeId && name && (
+                      <a
+                        className="dag-focus-open-link"
+                        href={`/schedule/${encodeURIComponent(name)}/node/${encodeURIComponent(selectedNodeId)}`}
+                        onClick={e => {
+                          e.preventDefault();
+                          navigate(`/schedule/${encodeURIComponent(name)}/node/${encodeURIComponent(selectedNodeId)}`);
+                        }}
+                      >
+                        Open node detail →
+                      </a>
+                    )}
                   </div>
                 )}
               </>
