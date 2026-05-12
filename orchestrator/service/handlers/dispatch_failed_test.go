@@ -1,3 +1,5 @@
+// White-box (in-package) test: the dispatchFailedReason mapper is
+// unexported and exercised directly from package handlers.
 package handlers
 
 import (
