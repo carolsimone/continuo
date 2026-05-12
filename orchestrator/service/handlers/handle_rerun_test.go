@@ -17,8 +17,9 @@ import (
 
 // ── fakeSnapshotService for HandleRerun tests ─────────────────────────────────
 //
-// PR2 unification: rerun handler now drives snapshotSvc.Snapshot via the
-// SourcePinnedDAG selector. The fake returns a configurable projection (or error).
+// rerunFakeSnapshotService stubs SnapshotService for HandleRerun unit tests.
+// It lets each test inject a custom Snapshot result (projection + error) and
+// exposes the recorded call count for assertions.
 
 type rerunFakeSnapshotService struct {
 	snapshotFn    func(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error)

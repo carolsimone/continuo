@@ -17,8 +17,9 @@ import (
 
 // ── fakeSnapshotService for HandleRebase tests ────────────────────────────────
 //
-// PR2 Feature 2: rebase handler drives snapshotSvc.Snapshot via the
-// RebasePartition selector. The fake returns a configurable projection (or error).
+// rebaseFakeSnapshotService stubs SnapshotService for HandleRebase unit tests.
+// It lets each test inject a custom Snapshot result (projection + error) and
+// exposes the recorded call count for assertions.
 
 type rebaseFakeSnapshotService struct {
 	snapshotFn    func(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error)

@@ -32,6 +32,7 @@ func TestEmitDispatchFailed_WritesOutboxEntry(t *testing.T) {
 	assert.Equal(t, "run_entries_dispatch_failed", e.EventType)
 	assert.Equal(t, "orchestrator", e.AggregateType)
 	assert.Equal(t, runID, e.AggregateID)
+	assert.NotEqual(t, uuid.Nil, e.ID, "outbox entry must have a fresh UUID")
 	require.NotNil(t, e.MessageProcessingID)
 	assert.Equal(t, msgProcID, *e.MessageProcessingID)
 	assert.Equal(t, "pending", e.Status)
