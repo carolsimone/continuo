@@ -325,6 +325,9 @@ func TestHandleSchedulerStarted_EmptyProjection_EmitsDispatchFailed(t *testing.T
 	require.Equal(t, "run_entries_dispatch_failed", e.EventType)
 	require.Equal(t, scheduleID, e.AggregateID)
 
+	require.NotNil(t, e.MessageProcessingID, "outbox entry must carry the message_processing id")
+	assert.NotEqual(t, uuid.Nil, *e.MessageProcessingID, "message_processing id must be non-zero")
+
 	var payload pkgevents.RunEntriesDispatchFailed
 	require.NoError(t, json.Unmarshal(e.Payload, &payload))
 	require.Equal(t, scheduleID.String(), payload.ScheduleID)
