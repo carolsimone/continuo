@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
@@ -94,39 +93,4 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunIn
 		return fmt.Errorf("mark completed: %w", err)
 	}
 	return h.uow.Commit()
-}
-
-// dedupMessage is a shared private helper used by both consumer handlers
-// to avoid duplicating the InsertIfNotExists dance.
-func dedupMessage(
-	ctx context.Context,
-	u uow.UnitOfWork,
-	logger *slog.Logger,
-	messageID string,
-	streamName string,
-	payload []byte,
-) (uuid.UUID, bool, error) {
-	msgProc := &domain.MessageProcessing{
-		MessageID:  messageID,
-		StreamName: streamName,
-		State:      "processing",
-		Payload:    payload,
-	}
-	id, inserted, err := u.MessageProcessingRepo().InsertIfNotExists(ctx, msgProc)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("insert message processing: %w", err)
-	}
-	if !inserted {
-		existing, err := u.MessageProcessingRepo().GetByMessageID(ctx, messageID)
-		if err != nil {
-			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
-		}
-		if existing.State == "completed" || existing.State == "acked" {
-			logger.Info("Message already processed, skipping", "message_id", messageID, "state", existing.State)
-			return existing.ID, true, nil
-		}
-		logger.Warn("Message being processed by another instance", "message_id", messageID)
-		return existing.ID, true, nil
-	}
-	return id, false, nil
 }
