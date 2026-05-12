@@ -153,7 +153,7 @@ func EmitDispatchFailed(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 	evt := pkgEvents.RunEntriesDispatchFailed{
 		ScheduleID:   df.RunID,
 		ScheduleName: df.ScheduleName,
-		Reason:       df.Reason,
+		Reason:       pkgEvents.DispatchFailedReason(df.Reason),
 	}
 	payload, err := json.Marshal(evt)
 	if err != nil {

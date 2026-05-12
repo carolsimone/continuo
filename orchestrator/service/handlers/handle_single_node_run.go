@@ -271,7 +271,7 @@ func (h *HandleSingleNodeRunHandler) emitDispatchFailed(
 	evt := pkgEvents.RunEntriesDispatchFailed{
 		ScheduleID:   cmd.RunID,
 		ScheduleName: cmd.ScheduleName,
-		Reason:       reason,
+		Reason:       pkgEvents.DispatchFailedReason(reason),
 	}
 	failedPayload, err := json.Marshal(evt)
 	if err != nil {
