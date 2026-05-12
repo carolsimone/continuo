@@ -572,3 +572,69 @@ func TestRunEntriesDispatched_AutoRollupEmitsRunFinalized(t *testing.T) {
 	assert.Equal(t, int32(2), tracker.TerminalTaskCount,
 		"auto-rollup must seed terminal_task_count")
 }
+
+// TestRunEntriesDispatchedHandler_NoopWhenSchedulerTerminal verifies that a
+// second delivery of run.entries.dispatched (different Redis message ID,
+// bypassing processed_events dedup) is silently dropped when the scheduler is
+// already in a terminal state (failed or succeeded). Without this guard the
+// duplicate would call SetTerminalTaskCountTx and overwrite an already-correct
+// terminal_task_count, breaking the B1 finalization invariant.
+func TestRunEntriesDispatchedHandler_NoopWhenSchedulerTerminal(t *testing.T) {
+	for _, terminalStatus := range []model.SchedulerStatus{
+		model.SchedulerStatusFailed,
+		model.SchedulerStatusSucceeded,
+	} {
+		terminalStatus := terminalStatus
+		t.Run(string(terminalStatus), func(t *testing.T) {
+			h, db, schedulerRepo, taskRepo, _ := newTestHandlerWithRepos(t)
+			schedID := uuid.New()
+			seedSchedulerTracker(t, db, schedID, "completed")
+
+			// Advance scheduler to terminal status.
+			_, err := db.ExecContext(context.Background(),
+				`UPDATE scheduler_tracker
+				    SET status = $2,
+				        terminal_task_count = 8,
+				        total_task_count = 8,
+				        completed_at = NOW()
+				  WHERE schedule_id = $1`, schedID, string(terminalStatus))
+			require.NoError(t, err)
+
+			t.Cleanup(func() {
+				db.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, schedID)
+				db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, schedID)
+			})
+
+			// Simulate a duplicate delivery with a DIFFERENT message ID (bypasses dedup).
+			evt := events.RunEntriesDispatched{
+				ScheduleID:   schedID.String(),
+				ScheduleName: "terminal-guard-test",
+				AllTasks: []events.DispatchedTask{
+					{TaskID: uuid.New().String(), ServiceName: "svc", SchemaName: "s", TableName: "t",
+						NodeType: "dbt-model", MaxRetries: 0, Status: "succeeded"},
+					{TaskID: uuid.New().String(), ServiceName: "svc", SchemaName: "s", TableName: "u",
+						NodeType: "dbt-model", MaxRetries: 0, Status: "succeeded"},
+				},
+				TotalTaskCount: 2,
+			}
+			payload, marshalErr := json.Marshal(evt)
+			require.NoError(t, marshalErr)
+
+			ack, err := h.Handle(context.Background(), "duplicate-msg-"+uuid.New().String(), string(payload))
+			require.NoError(t, err)
+			assert.True(t, ack, "duplicate after terminal should ACK (no-op)")
+
+			// terminal_task_count must remain 8 — the duplicate must not overwrite it.
+			got, err := schedulerRepo.GetByID(context.Background(), schedID)
+			require.NoError(t, err)
+			assert.Equal(t, terminalStatus, got.Status, "status must remain %s", terminalStatus)
+			assert.Equal(t, int32(8), got.TerminalTaskCount,
+				"terminal_task_count must not be overwritten by duplicate delivery")
+
+			// No new task rows should have been created.
+			tasks, err := taskRepo.ListAllByScheduleID(context.Background(), schedID)
+			require.NoError(t, err)
+			assert.Empty(t, tasks, "duplicate delivery must not insert task rows")
+		})
+	}
+}
