@@ -292,3 +292,42 @@ func TestHandleSchedulerStarted_PropagatesKindAndSourceRunID(t *testing.T) {
 	require.NotNil(t, snapSvc.snapshotCalls[0].SourceRunID)
 	assert.Equal(t, sourceRunID, *snapSvc.snapshotCalls[0].SourceRunID)
 }
+
+// TestHandleSchedulerStarted_EmptyProjection_EmitsDispatchFailed verifies
+// that when Snapshot(LatestFullDAG) returns ErrEmptyProjection (a cron
+// schedule whose topology has zero active :Table nodes), the handler
+// emits run.entries.dispatch_failed:v1 with reason "empty_projection".
+// State's RunEntriesDispatchFailedHandler then finalises the run as
+// failed, so the scheduler_tracker row no longer leaks in PENDING.
+func TestHandleSchedulerStarted_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
+	ctx := context.Background()
+	u := newFakeUnitOfWork()
+	scheduleID := uuid.New()
+
+	// initRunFakeSnapshotService with no getScheduleInitNodesFn returns
+	// snapshot.ErrEmptyProjection from Snapshot — exactly the path under test.
+	snapSvc := &initRunFakeSnapshotService{}
+	runRepo := &extendedFakeRunRepository{}
+
+	h := handlers.NewHandleSchedulerStartedHandler(u, runRepo, snapSvc, newTestLogger())
+	evt := domain.SchedulerStarted{
+		ScheduleID:   scheduleID,
+		ScheduleName: "daily",
+	}
+
+	err := h.Handle(ctx, evt, "msg-empty-cron")
+	require.NoError(t, err, "ErrEmptyProjection must not surface as a handler error")
+	require.True(t, u.CommittedTx, "transaction must be committed")
+
+	require.Len(t, u.outboxRepo.CreatedEntries, 1, "expect exactly 1 outbox entry: run.entries.dispatch_failed:v1")
+	e := u.outboxRepo.CreatedEntries[0]
+	require.Equal(t, "run.entries.dispatch_failed:v1", e.StreamName)
+	require.Equal(t, "run_entries_dispatch_failed", e.EventType)
+	require.Equal(t, scheduleID, e.AggregateID)
+
+	var payload pkgevents.RunEntriesDispatchFailed
+	require.NoError(t, json.Unmarshal(e.Payload, &payload))
+	require.Equal(t, scheduleID.String(), payload.ScheduleID)
+	require.Equal(t, "daily", payload.ScheduleName)
+	require.Equal(t, pkgevents.DispatchFailedReasonEmptyProjection, payload.Reason)
+}
