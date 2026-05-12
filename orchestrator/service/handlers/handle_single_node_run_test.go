@@ -192,7 +192,7 @@ func TestHandleSingleNodeRun_TargetNotFound(t *testing.T) {
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
 	require.Equal(t, cmd.RunID, payload.ScheduleID)
 	require.Equal(t, cmd.ScheduleName, payload.ScheduleName)
-	require.Equal(t, "target_not_found", payload.Reason)
+	require.Equal(t, pkgEvents.DispatchFailedReason("target_not_found"), payload.Reason)
 }
 
 // 3. Second delivery of the same messageID is a no-op (dedup).

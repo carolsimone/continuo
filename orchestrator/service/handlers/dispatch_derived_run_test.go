@@ -128,7 +128,7 @@ func TestDispatchDerivedRun_EmitFailedDispatch(t *testing.T) {
 	require.Equal(t, "run.entries.dispatch_failed:v1", entries[0].StreamName)
 	var failed pkgEvents.RunEntriesDispatchFailed
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
-	assert.Equal(t, "rerun_yielded_empty_projection", failed.Reason)
+	assert.Equal(t, pkgEvents.DispatchFailedReason("rerun_yielded_empty_projection"), failed.Reason)
 }
 
 // sanity: returns a meaningful error if RunID is invalid.

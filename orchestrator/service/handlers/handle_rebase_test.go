@@ -218,7 +218,7 @@ func TestHandleRebase_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", failed.ScheduleID)
 	assert.Equal(t, "daily", failed.ScheduleName)
-	assert.Equal(t, "rebase_yielded_empty_projection", failed.Reason)
+	assert.Equal(t, pkgEvents.DispatchFailedReason("rebase_yielded_empty_projection"), failed.Reason)
 }
 
 // 3. Second delivery of the same messageID is a no-op (dedup).
