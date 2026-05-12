@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -63,13 +62,12 @@ func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainModel.Rebase
 		Selector:     snapshot.RebasePartition{},
 	})
 	if snapErr != nil {
-		if errors.Is(snapErr, snapshot.ErrEmptyProjection) {
-			if ferr := EmitDispatchFailed(ctx, h.uow, h.logger, DispatchFailed{
-				RunID: cmd.RunID, ScheduleName: cmd.ScheduleName,
-				Reason:              "rebase_yielded_empty_projection",
-				StreamName:          "run.entries.dispatch_failed:v1",
-				EventType:           "run_entries_dispatch_failed",
+		if reason, ok := dispatchFailedReason(snapErr); ok {
+			if ferr := EmitDispatchFailed(ctx, h.uow, h.logger, DispatchFailedParams{
+				RunID:               cmd.RunID,
+				ScheduleName:        cmd.ScheduleName,
 				MessageProcessingID: msgProcessingID,
+				Reason:              reason,
 			}); ferr != nil {
 				return ferr
 			}
@@ -82,9 +80,9 @@ func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainModel.Rebase
 	}
 
 	if err := DispatchDerivedRun(ctx, h.uow, h.logger, DerivedRunDispatch{
-		RunID: cmd.RunID, ScheduleName: cmd.ScheduleName, Kind: "rebase",
-		StreamForFailed:     "run.entries.dispatch_failed:v1",
-		EventTypeForFailed:  "run_entries_dispatch_failed",
+		RunID:               cmd.RunID,
+		ScheduleName:        cmd.ScheduleName,
+		Kind:                "rebase",
 		MessageProcessingID: msgProcessingID,
 		Projection:          projection,
 	}); err != nil {

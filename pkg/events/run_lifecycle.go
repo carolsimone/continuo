@@ -32,16 +32,29 @@ type RunEntriesDispatched struct {
 	TotalTaskCount int32            `json:"total_task_count"`
 }
 
+// DispatchFailedReason is the closed set of reasons emitted with
+// run.entries.dispatch_failed:v1. Each value corresponds 1:1 to a
+// snapshot package sentinel; adding a new reason requires adding a new
+// sentinel as well. The orchestrator's dispatchFailedReason mapper
+// (orchestrator/service/handlers/dispatch_failed.go) is the single
+// point of truth for the error → reason mapping.
+type DispatchFailedReason string
+
+const (
+	DispatchFailedReasonTargetNotFound  DispatchFailedReason = "target_not_found"
+	DispatchFailedReasonEmptyProjection DispatchFailedReason = "empty_projection"
+)
+
 // RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1
-// Published by: orchestrator when it cannot produce dispatch work for a run
-// (e.g. Snapshot+SingleNode → ErrTargetNotFound). Symmetric to
-// RunEntriesDispatched: that one creates tasks + flips scheduler_tracker to
-// running; this one writes no tasks + flips scheduler_tracker to failed.
+// Published by: orchestrator when it cannot produce dispatch work for a
+// run. Symmetric to RunEntriesDispatched: that one creates tasks +
+// flips scheduler_tracker to running; this one writes no tasks + flips
+// scheduler_tracker to failed.
 // Consumed by: state.
 type RunEntriesDispatchFailed struct {
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	Reason       string `json:"reason"`
+	ScheduleID   string               `json:"schedule_id"`
+	ScheduleName string               `json:"schedule_name"`
+	Reason       DispatchFailedReason `json:"reason"`
 }
 
 // RunFinalized — stream: run.finalized:v1

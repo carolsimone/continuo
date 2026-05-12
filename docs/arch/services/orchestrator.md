@@ -117,7 +117,7 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 | `query.model:v1` | One message per newly-ready downstream node after a SUCCEEDED node is processed; for rerun/rebase only the **rebased** rows get a `query.model:v1` (inherited rows are already SUCCEEDED at dispatch and never enter the executor pipeline) |
 | `schedules.loaded:v1` | Produced by IngestTopology after successful topology load (schedule names list) |
 | `run.entries.dispatched:v1` | Produced by every `Snapshot`-driven handler (`HandleSchedulerStarted`, `HandleRerun`, `HandleRebase`, `HandleSingleNodeRun`) after the projection is materialised. Carries all task entries with pre-assigned UUIDs, root/seed node lists, plus per-task `Status` (defaults `"pending"`, `"succeeded"` for inherited rows) and `InheritedFromTaskID` (empty for non-inherited; root-resolved source `task_id` for inherited). Each `DispatchedTask` stamps `MaxRetries = pkg/events.DefaultTaskMaxRetries (= 2)` so state's `task_tracker.max_retries` matches the k8s retry budget. |
-| `run.entries.dispatch_failed:v1` | Produced by HandleSingleNodeRunHandler when `ErrTargetNotFound`. Symmetric counterpart of `run.entries.dispatched:v1`: same `scheduler_tracker` target, opposite outcome. State row-locks the row, marks status=`failed`, emits `run.finalized:v1`. |
+| `run.entries.dispatch_failed:v1` | Produced by `HandleSingleNodeRunHandler` on `snapshot.ErrTargetNotFound`, and by `HandleSingleNodeRunHandler`, `HandleRerunHandler`, `HandleRebaseHandler`, and `HandleSchedulerStartedHandler` on `snapshot.ErrEmptyProjection`. Symmetric counterpart of `run.entries.dispatched:v1`: same `scheduler_tracker` target, opposite outcome. State row-locks the row, marks status=`failed`, emits `run.finalized:v1`. |
 
 ### No gRPC calls to `state`
 
@@ -134,6 +134,8 @@ Orchestrator no longer calls `state` gRPC for any internal writes. All state mut
 5. Produces `run.entries.dispatched:v1` via outbox with: `run_id`, `schedule_name`, `manifest_versions`, full task entry list (each with `task_id`, node coordinates, `node_type`, `service_name`, `Status="pending"`, `InheritedFromTaskID=""`).
 
 `state` consumes `run.entries.dispatched:v1` to create task rows, set `total_task_count`, and mark the run as initialized.
+
+When `Snapshot(LatestFullDAG)` returns `snapshot.ErrEmptyProjection` (a schedule whose topology has zero active `:Table` nodes), the handler emits `run.entries.dispatch_failed:v1` with `reason=empty_projection` and the run finalises as `failed`.
 
 ### On `manifest.loaded:v1` — IngestTopology
 
@@ -177,7 +179,7 @@ If `rebase_set ∩ inherit_set` is empty (selector returns zero entries — shou
 
 ### Shared helpers
 
-Both consumer handlers (`HandleRerun`, `HandleRebase`) delegate the projection-to-outbox pipeline to `service/handlers/dispatch_derived_run.go`. The helper takes the materialised projection and emits the run-level `run.entries.dispatched:v1` outbox entry plus one `query.model:v1` entry per PENDING row. Inherited terminal rows (`FAILED` / `CANCELLED` / `SKIPPED`) round-trip their status verbatim — coercing them to `pending` would create `task_tracker` rows the executor never runs. `EmitDispatchFailed` in the same file writes a `run.entries.dispatch_failed:v1` outbox entry when a selector returns `ErrEmptyProjection`.
+Both consumer handlers (`HandleRerun`, `HandleRebase`) delegate the projection-to-outbox pipeline to `service/handlers/dispatch_derived_run.go`. The helper takes the materialised projection and emits the run-level `run.entries.dispatched:v1` outbox entry plus one `query.model:v1` entry per PENDING row. Inherited terminal rows (`FAILED` / `CANCELLED` / `SKIPPED`) round-trip their status verbatim — coercing them to `pending` would create `task_tracker` rows the executor never runs. `EmitDispatchFailed` in `service/handlers/dispatch_failed.go` writes a `run.entries.dispatch_failed:v1` outbox entry when a selector returns `ErrEmptyProjection`.
 
 ### On `trigger.single_node_run:v1` — HandleSingleNodeRunHandler
 

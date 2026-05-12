@@ -192,7 +192,31 @@ func TestHandleSingleNodeRun_TargetNotFound(t *testing.T) {
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
 	require.Equal(t, cmd.RunID, payload.ScheduleID)
 	require.Equal(t, cmd.ScheduleName, payload.ScheduleName)
-	require.Equal(t, "target_not_found", payload.Reason)
+	require.Equal(t, pkgEvents.DispatchFailedReasonTargetNotFound, payload.Reason)
+}
+
+// 2b. Snapshot(SingleNode) returns ErrEmptyProjection.
+//     Expect ONE outbox entry with stream run.entries.dispatch_failed:v1 and reason "empty_projection"; handler returns nil.
+func TestHandleSingleNodeRun_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
+	fx := newSingleNodeRunHandlerFixture(t)
+	cmd := makeSingleNodeCmd(uuid.New().String())
+	fx.SnapSvc.snapshotErr = snapshot.ErrEmptyProjection
+
+	err := fx.Handler.Handle(context.Background(), cmd, "msg-empty-projection")
+	require.NoError(t, err, "ErrEmptyProjection must not surface as a handler error")
+	require.True(t, fx.UoW.CommittedTx, "transaction must still be committed")
+
+	entries := fx.UoW.outboxRepo.CreatedEntries
+	require.Len(t, entries, 1, "expect exactly 1 outbox entry: run.entries.dispatch_failed:v1")
+	require.Equal(t, "run.entries.dispatch_failed:v1", entries[0].StreamName)
+	require.Equal(t, "run_entries_dispatch_failed", entries[0].EventType)
+	require.Equal(t, "pending", entries[0].Status)
+
+	var payload pkgEvents.RunEntriesDispatchFailed
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
+	require.Equal(t, cmd.RunID, payload.ScheduleID)
+	require.Equal(t, cmd.ScheduleName, payload.ScheduleName)
+	require.Equal(t, pkgEvents.DispatchFailedReasonEmptyProjection, payload.Reason)
 }
 
 // 3. Second delivery of the same messageID is a no-op (dedup).

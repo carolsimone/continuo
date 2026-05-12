@@ -17,26 +17,32 @@ sequenceDiagram
   Note right of R: payload — runner_id, schedule_name, service_metadata, kind='cron', source_run_id=''
 
   R->>OR: consume scheduler.started v1
-  Note over OR: HandleSchedulerStartedHandler.Handle (1 tx)<br/>Snapshot(LatestFullDAG) in Neo4j — Run + EXECUTES with pre-assigned task UUIDs<br/>GetScheduleInitNodes — AllNodes, RootNodes, SeedNodes<br/>orchestrator outbox — 1x run.entries.dispatched v1<br/>orchestrator outbox — Nx query.model v1 (seeds, fallback to roots)
-  OR->>R: publish run.entries.dispatched v1
-  OR->>R: publish query.model v1 (per seed/root)
+  Note over OR: HandleSchedulerStartedHandler.Handle (1 tx)<br/>Snapshot(LatestFullDAG) in Neo4j — Run + EXECUTES with pre-assigned task UUIDs<br/>GetScheduleInitNodes — AllNodes, RootNodes, SeedNodes
+  alt Snapshot returns ErrEmptyProjection (zero :Table nodes for this schedule)
+    OR->>R: publish run.entries.dispatch_failed:v1 (reason=empty_projection)
+    R->>ST: consume run.entries.dispatch_failed:v1
+    Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, FinalizeRunTx → status='failed'<br/>state_outbox INSERT for run.finalized:v1
+  else snapshot succeeds
+    OR->>R: publish run.entries.dispatched v1
+    OR->>R: publish query.model v1 (per seed/root)
 
-  par state registers run skeleton
-    R->>ST: consume run.entries.dispatched v1
-    Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker (skip if cancelled)<br/>BulkCreate task_tracker rows — status=PENDING<br/>SetTotalTaskCount, init_status=completed, status=RUNNING
-  and executor launches seed/root jobs
-    R->>EC: consume query.model v1
-    Note over EC: write deployment_outbox<br/>OutboxProcessor — CreateQueryJob (idempotent on JobName)
-    EC->>R: publish task.status.updated v1 (RUNNING)
-    EC->>R: publish node.deployed v1
-    R->>ST: consume task.status.updated v1 (RUNNING)
-    Note over ST: task_tracker.status = RUNNING
-    R->>KC: consume node.deployed v1
-    Note over KC: start poll loop — CheckJobStatus + check.k8s v1 backoff
+    par state registers run skeleton
+      R->>ST: consume run.entries.dispatched v1
+      Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker (skip if cancelled)<br/>BulkCreate task_tracker rows — status=PENDING<br/>SetTotalTaskCount, init_status=completed, status=RUNNING
+    and executor launches seed/root jobs
+      R->>EC: consume query.model v1
+      Note over EC: write deployment_outbox<br/>OutboxProcessor — CreateQueryJob (idempotent on JobName)
+      EC->>R: publish task.status.updated v1 (RUNNING)
+      EC->>R: publish node.deployed v1
+      R->>ST: consume task.status.updated v1 (RUNNING)
+      Note over ST: task_tracker.status = RUNNING
+      R->>KC: consume node.deployed v1
+      Note over KC: start poll loop — CheckJobStatus + check.k8s v1 backoff
+    end
   end
 ```
 
-> Stages 2A (state) and 2B (executor) race — the seed K8s Job can start before the matching `task_tracker` row exists. `TaskStatusUpdatedHandler` tolerates this by NACKing until `RunEntriesDispatchedHandler` has caught up.
+> On the success path (right side of the alt), stages 2A (state) and 2B (executor) race — the seed K8s Job can start before the matching `task_tracker` row exists. `TaskStatusUpdatedHandler` tolerates this by NACKing until `RunEntriesDispatchedHandler` has caught up. On the failure path (left side), if a schedule's topology has zero active `:Table` nodes — typically a configuration error in the dbt manifest — the cron run fails fast via `run.entries.dispatch_failed:v1` with `reason=empty_projection`; the state consumer is the same `RunEntriesDispatchFailedHandler` used by single-node, rerun, and rebase paths.
 
 ## 2. Steady-State Success Path
 

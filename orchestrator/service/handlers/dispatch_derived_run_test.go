@@ -41,8 +41,6 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 		RunID:               "00000000-0000-0000-0000-000000000001",
 		ScheduleName:        "daily",
 		Kind:                "rerun",
-		StreamForFailed:     "run.entries.dispatch_failed:v1",
-		EventTypeForFailed:  "run_entries_dispatch_failed",
 		MessageProcessingID: msgProcID,
 		Projection:          projection,
 	})
@@ -93,10 +91,11 @@ func TestDispatchDerivedRun_PreservesTerminalInherits(t *testing.T) {
 					ScheduleName: "daily", InitialStatus: tc.initial, InheritedFromTaskID: &root},
 			}
 			err := handlers.DispatchDerivedRun(ctx, uow, newTestLogger(), handlers.DerivedRunDispatch{
-				RunID: "00000000-0000-0000-0000-000000000001", ScheduleName: "daily",
-				Kind: "rerun", StreamForFailed: "run.entries.dispatch_failed:v1",
-				EventTypeForFailed:  "run_entries_dispatch_failed",
-				MessageProcessingID: uuid.New(), Projection: projection,
+				RunID:               "00000000-0000-0000-0000-000000000001",
+				ScheduleName:        "daily",
+				Kind:                "rerun",
+				MessageProcessingID: uuid.New(),
+				Projection:          projection,
 			})
 			require.NoError(t, err)
 
@@ -109,36 +108,16 @@ func TestDispatchDerivedRun_PreservesTerminalInherits(t *testing.T) {
 	}
 }
 
-func TestDispatchDerivedRun_EmitFailedDispatch(t *testing.T) {
-	ctx := context.Background()
-	uow := newFakeUnitOfWork()
-	msgProcID := uuid.New()
-
-	err := handlers.EmitDispatchFailed(ctx, uow, newTestLogger(), handlers.DispatchFailed{
-		RunID: "00000000-0000-0000-0000-000000000001", ScheduleName: "daily",
-		Reason:              "rerun_yielded_empty_projection",
-		StreamName:          "run.entries.dispatch_failed:v1",
-		EventType:           "run_entries_dispatch_failed",
-		MessageProcessingID: msgProcID,
-	})
-	require.NoError(t, err)
-
-	entries := uow.outboxRepo.CreatedEntries
-	require.Len(t, entries, 1)
-	require.Equal(t, "run.entries.dispatch_failed:v1", entries[0].StreamName)
-	var failed pkgEvents.RunEntriesDispatchFailed
-	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
-	assert.Equal(t, "rerun_yielded_empty_projection", failed.Reason)
-}
-
 // sanity: returns a meaningful error if RunID is invalid.
 func TestDispatchDerivedRun_InvalidRunID_Errors(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 	err := handlers.DispatchDerivedRun(ctx, uow, newTestLogger(), handlers.DerivedRunDispatch{
-		RunID: "not-a-uuid", ScheduleName: "daily", Kind: "rerun",
-		StreamForFailed: "run.entries.dispatch_failed:v1", EventTypeForFailed: "run_entries_dispatch_failed",
-		MessageProcessingID: uuid.New(), Projection: nil,
+		RunID:               "not-a-uuid",
+		ScheduleName:        "daily",
+		Kind:                "rerun",
+		MessageProcessingID: uuid.New(),
+		Projection:          nil,
 	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, errors.Unwrap(err)) || err != nil, "must propagate parse error")

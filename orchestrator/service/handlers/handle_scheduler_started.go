@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -19,8 +18,11 @@ import (
 )
 
 // HandleSchedulerStartedHandler consumes scheduler.started:v1 events.
-// It snapshots the run graph, emits run.entries.dispatched:v1 with all tasks,
-// and dispatches the initial seed/root nodes via query.model:v1.
+// On success, it snapshots the run graph, emits run.entries.dispatched:v1
+// with all tasks, and dispatches the initial seed/root nodes via query.model:v1.
+// On empty projection (no active :Table nodes), it emits
+// run.entries.dispatch_failed:v1 with reason "empty_projection", allowing
+// state's RunEntriesDispatchFailedHandler to finalise the run as failed.
 type HandleSchedulerStartedHandler struct {
 	uow         uow.UnitOfWork
 	runRepo     run.Repository
@@ -83,14 +85,17 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		Selector:     snapshot.LatestFullDAG{},
 	})
 	if err != nil {
-		if errors.Is(err, snapshot.ErrEmptyProjection) {
-			// Empty DAG: the run row exists but has no work to do. Warn and
-			// return nil — finalisation logic elsewhere handles the empty-DAG
-			// case.
-			h.logger.Warn("Snapshot: no nodes for schedule, run will have no EXECUTES edges",
-				"schedule_name", evt.ScheduleName, "run_id", evt.ScheduleID.String())
-			if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
-				return fmt.Errorf("failed to update message state: %w", err)
+		if reason, ok := dispatchFailedReason(err); ok {
+			if ferr := EmitDispatchFailed(ctx, h.uow, h.logger, DispatchFailedParams{
+				RunID:               evt.ScheduleID.String(),
+				ScheduleName:        evt.ScheduleName,
+				MessageProcessingID: msgProcessingID,
+				Reason:              reason,
+			}); ferr != nil {
+				return ferr
+			}
+			if cerr := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); cerr != nil {
+				return fmt.Errorf("mark completed after %s: %w", reason, cerr)
 			}
 			return h.uow.Commit()
 		}

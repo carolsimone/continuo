@@ -17,8 +17,9 @@ import (
 
 // ── fakeSnapshotService for HandleRerun tests ─────────────────────────────────
 //
-// PR2 unification: rerun handler now drives snapshotSvc.Snapshot via the
-// SourcePinnedDAG selector. The fake returns a configurable projection (or error).
+// rerunFakeSnapshotService stubs SnapshotService for HandleRerun unit tests.
+// It lets each test inject a custom Snapshot result (projection + error) and
+// exposes the recorded call count for assertions.
 
 type rerunFakeSnapshotService struct {
 	snapshotFn    func(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error)
@@ -188,7 +189,7 @@ func TestHandleRerun_HappyPath_ProjectsAndDispatches(t *testing.T) {
 }
 
 // 2. ErrEmptyProjection from Snapshot → run.entries.dispatch_failed with
-//    reason="rerun_yielded_empty_projection".
+//    reason="empty_projection".
 func TestHandleRerun_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
@@ -210,7 +211,7 @@ func TestHandleRerun_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 
 	var failed pkgEvents.RunEntriesDispatchFailed
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
-	assert.Equal(t, "rerun_yielded_empty_projection", failed.Reason)
+	assert.Equal(t, pkgEvents.DispatchFailedReasonEmptyProjection, failed.Reason)
 }
 
 // 3. Non-target terminal statuses (FAILED/CANCELLED/SKIPPED) inherited from the

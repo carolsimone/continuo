@@ -3,11 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
@@ -64,13 +62,12 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunIn
 		Selector:     snapshot.SourcePinnedDAG{},
 	})
 	if snapErr != nil {
-		if errors.Is(snapErr, snapshot.ErrEmptyProjection) {
-			if ferr := EmitDispatchFailed(ctx, h.uow, h.logger, DispatchFailed{
-				RunID: cmd.RunID, ScheduleName: cmd.ScheduleName,
-				Reason:              "rerun_yielded_empty_projection",
-				StreamName:          "run.entries.dispatch_failed:v1",
-				EventType:           "run_entries_dispatch_failed",
+		if reason, ok := dispatchFailedReason(snapErr); ok {
+			if ferr := EmitDispatchFailed(ctx, h.uow, h.logger, DispatchFailedParams{
+				RunID:               cmd.RunID,
+				ScheduleName:        cmd.ScheduleName,
 				MessageProcessingID: msgProcessingID,
+				Reason:              reason,
 			}); ferr != nil {
 				return ferr
 			}
@@ -83,9 +80,9 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunIn
 	}
 
 	if err := DispatchDerivedRun(ctx, h.uow, h.logger, DerivedRunDispatch{
-		RunID: cmd.RunID, ScheduleName: cmd.ScheduleName, Kind: "rerun",
-		StreamForFailed:     "run.entries.dispatch_failed:v1",
-		EventTypeForFailed:  "run_entries_dispatch_failed",
+		RunID:               cmd.RunID,
+		ScheduleName:        cmd.ScheduleName,
+		Kind:                "rerun",
 		MessageProcessingID: msgProcessingID,
 		Projection:          projection,
 	}); err != nil {
@@ -96,39 +93,4 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunIn
 		return fmt.Errorf("mark completed: %w", err)
 	}
 	return h.uow.Commit()
-}
-
-// dedupMessage is a shared private helper used by both consumer handlers
-// to avoid duplicating the InsertIfNotExists dance.
-func dedupMessage(
-	ctx context.Context,
-	u uow.UnitOfWork,
-	logger *slog.Logger,
-	messageID string,
-	streamName string,
-	payload []byte,
-) (uuid.UUID, bool, error) {
-	msgProc := &domain.MessageProcessing{
-		MessageID:  messageID,
-		StreamName: streamName,
-		State:      "processing",
-		Payload:    payload,
-	}
-	id, inserted, err := u.MessageProcessingRepo().InsertIfNotExists(ctx, msgProc)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("insert message processing: %w", err)
-	}
-	if !inserted {
-		existing, err := u.MessageProcessingRepo().GetByMessageID(ctx, messageID)
-		if err != nil {
-			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
-		}
-		if existing.State == "completed" || existing.State == "acked" {
-			logger.Info("Message already processed, skipping", "message_id", messageID, "state", existing.State)
-			return existing.ID, true, nil
-		}
-		logger.Warn("Message being processed by another instance", "message_id", messageID)
-		return existing.ID, true, nil
-	}
-	return id, false, nil
 }

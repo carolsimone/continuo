@@ -17,8 +17,9 @@ import (
 
 // ── fakeSnapshotService for HandleRebase tests ────────────────────────────────
 //
-// PR2 Feature 2: rebase handler drives snapshotSvc.Snapshot via the
-// RebasePartition selector. The fake returns a configurable projection (or error).
+// rebaseFakeSnapshotService stubs SnapshotService for HandleRebase unit tests.
+// It lets each test inject a custom Snapshot result (projection + error) and
+// exposes the recorded call count for assertions.
 
 type rebaseFakeSnapshotService struct {
 	snapshotFn    func(ctx context.Context, params snapshot.Params) ([]snapshot.TaskProjection, error)
@@ -191,7 +192,7 @@ func TestHandleRebase_HappyPath_ProjectsAndDispatches(t *testing.T) {
 }
 
 // 2. ErrEmptyProjection from Snapshot → ONE run.entries.dispatch_failed:v1
-//    outbox entry with reason="rebase_yielded_empty_projection"; tx committed.
+//    outbox entry with reason="empty_projection"; tx committed.
 func TestHandleRebase_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
@@ -218,7 +219,7 @@ func TestHandleRebase_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", failed.ScheduleID)
 	assert.Equal(t, "daily", failed.ScheduleName)
-	assert.Equal(t, "rebase_yielded_empty_projection", failed.Reason)
+	assert.Equal(t, pkgEvents.DispatchFailedReasonEmptyProjection, failed.Reason)
 }
 
 // 3. Second delivery of the same messageID is a no-op (dedup).
