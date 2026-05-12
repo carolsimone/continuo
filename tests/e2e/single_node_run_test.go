@@ -100,26 +100,44 @@ func TestSingleNodeRunLatest(t *testing.T) {
 
 	// Assert the new state.ListNodeRuns RPC returns this run as the most recent
 	// row for the target node, with the right kind, image_tag, manifest_version,
-	// and non-nil timings (the single-node-run executed, so task_execution exists
-	// with started_at / completed_at populated).
-	t.Log("Calling state.ListNodeRuns and asserting the new run appears...")
-	listResp, err := clients.stateClient.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{
-		ServiceName: targetService,
-		SchemaName:  targetSchema,
-		TableName:   targetTable,
-		Limit:       50,
-	})
-	require.NoError(t, err, "ListNodeRuns gRPC call failed")
-	require.NotEmpty(t, listResp.Runs, "ListNodeRuns must return at least one row for this node")
+	// and non-nil timings.
+	//
+	// task.status.updated:v1 and task.execution.recorded:v1 are delivered on
+	// separate Redis streams, so the scheduler can flip to SUCCEEDED before the
+	// execution consumer has inserted started_at/completed_at on task_execution.
+	// Poll ListNodeRuns until the execution-level fields appear before asserting,
+	// to avoid timestamp-vs-status race flakiness.
+	t.Log("Polling state.ListNodeRuns until the new run appears with execution timestamps...")
+	var top *statev1.NodeRun
+	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
+		listResp, err := clients.stateClient.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{
+			ServiceName: targetService,
+			SchemaName:  targetSchema,
+			TableName:   targetTable,
+			Limit:       50,
+		})
+		if err != nil {
+			return false, err
+		}
+		if len(listResp.Runs) == 0 {
+			return false, nil
+		}
+		row := listResp.Runs[0]
+		if row.RunId != runID.String() {
+			return false, nil
+		}
+		if row.StartedAt == "" || row.CompletedAt == "" {
+			return false, nil
+		}
+		top = row
+		return true, nil
+	}, "ListNodeRuns never returned the new run with populated started_at/completed_at — task.execution.recorded:v1 consumer may have lagged")
 
-	// The newest row (index 0) must be our just-completed run.
-	top := listResp.Runs[0]
+	require.NotNil(t, top, "ListNodeRuns must return the new run before the timeout")
 	assert.Equal(t, runID.String(), top.RunId, "ListNodeRuns[0].run_id must match the run we just triggered")
 	assert.Equal(t, "single_node_run", top.Kind, "ListNodeRuns[0].kind must be 'single_node_run'")
 	assert.NotEmpty(t, top.ImageTag, "ListNodeRuns[0].image_tag must be populated")
 	assert.NotEmpty(t, top.ManifestVersion, "ListNodeRuns[0].manifest_version must be populated")
-	assert.NotEmpty(t, top.StartedAt, "ListNodeRuns[0].started_at must be populated (execution completed)")
-	assert.NotEmpty(t, top.CompletedAt, "ListNodeRuns[0].completed_at must be populated (execution completed)")
 	assert.Equal(t, "succeeded", top.TaskStatus, "ListNodeRuns[0].task_status must be 'succeeded'")
 
 	t.Log("TestSingleNodeRunLatest passed")

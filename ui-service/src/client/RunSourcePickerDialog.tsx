@@ -8,8 +8,12 @@ interface Props {
   onClose: () => void;
 }
 
-function isTerminal(r: NodeRun): boolean {
-  const s = r.task_status;
+// Stale-mode (snapshot_of_run) eligibility mirrors state.TriggerSingleNodeRun's
+// validation: the source RUN must be terminal (scheduler-level status), not the
+// per-task status on this node. A FAILED run where this node stayed PENDING is
+// a valid source; an in-flight run where this node already succeeded is NOT.
+function isTerminalRun(r: NodeRun): boolean {
+  const s = r.terminal_status;
   return s === 'succeeded' || s === 'failed' || s === 'cancelled';
 }
 
@@ -26,7 +30,7 @@ export default function RunSourcePickerDialog({ runs, onPick, onClose }: Props) 
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const eligible = runs.filter(isTerminal);
+  const eligible = runs.filter(isTerminalRun);
 
   return (
     <div className="dialog-overlay" onClick={onClose}>

@@ -17,11 +17,16 @@ const mkRun = (over: Partial<NodeRun>): NodeRun => ({
 });
 
 describe('RunSourcePickerDialog', () => {
-  it('lists only terminal task statuses', () => {
+  it('lists runs whose source scheduler is terminal, regardless of this node\'s task_status', () => {
     const runs: NodeRun[] = [
-      mkRun({ run_id: 'r1', task_status: 'succeeded' }),
-      mkRun({ run_id: 'r2', task_status: 'failed' }),
-      mkRun({ run_id: 'r3', task_status: 'running', completed_at: null }),
+      // Source run succeeded; this node also succeeded — eligible.
+      mkRun({ run_id: 'r1', terminal_status: 'succeeded', task_status: 'succeeded' }),
+      // Source run FAILED but this node stayed PENDING — STILL eligible because the
+      // state handler validates source-run-level terminal status, not per-task.
+      mkRun({ run_id: 'r2', terminal_status: 'failed', task_status: 'pending' }),
+      // Source run still RUNNING (in-flight) — ineligible even though the node
+      // already succeeded; state would reject with FAILED_PRECONDITION.
+      mkRun({ run_id: 'r3', terminal_status: '', task_status: 'succeeded' }),
     ];
     render(<RunSourcePickerDialog runs={runs} onPick={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByRole('button', { name: /r1/ })).toBeInTheDocument();
