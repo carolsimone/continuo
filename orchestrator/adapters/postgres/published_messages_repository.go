@@ -6,30 +6,28 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
-// PublishedMessagesRepository handles published_messages table operations
-type PublishedMessagesRepository interface {
-	Exists(ctx context.Context, outboxEntryID uuid.UUID) (bool, error)
-	Create(ctx context.Context, pm *domain.PublishedMessage) error
-}
+// compile-time interface check
+var _ repository.PublishedMessagesRepository = (*publishedMessagesRepository)(nil)
 
 type publishedMessagesRepository struct {
 	db     *sqlx.DB
 	logger *slog.Logger
 }
 
-// NewPublishedMessagesRepository creates a new PublishedMessagesRepository
-func NewPublishedMessagesRepository(db *sqlx.DB, logger *slog.Logger) PublishedMessagesRepository {
+// NewPublishedMessagesRepository creates a new PublishedMessagesRepository.
+func NewPublishedMessagesRepository(db *sqlx.DB, logger *slog.Logger) repository.PublishedMessagesRepository {
 	return &publishedMessagesRepository{
 		db:     db,
 		logger: logger,
 	}
 }
 
-// Exists checks if an outbox entry has already been published
+// Exists checks if an outbox entry has already been published.
 func (r *publishedMessagesRepository) Exists(
 	ctx context.Context,
 	outboxEntryID uuid.UUID,
@@ -45,7 +43,7 @@ func (r *publishedMessagesRepository) Exists(
 	return exists, nil
 }
 
-// Create records a successful publish
+// Create records a successful publish.
 func (r *publishedMessagesRepository) Create(
 	ctx context.Context,
 	pm *domain.PublishedMessage,

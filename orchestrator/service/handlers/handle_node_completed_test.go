@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/orchestrator/service/handlers"
+	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
-	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
+	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -190,11 +191,11 @@ var _ postgres.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepo)(nil)
 // ── fakes: UnitOfWork ─────────────────────────────────────────────────────────
 
 type fakeUnitOfWork struct {
-	outboxRepo    *fakeOutboxRepository
-	msgProcRepo   *fakeMessageProcessingRepository
-	BegunTx       bool
-	CommittedTx   bool
-	RolledBackTx  bool
+	outboxRepo   *fakeOutboxRepository
+	msgProcRepo  *fakeMessageProcessingRepository
+	BegunTx      bool
+	CommittedTx  bool
+	RolledBackTx bool
 }
 
 func newFakeUnitOfWork() *fakeUnitOfWork {
@@ -204,8 +205,8 @@ func newFakeUnitOfWork() *fakeUnitOfWork {
 	}
 }
 
-func (f *fakeUnitOfWork) OutboxRepo() postgres.OutboxRepository     { return f.outboxRepo }
-func (f *fakeUnitOfWork) MessageProcessingRepo() postgres.MessageProcessingRepository {
+func (f *fakeUnitOfWork) OutboxRepo() repository.OutboxRepository { return f.outboxRepo }
+func (f *fakeUnitOfWork) MessageProcessingRepo() repository.MessageProcessingRepository {
 	return f.msgProcRepo
 }
 func (f *fakeUnitOfWork) Begin(ctx context.Context) error { f.BegunTx = true; return nil }
