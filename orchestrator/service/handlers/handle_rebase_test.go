@@ -192,7 +192,7 @@ func TestHandleRebase_HappyPath_ProjectsAndDispatches(t *testing.T) {
 }
 
 // 2. ErrEmptyProjection from Snapshot → ONE run.entries.dispatch_failed:v1
-//    outbox entry with reason="rebase_yielded_empty_projection"; tx committed.
+//    outbox entry with reason="empty_projection"; tx committed.
 func TestHandleRebase_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()

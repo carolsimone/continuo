@@ -189,7 +189,7 @@ func TestHandleRerun_HappyPath_ProjectsAndDispatches(t *testing.T) {
 }
 
 // 2. ErrEmptyProjection from Snapshot → run.entries.dispatch_failed with
-//    reason="rerun_yielded_empty_projection".
+//    reason="empty_projection".
 func TestHandleRerun_EmptyProjection_EmitsDispatchFailed(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()

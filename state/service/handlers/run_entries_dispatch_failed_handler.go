@@ -16,8 +16,10 @@ import (
 
 // RunEntriesDispatchFailedHandler processes run.entries.dispatch_failed:v1 events.
 // Counterpart of RunEntriesDispatchedHandler: when orchestrator cannot produce
-// dispatch work for a run (e.g. Snapshot+SingleNode → ErrTargetNotFound),
-// state finalizes the scheduler_tracker as failed and emits run.finalized:v1.
+// dispatch work for a run (e.g. snapshot.ErrTargetNotFound on a single-node run
+// targeting an unknown table, or snapshot.ErrEmptyProjection on a rerun, rebase,
+// or cron schedule whose topology yields zero tasks), state finalizes the
+// scheduler_tracker as failed and emits run.finalized:v1.
 type RunEntriesDispatchFailedHandler struct {
 	db            *sqlx.DB
 	schedulerRepo postgres.SchedulerTrackerRepository
