@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/google/uuid"
 )
 
@@ -87,8 +87,8 @@ func newFakeUnitOfWork() *fakeUnitOfWork {
 	}
 }
 
-func (f *fakeUnitOfWork) OutboxRepo() postgres.OutboxRepository { return f.outboxRepo }
-func (f *fakeUnitOfWork) MessageProcessingRepo() postgres.MessageProcessingRepository {
+func (f *fakeUnitOfWork) OutboxRepo() repository.OutboxRepository { return f.outboxRepo }
+func (f *fakeUnitOfWork) MessageProcessingRepo() repository.MessageProcessingRepository {
 	return f.msgProcRepo
 }
 func (f *fakeUnitOfWork) Begin(ctx context.Context) error { f.BegunTx = true; return nil }
