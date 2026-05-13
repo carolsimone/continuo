@@ -1,18 +1,8 @@
 package run
 
 import (
-	"time"
-
 	"github.com/carolsimone/continuo/orchestrator/domain"
 )
-
-type Run struct {
-	RunID          string
-	ScheduleName   string
-	TerminalStatus string
-	CreatedAt      time.Time
-	CompletedAt    *time.Time
-}
 
 type ScheduleInitNodes struct {
 	AllNodes  []*domain.TableNode
