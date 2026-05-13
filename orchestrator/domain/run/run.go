@@ -38,3 +38,98 @@ func (r *Run) Nodes() []*RunNode {
 	}
 	return out
 }
+
+// CompleteNode transitions the target node to status and enforces all downstream
+// invariants within the loaded subgraph. Returns domain events describing side effects.
+func (r *Run) CompleteNode(key NodeKey, status string) ([]DomainEvent, error) {
+	n, ok := r.nodes[key]
+	if !ok {
+		return nil, ErrNodeNotInScope
+	}
+	if n.isTerminal() {
+		return nil, ErrNodeAlreadyTerminal
+	}
+
+	n.Status = status
+	r.TerminalCount++
+	r.Version++
+
+	var events []DomainEvent
+
+	switch status {
+	case "FAILED":
+		events = append(events, r.cascadeSkip(key)...)
+	case "SUCCEEDED", "SKIPPED":
+		events = append(events, r.checkUnblocked(key)...)
+	}
+
+	if r.TerminalCount == r.TotalNodes {
+		terminalStatus := "SUCCEEDED"
+		for _, node := range r.nodes {
+			if node.Status == "FAILED" {
+				terminalStatus = "FAILED"
+				break
+			}
+		}
+		r.Status = RunStatus(terminalStatus)
+		events = append(events, RunFinalized{
+			RunID:          r.RunID,
+			ScheduleName:   r.ScheduleName,
+			TerminalStatus: terminalStatus,
+		})
+	} else if r.Status == RunStatusInitialized {
+		r.Status = RunStatusInProgress
+	}
+
+	return events, nil
+}
+
+// cascadeSkip recursively marks all reachable PENDING downstream nodes as SKIPPED.
+func (r *Run) cascadeSkip(from NodeKey) []DomainEvent {
+	var events []DomainEvent
+	n := r.nodes[from]
+	for _, dk := range n.Downstreams {
+		downstream, ok := r.nodes[dk]
+		if !ok || downstream.isTerminal() {
+			continue
+		}
+		downstream.Status = "SKIPPED"
+		r.TerminalCount++
+		events = append(events, NodeCascadeSkipped{Key: dk, TaskID: downstream.TaskID})
+		events = append(events, r.cascadeSkip(dk)...)
+		events = append(events, r.checkUnblocked(dk)...)
+	}
+	return events
+}
+
+// checkUnblocked emits NodeUnblocked for each immediate downstream node whose
+// every upstream is now terminal.
+func (r *Run) checkUnblocked(from NodeKey) []DomainEvent {
+	var events []DomainEvent
+	n := r.nodes[from]
+	for _, dk := range n.Downstreams {
+		downstream, ok := r.nodes[dk]
+		if !ok || downstream.isTerminal() {
+			continue
+		}
+		allTerminal := true
+		for _, upKey := range downstream.Upstreams {
+			up, inScope := r.nodes[upKey]
+			if !inScope || !up.isTerminal() {
+				allTerminal = false
+				break
+			}
+		}
+		if allTerminal {
+			events = append(events, NodeUnblocked{
+				Key:             dk,
+				TaskID:          downstream.TaskID,
+				ScheduleName:    downstream.ScheduleName,
+				NodeType:        downstream.NodeType,
+				ManifestVersion: downstream.ManifestVersion,
+				ImageTag:        downstream.ImageTag,
+			})
+		}
+	}
+	return events
+}
