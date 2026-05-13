@@ -63,10 +63,8 @@ sequenceDiagram
   KC->>R: publish node.updated:v1
 
   R->>OR: consume node.updated:v1
-  OR->>OR: UpdateNodeStatus(SUCCEEDED) in Neo4j
-  OR->>OR: GetReadyDownstream(...)
-  OR->>ST: ensure downstream tasks exist (GetTaskByScheduleAndNode)
-  OR->>OR: write outbox
+  Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>dedup on message_processing; cancelled-schedule guard<br/>runs.Load(runID, LoadHintNodeCompletion{Key, Status=SUCCEEDED})<br/>agg.CompleteNode(key, SUCCEEDED) → [NodeUnblocked …]<br/>runs.Save (retry on ErrVersionConflict)
+  OR->>OR: write outbox entry per NodeUnblocked
   OR->>R: publish query.model:v1
 
   R->>EC: consume query.model:v1
@@ -116,10 +114,9 @@ sequenceDiagram
     KC->>R: publish task.failed:v1
     KC->>R: publish node.updated:v1
     R->>OR: consume node.updated:v1
-    OR->>OR: UpdateNodeStatus(FAILED) in Neo4j
-    OR->>OR: CheckScheduleCompletion(...)
-    OR->>ST: UpdateScheduler(FAILED) when drained
-    OR->>OR: FinalizeRun(FAILED) in Neo4j
+    Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>runs.Load(runID, LoadHintNodeCompletion{Key, Status=FAILED})<br/>agg.CompleteNode(key, FAILED) → [NodeCascadeSkipped …, RunFinalized?]<br/>runs.Save writes per-node status, terminal_count, version;<br/>and on RunFinalized also :Run.terminal_status + completed_at
+    OR->>R: publish task.status.updated:v1 (cascade_task_skipped) per skipped node
+    Note over ST: TaskStatusUpdatedHandler increments terminal_task_count;<br/>when terminal_task_count == total_task_count it finalizes scheduler_tracker<br/>and emits run.finalized:v1 via state_outbox
   end
 ```
 

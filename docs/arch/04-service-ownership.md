@@ -94,7 +94,8 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 - **Retry-exhaustion uses the same propagation.** `ProcessBatch`'s
   retry-exhaustion branch calls `MarkTaskTerminallyFailed` instead of
   bare `MarkFailed`, so transient errors that exceed the retry budget
-  also reach orchestrator's `CheckScheduleCompletion`.
+  also reach orchestrator's `HandleNodeCompleted` (via `node.updated:v1`)
+  and state's `TaskStatusUpdatedHandler` (via `task.status.updated:v1`).
 
 ## `k8s-controller`
 

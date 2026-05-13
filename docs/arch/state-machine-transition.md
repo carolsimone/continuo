@@ -96,8 +96,8 @@ These are separate concerns. `initialization_status` tracks whether `startup-con
 | From | To | Owner | Trigger |
 |---|---|---|---|
 | `pending` | `running` | `state` service (internal) | Side effect of `initialization_status` reaching `"completed"` — see below |
-| `running` | `succeeded` | `orchestrator` | `UpdateScheduler` gRPC call after `CheckScheduleCompletion` |
-| `running` | `failed` | `orchestrator` | `UpdateScheduler` gRPC call after `CheckScheduleCompletion` |
+| `running` | `succeeded` | `state` service (internal) | `TaskStatusUpdatedHandler` finalises `scheduler_tracker` when `terminal_task_count` reaches `total_task_count` with no `failed` task |
+| `running` | `failed` | `state` service (internal) | `TaskStatusUpdatedHandler` finalises `scheduler_tracker` when `terminal_task_count` reaches `total_task_count` with at least one `failed` task |
 | `pending` or `running` | `cancelled` | `CancelScheduler` endpoint | `repo.Cancel()` — separate path, not through `Transition()` |
 
 #### Service Ownership
@@ -105,9 +105,11 @@ These are separate concerns. `initialization_status` tracks whether `startup-con
 **`state` service**
 - `pending → running`: never called directly by any external service. Fires automatically inside `UpdateSchedulerInitStatus` when `initialization_status` is set to `"completed"` and `status` is still `pending`.
 
-**`orchestrator`**
-- `running → succeeded`: after `CheckScheduleCompletion` confirms all tasks finished successfully.
-- `running → failed`: after `CheckScheduleCompletion` confirms a task failed with no remaining retries.
+**`state` service (internal, via `TaskStatusUpdatedHandler`)**
+- `running → succeeded`: when `terminal_task_count == total_task_count` and no task is in `failed`.
+- `running → failed`: when `terminal_task_count == total_task_count` and at least one task is in `failed`.
+
+In both cases the same SQL transaction writes a `run.finalized:v1` outbox row (consumed by future subscribers; `orchestrator` does not consume it — it learns of finalization from its own `Run` aggregate during `HandleNodeCompleted`).
 
 #### Enforcement
 
