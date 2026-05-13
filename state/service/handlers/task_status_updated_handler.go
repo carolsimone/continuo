@@ -11,6 +11,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/internal/finalization"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -113,6 +114,29 @@ func (h *TaskStatusUpdatedHandler) Handle(ctx context.Context, messageID string,
 	scheduler, txErr := h.schedulerRepo.GetByIDForUpdateTx(ctx, tx, scheduleID)
 	if txErr != nil {
 		return false, fmt.Errorf("get scheduler for update: %w", txErr)
+	}
+
+	// If the scheduler is already terminal, a stale task.status.updated event
+	// (e.g. a RUNNING retry that k8s-controller emitted before observing the
+	// finalize) must not mutate task_tracker or terminal_task_count. Without
+	// this guard, the FAILED→RUNNING decrement path drives terminal_task_count
+	// below total_task_count after finalize, breaking the B1 invariant.
+	if scheduler.Status == model.SchedulerStatusCancelled ||
+		scheduler.Status == model.SchedulerStatusFailed ||
+		scheduler.Status == model.SchedulerStatusSucceeded {
+		h.logger.Info("task.status.updated: scheduler already terminal — skipping",
+			"schedule_id", scheduleID, "status", scheduler.Status,
+			"task_id", taskID, "incoming_status", normalizedStatus)
+		if _, dbErr := tx.ExecContext(ctx,
+			`INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+			dedupID,
+		); dbErr != nil {
+			return false, fmt.Errorf("record processed event (terminal scheduler): %w", dbErr)
+		}
+		if txErr := tx.Commit(); txErr != nil {
+			return false, fmt.Errorf("commit tx (terminal scheduler): %w", txErr)
+		}
+		return true, nil
 	}
 
 	// Capture the previous task status before updating so we can track bidirectional
