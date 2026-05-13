@@ -10,7 +10,6 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
-	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
@@ -19,7 +18,6 @@ import (
 // InitializeRunHandler handles the initialize-run input.
 type InitializeRunHandler struct {
 	uow         uow.UnitOfWork
-	runRepo     run.Repository
 	snapshotSvc SnapshotService
 	logger      *slog.Logger
 }
@@ -27,13 +25,11 @@ type InitializeRunHandler struct {
 // NewInitializeRunHandler creates a new InitializeRunHandler.
 func NewInitializeRunHandler(
 	u uow.UnitOfWork,
-	runRepo run.Repository,
 	snapshotSvc SnapshotService,
 	logger *slog.Logger,
 ) *InitializeRunHandler {
 	return &InitializeRunHandler{
 		uow:         u,
-		runRepo:     runRepo,
 		snapshotSvc: snapshotSvc,
 		logger:      logger,
 	}
@@ -70,30 +66,26 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.Initi
 
 	// Snapshot the graph via the unified Snapshot+LatestFullDAG routine.
 	// InitializeRunInput carries no kind/sourceRunID; default to "cron" / nil.
-	if _, err := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
+	projection, err := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        cmd.RunID,
 		ScheduleName: cmd.ScheduleName,
 		Kind:         "cron",
 		Selector:     snapshot.LatestFullDAG{},
-	}); err != nil {
+	})
+	if err != nil {
 		if errors.Is(err, snapshot.ErrEmptyProjection) {
 			h.logger.Warn("Snapshot: no nodes for schedule, run will have no EXECUTES edges",
 				"schedule_name", cmd.ScheduleName, "run_id", cmd.RunID)
 			// Continue and write run.initialized:v1 with empty node lists rather
 			// than failing the run; downstream consumers handle empty payloads.
+			projection = nil
 		} else {
 			return fmt.Errorf("failed to snapshot graph: %w", err)
 		}
 	}
 
-	// Get all/root/seed initialization nodes for the schedule.
-	initNodes, err := h.runRepo.GetScheduleInitNodes(ctx, cmd.ScheduleName, cmd.RunID)
-	if err != nil {
-		return fmt.Errorf("failed to get schedule init nodes: %w", err)
-	}
-
-	// Build outbox payload with serialized node lists.
-	outboxPayload, err := buildRunInitializedPayload(cmd.RunID, initNodes)
+	// Build outbox payload from snapshot projection.
+	outboxPayload, err := buildRunInitializedPayloadFromProjection(cmd.RunID, projection)
 	if err != nil {
 		return fmt.Errorf("failed to build outbox payload: %w", err)
 	}
@@ -174,37 +166,25 @@ func (h *InitializeRunHandler) handleInitRunDedup(
 	return id, false, nil
 }
 
-// buildRunInitializedPayload serializes run init nodes into the outbox JSON payload.
-func buildRunInitializedPayload(runID string, initNodes *run.ScheduleInitNodes) ([]byte, error) {
-	toNodePayloads := func(nodes []*domain.TableNode) []domainEvent.RunInitializedNode {
-		out := make([]domainEvent.RunInitializedNode, 0, len(nodes))
-		for _, n := range nodes {
-			out = append(out, domainEvent.RunInitializedNode{
-				TableName:    n.TableName,
-				SchemaName:   n.SchemaName,
-				ServiceName:  n.ServiceName,
-				Owner:        n.Owner,
-				ScheduleName: n.ScheduleName,
-				Criticality:  string(n.Criticality),
-				NodeType:     n.NodeType,
-				Status:       n.Status,
-				TaskID:       n.TaskID,
-			})
-		}
-		return out
-	}
-
-	var allNodes, rootNodes, seedNodes []domainEvent.RunInitializedNode
-	if initNodes != nil {
-		allNodes = toNodePayloads(initNodes.AllNodes)
-		rootNodes = toNodePayloads(initNodes.RootNodes)
-		seedNodes = toNodePayloads(initNodes.SeedNodes)
+// buildRunInitializedPayloadFromProjection serializes task projection into the outbox JSON payload.
+func buildRunInitializedPayloadFromProjection(runID string, projection []snapshot.TaskProjection) ([]byte, error) {
+	allNodes := make([]domainEvent.RunInitializedNode, 0, len(projection))
+	for _, t := range projection {
+		allNodes = append(allNodes, domainEvent.RunInitializedNode{
+			TableName:    t.TableName,
+			SchemaName:   t.SchemaName,
+			ServiceName:  t.ServiceName,
+			ScheduleName: t.ScheduleName,
+			NodeType:     t.NodeType,
+			Status:       t.InitialStatus,
+			TaskID:       t.TaskID.String(),
+		})
 	}
 
 	return json.Marshal(map[string]interface{}{
 		"run_id":     runID,
 		"all_nodes":  allNodes,
-		"root_nodes": rootNodes,
-		"seed_nodes": seedNodes,
+		"root_nodes": []domainEvent.RunInitializedNode{},
+		"seed_nodes": []domainEvent.RunInitializedNode{},
 	})
 }
