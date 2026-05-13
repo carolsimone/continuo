@@ -1,13 +1,18 @@
 package run
 
+import "fmt"
+
 // Run is the aggregate root. It enforces all invariants over a single pipeline run.
-// nodes holds only the operation-scoped subgraph loaded by AggregateRepository.Load.
+// nodes holds only the operation-scoped subgraph loaded by AggregateRepository.Rehydrate.
+// FailedCount is persisted on :Run so finalisation can answer "did any node fail?"
+// without needing every node in the loaded subgraph.
 type Run struct {
 	RunID         string
 	ScheduleName  string
 	Status        RunStatus
 	TotalNodes    int
 	TerminalCount int
+	FailedCount   int
 	Version       int
 	nodes         map[NodeKey]*RunNode
 }
@@ -53,6 +58,9 @@ func (r *Run) CompleteNode(key NodeKey, status string) ([]DomainEvent, error) {
 	n.Status = status
 	r.TerminalCount++
 	r.Version++
+	if status == "FAILED" {
+		r.FailedCount++
+	}
 
 	var events []DomainEvent
 
@@ -65,11 +73,8 @@ func (r *Run) CompleteNode(key NodeKey, status string) ([]DomainEvent, error) {
 
 	if r.TerminalCount == r.TotalNodes {
 		terminalStatus := "SUCCEEDED"
-		for _, node := range r.nodes {
-			if node.Status == "FAILED" {
-				terminalStatus = "FAILED"
-				break
-			}
+		if r.FailedCount > 0 {
+			terminalStatus = "FAILED"
 		}
 		r.Status = RunStatus(terminalStatus)
 		events = append(events, RunFinalized{
@@ -82,6 +87,52 @@ func (r *Run) CompleteNode(key NodeKey, status string) ([]DomainEvent, error) {
 	}
 
 	return events, nil
+}
+
+// EffectsForTerminal recomputes the side-effect events that should have been
+// emitted when key transitioned to its current terminal status. It does not
+// mutate state. The handler uses it on idempotent re-delivery — when Neo4j
+// already reflects the terminal transition but the Postgres outbox writes
+// from the prior attempt were rolled back — to rebuild the outbox.
+func (r *Run) EffectsForTerminal(key NodeKey) ([]DomainEvent, error) {
+	n, ok := r.nodes[key]
+	if !ok {
+		return nil, ErrNodeNotInScope
+	}
+	if !n.isTerminal() {
+		return nil, fmt.Errorf("run: EffectsForTerminal called on non-terminal node %v", key)
+	}
+	var events []DomainEvent
+	switch n.Status {
+	case "FAILED":
+		events = append(events, r.gatherCascadedSkipped(key)...)
+	case "SUCCEEDED", "SKIPPED":
+		events = append(events, r.checkUnblocked(key)...)
+	}
+	return events, nil
+}
+
+// gatherCascadedSkipped walks the same path as cascadeSkip but reads current
+// status instead of mutating. The fan-out mirrors cascadeSkip exactly so the
+// reconstructed events match what the original mutation produced.
+func (r *Run) gatherCascadedSkipped(from NodeKey) []DomainEvent {
+	var events []DomainEvent
+	n, ok := r.nodes[from]
+	if !ok {
+		return events
+	}
+	for _, dk := range n.Downstreams {
+		downstream, ok := r.nodes[dk]
+		if !ok {
+			continue
+		}
+		if downstream.Status == "SKIPPED" {
+			events = append(events, NodeCascadeSkipped{Key: dk, TaskID: downstream.TaskID})
+			events = append(events, r.gatherCascadedSkipped(dk)...)
+			events = append(events, r.checkUnblocked(dk)...)
+		}
+	}
+	return events
 }
 
 // cascadeSkip recursively marks all reachable PENDING downstream nodes as SKIPPED.
@@ -103,7 +154,7 @@ func (r *Run) cascadeSkip(from NodeKey) []DomainEvent {
 }
 
 // ResetDownstream resets all transitively downstream SKIPPED nodes back to PENDING.
-// Called when an upstream node is retried. Requires LoadHintResetDownstream subgraph.
+// Called when an upstream node is retried. Requires ScopeResetDownstream subgraph.
 func (r *Run) ResetDownstream(from NodeKey) ([]DomainEvent, error) {
 	if _, ok := r.nodes[from]; !ok {
 		return nil, ErrNodeNotInScope

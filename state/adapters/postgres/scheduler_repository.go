@@ -650,7 +650,7 @@ func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx
 func (r *schedulerTrackerRepository) SetTerminalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, terminal int32) error {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
-		SET terminal_task_count = $2
+		SET terminal_task_count = GREATEST(terminal_task_count, $2)
 		WHERE schedule_id = $1
 	`, id, terminal)
 	if err != nil {

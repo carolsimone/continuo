@@ -37,7 +37,8 @@ Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run sna
 | `source_run_id` | string (UUID) | Optional; set via Cypher `FOREACH` only when non-nil. Reads use `COALESCE(r.source_run_id, "")` for the absent case. NULL for `cron`/`trigger` runs. **Drives the topology-metadata source decision:** when present, the new `:Run` inherits `topology_generation` + `service_metadata` from the referenced source run; when absent, both are read from `:TopologyRoot`. |
 | `total_nodes` | int | Number of `:EXECUTES` edges materialised at `Snapshot` time. Used by the `Run` aggregate to detect terminal-count == total-count finalization. |
 | `terminal_count` | int | Number of `:EXECUTES` edges currently in a terminal status (`SUCCEEDED`, `FAILED`, `SKIPPED`, `CANCELLED`). Incremented by `AggregateRepository.Save` as nodes complete; equal to `total_nodes` when the run finalises. |
-| `version` | int | Optimistic-concurrency token. Incremented on every aggregate mutation (`CompleteNode`, `ResetDownstream`); `AggregateRepository.Save` compares against the loaded value and returns `ErrVersionConflict` on mismatch. |
+| `failed_count` | int | Number of `:EXECUTES` edges that transitioned to `FAILED` directly (cascade-skipped nodes do not count). Drives the aggregate's terminal-status decision when `terminal_count == total_nodes` so finalisation works even when the failed node is outside the currently loaded subgraph. |
+| `version` | int | Optimistic-concurrency token. Incremented on every aggregate mutation (`CompleteNode`, `ResetDownstream`); `AggregateRepository.Save` compares against `COALESCE(run.version, 0)` and returns `ErrVersionConflict` on mismatch. |
 
 ### Run aggregate (`orchestrator/domain/run`)
 
@@ -57,16 +58,16 @@ Domain events live in `orchestrator/domain/run/events.go`:
 
 Ports (`orchestrator/domain/run/ports.go`):
 
-- `AggregateRepository` (write-side) — `Load(ctx, runID, hint) (*Run, error)` rehydrates an operation-scoped subgraph; `Save(ctx, *Run) error` persists node statuses, `total_nodes`/`terminal_count`/`version` and `:Run.terminal_status`/`completed_at` when finalised. `Save` checks `Version` against the loaded value and returns `ErrVersionConflict` on mismatch; the handler retries from `Load`.
+- `AggregateRepository` (write-side) — `Rehydrate(ctx, runID, scope) (*Run, error)` reconstitutes an operation-scoped subgraph; `Save(ctx, *Run) error` persists node statuses, `total_nodes`/`terminal_count`/`failed_count`/`version`, and `:Run.terminal_status`/`completed_at` when finalised. `Save` checks `Version` against the loaded value (with `COALESCE(run.version, 0)` to admit legacy in-flight runs) and returns `ErrVersionConflict` on mismatch; the handler retries from `Rehydrate`. `terminal_status`/`completed_at` are first-writer-wins so state's authoritative `run.finalized:v1` projection cannot be overwritten by a later aggregate save.
 - `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`.
 
-`LoadHint` is a sealed interface with three variants that the adapter uses to scope the Cypher read:
+`Scope` is a sealed interface with three variants that the adapter uses to scope the Cypher read:
 
 | Hint | Subgraph loaded |
 |---|---|
-| `LoadHintFull` | Every `:EXECUTES` edge for the run (used at initialisation only). |
-| `LoadHintNodeCompletion{Key, Status}` | `Status="FAILED"` → target + full transitive downstream; `Status="SUCCEEDED"`/`SKIPPED` → target + immediate downstream + each downstream's upstreams. |
-| `LoadHintResetDownstream{Key}` | Target + full transitive downstream. |
+| `ScopeFull` | Every `:EXECUTES` edge for the run (used at initialisation only). |
+| `ScopeNodeCompletion{Key, Status}` | `Status="FAILED"` → target + full transitive downstream; `Status="SUCCEEDED"`/`SKIPPED` → target + immediate downstream + each downstream's upstreams. |
+| `ScopeResetDownstream{Key}` | Target + full transitive downstream. |
 
 Adapter implementations:
 - `orchestrator/adapters/neo4j/run_aggregate_repository.go` — `RunAggregateRepository` implements `AggregateRepository`. Also owns `DeleteExpiredRuns` for the sweeper.
@@ -240,7 +241,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
    mark message_processing=completed, commit, and return (no aggregate mutation)
 
 4. Aggregate loop (retried on ErrVersionConflict):
-   a. agg, err := runs.Load(ctx, runID, LoadHintNodeCompletion{Key, Status})
+   a. agg, err := runs.Rehydrate(ctx, runID, ScopeNodeCompletion{Key, Status})
    b. events, err := agg.CompleteNode(key, status)
       - on ErrNodeAlreadyTerminal: idempotent re-delivery — mark completed and commit
    c. err := runs.Save(ctx, agg)

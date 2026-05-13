@@ -294,3 +294,112 @@ func TestResetDownstream_NodeNotInScope_ReturnsError(t *testing.T) {
 
 	assert.ErrorIs(t, err, run.ErrNodeNotInScope)
 }
+
+// FailedCount tests
+
+func TestCompleteNode_FailedDirect_IncrementsFailedCount(t *testing.T) {
+	kA := key("public", "a")
+	r := makeRun(
+		node(kA, "RUNNING", nil, nil),
+		node(key("public", "b"), "PENDING", nil, nil),
+	)
+
+	_, err := r.CompleteNode(kA, "FAILED")
+	require.NoError(t, err)
+	assert.Equal(t, 1, r.FailedCount)
+}
+
+func TestCompleteNode_CascadeSkipped_DoesNotIncrementFailedCount(t *testing.T) {
+	kA := key("public", "a")
+	kB := key("public", "b")
+	r := makeRun(
+		node(kA, "RUNNING", nil, []run.NodeKey{kB}),
+		node(kB, "PENDING", []run.NodeKey{kA}, nil),
+	)
+
+	_, err := r.CompleteNode(kA, "FAILED")
+	require.NoError(t, err)
+	assert.Equal(t, 1, r.FailedCount, "cascade-skipped nodes must not count as failures")
+}
+
+func TestCompleteNode_PartialSubgraph_FinalisesAsFailedFromFailedCount(t *testing.T) {
+	// 3-node run; only the last node is in the current scope. A failed earlier
+	// in a different subgraph and is not loaded, but FailedCount carries the
+	// signal across operations.
+	kCurrent := key("public", "c")
+	r := makeRun(node(kCurrent, "RUNNING", nil, nil))
+	r.TotalNodes = 3
+	r.TerminalCount = 2 // A and B were counted in prior subgraph operations
+	r.FailedCount = 1   // A failed in a prior subgraph; not in scope here
+
+	events, err := r.CompleteNode(kCurrent, "SUCCEEDED")
+	require.NoError(t, err)
+
+	assert.Equal(t, run.RunStatusFailed, r.Status,
+		"FailedCount must drive terminal status even when no failed node is in scope")
+	require.NotEmpty(t, events)
+	evt, ok := events[len(events)-1].(run.RunFinalized)
+	require.True(t, ok, "last event must be RunFinalized, got %T", events[len(events)-1])
+	assert.Equal(t, "FAILED", evt.TerminalStatus)
+}
+
+// EffectsForTerminal tests
+
+func TestEffectsForTerminal_Succeeded_ReturnsUnblockedEvents(t *testing.T) {
+	kA := key("public", "a")
+	kB := key("public", "b")
+	kC := key("public", "c")
+	r := makeRun(
+		node(kA, "SUCCEEDED", nil, []run.NodeKey{kC}),
+		node(kB, "SUCCEEDED", nil, []run.NodeKey{kC}),
+		node(kC, "PENDING", []run.NodeKey{kA, kB}, nil),
+	)
+	r.TerminalCount = 2
+
+	events, err := r.EffectsForTerminal(kA)
+	require.NoError(t, err)
+
+	unblocked := filterEvents[run.NodeUnblocked](events)
+	require.Len(t, unblocked, 1)
+	assert.Equal(t, kC, unblocked[0].Key)
+}
+
+func TestEffectsForTerminal_Failed_ReturnsCascadeSkippedEvents(t *testing.T) {
+	kA := key("public", "a")
+	kB := key("public", "b")
+	kC := key("public", "c")
+	r := makeRun(
+		node(kA, "FAILED", nil, []run.NodeKey{kB}),
+		node(kB, "SKIPPED", []run.NodeKey{kA}, []run.NodeKey{kC}),
+		node(kC, "SKIPPED", []run.NodeKey{kB}, nil),
+	)
+	r.TerminalCount = 3
+
+	events, err := r.EffectsForTerminal(kA)
+	require.NoError(t, err)
+
+	skipped := filterEvents[run.NodeCascadeSkipped](events)
+	require.Len(t, skipped, 2)
+	keys := map[run.NodeKey]bool{}
+	for _, e := range skipped {
+		keys[e.Key] = true
+	}
+	assert.True(t, keys[kB])
+	assert.True(t, keys[kC])
+}
+
+func TestEffectsForTerminal_NotTerminal_ReturnsError(t *testing.T) {
+	kA := key("public", "a")
+	r := makeRun(node(kA, "RUNNING", nil, nil))
+
+	_, err := r.EffectsForTerminal(kA)
+	require.Error(t, err)
+}
+
+func TestEffectsForTerminal_NodeNotInScope_ReturnsError(t *testing.T) {
+	r := makeRun(node(key("public", "a"), "SUCCEEDED", nil, nil))
+	r.TerminalCount = 1
+
+	_, err := r.EffectsForTerminal(key("public", "missing"))
+	assert.ErrorIs(t, err, run.ErrNodeNotInScope)
+}

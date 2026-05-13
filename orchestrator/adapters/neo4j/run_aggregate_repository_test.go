@@ -148,7 +148,7 @@ func nodeByKey(agg *domainRun.Run, k domainRun.NodeKey) *domainRun.RunNode {
 	return nil
 }
 
-func TestRunAggregateRepository_LoadHintFull_ReturnsAllNodes(t *testing.T) {
+func TestRunAggregateRepository_RehydrateScopeFull_ReturnsAllNodes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -167,7 +167,7 @@ func TestRunAggregateRepository_LoadHintFull_ReturnsAllNodes(t *testing.T) {
 		},
 	)
 
-	agg, err := repo.Load(ctx, runID, domainRun.LoadHintFull{})
+	agg, err := repo.Rehydrate(ctx, runID, domainRun.ScopeFull{})
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, agg.TotalNodes)
@@ -185,7 +185,7 @@ func TestRunAggregateRepository_LoadHintFull_ReturnsAllNodes(t *testing.T) {
 	assert.Contains(t, nB.Upstreams, kA, "B.Upstreams must contain A")
 }
 
-func TestRunAggregateRepository_LoadHintNodeCompletion_Failed_IncludesTransitiveDownstream(t *testing.T) {
+func TestRunAggregateRepository_RehydrateScopeNodeCompletion_Failed_IncludesTransitiveDownstream(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -207,8 +207,8 @@ func TestRunAggregateRepository_LoadHintNodeCompletion_Failed_IncludesTransitive
 	)
 
 	kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
-	agg, err := repo.Load(ctx, runID,
-		domainRun.LoadHintNodeCompletion{Key: kA, Status: "FAILED"})
+	agg, err := repo.Rehydrate(ctx, runID,
+		domainRun.ScopeNodeCompletion{Key: kA, Status: "FAILED"})
 	require.NoError(t, err)
 
 	keys := make(map[domainRun.NodeKey]bool)
@@ -222,7 +222,7 @@ func TestRunAggregateRepository_LoadHintNodeCompletion_Failed_IncludesTransitive
 		"transitive downstream must be in scope")
 }
 
-func TestRunAggregateRepository_LoadHintNodeCompletion_Succeeded_IncludesNeighbourhood(t *testing.T) {
+func TestRunAggregateRepository_RehydrateScopeNodeCompletion_Succeeded_IncludesNeighbourhood(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -246,8 +246,8 @@ func TestRunAggregateRepository_LoadHintNodeCompletion_Succeeded_IncludesNeighbo
 	)
 
 	kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
-	agg, err := repo.Load(ctx, runID,
-		domainRun.LoadHintNodeCompletion{Key: kA, Status: "SUCCEEDED"})
+	agg, err := repo.Rehydrate(ctx, runID,
+		domainRun.ScopeNodeCompletion{Key: kA, Status: "SUCCEEDED"})
 	require.NoError(t, err)
 
 	keys := make(map[domainRun.NodeKey]bool)
@@ -281,15 +281,15 @@ func TestRunAggregateRepository_Save_PersistsNodeStatusesAndCounters(t *testing.
 	)
 
 	kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
-	agg, err := repo.Load(ctx, runID,
-		domainRun.LoadHintNodeCompletion{Key: kA, Status: "SUCCEEDED"})
+	agg, err := repo.Rehydrate(ctx, runID,
+		domainRun.ScopeNodeCompletion{Key: kA, Status: "SUCCEEDED"})
 	require.NoError(t, err)
 
 	_, err = agg.CompleteNode(kA, "SUCCEEDED")
 	require.NoError(t, err)
 	require.NoError(t, repo.Save(ctx, agg))
 
-	reloaded, err := repo.Load(ctx, runID, domainRun.LoadHintFull{})
+	reloaded, err := repo.Rehydrate(ctx, runID, domainRun.ScopeFull{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, reloaded.TerminalCount, "terminal_count must be persisted")
 	assert.Equal(t, 1, reloaded.Version, "version must be bumped on save")
@@ -323,11 +323,11 @@ func TestRunAggregateRepository_Save_StaleVersion_ReturnsErrVersionConflict(t *t
 	)
 
 	kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
-	hint := domainRun.LoadHintNodeCompletion{Key: kA, Status: "SUCCEEDED"}
+	hint := domainRun.ScopeNodeCompletion{Key: kA, Status: "SUCCEEDED"}
 
-	agg1, err := repo.Load(ctx, runID, hint)
+	agg1, err := repo.Rehydrate(ctx, runID, hint)
 	require.NoError(t, err)
-	agg2, err := repo.Load(ctx, runID, hint)
+	agg2, err := repo.Rehydrate(ctx, runID, hint)
 	require.NoError(t, err)
 
 	_, err = agg1.CompleteNode(kA, "SUCCEEDED")

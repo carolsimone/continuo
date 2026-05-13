@@ -79,6 +79,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              run.service_metadata    = svc_meta,
 		              run.total_nodes         = $total_nodes,
 		              run.terminal_count      = 0,
+		              run.failed_count        = 0,
 		              run.version             = 0
 		ON MATCH SET  run.kind = COALESCE(run.kind, $kind)
 		FOREACH (_ IN CASE WHEN $source_run_id IS NULL THEN [] ELSE [1] END |

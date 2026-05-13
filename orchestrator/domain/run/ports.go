@@ -6,40 +6,42 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 )
 
-// LoadHint tells the AggregateRepository what subgraph to load.
-// Implementations live in the adapter; the domain only defines the sealed type.
-type LoadHint interface{ loadHint() }
+// Scope tells the AggregateRepository which subgraph to load when rehydrating
+// the Run aggregate. Implementations live in the adapter; the domain only
+// defines the sealed type.
+type Scope interface{ scope() }
 
-// LoadHintFull loads all nodes and edges for the run.
-// Used only at run initialization to count TotalNodes.
-type LoadHintFull struct{}
+// ScopeFull rehydrates with every node and edge in the run.
+// Used only at run initialisation to count TotalNodes.
+type ScopeFull struct{}
 
-func (LoadHintFull) loadHint() {}
+func (ScopeFull) scope() {}
 
-// LoadHintNodeCompletion loads the subgraph needed to complete the target node.
-//   Status == "FAILED":    target + full transitive downstream
-//   Status == "SUCCEEDED": target + immediate downstream + each downstream's upstreams
-type LoadHintNodeCompletion struct {
+// ScopeNodeCompletion rehydrates the subgraph needed to complete the target node.
+//
+//	Status == "FAILED":    target + full transitive downstream
+//	Status == "SUCCEEDED": target + immediate downstream + each downstream's upstreams
+type ScopeNodeCompletion struct {
 	Key    NodeKey
 	Status string
 }
 
-func (LoadHintNodeCompletion) loadHint() {}
+func (ScopeNodeCompletion) scope() {}
 
-// LoadHintResetDownstream loads the transitive downstream of the target node.
+// ScopeResetDownstream rehydrates the transitive downstream of the target node.
 // Used by ResetDownstream to reset SKIPPED nodes back to PENDING.
-type LoadHintResetDownstream struct {
+type ScopeResetDownstream struct {
 	Key NodeKey
 }
 
-func (LoadHintResetDownstream) loadHint() {}
+func (ScopeResetDownstream) scope() {}
 
 // AggregateRepository is the write-side port for the Run aggregate.
-// Load rehydrates the aggregate with an operation-scoped subgraph.
-// Save persists only the nodes present in the loaded subgraph plus
+// Rehydrate reconstitutes the aggregate from persistent state for the given
+// scope. Save persists only the nodes present in the loaded subgraph plus
 // updated counters, version, and run status.
 type AggregateRepository interface {
-	Load(ctx context.Context, runID string, hint LoadHint) (*Run, error)
+	Rehydrate(ctx context.Context, runID string, scope Scope) (*Run, error)
 	Save(ctx context.Context, run *Run) error
 }
 

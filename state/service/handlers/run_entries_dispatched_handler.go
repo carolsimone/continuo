@@ -97,9 +97,11 @@ func (h *RunEntriesDispatchedHandler) Handle(ctx context.Context, messageID, pay
 	if dbErr != nil {
 		return false, fmt.Errorf("lock scheduler row: %w", dbErr)
 	}
-	if scheduler.Status == model.SchedulerStatusCancelled {
-		h.logger.Info("run.entries.dispatched: scheduler already cancelled — skipping",
-			"schedule_id", scheduleID)
+	if scheduler.Status == model.SchedulerStatusCancelled ||
+		scheduler.Status == model.SchedulerStatusFailed ||
+		scheduler.Status == model.SchedulerStatusSucceeded {
+		h.logger.Info("run.entries.dispatched: scheduler already terminal — skipping",
+			"schedule_id", scheduleID, "status", scheduler.Status)
 		_ = tx.Commit()
 		return true, nil
 	}

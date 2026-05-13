@@ -22,22 +22,22 @@ func NewRunAggregateRepository(client Neo4jClient, logger *slog.Logger) *RunAggr
 
 var _ domainRun.AggregateRepository = (*RunAggregateRepository)(nil)
 
-// Load rehydrates the aggregate with an operation-scoped subgraph.
-func (r *RunAggregateRepository) Load(ctx context.Context, runID string, hint domainRun.LoadHint) (*domainRun.Run, error) {
-	switch h := hint.(type) {
-	case domainRun.LoadHintFull:
-		return r.loadFull(ctx, runID)
-	case domainRun.LoadHintNodeCompletion:
-		return r.loadForCompletion(ctx, runID, h)
-	case domainRun.LoadHintResetDownstream:
-		return r.loadForReset(ctx, runID, h)
+// Rehydrate reconstitutes the aggregate from persistent state for the given scope.
+func (r *RunAggregateRepository) Rehydrate(ctx context.Context, runID string, scope domainRun.Scope) (*domainRun.Run, error) {
+	switch s := scope.(type) {
+	case domainRun.ScopeFull:
+		return r.rehydrateFull(ctx, runID)
+	case domainRun.ScopeNodeCompletion:
+		return r.rehydrateForCompletion(ctx, runID, s)
+	case domainRun.ScopeResetDownstream:
+		return r.rehydrateForReset(ctx, runID, s)
 	default:
-		return nil, fmt.Errorf("RunAggregateRepository.Load: unknown hint type %T", hint)
+		return nil, fmt.Errorf("RunAggregateRepository.Rehydrate: unknown scope type %T", scope)
 	}
 }
 
-// loadFull loads all nodes and edges for the run.
-func (r *RunAggregateRepository) loadFull(ctx context.Context, runID string) (*domainRun.Run, error) {
+// rehydrateFull reads every node and edge for the run.
+func (r *RunAggregateRepository) rehydrateFull(ctx context.Context, runID string) (*domainRun.Run, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -45,20 +45,21 @@ func (r *RunAggregateRepository) loadFull(ctx context.Context, runID string) (*d
         MATCH (run:Run {run_id: $run_id})
         MATCH (run)-[e:EXECUTES]->(t:Table)
         RETURN
-            run.schedule_name   AS schedule_name,
-            run.terminal_status AS terminal_status,
-            run.total_nodes     AS total_nodes,
-            run.terminal_count  AS terminal_count,
-            run.version         AS version,
-            e.task_id           AS task_id,
-            COALESCE(e.status, 'PENDING')         AS status,
-            COALESCE(e.manifest_version, '')      AS manifest_version,
-            COALESCE(e.image_tag, '')             AS image_tag,
-            t.table_name    AS table_name,
-            t.schema_name   AS schema_name,
-            t.service_name  AS service_name,
-            t.node_type     AS node_type,
-            t.schedule_name AS schedule_name_t,
+            run.schedule_name                  AS schedule_name,
+            run.terminal_status                AS terminal_status,
+            COALESCE(run.total_nodes,    0)    AS total_nodes,
+            COALESCE(run.terminal_count, 0)    AS terminal_count,
+            COALESCE(run.failed_count,   0)    AS failed_count,
+            COALESCE(run.version,        0)    AS version,
+            e.task_id                          AS task_id,
+            COALESCE(e.status, 'PENDING')      AS status,
+            COALESCE(e.manifest_version, '')   AS manifest_version,
+            COALESCE(e.image_tag, '')          AS image_tag,
+            t.table_name                       AS table_name,
+            t.schema_name                      AS schema_name,
+            t.service_name                     AS service_name,
+            t.node_type                        AS node_type,
+            t.schedule_name                    AS schedule_name_t,
             [(t)-[:DEPENDS_ON]->(up:Table)<-[:EXECUTES]-(run) |
                 {schema_name: up.schema_name, table_name: up.table_name, service_name: up.service_name}
             ] AS upstreams,
@@ -67,12 +68,12 @@ func (r *RunAggregateRepository) loadFull(ctx context.Context, runID string) (*d
             ] AS downstreams
     `, map[string]interface{}{"run_id": runID})
 	if err != nil {
-		return nil, fmt.Errorf("loadFull: %w", err)
+		return nil, fmt.Errorf("rehydrateFull: %w", err)
 	}
 	return r.collectRunFromFlatRows(ctx, runID, result)
 }
 
-// loadForCompletion loads the subgraph needed to complete the target node.
+// rehydrateForCompletion loads the subgraph needed to complete the target node.
 // "immediate" = one DEPENDS_ON hop from the target; "transitive" = all hops.
 //
 //	FAILED:    target + transitive downstream
@@ -81,12 +82,12 @@ func (r *RunAggregateRepository) loadFull(ctx context.Context, runID string) (*d
 //	           upstreams (one DEPENDS_ON hop into the run on both sides of
 //	           the downstream node), so the aggregate can evaluate
 //	           "are all upstreams terminal?" for unblocking.
-func (r *RunAggregateRepository) loadForCompletion(ctx context.Context, runID string, h domainRun.LoadHintNodeCompletion) (*domainRun.Run, error) {
+func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, runID string, s domainRun.ScopeNodeCompletion) (*domainRun.Run, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
 	var query string
-	if h.Status == "FAILED" {
+	if s.Status == "FAILED" {
 		query = `
             MATCH (run:Run {run_id: $run_id})
             MATCH (run)-[:EXECUTES]->(target:Table {schema_name: $schema_name, table_name: $table_name})
@@ -98,20 +99,21 @@ func (r *RunAggregateRepository) loadForCompletion(ctx context.Context, runID st
             WITH run, t WHERE t IS NOT NULL
             MATCH (run)-[e:EXECUTES]->(t)
             RETURN
-                run.schedule_name   AS schedule_name,
-                run.terminal_status AS terminal_status,
-                run.total_nodes     AS total_nodes,
-                run.terminal_count  AS terminal_count,
-                run.version         AS version,
-                e.task_id           AS task_id,
-                COALESCE(e.status, 'PENDING')         AS status,
-                COALESCE(e.manifest_version, '')      AS manifest_version,
-                COALESCE(e.image_tag, '')             AS image_tag,
-                t.table_name    AS table_name,
-                t.schema_name   AS schema_name,
-                t.service_name  AS service_name,
-                t.node_type     AS node_type,
-                t.schedule_name AS schedule_name_t,
+                run.schedule_name                  AS schedule_name,
+                run.terminal_status                AS terminal_status,
+                COALESCE(run.total_nodes,    0)    AS total_nodes,
+                COALESCE(run.terminal_count, 0)    AS terminal_count,
+                COALESCE(run.failed_count,   0)    AS failed_count,
+                COALESCE(run.version,        0)    AS version,
+                e.task_id                          AS task_id,
+                COALESCE(e.status, 'PENDING')      AS status,
+                COALESCE(e.manifest_version, '')   AS manifest_version,
+                COALESCE(e.image_tag, '')          AS image_tag,
+                t.table_name                       AS table_name,
+                t.schema_name                      AS schema_name,
+                t.service_name                     AS service_name,
+                t.node_type                        AS node_type,
+                t.schedule_name                    AS schedule_name_t,
                 [(t)-[:DEPENDS_ON]->(up:Table)<-[:EXECUTES]-(run) |
                     {schema_name: up.schema_name, table_name: up.table_name, service_name: up.service_name}
                 ] AS upstreams,
@@ -136,20 +138,21 @@ func (r *RunAggregateRepository) loadForCompletion(ctx context.Context, runID st
             WITH run, t WHERE t IS NOT NULL
             MATCH (run)-[e:EXECUTES]->(t)
             RETURN
-                run.schedule_name   AS schedule_name,
-                run.terminal_status AS terminal_status,
-                run.total_nodes     AS total_nodes,
-                run.terminal_count  AS terminal_count,
-                run.version         AS version,
-                e.task_id           AS task_id,
-                COALESCE(e.status, 'PENDING')         AS status,
-                COALESCE(e.manifest_version, '')      AS manifest_version,
-                COALESCE(e.image_tag, '')             AS image_tag,
-                t.table_name    AS table_name,
-                t.schema_name   AS schema_name,
-                t.service_name  AS service_name,
-                t.node_type     AS node_type,
-                t.schedule_name AS schedule_name_t,
+                run.schedule_name                  AS schedule_name,
+                run.terminal_status                AS terminal_status,
+                COALESCE(run.total_nodes,    0)    AS total_nodes,
+                COALESCE(run.terminal_count, 0)    AS terminal_count,
+                COALESCE(run.failed_count,   0)    AS failed_count,
+                COALESCE(run.version,        0)    AS version,
+                e.task_id                          AS task_id,
+                COALESCE(e.status, 'PENDING')      AS status,
+                COALESCE(e.manifest_version, '')   AS manifest_version,
+                COALESCE(e.image_tag, '')          AS image_tag,
+                t.table_name                       AS table_name,
+                t.schema_name                      AS schema_name,
+                t.service_name                     AS service_name,
+                t.node_type                        AS node_type,
+                t.schedule_name                    AS schedule_name_t,
                 [(t)-[:DEPENDS_ON]->(up:Table)<-[:EXECUTES]-(run) |
                     {schema_name: up.schema_name, table_name: up.table_name, service_name: up.service_name}
                 ] AS upstreams,
@@ -161,17 +164,17 @@ func (r *RunAggregateRepository) loadForCompletion(ctx context.Context, runID st
 
 	result, err := session.Run(ctx, query, map[string]interface{}{
 		"run_id":      runID,
-		"schema_name": h.Key.SchemaName,
-		"table_name":  h.Key.TableName,
+		"schema_name": s.Key.SchemaName,
+		"table_name":  s.Key.TableName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("loadForCompletion: %w", err)
+		return nil, fmt.Errorf("rehydrateForCompletion: %w", err)
 	}
 	return r.collectRunFromFlatRows(ctx, runID, result)
 }
 
-// loadForReset loads the transitive downstream of the target node.
-func (r *RunAggregateRepository) loadForReset(ctx context.Context, runID string, h domainRun.LoadHintResetDownstream) (*domainRun.Run, error) {
+// rehydrateForReset loads the transitive downstream of the target node.
+func (r *RunAggregateRepository) rehydrateForReset(ctx context.Context, runID string, s domainRun.ScopeResetDownstream) (*domainRun.Run, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -185,20 +188,21 @@ func (r *RunAggregateRepository) loadForReset(ctx context.Context, runID string,
         WITH run, t WHERE t IS NOT NULL
         MATCH (run)-[e:EXECUTES]->(t)
         RETURN
-            run.schedule_name   AS schedule_name,
-            run.terminal_status AS terminal_status,
-            run.total_nodes     AS total_nodes,
-            run.terminal_count  AS terminal_count,
-            run.version         AS version,
-            e.task_id           AS task_id,
-            COALESCE(e.status, 'PENDING')         AS status,
-            COALESCE(e.manifest_version, '')      AS manifest_version,
-            COALESCE(e.image_tag, '')             AS image_tag,
-            t.table_name    AS table_name,
-            t.schema_name   AS schema_name,
-            t.service_name  AS service_name,
-            t.node_type     AS node_type,
-            t.schedule_name AS schedule_name_t,
+            run.schedule_name                  AS schedule_name,
+            run.terminal_status                AS terminal_status,
+            COALESCE(run.total_nodes,    0)    AS total_nodes,
+            COALESCE(run.terminal_count, 0)    AS terminal_count,
+            COALESCE(run.failed_count,   0)    AS failed_count,
+            COALESCE(run.version,        0)    AS version,
+            e.task_id                          AS task_id,
+            COALESCE(e.status, 'PENDING')      AS status,
+            COALESCE(e.manifest_version, '')   AS manifest_version,
+            COALESCE(e.image_tag, '')          AS image_tag,
+            t.table_name                       AS table_name,
+            t.schema_name                      AS schema_name,
+            t.service_name                     AS service_name,
+            t.node_type                        AS node_type,
+            t.schedule_name                    AS schedule_name_t,
             [(t)-[:DEPENDS_ON]->(up:Table)<-[:EXECUTES]-(run) |
                 {schema_name: up.schema_name, table_name: up.table_name, service_name: up.service_name}
             ] AS upstreams,
@@ -207,11 +211,11 @@ func (r *RunAggregateRepository) loadForReset(ctx context.Context, runID string,
             ] AS downstreams
     `, map[string]interface{}{
 		"run_id":      runID,
-		"schema_name": h.Key.SchemaName,
-		"table_name":  h.Key.TableName,
+		"schema_name": s.Key.SchemaName,
+		"table_name":  s.Key.TableName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("loadForReset: %w", err)
+		return nil, fmt.Errorf("rehydrateForReset: %w", err)
 	}
 	return r.collectRunFromFlatRows(ctx, runID, result)
 }
@@ -233,19 +237,34 @@ func (r *RunAggregateRepository) Save(ctx context.Context, agg *domainRun.Run) e
 		terminalStatus = string(agg.Status)
 	}
 
+	// COALESCE(run.version, 0) lets in-flight :Run nodes created before this
+	// patch (no version property) match expected_version=0 on the first save.
+	// terminal_status / completed_at are first-writer-wins so that state's
+	// authoritative run.finalized:v1 projection cannot be overwritten by a
+	// later aggregate save with a possibly-stale terminal_status.
 	versionResult, err := tx.Run(ctx, `
         MATCH (run:Run {run_id: $run_id})
-        WHERE run.version = $expected_version
+        WHERE COALESCE(run.version, 0) = $expected_version
         SET run.version         = $new_version,
             run.terminal_count  = $terminal_count,
-            run.terminal_status = CASE WHEN $terminal_status <> '' THEN $terminal_status ELSE run.terminal_status END,
-            run.completed_at    = CASE WHEN $terminal_status <> '' THEN datetime() ELSE run.completed_at END
+            run.failed_count    = $failed_count,
+            run.terminal_status = CASE
+                WHEN run.terminal_status IS NOT NULL THEN run.terminal_status
+                WHEN $terminal_status <> ''          THEN $terminal_status
+                ELSE NULL
+            END,
+            run.completed_at = CASE
+                WHEN run.completed_at IS NOT NULL THEN run.completed_at
+                WHEN $terminal_status <> ''       THEN datetime()
+                ELSE NULL
+            END
         RETURN run.version AS new_version
     `, map[string]interface{}{
 		"run_id":           agg.RunID,
 		"expected_version": agg.Version - 1,
 		"new_version":      agg.Version,
 		"terminal_count":   agg.TerminalCount,
+		"failed_count":     agg.FailedCount,
 		"terminal_status":  terminalStatus,
 	})
 	if err != nil {
@@ -339,6 +358,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		terminalStatus string
 		totalNodes     int
 		terminalCount  int
+		failedCount    int
 		version        int
 		runMetaSet     bool
 		nodes          []*domainRun.RunNode
@@ -356,6 +376,8 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 			totalNodes = int(toInt64(v))
 			v, _ = rec.Get("terminal_count")
 			terminalCount = int(toInt64(v))
+			v, _ = rec.Get("failed_count")
+			failedCount = int(toInt64(v))
 			v, _ = rec.Get("version")
 			version = int(toInt64(v))
 			runMetaSet = true
@@ -402,6 +424,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 	rebuilt := domainRun.NewRun(runID, scheduleName, nodes)
 	rebuilt.TotalNodes = totalNodes
 	rebuilt.TerminalCount = terminalCount
+	rebuilt.FailedCount = failedCount
 	rebuilt.Version = version
 	if terminalStatus != "" {
 		rebuilt.Status = domainRun.RunStatus(terminalStatus)

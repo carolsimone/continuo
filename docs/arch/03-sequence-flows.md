@@ -63,7 +63,7 @@ sequenceDiagram
   KC->>R: publish node.updated:v1
 
   R->>OR: consume node.updated:v1
-  Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>dedup on message_processing; cancelled-schedule guard<br/>runs.Load(runID, LoadHintNodeCompletion{Key, Status=SUCCEEDED})<br/>agg.CompleteNode(key, SUCCEEDED) → [NodeUnblocked …]<br/>runs.Save (retry on ErrVersionConflict)
+  Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>dedup on message_processing; cancelled-schedule guard<br/>runs.Rehydrate(runID, ScopeNodeCompletion{Key, Status=SUCCEEDED})<br/>agg.CompleteNode(key, SUCCEEDED) → [NodeUnblocked …]<br/>runs.Save (retry on ErrVersionConflict; on ErrNodeAlreadyTerminal re-derives effects via agg.EffectsForTerminal)
   OR->>OR: write outbox entry per NodeUnblocked
   OR->>R: publish query.model:v1
 
@@ -114,7 +114,7 @@ sequenceDiagram
     KC->>R: publish task.failed:v1
     KC->>R: publish node.updated:v1
     R->>OR: consume node.updated:v1
-    Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>runs.Load(runID, LoadHintNodeCompletion{Key, Status=FAILED})<br/>agg.CompleteNode(key, FAILED) → [NodeCascadeSkipped …, RunFinalized?]<br/>runs.Save writes per-node status, terminal_count, version;<br/>and on RunFinalized also :Run.terminal_status + completed_at
+    Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>runs.Rehydrate(runID, ScopeNodeCompletion{Key, Status=FAILED})<br/>agg.CompleteNode(key, FAILED) → [NodeCascadeSkipped …, RunFinalized?]<br/>runs.Save writes per-node status, terminal_count, failed_count, version;<br/>and on RunFinalized also :Run.terminal_status + completed_at (first-writer-wins)
     OR->>R: publish task.status.updated:v1 (cascade_task_skipped) per skipped node
     Note over ST: TaskStatusUpdatedHandler increments terminal_task_count;<br/>when terminal_task_count == total_task_count it finalizes scheduler_tracker<br/>and emits run.finalized:v1 via state_outbox
   end

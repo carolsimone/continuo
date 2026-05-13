@@ -65,46 +65,46 @@ type ScheduleGraph struct {
 
 // OutboxEntry represents an event staged for publishing
 type OutboxEntry struct {
-	ID                  uuid.UUID  `db:"id"`
-	MessageProcessingID *uuid.UUID `db:"message_processing_id"`
-	AggregateType       string     `db:"aggregate_type"`
-	AggregateID         uuid.UUID  `db:"aggregate_id"`
-	EventType           string     `db:"event_type"`
-	Payload             []byte     `db:"payload"`
-	StreamName          string     `db:"stream_name"`
-	CreatedAt           time.Time  `db:"created_at"`
-	ProcessedAt         *time.Time `db:"processed_at"`
-	Status              string     `db:"status"`
-	RetryCount          int        `db:"retry_count"`
-	MaxRetries          int        `db:"max_retries"`
-	ErrorMessage        *string    `db:"error_message"`
+	ID                  uuid.UUID
+	MessageProcessingID *uuid.UUID
+	AggregateType       string
+	AggregateID         uuid.UUID
+	EventType           string
+	Payload             []byte
+	StreamName          string
+	CreatedAt           time.Time
+	ProcessedAt         *time.Time
+	Status              string
+	RetryCount          int
+	MaxRetries          int
+	ErrorMessage        *string
 }
 
 // MessageProcessing tracks consumed messages for exactly-once
 type MessageProcessing struct {
-	ID         uuid.UUID `db:"id"`
-	MessageID  string    `db:"message_id"`
-	StreamName string    `db:"stream_name"`
-	State      string    `db:"state"` // processing, completed, acked
-	Payload    []byte    `db:"payload"`
-	Error      *string   `db:"error"`
-	CreatedAt  time.Time `db:"created_at"`
-	UpdatedAt  time.Time `db:"updated_at"`
+	ID         uuid.UUID
+	MessageID  string
+	StreamName string
+	State      string // processing, completed, acked
+	Payload    []byte
+	Error      *string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // PublishedMessage tracks published outbox entries for dedup
 type PublishedMessage struct {
-	ID             uuid.UUID `db:"id"`
-	OutboxEntryID  uuid.UUID `db:"outbox_entry_id"`
-	RedisMessageID *string   `db:"redis_message_id"`
-	PublishedAt    time.Time `db:"published_at"`
+	ID             uuid.UUID
+	OutboxEntryID  uuid.UUID
+	RedisMessageID *string
+	PublishedAt    time.Time
 }
 
 // CascadeTaskSkipped is the event payload written to task.status.updated:v1 outbox entries
 // for downstream nodes that become unreachable due to an upstream failure.
 type CascadeTaskSkipped struct {
-	TaskID     string `json:"task_id"`
-	ScheduleID string `json:"schedule_id"`
+	TaskID     string
+	ScheduleID string
 }
 
 // NodeReadyForExecution is the event payload written to query.model:v1 outbox entries

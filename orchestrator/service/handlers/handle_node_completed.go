@@ -91,19 +91,30 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainModel
 	}
 
 	for {
-		agg, err := h.runs.Load(ctx, cmd.ScheduleID.String(),
-			run.LoadHintNodeCompletion{Key: nodeKey, Status: cmd.Status})
+		agg, err := h.runs.Rehydrate(ctx, cmd.ScheduleID.String(),
+			run.ScopeNodeCompletion{Key: nodeKey, Status: cmd.Status})
 		if err != nil {
-			return fmt.Errorf("load aggregate: %w", err)
+			return fmt.Errorf("rehydrate aggregate: %w", err)
 		}
 
 		events, err := agg.CompleteNode(nodeKey, cmd.Status)
 		if err != nil {
 			if errors.Is(err, run.ErrNodeAlreadyTerminal) {
-				h.logger.Info("Node already terminal — idempotent re-delivery",
+				// Neo4j already reflects the terminal transition (likely from a
+				// prior attempt whose Postgres tx was rolled back). Re-derive
+				// the side-effect events from the loaded subgraph so the new
+				// Postgres tx re-creates the missing outbox entries.
+				h.logger.Info("Node already terminal — re-deriving effects for outbox",
 					"schema", cmd.SchemaName, "table", cmd.TableName)
-				if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
-					return fmt.Errorf("update message state: %w", err)
+				redoEvents, derr := agg.EffectsForTerminal(nodeKey)
+				if derr != nil {
+					return fmt.Errorf("EffectsForTerminal: %w", derr)
+				}
+				if werr := h.writeOutboxEntries(ctx, cmd, msgProcessingID, redoEvents); werr != nil {
+					return werr
+				}
+				if uerr := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); uerr != nil {
+					return fmt.Errorf("update message state: %w", uerr)
 				}
 				return h.uow.Commit()
 			}

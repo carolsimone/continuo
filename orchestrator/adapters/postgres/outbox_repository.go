@@ -8,57 +8,78 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
-// OutboxRepository defines operations for the outbox table
-type OutboxRepository interface {
-	Create(ctx context.Context, entry *domain.OutboxEntry) error
-	GetPendingBatch(ctx context.Context, limit int) ([]*domain.OutboxEntry, error)
-	MarkProcessed(ctx context.Context, id uuid.UUID) error
-	MarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error
-	IncrementRetry(ctx context.Context, id uuid.UUID) error
-	UpdateStatus(ctx context.Context, id uuid.UUID, newStatus, expectedStatus string) error
-}
-
-// OutboxExecutor abstracts sqlx.DB and sqlx.Tx for database operations
-type OutboxExecutor interface {
-	NamedExecContext(ctx context.Context, query string, arg interface{}) (sql.Result, error)
+// outboxExecutor abstracts sqlx.DB and sqlx.Tx for outbox database operations.
+type outboxExecutor interface {
 	SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
+// outboxEntryRow is the adapter-internal scan struct for SELECT queries against the outbox table.
+type outboxEntryRow struct {
+	ID                  uuid.UUID  `db:"id"`
+	MessageProcessingID *uuid.UUID `db:"message_processing_id"`
+	AggregateType       string     `db:"aggregate_type"`
+	AggregateID         uuid.UUID  `db:"aggregate_id"`
+	EventType           string     `db:"event_type"`
+	Payload             []byte     `db:"payload"`
+	StreamName          string     `db:"stream_name"`
+	CreatedAt           time.Time  `db:"created_at"`
+	ProcessedAt         *time.Time `db:"processed_at"`
+	Status              string     `db:"status"`
+	RetryCount          int        `db:"retry_count"`
+	MaxRetries          int        `db:"max_retries"`
+	ErrorMessage        *string    `db:"error_message"`
+}
+
+func domainFromOutboxRow(r *outboxEntryRow) *domain.OutboxEntry {
+	return &domain.OutboxEntry{
+		ID:                  r.ID,
+		MessageProcessingID: r.MessageProcessingID,
+		AggregateType:       r.AggregateType,
+		AggregateID:         r.AggregateID,
+		EventType:           r.EventType,
+		Payload:             r.Payload,
+		StreamName:          r.StreamName,
+		CreatedAt:           r.CreatedAt,
+		ProcessedAt:         r.ProcessedAt,
+		Status:              r.Status,
+		RetryCount:          r.RetryCount,
+		MaxRetries:          r.MaxRetries,
+		ErrorMessage:        r.ErrorMessage,
+	}
+}
+
+// compile-time interface check
+var _ repository.OutboxRepository = (*outboxRepository)(nil)
+
 type outboxRepository struct {
-	executor OutboxExecutor
+	executor outboxExecutor
 	logger   *slog.Logger
 }
 
-// NewOutboxRepository creates a new OutboxRepository
-func NewOutboxRepository(db *sqlx.DB, logger *slog.Logger) OutboxRepository {
-	return &outboxRepository{
-		executor: db,
-		logger:   logger,
-	}
+// NewOutboxRepository creates a new OutboxRepository backed by *sqlx.DB.
+func NewOutboxRepository(db *sqlx.DB, logger *slog.Logger) repository.OutboxRepository {
+	return &outboxRepository{executor: db, logger: logger}
 }
 
-// NewOutboxRepositoryWithExecutor creates a new OutboxRepository with a custom executor
-func NewOutboxRepositoryWithExecutor(executor OutboxExecutor, logger *slog.Logger) OutboxRepository {
-	return &outboxRepository{
-		executor: executor,
-		logger:   logger,
-	}
+// NewOutboxRepositoryWithExecutor creates a new OutboxRepository with a custom executor (e.g. *sqlx.Tx).
+func NewOutboxRepositoryWithExecutor(executor outboxExecutor, logger *slog.Logger) repository.OutboxRepository {
+	return &outboxRepository{executor: executor, logger: logger}
 }
 
-// Create inserts a new outbox entry
+// Create inserts a new outbox entry using positional parameters.
 func (r *outboxRepository) Create(ctx context.Context, entry *domain.OutboxEntry) error {
 	query := `
 		INSERT INTO outbox (
 			id, message_processing_id, aggregate_type, aggregate_id, event_type, payload,
 			stream_name, created_at, status, retry_count, max_retries
 		) VALUES (
-			:id, :message_processing_id, :aggregate_type, :aggregate_id, :event_type, :payload,
-			:stream_name, :created_at, :status, :retry_count, :max_retries
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 		)
 	`
 
@@ -75,7 +96,19 @@ func (r *outboxRepository) Create(ctx context.Context, entry *domain.OutboxEntry
 		entry.MaxRetries = 3
 	}
 
-	_, err := r.executor.NamedExecContext(ctx, query, entry)
+	_, err := r.executor.ExecContext(ctx, query,
+		entry.ID,
+		entry.MessageProcessingID,
+		entry.AggregateType,
+		entry.AggregateID,
+		entry.EventType,
+		entry.Payload,
+		entry.StreamName,
+		entry.CreatedAt,
+		entry.Status,
+		entry.RetryCount,
+		entry.MaxRetries,
+	)
 	if err != nil {
 		r.logger.Error("Failed to create outbox entry",
 			"aggregate_id", entry.AggregateID,
@@ -94,10 +127,10 @@ func (r *outboxRepository) Create(ctx context.Context, entry *domain.OutboxEntry
 	return nil
 }
 
-// GetPendingBatch retrieves a batch of pending outbox entries
+// GetPendingBatch retrieves a batch of pending outbox entries.
 func (r *outboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*domain.OutboxEntry, error) {
 	query := `
-		SELECT id, aggregate_type, aggregate_id, event_type, payload,
+		SELECT id, message_processing_id, aggregate_type, aggregate_id, event_type, payload,
 		       stream_name, created_at, processed_at, status,
 		       retry_count, max_retries, error_message
 		FROM outbox
@@ -107,32 +140,29 @@ func (r *outboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*d
 		FOR UPDATE SKIP LOCKED
 	`
 
-	var entries []*domain.OutboxEntry
-	err := r.executor.SelectContext(ctx, &entries, query, "pending", limit)
+	var rows []*outboxEntryRow
+	err := r.executor.SelectContext(ctx, &rows, query, "pending", limit)
 	if err != nil && err != sql.ErrNoRows {
 		r.logger.Error("Failed to get pending outbox entries", "error", err)
 		return nil, fmt.Errorf("failed to get pending outbox entries: %w", err)
 	}
 
-	r.logger.Debug("Retrieved pending outbox entries", "count", len(entries))
+	entries := make([]*domain.OutboxEntry, len(rows))
+	for i, row := range rows {
+		entries[i] = domainFromOutboxRow(row)
+	}
 
+	r.logger.Debug("Retrieved pending outbox entries", "count", len(entries))
 	return entries, nil
 }
 
-// MarkProcessed marks an outbox entry as processed
+// MarkProcessed marks an outbox entry as processed.
 func (r *outboxRepository) MarkProcessed(ctx context.Context, id uuid.UUID) error {
-	query := `
-		UPDATE outbox
-		SET status = $1, processed_at = $2
-		WHERE id = $3
-	`
+	query := `UPDATE outbox SET status = $1, processed_at = $2 WHERE id = $3`
 
 	result, err := r.executor.ExecContext(ctx, query, "processed", time.Now(), id)
 	if err != nil {
-		r.logger.Error("Failed to mark outbox entry as processed",
-			"id", id,
-			"error", err,
-		)
+		r.logger.Error("Failed to mark outbox entry as processed", "id", id, "error", err)
 		return fmt.Errorf("failed to mark outbox entry as processed: %w", err)
 	}
 
@@ -143,24 +173,16 @@ func (r *outboxRepository) MarkProcessed(ctx context.Context, id uuid.UUID) erro
 	}
 
 	r.logger.Debug("Marked outbox entry as processed", "id", id)
-
 	return nil
 }
 
-// MarkFailed marks an outbox entry as failed
+// MarkFailed marks an outbox entry as failed.
 func (r *outboxRepository) MarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error {
-	query := `
-		UPDATE outbox
-		SET status = $1, error_message = $2
-		WHERE id = $3
-	`
+	query := `UPDATE outbox SET status = $1, error_message = $2 WHERE id = $3`
 
 	result, err := r.executor.ExecContext(ctx, query, "failed", errorMessage, id)
 	if err != nil {
-		r.logger.Error("Failed to mark outbox entry as failed",
-			"id", id,
-			"error", err,
-		)
+		r.logger.Error("Failed to mark outbox entry as failed", "id", id, "error", err)
 		return fmt.Errorf("failed to mark outbox entry as failed: %w", err)
 	}
 
@@ -170,30 +192,17 @@ func (r *outboxRepository) MarkFailed(ctx context.Context, id uuid.UUID, errorMe
 		return fmt.Errorf("outbox entry not found")
 	}
 
-	r.logger.Warn("Marked outbox entry as failed",
-		"id", id,
-		"error_message", errorMessage,
-	)
-
+	r.logger.Warn("Marked outbox entry as failed", "id", id, "error_message", errorMessage)
 	return nil
 }
 
-// IncrementRetry increments the retry count for an outbox entry and resets status to pending
-// so that entries stuck in 'publishing' are picked up again on the next processor tick.
+// IncrementRetry increments the retry count and resets status to pending.
 func (r *outboxRepository) IncrementRetry(ctx context.Context, id uuid.UUID) error {
-	query := `
-		UPDATE outbox
-		SET retry_count = retry_count + 1,
-		    status      = 'pending'
-		WHERE id = $1
-	`
+	query := `UPDATE outbox SET retry_count = retry_count + 1, status = 'pending' WHERE id = $1`
 
 	result, err := r.executor.ExecContext(ctx, query, id)
 	if err != nil {
-		r.logger.Error("Failed to increment retry count",
-			"id", id,
-			"error", err,
-		)
+		r.logger.Error("Failed to increment retry count", "id", id, "error", err)
 		return fmt.Errorf("failed to increment retry count: %w", err)
 	}
 
@@ -204,30 +213,17 @@ func (r *outboxRepository) IncrementRetry(ctx context.Context, id uuid.UUID) err
 	}
 
 	r.logger.Debug("Incremented retry count and reset status to pending", "id", id)
-
 	return nil
 }
 
-// UpdateStatus updates the status if it matches expected status (optimistic lock)
-func (r *outboxRepository) UpdateStatus(
-	ctx context.Context,
-	id uuid.UUID,
-	newStatus, expectedStatus string,
-) error {
-	query := `
-		UPDATE outbox
-		SET status = $1
-		WHERE id = $2 AND status = $3
-	`
+// UpdateStatus updates the status if it matches expectedStatus (optimistic lock).
+func (r *outboxRepository) UpdateStatus(ctx context.Context, id uuid.UUID, newStatus, expectedStatus string) error {
+	query := `UPDATE outbox SET status = $1 WHERE id = $2 AND status = $3`
 
 	result, err := r.executor.ExecContext(ctx, query, newStatus, id, expectedStatus)
 	if err != nil {
 		r.logger.Error("Failed to update status",
-			"id", id,
-			"new_status", newStatus,
-			"expected_status", expectedStatus,
-			"error", err,
-		)
+			"id", id, "new_status", newStatus, "expected_status", expectedStatus, "error", err)
 		return fmt.Errorf("failed to update status: %w", err)
 	}
 
@@ -235,15 +231,10 @@ func (r *outboxRepository) UpdateStatus(
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-
 	if rows == 0 {
 		return fmt.Errorf("status mismatch or entry not found")
 	}
 
-	r.logger.Debug("Updated status",
-		"id", id,
-		"new_status", newStatus,
-	)
-
+	r.logger.Debug("Updated status", "id", id, "new_status", newStatus)
 	return nil
 }
