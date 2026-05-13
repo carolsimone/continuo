@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	domainRun "github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// RunAggregateRepository implements run.AggregateRepository against Neo4j.
+// RunAggregateRepository implements domainRun.AggregateRepository against Neo4j.
 type RunAggregateRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
@@ -20,16 +20,16 @@ func NewRunAggregateRepository(client Neo4jClient, logger *slog.Logger) *RunAggr
 	return &RunAggregateRepository{client: client, logger: logger}
 }
 
-var _ run.AggregateRepository = (*RunAggregateRepository)(nil)
+var _ domainRun.AggregateRepository = (*RunAggregateRepository)(nil)
 
 // Load rehydrates the aggregate with an operation-scoped subgraph.
-func (r *RunAggregateRepository) Load(ctx context.Context, runID string, hint run.LoadHint) (*run.Run, error) {
+func (r *RunAggregateRepository) Load(ctx context.Context, runID string, hint domainRun.LoadHint) (*domainRun.Run, error) {
 	switch h := hint.(type) {
-	case run.LoadHintFull:
+	case domainRun.LoadHintFull:
 		return r.loadFull(ctx, runID)
-	case run.LoadHintNodeCompletion:
+	case domainRun.LoadHintNodeCompletion:
 		return r.loadForCompletion(ctx, runID, h)
-	case run.LoadHintResetDownstream:
+	case domainRun.LoadHintResetDownstream:
 		return r.loadForReset(ctx, runID, h)
 	default:
 		return nil, fmt.Errorf("RunAggregateRepository.Load: unknown hint type %T", hint)
@@ -37,7 +37,7 @@ func (r *RunAggregateRepository) Load(ctx context.Context, runID string, hint ru
 }
 
 // loadFull loads all nodes and edges for the run.
-func (r *RunAggregateRepository) loadFull(ctx context.Context, runID string) (*run.Run, error) {
+func (r *RunAggregateRepository) loadFull(ctx context.Context, runID string) (*domainRun.Run, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -73,9 +73,15 @@ func (r *RunAggregateRepository) loadFull(ctx context.Context, runID string) (*r
 }
 
 // loadForCompletion loads the subgraph needed to complete the target node.
-// FAILED:    target + transitive downstream
-// SUCCEEDED: target + immediate downstream + immediate downstream's upstreams (for unblocking decision)
-func (r *RunAggregateRepository) loadForCompletion(ctx context.Context, runID string, h run.LoadHintNodeCompletion) (*run.Run, error) {
+// "immediate" = one DEPENDS_ON hop from the target; "transitive" = all hops.
+//
+//	FAILED:    target + transitive downstream
+//	           (cascade-skip must reach every PENDING descendant).
+//	SUCCEEDED: target + immediate downstream + each immediate downstream's
+//	           upstreams (one DEPENDS_ON hop into the run on both sides of
+//	           the downstream node), so the aggregate can evaluate
+//	           "are all upstreams terminal?" for unblocking.
+func (r *RunAggregateRepository) loadForCompletion(ctx context.Context, runID string, h domainRun.LoadHintNodeCompletion) (*domainRun.Run, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -165,7 +171,7 @@ func (r *RunAggregateRepository) loadForCompletion(ctx context.Context, runID st
 }
 
 // loadForReset loads the transitive downstream of the target node.
-func (r *RunAggregateRepository) loadForReset(ctx context.Context, runID string, h run.LoadHintResetDownstream) (*run.Run, error) {
+func (r *RunAggregateRepository) loadForReset(ctx context.Context, runID string, h domainRun.LoadHintResetDownstream) (*domainRun.Run, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
@@ -212,7 +218,7 @@ func (r *RunAggregateRepository) loadForReset(ctx context.Context, runID string,
 
 // Save persists the aggregate. Checks optimistic version. Writes only loaded nodes
 // plus counters, version, and run status if finalized.
-func (r *RunAggregateRepository) Save(ctx context.Context, agg *run.Run) error {
+func (r *RunAggregateRepository) Save(ctx context.Context, agg *domainRun.Run) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
@@ -246,7 +252,7 @@ func (r *RunAggregateRepository) Save(ctx context.Context, agg *run.Run) error {
 		return fmt.Errorf("Save: version check: %w", err)
 	}
 	if !versionResult.Next(ctx) {
-		return run.ErrVersionConflict
+		return domainRun.ErrVersionConflict
 	}
 	if _, err := versionResult.Consume(ctx); err != nil {
 		return fmt.Errorf("Save: consume version result: %w", err)
@@ -321,13 +327,13 @@ func (r *RunAggregateRepository) DeleteExpiredRuns(ctx context.Context, retentio
 	return nil
 }
 
-// collectRunFromFlatRows builds a *run.Run from a Neo4j result where each row
-// represents a single node in the loaded subgraph.
+// collectRunFromFlatRows builds a *domainRun.Run from a Neo4j result where each
+// row represents a single node in the loaded subgraph.
 func (r *RunAggregateRepository) collectRunFromFlatRows(
 	ctx context.Context,
 	runID string,
 	result neo4j.ResultWithContext,
-) (*run.Run, error) {
+) (*domainRun.Run, error) {
 	var (
 		scheduleName   string
 		terminalStatus string
@@ -335,7 +341,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		terminalCount  int
 		version        int
 		runMetaSet     bool
-		nodes          []*run.RunNode
+		nodes          []*domainRun.RunNode
 	)
 
 	for result.Next(ctx) {
@@ -367,14 +373,14 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		upsRaw, _ := rec.Get("upstreams")
 		downsRaw, _ := rec.Get("downstreams")
 
-		nodeKey := run.NodeKey{
+		nodeKey := domainRun.NodeKey{
 			ServiceName: safeString(svcVal),
 			SchemaName:  safeString(schemaVal),
 			TableName:   safeString(tableVal),
 		}
 		taskUUID, _ := uuid.Parse(safeString(taskIDVal))
 
-		nodes = append(nodes, &run.RunNode{
+		nodes = append(nodes, &domainRun.RunNode{
 			Key:             nodeKey,
 			TaskID:          taskUUID,
 			Status:          safeString(statusVal),
@@ -393,30 +399,30 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		return nil, fmt.Errorf("collectRunFromFlatRows: run %s not found", runID)
 	}
 
-	rebuilt := run.NewRun(runID, scheduleName, nodes)
+	rebuilt := domainRun.NewRun(runID, scheduleName, nodes)
 	rebuilt.TotalNodes = totalNodes
 	rebuilt.TerminalCount = terminalCount
 	rebuilt.Version = version
 	if terminalStatus != "" {
-		rebuilt.Status = run.RunStatus(terminalStatus)
+		rebuilt.Status = domainRun.RunStatus(terminalStatus)
 	} else if terminalCount > 0 {
-		rebuilt.Status = run.RunStatusInProgress
+		rebuilt.Status = domainRun.RunStatusInProgress
 	}
 	return rebuilt, nil
 }
 
-func extractNodeKeys(raw interface{}) []run.NodeKey {
+func extractNodeKeys(raw interface{}) []domainRun.NodeKey {
 	list, ok := raw.([]interface{})
 	if !ok {
 		return nil
 	}
-	var keys []run.NodeKey
+	var keys []domainRun.NodeKey
 	for _, item := range list {
 		m, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		keys = append(keys, run.NodeKey{
+		keys = append(keys, domainRun.NodeKey{
 			ServiceName: safeString(m["service_name"]),
 			SchemaName:  safeString(m["schema_name"]),
 			TableName:   safeString(m["table_name"]),
