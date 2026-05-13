@@ -241,3 +241,56 @@ func filterEvents[T run.DomainEvent](events []run.DomainEvent) []T {
 	}
 	return out
 }
+
+// ResetDownstream tests
+
+func TestResetDownstream_ResetsSkippedNodesToPending(t *testing.T) {
+	kA := key("public", "a")
+	kB := key("public", "b")
+	kC := key("public", "c")
+	r := makeRun(
+		node(kA, "FAILED", nil, []run.NodeKey{kB}),
+		node(kB, "SKIPPED", []run.NodeKey{kA}, []run.NodeKey{kC}),
+		node(kC, "SKIPPED", []run.NodeKey{kB}, nil),
+	)
+	r.TerminalCount = 3
+
+	_, err := r.ResetDownstream(kA)
+	require.NoError(t, err)
+
+	byKey := map[run.NodeKey]string{}
+	for _, n := range r.Nodes() {
+		byKey[n.Key] = n.Status
+	}
+	assert.Equal(t, "PENDING", byKey[kB])
+	assert.Equal(t, "PENDING", byKey[kC])
+	assert.Equal(t, 1, r.TerminalCount) // only kA remains terminal
+}
+
+func TestResetDownstream_DoesNotResetNonSkippedNodes(t *testing.T) {
+	kA := key("public", "a")
+	kB := key("public", "b")
+	r := makeRun(
+		node(kA, "FAILED", nil, []run.NodeKey{kB}),
+		node(kB, "SUCCEEDED", []run.NodeKey{kA}, nil),
+	)
+	r.TerminalCount = 2
+
+	_, err := r.ResetDownstream(kA)
+	require.NoError(t, err)
+
+	for _, n := range r.Nodes() {
+		if n.Key == kB {
+			assert.Equal(t, "SUCCEEDED", n.Status, "SUCCEEDED node must not be reset")
+		}
+	}
+	assert.Equal(t, 2, r.TerminalCount)
+}
+
+func TestResetDownstream_NodeNotInScope_ReturnsError(t *testing.T) {
+	r := makeRun(node(key("public", "a"), "FAILED", nil, nil))
+
+	_, err := r.ResetDownstream(key("public", "missing"))
+
+	assert.ErrorIs(t, err, run.ErrNodeNotInScope)
+}
