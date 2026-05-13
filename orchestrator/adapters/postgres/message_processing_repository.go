@@ -5,32 +5,55 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/google/uuid"
 )
 
-// MessageProcessingRepository handles message_processing table operations
-type MessageProcessingRepository interface {
-	InsertIfNotExists(ctx context.Context, msgProc *domain.MessageProcessing) (uuid.UUID, bool, error)
-	GetByMessageID(ctx context.Context, messageID string) (*domain.MessageProcessing, error)
-	UpdateState(ctx context.Context, id uuid.UUID, state string) error
-}
-
-// MessageProcessingExecutor abstracts sqlx.DB and sqlx.Tx for database operations
-type MessageProcessingExecutor interface {
+// messageProcessingExecutor abstracts sqlx.DB and sqlx.Tx for message_processing operations.
+type messageProcessingExecutor interface {
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 	GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
+// messageProcessingRow is the adapter-internal scan struct for SELECT queries against message_processing.
+type messageProcessingRow struct {
+	ID         uuid.UUID `db:"id"`
+	MessageID  string    `db:"message_id"`
+	StreamName string    `db:"stream_name"`
+	State      string    `db:"state"`
+	Payload    []byte    `db:"payload"`
+	Error      *string   `db:"error"`
+	CreatedAt  time.Time `db:"created_at"`
+	UpdatedAt  time.Time `db:"updated_at"`
+}
+
+func domainFromMessageProcessingRow(r *messageProcessingRow) *domain.MessageProcessing {
+	return &domain.MessageProcessing{
+		ID:         r.ID,
+		MessageID:  r.MessageID,
+		StreamName: r.StreamName,
+		State:      r.State,
+		Payload:    r.Payload,
+		Error:      r.Error,
+		CreatedAt:  r.CreatedAt,
+		UpdatedAt:  r.UpdatedAt,
+	}
+}
+
+// compile-time interface check
+var _ repository.MessageProcessingRepository = (*messageProcessingRepository)(nil)
+
 type messageProcessingRepository struct {
-	executor MessageProcessingExecutor
+	executor messageProcessingExecutor
 	logger   *slog.Logger
 }
 
-// NewMessageProcessingRepository creates a new MessageProcessingRepository
-func NewMessageProcessingRepository(executor MessageProcessingExecutor, logger *slog.Logger) MessageProcessingRepository {
+// NewMessageProcessingRepository creates a new MessageProcessingRepository.
+func NewMessageProcessingRepository(executor messageProcessingExecutor, logger *slog.Logger) repository.MessageProcessingRepository {
 	return &messageProcessingRepository{
 		executor: executor,
 		logger:   logger,
@@ -51,9 +74,7 @@ func (r *messageProcessingRepository) InsertIfNotExists(
 	`
 
 	var id uuid.UUID
-	err := r.executor.QueryRowContext(
-		ctx,
-		query,
+	err := r.executor.QueryRowContext(ctx, query,
 		msgProc.MessageID,
 		msgProc.StreamName,
 		msgProc.State,
@@ -61,7 +82,6 @@ func (r *messageProcessingRepository) InsertIfNotExists(
 	).Scan(&id)
 
 	if err == sql.ErrNoRows {
-		// Conflict occurred, fetch existing ID
 		existingQuery := `SELECT id FROM message_processing WHERE message_id = $1`
 		err = r.executor.GetContext(ctx, &id, existingQuery, msgProc.MessageID)
 		if err != nil {
@@ -77,15 +97,15 @@ func (r *messageProcessingRepository) InsertIfNotExists(
 	return id, true, nil
 }
 
-// GetByMessageID retrieves a message processing record by Redis message ID
+// GetByMessageID retrieves a message processing record by Redis message ID.
 func (r *messageProcessingRepository) GetByMessageID(
 	ctx context.Context,
 	messageID string,
 ) (*domain.MessageProcessing, error) {
-	var msgProc domain.MessageProcessing
+	var row messageProcessingRow
 	query := `SELECT * FROM message_processing WHERE message_id = $1`
 
-	err := r.executor.GetContext(ctx, &msgProc, query, messageID)
+	err := r.executor.GetContext(ctx, &row, query, messageID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("message not found: %s", messageID)
 	}
@@ -93,20 +113,16 @@ func (r *messageProcessingRepository) GetByMessageID(
 		return nil, fmt.Errorf("failed to get message processing: %w", err)
 	}
 
-	return &msgProc, nil
+	return domainFromMessageProcessingRow(&row), nil
 }
 
-// UpdateState updates the processing state of a message
+// UpdateState updates the processing state of a message.
 func (r *messageProcessingRepository) UpdateState(
 	ctx context.Context,
 	id uuid.UUID,
 	state string,
 ) error {
-	query := `
-		UPDATE message_processing
-		SET state = $1, updated_at = NOW()
-		WHERE id = $2
-	`
+	query := `UPDATE message_processing SET state = $1, updated_at = NOW() WHERE id = $2`
 
 	result, err := r.executor.ExecContext(ctx, query, state, id)
 	if err != nil {
@@ -117,7 +133,6 @@ func (r *messageProcessingRepository) UpdateState(
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-
 	if rows == 0 {
 		return fmt.Errorf("no message processing record found with id: %s", id)
 	}

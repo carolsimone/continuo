@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -19,16 +19,16 @@ var errAlreadyClaimed = errors.New("outbox entry already claimed by another proc
 
 // OutboxProcessor processes pending outbox entries and publishes them to Redis
 type OutboxProcessor struct {
-	outboxRepo    postgres.OutboxRepository
-	publishedRepo postgres.PublishedMessagesRepository
+	outboxRepo    repository.OutboxRepository
+	publishedRepo repository.PublishedMessagesRepository
 	redisClient   *goredis.Client
 	logger        *slog.Logger
 }
 
 // NewOutboxProcessor creates a new OutboxProcessor
 func NewOutboxProcessor(
-	outboxRepo postgres.OutboxRepository,
-	publishedRepo postgres.PublishedMessagesRepository,
+	outboxRepo repository.OutboxRepository,
+	publishedRepo repository.PublishedMessagesRepository,
 	redisClient *goredis.Client,
 	logger *slog.Logger,
 ) *OutboxProcessor {
