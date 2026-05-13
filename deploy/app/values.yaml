@@ -189,7 +189,7 @@ services:
     replicas: 1
     httpPort: 8090
     probePath: /
-    serviceType: LoadBalancer
+    serviceType: ClusterIP
     secretEnv:
       - name: AWS_ACCESS_KEY_ID
         secretKey: AWS_ACCESS_KEY_ID
