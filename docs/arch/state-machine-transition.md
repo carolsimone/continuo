@@ -109,7 +109,7 @@ These are separate concerns. `initialization_status` tracks whether `startup-con
 - `running → succeeded`: when `terminal_task_count == total_task_count` and no task is in `failed`.
 - `running → failed`: when `terminal_task_count == total_task_count` and at least one task is in `failed`.
 
-In both cases the same SQL transaction writes a `run.finalized:v1` outbox row (consumed by future subscribers; `orchestrator` does not consume it — it learns of finalization from its own `Run` aggregate during `HandleNodeCompleted`).
+In both cases the same SQL transaction writes a `run.finalized:v1` outbox row. The orchestrator consumes the stream and projects `terminal_status` / `completed_at` onto Neo4j `:Run`; this is the authoritative path for runs that never produce `node.updated:v1` traffic (e.g. full-inherited rebases). For runs that do produce node completions, the orchestrator's `Run` aggregate also stamps the same Neo4j fields when `terminal_count == total_nodes` during `HandleNodeCompleted`; the consumer's update is idempotent in that case.
 
 #### Enforcement
 

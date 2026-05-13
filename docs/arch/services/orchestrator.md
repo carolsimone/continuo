@@ -53,7 +53,7 @@ Domain events live in `orchestrator/domain/run/events.go`:
 |---|---|
 | `NodeUnblocked` | Every upstream of an immediate-downstream node is now terminal; the orchestrator outbox writes `query.model:v1` for the unblocked node. |
 | `NodeCascadeSkipped` | A `PENDING` downstream was forced to `SKIPPED` by an upstream `FAILED`; the orchestrator outbox writes `task.status.updated:v1` (`cascade_task_skipped`) so `state` updates the task row. |
-| `RunFinalized` | All nodes have reached a terminal status. Neo4j `:Run.terminal_status` and `:Run.completed_at` are written by `AggregateRepository.Save`; no external signal is emitted by the orchestrator. |
+| `RunFinalized` | All nodes have reached a terminal status inside the aggregate. Neo4j `:Run.terminal_status` and `:Run.completed_at` are written by `AggregateRepository.Save`. For runs that produce no `node.updated:v1` traffic (e.g. full-inherited rebases), a separate `run.finalized:v1` consumer projects state's authoritative scheduler outcome onto the same Neo4j fields. |
 
 Ports (`orchestrator/domain/run/ports.go`):
 
@@ -254,7 +254,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 5. Update message_processing state -> completed; commit transaction
 ```
 
-`runs.Save` is the only writer of `:Run.terminal_status` / `:Run.completed_at`; downstream services observe finalization via `state`'s `run.finalized:v1` outbox, which `state.TaskStatusUpdatedHandler` emits when its own `terminal_task_count` reaches `total_task_count`.
+`runs.Save` writes `:Run.terminal_status` / `:Run.completed_at` when the aggregate finalises internally. A separate Redis consumer on `run.finalized:v1` projects state's authoritative outcome onto the same fields whenever a run's terminal transition is not produced by the aggregate — primarily full-inherited rebases that never publish `node.updated:v1` events. State remains the source of truth for `terminal_task_count == total_task_count`; orchestrator's role on this stream is read-only persistence.
 
 ## Background Loops
 
@@ -267,6 +267,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 | Redis consumer (`trigger.rebase:v1`) | Reads and dispatches to HandleRebase handler. Stream/group configurable via env: `REBASE_STREAM` (default `trigger.rebase:v1`), `REBASE_GROUP` (default `orchestrator-rebase`). |
 | Redis consumer (`trigger.single_node_run:v1`) | Reads and dispatches to HandleSingleNodeRunHandler |
 | Redis consumer (`initialize.run:v1`) | Secondary entry path; runs `Snapshot(LatestFullDAG)` + dispatch. No active producer. |
+| Redis consumer (`run.finalized:v1`) | Projects state's terminal scheduler outcome onto Neo4j `:Run.completed_at` / `terminal_status`. Active fallback for runs that produce no `node.updated:v1` traffic. |
 | Outbox processor | Polls outbox for pending entries; publishes to `query.model:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `schedules.loaded:v1`; records in `published_messages` |
 | RunSweeper | Periodically deletes expired `Run` nodes (and their `EXECUTES` edges) older than `retention_days` |
 

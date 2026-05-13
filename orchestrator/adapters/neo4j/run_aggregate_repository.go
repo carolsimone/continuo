@@ -271,6 +271,32 @@ func (r *RunAggregateRepository) Save(ctx context.Context, agg *run.Run) error {
 	return tx.Commit(ctx)
 }
 
+// FinalizeRun stamps terminal_status and completed_at on the :Run node. Invoked
+// from the run.finalized:v1 consumer to project state's authoritative scheduler
+// outcome into Neo4j when the aggregate's internal completion path is not
+// exercised (e.g. full-inherited rebases with no node.updated:v1 traffic).
+func (r *RunAggregateRepository) FinalizeRun(ctx context.Context, runID, terminalStatus string) error {
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+        MATCH (run:Run {run_id: $run_id})
+        SET run.terminal_status = $terminal_status,
+            run.completed_at    = COALESCE(run.completed_at, datetime())
+        RETURN run.run_id AS run_id
+    `, map[string]interface{}{
+		"run_id":          runID,
+		"terminal_status": terminalStatus,
+	})
+	if err != nil {
+		return fmt.Errorf("FinalizeRun: %w", err)
+	}
+	if _, err := result.Consume(ctx); err != nil {
+		return fmt.Errorf("FinalizeRun consume: %w", err)
+	}
+	return nil
+}
+
 // DeleteExpiredRuns removes Run nodes older than retentionDays. Called by the sweeper.
 func (r *RunAggregateRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)

@@ -417,6 +417,18 @@ func main() {
 		logger,
 	)
 
+	// Consumer: run.finalized:v1 — projects state's terminal scheduler outcome
+	// onto Neo4j :Run.completed_at / terminal_status. Covers edge cases where
+	// the aggregate's internal finalization path is not exercised (e.g.
+	// full-inherited rebases that produce no node.updated:v1 traffic).
+	runFinalizedHandler := redis.NewRunFinalizedHandler(runAggRepo, logger)
+	runFinalizedConsumer := redis.NewStreamConsumer(
+		redisClient,
+		cfg.RunFinalizedStream,
+		cfg.RunFinalizedGroup,
+		runFinalizedHandler,
+		logger,
+	)
 
 	// Start all consumers in goroutines
 	go func() {
@@ -458,6 +470,12 @@ func main() {
 	go func() {
 		if err := singleNodeRunConsumer.Start(ctx); err != nil {
 			logger.Error("Single-node-run consumer error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := runFinalizedConsumer.Start(ctx); err != nil {
+			logger.Error("Run finalized consumer error", "error", err)
 		}
 	}()
 
