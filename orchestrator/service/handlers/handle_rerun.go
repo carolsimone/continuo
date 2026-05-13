@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
-	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
@@ -19,13 +18,12 @@ import (
 // selector and the kind/stream labels.
 type HandleRerunHandler struct {
 	uow         uow.UnitOfWork
-	runRepo     run.Repository
 	snapshotSvc SnapshotService
 	logger      *slog.Logger
 }
 
-func NewHandleRerunHandler(u uow.UnitOfWork, runRepo run.Repository, snapshotSvc SnapshotService, logger *slog.Logger) *HandleRerunHandler {
-	return &HandleRerunHandler{uow: u, runRepo: runRepo, snapshotSvc: snapshotSvc, logger: logger}
+func NewHandleRerunHandler(u uow.UnitOfWork, snapshotSvc SnapshotService, logger *slog.Logger) *HandleRerunHandler {
+	return &HandleRerunHandler{uow: u, snapshotSvc: snapshotSvc, logger: logger}
 }
 
 func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunInput, messageID string) error {
