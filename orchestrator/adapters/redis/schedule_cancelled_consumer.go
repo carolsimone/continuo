@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -15,7 +16,7 @@ import (
 func NewScheduleCancelledHandler(
 	repo postgres.CancelledSchedulesRepository,
 	logger *slog.Logger,
-) MessageHandler {
+) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		idStr, _ := msg.Values["schedule_id"].(string)
 		scheduleID, err := uuid.Parse(idStr)

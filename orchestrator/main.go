@@ -26,6 +26,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -215,7 +216,7 @@ func main() {
 	// ========================================================================
 
 	scheduleCancelledHandler := redis.NewScheduleCancelledHandler(cancelledSchedulesRepo, logger)
-	scheduleCancelledConsumer := redis.NewStreamConsumer(
+	scheduleCancelledConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.ScheduleCancelledStream,
 		cfg.ScheduleCancelledGroup,
@@ -263,7 +264,7 @@ func main() {
 		}
 		return handleNodeCompletedHandler.Handle(ctx, cmd, msg.ID)
 	}
-	nodeUpdatedConsumer := redis.NewStreamConsumer(
+	nodeUpdatedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.NodeUpdatedStream,
 		cfg.NodeUpdatedGroup,
@@ -284,7 +285,7 @@ func main() {
 		cmd := domainModel.IngestTopologyInput{Nodes: nodes}
 		return ingestTopologyHandler.Handle(ctx, cmd, msg.ID)
 	}
-	manifestLoadedConsumer := redis.NewStreamConsumer(
+	manifestLoadedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.ManifestLoadedStream,
 		cfg.ManifestLoadedGroup,
@@ -302,7 +303,7 @@ func main() {
 		}
 		return initializeRunHandler.Handle(ctx, cmd, msg.ID)
 	}
-	initRunConsumer := redis.NewStreamConsumer(
+	initRunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.InitializeRunStream,
 		cfg.InitializeRunGroup,
@@ -318,7 +319,7 @@ func main() {
 		}
 		return handleSchedulerStartedHandler.Handle(ctx, evt, msg.ID)
 	}
-	schedulerStartedConsumer := redis.NewStreamConsumer(
+	schedulerStartedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.SchedulerStartedStream,
 		cfg.SchedulerStartedGroup,
@@ -341,7 +342,7 @@ func main() {
 		}
 		return handleRerunHandler.Handle(ctx, cmd, msg.ID)
 	}
-	rerunConsumer := redis.NewStreamConsumer(
+	rerunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RerunStream,
 		cfg.RerunGroup,
@@ -364,7 +365,7 @@ func main() {
 		}
 		return handleRebaseHandler.Handle(ctx, cmd, msg.ID)
 	}
-	rebaseConsumer := redis.NewStreamConsumer(
+	rebaseConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RebaseStream,
 		cfg.RebaseGroup,
@@ -409,7 +410,7 @@ func main() {
 		}
 		return handleSingleNodeRunHandler.Handle(ctx, req, msg.ID)
 	}
-	singleNodeRunConsumer := redis.NewStreamConsumer(
+	singleNodeRunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.SingleNodeRunStream,
 		cfg.SingleNodeRunGroup,
@@ -422,7 +423,7 @@ func main() {
 	// the aggregate's internal finalization path is not exercised (e.g.
 	// full-inherited rebases that produce no node.updated:v1 traffic).
 	runFinalizedHandler := redis.NewRunFinalizedHandler(runAggRepo, logger)
-	runFinalizedConsumer := redis.NewStreamConsumer(
+	runFinalizedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RunFinalizedStream,
 		cfg.RunFinalizedGroup,

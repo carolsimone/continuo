@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -24,7 +25,7 @@ type RunFinalizer interface {
 func NewRunFinalizedHandler(
 	repo RunFinalizer,
 	logger *slog.Logger,
-) MessageHandler {
+) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		scheduleID, _ := msg.Values["schedule_id"].(string)
 		status, _ := msg.Values["status"].(string)

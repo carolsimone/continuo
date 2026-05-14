@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
 	"github.com/carolsimone/continuo/pkg/events"
+	redis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
