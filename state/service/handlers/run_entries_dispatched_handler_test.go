@@ -3,639 +3,590 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
+	"errors"
 	"log/slog"
+	"os"
 	"testing"
-	"time"
 
-	"github.com/carolsimone/continuo/pkg/events"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/database"
+	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/domain/model"
-	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func setupRunEntriesDispatchedTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
-	db, err := database.GetPostgresConnection()
-	if err != nil {
-		t.Skip("no test DB available:", err)
+// fakeDispatchedSchedulerRepo records every *Tx method the handler calls and
+// stubs the rest with a panic so accidental use surfaces immediately.
+type fakeDispatchedSchedulerRepo struct {
+	scheduler *model.SchedulerTracker
+	getErr    error
+
+	setTotalCalls       []int32
+	setTotalErr         error
+	initStatusCalls     []string
+	initStatusErr       error
+	finalizedTo         string
+	finalizeErr         error
+	setTerminalCalls    []int32
+	setTerminalErr      error
+	updateStatusCalls   []string
+	updateStatusErr     error
+}
+
+func (f *fakeDispatchedSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
+	return f.scheduler, f.getErr
+}
+func (f *fakeDispatchedSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, n int32) error {
+	if f.setTotalErr != nil {
+		return f.setTotalErr
 	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	f.setTotalCalls = append(f.setTotalCalls, n)
+	return nil
+}
+func (f *fakeDispatchedSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, status string) error {
+	if f.initStatusErr != nil {
+		return f.initStatusErr
+	}
+	f.initStatusCalls = append(f.initStatusCalls, status)
+	return nil
+}
+func (f *fakeDispatchedSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, status string) error {
+	if f.finalizeErr != nil {
+		return f.finalizeErr
+	}
+	f.finalizedTo = status
+	return nil
+}
+func (f *fakeDispatchedSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, n int32) error {
+	if f.setTerminalErr != nil {
+		return f.setTerminalErr
+	}
+	f.setTerminalCalls = append(f.setTerminalCalls, n)
+	return nil
+}
+func (f *fakeDispatchedSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, status string) error {
+	if f.updateStatusErr != nil {
+		return f.updateStatusErr
+	}
+	f.updateStatusCalls = append(f.updateStatusCalls, status)
+	return nil
 }
 
-func seedSchedulerTracker(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, initStatus string) {
-	t.Helper()
-	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (
-			schedule_id, schedule_name, status, created_at,
-			initialization_status, service_metadata, total_task_count, terminal_task_count
-		) VALUES ($1, $2, $3, $4, $5, $6, NULL, 0)
-	`,
-		scheduleID,
-		"test-schedule-"+scheduleID.String(),
-		string(model.SchedulerStatusPending),
-		time.Now(),
-		initStatus,
-		json.RawMessage(`{}`),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		db.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, scheduleID)
-		db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
-	})
+// Unused methods — panic on accidental use.
+func (f *fakeDispatchedSchedulerRepo) Create(context.Context, *model.SchedulerTracker) error {
+	panic("Create not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) GetByID(context.Context, uuid.UUID) (*model.SchedulerTracker, error) {
+	panic("GetByID not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) Update(context.Context, *model.SchedulerTracker) error {
+	panic("Update not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) Cancel(context.Context, uuid.UUID, string, string) error {
+	panic("Cancel not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) CancelTx(context.Context, *sqlx.Tx, uuid.UUID, string, string) error {
+	panic("CancelTx not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) List(context.Context, postgres.SchedulerFilters) ([]*model.SchedulerTracker, int, error) {
+	panic("List not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) HasActiveSchedule(context.Context, string) (bool, error) {
+	panic("HasActiveSchedule not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) UpdateInitializationStatus(context.Context, uuid.UUID, string) error {
+	panic("UpdateInitializationStatus not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) ResetInProgressInitializations(context.Context) (int, error) {
+	panic("ResetInProgressInitializations not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) GetLastRunPerSchedule(context.Context) (map[string]postgres.LastRunData, error) {
+	panic("GetLastRunPerSchedule not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) GetActiveScheduler(context.Context, string) (*model.SchedulerTracker, error) {
+	panic("GetActiveScheduler not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) UpdateTx(context.Context, *sqlx.Tx, *model.SchedulerTracker) error {
+	panic("UpdateTx not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) CreateTx(context.Context, *sqlx.Tx, *model.SchedulerTracker) error {
+	panic("CreateTx not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) IncrementTerminalCountTx(context.Context, *sqlx.Tx, uuid.UUID) (int32, int32, error) {
+	panic("IncrementTerminalCountTx not implemented in fake")
+}
+func (f *fakeDispatchedSchedulerRepo) DecrementTerminalCountTx(context.Context, *sqlx.Tx, uuid.UUID, int32) error {
+	panic("DecrementTerminalCountTx not implemented in fake")
 }
 
-func buildDispatchedPayload(t *testing.T, scheduleID uuid.UUID, tasks []events.DispatchedTask) string {
-	t.Helper()
+// fakeDispatchedTaskRepo captures the bulk-create call.
+type fakeDispatchedTaskRepo struct {
+	bulkCreated []*model.TaskTracker
+	bulkErr     error
+}
+
+func (f *fakeDispatchedTaskRepo) BulkCreateTx(_ context.Context, _ *sqlx.Tx, tasks []*model.TaskTracker) error {
+	if f.bulkErr != nil {
+		return f.bulkErr
+	}
+	f.bulkCreated = append(f.bulkCreated, tasks...)
+	return nil
+}
+
+// Unused methods — panic on accidental use.
+func (f *fakeDispatchedTaskRepo) Create(context.Context, *model.TaskTracker) error {
+	panic("Create not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) GetByID(context.Context, uuid.UUID) (*model.TaskTracker, error) {
+	panic("GetByID not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) GetByScheduleAndNode(context.Context, uuid.UUID, string, string, string) (*model.TaskTracker, error) {
+	panic("GetByScheduleAndNode not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) Update(context.Context, *model.TaskTracker) error {
+	panic("Update not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) Delete(context.Context, uuid.UUID) error {
+	panic("Delete not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) ListByScheduleID(context.Context, uuid.UUID, *model.TaskStatus, int, int) ([]*model.TaskTracker, int, error) {
+	panic("ListByScheduleID not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) List(context.Context, postgres.TaskFilters) ([]*model.TaskTracker, int, error) {
+	panic("List not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) UpdateTx(context.Context, *sqlx.Tx, *model.TaskTracker) error {
+	panic("UpdateTx not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) ListAllByScheduleID(context.Context, uuid.UUID) ([]*model.TaskTracker, error) {
+	panic("ListAllByScheduleID not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) ResetTasksTx(context.Context, *sqlx.Tx, []uuid.UUID) (int32, error) {
+	panic("ResetTasksTx not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) UpdateStatusIfChangedTx(context.Context, *sqlx.Tx, uuid.UUID, string, int32) (int32, error) {
+	panic("UpdateStatusIfChangedTx not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) ExistsTx(context.Context, *sqlx.Tx, uuid.UUID) (bool, error) {
+	panic("ExistsTx not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) HasFailedTaskTx(context.Context, *sqlx.Tx, uuid.UUID) (bool, error) {
+	panic("HasFailedTaskTx not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) HasRetryableFailedTaskTx(context.Context, *sqlx.Tx, uuid.UUID) (bool, error) {
+	panic("HasRetryableFailedTaskTx not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) HasNonSucceededTask(context.Context, uuid.UUID) (bool, error) {
+	panic("HasNonSucceededTask not implemented in fake")
+}
+func (f *fakeDispatchedTaskRepo) BulkCancelByScheduleIDTx(context.Context, *sqlx.Tx, uuid.UUID, string) (int64, error) {
+	panic("BulkCancelByScheduleIDTx not implemented in fake")
+}
+
+// fakeDispatchedOutboxRepo captures outbox writes.
+type fakeDispatchedOutboxRepo struct {
+	created []*postgres.OutboxEntry
+	err     error
+}
+
+func (f *fakeDispatchedOutboxRepo) Create(_ context.Context, _ *sqlx.Tx, e *postgres.OutboxEntry) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.created = append(f.created, e)
+	return nil
+}
+func (f *fakeDispatchedOutboxRepo) ListPending(context.Context, int) ([]*postgres.OutboxEntry, error) {
+	panic("ListPending not implemented in fake")
+}
+func (f *fakeDispatchedOutboxRepo) MarkPublished(context.Context, uuid.UUID) error {
+	panic("MarkPublished not implemented in fake")
+}
+func (f *fakeDispatchedOutboxRepo) IncrementRetry(context.Context, uuid.UUID) error {
+	panic("IncrementRetry not implemented in fake")
+}
+
+func dispatchedTestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+// newDispatchedUoW assembles a FakeUnitOfWork already in a transaction
+// (Begin called) wired to fresh fakes.
+func newDispatchedUoW(
+	sched *fakeDispatchedSchedulerRepo,
+	task *fakeDispatchedTaskRepo,
+	outbox *fakeDispatchedOutboxRepo,
+) *uow.FakeUnitOfWork {
+	u := &uow.FakeUnitOfWork{Scheduler: sched, Task: task, Outbox: outbox}
+	_ = u.Begin(context.Background())
+	return u
+}
+
+// TestRunEntriesDispatched_PendingTasksTransitionToRunning is the canonical
+// happy path: a projection of all-PENDING tasks bulk-creates rows, sets
+// total_task_count, transitions initialization_status to "completed" and
+// scheduler status to "running". No outbox emission, no terminal-count seeding.
+func TestRunEntriesDispatched_PendingTasksTransitionToRunning(t *testing.T) {
+	scheduleID := uuid.New()
+	sched := &fakeDispatchedSchedulerRepo{
+		scheduler: &model.SchedulerTracker{
+			ScheduleID:   scheduleID,
+			ScheduleName: "happy-path",
+			Status:       model.SchedulerStatusPending,
+		},
+	}
+	taskRepo := &fakeDispatchedTaskRepo{}
+	outboxRepo := &fakeDispatchedOutboxRepo{}
+	u := newDispatchedUoW(sched, taskRepo, outboxRepo)
+
+	t1, t2 := uuid.New(), uuid.New()
 	evt := events.RunEntriesDispatched{
-		ScheduleID:     scheduleID.String(),
-		ScheduleName:   "test-schedule",
-		AllTasks:       tasks,
-		TotalTaskCount: int32(len(tasks)),
-	}
-	b, err := json.Marshal(evt)
-	require.NoError(t, err)
-	return string(b)
-}
-
-func TestRunEntriesDispatchedHandler_BulkCreatesTasksAndTransitionsInitStatus(t *testing.T) {
-	db := setupRunEntriesDispatchedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	scheduleID := uuid.New()
-	seedSchedulerTracker(t, db, scheduleID, "in_progress")
-
-	// clean up processed_events for this test (dedup IDs are deterministic UUIDs derived from messageID)
-	t.Cleanup(func() {
-		db.Exec(`DELETE FROM processed_events`)
-	})
-
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-
-	handler := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-
-	tasks := []events.DispatchedTask{
-		{TaskID: uuid.New().String(), ServiceName: "svc-a", SchemaName: "public", TableName: "orders", NodeType: "model", MaxRetries: 3},
-		{TaskID: uuid.New().String(), ServiceName: "svc-b", SchemaName: "raw", TableName: "events", NodeType: "model", MaxRetries: 2},
-	}
-	payload := buildDispatchedPayload(t, scheduleID, tasks)
-	messageID := scheduleID.String() + "-test-bulk"
-
-	shouldACK, err := handler.Handle(context.Background(), messageID, payload)
-	require.NoError(t, err)
-	assert.True(t, shouldACK)
-
-	// Assert task rows created
-	created, err := taskRepo.ListAllByScheduleID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	assert.Len(t, created, 2)
-
-	// Assert scheduler_tracker updated
-	tracker, err := schedulerRepo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, "completed", tracker.InitializationStatus)
-	assert.Equal(t, model.SchedulerStatusRunning, tracker.Status)
-	assert.True(t, tracker.TotalTaskCount.Valid)
-	assert.Equal(t, int32(2), tracker.TotalTaskCount.Int32)
-}
-
-func TestRunEntriesDispatchedHandler_Idempotent(t *testing.T) {
-	db := setupRunEntriesDispatchedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	scheduleID := uuid.New()
-	seedSchedulerTracker(t, db, scheduleID, "in_progress")
-
-	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
-
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-
-	handler := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-
-	taskID := uuid.New().String()
-	tasks := []events.DispatchedTask{
-		{TaskID: taskID, ServiceName: "svc-a", SchemaName: "public", TableName: "orders", NodeType: "model", MaxRetries: 3},
-	}
-	payload := buildDispatchedPayload(t, scheduleID, tasks)
-	messageID := scheduleID.String() + "-test-idem"
-
-	// First call
-	shouldACK, err := handler.Handle(context.Background(), messageID, payload)
-	require.NoError(t, err)
-	assert.True(t, shouldACK)
-
-	// Second call — same message ID, should be a no-op
-	// Reset status so UpdateStatusTx won't fail if scheduler is already RUNNING
-	// (the handler is idempotent because it exits after dedup check)
-	shouldACK, err = handler.Handle(context.Background(), messageID, payload)
-	require.NoError(t, err)
-	assert.True(t, shouldACK)
-
-	// Assert still only 1 task row
-	created, listErr := taskRepo.ListAllByScheduleID(context.Background(), scheduleID)
-	require.NoError(t, listErr)
-	assert.Len(t, created, 1, "duplicate message should not create extra task rows")
-
-	// processed_events deduplication: exactly one entry for this message (keyed on derived UUID)
-	dedupID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("run.entries.dispatched:"+messageID))
-	var count int
-	require.NoError(t, db.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM processed_events WHERE event_id = $1`, dedupID,
-	).Scan(&count))
-	assert.Equal(t, 1, count, "processed_events should have exactly one entry")
-
-	// The TotalTaskCount.Valid check
-	tracker, err := schedulerRepo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	assert.True(t, tracker.TotalTaskCount.Valid)
-	assert.Equal(t, int32(1), tracker.TotalTaskCount.Int32)
-}
-
-func TestRunEntriesDispatchedHandler_PersistsManifestVersionPerTask(t *testing.T) {
-	db := setupRunEntriesDispatchedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	scheduleID := uuid.New()
-	seedSchedulerTracker(t, db, scheduleID, "in_progress")
-	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
-
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	handler := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-
-	taskID := uuid.New()
-	tasks := []events.DispatchedTask{
-		{
-			TaskID:          taskID.String(),
-			ServiceName:     "svc-a",
-			SchemaName:      "public",
-			TableName:       "users",
-			NodeType:        "dbt-model",
-			MaxRetries:      3,
-			ManifestVersion: "v7",
-			ImageTag:        "abc123-1714300000",
-		},
-	}
-	payload := buildDispatchedPayload(t, scheduleID, tasks)
-
-	shouldACK, err := handler.Handle(context.Background(), scheduleID.String()+"-manifest-test", payload)
-	require.NoError(t, err)
-	assert.True(t, shouldACK)
-
-	created, err := taskRepo.ListAllByScheduleID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	require.Len(t, created, 1)
-	assert.Equal(t, "v7", created[0].ManifestVersion, "manifest_version must be persisted from the event payload")
-	assert.Equal(t, "abc123-1714300000", created[0].ImageTag, "image_tag must be persisted from the event payload")
-}
-
-func TestRunEntriesDispatchedHandler_NoopWhenSchedulerCancelled(t *testing.T) {
-	db := setupRunEntriesDispatchedTestDB(t)
-	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	ctx := context.Background()
-
-	// Create a scheduler, then move its status to 'cancelled' directly.
-	schedID := uuid.New()
-	seedSchedulerTracker(t, db, schedID, "completed")
-	_, err := db.ExecContext(ctx, `UPDATE scheduler_tracker SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = 'test' WHERE schedule_id = $1`, schedID)
-	require.NoError(t, err)
-
-	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
-
-	outboxRepo := postgres.NewOutboxRepository(db, discardLogger())
-	h := statehandlers.NewRunEntriesDispatchedHandler(db, schedRepo, taskRepo, outboxRepo, discardLogger())
-
-	payload, _ := json.Marshal(events.RunEntriesDispatched{
-		ScheduleID:   schedID.String(),
-		ScheduleName: "test-schedule",
-		AllTasks: []events.DispatchedTask{
-			{TaskID: uuid.New().String(), ServiceName: "svc", SchemaName: "sc", TableName: "t", MaxRetries: 0},
-		},
-		TotalTaskCount: 1,
-	})
-	ack, err := h.Handle(ctx, "msg-noop-cancelled-1", string(payload))
-
-	require.NoError(t, err)
-	assert.True(t, ack, "should ACK (no-op) when scheduler already cancelled")
-
-	// Scheduler status must remain 'cancelled', not revert to 'running'.
-	got, err := schedRepo.GetByID(ctx, schedID)
-	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusCancelled, got.Status)
-}
-
-// TestRunEntriesDispatched_PR2_PerTaskStatus verifies that the handler honors
-// the per-task Status and InheritedFromTaskID fields introduced by PR2 (rebase
-// from failed). A mixed-status payload (one rebased + one inherited-succeeded)
-// must produce task_tracker rows that mirror the wire-format values verbatim.
-func TestRunEntriesDispatched_PR2_PerTaskStatus(t *testing.T) {
-	db := setupRunEntriesDispatchedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	h := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-
-	scheduleID := uuid.New()
-	seedSchedulerTracker(t, db, scheduleID, "in_progress")
-	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
-
-	rootTaskID := uuid.New()
-	rebasedTaskID := uuid.New()
-	inheritedTaskID := uuid.New()
-
-	evt := events.RunEntriesDispatched{
-		ScheduleID:   scheduleID.String(),
-		ScheduleName: "rebase-test",
-		AllTasks: []events.DispatchedTask{
-			{
-				TaskID: rebasedTaskID.String(), ServiceName: "svc", SchemaName: "s", TableName: "rebased",
-				NodeType: "dbt-model", MaxRetries: 2, ManifestVersion: "v2", ImageTag: "img:2",
-				Status: "pending",
-			},
-			{
-				TaskID: inheritedTaskID.String(), ServiceName: "svc", SchemaName: "s", TableName: "inherited",
-				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
-				Status: "succeeded", InheritedFromTaskID: rootTaskID.String(),
-			},
-		},
+		ScheduleID:     scheduleID,
 		TotalTaskCount: 2,
+		AllTasks: []events.RunEntriesDispatchedTask{
+			{TaskID: t1, ServiceName: "svc-a", SchemaName: "public", TableName: "orders", Status: model.TaskStatusPending, MaxRetries: 3},
+			{TaskID: t2, ServiceName: "svc-b", SchemaName: "raw", TableName: "events", Status: model.TaskStatusPending, MaxRetries: 2},
+		},
 	}
-	payload, err := json.Marshal(evt)
-	require.NoError(t, err)
 
-	ack, err := h.Handle(context.Background(), "msg-perTaskStatus-"+uuid.New().String(), string(payload))
-	require.NoError(t, err)
-	require.True(t, ack)
+	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
 
-	rebased, err := taskRepo.GetByID(context.Background(), rebasedTaskID)
-	require.NoError(t, err)
+	require.Len(t, taskRepo.bulkCreated, 2, "BulkCreateTx must receive both tasks")
+	for _, tt := range taskRepo.bulkCreated {
+		assert.Equal(t, scheduleID, tt.ScheduleID)
+		assert.NotEmpty(t, tt.JobName, "job_name must be computed")
+	}
+	require.Equal(t, []int32{2}, sched.setTotalCalls)
+	require.Equal(t, []string{"completed"}, sched.initStatusCalls)
+	require.Equal(t, []string{string(model.SchedulerStatusRunning)}, sched.updateStatusCalls)
+	assert.Empty(t, sched.setTerminalCalls, "no terminal tasks → terminal_task_count not seeded")
+	assert.Empty(t, sched.finalizedTo, "pending tasks → no auto-rollup")
+	assert.Empty(t, outboxRepo.created, "pending tasks → no run.finalized outbox")
+}
+
+// TestRunEntriesDispatched_PreservesPerTaskFields verifies that every wire
+// field (Status, ManifestVersion, ImageTag, MaxRetries, InheritedFromTaskID)
+// flows through to the TaskTracker row passed to BulkCreateTx.
+func TestRunEntriesDispatched_PreservesPerTaskFields(t *testing.T) {
+	scheduleID := uuid.New()
+	sched := &fakeDispatchedSchedulerRepo{
+		scheduler: &model.SchedulerTracker{
+			ScheduleID: scheduleID, ScheduleName: "fields", Status: model.SchedulerStatusPending,
+		},
+	}
+	taskRepo := &fakeDispatchedTaskRepo{}
+	outboxRepo := &fakeDispatchedOutboxRepo{}
+	u := newDispatchedUoW(sched, taskRepo, outboxRepo)
+
+	rebasedID := uuid.New()
+	inheritedID := uuid.New()
+	rootID := uuid.New()
+	evt := events.RunEntriesDispatched{
+		ScheduleID:     scheduleID,
+		TotalTaskCount: 2,
+		AllTasks: []events.RunEntriesDispatchedTask{
+			{
+				TaskID: rebasedID, ServiceName: "svc", SchemaName: "s", TableName: "rebased",
+				Status: model.TaskStatusPending, MaxRetries: 2,
+				ManifestVersion: "v2", ImageTag: "img:2",
+			},
+			{
+				TaskID: inheritedID, ServiceName: "svc", SchemaName: "s", TableName: "inherited",
+				Status: model.TaskStatusSucceeded, MaxRetries: 0,
+				ManifestVersion: "v1", ImageTag: "img:1",
+				InheritedFromTaskID: &rootID,
+			},
+		},
+	}
+
+	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+
+	require.Len(t, taskRepo.bulkCreated, 2)
+	byID := map[uuid.UUID]*model.TaskTracker{}
+	for _, tt := range taskRepo.bulkCreated {
+		byID[tt.TaskID] = tt
+	}
+	rebased := byID[rebasedID]
+	require.NotNil(t, rebased)
 	assert.Equal(t, model.TaskStatusPending, rebased.Status)
+	assert.Equal(t, "v2", rebased.ManifestVersion)
+	assert.Equal(t, "img:2", rebased.ImageTag)
+	assert.Equal(t, 2, rebased.MaxRetries)
 	assert.Nil(t, rebased.InheritedFromTaskID)
 
-	inherited, err := taskRepo.GetByID(context.Background(), inheritedTaskID)
-	require.NoError(t, err)
+	inherited := byID[inheritedID]
+	require.NotNil(t, inherited)
 	assert.Equal(t, model.TaskStatusSucceeded, inherited.Status)
+	assert.Equal(t, "v1", inherited.ManifestVersion)
+	assert.Equal(t, "img:1", inherited.ImageTag)
 	require.NotNil(t, inherited.InheritedFromTaskID)
-	assert.Equal(t, rootTaskID, *inherited.InheritedFromTaskID)
+	assert.Equal(t, rootID, *inherited.InheritedFromTaskID)
 }
 
-// TestRunEntriesDispatched_PR2_BackwardCompatDefaultsPending verifies that a
-// pre-PR2 producer (one that omits Status from the JSON payload) still
-// produces task_tracker rows in 'pending' state — never the empty string,
-// never an invalid zero-value.
-func TestRunEntriesDispatched_PR2_BackwardCompatDefaultsPending(t *testing.T) {
-	db := setupRunEntriesDispatchedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	h := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-
-	scheduleID := uuid.New()
-	seedSchedulerTracker(t, db, scheduleID, "in_progress")
-	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
-
-	taskID := uuid.New()
-	// Pre-PR2 producer: omit Status entirely from JSON.
-	payload := fmt.Sprintf(`{"schedule_id":%q,"schedule_name":"cron-test","total_task_count":1,"all_tasks":[{"task_id":%q,"service_name":"svc","schema_name":"s","table_name":"x","node_type":"dbt-model","max_retries":2,"manifest_version":"v1","image_tag":"img:1"}]}`,
-		scheduleID.String(), taskID.String())
-
-	ack, err := h.Handle(context.Background(), "msg-bc-"+uuid.New().String(), payload)
-	require.NoError(t, err)
-	require.True(t, ack)
-
-	got, err := taskRepo.GetByID(context.Background(), taskID)
-	require.NoError(t, err)
-	assert.Equal(t, model.TaskStatusPending, got.Status, "missing Status must default to pending")
-	assert.Nil(t, got.InheritedFromTaskID)
-}
-
-// newTestHandlerWithRepos builds a fresh handler with real Postgres-backed
-// repos for tests that need to assert post-handle scheduler/task state.
-func newTestHandlerWithRepos(t *testing.T) (*statehandlers.RunEntriesDispatchedHandler, *sqlx.DB, postgres.SchedulerTrackerRepository, postgres.TaskTrackerRepository, postgres.OutboxRepository) {
-	t.Helper()
-	db := setupRunEntriesDispatchedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	h := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
-	return h, db, schedulerRepo, taskRepo, outboxRepo
-}
-
-// seedSchedulerWithKind inserts a scheduler_tracker row with explicit kind
-// (cron / trigger / rerun / rebase / single_node_run) and returns its id.
-func seedSchedulerWithKind(t *testing.T, db *sqlx.DB, name, kind string) uuid.UUID {
-	t.Helper()
-	id := uuid.New()
-	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (
-			schedule_id, schedule_name, status, created_at,
-			initialization_status, service_metadata, total_task_count, terminal_task_count, kind
-		) VALUES ($1, $2, $3, $4, $5, $6, NULL, 0, $7)
-	`,
-		id,
-		name,
-		string(model.SchedulerStatusPending),
-		time.Now(),
-		"in_progress",
-		json.RawMessage(`{}`),
-		kind,
-	)
-	require.NoError(t, err)
-	return id
-}
-
-// TestRunEntriesDispatched_PR2_AllSucceededAutoRollup verifies that when every
-// projected task arrives in a terminal-succeeded state (the rebase-of-only-
-// inherited-tasks edge case), the scheduler is auto-rolled-up to SUCCEEDED
-// with completed_at set, rather than being routed through RUNNING.
-func TestRunEntriesDispatched_PR2_AllSucceededAutoRollup(t *testing.T) {
-	h, db, schedulerRepo, _, _ := newTestHandlerWithRepos(t)
-	scheduleID := seedSchedulerWithKind(t, db, "rebase-rollup-"+uuid.New().String()[:8], "rebase")
-	t.Cleanup(func() {
-		db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
-		db.ExecContext(context.Background(), "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
-		db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
-	})
-
-	root1 := uuid.New()
-	root2 := uuid.New()
-	t1 := uuid.New()
-	t2 := uuid.New()
-
-	evt := events.RunEntriesDispatched{
-		ScheduleID:   scheduleID.String(),
-		ScheduleName: "rebase-rollup",
-		AllTasks: []events.DispatchedTask{
-			{TaskID: t1.String(), ServiceName: "svc", SchemaName: "s", TableName: "a",
-				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
-				Status: "succeeded", InheritedFromTaskID: root1.String()},
-			{TaskID: t2.String(), ServiceName: "svc", SchemaName: "s", TableName: "b",
-				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
-				Status: "succeeded", InheritedFromTaskID: root2.String()},
-		},
-		TotalTaskCount: 2,
-	}
-	payload, err := json.Marshal(evt)
-	require.NoError(t, err)
-
-	ack, err := h.Handle(context.Background(), "msg-rollup-"+uuid.New().String(), string(payload))
-	require.NoError(t, err)
-	require.True(t, ack)
-
-	scheduler, err := schedulerRepo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusSucceeded, scheduler.Status, "all-succeeded projection should auto-rollup to SUCCEEDED")
-	require.NotNil(t, scheduler.CompletedAt, "auto-rollup must set CompletedAt")
-}
-
-// TestRunEntriesDispatched_PR2_MixedPendingDoesNotRollup verifies that a
-// projection containing at least one PENDING task continues to route through
-// RUNNING (no auto-rollup, no completed_at) — preserving cron, trigger, rerun
-// and partial-rebase semantics.
-func TestRunEntriesDispatched_PR2_MixedPendingDoesNotRollup(t *testing.T) {
-	h, db, schedulerRepo, _, _ := newTestHandlerWithRepos(t)
-	scheduleID := seedSchedulerWithKind(t, db, "rebase-mixed-"+uuid.New().String()[:8], "rebase")
-	t.Cleanup(func() {
-		db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
-		db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
-	})
-
-	t1 := uuid.New()
-	t2 := uuid.New()
-	root := uuid.New()
-	evt := events.RunEntriesDispatched{
-		ScheduleID:   scheduleID.String(),
-		ScheduleName: "rebase-mixed",
-		AllTasks: []events.DispatchedTask{
-			{TaskID: t1.String(), ServiceName: "svc", SchemaName: "s", TableName: "rebased",
-				NodeType: "dbt-model", MaxRetries: 2, ManifestVersion: "v2", ImageTag: "img:2",
-				Status: "pending"},
-			{TaskID: t2.String(), ServiceName: "svc", SchemaName: "s", TableName: "inherited",
-				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
-				Status: "succeeded", InheritedFromTaskID: root.String()},
-		},
-		TotalTaskCount: 2,
-	}
-	payload, err := json.Marshal(evt)
-	require.NoError(t, err)
-
-	ack, err := h.Handle(context.Background(), "msg-mixed-rollup-"+uuid.New().String(), string(payload))
-	require.NoError(t, err)
-	require.True(t, ack)
-
-	scheduler, err := schedulerRepo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusRunning, scheduler.Status, "mixed projection (>=1 PENDING) should still go to RUNNING")
-	assert.Nil(t, scheduler.CompletedAt, "RUNNING transition must NOT set CompletedAt")
-}
-
-// TestRunEntriesDispatched_SeedsTerminalCountForInheritedTasks asserts that
-// when a mixed projection (one PENDING + N SUCCEEDED inherits) is dispatched,
-// scheduler_tracker.terminal_task_count is seeded with N — so that when the
-// remaining PENDING task transitions to terminal via task.status.updated:v1,
-// terminal_task_count == total_task_count and the run finalizes normally.
-func TestRunEntriesDispatched_SeedsTerminalCountForInheritedTasks(t *testing.T) {
-	h, db, schedulerRepo, _, _ := newTestHandlerWithRepos(t)
-	scheduleID := seedSchedulerWithKind(t, db, "rebase-seedterm-"+uuid.New().String()[:8], "rebase")
-	t.Cleanup(func() {
-		db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
-		db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
-	})
-
-	pending := uuid.New()
-	inherit1 := uuid.New()
-	inherit2 := uuid.New()
-	root1 := uuid.New()
-	root2 := uuid.New()
-
-	evt := events.RunEntriesDispatched{
-		ScheduleID:   scheduleID.String(),
-		ScheduleName: "rebase-seedterm",
-		AllTasks: []events.DispatchedTask{
-			{TaskID: pending.String(), ServiceName: "svc", SchemaName: "s", TableName: "rebased",
-				NodeType: "dbt-model", MaxRetries: 2, ManifestVersion: "v2", ImageTag: "img:2",
-				Status: "pending"},
-			{TaskID: inherit1.String(), ServiceName: "svc", SchemaName: "s", TableName: "ok1",
-				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
-				Status: "succeeded", InheritedFromTaskID: root1.String()},
-			{TaskID: inherit2.String(), ServiceName: "svc", SchemaName: "s", TableName: "ok2",
-				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
-				Status: "succeeded", InheritedFromTaskID: root2.String()},
-		},
-		TotalTaskCount: 3,
-	}
-	payload, err := json.Marshal(evt)
-	require.NoError(t, err)
-
-	ack, err := h.Handle(context.Background(), "msg-seedterm-"+uuid.New().String(), string(payload))
-	require.NoError(t, err)
-	require.True(t, ack)
-
-	tracker, err := schedulerRepo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusRunning, tracker.Status,
-		"mixed pending+terminal must still go to RUNNING")
-	assert.True(t, tracker.TotalTaskCount.Valid)
-	assert.Equal(t, int32(3), tracker.TotalTaskCount.Int32)
-	assert.Equal(t, int32(2), tracker.TerminalTaskCount,
-		"terminal_task_count must be seeded with the count of pre-terminal task rows")
-}
-
-// TestRunEntriesDispatched_AutoRollupEmitsRunFinalized asserts that when the
-// auto-rollup branch fires (every dispatched task is already terminal), the
-// handler writes a run.finalized:v1 outbox row in the same tx — without it,
-// orchestrator never finalizes the Neo4j :Run and the run stays "active".
-func TestRunEntriesDispatched_AutoRollupEmitsRunFinalized(t *testing.T) {
-	db := setupRunEntriesDispatchedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	h := statehandlers.NewRunEntriesDispatchedHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-
-	scheduleID := seedSchedulerWithKind(t, db, "rebase-rollup-emit-"+uuid.New().String()[:8], "rebase")
-	t.Cleanup(func() {
-		ctx := context.Background()
-		db.ExecContext(ctx, "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
-		db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
-		db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
-		db.Exec(`DELETE FROM processed_events`)
-	})
-
-	t1 := uuid.New()
-	t2 := uuid.New()
-	root1 := uuid.New()
-	root2 := uuid.New()
-	evt := events.RunEntriesDispatched{
-		ScheduleID:   scheduleID.String(),
-		ScheduleName: "rebase-rollup-emit",
-		AllTasks: []events.DispatchedTask{
-			{TaskID: t1.String(), ServiceName: "svc", SchemaName: "s", TableName: "a",
-				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
-				Status: "succeeded", InheritedFromTaskID: root1.String()},
-			{TaskID: t2.String(), ServiceName: "svc", SchemaName: "s", TableName: "b",
-				NodeType: "dbt-model", MaxRetries: 0, ManifestVersion: "v1", ImageTag: "img:1",
-				Status: "succeeded", InheritedFromTaskID: root2.String()},
-		},
-		TotalTaskCount: 2,
-	}
-	payload, err := json.Marshal(evt)
-	require.NoError(t, err)
-
-	ack, err := h.Handle(context.Background(), "msg-rollup-emit-"+uuid.New().String(), string(payload))
-	require.NoError(t, err)
-	require.True(t, ack)
-
-	// Assert run.finalized:v1 outbox row was written.
-	var count int
-	require.NoError(t, db.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM state_outbox
-		 WHERE aggregate_id = $1 AND stream_name = 'run.finalized:v1'`,
-		scheduleID,
-	).Scan(&count))
-	assert.Equal(t, 1, count, "auto-rollup must emit exactly one run.finalized:v1")
-
-	// Assert the payload reflects the terminal status.
-	var rawPayload []byte
-	require.NoError(t, db.QueryRowContext(context.Background(),
-		`SELECT payload FROM state_outbox
-		 WHERE aggregate_id = $1 AND stream_name = 'run.finalized:v1'`,
-		scheduleID,
-	).Scan(&rawPayload))
-	var fin events.RunFinalized
-	require.NoError(t, json.Unmarshal(rawPayload, &fin))
-	assert.Equal(t, scheduleID.String(), fin.ScheduleID)
-	assert.Equal(t, "succeeded", fin.Status)
-
-	// Fold-in from T3 review: rollup must also seed terminal_task_count.
-	tracker, err := schedulerRepo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, int32(2), tracker.TerminalTaskCount,
-		"auto-rollup must seed terminal_task_count")
-}
-
-// TestRunEntriesDispatchedHandler_NoopWhenSchedulerTerminal verifies that a
-// second delivery of run.entries.dispatched (different Redis message ID,
-// bypassing processed_events dedup) is silently dropped when the scheduler is
-// already in a terminal state (failed or succeeded). Without this guard the
-// duplicate would call SetTerminalTaskCountTx and overwrite an already-correct
-// terminal_task_count, causing terminal_task_count < total_task_count and
-// preventing the run from ever being considered fully finalized.
-func TestRunEntriesDispatchedHandler_NoopWhenSchedulerTerminal(t *testing.T) {
-	for _, terminalStatus := range []model.SchedulerStatus{
-		model.SchedulerStatusFailed,
+// TestRunEntriesDispatched_NoopWhenSchedulerTerminal verifies that a duplicate
+// delivery (or a late dispatch after cancel/finalize) against a scheduler
+// already in any terminal state is a complete no-op: no bulk-create, no
+// terminal-count overwrite, no finalize, no outbox.
+func TestRunEntriesDispatched_NoopWhenSchedulerTerminal(t *testing.T) {
+	for _, status := range []model.SchedulerStatus{
 		model.SchedulerStatusSucceeded,
+		model.SchedulerStatusFailed,
+		model.SchedulerStatusCancelled,
 	} {
-		terminalStatus := terminalStatus
-		t.Run(string(terminalStatus), func(t *testing.T) {
-			h, db, schedulerRepo, taskRepo, _ := newTestHandlerWithRepos(t)
-			schedID := uuid.New()
-			seedSchedulerTracker(t, db, schedID, "completed")
-
-			// Advance scheduler to terminal status.
-			_, err := db.ExecContext(context.Background(),
-				`UPDATE scheduler_tracker
-				    SET status = $2,
-				        terminal_task_count = 8,
-				        total_task_count = 8,
-				        completed_at = NOW()
-				  WHERE schedule_id = $1`, schedID, string(terminalStatus))
-			require.NoError(t, err)
-
-			t.Cleanup(func() {
-				db.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, schedID)
-				db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, schedID)
-			})
-
-			// Simulate a duplicate delivery with a DIFFERENT message ID (bypasses dedup).
-			evt := events.RunEntriesDispatched{
-				ScheduleID:   schedID.String(),
-				ScheduleName: "terminal-guard-test",
-				AllTasks: []events.DispatchedTask{
-					{TaskID: uuid.New().String(), ServiceName: "svc", SchemaName: "s", TableName: "t",
-						NodeType: "dbt-model", MaxRetries: 0, Status: "succeeded"},
-					{TaskID: uuid.New().String(), ServiceName: "svc", SchemaName: "s", TableName: "u",
-						NodeType: "dbt-model", MaxRetries: 0, Status: "succeeded"},
+		t.Run(string(status), func(t *testing.T) {
+			scheduleID := uuid.New()
+			sched := &fakeDispatchedSchedulerRepo{
+				scheduler: &model.SchedulerTracker{
+					ScheduleID: scheduleID, ScheduleName: "terminal-guard", Status: status,
 				},
-				TotalTaskCount: 2,
 			}
-			payload, marshalErr := json.Marshal(evt)
-			require.NoError(t, marshalErr)
+			taskRepo := &fakeDispatchedTaskRepo{}
+			outboxRepo := &fakeDispatchedOutboxRepo{}
+			u := newDispatchedUoW(sched, taskRepo, outboxRepo)
 
-			ack, err := h.Handle(context.Background(), "duplicate-msg-"+uuid.New().String(), string(payload))
-			require.NoError(t, err)
-			assert.True(t, ack, "duplicate after terminal should ACK (no-op)")
+			evt := events.RunEntriesDispatched{
+				ScheduleID:     scheduleID,
+				TotalTaskCount: 1,
+				AllTasks: []events.RunEntriesDispatchedTask{
+					{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "t", Status: model.TaskStatusSucceeded},
+				},
+			}
 
-			// terminal_task_count must remain 8 — the duplicate must not overwrite it.
-			got, err := schedulerRepo.GetByID(context.Background(), schedID)
-			require.NoError(t, err)
-			assert.Equal(t, terminalStatus, got.Status, "status must remain %s", terminalStatus)
-			assert.Equal(t, int32(8), got.TerminalTaskCount,
-				"terminal_task_count must not be overwritten by duplicate delivery")
+			h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+			require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
 
-			// No new task rows should have been created.
-			tasks, err := taskRepo.ListAllByScheduleID(context.Background(), schedID)
-			require.NoError(t, err)
-			assert.Empty(t, tasks, "duplicate delivery must not insert task rows")
+			assert.Empty(t, taskRepo.bulkCreated, "terminal scheduler → no task rows created")
+			assert.Empty(t, sched.setTotalCalls, "terminal scheduler → no total_task_count update")
+			assert.Empty(t, sched.initStatusCalls)
+			assert.Empty(t, sched.setTerminalCalls, "terminal scheduler → terminal_task_count must NOT be overwritten")
+			assert.Empty(t, sched.finalizedTo)
+			assert.Empty(t, sched.updateStatusCalls)
+			assert.Empty(t, outboxRepo.created)
 		})
 	}
+}
+
+// TestRunEntriesDispatched_AllSucceededAutoRollup verifies that when every
+// projected task arrives in terminal-succeeded state, the scheduler is
+// auto-rolled-up to SUCCEEDED, terminal_task_count is seeded, and a
+// run.finalized:v1 outbox entry is written with status="succeeded" and
+// MessageProcessingID set.
+func TestRunEntriesDispatched_AllSucceededAutoRollup(t *testing.T) {
+	scheduleID := uuid.New()
+	msgProcID := uuid.New()
+	sched := &fakeDispatchedSchedulerRepo{
+		scheduler: &model.SchedulerTracker{
+			ScheduleID: scheduleID, ScheduleName: "rebase-rollup",
+			Status: model.SchedulerStatusPending,
+		},
+	}
+	taskRepo := &fakeDispatchedTaskRepo{}
+	outboxRepo := &fakeDispatchedOutboxRepo{}
+	u := newDispatchedUoW(sched, taskRepo, outboxRepo)
+
+	root1, root2 := uuid.New(), uuid.New()
+	evt := events.RunEntriesDispatched{
+		ScheduleID:     scheduleID,
+		TotalTaskCount: 2,
+		AllTasks: []events.RunEntriesDispatchedTask{
+			{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "a",
+				Status: model.TaskStatusSucceeded, InheritedFromTaskID: &root1},
+			{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "b",
+				Status: model.TaskStatusSucceeded, InheritedFromTaskID: &root2},
+		},
+	}
+
+	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, msgProcID))
+
+	assert.Equal(t, string(model.SchedulerStatusSucceeded), sched.finalizedTo,
+		"all-succeeded projection must auto-rollup to SUCCEEDED")
+	require.Equal(t, []int32{2}, sched.setTerminalCalls,
+		"auto-rollup must seed terminal_task_count with the terminal row count")
+	assert.Empty(t, sched.updateStatusCalls,
+		"auto-rollup must NOT route through UpdateStatusTx(running)")
+
+	require.Len(t, outboxRepo.created, 1, "auto-rollup must emit exactly one run.finalized:v1")
+	entry := outboxRepo.created[0]
+	assert.Equal(t, "run.finalized:v1", entry.EventType)
+	assert.Equal(t, "run.finalized:v1", entry.StreamName)
+	assert.Equal(t, "scheduler_tracker", entry.AggregateType)
+	assert.Equal(t, scheduleID, entry.AggregateID)
+	assert.Equal(t, "pending", entry.Status)
+	require.NotNil(t, entry.MessageProcessingID)
+	assert.Equal(t, msgProcID, *entry.MessageProcessingID)
+
+	var fin pkgevents.RunFinalized
+	require.NoError(t, json.Unmarshal(entry.Payload, &fin))
+	assert.Equal(t, scheduleID.String(), fin.ScheduleID)
+	assert.Equal(t, "rebase-rollup", fin.ScheduleName)
+	assert.Equal(t, "succeeded", fin.Status)
+}
+
+// TestRunEntriesDispatched_MixedTerminalAutoRollupAsFailed verifies that when
+// every task is terminal but at least one is not "succeeded", the run rolls up
+// to FAILED (conservative classification) and the outbox payload reflects it.
+func TestRunEntriesDispatched_MixedTerminalAutoRollupAsFailed(t *testing.T) {
+	scheduleID := uuid.New()
+	sched := &fakeDispatchedSchedulerRepo{
+		scheduler: &model.SchedulerTracker{
+			ScheduleID: scheduleID, ScheduleName: "mixed-terminal",
+			Status: model.SchedulerStatusPending,
+		},
+	}
+	taskRepo := &fakeDispatchedTaskRepo{}
+	outboxRepo := &fakeDispatchedOutboxRepo{}
+	u := newDispatchedUoW(sched, taskRepo, outboxRepo)
+
+	evt := events.RunEntriesDispatched{
+		ScheduleID:     scheduleID,
+		TotalTaskCount: 2,
+		AllTasks: []events.RunEntriesDispatchedTask{
+			{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "a", Status: model.TaskStatusSucceeded},
+			{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "b", Status: model.TaskStatusFailed},
+		},
+	}
+
+	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+
+	assert.Equal(t, string(model.SchedulerStatusFailed), sched.finalizedTo,
+		"mixed terminal (one failed) must roll up to FAILED")
+	require.Equal(t, []int32{2}, sched.setTerminalCalls)
+	assert.Empty(t, sched.updateStatusCalls)
+
+	require.Len(t, outboxRepo.created, 1)
+	var fin pkgevents.RunFinalized
+	require.NoError(t, json.Unmarshal(outboxRepo.created[0].Payload, &fin))
+	assert.Equal(t, "failed", fin.Status)
+}
+
+// TestRunEntriesDispatched_MixedPendingAndTerminalSeedsCount verifies that a
+// projection with at least one PENDING task does NOT auto-rollup, but the
+// inherited terminal rows are accounted for via SetTerminalTaskCountTx so the
+// remaining pending tasks can finalize the run later. Status still moves to
+// RUNNING; no outbox emission.
+func TestRunEntriesDispatched_MixedPendingAndTerminalSeedsCount(t *testing.T) {
+	scheduleID := uuid.New()
+	sched := &fakeDispatchedSchedulerRepo{
+		scheduler: &model.SchedulerTracker{
+			ScheduleID: scheduleID, ScheduleName: "rebase-mixed",
+			Status: model.SchedulerStatusPending,
+		},
+	}
+	taskRepo := &fakeDispatchedTaskRepo{}
+	outboxRepo := &fakeDispatchedOutboxRepo{}
+	u := newDispatchedUoW(sched, taskRepo, outboxRepo)
+
+	root1, root2 := uuid.New(), uuid.New()
+	evt := events.RunEntriesDispatched{
+		ScheduleID:     scheduleID,
+		TotalTaskCount: 3,
+		AllTasks: []events.RunEntriesDispatchedTask{
+			{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "rebased",
+				Status: model.TaskStatusPending, MaxRetries: 2},
+			{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "ok1",
+				Status: model.TaskStatusSucceeded, InheritedFromTaskID: &root1},
+			{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "ok2",
+				Status: model.TaskStatusSucceeded, InheritedFromTaskID: &root2},
+		},
+	}
+
+	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+
+	require.Equal(t, []int32{3}, sched.setTotalCalls)
+	require.Equal(t, []int32{2}, sched.setTerminalCalls,
+		"mixed pending+terminal must seed terminal_task_count with the count of terminal rows")
+	require.Equal(t, []string{string(model.SchedulerStatusRunning)}, sched.updateStatusCalls)
+	assert.Empty(t, sched.finalizedTo, "any PENDING must keep the run in RUNNING")
+	assert.Empty(t, outboxRepo.created, "no rollup → no run.finalized outbox")
+}
+
+// TestRunEntriesDispatched_GetByIDErrorPropagates verifies that a scheduler
+// lookup failure short-circuits the handler before any mutation.
+func TestRunEntriesDispatched_GetByIDErrorPropagates(t *testing.T) {
+	sched := &fakeDispatchedSchedulerRepo{getErr: errors.New("row lock failed")}
+	taskRepo := &fakeDispatchedTaskRepo{}
+	outboxRepo := &fakeDispatchedOutboxRepo{}
+	u := newDispatchedUoW(sched, taskRepo, outboxRepo)
+
+	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+	err := h.Handle(context.Background(), u, events.RunEntriesDispatched{
+		ScheduleID:     uuid.New(),
+		TotalTaskCount: 0,
+	}, uuid.New())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lock scheduler row")
+	assert.Empty(t, taskRepo.bulkCreated)
+	assert.Empty(t, sched.setTotalCalls)
+	assert.Empty(t, outboxRepo.created)
+}
+
+// TestRunEntriesDispatched_BulkCreateErrorPropagates verifies that a
+// task-repo failure surfaces an error after the lock but before any
+// scheduler mutation.
+func TestRunEntriesDispatched_BulkCreateErrorPropagates(t *testing.T) {
+	scheduleID := uuid.New()
+	sched := &fakeDispatchedSchedulerRepo{
+		scheduler: &model.SchedulerTracker{
+			ScheduleID: scheduleID, ScheduleName: "bulk-error",
+			Status: model.SchedulerStatusPending,
+		},
+	}
+	taskRepo := &fakeDispatchedTaskRepo{bulkErr: errors.New("db down")}
+	outboxRepo := &fakeDispatchedOutboxRepo{}
+	u := newDispatchedUoW(sched, taskRepo, outboxRepo)
+
+	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+	err := h.Handle(context.Background(), u, events.RunEntriesDispatched{
+		ScheduleID:     scheduleID,
+		TotalTaskCount: 1,
+		AllTasks: []events.RunEntriesDispatchedTask{
+			{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "t", Status: model.TaskStatusPending},
+		},
+	}, uuid.New())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bulk create tasks")
+	assert.Empty(t, sched.setTotalCalls)
+	assert.Empty(t, outboxRepo.created)
+}
+
+// TestRunEntriesDispatched_OutboxErrorPropagates verifies that an outbox
+// write failure on the auto-rollup branch bubbles up so the binding rolls
+// back the entire tx (no half-committed finalize).
+func TestRunEntriesDispatched_OutboxErrorPropagates(t *testing.T) {
+	scheduleID := uuid.New()
+	sched := &fakeDispatchedSchedulerRepo{
+		scheduler: &model.SchedulerTracker{
+			ScheduleID: scheduleID, ScheduleName: "outbox-error",
+			Status: model.SchedulerStatusPending,
+		},
+	}
+	taskRepo := &fakeDispatchedTaskRepo{}
+	outboxRepo := &fakeDispatchedOutboxRepo{err: errors.New("outbox down")}
+	u := newDispatchedUoW(sched, taskRepo, outboxRepo)
+
+	evt := events.RunEntriesDispatched{
+		ScheduleID:     scheduleID,
+		TotalTaskCount: 1,
+		AllTasks: []events.RunEntriesDispatchedTask{
+			{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "a", Status: model.TaskStatusSucceeded},
+		},
+	}
+
+	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+	err := h.Handle(context.Background(), u, evt, uuid.New())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create outbox entry for run.finalized")
 }

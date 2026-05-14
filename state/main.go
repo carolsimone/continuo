@@ -124,31 +124,22 @@ func main() {
 		}
 	}()
 
-	// Initialize run.entries.dispatched:v1 consumer
-	runEntriesConsumer, err := redis.NewRunEntriesDispatchedConsumer(
+	// run.entries.dispatched:v1 consumer. The StreamConsumer drives the
+	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
+	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
+	// exits Start cleanly.
+	runEntriesDispatchedHandler := svchandlers.NewRunEntriesDispatchedHandler(logger)
+	runEntriesDispatchedBinding := redis.NewRunEntriesDispatchedBinding(uowFactory, runEntriesDispatchedHandler, logger)
+	runEntriesDispatchedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamRunEntriesDispatched,
-		db,
-		schedulerRepo,
-		taskRepo,
-		outboxRepo,
+		"state-run-entries-dispatched",
+		runEntriesDispatchedBinding,
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create run entries dispatched consumer", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("Run entries dispatched consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping run entries dispatched consumer")
-		runEntriesConsumer.Stop()
-		return nil
-	})
-
-	// Start run entries dispatched consumer in background
 	go func() {
-		if err := runEntriesConsumer.Start(ctx); err != nil {
+		if err := runEntriesDispatchedConsumer.Start(ctx); err != nil {
 			logger.Error("Run entries dispatched consumer error", "error", err)
 		}
 	}()
