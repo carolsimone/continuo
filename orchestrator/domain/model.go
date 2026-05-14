@@ -80,18 +80,6 @@ type OutboxEntry struct {
 	ErrorMessage        *string
 }
 
-// MessageProcessing tracks consumed messages for exactly-once
-type MessageProcessing struct {
-	ID         uuid.UUID
-	MessageID  string
-	StreamName string
-	State      string // processing, completed, acked
-	Payload    []byte
-	Error      *string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
-
 // PublishedMessage tracks published outbox entries for dedup
 type PublishedMessage struct {
 	ID             uuid.UUID

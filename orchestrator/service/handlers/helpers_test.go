@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/google/uuid"
 )
 
@@ -34,16 +35,16 @@ func (f *fakeOutboxRepository) UpdateStatus(ctx context.Context, id uuid.UUID, n
 // fakeMessageProcessingRepository is an in-memory message_processing store
 // keyed by messageID.
 type fakeMessageProcessingRepository struct {
-	messages map[string]*domain.MessageProcessing
+	messages map[string]*messageprocessing.MessageProcessing
 }
 
 func newFakeMessageProcessingRepository() *fakeMessageProcessingRepository {
 	return &fakeMessageProcessingRepository{
-		messages: make(map[string]*domain.MessageProcessing),
+		messages: make(map[string]*messageprocessing.MessageProcessing),
 	}
 }
 
-func (f *fakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context, msgProc *domain.MessageProcessing) (uuid.UUID, bool, error) {
+func (f *fakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
 	if existing, ok := f.messages[msgProc.MessageID]; ok {
 		return existing.ID, false, nil
 	}
@@ -52,7 +53,7 @@ func (f *fakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context,
 	return msgProc.ID, true, nil
 }
 
-func (f *fakeMessageProcessingRepository) GetByMessageID(ctx context.Context, messageID string) (*domain.MessageProcessing, error) {
+func (f *fakeMessageProcessingRepository) GetByMessageID(ctx context.Context, messageID string) (*messageprocessing.MessageProcessing, error) {
 	msg, ok := f.messages[messageID]
 	if !ok {
 		return nil, nil
@@ -88,7 +89,7 @@ func newFakeUnitOfWork() *fakeUnitOfWork {
 }
 
 func (f *fakeUnitOfWork) OutboxRepo() repository.OutboxRepository { return f.outboxRepo }
-func (f *fakeUnitOfWork) MessageProcessingRepo() repository.MessageProcessingRepository {
+func (f *fakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
 	return f.msgProcRepo
 }
 func (f *fakeUnitOfWork) Begin(ctx context.Context) error { f.BegunTx = true; return nil }

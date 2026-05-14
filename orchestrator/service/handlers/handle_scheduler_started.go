@@ -9,6 +9,7 @@ import (
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
@@ -217,7 +218,7 @@ func (h *HandleSchedulerStartedHandler) dedup(
 	messageID string,
 	messagePayload []byte,
 ) (uuid.UUID, bool, error) {
-	msgProc := &domain.MessageProcessing{
+	msgProc := &messageprocessing.MessageProcessing{
 		MessageID:  messageID,
 		StreamName: "scheduler.started:v1",
 		State:      "processing",

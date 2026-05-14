@@ -12,6 +12,7 @@ import (
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/google/uuid"
 )
 
@@ -131,7 +132,7 @@ func (h *InitializeRunHandler) handleInitRunDedup(
 	messageID string,
 	messagePayload []byte,
 ) (uuid.UUID, bool, error) {
-	msgProc := &domain.MessageProcessing{
+	msgProc := &messageprocessing.MessageProcessing{
 		MessageID:  messageID,
 		StreamName: "initialize.run:v1",
 		State:      "processing",

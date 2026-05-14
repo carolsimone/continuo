@@ -8,6 +8,7 @@ import (
 
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
@@ -221,7 +222,7 @@ func (h *HandleSingleNodeRunHandler) dedup(
 	messageID string,
 	payload []byte,
 ) (uuid.UUID, bool, error) {
-	msgProc := &domain.MessageProcessing{
+	msgProc := &messageprocessing.MessageProcessing{
 		MessageID:  messageID,
 		StreamName: "trigger.single_node_run:v1",
 		State:      "processing",

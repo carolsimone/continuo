@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/google/uuid"
 )
 
@@ -20,7 +20,7 @@ func dedupMessage(
 	streamName string,
 	payload []byte,
 ) (uuid.UUID, bool, error) {
-	msgProc := &domain.MessageProcessing{
+	msgProc := &messageprocessing.MessageProcessing{
 		MessageID:  messageID,
 		StreamName: streamName,
 		State:      "processing",

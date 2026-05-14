@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/pkg/events"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/google/uuid"
 )
 
@@ -203,7 +204,7 @@ func (h *IngestTopologyHandler) handleTopologyDedup(
 	messageID string,
 	messagePayload []byte,
 ) (uuid.UUID, bool, error) {
-	msgProc := &domain.MessageProcessing{
+	msgProc := &messageprocessing.MessageProcessing{
 		MessageID:  messageID,
 		StreamName: "manifest.loaded:v1",
 		State:      "processing",

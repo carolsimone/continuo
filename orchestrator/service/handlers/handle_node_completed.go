@@ -9,6 +9,7 @@ import (
 
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 
 	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/domain"
@@ -266,7 +267,7 @@ func (h *HandleNodeCompletedHandler) handleDedup(
 	messageID string,
 	payload []byte,
 ) (uuid.UUID, bool, error) {
-	msgProc := &domain.MessageProcessing{
+	msgProc := &messageprocessing.MessageProcessing{
 		MessageID:  messageID,
 		StreamName: "node.updated:v1",
 		State:      "processing",

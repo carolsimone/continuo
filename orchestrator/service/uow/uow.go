@@ -7,13 +7,14 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/jmoiron/sqlx"
 )
 
 // UnitOfWork defines the interface for managing database transactions
 type UnitOfWork interface {
 	OutboxRepo() repository.OutboxRepository
-	MessageProcessingRepo() repository.MessageProcessingRepository
+	MessageProcessingRepo() messageprocessing.Repository
 	Begin(ctx context.Context) error
 	Commit() error
 	Rollback() error
@@ -24,7 +25,7 @@ type PostgresUnitOfWork struct {
 	db                *sqlx.DB
 	tx                *sqlx.Tx
 	outboxRepo        repository.OutboxRepository
-	msgProcessingRepo repository.MessageProcessingRepository
+	msgProcessingRepo messageprocessing.Repository
 	logger            *slog.Logger
 	inTx              bool
 }
@@ -46,11 +47,11 @@ func (uow *PostgresUnitOfWork) OutboxRepo() repository.OutboxRepository {
 }
 
 // MessageProcessingRepo returns the message processing repository
-func (uow *PostgresUnitOfWork) MessageProcessingRepo() repository.MessageProcessingRepository {
+func (uow *PostgresUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
 	if uow.tx != nil {
-		return postgres.NewMessageProcessingRepository(uow.tx, uow.logger)
+		return messageprocessing.NewPostgresRepository(uow.tx, uow.logger)
 	}
-	return postgres.NewMessageProcessingRepository(uow.db, uow.logger)
+	return messageprocessing.NewPostgresRepository(uow.db, uow.logger)
 }
 
 // Begin starts a new database transaction
