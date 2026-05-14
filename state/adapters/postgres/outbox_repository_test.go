@@ -12,17 +12,19 @@ import (
 )
 
 func newOutboxEntry() *postgres.OutboxEntry {
+	msgProcID := uuid.New()
 	return &postgres.OutboxEntry{
-		ID:            uuid.New(),
-		AggregateType: "scheduler",
-		AggregateID:   uuid.New(),
-		EventType:     "rerun_node",
-		Payload:       []byte(`{"schedule_id":"test"}`),
-		StreamName:    "trigger.rerun:v1",
-		Status:        "pending",
-		MaxRetries:    3,
-		RetryCount:    0,
-		CreatedAt:     time.Now(),
+		ID:                  uuid.New(),
+		MessageProcessingID: &msgProcID,
+		AggregateType:       "scheduler",
+		AggregateID:         uuid.New(),
+		EventType:           "rerun_node",
+		Payload:             []byte(`{"schedule_id":"test"}`),
+		StreamName:          "trigger.rerun:v1",
+		Status:              "pending",
+		MaxRetries:          3,
+		RetryCount:          0,
+		CreatedAt:           time.Now(),
 	}
 }
 
