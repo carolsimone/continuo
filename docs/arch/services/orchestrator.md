@@ -110,7 +110,7 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 
 | Table | Purpose |
 |---|---|
-| `message_processing` | Inbound dedup: one row per consumed Redis message ID; tracks state (`processing` / `completed` / `acked`) |
+| `message_processing` | Inbound dedup: one row per consumed Redis message, scoped by `(message_id, stream_name)`; tracks state (`processing` / `completed` / `acked`) |
 | `outbox` | Outbound dispatch intents: one row per downstream node ready for execution |
 | `published_messages` | Outbound idempotency: records `(outbox_entry_id, redis_message_id)` after successful publish |
 
@@ -317,7 +317,7 @@ as warnings by `RunQueryService` but otherwise pass through unmodified.
 
 ## Reliability Patterns
 
-- **Inbound dedup**: `message_processing` keyed by Redis message ID; INSERT IF NOT EXISTS prevents double-processing
+- **Inbound dedup**: `message_processing` keyed by `(message_id, stream_name)`; INSERT IF NOT EXISTS prevents double-processing. The composite key is required because Redis Streams assign IDs per-stream, so a single publisher can emit two messages to two streams in the same millisecond and produce identical message IDs that must not collide.
 - **Outbound idempotency**: `published_messages` tracks published outbox entries; republishing is safe
 - **Neo4j updates are outside the Postgres tx**: topology and status writes are idempotent; if the tx fails the message will be redelivered
 - **Snapshot reconciliation**: `manifest.loaded:v1` is treated as authoritative; nodes missing from the latest payload are retired from the current topology automatically

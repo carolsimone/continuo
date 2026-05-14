@@ -60,7 +60,7 @@ func (r *postgresRepository) InsertIfNotExists(
 	query := `
 		INSERT INTO message_processing (message_id, stream_name, state, payload)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (message_id) DO NOTHING
+		ON CONFLICT (message_id, stream_name) DO NOTHING
 		RETURNING id
 	`
 	var id uuid.UUID
@@ -69,7 +69,8 @@ func (r *postgresRepository) InsertIfNotExists(
 	).Scan(&id)
 	if err == sql.ErrNoRows {
 		err = r.exec.GetContext(ctx, &id,
-			`SELECT id FROM message_processing WHERE message_id = $1`, msgProc.MessageID)
+			`SELECT id FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
+			msgProc.MessageID, msgProc.StreamName)
 		if err != nil {
 			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
 		}
@@ -81,14 +82,15 @@ func (r *postgresRepository) InsertIfNotExists(
 	return id, true, nil
 }
 
-func (r *postgresRepository) GetByMessageID(
-	ctx context.Context, messageID string,
+func (r *postgresRepository) GetByMessageIDAndStream(
+	ctx context.Context, messageID, streamName string,
 ) (*MessageProcessing, error) {
 	var rr row
 	err := r.exec.GetContext(ctx, &rr,
-		`SELECT * FROM message_processing WHERE message_id = $1`, messageID)
+		`SELECT * FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
+		messageID, streamName)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("message not found: %s", messageID)
+		return nil, fmt.Errorf("message not found: %s on stream %s", messageID, streamName)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get message processing: %w", err)

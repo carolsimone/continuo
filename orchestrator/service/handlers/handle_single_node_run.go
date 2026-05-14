@@ -235,7 +235,7 @@ func (h *HandleSingleNodeRunHandler) dedup(
 	}
 
 	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageID(ctx, messageID)
+		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "trigger.single_node_run:v1")
 		if err != nil {
 			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
 		}

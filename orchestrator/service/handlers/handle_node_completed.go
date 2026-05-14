@@ -278,7 +278,7 @@ func (h *HandleNodeCompletedHandler) handleDedup(
 		return uuid.Nil, false, fmt.Errorf("insert message processing: %w", err)
 	}
 	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageID(ctx, messageID)
+		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "node.updated:v1")
 		if err != nil {
 			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
 		}

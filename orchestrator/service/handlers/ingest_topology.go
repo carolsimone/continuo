@@ -217,7 +217,7 @@ func (h *IngestTopologyHandler) handleTopologyDedup(
 	}
 
 	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageID(ctx, messageID)
+		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "manifest.loaded:v1")
 		if err != nil {
 			return uuid.Nil, false, fmt.Errorf("failed to get existing message: %w", err)
 		}

@@ -38,7 +38,7 @@ func Dedup(
 	if inserted {
 		return id, false, nil
 	}
-	existing, err := repo.GetByMessageID(ctx, messageID)
+	existing, err := repo.GetByMessageIDAndStream(ctx, messageID, streamName)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
 	}

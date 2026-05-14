@@ -231,7 +231,7 @@ func (h *HandleSchedulerStartedHandler) dedup(
 	}
 
 	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageID(ctx, messageID)
+		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "scheduler.started:v1")
 		if err != nil {
 			return uuid.Nil, false, fmt.Errorf("failed to get existing message: %w", err)
 		}

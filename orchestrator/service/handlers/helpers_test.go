@@ -44,17 +44,22 @@ func newFakeMessageProcessingRepository() *fakeMessageProcessingRepository {
 	}
 }
 
+func fakeMsgProcKey(messageID, streamName string) string {
+	return messageID + "|" + streamName
+}
+
 func (f *fakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
-	if existing, ok := f.messages[msgProc.MessageID]; ok {
+	k := fakeMsgProcKey(msgProc.MessageID, msgProc.StreamName)
+	if existing, ok := f.messages[k]; ok {
 		return existing.ID, false, nil
 	}
 	msgProc.ID = uuid.New()
-	f.messages[msgProc.MessageID] = msgProc
+	f.messages[k] = msgProc
 	return msgProc.ID, true, nil
 }
 
-func (f *fakeMessageProcessingRepository) GetByMessageID(ctx context.Context, messageID string) (*messageprocessing.MessageProcessing, error) {
-	msg, ok := f.messages[messageID]
+func (f *fakeMessageProcessingRepository) GetByMessageIDAndStream(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
+	msg, ok := f.messages[fakeMsgProcKey(messageID, streamName)]
 	if !ok {
 		return nil, nil
 	}
