@@ -57,7 +57,8 @@ type TopologyStateRepository interface {
 }
 
 // TopologyRepository is the write/read interface for the topology graph.
-// Satisfied by adapters/neo4j/TopologyRepository.
+// Implementations are responsible for snapshot atomicity and cross-generation
+// consistency.
 type TopologyRepository interface {
 	ApplySnapshot(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error
 	SetServiceMetadata(ctx context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error
