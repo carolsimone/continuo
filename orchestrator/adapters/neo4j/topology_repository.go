@@ -6,17 +6,23 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// TopologyRepository implements the write-side of topology.Repository.
+// TopologyRepository implements repository.TopologyRepository against Neo4j,
+// covering both the snapshot write path and the minimal schedule-graph read
+// required by the domain port.
 type TopologyRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
 }
 
-func NewTopologyRepository(client Neo4jClient, logger *slog.Logger) *TopologyRepository {
+// Compile-time assertion that the neo4j adapter satisfies the domain port.
+var _ repository.TopologyRepository = (*TopologyRepository)(nil)
+
+func NewTopologyRepository(client Neo4jClient, logger *slog.Logger) repository.TopologyRepository {
 	return &TopologyRepository{client: client, logger: logger}
 }
 
@@ -271,7 +277,7 @@ func (r *TopologyRepository) deleteInactiveOrphans(ctx context.Context, tx neo4j
 }
 
 // GetScheduleGraph returns all nodes and edges for a schedule.
-// NOTE: This is a minimal implementation to satisfy the topology.Repository interface.
+// NOTE: This is a minimal implementation to satisfy the repository.TopologyRepository interface.
 // The full graph read is handled by OrchestratorQueryRepository.
 func (r *TopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName string) ([]*topology.Node, []*topology.UpstreamDependency, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)

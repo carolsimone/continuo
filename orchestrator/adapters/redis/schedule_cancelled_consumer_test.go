@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -28,7 +28,7 @@ func (f *fakeCancelledRepo) DeleteExpired(_ context.Context, _ time.Duration) (i
 	return 0, nil
 }
 
-var _ postgres.CancelledSchedulesRepository = (*fakeCancelledRepo)(nil)
+var _ repository.CancelledSchedulesRepository = (*fakeCancelledRepo)(nil)
 
 func TestScheduleCancelledHandler_InsertsScheduleID(t *testing.T) {
 	repo := &fakeCancelledRepo{}

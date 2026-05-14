@@ -6,21 +6,24 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/jmoiron/sqlx"
 )
 
-// TopologyStateRepository manages the singleton topology_state row in Postgres.
-type TopologyStateRepository struct {
+// topologyStateRepository manages the singleton topology_state row in Postgres.
+type topologyStateRepository struct {
 	db *sqlx.DB
 }
 
-// NewTopologyStateRepository creates a new TopologyStateRepository.
-func NewTopologyStateRepository(db *sqlx.DB) *TopologyStateRepository {
-	return &TopologyStateRepository{db: db}
+// NewTopologyStateRepository constructs a topology-state repository.
+func NewTopologyStateRepository(db *sqlx.DB) repository.TopologyStateRepository {
+	return &topologyStateRepository{db: db}
 }
 
+var _ repository.TopologyStateRepository = (*topologyStateRepository)(nil)
+
 // IncrementGeneration atomically increments topology_generation and returns the new value.
-func (r *TopologyStateRepository) IncrementGeneration(ctx context.Context) (int64, error) {
+func (r *topologyStateRepository) IncrementGeneration(ctx context.Context) (int64, error) {
 	var next int64
 	err := r.db.QueryRowxContext(ctx, `
 		UPDATE topology_state
@@ -39,7 +42,7 @@ func (r *TopologyStateRepository) IncrementGeneration(ctx context.Context) (int6
 }
 
 // GetGeneration returns the current topology_generation value.
-func (r *TopologyStateRepository) GetGeneration(ctx context.Context) (int64, error) {
+func (r *topologyStateRepository) GetGeneration(ctx context.Context) (int64, error) {
 	var current int64
 	err := r.db.QueryRowxContext(ctx, `
 		SELECT topology_generation FROM topology_state WHERE id = TRUE

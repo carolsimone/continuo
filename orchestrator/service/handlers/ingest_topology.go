@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 
-	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/pkg/events"
@@ -21,18 +21,18 @@ import (
 // IngestTopologyHandler handles the topology-ingestion input.
 type IngestTopologyHandler struct {
 	uow               uow.UnitOfWork
-	topologyRepo      topology.Repository
-	topologyStateRepo topology.TopologyStateRepository
-	rejectedRepo      postgresadapter.RejectedTopologyRepository
+	topologyRepo      repository.TopologyRepository
+	topologyStateRepo repository.TopologyStateRepository
+	rejectedRepo      repository.RejectedTopologyRepository
 	logger            *slog.Logger
 }
 
 // NewIngestTopologyHandler creates a new IngestTopologyHandler.
 func NewIngestTopologyHandler(
 	u uow.UnitOfWork,
-	topologyRepo topology.Repository,
-	topologyStateRepo topology.TopologyStateRepository,
-	rejectedRepo postgresadapter.RejectedTopologyRepository,
+	topologyRepo repository.TopologyRepository,
+	topologyStateRepo repository.TopologyStateRepository,
+	rejectedRepo repository.RejectedTopologyRepository,
 	logger *slog.Logger,
 ) *IngestTopologyHandler {
 	return &IngestTopologyHandler{

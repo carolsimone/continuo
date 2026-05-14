@@ -4,23 +4,21 @@ import (
 	"context"
 	"time"
 
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
-
-type CancelledSchedulesRepository interface {
-	Insert(ctx context.Context, scheduleID uuid.UUID) error
-	Exists(ctx context.Context, scheduleID uuid.UUID) (bool, error)
-	DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error)
-}
 
 type cancelledSchedulesRepository struct {
 	db *sqlx.DB
 }
 
-func NewCancelledSchedulesRepository(db *sqlx.DB) CancelledSchedulesRepository {
+// NewCancelledSchedulesRepository constructs a cancelled-schedules repository.
+func NewCancelledSchedulesRepository(db *sqlx.DB) repository.CancelledSchedulesRepository {
 	return &cancelledSchedulesRepository{db: db}
 }
+
+var _ repository.CancelledSchedulesRepository = (*cancelledSchedulesRepository)(nil)
 
 func (r *cancelledSchedulesRepository) Insert(ctx context.Context, scheduleID uuid.UUID) error {
 	_, err := r.db.ExecContext(ctx,

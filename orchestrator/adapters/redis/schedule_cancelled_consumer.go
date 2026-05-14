@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -13,7 +13,7 @@ import (
 // NewScheduleCancelledHandler returns a MessageHandler that records cancelled
 // schedule IDs in the local cancelled_schedules table.
 func NewScheduleCancelledHandler(
-	repo postgres.CancelledSchedulesRepository,
+	repo repository.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {

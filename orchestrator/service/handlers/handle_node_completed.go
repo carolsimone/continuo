@@ -10,9 +10,9 @@ import (
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 
-	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
@@ -22,7 +22,7 @@ import (
 type HandleNodeCompletedHandler struct {
 	uow                uow.UnitOfWork
 	runs               run.AggregateRepository
-	cancelledSchedules postgresadapter.CancelledSchedulesRepository
+	cancelledSchedules repository.CancelledSchedulesRepository
 	logger             *slog.Logger
 }
 
@@ -30,7 +30,7 @@ type HandleNodeCompletedHandler struct {
 func NewHandleNodeCompletedHandler(
 	u uow.UnitOfWork,
 	runs run.AggregateRepository,
-	cancelledSchedules postgresadapter.CancelledSchedulesRepository,
+	cancelledSchedules repository.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) *HandleNodeCompletedHandler {
 	return &HandleNodeCompletedHandler{
