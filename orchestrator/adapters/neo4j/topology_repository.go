@@ -22,7 +22,7 @@ type TopologyRepository struct {
 // Compile-time assertion that the neo4j adapter satisfies the domain port.
 var _ repository.TopologyRepository = (*TopologyRepository)(nil)
 
-func NewTopologyRepository(client Neo4jClient, logger *slog.Logger) *TopologyRepository {
+func NewTopologyRepository(client Neo4jClient, logger *slog.Logger) repository.TopologyRepository {
 	return &TopologyRepository{client: client, logger: logger}
 }
 
