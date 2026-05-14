@@ -113,6 +113,27 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 | `message_processing` | Inbound dedup: one row per consumed Redis message ID; tracks state (`processing` / `completed` / `acked`) |
 | `outbox` | Outbound dispatch intents: one row per downstream node ready for execution |
 | `published_messages` | Outbound idempotency: records `(outbox_entry_id, redis_message_id)` after successful publish |
+| `topology_state` | Singleton row holding the monotonic `topology_generation` counter |
+| `cancelled_schedules` | Schedule IDs cancelled by an upstream control-plane signal; consulted to short-circuit terminal-state processing for already-cancelled runs |
+| `rejected_topology_messages` | Forensics for permanently-rejected `manifest.loaded:v1` payloads |
+
+### Adapter-replaceable ports
+
+All ports the service layer depends on for adapter-replaceable storage live in `orchestrator/domain/repository/port.go`:
+
+| Port | Storage adapter |
+|---|---|
+| `OutboxRepository` | Postgres |
+| `MessageProcessingRepository` | Postgres |
+| `PublishedMessagesRepository` | Postgres |
+| `CancelledSchedulesRepository` | Postgres |
+| `RejectedTopologyRepository` | Postgres |
+| `TopologyStateRepository` | Postgres |
+| `TopologyRepository` | Neo4j |
+
+Two narrow exceptions are allowed to import adapter packages directly: `service/uow/uow.go` (composition root for transactional repositories) and `service/handlers/ingest_topology_integration_test.go` (integration test wiring the real Postgres adapter against a live database). Production handlers and unit-test fakes hold only `repository.*` types.
+
+Read-side ports specific to the CQRS query path (`RunReader`, `TopologyStateReader`) are defined where they are consumed — `service/queries/run_query_service.go` — and intentionally not promoted into `domain/repository/`.
 
 ## Inbound Interfaces
 
@@ -303,7 +324,9 @@ Postgres on the read path:
 - the **write path** — `IngestTopologyHandler.IncrementGeneration` allocates
   the next monotonic value before stamping every `:Table` node with it.
 - the **read path** — `RunQueryService` calls `TopologyStateRepository.GetGeneration`
-  on each query to expose the current value.
+  on each query to expose the current value. The port lives at
+  `orchestrator/domain/repository/port.go`; the Postgres adapter is the only
+  current implementation.
 
 ### Drift contract
 
