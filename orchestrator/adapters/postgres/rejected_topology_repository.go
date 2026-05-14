@@ -24,6 +24,7 @@ func NewRejectedTopologyRepository(db *sqlx.DB) repository.RejectedTopologyRepos
 
 var _ repository.RejectedTopologyRepository = (*rejectedTopologyRepository)(nil)
 
+// Insert writes a forensics row. payload must be valid JSON.
 func (r *rejectedTopologyRepository) Insert(
 	ctx context.Context,
 	messageID, reason string,

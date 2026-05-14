@@ -47,6 +47,7 @@ type CancelledSchedulesRepository interface {
 // consumer ACKs after this call regardless of outcome, so a failed Insert
 // must NOT turn a permanent error into a transient one.
 type RejectedTopologyRepository interface {
+	// Insert writes a forensics row. payload must be valid JSON.
 	Insert(ctx context.Context, messageID, reason string, payload json.RawMessage) error
 }
 
