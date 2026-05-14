@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	postgresadapter "github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/pkg/events"
@@ -121,7 +121,7 @@ func (f *fakeRejectedTopologyRepo) Insert(_ context.Context, messageID, reason s
 	return f.InsertErr
 }
 
-var _ postgresadapter.RejectedTopologyRepository = (*fakeRejectedTopologyRepo)(nil)
+var _ repository.RejectedTopologyRepository = (*fakeRejectedTopologyRepo)(nil)
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
