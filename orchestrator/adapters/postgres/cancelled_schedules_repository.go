@@ -18,6 +18,8 @@ func NewCancelledSchedulesRepository(db *sqlx.DB) repository.CancelledSchedulesR
 	return &cancelledSchedulesRepository{db: db}
 }
 
+var _ repository.CancelledSchedulesRepository = (*cancelledSchedulesRepository)(nil)
+
 func (r *cancelledSchedulesRepository) Insert(ctx context.Context, scheduleID uuid.UUID) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO cancelled_schedules (schedule_id) VALUES ($1) ON CONFLICT DO NOTHING`,

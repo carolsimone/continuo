@@ -21,7 +21,7 @@ func NewScheduleCancelledHandler(
 		scheduleID, err := uuid.Parse(idStr)
 		if err != nil {
 			logger.Error("schedule.cancelled: invalid schedule_id — discarding", "id", idStr)
-			return nil
+			return nil // permanent error: ack implicitly by returning nil
 		}
 		if err := repo.Insert(ctx, scheduleID); err != nil {
 			return fmt.Errorf("insert cancelled schedule %s: %w", scheduleID, err)
