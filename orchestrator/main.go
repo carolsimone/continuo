@@ -121,9 +121,8 @@ func main() {
 	// ========================================================================
 
 	topologyRepo := neo4jinfra.NewTopologyRepository(neo4jClient, logger)
-	runRepoWrite := neo4jinfra.NewRunRepository(neo4jClient, logger)
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
-	runRepo := neo4jinfra.NewCompositeRunRepository(runRepoWrite, queryRepo)
+	runAggRepo := neo4jinfra.NewRunAggregateRepository(neo4jClient, logger)
 	snapshotTxRunner := neo4jinfra.NewSnapshotTxRunner(neo4jClient)
 	snapshotService := snapshotsvc.NewService(snapshotTxRunner, logger)
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
@@ -142,12 +141,12 @@ func main() {
 	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
 	rejectedTopologyRepo := postgres.NewRejectedTopologyRepository(pgDB)
 	ingestTopologyHandler := handlers.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, rejectedTopologyRepo, logger)
-	initializeRunHandler := handlers.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
-	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, cancelledSchedulesRepo, logger)
-	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
-	handleRerunHandler := handlers.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
-	handleRebaseHandler := handlers.NewHandleRebaseHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
-	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runRepo, snapshotService, logger)
+	initializeRunHandler := handlers.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
+	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runAggRepo, cancelledSchedulesRepo, logger)
+	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), queryRepo, snapshotService, logger)
+	handleRerunHandler := handlers.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
+	handleRebaseHandler := handlers.NewHandleRebaseHandler(uow.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
+	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -181,7 +180,7 @@ func main() {
 	// START RUN SWEEPER
 	// ========================================================================
 
-	runSweeper := sweeper.New(runRepoWrite, cfg.RunHistoryRetentionDays, cfg.RunSweeperIntervalMinutes, logger)
+	runSweeper := sweeper.New(runAggRepo, cfg.RunHistoryRetentionDays, cfg.RunSweeperIntervalMinutes, logger)
 	go runSweeper.Start(ctx)
 
 	// ========================================================================
@@ -418,8 +417,11 @@ func main() {
 		logger,
 	)
 
-	// Consumer 6: run.finalized:v1 -> FinalizeRun
-	runFinalizedHandler := redis.NewRunFinalizedHandler(runRepoWrite, logger)
+	// Consumer: run.finalized:v1 — projects state's terminal scheduler outcome
+	// onto Neo4j :Run.completed_at / terminal_status. Covers edge cases where
+	// the aggregate's internal finalization path is not exercised (e.g.
+	// full-inherited rebases that produce no node.updated:v1 traffic).
+	runFinalizedHandler := redis.NewRunFinalizedHandler(runAggRepo, logger)
 	runFinalizedConsumer := redis.NewStreamConsumer(
 		redisClient,
 		cfg.RunFinalizedStream,
@@ -481,7 +483,7 @@ func main() {
 	// START gRPC SERVER (BLOCKING)
 	// ========================================================================
 
-	runQueries := queries.NewRunQueryService(runRepo, topologyStateRepo, logger)
+	runQueries := queries.NewRunQueryService(queryRepo, topologyStateRepo, logger)
 	queryHandler := grpcinfra.NewQueryHandler(queryRepo, runQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)

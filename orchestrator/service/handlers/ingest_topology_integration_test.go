@@ -141,7 +141,6 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 		newTestLogger(),
 	)
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(client, newTestLogger())
-	runRepo := neo4jinfra.NewRunRepository(client, newTestLogger())
 	snapSvc := snapshotsvc.NewService(neo4jinfra.NewSnapshotTxRunner(client), newTestLogger())
 
 	initialLoad := domainModel.IngestTopologyInput{
@@ -220,7 +219,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 	})
 	require.NoError(t, err)
 
-	initNodes, err := runRepo.GetScheduleInitNodes(ctx, scheduleName, runID)
+	initNodes, err := queryRepo.GetScheduleInitNodes(ctx, scheduleName, runID)
 	require.NoError(t, err)
 	require.Len(t, initNodes.AllNodes, 1, "new runs must not snapshot nodes removed from the latest manifest")
 	assert.Equal(t, keepTable, initNodes.AllNodes[0].TableName)

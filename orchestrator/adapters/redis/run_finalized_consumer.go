@@ -8,13 +8,19 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// RunFinalizer is the narrow interface the handler needs from the run repository.
+// RunFinalizer projects a run's terminal status from state's run.finalized:v1
+// stream onto the orchestrator's Neo4j :Run node. It exists because some runs
+// (notably full-inherited rebases) never produce node.updated:v1 traffic, so
+// the Run aggregate's internal finalization path is not exercised; state
+// remains the authority for terminal_task_count == total_task_count and the
+// orchestrator merely projects that outcome back into Neo4j.
 type RunFinalizer interface {
 	FinalizeRun(ctx context.Context, runID, terminalStatus string) error
 }
 
-// NewRunFinalizedHandler returns a MessageHandler that marks a Run node in Neo4j
-// as complete by setting completed_at and terminal_status.
+// NewRunFinalizedHandler returns a MessageHandler that stamps completed_at and
+// terminal_status on the :Run node when state's scheduler_tracker reaches a
+// terminal state.
 func NewRunFinalizedHandler(
 	repo RunFinalizer,
 	logger *slog.Logger,
@@ -29,7 +35,7 @@ func NewRunFinalizedHandler(
 				"schedule_id", scheduleID,
 				"status", status,
 			)
-			return nil // permanent error: ack by returning nil
+			return nil
 		}
 
 		if err := repo.FinalizeRun(ctx, scheduleID, status); err != nil {

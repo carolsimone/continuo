@@ -18,7 +18,7 @@ It is responsible for:
 | Entity | Description |
 |---|---|
 | `Table` node | One per model/seed; carries topology metadata, `last_updated_at`, and an `active` flag for current-topology reconciliation |
-| `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at`, `kind`, `source_run_id`, `topology_generation` |
+| `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at`, `kind`, `source_run_id`, `topology_generation`, `total_nodes`, `terminal_count`, `version` |
 | `DEPENDS_ON` relationship | Directed edge from downstream to upstream `Table` |
 | `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status`, pre-assigned `task_id` UUID, per-task `image_tag` + `manifest_version`, and (for rebase-projected inherited rows only) an optional `inherited_from_task_id` property pointing to the root executed `task_id` in the source lineage |
 
@@ -35,10 +35,43 @@ Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run sna
 | `service_metadata` | map | Same source-vs-`:TopologyRoot` rule as `topology_generation` — derived runs inherit the pair from the source `:Run`; fresh runs read it from `:TopologyRoot`. |
 | `kind` | string | Mirrors `scheduler_tracker.kind` (`cron`, `trigger`, `rerun`, `rebase`, `single_node_run`). Stamped at `Snapshot` time via `ON CREATE SET run.kind = $kind` / `ON MATCH SET run.kind = COALESCE(run.kind, $kind)` — the original kind survives idempotent replay. Reads use `COALESCE(r.kind, "cron")` as a defensive default. |
 | `source_run_id` | string (UUID) | Optional; set via Cypher `FOREACH` only when non-nil. Reads use `COALESCE(r.source_run_id, "")` for the absent case. NULL for `cron`/`trigger` runs. **Drives the topology-metadata source decision:** when present, the new `:Run` inherits `topology_generation` + `service_metadata` from the referenced source run; when absent, both are read from `:TopologyRoot`. |
+| `total_nodes` | int | Number of `:EXECUTES` edges materialised at `Snapshot` time. Used by the `Run` aggregate to detect terminal-count == total-count finalization. |
+| `terminal_count` | int | Number of `:EXECUTES` edges currently in a terminal status (`SUCCEEDED`, `FAILED`, `SKIPPED`, `CANCELLED`). Incremented by `AggregateRepository.Save` as nodes complete; equal to `total_nodes` when the run finalises. |
+| `failed_count` | int | Number of `:EXECUTES` edges that transitioned to `FAILED` directly (cascade-skipped nodes do not count). Drives the aggregate's terminal-status decision when `terminal_count == total_nodes` so finalisation works even when the failed node is outside the currently loaded subgraph. |
+| `version` | int | Optimistic-concurrency token. Incremented on every aggregate mutation (`CompleteNode`, `ResetDownstream`); `AggregateRepository.Save` compares against `COALESCE(run.version, 0)` and returns `ErrVersionConflict` on mismatch. |
 
-The `run.Repository` interface exposes the following Neo4j read methods used during rerun and rebase handling:
-- `GetNodeType(ctx, schemaName, tableName) (string, error)` — reads `node_type` from the current `Table` node (queries by `schema_name` property)
-- `GetNodeServiceName(ctx, schemaName, tableName) (string, error)` — reads `service_name` from the current `Table` node (queries by `schema_name` property)
+### Run aggregate (`orchestrator/domain/run`)
+
+The write-side of node-completion processing is the `Run` aggregate root. It owns `RunID`, `ScheduleName`, `Status`, the counters above (`TotalNodes`, `TerminalCount`, `Version`), and an operation-scoped `map[NodeKey]*RunNode` subgraph. Methods:
+
+- `NewRun(runID, scheduleName, nodes) *Run` — constructs the aggregate from its initial node set; called once after `Snapshot` materialises the `:EXECUTES` edges.
+- `CompleteNode(key, status) ([]DomainEvent, error)` — transitions the target node, enforces cascade-skip on `FAILED`, computes immediate unblocks on `SUCCEEDED`/`SKIPPED`, and emits `RunFinalized` when `TerminalCount == TotalNodes`.
+- `ResetDownstream(key) ([]DomainEvent, error)` — walks the transitive downstream of a retried node and resets any `SKIPPED` rows back to `PENDING`.
+
+Domain events live in `orchestrator/domain/run/events.go`:
+
+| Event | Meaning |
+|---|---|
+| `NodeUnblocked` | Every upstream of an immediate-downstream node is now terminal; the orchestrator outbox writes `query.model:v1` for the unblocked node. |
+| `NodeCascadeSkipped` | A `PENDING` downstream was forced to `SKIPPED` by an upstream `FAILED`; the orchestrator outbox writes `task.status.updated:v1` (`cascade_task_skipped`) so `state` updates the task row. |
+| `RunFinalized` | All nodes have reached a terminal status inside the aggregate. Neo4j `:Run.terminal_status` and `:Run.completed_at` are written by `AggregateRepository.Save`. For runs that produce no `node.updated:v1` traffic (e.g. full-inherited rebases), a separate `run.finalized:v1` consumer projects state's authoritative scheduler outcome onto the same Neo4j fields. |
+
+Ports (`orchestrator/domain/run/ports.go`):
+
+- `AggregateRepository` (write-side) — `Rehydrate(ctx, runID, scope) (*Run, error)` reconstitutes an operation-scoped subgraph; `Save(ctx, *Run) error` persists node statuses, `total_nodes`/`terminal_count`/`failed_count`/`version`, and `:Run.terminal_status`/`completed_at` when finalised. `Save` checks `Version` against the loaded value (with `COALESCE(run.version, 0)` to admit legacy in-flight runs) and returns `ErrVersionConflict` on mismatch; the handler retries from `Rehydrate`. `terminal_status`/`completed_at` are first-writer-wins so state's authoritative `run.finalized:v1` projection cannot be overwritten by a later aggregate save.
+- `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`.
+
+`Scope` is a sealed interface with three variants that the adapter uses to scope the Cypher read:
+
+| Hint | Subgraph loaded |
+|---|---|
+| `ScopeFull` | Every `:EXECUTES` edge for the run (used at initialisation only). |
+| `ScopeNodeCompletion{Key, Status}` | `Status="FAILED"` → target + full transitive downstream; `Status="SUCCEEDED"`/`SKIPPED` → target + immediate downstream + each downstream's upstreams. |
+| `ScopeResetDownstream{Key}` | Target + full transitive downstream. |
+
+Adapter implementations:
+- `orchestrator/adapters/neo4j/run_aggregate_repository.go` — `RunAggregateRepository` implements `AggregateRepository`. Also owns `DeleteExpiredRuns` for the sweeper.
+- `orchestrator/adapters/neo4j/orchestrator_query_repository.go` — `OrchestratorQueryRepository` implements `RunQueryPort`, including `GetScheduleInitNodes` used by `HandleSchedulerStarted` to identify root and seed nodes.
 
 ### Snapshot — domain ports, adapters, and application service
 
@@ -194,25 +227,35 @@ Entry point for a single-node ad-hoc run. The handler runs in one Postgres UoW t
    - 1× `run.entries.dispatched:v1` with the single task entry — consumed by `state` to create the `task_tracker` row, set `total_task_count=1`, and mark `init_status=completed, status=RUNNING`.
    - 1× `query.model:v1` for the single target node — consumed by `executor-controller` to launch the K8s job.
 
-No rerun-descended helpers (`GetSkippedDownstreamTaskIDs`, `ResetSkippedDownstreamToPending`) are called; there is exactly one task and no pre-existing run graph to reset.
+There is exactly one task and no pre-existing run graph; the handler does not touch the `Run` aggregate.
 
 ### On `node.updated:v1` — HandleNodeCompleted
 
 ```
-1. Dedup check: insert into message_processing (INSERT IF NOT EXISTS)
-   -> if already completed/acked: skip and return
+1. Open Postgres transaction (UoW)
 
-2. Open Postgres transaction
-   a. UpdateNodeStatus in Neo4j (outside tx - idempotent)
-   b. If status == SUCCEEDED:
-      - GetReadyDownstream from Neo4j
-      - For each ready node:
-          - Read pre-assigned task_id from EXECUTES edge in Neo4j
-          - ComputeJobName(service, schema, table, scheduleID) — includes 8-char schedule_id suffix to prevent cross-run K8s job name collisions
-          - Write outbox entry (query.model:v1)
-      - Update message_processing state -> completed
-   c. Commit transaction
+2. Dedup: INSERT IF NOT EXISTS into message_processing
+   -> if state is completed/acked or in-flight on another instance: ack and return
+
+3. Cancelled-schedule guard: if cancelled_schedules contains the schedule_id,
+   mark message_processing=completed, commit, and return (no aggregate mutation)
+
+4. Aggregate loop (retried on ErrVersionConflict):
+   a. agg, err := runs.Rehydrate(ctx, runID, ScopeNodeCompletion{Key, Status})
+   b. events, err := agg.CompleteNode(key, status)
+      - on ErrNodeAlreadyTerminal: idempotent re-delivery — mark completed and commit
+   c. err := runs.Save(ctx, agg)
+      - on ErrVersionConflict: continue (re-enter loop from step a)
+   d. Translate each domain event into an outbox entry (same Postgres tx):
+        NodeUnblocked     -> query.model:v1            (node_ready_for_execution)
+        NodeCascadeSkipped -> task.status.updated:v1   (cascade_task_skipped)
+        RunFinalized      -> no outbox entry; :Run.terminal_status and
+                             :Run.completed_at are written by runs.Save
+
+5. Update message_processing state -> completed; commit transaction
 ```
+
+`runs.Save` writes `:Run.terminal_status` / `:Run.completed_at` when the aggregate finalises internally. A separate Redis consumer on `run.finalized:v1` projects state's authoritative outcome onto the same fields whenever a run's terminal transition is not produced by the aggregate — primarily full-inherited rebases that never publish `node.updated:v1` events. State remains the source of truth for `terminal_task_count == total_task_count`; orchestrator's role on this stream is read-only persistence.
 
 ## Background Loops
 
@@ -225,6 +268,7 @@ No rerun-descended helpers (`GetSkippedDownstreamTaskIDs`, `ResetSkippedDownstre
 | Redis consumer (`trigger.rebase:v1`) | Reads and dispatches to HandleRebase handler. Stream/group configurable via env: `REBASE_STREAM` (default `trigger.rebase:v1`), `REBASE_GROUP` (default `orchestrator-rebase`). |
 | Redis consumer (`trigger.single_node_run:v1`) | Reads and dispatches to HandleSingleNodeRunHandler |
 | Redis consumer (`initialize.run:v1`) | Secondary entry path; runs `Snapshot(LatestFullDAG)` + dispatch. No active producer. |
+| Redis consumer (`run.finalized:v1`) | Projects state's terminal scheduler outcome onto Neo4j `:Run.completed_at` / `terminal_status`. Active fallback for runs that produce no `node.updated:v1` traffic. |
 | Outbox processor | Polls outbox for pending entries; publishes to `query.model:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `schedules.loaded:v1`; records in `published_messages` |
 | RunSweeper | Periodically deletes expired `Run` nodes (and their `EXECUTES` edges) older than `retention_days` |
 
@@ -247,7 +291,8 @@ compose read-side stores; command handlers compose write-side stores.
 Postgres on the read path:
 
 - `GetRunGraph(runID)` — returns the run's nodes and edges from Neo4j (via
-  `CompositeRunRepository`) plus `:Run.topology_generation` and the latest
+  `RunQueryPort`, implemented by `OrchestratorQueryRepository`) plus
+  `:Run.topology_generation` and the latest
   `topology_state.topology_generation` from Postgres. Backs the rerun
   confirmation modal in ui-service.
 - `ListActiveRunDrifts()` — returns every `:Run` with `completed_at IS NULL`

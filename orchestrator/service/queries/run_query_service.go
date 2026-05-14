@@ -19,7 +19,7 @@ import (
 )
 
 // RunReader is the read-side surface RunQueryService needs from a run-repo
-// adapter. Satisfied by adapters/neo4j/CompositeRunRepository.
+// adapter. Satisfied by adapters/neo4j/OrchestratorQueryRepository.
 type RunReader interface {
 	GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error)
 	GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error)

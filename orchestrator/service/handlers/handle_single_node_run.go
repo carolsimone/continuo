@@ -11,7 +11,6 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
-	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
@@ -20,14 +19,13 @@ import (
 // HandleSingleNodeRunHandler consumes trigger.single_node_run:v1 messages.
 type HandleSingleNodeRunHandler struct {
 	uow         uow.UnitOfWork
-	runRepo     run.Repository
 	snapshotSvc SnapshotService
 	logger      *slog.Logger
 }
 
 // NewHandleSingleNodeRunHandler creates a new HandleSingleNodeRunHandler.
-func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, runRepo run.Repository, snapshotSvc SnapshotService, logger *slog.Logger) *HandleSingleNodeRunHandler {
-	return &HandleSingleNodeRunHandler{uow: u, runRepo: runRepo, snapshotSvc: snapshotSvc, logger: logger}
+func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, snapshotSvc SnapshotService, logger *slog.Logger) *HandleSingleNodeRunHandler {
+	return &HandleSingleNodeRunHandler{uow: u, snapshotSvc: snapshotSvc, logger: logger}
 }
 
 // Handle processes a SingleNodeRunInput derived from a

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
-	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
@@ -19,13 +18,12 @@ import (
 // labels.
 type HandleRebaseHandler struct {
 	uow         uow.UnitOfWork
-	runRepo     run.Repository
 	snapshotSvc SnapshotService
 	logger      *slog.Logger
 }
 
-func NewHandleRebaseHandler(u uow.UnitOfWork, runRepo run.Repository, snapshotSvc SnapshotService, logger *slog.Logger) *HandleRebaseHandler {
-	return &HandleRebaseHandler{uow: u, runRepo: runRepo, snapshotSvc: snapshotSvc, logger: logger}
+func NewHandleRebaseHandler(u uow.UnitOfWork, snapshotSvc SnapshotService, logger *slog.Logger) *HandleRebaseHandler {
+	return &HandleRebaseHandler{uow: u, snapshotSvc: snapshotSvc, logger: logger}
 }
 
 func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainModel.RebaseInput, messageID string) error {

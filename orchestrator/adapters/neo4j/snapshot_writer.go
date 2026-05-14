@@ -22,13 +22,15 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 // projection entry. Idempotent on rerun.
 //
 // :Run properties: run_id, schedule_name, kind, created_at, source_run_id?,
-//                  topology_generation, service_metadata
+//                  topology_generation, service_metadata, total_nodes, terminal_count,
+//                  version
 // :EXECUTES edge:  task_id, status, image_tag, manifest_version,
 //                  inherited_from_task_id?
 //
 // topology_generation + service_metadata are stamped on CREATE from the source
 // :Run if source_run_id is set, otherwise from :TopologyRoot. Falls back to
-// :TopologyRoot if source :Run was pruned.
+// :TopologyRoot if source :Run was pruned. total_nodes is set to len(projection),
+// terminal_count initialized to 0, and version initialized to 0.
 func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapshot.Params, projection []snapshot.TaskProjection) error {
 	if len(projection) == 0 {
 		return snapshot.ErrEmptyProjection
@@ -74,7 +76,11 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              run.created_at         = datetime(),
 		              run.kind               = $kind,
 		              run.topology_generation = topo_gen,
-		              run.service_metadata    = svc_meta
+		              run.service_metadata    = svc_meta,
+		              run.total_nodes         = $total_nodes,
+		              run.terminal_count      = 0,
+		              run.failed_count        = 0,
+		              run.version             = 0
 		ON MATCH SET  run.kind = COALESCE(run.kind, $kind)
 		FOREACH (_ IN CASE WHEN $source_run_id IS NULL THEN [] ELSE [1] END |
 		    SET run.source_run_id = $source_run_id
@@ -101,6 +107,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		"kind":          p.Kind,
 		"source_run_id": sourceRunIDParam,
 		"tasks":         tasks,
+		"total_nodes":   len(projection),
 	})
 	if err != nil {
 		return fmt.Errorf("snapshot_writer: query failed: %w", err)

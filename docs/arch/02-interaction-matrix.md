@@ -44,7 +44,7 @@ Legend:
 | `task.status.updated:v1` | `executor-controller` (RUNNING **and FAILED on permanent dispatch error or retry-exhaustion**), `k8s-controller` (SUCCEEDED/FAILED) | `state` | Task status update; drives finalization state machine in state |
 | `task.execution.recorded:v1` | `k8s-controller` | `state` | Persist task execution record with timing and S3 log key |
 | `node.updated:v1` | `k8s-controller` (**also `executor-controller` on permanent dispatch error or retry-exhaustion**) | `orchestrator` | Node terminal status projection; orchestrator unlocks downstream nodes |
-| `run.finalized:v1` | `state` | *(future consumers)* | Run completed; emitted when all tasks reach terminal state |
+| `run.finalized:v1` | `state` | `orchestrator` | Run completed; emitted when all tasks reach terminal state. Orchestrator projects the outcome onto Neo4j `:Run.terminal_status` / `:Run.completed_at`. |
 | `schedule.cancelled:v1` | `state` (triggered by `ui-service.CancelSchedule` **OR by `orchestrator` dispatch watchdog**) | `orchestrator`, `executor-controller`, `k8s-controller` | Signal active-run cancellation; consumers halt in-flight work for the cancelled schedule. Watchdog uses `cancelled_by="watchdog"` and `cancellation_reason="watchdog: ..."`. |
 
 ## Outbound gRPC Calls by Service

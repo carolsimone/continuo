@@ -54,7 +54,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 |---|---|
 | Durable state | Neo4j `Table` nodes (+ `image_tag`, `topology_generation` props), `Run` nodes (+ `topology_generation`, `service_metadata` props), `DEPENDS_ON` edges, `EXECUTES` edges (+ `image_tag` prop); Neo4j `:TopologyRoot {id:'singleton'}` (generation + service_metadata); Postgres `topology_state`, `message_processing`, `outbox`, `published_messages` |
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
-| Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1` |
+| Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1` |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1` |
 | Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `CancelSchedule` (watchdog only) |
 
@@ -94,7 +94,8 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 - **Retry-exhaustion uses the same propagation.** `ProcessBatch`'s
   retry-exhaustion branch calls `MarkTaskTerminallyFailed` instead of
   bare `MarkFailed`, so transient errors that exceed the retry budget
-  also reach orchestrator's `CheckScheduleCompletion`.
+  also reach orchestrator's `HandleNodeCompleted` (via `node.updated:v1`)
+  and state's `TaskStatusUpdatedHandler` (via `task.status.updated:v1`).
 
 ## `k8s-controller`
 

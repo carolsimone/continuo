@@ -319,6 +319,59 @@ func TestTaskStatusUpdatedHandler_ExhaustedRetriesFinalizeFailed(t *testing.T) {
 	assert.Equal(t, 1, getOutboxCountForSchedule(t, db, scheduleID, "run.finalized:v1"))
 }
 
+// TestTaskStatusUpdatedHandler_NoopWhenSchedulerTerminal verifies that a stale
+// task.status.updated event arriving after the run has already finalised does
+// not mutate task_tracker or terminal_task_count. Without this guard, a delayed
+// FAILED→RUNNING retry event would decrement terminal_task_count below
+// total_task_count, breaking the B1 invariant (terminal == total after
+// finalize). Mirror of run_entries_dispatched_handler's terminal guard.
+func TestTaskStatusUpdatedHandler_NoopWhenSchedulerTerminal(t *testing.T) {
+	for _, terminalStatus := range []model.SchedulerStatus{
+		model.SchedulerStatusFailed,
+		model.SchedulerStatusSucceeded,
+		model.SchedulerStatusCancelled,
+	} {
+		terminalStatus := terminalStatus
+		t.Run(string(terminalStatus), func(t *testing.T) {
+			db := setupTaskStatusTestDB(t)
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+			scheduleID := uuid.New()
+			tA := uuid.New()
+
+			// Run finalised: total=8, terminal=8, status=terminal.
+			seedSchedulerForTaskStatus(t, db, scheduleID, 8, 8)
+			_, err := db.Exec(
+				`UPDATE scheduler_tracker SET status = $2, completed_at = NOW() WHERE schedule_id = $1`,
+				scheduleID, string(terminalStatus))
+			require.NoError(t, err)
+
+			// Task is in terminal state (failed) — simulate the delayed retry event.
+			seedTaskForStatus(t, db, tA, scheduleID, model.TaskStatusFailed)
+
+			handler := newTaskStatusHandler(db, logger)
+
+			// Stale RUNNING event arriving after the run finalised: must be a no-op.
+			shouldACK, err := handler.Handle(context.Background(), "msg-stale-running",
+				buildTaskStatusPayload(t, tA, scheduleID, "RUNNING", 1))
+			require.NoError(t, err)
+			assert.True(t, shouldACK, "stale event must be ACKed (terminal scheduler)")
+
+			// Invariants: terminal_count unchanged, scheduler still terminal,
+			// task_tracker row not mutated.
+			assert.Equal(t, int32(8), getTerminalTaskCount(t, db, scheduleID),
+				"terminal_task_count must not regress after finalize")
+			assert.Equal(t, terminalStatus, getSchedulerStatus(t, db, scheduleID),
+				"scheduler status must remain terminal")
+			var taskStatus string
+			require.NoError(t, db.QueryRowContext(context.Background(),
+				`SELECT status FROM task_tracker WHERE task_id = $1`, tA).Scan(&taskStatus))
+			assert.Equal(t, string(model.TaskStatusFailed), taskStatus,
+				"task_tracker status must not be mutated by stale event")
+		})
+	}
+}
+
 func getTerminalTaskCount(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) int32 {
 	t.Helper()
 	var count int32

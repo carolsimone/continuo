@@ -25,7 +25,7 @@ import (
 // state's RunEntriesDispatchFailedHandler to finalise the run as failed.
 type HandleSchedulerStartedHandler struct {
 	uow         uow.UnitOfWork
-	runRepo     run.Repository
+	runQueries  run.RunQueryPort
 	snapshotSvc SnapshotService
 	logger      *slog.Logger
 }
@@ -33,13 +33,13 @@ type HandleSchedulerStartedHandler struct {
 // NewHandleSchedulerStartedHandler creates a new HandleSchedulerStartedHandler.
 func NewHandleSchedulerStartedHandler(
 	u uow.UnitOfWork,
-	runRepo run.Repository,
+	runQueries run.RunQueryPort,
 	snapshotSvc SnapshotService,
 	logger *slog.Logger,
 ) *HandleSchedulerStartedHandler {
 	return &HandleSchedulerStartedHandler{
 		uow:         u,
-		runRepo:     runRepo,
+		runQueries:  runQueries,
 		snapshotSvc: snapshotSvc,
 		logger:      logger,
 	}
@@ -105,7 +105,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 	// Get root/seed dispatch ordering for the schedule. The AllNodes data is
 	// redundant with the projection above; we ignore it. Only RootNodes/SeedNodes
 	// are used (seeds dispatch first, otherwise roots).
-	initNodes, err := h.runRepo.GetScheduleInitNodes(ctx, evt.ScheduleName, evt.ScheduleID.String())
+	initNodes, err := h.runQueries.GetScheduleInitNodes(ctx, evt.ScheduleName, evt.ScheduleID.String())
 	if err != nil {
 		return fmt.Errorf("failed to get schedule init nodes: %w", err)
 	}
