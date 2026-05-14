@@ -17,7 +17,9 @@ import (
 	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -95,27 +97,27 @@ func main() {
 		}
 	}()
 
-	// Initialize schedule catalog consumer (consumes schedules.loaded:v1)
-	catalogConsumer, err := redis.NewScheduleCatalogConsumer(
+	// UoW factory shared by every stream binding below. Each invocation
+	// returns a fresh PostgresUnitOfWork over the same repos and *sqlx.DB
+	// so concurrent message handlers do not share transaction state.
+	uowFactory := func() uow.UnitOfWork {
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, logger)
+	}
+
+	// Schedule catalog consumer (consumes schedules.loaded:v1). The
+	// StreamConsumer drives the parser+dedup+UoW binding declared in the
+	// redis adapter. Lifecycle is tied to ctx — the lifecycle manager
+	// cancels ctx on shutdown, which exits Start cleanly.
+	catalogHandler := svchandlers.NewScheduleCatalogHandler(logger)
+	catalogBinding := redis.NewScheduleCatalogBinding(uowFactory, catalogHandler, logger)
+	catalogConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamSchedulesLoaded,
-		catalogRepo,
-		db,
+		"state-schedule-catalog",
+		catalogBinding,
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create schedule catalog consumer", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("Schedule catalog consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping schedule catalog consumer")
-		catalogConsumer.Stop()
-		return nil
-	})
-
-	// Start catalog consumer in background
 	go func() {
 		if err := catalogConsumer.Start(ctx); err != nil {
 			logger.Error("Schedule catalog consumer error", "error", err)
