@@ -21,7 +21,7 @@ import (
 // IngestTopologyHandler handles the topology-ingestion input.
 type IngestTopologyHandler struct {
 	uow               uow.UnitOfWork
-	topologyRepo      topology.Repository
+	topologyRepo      repository.TopologyRepository
 	topologyStateRepo repository.TopologyStateRepository
 	rejectedRepo      repository.RejectedTopologyRepository
 	logger            *slog.Logger
@@ -30,7 +30,7 @@ type IngestTopologyHandler struct {
 // NewIngestTopologyHandler creates a new IngestTopologyHandler.
 func NewIngestTopologyHandler(
 	u uow.UnitOfWork,
-	topologyRepo topology.Repository,
+	topologyRepo repository.TopologyRepository,
 	topologyStateRepo repository.TopologyStateRepository,
 	rejectedRepo repository.RejectedTopologyRepository,
 	logger *slog.Logger,

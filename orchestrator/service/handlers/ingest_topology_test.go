@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ── fakes: topology.Repository ───────────────────────────────────────────────
+// ── fakes: repository.TopologyRepository ─────────────────────────────────────
 
 type fakeTopologyRepository struct {
 	applySnapshotFn    func(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error
@@ -40,6 +40,8 @@ func (f *fakeTopologyRepository) SetServiceMetadata(ctx context.Context, service
 func (f *fakeTopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName string) ([]*topology.Node, []*topology.UpstreamDependency, error) {
 	return nil, nil, nil
 }
+
+var _ repository.TopologyRepository = (*fakeTopologyRepository)(nil)
 
 // ── fakes: repository.TopologyStateRepository ─────────────────────────────────
 
