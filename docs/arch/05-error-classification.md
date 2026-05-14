@@ -24,6 +24,7 @@ permanent.
 |---|---|---|
 | `orchestrator/service/handlers/ingest_topology.go` (`validateTopologyNodes`) | any node has empty `image_tag` | `fmt.Errorf("%w: image_tag empty for N node(s): ...", events.ErrPermanent, ...)` |
 | `executor-controller/adapters/k8s/client.go:177` (`buildPodSpec`) | `image_tag` missing on dispatch | `fmt.Errorf("%w: image_tag missing from job params for service %s", events.ErrPermanent, params.ServiceName)` |
+| `state/adapters/redis/*_binding.go` (each binding) | per-stream parser returns a parse/validation failure (malformed payload, missing required field, bad UUID, unknown enum value) | `fmt.Errorf("%w: %v", pkgevents.ErrPermanent, err)` after the binding's parser returns an error |
 
 The Python counterpart (`manifest-controller/service/validators.py`)
 raises `ManifestValidationError` instead of wrapping a sentinel — Python
@@ -37,7 +38,7 @@ Add new emitters to this table as they land.
 
 | Site | Behaviour on `errors.Is(err, events.ErrPermanent)` |
 |---|---|
-| `orchestrator/adapters/redis/consumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND XCLAIM redelivery |
+| `pkg/redis/streamconsumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND periodic reclaim. Plain (non-`ErrPermanent`) errors are left in the PEL so the reclaim ticker retries them. Used by every Go service's Redis ingest path. |
 | `executor-controller/service/handlers/outbox_processor.go` (`processEntry`) | call `MarkTaskTerminallyFailed` (publishes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED + marks outbox failed), return `errPermanentFailure` so `ProcessBatch` skips retry-increment |
 
 The local `errPermanentFailure` sentinel in `outbox_processor.go` is
