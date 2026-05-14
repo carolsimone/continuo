@@ -36,6 +36,11 @@ type TaskTrackerRepository interface {
 	UpdateStatusIfChangedTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error)
 	// ExistsTx reports whether a task_tracker row with the given task_id exists.
 	ExistsTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (bool, error)
+	// GetStatusTx returns the current status of the task_tracker row, or
+	// empty string if the row does not exist. Used by the
+	// task.status.updated:v1 handler to detect FAILED→RUNNING transitions and
+	// decrement terminal_task_count accordingly.
+	GetStatusTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (string, error)
 	// HasFailedTaskTx reports whether any task for the given schedule has status = 'failed'.
 	HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
 	// HasRetryableFailedTaskTx reports whether any task for the given schedule has
@@ -400,6 +405,25 @@ func (r *taskTrackerRepository) UpdateStatusIfChangedTx(ctx context.Context, tx 
 		return 0, err
 	}
 	return int32(n), nil
+}
+
+// GetStatusTx returns the current status of the task_tracker row for the
+// given task_id, or empty string when no row exists. The empty-string
+// fallback preserves the prior inline behavior in the task.status.updated
+// handler which silently treated missing rows as "no previous status".
+func (r *taskTrackerRepository) GetStatusTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (string, error) {
+	var status string
+	err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(status, '') FROM task_tracker WHERE task_id = $1`,
+		taskID,
+	).Scan(&status)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get task status for task_id %s: %w", taskID, err)
+	}
+	return status, nil
 }
 
 // ExistsTx reports whether a task_tracker row exists for the given task_id.

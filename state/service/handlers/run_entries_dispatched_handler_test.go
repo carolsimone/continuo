@@ -175,6 +175,9 @@ func (f *fakeDispatchedTaskRepo) UpdateStatusIfChangedTx(context.Context, *sqlx.
 func (f *fakeDispatchedTaskRepo) ExistsTx(context.Context, *sqlx.Tx, uuid.UUID) (bool, error) {
 	panic("ExistsTx not implemented in fake")
 }
+func (f *fakeDispatchedTaskRepo) GetStatusTx(context.Context, *sqlx.Tx, uuid.UUID) (string, error) {
+	panic("GetStatusTx not implemented in fake")
+}
 func (f *fakeDispatchedTaskRepo) HasFailedTaskTx(context.Context, *sqlx.Tx, uuid.UUID) (bool, error) {
 	panic("HasFailedTaskTx not implemented in fake")
 }

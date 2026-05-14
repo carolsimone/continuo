@@ -2,14 +2,12 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -131,27 +129,7 @@ func (h *RunEntriesDispatchedHandler) Handle(
 		// Emit run.finalized:v1 in the same tx so orchestrator finalizes the
 		// Neo4j :Run. Without this, the auto-rollup run stays "active" in the
 		// orchestrator's projection forever.
-		payload, err := json.Marshal(pkgevents.RunFinalized{
-			ScheduleID:   evt.ScheduleID.String(),
-			ScheduleName: scheduler.ScheduleName,
-			Status:       terminal,
-		})
-		if err != nil {
-			return fmt.Errorf("marshal run.finalized payload: %w", err)
-		}
-		if err := u.OutboxRepo().Create(ctx, u.Tx(), &postgres.OutboxEntry{
-			ID:                  uuid.New(),
-			MessageProcessingID: &msgProcID,
-			AggregateType:       "scheduler_tracker",
-			AggregateID:         evt.ScheduleID,
-			EventType:           "run.finalized:v1",
-			Payload:             payload,
-			StreamName:          "run.finalized:v1",
-			Status:              "pending",
-			MaxRetries:          5,
-			RetryCount:          0,
-			CreatedAt:           time.Now(),
-		}); err != nil {
+		if err := emitRunFinalized(ctx, u, evt.ScheduleID, scheduler.ScheduleName, terminal, msgProcID); err != nil {
 			return fmt.Errorf("create outbox entry for run.finalized: %w", err)
 		}
 	} else {

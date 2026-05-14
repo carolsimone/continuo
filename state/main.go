@@ -164,31 +164,22 @@ func main() {
 		}
 	}()
 
-	// Initialize task.status.updated:v1 consumer
-	taskStatusConsumer, err := redis.NewTaskStatusUpdatedConsumer(
+	// task.status.updated:v1 consumer. The StreamConsumer drives the
+	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
+	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
+	// exits Start cleanly.
+	taskStatusUpdatedHandler := svchandlers.NewTaskStatusUpdatedHandler(logger)
+	taskStatusUpdatedBinding := redis.NewTaskStatusUpdatedBinding(uowFactory, taskStatusUpdatedHandler, logger)
+	taskStatusUpdatedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamTaskStatusUpdated,
-		db,
-		schedulerRepo,
-		taskRepo,
-		outboxRepo,
+		"state-task-status-updated",
+		taskStatusUpdatedBinding,
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create task status updated consumer", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("Task status updated consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping task status updated consumer")
-		taskStatusConsumer.Stop()
-		return nil
-	})
-
-	// Start task status updated consumer in background
 	go func() {
-		if err := taskStatusConsumer.Start(ctx); err != nil {
+		if err := taskStatusUpdatedConsumer.Start(ctx); err != nil {
 			logger.Error("Task status updated consumer error", "error", err)
 		}
 	}()

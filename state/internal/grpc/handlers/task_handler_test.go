@@ -93,6 +93,9 @@ func (s *stubTaskRepo) UpdateStatusIfChangedTx(_ context.Context, _ *sqlx.Tx, _ 
 func (s *stubTaskRepo) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
 }
+func (s *stubTaskRepo) GetStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (string, error) {
+	return "", nil
+}
 func (s *stubTaskRepo) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
 }
