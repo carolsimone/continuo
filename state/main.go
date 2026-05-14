@@ -202,27 +202,20 @@ func main() {
 		}
 	}()
 
-	// Initialize task.execution.recorded:v1 consumer
-	taskExecutionRecordedConsumer, err := redis.NewTaskExecutionRecordedConsumer(
+	// task.execution.recorded:v1 consumer. The StreamConsumer drives the
+	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
+	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
+	// exits Start cleanly.
+	taskExecutionRecordedHandler := svchandlers.NewTaskExecutionRecordedHandler(logger)
+	taskExecutionRecordedBinding := redis.NewTaskExecutionRecordedBinding(uowFactory, taskExecutionRecordedHandler, logger)
+	taskExecutionRecordedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamTaskExecutionRecorded,
-		db,
-		taskExecutionRepo,
+		"state-task-execution-recorded",
+		taskExecutionRecordedBinding,
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create task execution recorded consumer", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("Task execution recorded consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping task execution recorded consumer")
-		taskExecutionRecordedConsumer.Stop()
-		return nil
-	})
-
-	// Start task execution recorded consumer in background
 	go func() {
 		if err := taskExecutionRecordedConsumer.Start(ctx); err != nil {
 			logger.Error("Task execution recorded consumer error", "error", err)
