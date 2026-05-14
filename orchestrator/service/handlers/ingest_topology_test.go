@@ -41,7 +41,7 @@ func (f *fakeTopologyRepository) GetScheduleGraph(ctx context.Context, scheduleN
 	return nil, nil, nil
 }
 
-// ── fakes: topology.TopologyStateRepository ──────────────────────────────────
+// ── fakes: repository.TopologyStateRepository ─────────────────────────────────
 
 type fakeTopologyStateRepository struct {
 	generation int64
@@ -55,6 +55,8 @@ func (f *fakeTopologyStateRepository) IncrementGeneration(ctx context.Context) (
 func (f *fakeTopologyStateRepository) GetGeneration(ctx context.Context) (int64, error) {
 	return f.generation, nil
 }
+
+var _ repository.TopologyStateRepository = (*fakeTopologyStateRepository)(nil)
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

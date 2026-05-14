@@ -22,7 +22,7 @@ import (
 type IngestTopologyHandler struct {
 	uow               uow.UnitOfWork
 	topologyRepo      topology.Repository
-	topologyStateRepo topology.TopologyStateRepository
+	topologyStateRepo repository.TopologyStateRepository
 	rejectedRepo      repository.RejectedTopologyRepository
 	logger            *slog.Logger
 }
@@ -31,7 +31,7 @@ type IngestTopologyHandler struct {
 func NewIngestTopologyHandler(
 	u uow.UnitOfWork,
 	topologyRepo topology.Repository,
-	topologyStateRepo topology.TopologyStateRepository,
+	topologyStateRepo repository.TopologyStateRepository,
 	rejectedRepo repository.RejectedTopologyRepository,
 	logger *slog.Logger,
 ) *IngestTopologyHandler {
