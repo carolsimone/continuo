@@ -9,6 +9,7 @@ import (
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/google/uuid"
 )
 
@@ -39,7 +40,7 @@ func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainModel.Rebase
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	msgProcessingID, shouldSkip, err := dedupMessage(ctx, h.uow, h.logger, messageID, "trigger.rebase:v1", cmdPayload)
+	msgProcessingID, shouldSkip, err := messageprocessing.Dedup(ctx, h.uow.MessageProcessingRepo(), h.logger, messageID, "trigger.rebase:v1", cmdPayload)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
 	}
