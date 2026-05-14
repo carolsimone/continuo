@@ -11,7 +11,9 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// TopologyRepository implements the write-side of repository.TopologyRepository.
+// TopologyRepository implements repository.TopologyRepository against Neo4j,
+// covering both the snapshot write path and the minimal schedule-graph read
+// required by the domain port.
 type TopologyRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
