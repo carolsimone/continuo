@@ -19,15 +19,6 @@ type Config struct {
 	S3       pkgconfig.S3Config
 	Resolver ResolverConfig
 
-	// Redis streams
-	RedisConsumerDeployedStream    string
-	RedisConsumerCheckStream       string
-	RedisConsumerGroup             string
-	RedisProducerCheckStream       string
-	RedisProducerRetryStream       string
-	RedisProducerFailedStream      string
-	RedisProducerUpdateTableStream string
-
 	// HTTP
 	HTTPPort int
 
@@ -43,8 +34,6 @@ type Config struct {
 	ErrorMessageMaxLength int
 
 	// Schedule cancellation
-	ScheduleCancelledStream            string
-	ScheduleCancelledGroup             string
 	CancelledSchedulesTTLHours         int
 	CancelledSchedulesSweepIntervalMin int
 }
@@ -64,14 +53,6 @@ func Load(v *pkgconfig.Validator) Config {
 			MaxAttempts:           envInt("RESOLVER_MAX_ATTEMPTS", 5),
 		},
 
-		RedisConsumerDeployedStream:    v.Require("REDIS_CONSUMER_DEPLOYED_STREAM"),
-		RedisConsumerCheckStream:       v.Require("REDIS_CONSUMER_CHECK_STREAM"),
-		RedisConsumerGroup:             v.Require("REDIS_CONSUMER_GROUP"),
-		RedisProducerCheckStream:       v.Require("REDIS_PRODUCER_CHECK_STREAM"),
-		RedisProducerRetryStream:       v.Require("REDIS_PRODUCER_RETRY_STREAM"),
-		RedisProducerFailedStream:      v.Require("REDIS_PRODUCER_FAILED_STREAM"),
-		RedisProducerUpdateTableStream: v.Require("REDIS_PRODUCER_UPDATE_TABLE_STREAM"),
-
 		HTTPPort:              envInt("HTTP_PORT", 8085),
 		K8sNamespace:          v.Require("K8S_NAMESPACE"),
 		K8sCheckDelaySeconds:  envInt("K8S_CHECK_DELAY_SECONDS", 30),
@@ -79,12 +60,9 @@ func Load(v *pkgconfig.Validator) Config {
 		LogTailLines:          envInt("LOG_TAIL_LINES", 50),
 		ErrorMessageMaxLength: envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
 
-		ScheduleCancelledStream:            v.Require("SCHEDULE_CANCELLED_STREAM"),
-		ScheduleCancelledGroup:             v.Require("SCHEDULE_CANCELLED_GROUP"),
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
 	}
 }
 
-func env(key, fallback string) string     { return pkgconfig.EnvOrDefault(key, fallback) }
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }
