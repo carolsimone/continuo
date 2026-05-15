@@ -34,10 +34,11 @@ func TestConsumer_DropsQueryModelWhenScheduleCancelled(t *testing.T) {
 	cancelledRepo := &fakeCancelledRepo{ids: map[uuid.UUID]bool{scheduleID: true}}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	// Consumer with minimal setup (no real Redis needed)
+	// Consumer with minimal setup (no real Redis needed).
 	c := &Consumer{
 		cancelledSchedulesRepo: cancelledRepo,
-		consumerGroup:          "test-group",
+		group:                  "test-group",
+		stream:                 "query.model:v1",
 		logger:                 logger,
 	}
 
@@ -58,6 +59,42 @@ func TestConsumer_DropsQueryModelWhenScheduleCancelled(t *testing.T) {
 	// The guard should short-circuit before messageBus is called.
 	// Since messageBus is nil, if the guard doesn't fire, it will panic.
 	// A panic means the guard is missing; returning nil means it worked.
-	err := c.processMessage(context.Background(), msg, "query.model:v1")
+	err := c.processMessage(context.Background(), msg)
 	require.NoError(t, err, "should no-op when schedule is cancelled, not panic")
+}
+
+func TestConsumer_DropsRetryTaskWhenScheduleCancelled(t *testing.T) {
+	scheduleID := uuid.New()
+	taskID := uuid.New()
+
+	cancelledRepo := &fakeCancelledRepo{ids: map[uuid.UUID]bool{scheduleID: true}}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Consumer configured for the retry.task:v1 stream.
+	c := &Consumer{
+		cancelledSchedulesRepo: cancelledRepo,
+		group:                  "test-group",
+		stream:                 "retry.task:v1",
+		logger:                 logger,
+	}
+
+	msg := goredis.XMessage{
+		ID: "2-0",
+		Values: map[string]interface{}{
+			"schedule_id":      scheduleID.String(),
+			"task_id":          taskID.String(),
+			"schedule_name":    "s",
+			"service_name":     "svc",
+			"schema_name":      "sc",
+			"table_name":       "t",
+			"job_name":         "j",
+			"node_type":        "dbt_model",
+			"task_retry_count": "1",
+			"max_retries":      "3",
+		},
+	}
+
+	// Guard must fire for retry.task stream too; messageBus nil would panic if it doesn't.
+	err := c.processMessage(context.Background(), msg)
+	require.NoError(t, err, "should no-op when schedule is cancelled on retry.task stream, not panic")
 }
