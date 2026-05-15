@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"strings"
 	"testing"
 )
@@ -183,5 +184,22 @@ streams:
 	_, err := loadAndValidate(strings.NewReader(y))
 	if err == nil || !strings.Contains(err.Error(), "identifier") {
 		t.Fatalf("expected identifier error, got %v", err)
+	}
+}
+
+//go:embed testdata/golden.go.txt
+var goldenGo string
+
+func TestEmitGo(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(validYAML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got, err := emitGo(c)
+	if err != nil {
+		t.Fatalf("emitGo: %v", err)
+	}
+	if got != goldenGo {
+		t.Fatalf("emitGo mismatch.\n--- got ---\n%s\n--- want ---\n%s", got, goldenGo)
 	}
 }
