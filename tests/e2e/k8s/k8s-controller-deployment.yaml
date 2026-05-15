@@ -64,20 +64,6 @@ spec:
               value: "6379"
             - name: REDIS_PASSWORD
               value: "continuo"
-            - name: REDIS_CONSUMER_DEPLOYED_STREAM
-              value: "node.deployed:v1"
-            - name: REDIS_CONSUMER_CHECK_STREAM
-              value: "check.k8s:v1"
-            - name: REDIS_CONSUMER_GROUP
-              value: "k8s_controller_consumers"
-            - name: REDIS_PRODUCER_CHECK_STREAM
-              value: "check.k8s:v1"
-            - name: REDIS_PRODUCER_RETRY_STREAM
-              value: "retry.task:v1"
-            - name: REDIS_PRODUCER_FAILED_STREAM
-              value: "task.failed:v1"
-            - name: REDIS_PRODUCER_UPDATE_TABLE_STREAM
-              value: "node.updated:v1"
             - name: POSTGRES_HOST
               value: "${DOCKER_BRIDGE_IP}"
             - name: POSTGRES_PORT
@@ -112,10 +98,6 @@ spec:
               value: "local"
             - name: LOG_LEVEL
               value: "INFO"
-            - name: SCHEDULE_CANCELLED_STREAM
-              value: "schedule.cancelled:v1"
-            - name: SCHEDULE_CANCELLED_GROUP
-              value: "k8s-schedule-cancelled"
             - name: CANCELLED_SCHEDULES_TTL_HOURS
               value: "24"
             - name: CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES
