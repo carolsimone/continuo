@@ -14,7 +14,7 @@ import (
 // NewScheduleCancelledHandler returns a MessageHandler that records cancelled
 // schedule IDs in the local cancelled_schedules table.
 func NewScheduleCancelledHandler(
-	repo postgres.CancelledSchedulesRepository,
+	repo repository.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {

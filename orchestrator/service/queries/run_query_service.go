@@ -27,7 +27,7 @@ type RunReader interface {
 }
 
 // TopologyStateReader is the read-side surface RunQueryService needs from
-// the topology-state adapter. Satisfied by adapters/postgres/TopologyStateRepository.
+// the topology-state adapter. Satisfied by adapters/postgres/topologyStateRepository.
 type TopologyStateReader interface {
 	GetGeneration(ctx context.Context) (int64, error)
 }
