@@ -113,7 +113,7 @@ func main() {
 	catalogBinding := redis.NewScheduleCatalogBinding(uowFactory, catalogHandler, logger)
 	catalogConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.RedisStreamSchedulesLoaded,
+		streams.SchedulesLoadedV1,
 		streams.StateScheduleCatalog,
 		catalogBinding,
 		logger,
@@ -133,7 +133,7 @@ func main() {
 	runEntriesDispatchedBinding := redis.NewRunEntriesDispatchedBinding(uowFactory, runEntriesDispatchedHandler, logger)
 	runEntriesDispatchedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.RedisStreamRunEntriesDispatched,
+		streams.RunEntriesDispatchedV1,
 		streams.StateRunEntriesDispatched,
 		runEntriesDispatchedBinding,
 		logger,
@@ -153,7 +153,7 @@ func main() {
 	runEntriesDispatchFailedBinding := redis.NewRunEntriesDispatchFailedBinding(uowFactory, runEntriesDispatchFailedHandler, logger)
 	runEntriesDispatchFailedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.RedisStreamRunEntriesDispatchFailed,
+		streams.RunEntriesDispatchFailedV1,
 		streams.StateRunEntriesDispatchFailed,
 		runEntriesDispatchFailedBinding,
 		logger,
@@ -173,7 +173,7 @@ func main() {
 	taskStatusUpdatedBinding := redis.NewTaskStatusUpdatedBinding(uowFactory, taskStatusUpdatedHandler, logger)
 	taskStatusUpdatedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.RedisStreamTaskStatusUpdated,
+		streams.TaskStatusUpdatedV1,
 		streams.StateTaskStatusUpdated,
 		taskStatusUpdatedBinding,
 		logger,
@@ -193,7 +193,7 @@ func main() {
 	taskExecutionRecordedBinding := redis.NewTaskExecutionRecordedBinding(uowFactory, taskExecutionRecordedHandler, logger)
 	taskExecutionRecordedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.RedisStreamTaskExecutionRecorded,
+		streams.TaskExecutionRecordedV1,
 		streams.StateTaskExecutionRecorded,
 		taskExecutionRecordedBinding,
 		logger,
@@ -213,7 +213,7 @@ func main() {
 		catalogRepo,
 		schedulerRepo,
 		outboxRepo,
-		cfg.RedisStreamSchedulerStarted,
+		streams.SchedulerStartedV1,
 		logger,
 	)
 	logger.Info("Schedule activator and activation service initialized")
