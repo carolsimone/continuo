@@ -27,6 +27,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -219,8 +220,8 @@ func main() {
 	scheduleCancelledBinding := redis.NewScheduleCancelledBinding(scheduleCancelledHandler, logger)
 	scheduleCancelledConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.ScheduleCancelledStream,
-		cfg.ScheduleCancelledGroup,
+		streams.ScheduleCancelledV1,
+		streams.OrchestratorScheduleCancelled,
 		scheduleCancelledBinding,
 		logger,
 	)
@@ -267,8 +268,8 @@ func main() {
 	}
 	nodeUpdatedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.NodeUpdatedStream,
-		cfg.NodeUpdatedGroup,
+		streams.NodeUpdatedV1,
+		streams.OrchestratorNodeUpdated,
 		nodeUpdatedHandler,
 		logger,
 	)
@@ -288,8 +289,8 @@ func main() {
 	}
 	manifestLoadedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.ManifestLoadedStream,
-		cfg.ManifestLoadedGroup,
+		streams.ManifestLoadedV1,
+		streams.OrchestratorManifestLoaded,
 		manifestLoadedHandler,
 		logger,
 	)
@@ -306,8 +307,8 @@ func main() {
 	}
 	initRunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.InitializeRunStream,
-		cfg.InitializeRunGroup,
+		streams.InitializeRunV1,
+		streams.OrchestratorInitializeRun,
 		initRunHandler,
 		logger,
 	)
@@ -322,8 +323,8 @@ func main() {
 	}
 	schedulerStartedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.SchedulerStartedStream,
-		cfg.SchedulerStartedGroup,
+		streams.SchedulerStartedV1,
+		streams.OrchestratorSchedulerStarted,
 		schedulerStartedHandler,
 		logger,
 	)
@@ -345,8 +346,8 @@ func main() {
 	}
 	rerunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.RerunStream,
-		cfg.RerunGroup,
+		streams.TriggerRerunV1,
+		streams.OrchestratorRerun,
 		rerunHandler,
 		logger,
 	)
@@ -368,8 +369,8 @@ func main() {
 	}
 	rebaseConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.RebaseStream,
-		cfg.RebaseGroup,
+		streams.TriggerRebaseV1,
+		streams.OrchestratorRebase,
 		rebaseHandler,
 		logger,
 	)
@@ -413,8 +414,8 @@ func main() {
 	}
 	singleNodeRunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.SingleNodeRunStream,
-		cfg.SingleNodeRunGroup,
+		streams.TriggerSingleNodeRunV1,
+		streams.OrchestratorSingleNodeRun,
 		singleNodeRunHandler,
 		logger,
 	)
@@ -427,8 +428,8 @@ func main() {
 	runFinalizedBinding := redis.NewRunFinalizedBinding(runFinalizedHandler, logger)
 	runFinalizedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		cfg.RunFinalizedStream,
-		cfg.RunFinalizedGroup,
+		streams.RunFinalizedV1,
+		streams.OrchestratorRunFinalized,
 		runFinalizedBinding,
 		logger,
 	)
