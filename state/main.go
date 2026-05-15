@@ -20,6 +20,7 @@ import (
 	"github.com/carolsimone/continuo/state/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -113,7 +114,7 @@ func main() {
 	catalogConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamSchedulesLoaded,
-		"state-schedule-catalog",
+		streams.StateScheduleCatalog,
 		catalogBinding,
 		logger,
 	)
@@ -133,7 +134,7 @@ func main() {
 	runEntriesDispatchedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamRunEntriesDispatched,
-		"state-run-entries-dispatched",
+		streams.StateRunEntriesDispatched,
 		runEntriesDispatchedBinding,
 		logger,
 	)
@@ -153,7 +154,7 @@ func main() {
 	runEntriesDispatchFailedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamRunEntriesDispatchFailed,
-		"state-run-entries-dispatch-failed",
+		streams.StateRunEntriesDispatchFailed,
 		runEntriesDispatchFailedBinding,
 		logger,
 	)
@@ -173,7 +174,7 @@ func main() {
 	taskStatusUpdatedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamTaskStatusUpdated,
-		"state-task-status-updated",
+		streams.StateTaskStatusUpdated,
 		taskStatusUpdatedBinding,
 		logger,
 	)
@@ -193,7 +194,7 @@ func main() {
 	taskExecutionRecordedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamTaskExecutionRecorded,
-		"state-task-execution-recorded",
+		streams.StateTaskExecutionRecorded,
 		taskExecutionRecordedBinding,
 		logger,
 	)
