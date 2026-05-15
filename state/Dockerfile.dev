@@ -42,6 +42,10 @@ COPY executor-controller/ ./executor-controller/
 COPY k8s-controller/ ./k8s-controller/
 COPY tests/e2e/ ./tests/e2e/
 
+# state/test/migrations.go loads db/migration/state/V*.sql at test runtime so
+# the integration/e2e tests apply the same Flyway DDL as production.
+COPY db/migration/state/ ./db/migration/state/
+
 WORKDIR /app/state
 
 EXPOSE 8082

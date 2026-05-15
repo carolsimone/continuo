@@ -12,10 +12,12 @@ import (
 )
 
 func newOutboxEntry() *postgres.OutboxEntry {
-	msgProcID := uuid.New()
+	// MessageProcessingID left nil — the FK column is nullable. Tests that
+	// exercise the FK provenance link should seed a real message_processing
+	// row and use its ID; these CRUD tests don't.
 	return &postgres.OutboxEntry{
 		ID:                  uuid.New(),
-		MessageProcessingID: &msgProcID,
+		MessageProcessingID: nil,
 		AggregateType:       "scheduler",
 		AggregateID:         uuid.New(),
 		EventType:           "rerun_node",

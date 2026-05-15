@@ -99,9 +99,11 @@ func TestMain(m *testing.M) {
 	}
 	defer db.Close()
 
-	// ---- Run migrations ----
-	if _, err := db.Exec(integrationSchema); err != nil {
-		logger.Error("Failed to run schema migration", "error", err)
+	// ---- Run migrations from db/migration/state/V*.sql ----
+	// Loaded from disk rather than hardcoded so the test schema stays in
+	// lock-step with production. See state/test/migrations.go.
+	if err := ApplyMigrations(db.DB); err != nil {
+		logger.Error("Failed to apply migrations", "error", err)
 		os.Exit(1)
 	}
 
@@ -167,103 +169,6 @@ func (n *noopScheduleActivator) PrepareActivation(_ context.Context, _ string, _
 }
 
 var _ scheduler.ScheduleActivator = (*noopScheduleActivator)(nil)
-
-// integrationSchema is the full DDL for tables exercised by integration tests.
-// Matches the schema from repository_test.go.
-// NOTE: keep this DDL in sync with db/migration/state/V*.sql (currently V1–V16).
-const integrationSchema = `
-CREATE TABLE IF NOT EXISTS scheduler_tracker (
-	schedule_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-	schedule_name       VARCHAR(50) NOT NULL,
-	status              VARCHAR(20) NOT NULL CHECK (status IN (
-							'pending','running','succeeded','failed','cancelled'
-						)),
-	created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-	started_at          TIMESTAMPTZ,
-	completed_at        TIMESTAMPTZ,
-	last_heartbeat_at   TIMESTAMPTZ,
-	cancelled_at        TIMESTAMPTZ,
-	cancelled_by        VARCHAR(255),
-	cancellation_reason TEXT,
-	initialization_status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (initialization_status IN (
-							'pending','in_progress','completed','failed'
-						)),
-	service_metadata    JSONB NOT NULL DEFAULT '{}',
-	total_task_count    INTEGER,
-	terminal_task_count INTEGER NOT NULL DEFAULT 0,
-	kind                VARCHAR(20) NOT NULL DEFAULT 'cron' CHECK (kind IN (
-							'cron', 'trigger', 'rerun', 'rebase', 'single_node_run'
-						)),
-	source_run_id       UUID NULL,
-	CONSTRAINT valid_timestamps CHECK (
-		(started_at IS NULL OR started_at >= created_at) AND
-		(completed_at IS NULL OR completed_at >= started_at)
-	)
-);
-
-CREATE INDEX IF NOT EXISTS idx_int_scheduler_tracker_init_status ON scheduler_tracker(schedule_id, initialization_status);
-CREATE INDEX IF NOT EXISTS idx_int_scheduler_tracker_kind ON scheduler_tracker (kind);
-CREATE INDEX IF NOT EXISTS idx_int_scheduler_tracker_source_run_id ON scheduler_tracker (source_run_id)
-	WHERE source_run_id IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS task_tracker (
-	task_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-	schedule_id         UUID NOT NULL REFERENCES scheduler_tracker(schedule_id) ON DELETE CASCADE,
-	created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-	service_name        VARCHAR(100) NOT NULL,
-	schema_name         VARCHAR(100) NOT NULL,
-	table_name          VARCHAR(100) NOT NULL,
-	status              VARCHAR(20) NOT NULL CHECK (status IN (
-							'pending','running','succeeded','failed','cancelled','skipped'
-						)),
-	retry_count         INTEGER NOT NULL DEFAULT 0,
-	max_retries         INTEGER NOT NULL,
-	job_name            VARCHAR(63) NOT NULL,
-	cancelled_at        TIMESTAMPTZ,
-	cancelled_by        VARCHAR(255),
-	manifest_version    VARCHAR(50) NOT NULL DEFAULT '',
-	image_tag           VARCHAR(255) NOT NULL DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_int_task_tracker_schedule_id ON task_tracker(schedule_id);
-CREATE INDEX IF NOT EXISTS idx_int_task_tracker_status ON task_tracker(status);
-
-CREATE TABLE IF NOT EXISTS task_execution (
-	id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-	task_id                UUID NOT NULL REFERENCES task_tracker(task_id) ON DELETE CASCADE,
-	created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-	started_at             TIMESTAMPTZ,
-	completed_at           TIMESTAMPTZ,
-	execution_time_seconds DECIMAL(10, 3),
-	executor_id            VARCHAR(100),
-	k8s_job_name           VARCHAR(253),
-	error_message          TEXT,
-	cancelled_at           TIMESTAMPTZ,
-	cancelled_by           VARCHAR(255),
-	cancellation_reason    TEXT,
-	log_s3_key             VARCHAR(500),
-	CONSTRAINT valid_execution_timestamps CHECK (
-		(started_at IS NULL OR started_at >= created_at) AND
-		(completed_at IS NULL OR completed_at >= started_at)
-	)
-);
-
-CREATE INDEX IF NOT EXISTS idx_int_task_execution_task_id ON task_execution(task_id);
-CREATE INDEX IF NOT EXISTS idx_int_task_execution_created_at ON task_execution(created_at DESC);
-
-CREATE TABLE IF NOT EXISTS state_outbox (
-	id             UUID PRIMARY KEY,
-	aggregate_type VARCHAR(100) NOT NULL,
-	aggregate_id   UUID NOT NULL,
-	event_type     VARCHAR(100) NOT NULL,
-	payload        JSONB NOT NULL,
-	stream_name    VARCHAR(200) NOT NULL,
-	status         VARCHAR(20) NOT NULL DEFAULT 'pending',
-	max_retries    INTEGER NOT NULL DEFAULT 3,
-	retry_count    INTEGER NOT NULL DEFAULT 0,
-	created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-`
 
 // ============================================================================
 // Integration tests
