@@ -74,22 +74,6 @@ func setupRedis(t *testing.T) (*goredis.Client, func()) {
 	return client, cleanup
 }
 
-// outboxSchema returns the DDL for the state_outbox table used in e2e tests.
-const outboxSchema = `
-CREATE TABLE IF NOT EXISTS state_outbox (
-	id             UUID PRIMARY KEY,
-	aggregate_type VARCHAR(100) NOT NULL,
-	aggregate_id   UUID NOT NULL,
-	event_type     VARCHAR(100) NOT NULL,
-	payload        JSONB NOT NULL,
-	stream_name    VARCHAR(200) NOT NULL,
-	status         VARCHAR(20) NOT NULL DEFAULT 'pending',
-	max_retries    INTEGER NOT NULL DEFAULT 3,
-	retry_count    INTEGER NOT NULL DEFAULT 0,
-	created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-`
-
 // TestSchedulerActivation_E2E tests the full scheduler activation flow using the
 // transactional outbox pattern: ScheduleActivationService writes atomically to
 // scheduler_tracker + state_outbox, then OutboxProcessor publishes to Redis.
@@ -103,14 +87,12 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	// Setup PostgreSQL
+	// Setup PostgreSQL. setupPostgres applies the full Flyway migration set
+	// from db/migration/state/V*.sql, including message_processing and
+	// state_outbox, so no additional DDL is needed here.
 	t.Log("Setting up PostgreSQL...")
 	db, cleanupDB := setupPostgres(t)
 	defer cleanupDB()
-
-	// Create the outbox table (setupPostgres only creates scheduler/task tables)
-	_, err := db.Exec(outboxSchema)
-	require.NoError(t, err, "Failed to create state_outbox table")
 
 	// Setup Redis
 	t.Log("Setting up Redis...")

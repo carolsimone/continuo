@@ -3,186 +3,249 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
-	"io"
+	"errors"
 	"log/slog"
+	"os"
 	"testing"
-	"time"
 
-	"github.com/carolsimone/continuo/pkg/events"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/database"
+	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/domain/model"
-	statehandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func setupDispatchFailedTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
-	db, err := database.GetPostgresConnection()
-	if err != nil {
-		t.Skip("no test DB available:", err)
+// fakeRunFailedSchedulerRepo is a minimal stub of
+// postgres.SchedulerTrackerRepository for RunEntriesDispatchFailed handler
+// tests. Only the *Tx methods the handler calls record arguments; the rest
+// panic so accidental use surfaces immediately.
+type fakeRunFailedSchedulerRepo struct {
+	scheduler   *model.SchedulerTracker
+	getErr      error
+	finalizedTo string
+	finalizeErr error
+}
+
+func (f *fakeRunFailedSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
+	return f.scheduler, f.getErr
+}
+
+func (f *fakeRunFailedSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, status string) error {
+	f.finalizedTo = status
+	return f.finalizeErr
+}
+
+// Unused methods — panic on accidental use.
+func (f *fakeRunFailedSchedulerRepo) Create(context.Context, *model.SchedulerTracker) error {
+	panic("Create not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) GetByID(context.Context, uuid.UUID) (*model.SchedulerTracker, error) {
+	panic("GetByID not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) Update(context.Context, *model.SchedulerTracker) error {
+	panic("Update not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) Cancel(context.Context, uuid.UUID, string, string) error {
+	panic("Cancel not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) CancelTx(context.Context, *sqlx.Tx, uuid.UUID, string, string) error {
+	panic("CancelTx not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) List(context.Context, postgres.SchedulerFilters) ([]*model.SchedulerTracker, int, error) {
+	panic("List not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) HasActiveSchedule(context.Context, string) (bool, error) {
+	panic("HasActiveSchedule not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) UpdateInitializationStatus(context.Context, uuid.UUID, string) error {
+	panic("UpdateInitializationStatus not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) ResetInProgressInitializations(context.Context) (int, error) {
+	panic("ResetInProgressInitializations not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) GetLastRunPerSchedule(context.Context) (map[string]postgres.LastRunData, error) {
+	panic("GetLastRunPerSchedule not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) GetActiveScheduler(context.Context, string) (*model.SchedulerTracker, error) {
+	panic("GetActiveScheduler not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) UpdateTx(context.Context, *sqlx.Tx, *model.SchedulerTracker) error {
+	panic("UpdateTx not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) UpdateInitializationStatusTx(context.Context, *sqlx.Tx, uuid.UUID, string) error {
+	panic("UpdateInitializationStatusTx not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) CreateTx(context.Context, *sqlx.Tx, *model.SchedulerTracker) error {
+	panic("CreateTx not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) IncrementTerminalCountTx(context.Context, *sqlx.Tx, uuid.UUID) (int32, int32, error) {
+	panic("IncrementTerminalCountTx not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) DecrementTerminalCountTx(context.Context, *sqlx.Tx, uuid.UUID, int32) error {
+	panic("DecrementTerminalCountTx not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) SetTotalTaskCountTx(context.Context, *sqlx.Tx, uuid.UUID, int32) error {
+	panic("SetTotalTaskCountTx not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) SetTerminalTaskCountTx(context.Context, *sqlx.Tx, uuid.UUID, int32) error {
+	panic("SetTerminalTaskCountTx not implemented in fake")
+}
+func (f *fakeRunFailedSchedulerRepo) UpdateStatusTx(context.Context, *sqlx.Tx, uuid.UUID, string) error {
+	panic("UpdateStatusTx not implemented in fake")
+}
+
+// fakeRunFailedOutboxRepo captures outbox writes for the dispatch_failed
+// handler tests. Only Create is exercised; other methods panic.
+type fakeRunFailedOutboxRepo struct {
+	created []*postgres.OutboxEntry
+	err     error
+}
+
+func (f *fakeRunFailedOutboxRepo) Create(_ context.Context, _ *sqlx.Tx, e *postgres.OutboxEntry) error {
+	if f.err != nil {
+		return f.err
 	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	f.created = append(f.created, e)
+	return nil
+}
+func (f *fakeRunFailedOutboxRepo) ListPending(context.Context, int) ([]*postgres.OutboxEntry, error) {
+	panic("ListPending not implemented in fake")
+}
+func (f *fakeRunFailedOutboxRepo) MarkPublished(context.Context, uuid.UUID) error {
+	panic("MarkPublished not implemented in fake")
+}
+func (f *fakeRunFailedOutboxRepo) IncrementRetry(context.Context, uuid.UUID) error {
+	panic("IncrementRetry not implemented in fake")
 }
 
-func seedDispatchFailedScheduler(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, status model.SchedulerStatus) {
-	t.Helper()
-	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (
-			schedule_id, schedule_name, status, created_at,
-			initialization_status, service_metadata, total_task_count, terminal_task_count
-		) VALUES ($1, $2, $3, $4, $5, $6, NULL, 0)
-	`,
-		scheduleID,
-		"test-schedule-"+scheduleID.String(),
-		string(status),
-		time.Now(),
-		"in_progress",
-		json.RawMessage(`{}`),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
-	})
+func runFailedTestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-func buildDispatchFailedPayload(t *testing.T, scheduleID uuid.UUID, scheduleName, reason string) string {
-	t.Helper()
-	evt := events.RunEntriesDispatchFailed{
-		ScheduleID:   scheduleID.String(),
-		ScheduleName: scheduleName,
-		Reason:       events.DispatchFailedReason(reason),
-	}
-	b, err := json.Marshal(evt)
-	require.NoError(t, err)
-	return string(b)
-}
-
-// TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed verifies
-// the happy path. The gRPC TriggerSingleNodeRun handler creates the
-// scheduler_tracker row with status='running' before orchestrator emits the
-// dispatch_failed event, so this seeds 'running' to match production.
+// TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed
+// verifies the happy path: a non-terminal scheduler is locked, finalized as
+// failed, and a run.finalized:v1 outbox entry is written with
+// MessageProcessingID set to the dedup ID returned by Dedup().
 func TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed(t *testing.T) {
-	db := setupDispatchFailedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
 	scheduleID := uuid.New()
-	seedDispatchFailedScheduler(t, db, scheduleID, model.SchedulerStatusRunning)
-	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
-
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	handler := statehandlers.NewRunEntriesDispatchFailedHandler(db, schedulerRepo, outboxRepo, logger)
-
-	payload := buildDispatchFailedPayload(t, scheduleID, "test-schedule", "target_not_found")
-	messageID := scheduleID.String() + "-fail-1"
-
-	shouldACK, err := handler.Handle(context.Background(), messageID, payload)
-	require.NoError(t, err)
-	assert.True(t, shouldACK)
-
-	tracker, err := schedulerRepo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusFailed, tracker.Status)
-
-	pending, err := outboxRepo.ListPending(context.Background(), 50)
-	require.NoError(t, err)
-	var foundFinalized bool
-	for _, e := range pending {
-		if e.AggregateID == scheduleID && e.StreamName == "run.finalized:v1" {
-			foundFinalized = true
-			var fin events.RunFinalized
-			require.NoError(t, json.Unmarshal(e.Payload, &fin))
-			assert.Equal(t, "failed", fin.Status)
-			assert.Equal(t, scheduleID.String(), fin.ScheduleID)
-		}
+	msgProcID := uuid.New()
+	sched := &model.SchedulerTracker{
+		ScheduleID:   scheduleID,
+		ScheduleName: "test-schedule",
+		Status:       model.SchedulerStatusRunning,
 	}
-	assert.True(t, foundFinalized, "run.finalized:v1 outbox entry must be written")
+	schedRepo := &fakeRunFailedSchedulerRepo{scheduler: sched}
+	outboxRepo := &fakeRunFailedOutboxRepo{}
+	u := &uow.FakeUnitOfWork{Scheduler: schedRepo, Outbox: outboxRepo}
+
+	h := handlers.NewRunEntriesDispatchFailedHandler(runFailedTestLogger())
+	err := h.Handle(context.Background(), u, events.RunEntriesDispatchFailed{
+		ScheduleID:   scheduleID,
+		ScheduleName: "test-schedule",
+		Reason:       pkgevents.DispatchFailedReasonTargetNotFound,
+	}, msgProcID)
+	require.NoError(t, err)
+	assert.Equal(t, string(model.SchedulerStatusFailed), schedRepo.finalizedTo)
+	require.Len(t, outboxRepo.created, 1)
+	entry := outboxRepo.created[0]
+	assert.Equal(t, "run.finalized:v1", entry.EventType)
+	assert.Equal(t, "run.finalized:v1", entry.StreamName)
+	assert.Equal(t, "scheduler_tracker", entry.AggregateType)
+	assert.Equal(t, scheduleID, entry.AggregateID)
+	assert.Equal(t, "pending", entry.Status)
+	require.NotNil(t, entry.MessageProcessingID)
+	assert.Equal(t, msgProcID, *entry.MessageProcessingID)
+
+	var fin pkgevents.RunFinalized
+	require.NoError(t, json.Unmarshal(entry.Payload, &fin))
+	assert.Equal(t, scheduleID.String(), fin.ScheduleID)
+	assert.Equal(t, "test-schedule", fin.ScheduleName)
+	assert.Equal(t, "failed", fin.Status)
 }
 
-// TestRunEntriesDispatchFailedHandler_IdempotentOnAlreadyTerminal verifies that
-// re-delivery against an already-terminal scheduler is a no-op (no extra
-// run.finalized:v1, no status change).
+// TestRunEntriesDispatchFailedHandler_IdempotentOnAlreadyTerminal verifies
+// that re-delivery against a scheduler already in any terminal state is a
+// no-op: no finalize, no outbox write. Replaces the DB-integration
+// "Succeeded" variant; covers all three terminal statuses for completeness.
 func TestRunEntriesDispatchFailedHandler_IdempotentOnAlreadyTerminal(t *testing.T) {
-	db := setupDispatchFailedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, status := range []model.SchedulerStatus{
+		model.SchedulerStatusSucceeded,
+		model.SchedulerStatusFailed,
+		model.SchedulerStatusCancelled,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			scheduleID := uuid.New()
+			sched := &model.SchedulerTracker{
+				ScheduleID:   scheduleID,
+				ScheduleName: "test-schedule",
+				Status:       status,
+			}
+			schedRepo := &fakeRunFailedSchedulerRepo{scheduler: sched}
+			outboxRepo := &fakeRunFailedOutboxRepo{}
+			u := &uow.FakeUnitOfWork{Scheduler: schedRepo, Outbox: outboxRepo}
 
-	scheduleID := uuid.New()
-	seedDispatchFailedScheduler(t, db, scheduleID, model.SchedulerStatusSucceeded)
-	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
-
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	handler := statehandlers.NewRunEntriesDispatchFailedHandler(db, schedulerRepo, outboxRepo, logger)
-
-	payload := buildDispatchFailedPayload(t, scheduleID, "test-schedule", "target_not_found")
-	messageID := scheduleID.String() + "-fail-already-terminal"
-
-	shouldACK, err := handler.Handle(context.Background(), messageID, payload)
-	require.NoError(t, err)
-	assert.True(t, shouldACK)
-
-	tracker, err := schedulerRepo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusSucceeded, tracker.Status,
-		"already-terminal scheduler must not be overwritten by dispatch_failed")
-
-	pending, err := outboxRepo.ListPending(context.Background(), 50)
-	require.NoError(t, err)
-	for _, e := range pending {
-		if e.AggregateID == scheduleID && e.StreamName == "run.finalized:v1" {
-			t.Fatalf("no run.finalized:v1 must be emitted for already-terminal scheduler, got entry %s", e.ID)
-		}
+			h := handlers.NewRunEntriesDispatchFailedHandler(runFailedTestLogger())
+			err := h.Handle(context.Background(), u, events.RunEntriesDispatchFailed{
+				ScheduleID:   scheduleID,
+				ScheduleName: "test-schedule",
+				Reason:       pkgevents.DispatchFailedReasonTargetNotFound,
+			}, uuid.New())
+			require.NoError(t, err)
+			assert.Empty(t, schedRepo.finalizedTo,
+				"already-terminal scheduler must not be re-finalized")
+			assert.Empty(t, outboxRepo.created,
+				"no run.finalized:v1 must be emitted for already-terminal scheduler")
+		})
 	}
 }
 
-// TestRunEntriesDispatchFailedHandler_DedupOnRedelivery verifies that the
-// processed_events guard prevents double-processing on Redis re-delivery.
-func TestRunEntriesDispatchFailedHandler_DedupOnRedelivery(t *testing.T) {
-	db := setupDispatchFailedTestDB(t)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
+// TestRunEntriesDispatchFailedHandler_FinalizeErrorPropagates verifies that
+// a FinalizeRunTx failure bubbles up and prevents the outbox write — the
+// binding will then rollback the transaction.
+func TestRunEntriesDispatchFailedHandler_FinalizeErrorPropagates(t *testing.T) {
 	scheduleID := uuid.New()
-	seedDispatchFailedScheduler(t, db, scheduleID, model.SchedulerStatusRunning)
-	t.Cleanup(func() { db.Exec(`DELETE FROM processed_events`) })
-
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	handler := statehandlers.NewRunEntriesDispatchFailedHandler(db, schedulerRepo, outboxRepo, logger)
-
-	payload := buildDispatchFailedPayload(t, scheduleID, "test-schedule", "target_not_found")
-	messageID := scheduleID.String() + "-fail-dedup"
-
-	// First delivery
-	shouldACK, err := handler.Handle(context.Background(), messageID, payload)
-	require.NoError(t, err)
-	assert.True(t, shouldACK)
-
-	// Second delivery — same message ID, must be a no-op
-	shouldACK, err = handler.Handle(context.Background(), messageID, payload)
-	require.NoError(t, err)
-	assert.True(t, shouldACK)
-
-	// Exactly one run.finalized:v1 outbox entry must exist for this scheduler
-	pending, err := outboxRepo.ListPending(context.Background(), 50)
-	require.NoError(t, err)
-	var finalizedCount int
-	for _, e := range pending {
-		if e.AggregateID == scheduleID && e.StreamName == "run.finalized:v1" {
-			finalizedCount++
-		}
+	sched := &model.SchedulerTracker{
+		ScheduleID:   scheduleID,
+		ScheduleName: "test-schedule",
+		Status:       model.SchedulerStatusRunning,
 	}
-	assert.Equal(t, 1, finalizedCount, "duplicate message must not produce a second run.finalized:v1")
+	schedRepo := &fakeRunFailedSchedulerRepo{
+		scheduler:   sched,
+		finalizeErr: errors.New("db down"),
+	}
+	outboxRepo := &fakeRunFailedOutboxRepo{}
+	u := &uow.FakeUnitOfWork{Scheduler: schedRepo, Outbox: outboxRepo}
 
-	dedupID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("run.entries.dispatch_failed:"+messageID))
-	var count int
-	require.NoError(t, db.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM processed_events WHERE event_id = $1`, dedupID,
-	).Scan(&count))
-	assert.Equal(t, 1, count, "processed_events must have exactly one entry for the message")
+	h := handlers.NewRunEntriesDispatchFailedHandler(runFailedTestLogger())
+	err := h.Handle(context.Background(), u, events.RunEntriesDispatchFailed{
+		ScheduleID:   scheduleID,
+		ScheduleName: "test-schedule",
+		Reason:       pkgevents.DispatchFailedReasonTargetNotFound,
+	}, uuid.New())
+	require.Error(t, err)
+	assert.Empty(t, outboxRepo.created,
+		"finalize failure must short-circuit the outbox write")
+}
+
+// TestRunEntriesDispatchFailedHandler_GetByIDErrorPropagates verifies that a
+// scheduler lookup failure surfaces an error before any state mutation.
+func TestRunEntriesDispatchFailedHandler_GetByIDErrorPropagates(t *testing.T) {
+	schedRepo := &fakeRunFailedSchedulerRepo{getErr: errors.New("row lock failed")}
+	outboxRepo := &fakeRunFailedOutboxRepo{}
+	u := &uow.FakeUnitOfWork{Scheduler: schedRepo, Outbox: outboxRepo}
+
+	h := handlers.NewRunEntriesDispatchFailedHandler(runFailedTestLogger())
+	err := h.Handle(context.Background(), u, events.RunEntriesDispatchFailed{
+		ScheduleID:   uuid.New(),
+		ScheduleName: "test-schedule",
+		Reason:       pkgevents.DispatchFailedReasonEmptyProjection,
+	}, uuid.New())
+	require.Error(t, err)
+	assert.Empty(t, schedRepo.finalizedTo)
+	assert.Empty(t, outboxRepo.created)
 }

@@ -17,7 +17,10 @@ import (
 	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -95,139 +98,107 @@ func main() {
 		}
 	}()
 
-	// Initialize schedule catalog consumer (consumes schedules.loaded:v1)
-	catalogConsumer, err := redis.NewScheduleCatalogConsumer(
+	// UoW factory shared by every stream binding below. Each invocation
+	// returns a fresh PostgresUnitOfWork over the same repos and *sqlx.DB
+	// so concurrent message handlers do not share transaction state.
+	uowFactory := func() uow.UnitOfWork {
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, logger)
+	}
+
+	// Schedule catalog consumer (consumes schedules.loaded:v1). The
+	// StreamConsumer drives the parser+dedup+UoW binding declared in the
+	// redis adapter. Lifecycle is tied to ctx — the lifecycle manager
+	// cancels ctx on shutdown, which exits Start cleanly.
+	catalogHandler := svchandlers.NewScheduleCatalogHandler(logger)
+	catalogBinding := redis.NewScheduleCatalogBinding(uowFactory, catalogHandler, logger)
+	catalogConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamSchedulesLoaded,
-		catalogRepo,
-		db,
+		streams.StateScheduleCatalog,
+		catalogBinding,
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create schedule catalog consumer", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("Schedule catalog consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping schedule catalog consumer")
-		catalogConsumer.Stop()
-		return nil
-	})
-
-	// Start catalog consumer in background
 	go func() {
 		if err := catalogConsumer.Start(ctx); err != nil {
 			logger.Error("Schedule catalog consumer error", "error", err)
 		}
 	}()
 
-	// Initialize run.entries.dispatched:v1 consumer
-	runEntriesConsumer, err := redis.NewRunEntriesDispatchedConsumer(
+	// run.entries.dispatched:v1 consumer. The StreamConsumer drives the
+	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
+	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
+	// exits Start cleanly.
+	runEntriesDispatchedHandler := svchandlers.NewRunEntriesDispatchedHandler(logger)
+	runEntriesDispatchedBinding := redis.NewRunEntriesDispatchedBinding(uowFactory, runEntriesDispatchedHandler, logger)
+	runEntriesDispatchedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamRunEntriesDispatched,
-		db,
-		schedulerRepo,
-		taskRepo,
-		outboxRepo,
+		streams.StateRunEntriesDispatched,
+		runEntriesDispatchedBinding,
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create run entries dispatched consumer", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("Run entries dispatched consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping run entries dispatched consumer")
-		runEntriesConsumer.Stop()
-		return nil
-	})
-
-	// Start run entries dispatched consumer in background
 	go func() {
-		if err := runEntriesConsumer.Start(ctx); err != nil {
+		if err := runEntriesDispatchedConsumer.Start(ctx); err != nil {
 			logger.Error("Run entries dispatched consumer error", "error", err)
 		}
 	}()
 
-	// Initialize run.entries.dispatch_failed:v1 consumer
-	runEntriesDispatchFailedConsumer, err := redis.NewRunEntriesDispatchFailedConsumer(
+	// run.entries.dispatch_failed:v1 consumer. The StreamConsumer drives the
+	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
+	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
+	// exits Start cleanly.
+	runEntriesDispatchFailedHandler := svchandlers.NewRunEntriesDispatchFailedHandler(logger)
+	runEntriesDispatchFailedBinding := redis.NewRunEntriesDispatchFailedBinding(uowFactory, runEntriesDispatchFailedHandler, logger)
+	runEntriesDispatchFailedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamRunEntriesDispatchFailed,
-		db,
-		schedulerRepo,
-		outboxRepo,
+		streams.StateRunEntriesDispatchFailed,
+		runEntriesDispatchFailedBinding,
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create run entries dispatch failed consumer", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("Run entries dispatch failed consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping run entries dispatch failed consumer")
-		runEntriesDispatchFailedConsumer.Stop()
-		return nil
-	})
-
 	go func() {
 		if err := runEntriesDispatchFailedConsumer.Start(ctx); err != nil {
 			logger.Error("Run entries dispatch failed consumer error", "error", err)
 		}
 	}()
 
-	// Initialize task.status.updated:v1 consumer
-	taskStatusConsumer, err := redis.NewTaskStatusUpdatedConsumer(
+	// task.status.updated:v1 consumer. The StreamConsumer drives the
+	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
+	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
+	// exits Start cleanly.
+	taskStatusUpdatedHandler := svchandlers.NewTaskStatusUpdatedHandler(logger)
+	taskStatusUpdatedBinding := redis.NewTaskStatusUpdatedBinding(uowFactory, taskStatusUpdatedHandler, logger)
+	taskStatusUpdatedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamTaskStatusUpdated,
-		db,
-		schedulerRepo,
-		taskRepo,
-		outboxRepo,
+		streams.StateTaskStatusUpdated,
+		taskStatusUpdatedBinding,
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create task status updated consumer", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("Task status updated consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping task status updated consumer")
-		taskStatusConsumer.Stop()
-		return nil
-	})
-
-	// Start task status updated consumer in background
 	go func() {
-		if err := taskStatusConsumer.Start(ctx); err != nil {
+		if err := taskStatusUpdatedConsumer.Start(ctx); err != nil {
 			logger.Error("Task status updated consumer error", "error", err)
 		}
 	}()
 
-	// Initialize task.execution.recorded:v1 consumer
-	taskExecutionRecordedConsumer, err := redis.NewTaskExecutionRecordedConsumer(
+	// task.execution.recorded:v1 consumer. The StreamConsumer drives the
+	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
+	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
+	// exits Start cleanly.
+	taskExecutionRecordedHandler := svchandlers.NewTaskExecutionRecordedHandler(logger)
+	taskExecutionRecordedBinding := redis.NewTaskExecutionRecordedBinding(uowFactory, taskExecutionRecordedHandler, logger)
+	taskExecutionRecordedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RedisStreamTaskExecutionRecorded,
-		db,
-		taskExecutionRepo,
+		streams.StateTaskExecutionRecorded,
+		taskExecutionRecordedBinding,
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create task execution recorded consumer", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("Task execution recorded consumer initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping task execution recorded consumer")
-		taskExecutionRecordedConsumer.Stop()
-		return nil
-	})
-
-	// Start task execution recorded consumer in background
 	go func() {
 		if err := taskExecutionRecordedConsumer.Start(ctx); err != nil {
 			logger.Error("Task execution recorded consumer error", "error", err)

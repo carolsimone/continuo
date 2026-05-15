@@ -20,7 +20,7 @@ State mutates these records in two ways: via gRPC for UI-facing reads and user-i
 | `task_execution` | One row per execution attempt of a task |
 | `schedule_catalog` | Active schedule names derived from manifests; soft-delete by `removed_at` |
 | `state_outbox` | Transactional outbox for Redis publication |
-| `processed_events` | Deduplication of consumed Redis events |
+| `message_processing` | Inbound dedup: one row per consumed Redis message ID, scoped by `stream_name`; tracks state (`processing` / `completed` / `acked`) |
 
 ### New columns on `scheduler_tracker`
 
@@ -161,6 +161,12 @@ On success: a new `scheduler_tracker` row is inserted with `kind='rerun'`, `sour
 
 ### Redis consumers
 
+Every consumed stream follows the same three-layer path:
+
+1. **Adapter** (`state/adapters/redis/`): a `pkg/redis.StreamConsumer` reads the stream and delegates each `goredis.XMessage` to a per-stream binding (`*_binding.go`). The binding calls a per-stream parser (`*_parser.go`) to turn the raw `XMessage` into a typed `events.<Event>` struct from `state/domain/events`. Parser failures (malformed payload, missing required field, bad UUID, unknown enum value) are wrapped with `pkg/events.ErrPermanent`; `pkg/redis.StreamConsumer` ACKs and drops `ErrPermanent`-wrapped errors so they leave the pending list immediately. Plain handler errors stay in the PEL and are reclaimed by the consumer's periodic ticker.
+2. **Dedup + transaction** (in the binding): the binding obtains a `state/service/uow.UnitOfWork`, calls `Begin`, then runs `pkg/messageprocessing.Dedup` against state's `message_processing` table keyed on `(message_id, stream_name)`. A duplicate commits the empty txn and returns nil (consumer ACKs). A miss inserts a `processing` row and continues into the handler under the same tx.
+3. **Handler** (`state/service/handlers/`): pure orchestration over `uow.UnitOfWork` — no `sqlx`, no `goredis`, no JSON parsing. The handler reads/writes through the repos exposed by the UnitOfWork (`SchedulerRepo`, `TaskRepo`, `TaskExecutionRepo`, `ScheduleCatalogRepo`, `OutboxRepo`). On success the binding marks the `message_processing` row `completed`, the outbox-and-state writes commit together, and the consumer ACKs.
+
 | Stream | Consumer group | Handler |
 |---|---|---|
 | `schedules.loaded:v1` | state service | `ScheduleCatalogHandler` — reconciles `schedule_catalog` |
@@ -168,6 +174,8 @@ On success: a new `scheduler_tracker` row is inserted with `kind='rerun'`, `sour
 | `run.entries.dispatch_failed:v1` | state service | `RunEntriesDispatchFailedHandler` — symmetric counterpart of `RunEntriesDispatchedHandler`. Row-locks `scheduler_tracker`, marks status=`failed`, emits `run.finalized:v1`. Idempotent on already-terminal rows. |
 | `task.status.updated:v1` | state service | `TaskStatusUpdatedHandler` — updates task status, drives finalization state machine |
 | `task.execution.recorded:v1` | state service | `TaskExecutionRecordedHandler` — persists task execution records |
+
+Transient handler errors (e.g. `task_tracker` row not found because `RunEntriesDispatchedHandler` has not yet caught up) intentionally return plain errors — the message stays pending and is reclaimed on the next tick.
 
 ## Outbound Interfaces
 
@@ -264,7 +272,7 @@ If **every** dispatched task is in a terminal state (i.e. there is nothing to ex
 - `task_execution` — on execution create/update (via events)
 - `schedule_catalog` — on `schedules.loaded:v1` consumption (upsert active, soft-delete absent)
 - `state_outbox` — atomically with every activation, rerun, or finalization
-- `processed_events` — after processing each consumed Redis event (deduplication)
+- `message_processing` — one row per consumed Redis message ID; written by the binding inside the same transaction as the handler's state mutation
 
 ## Background Loops
 
@@ -272,10 +280,7 @@ If **every** dispatched task is in a terminal state (i.e. there is nothing to ex
 |---|---|
 | `CronScheduler` | Fires on schedule per `schedules.yaml`; calls `ActivateSchedule` via `ScheduleActivationService` |
 | `OutboxProcessor` | Polls `state_outbox` for pending entries; publishes to Redis and marks processed |
-| `ScheduleCatalogConsumer` | Reads `schedules.loaded:v1` stream |
-| `RunEntriesDispatchedConsumer` | Reads `run.entries.dispatched:v1` stream |
-| `TaskStatusUpdatedConsumer` | Reads `task.status.updated:v1` stream |
-| `TaskExecutionRecordedConsumer` | Reads `task.execution.recorded:v1` stream |
+| `pkg/redis.StreamConsumer` (one per stream) | Reads each consumed stream and delegates to the matching binding in `state/adapters/redis/`. One instance per stream: `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1`, `task.execution.recorded:v1`. Includes a periodic reclaim ticker that re-delivers messages whose handler returned a non-`ErrPermanent` error. |
 | gRPC server | Serves `StateService` on port 50051 |
 | HTTP server | Serves health endpoint on port 8082 |
 
@@ -319,7 +324,8 @@ Payload (nested under Redis field `payload`):
 Effects (all or nothing — transient errors are retried, not ACK'd):
 1. `UpsertAll` — insert or reactivate all names in the list
 2. `SoftDeleteAbsent` — set `removed_at` on any active row not in the list
-3. Record `event_id` in `processed_events`
+
+Dedup against `message_processing` is performed by the binding before the handler runs; the handler itself sees only typed `events.ScheduleCatalogLoaded` data.
 
 > **Warning**: if `schedule_names` is empty, `SoftDeleteAbsent([])` will soft-delete all active catalog entries. The manifest-controller must never publish an empty list.
 
@@ -335,7 +341,8 @@ Effects:
 3. Set `init_status = completed`. Status transition:
    - If every dispatched task is already terminal: directly to terminal (`SUCCEEDED`/`FAILED`) with `completed_at` set; emit `run.finalized:v1` via outbox.
    - Otherwise: `status = running`.
-4. Record event ID in `processed_events`
+
+Dedup against `message_processing` is performed by the binding before the handler runs.
 
 ### Consumes: `task.status.updated:v1`
 
@@ -345,7 +352,8 @@ Effects:
 1. Update task status in `task_tracker`
 2. If status is terminal: increment `terminal_task_count`, check finalization condition
 3. If finalization condition met: transition scheduler to terminal, emit `run.finalized:v1` via outbox
-4. Record event ID in `processed_events`
+
+Dedup against `message_processing` is performed by the binding before the handler runs.
 
 ### Consumes: `task.execution.recorded:v1`
 
@@ -353,7 +361,8 @@ Published by: `k8s-controller`
 
 Effects:
 1. Insert row in `task_execution`
-2. Record event ID in `processed_events`
+
+Dedup against `message_processing` is performed by the binding before the handler runs.
 
 ## gRPC Callers
 
@@ -368,10 +377,10 @@ State calls no external gRPC services.
 ## Reliability Patterns
 
 - **Transactional outbox**: every Redis publish is backed by a `state_outbox` row committed in the same transaction as the state mutation — no partial writes
-- **Event deduplication**: `event_id` stored in `processed_events`; duplicate messages are ACK'd without re-processing
+- **Inbound dedup**: `message_processing` keyed by `(message_id, stream_name)`; `pkg/messageprocessing.Dedup` INSERTs IF NOT EXISTS inside the handler transaction. Duplicates short-circuit before the handler runs and the binding ACKs.
 - **Rerun / rebase atomicity**: new `scheduler_tracker` row INSERT + outbox write are a single SQL transaction; the source row is read for eligibility checks but never mutated
 - **Finalization atomicity**: `terminal_task_count` increment + finalization check + `run.finalized:v1` outbox write are a single SQL transaction
-- **At-least-once consumers**: all Redis consumers retry on transient errors; idempotency is enforced via `processed_events`
+- **Error classification**: parse failures inside bindings are wrapped with `pkg/events.ErrPermanent`; `pkg/redis.StreamConsumer` ACKs+drops `ErrPermanent`-wrapped errors so malformed payloads do not loop in the PEL. Plain errors stay pending and are reclaimed by the consumer's periodic ticker (`reclaimInterval`).
 
 ## Source-of-Truth Notes
 

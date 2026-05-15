@@ -356,6 +356,9 @@ func (s *cancelTaskStub) UpdateStatusIfChangedTx(_ context.Context, _ *sqlx.Tx, 
 func (s *cancelTaskStub) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
 }
+func (s *cancelTaskStub) GetStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (string, error) {
+	return "", nil
+}
 func (s *cancelTaskStub) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
 }

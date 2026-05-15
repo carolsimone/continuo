@@ -20,13 +20,6 @@ type OutboxRepository interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, newStatus, expectedStatus string) error
 }
 
-// MessageProcessingRepository handles message_processing table operations.
-type MessageProcessingRepository interface {
-	InsertIfNotExists(ctx context.Context, msgProc *domain.MessageProcessing) (uuid.UUID, bool, error)
-	GetByMessageID(ctx context.Context, messageID string) (*domain.MessageProcessing, error)
-	UpdateState(ctx context.Context, id uuid.UUID, state string) error
-}
-
 // PublishedMessagesRepository handles published_messages table operations.
 type PublishedMessagesRepository interface {
 	Exists(ctx context.Context, outboxEntryID uuid.UUID) (bool, error)

@@ -9,6 +9,7 @@ import (
 
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
@@ -266,7 +267,7 @@ func (h *HandleNodeCompletedHandler) handleDedup(
 	messageID string,
 	payload []byte,
 ) (uuid.UUID, bool, error) {
-	msgProc := &domain.MessageProcessing{
+	msgProc := &messageprocessing.MessageProcessing{
 		MessageID:  messageID,
 		StreamName: "node.updated:v1",
 		State:      "processing",
@@ -277,7 +278,7 @@ func (h *HandleNodeCompletedHandler) handleDedup(
 		return uuid.Nil, false, fmt.Errorf("insert message processing: %w", err)
 	}
 	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageID(ctx, messageID)
+		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "node.updated:v1")
 		if err != nil {
 			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
 		}

@@ -40,7 +40,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | `scheduler_tracker` (+ `service_metadata` JSONB column), `task_tracker` (+ `manifest_version` column), `task_execution`, `schedule_catalog` (+ `service_metadata` JSONB column), `state_outbox`, `processed_events` |
+| Durable state | `scheduler_tracker` (+ `service_metadata` JSONB column), `task_tracker` (+ `manifest_version` column), `task_execution`, `schedule_catalog` (+ `service_metadata` JSONB column), `state_outbox`, `message_processing` |
 | gRPC server methods owned | `CreateScheduler`, `GetScheduler`, `CancelScheduler`, `ActivateSchedule`, `ListAllSchedules`, `TriggerSchedule`, `CancelSchedule`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `CreateTask`, `GetTask`, `GetTaskByScheduleAndNode`, `DeleteTask`, `ListTasks`, `ResetTask`, `GetSchedulerInitStatus`, `GetTaskExecution`, `ListTaskExecutions` |
 | Redis consumes | `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1`, `task.execution.recorded:v1` |
 | Redis produces | `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1`, `schedule.cancelled:v1` |
