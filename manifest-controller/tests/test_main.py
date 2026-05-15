@@ -40,8 +40,6 @@ def test_main_handles_event_and_cleans_up(monkeypatch):
     monkeypatch.setattr(main, "S3_BUCKET", "bucket")
     monkeypatch.setattr(main, "S3_ENV", "local")
     monkeypatch.setattr(main, "REDIS_URL", "redis://localhost:6379/0")
-    monkeypatch.setattr(main, "REDIS_STREAM", "trigger")
-    monkeypatch.setattr(main, "REDIS_GROUP", "group")
     monkeypatch.setattr(main, "MANIFEST_LOADED_STREAM", "manifest.loaded:v1")
     monkeypatch.setattr(main, "FilesystemRegistryRepository", lambda path: object())
     monkeypatch.setattr(main, "LocalFilesystemSource", lambda base_path: fake_source)

@@ -1,8 +1,14 @@
 import os
 
+from streams_contract import (
+    UPDATE_GRAPH_V1,
+    MANIFEST_LOADED_V1,
+    MANIFEST_UPDATE_GRAPH,
+)
+
 REDIS_URL       = os.environ.get("REDIS_URL", "")
-REDIS_STREAM    = os.environ.get("REDIS_STREAM", "")
-REDIS_GROUP     = os.environ.get("REDIS_GROUP", "")
+REDIS_STREAM    = UPDATE_GRAPH_V1
+REDIS_GROUP     = MANIFEST_UPDATE_GRAPH
 REGISTRY_PATH   = os.environ.get("REGISTRY_PATH", "")
 MANIFESTS_BASE  = os.environ.get("MANIFESTS_BASE", "")
 
@@ -12,10 +18,10 @@ S3_ENV          = os.environ.get("S3_ENV", "")
 
 AWS_DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION", "")
 
-MANIFEST_LOADED_STREAM  = os.getenv("REDIS_OUTPUT_STREAM", "manifest.loaded:v1")
+MANIFEST_LOADED_STREAM = MANIFEST_LOADED_V1
 
 _REQUIRED = [
-    "REDIS_URL", "REDIS_STREAM", "REDIS_GROUP",
+    "REDIS_URL",
     "REGISTRY_PATH", "MANIFESTS_BASE",
     "S3_ENDPOINT_URL", "S3_BUCKET", "S3_ENV", "AWS_DEFAULT_REGION",
 ]
