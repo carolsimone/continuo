@@ -120,3 +120,68 @@ streams:
 		t.Fatalf("expected duplicate consumer const error, got %v", err)
 	}
 }
+
+func TestValidate_GroupNotHyphenated(t *testing.T) {
+	y := `
+streams:
+  - name: a:v1
+    const: AV1
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator_node_updated
+        const: OrchestratorNodeUpdated
+`
+	_, err := loadAndValidate(strings.NewReader(y))
+	if err == nil || !strings.Contains(err.Error(), "group") || !strings.Contains(err.Error(), "must match") {
+		t.Fatalf("expected naming policy error, got %v", err)
+	}
+}
+
+func TestValidate_UnknownService(t *testing.T) {
+	y := `
+streams:
+  - name: a:v1
+    const: AV1
+    producers: [state]
+    consumers:
+      - service: nope-controller
+        group: nope-group
+        const: NopeGroup
+`
+	_, err := loadAndValidate(strings.NewReader(y))
+	if err == nil || !strings.Contains(err.Error(), "unknown service") {
+		t.Fatalf("expected unknown service error, got %v", err)
+	}
+}
+
+func TestValidate_GroupUppercase(t *testing.T) {
+	y := `
+streams:
+  - name: a:v1
+    const: AV1
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: Orchestrator-Node-Updated
+        const: OrchestratorNodeUpdated
+`
+	_, err := loadAndValidate(strings.NewReader(y))
+	if err == nil {
+		t.Fatal("expected uppercase rejection")
+	}
+}
+
+func TestValidate_GoIdentifier(t *testing.T) {
+	y := `
+streams:
+  - name: a:v1
+    const: 9NotIdentifier
+    producers: [state]
+    consumers: []
+`
+	_, err := loadAndValidate(strings.NewReader(y))
+	if err == nil || !strings.Contains(err.Error(), "identifier") {
+		t.Fatalf("expected identifier error, got %v", err)
+	}
+}

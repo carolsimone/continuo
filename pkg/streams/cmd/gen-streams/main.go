@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
@@ -61,28 +62,48 @@ func loadAndValidate(r io.Reader) (*Contract, error) {
 }
 
 func validate(c *Contract) error {
+	groupRe := regexp.MustCompile(`^[a-z][a-z0-9-]+$`)
+	identRe := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	knownServices := map[string]struct{}{
+		"state":               {},
+		"orchestrator":        {},
+		"executor-controller": {},
+		"k8s-controller":      {},
+		"manifest-controller": {},
+	}
+
 	streamNames := map[string]int{}
 	streamConsts := map[string]int{}
 	groupNames := map[string]int{}
 	groupConsts := map[string]int{}
 
 	for i, s := range c.Streams {
+		if !identRe.MatchString(s.Const) {
+			return fmt.Errorf("stream %q: const %q is not a valid identifier", s.Name, s.Const)
+		}
 		if prev, ok := streamNames[s.Name]; ok {
 			return fmt.Errorf("duplicate stream name %q at index %d (first seen at %d)", s.Name, i, prev)
 		}
 		streamNames[s.Name] = i
-
 		if prev, ok := streamConsts[s.Const]; ok {
 			return fmt.Errorf("duplicate stream const %q at index %d (first seen at %d)", s.Const, i, prev)
 		}
 		streamConsts[s.Const] = i
 
 		for j, cons := range s.Consumers {
+			if _, ok := knownServices[cons.Service]; !ok {
+				return fmt.Errorf("stream %q consumer[%d]: unknown service %q", s.Name, j, cons.Service)
+			}
+			if !groupRe.MatchString(cons.Group) {
+				return fmt.Errorf("stream %q consumer[%d]: group %q must match %s", s.Name, j, cons.Group, groupRe.String())
+			}
+			if !identRe.MatchString(cons.Const) {
+				return fmt.Errorf("stream %q consumer[%d]: const %q is not a valid identifier", s.Name, j, cons.Const)
+			}
 			if prev, ok := groupNames[cons.Group]; ok {
 				return fmt.Errorf("duplicate consumer group %q on stream %q[%d] (first seen at stream index %d)", cons.Group, s.Name, j, prev)
 			}
 			groupNames[cons.Group] = i
-
 			if prev, ok := groupConsts[cons.Const]; ok {
 				return fmt.Errorf("duplicate consumer const %q on stream %q[%d] (first seen at stream index %d)", cons.Const, s.Name, j, prev)
 			}
