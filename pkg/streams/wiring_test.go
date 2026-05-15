@@ -53,8 +53,6 @@ func repoRootFromTest(t *testing.T) string {
 // PERMISSIVE: in Phase 3 this is skipped because the services still hold
 // literals before their refactors land. Phase 11 unskips it.
 func TestNoStreamOrGroupLiteralsInMains(t *testing.T) {
-	t.Skip("PHASE 11: re-enable after service refactors complete")
-
 	root := repoRootFromTest(t)
 	fset := token.NewFileSet()
 	for _, rel := range servicesWithMainGo {
