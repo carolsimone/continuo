@@ -203,3 +203,48 @@ func TestEmitGo(t *testing.T) {
 		t.Fatalf("emitGo mismatch.\n--- got ---\n%s\n--- want ---\n%s", got, goldenGo)
 	}
 }
+
+//go:embed testdata/golden.py.txt
+var goldenPy string
+
+const pythonRelevantYAML = `
+streams:
+  - name: update.graph:v1
+    const: UpdateGraphV1
+    description: Manifest refresh trigger.
+    producers: [state]
+    consumers:
+      - service: manifest-controller
+        group: manifest-controller-update-graph
+        const: ManifestUpdateGraph
+  - name: manifest.loaded:v1
+    const: ManifestLoadedV1
+    description: Topology after manifest load.
+    producers: [manifest-controller]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-manifest-loaded
+        const: OrchestratorManifestLoaded
+  - name: irrelevant.to.python:v1
+    const: IrrelevantV1
+    description: Should not appear in Python output.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-irrelevant
+        const: OrchestratorIrrelevant
+`
+
+func TestEmitPython(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(pythonRelevantYAML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got, err := emitPython(c, "manifest-controller")
+	if err != nil {
+		t.Fatalf("emitPython: %v", err)
+	}
+	if got != goldenPy {
+		t.Fatalf("emitPython mismatch.\n--- got ---\n%s\n--- want ---\n%s", got, goldenPy)
+	}
+}
