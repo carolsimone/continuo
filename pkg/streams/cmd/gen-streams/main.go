@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"text/template"
@@ -39,7 +40,61 @@ func main() {
 }
 
 func run() error {
-	return fmt.Errorf("not implemented")
+	root, err := findRepoRoot()
+	if err != nil {
+		return err
+	}
+	yamlPath := filepath.Join(root, "pkg", "streams", "contract.yaml")
+	f, err := os.Open(yamlPath)
+	if err != nil {
+		return fmt.Errorf("open contract: %w", err)
+	}
+	defer f.Close()
+
+	c, err := loadAndValidate(f)
+	if err != nil {
+		return fmt.Errorf("load contract: %w", err)
+	}
+
+	goSrc, err := emitGo(c)
+	if err != nil {
+		return fmt.Errorf("emit go: %w", err)
+	}
+	goOut := filepath.Join(root, "pkg", "streams", "streams.gen.go")
+	if err := os.WriteFile(goOut, []byte(goSrc), 0o644); err != nil {
+		return fmt.Errorf("write go: %w", err)
+	}
+
+	pySrc, err := emitPython(c, "manifest-controller")
+	if err != nil {
+		return fmt.Errorf("emit python: %w", err)
+	}
+	pyOut := filepath.Join(root, "manifest-controller", "streams_contract.py")
+	if err := os.WriteFile(pyOut, []byte(pySrc), 0o644); err != nil {
+		return fmt.Errorf("write python: %w", err)
+	}
+
+	fmt.Fprintln(os.Stderr, "gen-streams: wrote", goOut)
+	fmt.Fprintln(os.Stderr, "gen-streams: wrote", pyOut)
+	return nil
+}
+
+func findRepoRoot() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	dir := wd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.work")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("repo root not found (no go.work above %s)", wd)
+		}
+		dir = parent
+	}
 }
 
 func parseContract(r io.Reader) (*Contract, error) {
