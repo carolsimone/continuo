@@ -11,6 +11,20 @@ type SchedulerStarted struct {
 	SourceRunID  *uuid.UUID // populated for rerun, rebase, stale-mode single_node_run; nil otherwise
 }
 
+// ScheduleCancelled is the typed form of schedule.cancelled:v1.
+type ScheduleCancelled struct {
+	ScheduleID uuid.UUID
+}
+
+// RunFinalized is the typed form of run.finalized:v1.
+// ScheduleID and Status stay as strings — the Neo4j FinalizeRun signature
+// already takes strings, so converting to uuid.UUID + model enum would be
+// pointless round-tripping.
+type RunFinalized struct {
+	ScheduleID string
+	Status     string
+}
+
 type TopologyIngested struct {
 	ScheduleNames   []string
 	ServiceMetadata map[string]map[string]string

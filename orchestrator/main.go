@@ -215,12 +215,13 @@ func main() {
 	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER
 	// ========================================================================
 
-	scheduleCancelledHandler := redis.NewScheduleCancelledHandler(cancelledSchedulesRepo, logger)
+	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(cancelledSchedulesRepo, logger)
+	scheduleCancelledBinding := redis.NewScheduleCancelledBinding(scheduleCancelledHandler, logger)
 	scheduleCancelledConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.ScheduleCancelledStream,
 		cfg.ScheduleCancelledGroup,
-		scheduleCancelledHandler,
+		scheduleCancelledBinding,
 		logger,
 	)
 	go func() {
@@ -422,12 +423,13 @@ func main() {
 	// onto Neo4j :Run.completed_at / terminal_status. Covers edge cases where
 	// the aggregate's internal finalization path is not exercised (e.g.
 	// full-inherited rebases that produce no node.updated:v1 traffic).
-	runFinalizedHandler := redis.NewRunFinalizedHandler(runAggRepo, logger)
+	runFinalizedHandler := handlers.NewRunFinalizedHandler(runAggRepo, logger)
+	runFinalizedBinding := redis.NewRunFinalizedBinding(runFinalizedHandler, logger)
 	runFinalizedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		cfg.RunFinalizedStream,
 		cfg.RunFinalizedGroup,
-		runFinalizedHandler,
+		runFinalizedBinding,
 		logger,
 	)
 
