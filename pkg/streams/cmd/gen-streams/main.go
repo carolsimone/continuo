@@ -48,3 +48,46 @@ func parseContract(r io.Reader) (*Contract, error) {
 	}
 	return &c, nil
 }
+
+func loadAndValidate(r io.Reader) (*Contract, error) {
+	c, err := parseContract(r)
+	if err != nil {
+		return nil, err
+	}
+	if err := validate(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func validate(c *Contract) error {
+	streamNames := map[string]int{}
+	streamConsts := map[string]int{}
+	groupNames := map[string]int{}
+	groupConsts := map[string]int{}
+
+	for i, s := range c.Streams {
+		if prev, ok := streamNames[s.Name]; ok {
+			return fmt.Errorf("duplicate stream name %q at index %d (first seen at %d)", s.Name, i, prev)
+		}
+		streamNames[s.Name] = i
+
+		if prev, ok := streamConsts[s.Const]; ok {
+			return fmt.Errorf("duplicate stream const %q at index %d (first seen at %d)", s.Const, i, prev)
+		}
+		streamConsts[s.Const] = i
+
+		for j, cons := range s.Consumers {
+			if prev, ok := groupNames[cons.Group]; ok {
+				return fmt.Errorf("duplicate consumer group %q on stream %q[%d] (first seen at stream index %d)", cons.Group, s.Name, j, prev)
+			}
+			groupNames[cons.Group] = i
+
+			if prev, ok := groupConsts[cons.Const]; ok {
+				return fmt.Errorf("duplicate consumer const %q on stream %q[%d] (first seen at stream index %d)", cons.Const, s.Name, j, prev)
+			}
+			groupConsts[cons.Const] = i
+		}
+	}
+	return nil
+}

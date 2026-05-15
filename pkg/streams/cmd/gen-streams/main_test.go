@@ -36,3 +36,87 @@ func TestParseContract_Valid(t *testing.T) {
 		t.Errorf("consumers: %+v", s.Consumers)
 	}
 }
+
+func TestValidate_DuplicateStreamName(t *testing.T) {
+	y := `
+streams:
+  - name: a:v1
+    const: AV1
+    producers: [state]
+    consumers: []
+  - name: a:v1
+    const: BV1
+    producers: [state]
+    consumers: []
+`
+	_, err := loadAndValidate(strings.NewReader(y))
+	if err == nil || !strings.Contains(err.Error(), "duplicate stream name") {
+		t.Fatalf("expected duplicate stream name error, got %v", err)
+	}
+}
+
+func TestValidate_DuplicateStreamConst(t *testing.T) {
+	y := `
+streams:
+  - name: a:v1
+    const: SameConst
+    producers: [state]
+    consumers: []
+  - name: b:v1
+    const: SameConst
+    producers: [state]
+    consumers: []
+`
+	_, err := loadAndValidate(strings.NewReader(y))
+	if err == nil || !strings.Contains(err.Error(), "duplicate stream const") {
+		t.Fatalf("expected duplicate stream const error, got %v", err)
+	}
+}
+
+func TestValidate_DuplicateGroup(t *testing.T) {
+	y := `
+streams:
+  - name: a:v1
+    const: AV1
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: same-group
+        const: ConstA
+  - name: b:v1
+    const: BV1
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: same-group
+        const: ConstB
+`
+	_, err := loadAndValidate(strings.NewReader(y))
+	if err == nil || !strings.Contains(err.Error(), "duplicate consumer group") {
+		t.Fatalf("expected duplicate group error, got %v", err)
+	}
+}
+
+func TestValidate_DuplicateGroupConst(t *testing.T) {
+	y := `
+streams:
+  - name: a:v1
+    const: AV1
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: group-a
+        const: SameConst
+  - name: b:v1
+    const: BV1
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: group-b
+        const: SameConst
+`
+	_, err := loadAndValidate(strings.NewReader(y))
+	if err == nil || !strings.Contains(err.Error(), "duplicate consumer const") {
+		t.Fatalf("expected duplicate consumer const error, got %v", err)
+	}
+}
