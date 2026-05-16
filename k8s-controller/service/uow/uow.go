@@ -44,6 +44,19 @@ func (r *PostgresTransactionRunner) WithinTransaction(ctx context.Context, fn fu
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if recovered := recover(); recovered != nil {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				r.logger.Error("Failed to rollback transaction", "error", rollbackErr)
+			}
+			panic(recovered)
+		}
+	}()
+
 	scope := &postgresTransaction{tx: tx, logger: r.logger}
 	if err := fn(scope); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {
@@ -57,6 +70,7 @@ func (r *PostgresTransactionRunner) WithinTransaction(ctx context.Context, fn fu
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	committed = true
 	return nil
 }
 
