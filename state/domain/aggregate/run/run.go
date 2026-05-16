@@ -1,9 +1,12 @@
 package run
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/google/uuid"
 )
 
@@ -245,3 +248,132 @@ func (r *Run) PullEvents() []DomainEvent {
 // the changeSet via ResetChanges.
 func (r *Run) Changes() changeSet { return r.changes }
 func (r *Run) ResetChanges()      { r.changes = changeSet{} }
+
+// AcceptDispatch consumes the run.entries.dispatched:v1 projection. The
+// projection IS the full child set (no prior tasks exist), so the aggregate
+// makes the auto-rollup decision in one pass over the input.
+//
+// Behaviour:
+//   - No-op (returns no events, no mutations) when r is already terminal.
+//     The handler binding still commits the surrounding tx so dedup is recorded.
+//   - BulkCreate every projected task.
+//   - total_task_count = len(projection); terminal_task_count seeded from
+//     already-terminal projected rows.
+//   - init_status = completed always after dispatch.
+//   - Status transition:
+//     every projected task terminal && all succeeded → SUCCEEDED + completed_at
+//     every projected task terminal && any non-succeeded → FAILED + completed_at
+//     otherwise → RUNNING
+//   - Records a RunFinalized event only on the auto-rollup branch.
+func (r *Run) AcceptDispatch(
+	ctx context.Context,
+	tasks TaskCollection,
+	projection []DispatchedTask,
+	now time.Time,
+) ([]DomainEvent, error) {
+	if r.IsTerminal() {
+		return nil, nil
+	}
+
+	built := make([]Task, 0, len(projection))
+	for _, p := range projection {
+		jobName, err := domain.ComputeJobName(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
+		if err != nil {
+			return nil, fmt.Errorf("compute job_name: %w", err)
+		}
+		built = append(built, Task{
+			TaskID:              p.TaskID,
+			ScheduleID:          r.scheduleID,
+			CreatedAt:           now,
+			ServiceName:         p.ServiceName,
+			SchemaName:          p.SchemaName,
+			TableName:           p.TableName,
+			JobName:             jobName,
+			Status:              p.Status,
+			MaxRetries:          int(p.MaxRetries),
+			ManifestVersion:     p.ManifestVersion,
+			ImageTag:            p.ImageTag,
+			InheritedFromTaskID: p.InheritedFromTaskID,
+		})
+	}
+
+	if err := tasks.BulkCreate(ctx, built); err != nil {
+		return nil, fmt.Errorf("bulk create tasks: %w", err)
+	}
+
+	allTerminal, allSucceeded := true, true
+	terminal := int32(0)
+	for _, p := range projection {
+		if !p.Status.IsTerminal() {
+			allTerminal, allSucceeded = false, false
+			continue
+		}
+		terminal++
+		if p.Status != TaskStatusSucceeded {
+			allSucceeded = false
+		}
+	}
+
+	r.totalTaskCount = sql.NullInt32{Int32: int32(len(projection)), Valid: true}
+	r.terminalTaskCount = terminal
+	r.initStatus = InitStatusCompleted
+	r.changes.totalTaskCountDirty = true
+	r.changes.terminalTaskCountDirty = true
+	r.changes.initStatusDirty = true
+
+	if allTerminal {
+		outcome := SchedulerStatusFailed
+		if allSucceeded {
+			outcome = SchedulerStatusSucceeded
+		}
+		r.status = outcome
+		completedAt := now
+		r.completedAt = &completedAt
+		r.changes.statusDirty = true
+		r.changes.completedDirty = true
+		evt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: outcome}
+		r.events = append(r.events, evt)
+		return []DomainEvent{evt}, nil
+	}
+
+	r.status = SchedulerStatusRunning
+	startedAt := now
+	r.startedAt = &startedAt
+	r.changes.statusDirty = true
+	r.changes.startedDirty = true
+	return nil, nil
+}
+
+// Cancel marks r as cancelled, bulk-cancels its child tasks, and records a
+// RunCancelled event. Returns ErrAlreadyTerminal when r is already terminal.
+func (r *Run) Cancel(
+	ctx context.Context,
+	tasks TaskCollection,
+	by, reason string,
+	now time.Time,
+) ([]DomainEvent, error) {
+	if r.IsTerminal() {
+		return nil, ErrAlreadyTerminal
+	}
+	r.status = SchedulerStatusCancelled
+	cancelledAt := now
+	r.cancelledAt = &cancelledAt
+	if by != "" {
+		b := by
+		r.cancelledBy = &b
+	}
+	if reason != "" {
+		rs := reason
+		r.cancellationReason = &rs
+	}
+	r.changes.cancelDirty = true
+	r.changes.statusDirty = true
+
+	if _, err := tasks.BulkCancel(ctx, r.scheduleID, by); err != nil {
+		return nil, fmt.Errorf("bulk cancel tasks: %w", err)
+	}
+
+	evt := RunCancelled{ID: r.scheduleID, Name: r.scheduleName, By: by, CancellationReason: reason}
+	r.events = append(r.events, evt)
+	return []DomainEvent{evt}, nil
+}
