@@ -255,8 +255,7 @@ func main() {
 	logger.Info("Cron scheduler started")
 
 	// Initialize gRPC handlers
-	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activationService, catalogRepo, schedulesConfig, logger)
-	schedulerHandler.WithCancelDeps(db, taskRepo, outboxRepo)
+	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activationService, catalogRepo, schedulesConfig, uowFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)

@@ -13,7 +13,9 @@ import (
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
+	"github.com/carolsimone/continuo/state/ports"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -117,8 +119,15 @@ func TestMain(m *testing.M) {
 
 	// ---- Build handlers ----
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activator, nil, nil, logger)
-	schedulerHandler.WithCancelDeps(db, taskRepo, outboxRepo)
+	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
+	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	clk := ports.SystemClock{}
+	integrationUoWFactory := func() uow.UnitOfWork {
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+	}
+	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activator, nil, nil, integrationUoWFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	execHandler := handlers.NewTaskExecutionHandler(execRepo, logger)
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, nil, logger)
