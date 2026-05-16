@@ -30,8 +30,8 @@ streams:
 
   - name: run.entries.dispatched:v1
     const: RunEntriesDispatchedV1
-    description: Run entries that state successfully dispatched into the executor queue.
-    producers: [state]
+    description: Run entries that orchestrator successfully dispatched into the executor queue.
+    producers: [orchestrator]
     consumers:
       - service: state
         group: state-run-entries-dispatched
@@ -39,8 +39,8 @@ streams:
 
   - name: run.entries.dispatch_failed:v1
     const: RunEntriesDispatchFailedV1
-    description: Run entries state failed to dispatch.
-    producers: [state]
+    description: Run entries orchestrator failed to dispatch.
+    producers: [orchestrator]
     consumers:
       - service: state
         group: state-run-entries-dispatch-failed
@@ -57,8 +57,8 @@ streams:
 
   - name: task.execution.recorded:v1
     const: TaskExecutionRecordedV1
-    description: Completed task executions persisted by state.
-    producers: [state]
+    description: Completed task executions emitted by k8s-controller's outbox processor.
+    producers: [k8s-controller]
     consumers:
       - service: state
         group: state-task-execution-recorded
@@ -122,8 +122,8 @@ streams:
 
   - name: run.finalized:v1
     const: RunFinalizedV1
-    description: Run finalization (success or failure) emitted by orchestrator side; consumed for projections.
-    producers: [orchestrator]
+    description: Run finalization (success or failure) emitted by state; consumed for projections.
+    producers: [state]
     consumers:
       - service: orchestrator
         group: orchestrator-run-finalized

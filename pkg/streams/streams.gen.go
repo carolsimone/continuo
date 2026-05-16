@@ -8,13 +8,13 @@ const (
 	SchedulerStartedV1 = "scheduler.started:v1"
 	// SchedulesLoadedV1 — Schedules registered/refreshed by state; consumed by state for catalog projections.
 	SchedulesLoadedV1 = "schedules.loaded:v1"
-	// RunEntriesDispatchedV1 — Run entries that state successfully dispatched into the executor queue.
+	// RunEntriesDispatchedV1 — Run entries that orchestrator successfully dispatched into the executor queue.
 	RunEntriesDispatchedV1 = "run.entries.dispatched:v1"
-	// RunEntriesDispatchFailedV1 — Run entries state failed to dispatch.
+	// RunEntriesDispatchFailedV1 — Run entries orchestrator failed to dispatch.
 	RunEntriesDispatchFailedV1 = "run.entries.dispatch_failed:v1"
 	// TaskStatusUpdatedV1 — Per-task status transitions emitted by executor-controller.
 	TaskStatusUpdatedV1 = "task.status.updated:v1"
-	// TaskExecutionRecordedV1 — Completed task executions persisted by state.
+	// TaskExecutionRecordedV1 — Completed task executions emitted by k8s-controller's outbox processor.
 	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
 	// NodeUpdatedV1 — Node state transitions; orchestrator updates its projections.
 	NodeUpdatedV1 = "node.updated:v1"
@@ -28,7 +28,7 @@ const (
 	TriggerRebaseV1 = "trigger.rebase:v1"
 	// TriggerSingleNodeRunV1 — User-initiated single-node run trigger.
 	TriggerSingleNodeRunV1 = "trigger.single_node_run:v1"
-	// RunFinalizedV1 — Run finalization (success or failure) emitted by orchestrator side; consumed for projections.
+	// RunFinalizedV1 — Run finalization (success or failure) emitted by state; consumed for projections.
 	RunFinalizedV1 = "run.finalized:v1"
 	// QueryModelV1 — Tasks dispatched by orchestrator for the executor pool.
 	QueryModelV1 = "query.model:v1"
