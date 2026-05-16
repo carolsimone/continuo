@@ -22,6 +22,15 @@ State mutates these records in two ways: via gRPC for UI-facing reads and user-i
 | `state_outbox` | Transactional outbox for Redis publication |
 | `message_processing` | Inbound dedup: one row per consumed Redis message ID, scoped by `stream_name`; tracks state (`processing` / `completed` / `acked`) |
 
+### Aggregate boundaries
+
+Two domain aggregates own the write-side logic for these tables:
+
+- **`run.Run`** (`state/domain/aggregate/run`) — owns `scheduler_tracker` and its associated `task_tracker` rows. All scheduler and task status transitions, the finalization condition check, and `terminal_task_count`/`total_task_count` bookkeeping are encapsulated in `Run.RecordTaskStatus` and related methods. Infrastructure adapters load and persist `Run` through `postgres.RunRepository`.
+- **`catalog.ScheduleCatalog`** (`state/domain/aggregate/catalog`) — owns `schedule_catalog`. Reconciliation (upsert active, soft-delete absent) is encapsulated in `ScheduleCatalog.Reconcile`, which rejects an empty `scheduleNames` list as a safety guard against inadvertently wiping all catalog entries.
+
+Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecution`) live in `state/adapters/postgres` — they are infrastructure types used for scanning database rows, not domain objects.
+
 ### New columns on `scheduler_tracker`
 
 | Column | Type | Purpose |
@@ -245,13 +254,16 @@ Effect: signals downstream consumers that the run is complete.
 
 ## Finalization State Machine
 
-When `task.status.updated:v1` is processed and the new status is terminal (SUCCEEDED or FAILED):
+All finalization logic is owned by the `run.Run` aggregate. `TaskStatusUpdatedHandler` loads the `Run` from `postgres.RunRepository`, calls `Run.RecordTaskStatus(taskID, newStatus, caller)`, and persists the result.
 
-1. Increment `terminal_task_count` on `scheduler_tracker`.
-2. Check: `terminal_task_count == total_task_count && init_status == 'completed' && status == 'running'`
-3. If true: transition scheduler to terminal status, emit `run.finalized:v1` via outbox.
+`Run.RecordTaskStatus` performs the following in-memory:
 
-The check is performed atomically within the same transaction as the task status update and the `terminal_task_count` increment.
+1. Update the task's status in the aggregate's task map.
+2. If the new status is terminal (SUCCEEDED or FAILED): increment `terminal_task_count`.
+3. Check the finalization condition: `terminal_task_count == total_task_count && init_status == 'completed' && scheduler_status == 'running'`.
+4. If the condition holds: transition the scheduler to the appropriate terminal status (`SUCCEEDED` if every task is `SUCCEEDED`, `FAILED` otherwise) and mark the aggregate as needing a `run.finalized:v1` outbox entry.
+
+`postgres.RunRepository.Save` writes the updated `scheduler_tracker` row and, when the aggregate emits a finalization event, appends the `run.finalized:v1` row to `state_outbox` — all within the same Postgres transaction opened by the binding's `UnitOfWork`.
 
 ### Auto-rollup at dispatch time
 
@@ -294,22 +306,29 @@ If **every** dispatched task is in a terminal state (i.e. there is nothing to ex
 
 ## Activation Paths
 
+Both cron-loop activations and UI manual triggers share the same transactional write path through `ScheduleActivationService`.
+
 ```
 Cron tick
-    → CronScheduler.activateSchedule(name)
-    → ActivateSchedule gRPC handler
-    → ExistsActive (catalog check — NotFound if absent)
-    → ScheduleActivationService.ActivateSchedule
-    → PrepareActivation (HasActiveSchedule check — skips if active)
-    → GetManifestVersions from catalog
-    → tx: CreateTx(scheduler_tracker) + Create(outbox entry)
+    → CronScheduler fires on schedule
+    → ActivateScheduleHandler.Handle (svchandlers)
+    → UnitOfWork.Begin
+    → CatalogRepo.ExistsActive (NotFound if schedule not in catalog)
+    → SchedulerRepo.GetActiveScheduler (skip if already active — idempotent)
+    → CatalogRepo.GetServiceMetadata
+    → tx: RunRepo.CreateRun(scheduler_tracker) + OutboxRepo.Create(state_outbox)
+    → UnitOfWork.Commit
     → OutboxProcessor publishes scheduler.started:v1
 
 UI manual trigger
-    → TriggerSchedule gRPC
-    → ExistsActive (catalog check — NotFound if absent)
-    → HasActiveSchedule check (FailedPrecondition if active)
-    → ScheduleActivationService.ActivateSchedule (same path as above)
+    → TriggerSchedule gRPC handler
+    → UnitOfWork.Begin
+    → CatalogRepo.ExistsActive (NotFound if absent)
+    → SchedulerRepo.GetActiveScheduler (FailedPrecondition if active)
+    → CatalogRepo.GetServiceMetadata
+    → tx: RunRepo.CreateRun(scheduler_tracker) + OutboxRepo.Create(state_outbox)
+    → UnitOfWork.Commit
+    → OutboxProcessor publishes scheduler.started:v1
 ```
 
 ## Redis Behavior
@@ -322,12 +341,13 @@ Payload (nested under Redis field `payload`):
 - `manifest_versions` — map of service → manifest hash
 
 Effects (all or nothing — transient errors are retried, not ACK'd):
+
+`ScheduleCatalogHandler` loads the `catalog.ScheduleCatalog` aggregate and calls `ScheduleCatalog.Reconcile(scheduleNames, serviceMetadata)`. `Reconcile` returns `ErrEmptyScheduleList` if `scheduleNames` is empty, causing the binding to propagate a permanent error — the message is ACK'd and dropped rather than writing an empty list to the catalog. When `scheduleNames` is non-empty, the aggregate performs:
+
 1. `UpsertAll` — insert or reactivate all names in the list
 2. `SoftDeleteAbsent` — set `removed_at` on any active row not in the list
 
 Dedup against `message_processing` is performed by the binding before the handler runs; the handler itself sees only typed `events.ScheduleCatalogLoaded` data.
-
-> **Warning**: if `schedule_names` is empty, `SoftDeleteAbsent([])` will soft-delete all active catalog entries. The manifest-controller must never publish an empty list.
 
 ### Consumes: `run.entries.dispatched:v1`
 
