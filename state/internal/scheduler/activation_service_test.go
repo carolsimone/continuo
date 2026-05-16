@@ -60,11 +60,20 @@ type fakeCatalogRepoSvc struct {
 func (f *fakeCatalogRepoSvc) UpsertAll(_ context.Context, _ []string, _ map[string]model.ServiceMetadata) error {
 	return nil
 }
-func (f *fakeCatalogRepoSvc) SoftDeleteAbsent(_ context.Context, _ []string) error   { return nil }
-func (f *fakeCatalogRepoSvc) ListActive(_ context.Context) ([]string, error)          { return nil, nil }
-func (f *fakeCatalogRepoSvc) ExistsActive(_ context.Context, _ string) (bool, error)  { return false, nil }
+func (f *fakeCatalogRepoSvc) UpsertAllTx(_ context.Context, _ *sqlx.Tx, _ []string, _ map[string]map[string]model.ServiceMetadata) error {
+	return nil
+}
+func (f *fakeCatalogRepoSvc) SoftDeleteAbsent(_ context.Context, _ []string) error { return nil }
+func (f *fakeCatalogRepoSvc) SoftDeleteAbsentTx(_ context.Context, _ *sqlx.Tx, _ []string) error {
+	return nil
+}
+func (f *fakeCatalogRepoSvc) ListActive(_ context.Context) ([]string, error)         { return nil, nil }
+func (f *fakeCatalogRepoSvc) ExistsActive(_ context.Context, _ string) (bool, error) { return false, nil }
 func (f *fakeCatalogRepoSvc) GetServiceMetadata(_ context.Context, _ string) (map[string]model.ServiceMetadata, error) {
 	return f.serviceMetadata, f.err
+}
+func (f *fakeCatalogRepoSvc) ListAll(_ context.Context) ([]postgres.ScheduleCatalogRow, error) {
+	return nil, nil
 }
 
 // fakeOutboxRepoSvc records outbox Create calls.

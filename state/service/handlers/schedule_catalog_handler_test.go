@@ -7,11 +7,13 @@ import (
 	"os"
 	"testing"
 
+	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,9 +36,17 @@ func (f *fakeCatalogRepo) UpsertAll(_ context.Context, names []string, meta map[
 	return f.upsertErr
 }
 
+func (f *fakeCatalogRepo) UpsertAllTx(_ context.Context, _ *sqlx.Tx, _ []string, _ map[string]map[string]model.ServiceMetadata) error {
+	return nil
+}
+
 func (f *fakeCatalogRepo) SoftDeleteAbsent(_ context.Context, names []string) error {
 	f.softDelete = append([]string(nil), names...)
 	return f.softDeleteErr
+}
+
+func (f *fakeCatalogRepo) SoftDeleteAbsentTx(_ context.Context, _ *sqlx.Tx, _ []string) error {
+	return nil
 }
 
 func (f *fakeCatalogRepo) ListActive(_ context.Context) ([]string, error) { return nil, nil }
@@ -47,6 +57,10 @@ func (f *fakeCatalogRepo) ExistsActive(_ context.Context, _ string) (bool, error
 
 func (f *fakeCatalogRepo) GetServiceMetadata(_ context.Context, _ string) (map[string]model.ServiceMetadata, error) {
 	return map[string]model.ServiceMetadata{}, nil
+}
+
+func (f *fakeCatalogRepo) ListAll(_ context.Context) ([]postgres.ScheduleCatalogRow, error) {
+	return nil, nil
 }
 
 func testLogger() *slog.Logger {

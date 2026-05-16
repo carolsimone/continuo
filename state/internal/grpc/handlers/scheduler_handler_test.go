@@ -119,6 +119,15 @@ func (s *stubCatalogRepo) ExistsActive(_ context.Context, name string) (bool, er
 func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, _ string) (map[string]model.ServiceMetadata, error) {
 	return map[string]model.ServiceMetadata{}, nil
 }
+func (s *stubCatalogRepo) UpsertAllTx(_ context.Context, _ *sqlx.Tx, _ []string, _ map[string]map[string]model.ServiceMetadata) error {
+	return nil
+}
+func (s *stubCatalogRepo) SoftDeleteAbsentTx(_ context.Context, _ *sqlx.Tx, _ []string) error {
+	return nil
+}
+func (s *stubCatalogRepo) ListAll(_ context.Context) ([]postgres.ScheduleCatalogRow, error) {
+	return nil, nil
+}
 
 type stubSchedulerRepo struct {
 	hasActive       bool
