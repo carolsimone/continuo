@@ -141,7 +141,7 @@ func TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed(t *te
 	}
 	schedRepo := &fakeRunFailedSchedulerRepo{scheduler: sched}
 	outboxRepo := &fakeRunFailedOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Scheduler: schedRepo, Outbox: outboxRepo}
+	u := &uow.FakeUnitOfWork{Scheduler: schedRepo, OutboxStore: outboxRepo}
 
 	h := handlers.NewRunEntriesDispatchFailedHandler(runFailedTestLogger())
 	err := h.Handle(context.Background(), u, events.RunEntriesDispatchFailed{
@@ -187,7 +187,7 @@ func TestRunEntriesDispatchFailedHandler_IdempotentOnAlreadyTerminal(t *testing.
 			}
 			schedRepo := &fakeRunFailedSchedulerRepo{scheduler: sched}
 			outboxRepo := &fakeRunFailedOutboxRepo{}
-			u := &uow.FakeUnitOfWork{Scheduler: schedRepo, Outbox: outboxRepo}
+			u := &uow.FakeUnitOfWork{Scheduler: schedRepo, OutboxStore: outboxRepo}
 
 			h := handlers.NewRunEntriesDispatchFailedHandler(runFailedTestLogger())
 			err := h.Handle(context.Background(), u, events.RunEntriesDispatchFailed{
@@ -219,7 +219,7 @@ func TestRunEntriesDispatchFailedHandler_FinalizeErrorPropagates(t *testing.T) {
 		finalizeErr: errors.New("db down"),
 	}
 	outboxRepo := &fakeRunFailedOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Scheduler: schedRepo, Outbox: outboxRepo}
+	u := &uow.FakeUnitOfWork{Scheduler: schedRepo, OutboxStore: outboxRepo}
 
 	h := handlers.NewRunEntriesDispatchFailedHandler(runFailedTestLogger())
 	err := h.Handle(context.Background(), u, events.RunEntriesDispatchFailed{
@@ -237,7 +237,7 @@ func TestRunEntriesDispatchFailedHandler_FinalizeErrorPropagates(t *testing.T) {
 func TestRunEntriesDispatchFailedHandler_GetByIDErrorPropagates(t *testing.T) {
 	schedRepo := &fakeRunFailedSchedulerRepo{getErr: errors.New("row lock failed")}
 	outboxRepo := &fakeRunFailedOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Scheduler: schedRepo, Outbox: outboxRepo}
+	u := &uow.FakeUnitOfWork{Scheduler: schedRepo, OutboxStore: outboxRepo}
 
 	h := handlers.NewRunEntriesDispatchFailedHandler(runFailedTestLogger())
 	err := h.Handle(context.Background(), u, events.RunEntriesDispatchFailed{

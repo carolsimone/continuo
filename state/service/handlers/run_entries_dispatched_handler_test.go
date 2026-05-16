@@ -225,7 +225,7 @@ func newDispatchedUoW(
 	task *fakeDispatchedTaskRepo,
 	outbox *fakeDispatchedOutboxRepo,
 ) *uow.FakeUnitOfWork {
-	u := &uow.FakeUnitOfWork{Scheduler: sched, Task: task, Outbox: outbox}
+	u := &uow.FakeUnitOfWork{Scheduler: sched, Task: task, OutboxStore: outbox}
 	_ = u.Begin(context.Background())
 	return u
 }

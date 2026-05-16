@@ -72,7 +72,7 @@ func testLogger() *slog.Logger {
 // and then calls SoftDeleteAbsent with the same name set.
 func TestScheduleCatalogHandler_HappyPath(t *testing.T) {
 	repo := &fakeCatalogRepo{}
-	u := &uow.FakeUnitOfWork{Catalog: repo}
+	u := &uow.FakeUnitOfWork{ScheduleCatalog: repo}
 	h := handlers.NewScheduleCatalogHandler(testLogger())
 
 	evt := events.ScheduleCatalogLoaded{
@@ -97,7 +97,7 @@ func TestScheduleCatalogHandler_HappyPath(t *testing.T) {
 // from UpsertAll bubbles up unchanged and short-circuits SoftDeleteAbsent.
 func TestScheduleCatalogHandler_UpsertErrorPropagates(t *testing.T) {
 	repo := &fakeCatalogRepo{upsertErr: errors.New("db down")}
-	u := &uow.FakeUnitOfWork{Catalog: repo}
+	u := &uow.FakeUnitOfWork{ScheduleCatalog: repo}
 	h := handlers.NewScheduleCatalogHandler(testLogger())
 
 	err := h.Handle(context.Background(), u, events.ScheduleCatalogLoaded{
@@ -111,7 +111,7 @@ func TestScheduleCatalogHandler_UpsertErrorPropagates(t *testing.T) {
 // SoftDeleteAbsent failure surfaces as a handler error.
 func TestScheduleCatalogHandler_SoftDeleteErrorPropagates(t *testing.T) {
 	repo := &fakeCatalogRepo{softDeleteErr: errors.New("db down")}
-	u := &uow.FakeUnitOfWork{Catalog: repo}
+	u := &uow.FakeUnitOfWork{ScheduleCatalog: repo}
 	h := handlers.NewScheduleCatalogHandler(testLogger())
 
 	err := h.Handle(context.Background(), u, events.ScheduleCatalogLoaded{

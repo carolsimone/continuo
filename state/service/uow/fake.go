@@ -6,6 +6,8 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/ports"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -13,12 +15,16 @@ import (
 // it with fake repo implementations satisfying the postgres.* interfaces.
 // Tx() returns nil — handler-test repo fakes must accept and ignore the nil
 // *sqlx.Tx parameter on *Tx methods without dereferencing it.
+//
+// The aggregate-level accessors (Run, Catalog, Outbox, TaskCollection, Clock)
+// default to nil and can be set via the corresponding setter methods.
+// Clock() falls back to ports.SystemClock{} when no override is provided.
 type FakeUnitOfWork struct {
 	Scheduler         postgres.SchedulerTrackerRepository
 	Task              postgres.TaskTrackerRepository
 	TaskExecution     postgres.TaskExecutionRepository
-	Catalog           postgres.ScheduleCatalogRepository
-	Outbox            postgres.OutboxRepository
+	ScheduleCatalog   postgres.ScheduleCatalogRepository
+	OutboxStore       postgres.OutboxRepository
 	MessageProcessing messageprocessing.Repository
 
 	BeginCalled    int
@@ -26,6 +32,12 @@ type FakeUnitOfWork struct {
 	RollbackCalled int
 
 	inTx bool
+
+	runRepo     ports.RunRepository
+	catalogRepo ports.ScheduleCatalogRepository
+	outboxPub   ports.OutboxPublisher
+	taskColl    run.TaskCollection
+	clock       ports.Clock
 }
 
 func (f *FakeUnitOfWork) SchedulerRepo() postgres.SchedulerTrackerRepository {
@@ -36,9 +48,9 @@ func (f *FakeUnitOfWork) TaskExecutionRepo() postgres.TaskExecutionRepository {
 	return f.TaskExecution
 }
 func (f *FakeUnitOfWork) ScheduleCatalogRepo() postgres.ScheduleCatalogRepository {
-	return f.Catalog
+	return f.ScheduleCatalog
 }
-func (f *FakeUnitOfWork) OutboxRepo() postgres.OutboxRepository               { return f.Outbox }
+func (f *FakeUnitOfWork) OutboxRepo() postgres.OutboxRepository               { return f.OutboxStore }
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository { return f.MessageProcessing }
 func (f *FakeUnitOfWork) Tx() *sqlx.Tx                                        { return nil }
 
@@ -68,3 +80,29 @@ func (f *FakeUnitOfWork) Rollback() error {
 	f.RollbackCalled++
 	return nil
 }
+
+// Aggregate-level accessors. Return whatever was set via the setter methods.
+
+func (f *FakeUnitOfWork) Run() ports.RunRepository                 { return f.runRepo }
+func (f *FakeUnitOfWork) Outbox() ports.OutboxPublisher            { return f.outboxPub }
+func (f *FakeUnitOfWork) TaskCollection() run.TaskCollection       { return f.taskColl }
+
+// Catalog returns the aggregate-level ports.ScheduleCatalogRepository set via SetCatalogRepo.
+func (f *FakeUnitOfWork) Catalog() ports.ScheduleCatalogRepository { return f.catalogRepo }
+
+// Clock returns the configured clock, falling back to ports.SystemClock{} when
+// no override has been set.
+func (f *FakeUnitOfWork) Clock() ports.Clock {
+	if f.clock == nil {
+		return ports.SystemClock{}
+	}
+	return f.clock
+}
+
+// Setters allow individual tests to inject aggregate-level fakes without
+// affecting tests that only need the low-level tracker repos.
+func (f *FakeUnitOfWork) SetRunRepo(r ports.RunRepository)                 { f.runRepo = r }
+func (f *FakeUnitOfWork) SetCatalogRepo(r ports.ScheduleCatalogRepository) { f.catalogRepo = r }
+func (f *FakeUnitOfWork) SetOutboxPublisher(p ports.OutboxPublisher)       { f.outboxPub = p }
+func (f *FakeUnitOfWork) SetTaskCollection(tc run.TaskCollection)          { f.taskColl = tc }
+func (f *FakeUnitOfWork) SetClock(c ports.Clock)                           { f.clock = c }

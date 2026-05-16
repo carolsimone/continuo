@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
+	"github.com/carolsimone/continuo/state/ports"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -98,11 +99,18 @@ func main() {
 		}
 	}()
 
+	// Aggregate-level port adapters wired into the UoW so handlers that
+	// operate on domain aggregates (Run, ScheduleCatalog) have typed access.
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
+	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	clk := ports.SystemClock{}
+
 	// UoW factory shared by every stream binding below. Each invocation
 	// returns a fresh PostgresUnitOfWork over the same repos and *sqlx.DB
 	// so concurrent message handlers do not share transaction state.
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, logger)
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
 
 	// Schedule catalog consumer (consumes schedules.loaded:v1). The
