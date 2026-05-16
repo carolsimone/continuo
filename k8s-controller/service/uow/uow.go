@@ -9,105 +9,61 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// UnitOfWork defines the interface for managing database transactions
-type UnitOfWork interface {
+// Transaction exposes repositories scoped to one database transaction.
+type Transaction interface {
 	OutboxRepo() postgres.OutboxRepository
 	ProcessedEventsRepo() postgres.ProcessedEventsRepository
-	Begin(ctx context.Context) error
-	Commit() error
-	Rollback() error
 }
 
-// PostgresUnitOfWork implements UnitOfWork for PostgreSQL
-type PostgresUnitOfWork struct {
-	db         *sqlx.DB
-	tx         *sqlx.Tx
-	outboxRepo postgres.OutboxRepository
-	logger     *slog.Logger
-	inTx       bool
+// TransactionRunner executes work inside a fresh database transaction.
+type TransactionRunner interface {
+	WithinTransaction(ctx context.Context, fn func(Transaction) error) error
 }
 
-// NewPostgresUnitOfWork creates a new PostgreSQL-based Unit of Work
-func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) UnitOfWork {
-	return &PostgresUnitOfWork{
-		db:     db,
-		logger: logger,
-	}
+// PostgresTransactionRunner creates transaction-scoped repositories for PostgreSQL work.
+type PostgresTransactionRunner struct {
+	db     *sqlx.DB
+	logger *slog.Logger
 }
 
-// OutboxRepo returns the outbox repository with the current transaction context
-func (uow *PostgresUnitOfWork) OutboxRepo() postgres.OutboxRepository {
-	if uow.inTx && uow.tx != nil {
-		// Return repository using the transaction
-		return postgres.NewOutboxRepositoryWithTx(uow.tx, uow.logger)
-	}
-	// Return repository using the main DB connection
-	return postgres.NewOutboxRepository(uow.db, uow.logger)
+type postgresTransaction struct {
+	tx     *sqlx.Tx
+	logger *slog.Logger
 }
 
-// ProcessedEventsRepo returns the processed events repository with the current transaction context
-func (uow *PostgresUnitOfWork) ProcessedEventsRepo() postgres.ProcessedEventsRepository {
-	if uow.inTx && uow.tx != nil {
-		return postgres.NewProcessedEventsRepositoryWithTx(uow.tx, uow.logger)
-	}
-	return postgres.NewProcessedEventsRepository(uow.db, uow.logger)
+// NewPostgresTransactionRunner creates a PostgreSQL-backed transaction runner.
+func NewPostgresTransactionRunner(db *sqlx.DB, logger *slog.Logger) TransactionRunner {
+	return &PostgresTransactionRunner{db: db, logger: logger}
 }
 
-// Begin starts a new database transaction
-func (uow *PostgresUnitOfWork) Begin(ctx context.Context) error {
-	if uow.inTx {
-		return fmt.Errorf("transaction already in progress")
-	}
-
-	tx, err := uow.db.BeginTxx(ctx, nil)
+// WithinTransaction executes fn inside a fresh transaction and commits only on success.
+func (r *PostgresTransactionRunner) WithinTransaction(ctx context.Context, fn func(Transaction) error) error {
+	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
-		uow.logger.Error("Failed to begin transaction", "error", err)
+		r.logger.Error("Failed to begin transaction", "error", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	uow.tx = tx
-	uow.inTx = true
-
-	uow.logger.Debug("Transaction started")
-
-	return nil
-}
-
-// Commit commits the current transaction
-func (uow *PostgresUnitOfWork) Commit() error {
-	if !uow.inTx || uow.tx == nil {
-		return fmt.Errorf("no transaction in progress")
+	scope := &postgresTransaction{tx: tx, logger: r.logger}
+	if err := fn(scope); err != nil {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			r.logger.Error("Failed to rollback transaction", "error", rollbackErr)
+		}
+		return err
 	}
 
-	if err := uow.tx.Commit(); err != nil {
-		uow.logger.Error("Failed to commit transaction", "error", err)
+	if err := tx.Commit(); err != nil {
+		r.logger.Error("Failed to commit transaction", "error", err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	uow.tx = nil
-	uow.inTx = false
-
-	uow.logger.Debug("Transaction committed")
-
 	return nil
 }
 
-// Rollback rolls back the current transaction
-func (uow *PostgresUnitOfWork) Rollback() error {
-	if !uow.inTx || uow.tx == nil {
-		// No transaction to rollback, this is fine
-		return nil
-	}
+func (tx *postgresTransaction) OutboxRepo() postgres.OutboxRepository {
+	return postgres.NewOutboxRepositoryWithTx(tx.tx, tx.logger)
+}
 
-	if err := uow.tx.Rollback(); err != nil {
-		uow.logger.Error("Failed to rollback transaction", "error", err)
-		return fmt.Errorf("failed to rollback transaction: %w", err)
-	}
-
-	uow.tx = nil
-	uow.inTx = false
-
-	uow.logger.Debug("Transaction rolled back")
-
-	return nil
+func (tx *postgresTransaction) ProcessedEventsRepo() postgres.ProcessedEventsRepository {
+	return postgres.NewProcessedEventsRepositoryWithTx(tx.tx, tx.logger)
 }

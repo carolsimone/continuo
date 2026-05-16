@@ -78,9 +78,9 @@ func main() {
 		return pgDB.Close()
 	})
 
-	// Step 6: Initialize repositories and Unit of Work
+	// Step 6: Initialize repositories and transaction runner
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
-	unitOfWork := uow.NewPostgresUnitOfWork(pgDB, logger)
+	txRunner := uow.NewPostgresTransactionRunner(pgDB, logger)
 
 	logger.Info("PostgreSQL repositories initialized")
 
@@ -118,7 +118,7 @@ func main() {
 	// Initialize cancelled schedules repository (needed by CheckStatusHandler guard)
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
-	// Step 10b: Initialize check status handler with UoW
+	// Step 10b: Initialize check status handler with transaction runner
 	handlerConfig := &handlers.HandlerConfig{
 		K8sNamespace:          cfg.K8sNamespace,
 		CheckDelaySeconds:     cfg.K8sCheckDelaySeconds,
@@ -126,7 +126,7 @@ func main() {
 		LogTailLines:          int64(cfg.LogTailLines),
 		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
 	}
-	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, unitOfWork, s3Client, handlerConfig, cancelledSchedulesRepo, logger)
+	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, txRunner, s3Client, handlerConfig, cancelledSchedulesRepo, logger)
 
 	// Step 11: Create command handlers map (CQRS pattern)
 	commandHandlers := map[string]messagebus.CommandHandler{
