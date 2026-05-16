@@ -8,9 +8,23 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
+
+// isTerminalSchedulerStatus reports whether a scheduler status can no longer
+// transition. Used by handlers that guard against re-processing already-final
+// runs via the low-level tracker repos.
+func isTerminalSchedulerStatus(s model.SchedulerStatus) bool {
+	switch s {
+	case model.SchedulerStatusSucceeded,
+		model.SchedulerStatusFailed,
+		model.SchedulerStatusCancelled:
+		return true
+	}
+	return false
+}
 
 // emitRunFinalized writes a run.finalized:v1 outbox entry using the caller's
 // UoW transaction. Used by every handler that finalizes a scheduler run so
