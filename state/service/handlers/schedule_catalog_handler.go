@@ -2,19 +2,22 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
 
-// ScheduleCatalogHandler reconciles state's schedule_catalog from a
-// ScheduleCatalogLoaded event. The handler is pure orchestration: it takes
-// a UnitOfWork and a typed event, and never parses JSON, manages a
-// transaction, or runs dedup itself — those responsibilities live in the
-// adapter binding that wires the parser, dedup, and UoW lifecycle around
-// this call.
+// ScheduleCatalogHandler processes schedules.loaded:v1 events. Loads the
+// ScheduleCatalog aggregate, invokes Reconcile (which enforces the
+// empty-list guard), persists via SaveCatalog. The aggregate's
+// ErrEmptyReconciliation is surfaced so the consumer NACKs instead of
+// silently soft-deleting every active catalog row.
 type ScheduleCatalogHandler struct {
 	logger *slog.Logger
 }
@@ -24,27 +27,51 @@ func NewScheduleCatalogHandler(logger *slog.Logger) *ScheduleCatalogHandler {
 	return &ScheduleCatalogHandler{logger: logger}
 }
 
-// Handle reconciles schedule_catalog by upserting the current name set
-// (with per-service metadata) and soft-deleting any rows whose schedule
-// name is no longer present. msgProcID is unused because this reconciler
-// produces no outbox entries; it is kept on the signature for consistency
-// with the other state handlers.
+// Handle orchestrates the catalog-loaded flow.
+//
+// Caller contract: u.Begin(ctx) has been called; the handler MUST NOT commit.
+// Returning nil tells the binding to commit; returning an error triggers
+// rollback. ErrEmptyReconciliation is returned wrapped, so the binding can
+// distinguish "domain rejected the payload" from "transient infra error".
+// (Today both produce a NACK; the binding may classify them differently later.)
 func (h *ScheduleCatalogHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	evt events.ScheduleCatalogLoaded,
-	_ uuid.UUID,
+	_ uuid.UUID, // msgProcID — catalog events do not propagate provenance today
 ) error {
-	repo := u.ScheduleCatalogRepo()
-	if err := repo.UpsertAll(ctx, evt.ScheduleNames, evt.ServiceMetadata); err != nil {
-		return err
+	c, err := u.Catalog().LoadCatalogForUpdate(ctx, u.Tx())
+	if err != nil {
+		return fmt.Errorf("load catalog: %w", err)
 	}
-	if err := repo.SoftDeleteAbsent(ctx, evt.ScheduleNames); err != nil {
-		return err
+	if _, err := c.Reconcile(evt.ScheduleNames, broadcastServiceMetadata(evt.ScheduleNames, evt.ServiceMetadata), u.Clock().Now()); err != nil {
+		if errors.Is(err, catalog.ErrEmptyReconciliation) {
+			h.logger.Error("schedules.loaded: empty schedule_names list — refusing to nuke catalog")
+		}
+		return fmt.Errorf("reconcile: %w", err)
+	}
+	if err := u.Catalog().SaveCatalog(ctx, u.Tx(), c); err != nil {
+		return fmt.Errorf("save: %w", err)
 	}
 	h.logger.Info("Schedule catalog reconciled",
 		"event_id", evt.EventID,
 		"schedule_count", len(evt.ScheduleNames),
 	)
 	return nil
+}
+
+// broadcastServiceMetadata translates the wire-format metadata shape to the
+// aggregate's typed map. The schedules.loaded:v1 wire format carries a global
+// flat map of {serviceName -> metadata} (not per-schedule). We promote it by
+// applying the same service metadata to every schedule name in the payload.
+func broadcastServiceMetadata(names []string, global map[string]run.ServiceMetadata) map[string]map[string]run.ServiceMetadata {
+	out := make(map[string]map[string]run.ServiceMetadata, len(names))
+	for _, name := range names {
+		m := make(map[string]run.ServiceMetadata, len(global))
+		for svc, meta := range global {
+			m[svc] = meta
+		}
+		out[name] = m
+	}
+	return out
 }
