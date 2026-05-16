@@ -1,148 +1,63 @@
+// Package model is a transitional alias layer. Types previously declared here
+// have migrated into state/domain/aggregate/run/ (and projection/). This file
+// remains so that callers continue to compile until the migration is complete;
+// it is removed in Step 7.
 package model
 
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"time"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 )
 
-// SchedulerStatus represents valid states for scheduler_tracker
-type SchedulerStatus string
+// SchedulerStatus is an alias for run.SchedulerStatus.
+type SchedulerStatus = run.SchedulerStatus
 
 const (
-	SchedulerStatusPending   SchedulerStatus = "pending"
-	SchedulerStatusRunning   SchedulerStatus = "running"
-	SchedulerStatusSucceeded SchedulerStatus = "succeeded"
-	SchedulerStatusFailed    SchedulerStatus = "failed"
-	SchedulerStatusCancelled SchedulerStatus = "cancelled"
+	SchedulerStatusPending   = run.SchedulerStatusPending
+	SchedulerStatusRunning   = run.SchedulerStatusRunning
+	SchedulerStatusSucceeded = run.SchedulerStatusSucceeded
+	SchedulerStatusFailed    = run.SchedulerStatusFailed
+	SchedulerStatusCancelled = run.SchedulerStatusCancelled
 )
 
-// IsValid checks if the SchedulerStatus is valid
-func (s SchedulerStatus) IsValid() bool {
-	switch s {
-	case SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusSucceeded,
-		SchedulerStatusFailed, SchedulerStatusCancelled:
-		return true
-	}
-	return false
-}
-
-// TaskStatus represents valid states for task_tracker and task_execution
-type TaskStatus string
+// TaskStatus is an alias for run.TaskStatus.
+type TaskStatus = run.TaskStatus
 
 const (
-	TaskStatusPending   TaskStatus = "pending"
-	TaskStatusRunning   TaskStatus = "running"
-	TaskStatusSucceeded TaskStatus = "succeeded"
-	TaskStatusFailed    TaskStatus = "failed"
-	TaskStatusCancelled TaskStatus = "cancelled"
-	TaskStatusSkipped   TaskStatus = "skipped"
+	TaskStatusPending   = run.TaskStatusPending
+	TaskStatusRunning   = run.TaskStatusRunning
+	TaskStatusSucceeded = run.TaskStatusSucceeded
+	TaskStatusFailed    = run.TaskStatusFailed
+	TaskStatusCancelled = run.TaskStatusCancelled
+	TaskStatusSkipped   = run.TaskStatusSkipped
 )
 
-// IsValid checks if the TaskStatus is valid
-func (t TaskStatus) IsValid() bool {
-	switch t {
-	case TaskStatusPending, TaskStatusRunning, TaskStatusSucceeded,
-		TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped:
-		return true
-	}
-	return false
-}
+// ParseTaskStatus is an alias for run.ParseTaskStatus.
+var ParseTaskStatus = run.ParseTaskStatus
 
-// ParseTaskStatus converts a lowercase status string to a TaskStatus, returning
-// an error for unknown values. Used at the wire-format boundary (e.g. parsing
-// per-task Status from a run.entries.dispatched:v1 event payload).
-func ParseTaskStatus(s string) (TaskStatus, error) {
-	t := TaskStatus(s)
-	if !t.IsValid() {
-		return "", fmt.Errorf("unknown task status %q", s)
-	}
-	return t, nil
-}
-
-// CallerID identifies which service is performing a task state transition.
-type CallerID string
+// CallerID and constants alias run.CallerID.
+type CallerID = run.CallerID
 
 const (
-	CallerStartupController  CallerID = "startup-controller"
-	CallerExecutorController CallerID = "executor-controller"
-	CallerK8sController      CallerID = "k8s-controller"
+	CallerStartupController  = run.CallerStartupController
+	CallerExecutorController = run.CallerExecutorController
+	CallerK8sController      = run.CallerK8sController
 )
 
+// Transition errors alias the run package's variables.
 var (
-	ErrInvalidTransition      = errors.New("invalid state transition")
-	ErrUnauthorizedTransition = errors.New("unauthorized state transition")
+	ErrInvalidTransition      = run.ErrInvalidTransition
+	ErrUnauthorizedTransition = run.ErrUnauthorizedTransition
 )
 
-type taskTransition struct {
-	from  TaskStatus
-	to    TaskStatus
-	owner CallerID
-}
+// SchedulerTracker and TaskTracker remain as field carriers until Steps 4-7
+// fully cut over the persistence layer. They get a Transition shim each to
+// preserve the legacy API surface used by gRPC reset / scheduler handlers.
 
-var allowedTaskTransitions = []taskTransition{
-	{TaskStatusFailed, TaskStatusPending, CallerStartupController},
-	{TaskStatusPending, TaskStatusRunning, CallerExecutorController},
-	{TaskStatusFailed, TaskStatusRunning, CallerExecutorController},
-	{TaskStatusRunning, TaskStatusSucceeded, CallerK8sController},
-	{TaskStatusRunning, TaskStatusFailed, CallerK8sController},
-}
-
-type schedulerTransition struct {
-	from SchedulerStatus
-	to   SchedulerStatus
-}
-
-var allowedSchedulerTransitions = []schedulerTransition{
-	{SchedulerStatusPending, SchedulerStatusRunning},
-	{SchedulerStatusRunning, SchedulerStatusSucceeded},
-	{SchedulerStatusRunning, SchedulerStatusFailed},
-}
-
-// Transition attempts to move the scheduler to the target status.
-// Returns ErrInvalidTransition if the (from, to) pair is not in the allowed set.
-// Status is only mutated on success.
-// Note: cancelled is handled separately via repo.Cancel() and is not in this table.
-func (s *SchedulerTracker) Transition(to SchedulerStatus) error {
-	for _, tr := range allowedSchedulerTransitions {
-		if tr.from == s.Status && tr.to == to {
-			s.Status = to
-			return nil
-		}
-	}
-	return ErrInvalidTransition
-}
-
-// Transition attempts to move the task to the target status on behalf of the given caller.
-// Returns ErrInvalidTransition if the (from, to) pair is not in the allowed set.
-// Returns ErrUnauthorizedTransition if the transition exists but this caller does not own it.
-// Status is only mutated on success.
-func (t *TaskTracker) Transition(caller CallerID, to TaskStatus) error {
-	for _, tr := range allowedTaskTransitions {
-		if tr.from == t.Status && tr.to == to {
-			if tr.owner != caller {
-				return ErrUnauthorizedTransition
-			}
-			t.Status = to
-			return nil
-		}
-	}
-	return ErrInvalidTransition
-}
-
-// ServiceMetadata holds per-service topology snapshot data stored in scheduler_tracker
-// and schedule_catalog (service_metadata JSONB column).
-type ServiceMetadata struct {
-	ManifestVersion string `json:"manifest_version"`
-	ImageTag        string `json:"image_tag"`
-}
-
-// SchedulerTracker represents a scheduler execution run
-// Maps to the scheduler_tracker table in PostgreSQL
 type SchedulerTracker struct {
 	ScheduleID           uuid.UUID                  `json:"schedule_id" db:"schedule_id"`
 	ScheduleName         string                     `json:"schedule_name" db:"schedule_name"`
@@ -163,6 +78,16 @@ type SchedulerTracker struct {
 	ServiceMetadataRaw   json.RawMessage            `json:"-" db:"service_metadata"`
 }
 
+// Transition is a thin shim delegating to the run package. Retained for the
+// gRPC ResetTask path which still calls TaskTracker.Transition until Step 5.
+func (s *SchedulerTracker) Transition(to SchedulerStatus) error {
+	if canSchedulerTransitionViaRun(s.Status, to) {
+		s.Status = to
+		return nil
+	}
+	return ErrInvalidTransition
+}
+
 func (s *SchedulerTracker) GetServiceMetadata() map[string]ServiceMetadata {
 	if len(s.ServiceMetadata) > 0 {
 		return s.ServiceMetadata
@@ -180,8 +105,6 @@ func (s *SchedulerTracker) GetServiceMetadata() map[string]ServiceMetadata {
 	return meta
 }
 
-// TaskTracker represents a task execution within a schedule
-// Maps to the task_tracker table in PostgreSQL
 type TaskTracker struct {
 	TaskID              uuid.UUID  `json:"task_id" db:"task_id"`
 	ScheduleID          uuid.UUID  `json:"schedule_id" db:"schedule_id"`
@@ -200,8 +123,19 @@ type TaskTracker struct {
 	InheritedFromTaskID *uuid.UUID `json:"inherited_from_task_id,omitempty" db:"inherited_from_task_id"`
 }
 
-// TaskExecution represents a single execution attempt of a task
-// Maps to the task_execution table in PostgreSQL
+// Transition is a thin shim delegating to the run package.
+func (t *TaskTracker) Transition(caller CallerID, to TaskStatus) error {
+	allowed, ownerOK := canTaskTransitionViaRun(t.Status, to, caller)
+	if !allowed {
+		return ErrInvalidTransition
+	}
+	if !ownerOK {
+		return ErrUnauthorizedTransition
+	}
+	t.Status = to
+	return nil
+}
+
 type TaskExecution struct {
 	ID                   uuid.UUID  `json:"id" db:"id"`
 	TaskID               uuid.UUID  `json:"task_id" db:"task_id"`
@@ -228,18 +162,61 @@ type TaskExecution struct {
 // timings and an empty ErrorMessage / LogS3Key. The Kind and TerminalStatus
 // fields come from the parent scheduler_tracker.
 type NodeRun struct {
-	ScheduleID      uuid.UUID  `db:"run_id"`            // scheduler_tracker.schedule_id
+	ScheduleID      uuid.UUID  `db:"run_id"`
 	ScheduleName    string     `db:"schedule_name"`
-	Kind            string     `db:"kind"`              // cron | trigger | rerun | rebase | single_node_run
-	TerminalStatus  string     `db:"terminal_status"`   // scheduler_tracker.status — "" while in flight
+	Kind            string     `db:"kind"`
+	TerminalStatus  string     `db:"terminal_status"`
 	TaskID          uuid.UUID  `db:"task_id"`
 	TaskStatus      TaskStatus `db:"task_status"`
 	RetryCount      int        `db:"retry_count"`
 	ImageTag        string     `db:"image_tag"`
 	ManifestVersion string     `db:"manifest_version"`
-	CreatedAt       time.Time  `db:"created_at"`        // scheduler_tracker.created_at — the user-visible "when"
-	StartedAt       *time.Time `db:"started_at"`        // task_execution.started_at
-	CompletedAt    *time.Time `db:"completed_at"`       // task_execution.completed_at
+	CreatedAt       time.Time  `db:"created_at"`
+	StartedAt       *time.Time `db:"started_at"`
+	CompletedAt     *time.Time `db:"completed_at"`
 	ErrorMessage    *string    `db:"error_message"`
 	LogS3Key        *string    `db:"log_s3_key"`
+}
+
+// ServiceMetadata stays here for one more task (1.3); becomes an alias once it
+// moves into the run package.
+type ServiceMetadata struct {
+	ManifestVersion string `json:"manifest_version"`
+	ImageTag        string `json:"image_tag"`
+}
+
+// canSchedulerTransitionViaRun and canTaskTransitionViaRun are private bridges
+// so the legacy Transition shims do not duplicate the table. They will go away
+// in Step 7 when the file is deleted.
+func canSchedulerTransitionViaRun(from, to SchedulerStatus) bool {
+	type t struct{ from, to SchedulerStatus }
+	for _, tr := range []t{
+		{run.SchedulerStatusPending, run.SchedulerStatusRunning},
+		{run.SchedulerStatusRunning, run.SchedulerStatusSucceeded},
+		{run.SchedulerStatusRunning, run.SchedulerStatusFailed},
+	} {
+		if tr.from == from && tr.to == to {
+			return true
+		}
+	}
+	return false
+}
+
+func canTaskTransitionViaRun(from, to TaskStatus, caller CallerID) (allowed, ownerOK bool) {
+	type t struct {
+		from, to TaskStatus
+		owner    CallerID
+	}
+	for _, tr := range []t{
+		{run.TaskStatusFailed, run.TaskStatusPending, run.CallerStartupController},
+		{run.TaskStatusPending, run.TaskStatusRunning, run.CallerExecutorController},
+		{run.TaskStatusFailed, run.TaskStatusRunning, run.CallerExecutorController},
+		{run.TaskStatusRunning, run.TaskStatusSucceeded, run.CallerK8sController},
+		{run.TaskStatusRunning, run.TaskStatusFailed, run.CallerK8sController},
+	} {
+		if tr.from == from && tr.to == to {
+			return true, tr.owner == caller
+		}
+	}
+	return false, false
 }
