@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -19,6 +20,8 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/service/messagebus"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -75,9 +78,9 @@ func main() {
 		return pgDB.Close()
 	})
 
-	// Step 6: Initialize repositories and Unit of Work
+	// Step 6: Initialize repositories and transaction runner
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
-	unitOfWork := uow.NewPostgresUnitOfWork(pgDB, logger)
+	txRunner := uow.NewPostgresTransactionRunner(pgDB, logger)
 
 	logger.Info("PostgreSQL repositories initialized")
 
@@ -91,16 +94,16 @@ func main() {
 	// Step 9: Initialize Redis producer
 	producer := redis.NewMultiProducer(
 		redisClient,
-		cfg.RedisProducerCheckStream,
-		cfg.RedisProducerRetryStream,
-		cfg.RedisProducerFailedStream,
+		streams.CheckK8sV1,
+		streams.RetryTaskV1,
+		streams.TaskFailedV1,
 		logger,
 	)
 
 	logger.Info("Redis producer initialized",
-		"check_stream", cfg.RedisProducerCheckStream,
-		"retry_stream", cfg.RedisProducerRetryStream,
-		"failed_stream", cfg.RedisProducerFailedStream,
+		"check_stream", streams.CheckK8sV1,
+		"retry_stream", streams.RetryTaskV1,
+		"failed_stream", streams.TaskFailedV1,
 	)
 
 	// Step 10: Initialize S3 log uploader
@@ -115,7 +118,7 @@ func main() {
 	// Initialize cancelled schedules repository (needed by CheckStatusHandler guard)
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
-	// Step 10b: Initialize check status handler with UoW
+	// Step 10b: Initialize check status handler with transaction runner
 	handlerConfig := &handlers.HandlerConfig{
 		K8sNamespace:          cfg.K8sNamespace,
 		CheckDelaySeconds:     cfg.K8sCheckDelaySeconds,
@@ -123,7 +126,7 @@ func main() {
 		LogTailLines:          int64(cfg.LogTailLines),
 		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
 	}
-	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, unitOfWork, s3Client, handlerConfig, cancelledSchedulesRepo, logger)
+	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, txRunner, s3Client, handlerConfig, cancelledSchedulesRepo, logger)
 
 	// Step 11: Create command handlers map (CQRS pattern)
 	commandHandlers := map[string]messagebus.CommandHandler{
@@ -137,25 +140,45 @@ func main() {
 
 	logger.Info("Message bus initialized")
 
-	// Step 13: Initialize Redis dual-stream consumer
-	consumer, err := redis.NewDualStreamConsumer(
+	// Step 13: Initialize per-stream Redis consumers.
+	// Each consumer runs in its own goroutine against a dedicated consumer group.
+	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String()[:8])
+
+	deployedConsumer, err := redis.NewConsumer(
 		redisClient,
-		cfg.RedisConsumerDeployedStream,
-		cfg.RedisConsumerCheckStream,
-		cfg.RedisConsumerGroup,
+		consumerName,
+		streams.K8sDeployed,
+		streams.NodeDeployedV1,
 		messageBus,
 		cfg.DefaultTaskMaxRetries,
+		false, // node.deployed:v1 messages are processed immediately
 		logger,
 	)
 	if err != nil {
-		logger.Error("Failed to initialize consumer", "error", err)
+		logger.Error("Failed to initialize deployed consumer", "error", err)
 		os.Exit(1)
 	}
 
-	logger.Info("Redis consumer initialized",
-		"deployed_stream", cfg.RedisConsumerDeployedStream,
-		"check_stream", cfg.RedisConsumerCheckStream,
-		"consumer_group", cfg.RedisConsumerGroup,
+	checkConsumer, err := redis.NewConsumer(
+		redisClient,
+		consumerName,
+		streams.K8sCheckStatus,
+		streams.CheckK8sV1,
+		messageBus,
+		cfg.DefaultTaskMaxRetries,
+		true, // check.k8s:v1 messages are re-circulated until check_after elapses
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to initialize check consumer", "error", err)
+		os.Exit(1)
+	}
+
+	logger.Info("Redis consumers initialized",
+		"deployed_stream", streams.NodeDeployedV1,
+		"deployed_group", streams.K8sDeployed,
+		"check_stream", streams.CheckK8sV1,
+		"check_group", streams.K8sCheckStatus,
 	)
 
 	// Step 14: Initialize and start OutboxProcessor (background)
@@ -220,8 +243,8 @@ func main() {
 
 	scheduleCancelledConsumer, err := redis.NewScheduleCancelledConsumer(
 		redisClient,
-		cfg.ScheduleCancelledStream,
-		cfg.ScheduleCancelledGroup,
+		streams.ScheduleCancelledV1,
+		streams.K8sScheduleCancelled,
 		cancelledSchedulesRepo,
 		logger,
 	)
@@ -253,10 +276,18 @@ func main() {
 		}
 	}()
 
-	// Step 17: Start Redis Consumer (BLOCKING - main loop)
-	logger.Info("Starting Redis consumer (main loop)")
-	if err := consumer.Start(ctx); err != nil && err != context.Canceled {
-		logger.Error("Consumer stopped with error", "error", err)
+	// Step 17: Start Redis consumers.
+	// The deployed consumer runs in the background; the check consumer runs as the main blocking loop.
+	go func() {
+		logger.Info("Starting deployed consumer")
+		if err := deployedConsumer.Start(ctx); err != nil && err != context.Canceled {
+			logger.Error("Deployed consumer stopped with error", "error", err)
+		}
+	}()
+
+	logger.Info("Starting check consumer (main loop)")
+	if err := checkConsumer.Start(ctx); err != nil && err != context.Canceled {
+		logger.Error("Check consumer stopped with error", "error", err)
 		os.Exit(1)
 	}
 

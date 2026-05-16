@@ -133,6 +133,7 @@ Reads `k8s_status_outbox` entries and executes the staged side effects:
 
 - **Two-entry outbox pattern**: internal side effects (state events) and external notifications (Redis) are staged as separate outbox entries within the same transaction — both commit or neither does
 - **Inbound dedup inside transaction**: `processed_events` insert and outbox writes are in the same transaction; a crash after commit is idempotent on retry (dedup fires)
+- **Explicit transaction boundary**: each status message gets its own transaction-scoped repositories for dedup and outbox writes; parallel `node.deployed:v1` and `check.k8s:v1` consumers can reuse one handler without sharing mutable transaction state
 - **S3 soft-fail**: log upload failure does not block task completion; execution record is written with empty S3 key
 - **No state gRPC dependency**: k8s-controller no longer calls state gRPC; all state mutations flow via `task.status.updated:v1` and `task.execution.recorded:v1`
 - **Retry count in payload**: `retry_count` flows through Redis messages; `max_retries` uses the service config default (default = 2, meaning 3 total execution attempts: initial + 2 retries); permanent failure occurs when `retry_count >= max_retries`

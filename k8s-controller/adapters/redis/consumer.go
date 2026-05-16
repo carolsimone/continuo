@@ -14,104 +14,89 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// defaultMaxRetries is used when a message does not carry a max_retries field
+// defaultConsumerMaxRetries is used when a message does not carry a max_retries field
 // (backward-compat: old executor-controller versions did not publish it).
 const defaultConsumerMaxRetries = 2
 
-// DualStreamConsumer consumes from both node.deployed:v1 and check.k8s:v1 streams
-type DualStreamConsumer struct {
+// Consumer consumes messages from a single Redis Stream using a consumer group.
+type Consumer struct {
 	client            *goredis.Client
-	deployedStream    string // node.deployed:v1
-	checkStream       string // check.k8s:v1
-	consumerGroup     string
+	stream            string
+	group             string
 	consumerName      string
 	messageBus        *messagebus.MessageBus
-	defaultMaxRetries int // fallback when message does not carry max_retries
+	defaultMaxRetries int  // fallback when message does not carry max_retries
+	checkDelay        bool // when true, messages with a future check_after timestamp are re-circulated
 	logger            *slog.Logger
 	stopCh            chan struct{}
 }
 
-// NewDualStreamConsumer creates a new dual-stream consumer
-func NewDualStreamConsumer(
+// NewConsumer creates a new single-stream consumer.
+// Set checkDelay to true for the check.k8s:v1 stream so that messages whose
+// check_after timestamp has not yet been reached are re-circulated.
+func NewConsumer(
 	client *goredis.Client,
-	deployedStream string,
-	checkStream string,
-	consumerGroup string,
+	consumerName string,
+	group string,
+	stream string,
 	messageBus *messagebus.MessageBus,
 	defaultMaxRetries int,
+	checkDelay bool,
 	logger *slog.Logger,
-) (*DualStreamConsumer, error) {
-	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String()[:8])
-
+) (*Consumer, error) {
 	if defaultMaxRetries <= 0 {
 		defaultMaxRetries = defaultConsumerMaxRetries
 	}
 
-	consumer := &DualStreamConsumer{
+	c := &Consumer{
 		client:            client,
-		deployedStream:    deployedStream,
-		checkStream:       checkStream,
-		consumerGroup:     consumerGroup,
+		stream:            stream,
+		group:             group,
 		consumerName:      consumerName,
 		messageBus:        messageBus,
 		defaultMaxRetries: defaultMaxRetries,
+		checkDelay:        checkDelay,
 		logger:            logger,
 		stopCh:            make(chan struct{}),
 	}
 
-	// Create consumer groups for both streams
-	if err := consumer.createConsumerGroups(context.Background()); err != nil {
+	if err := c.createConsumerGroup(context.Background()); err != nil {
 		return nil, err
 	}
 
-	logger.Info("Dual-stream consumer initialized",
-		"deployed_stream", deployedStream,
-		"check_stream", checkStream,
-		"consumer_group", consumerGroup,
+	logger.Info("Consumer initialized",
+		"stream", stream,
+		"group", group,
 		"consumer_name", consumerName,
+		"check_delay", checkDelay,
 	)
 
-	return consumer, nil
+	return c, nil
 }
 
-// createConsumerGroups creates consumer groups for both streams
-func (c *DualStreamConsumer) createConsumerGroups(ctx context.Context) error {
-	// Create group for deployed stream
-	err := c.client.XGroupCreateMkStream(ctx, c.deployedStream, c.consumerGroup, "0").Err()
+// createConsumerGroup creates the consumer group for the stream, or no-ops if it already exists.
+func (c *Consumer) createConsumerGroup(ctx context.Context) error {
+	err := c.client.XGroupCreateMkStream(ctx, c.stream, c.group, "0").Err()
 	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		return fmt.Errorf("failed to create consumer group for %s: %w", c.deployedStream, err)
+		return fmt.Errorf("failed to create consumer group for %s: %w", c.stream, err)
 	}
 
-	// Create group for check stream
-	err = c.client.XGroupCreateMkStream(ctx, c.checkStream, c.consumerGroup, "0").Err()
-	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		return fmt.Errorf("failed to create consumer group for %s: %w", c.checkStream, err)
-	}
-
-	c.logger.Info("Consumer groups created/verified")
+	c.logger.Info("Consumer group created/verified", "group", c.group, "stream", c.stream)
 	return nil
 }
 
-// Start starts consuming from both streams
-func (c *DualStreamConsumer) Start(ctx context.Context) error {
-	c.logger.Info("Starting dual-stream consumer")
+// Start begins consuming messages from the Redis stream.
+func (c *Consumer) Start(ctx context.Context) error {
+	c.logger.Info("Starting consumer", "stream", c.stream, "group", c.group)
 
-	// Process pending messages from both streams (crash recovery)
-	if err := c.processPendingMessages(ctx, c.deployedStream); err != nil {
+	// Process pending messages for crash recovery.
+	if err := c.processPendingMessages(ctx); err != nil {
 		c.logger.Error("Failed to process pending messages",
-			"stream", c.deployedStream,
+			"stream", c.stream,
 			"error", err,
 		)
 	}
 
-	if err := c.processPendingMessages(ctx, c.checkStream); err != nil {
-		c.logger.Error("Failed to process pending messages",
-			"stream", c.checkStream,
-			"error", err,
-		)
-	}
-
-	// Main consumption loop
 	for {
 		select {
 		case <-ctx.Done():
@@ -129,11 +114,11 @@ func (c *DualStreamConsumer) Start(ctx context.Context) error {
 	}
 }
 
-// processPendingMessages processes pending messages from a stream (crash recovery)
-func (c *DualStreamConsumer) processPendingMessages(ctx context.Context, stream string) error {
+// processPendingMessages claims and reprocesses messages that were delivered but never ACKed (crash recovery).
+func (c *Consumer) processPendingMessages(ctx context.Context) error {
 	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream,
-		Group:  c.consumerGroup,
+		Stream: c.stream,
+		Group:  c.group,
 		Start:  "-",
 		End:    "+",
 		Count:  100,
@@ -148,14 +133,14 @@ func (c *DualStreamConsumer) processPendingMessages(ctx context.Context, stream 
 	}
 
 	c.logger.Info("Processing pending messages",
-		"stream", stream,
+		"stream", c.stream,
 		"count", len(pending),
 	)
 
 	for _, p := range pending {
 		msgs, err := c.client.XClaim(ctx, &goredis.XClaimArgs{
-			Stream:   stream,
-			Group:    c.consumerGroup,
+			Stream:   c.stream,
+			Group:    c.group,
 			Consumer: c.consumerName,
 			MinIdle:  0,
 			Messages: []string{p.ID},
@@ -163,7 +148,7 @@ func (c *DualStreamConsumer) processPendingMessages(ctx context.Context, stream 
 
 		if err != nil {
 			c.logger.Error("Failed to claim message",
-				"stream", stream,
+				"stream", c.stream,
 				"message_id", p.ID,
 				"error", err,
 			)
@@ -171,9 +156,9 @@ func (c *DualStreamConsumer) processPendingMessages(ctx context.Context, stream 
 		}
 
 		for _, msg := range msgs {
-			if err := c.processMessage(ctx, msg, stream); err != nil {
+			if err := c.processMessage(ctx, msg); err != nil {
 				c.logger.Error("Failed to process pending message",
-					"stream", stream,
+					"stream", c.stream,
 					"message_id", msg.ID,
 					"error", err,
 				)
@@ -184,59 +169,53 @@ func (c *DualStreamConsumer) processPendingMessages(ctx context.Context, stream 
 	return nil
 }
 
-// readAndProcess reads messages from both streams and processes them
-func (c *DualStreamConsumer) readAndProcess(ctx context.Context) error {
-	// XREADGROUP GROUP group consumer BLOCK 1000 COUNT 10
-	//   STREAMS node.deployed:v1 check.k8s:v1 > >
+// readAndProcess reads new messages from the stream and processes them.
+func (c *Consumer) readAndProcess(ctx context.Context) error {
 	streams, err := c.client.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group:    c.consumerGroup,
+		Group:    c.group,
 		Consumer: c.consumerName,
-		Streams:  []string{c.deployedStream, c.checkStream, ">", ">"},
+		Streams:  []string{c.stream, ">"},
 		Count:    10,
 		Block:    1 * time.Second,
 	}).Result()
 
 	if err != nil {
 		if err == goredis.Nil {
-			// No messages, normal case
 			return nil
 		}
 		if strings.Contains(err.Error(), "NOGROUP") {
 			c.logger.Warn("Consumer group missing, recreating",
-				"streams", []string{c.deployedStream, c.checkStream},
-				"group", c.consumerGroup,
+				"stream", c.stream,
+				"group", c.group,
 			)
-			if createErr := c.createConsumerGroups(ctx); createErr != nil {
-				return fmt.Errorf("failed to recreate consumer groups: %w", createErr)
+			if createErr := c.createConsumerGroup(ctx); createErr != nil {
+				return fmt.Errorf("failed to recreate consumer group: %w", createErr)
 			}
 			return nil
 		}
-		return fmt.Errorf("failed to read from streams: %w", err)
+		return fmt.Errorf("failed to read from stream: %w", err)
 	}
 
-	for _, stream := range streams {
-		for _, msg := range stream.Messages {
-			// For check.k8s:v1 messages, check if ready for processing
-			if stream.Stream == c.checkStream {
-				if !c.isReadyForProcessing(msg) {
-					// Not ready yet: re-publish to the end of the stream so it gets
-					// picked up again after the delay, then ACK the original.
-					c.client.XAdd(ctx, &goredis.XAddArgs{
-						Stream: c.checkStream,
-						Values: msg.Values,
-					})
-					c.client.XAck(ctx, stream.Stream, c.consumerGroup, msg.ID)
-					continue
-				}
+	for _, s := range streams {
+		for _, msg := range s.Messages {
+			// For streams with check delay enabled, re-circulate messages whose
+			// check_after timestamp has not yet been reached.
+			if c.checkDelay && !c.isReadyForProcessing(msg) {
+				c.client.XAdd(ctx, &goredis.XAddArgs{
+					Stream: c.stream,
+					Values: msg.Values,
+				})
+				c.client.XAck(ctx, c.stream, c.group, msg.ID)
+				continue
 			}
 
-			if err := c.processMessage(ctx, msg, stream.Stream); err != nil {
+			if err := c.processMessage(ctx, msg); err != nil {
 				c.logger.Error("Failed to process message",
-					"stream", stream.Stream,
+					"stream", c.stream,
 					"message_id", msg.ID,
 					"error", err,
 				)
-				// Don't ACK failed messages - they'll be retried
+				// Do not ACK failed messages — they remain in the pending list for retry.
 				continue
 			}
 		}
@@ -245,11 +224,12 @@ func (c *DualStreamConsumer) readAndProcess(ctx context.Context) error {
 	return nil
 }
 
-// isReadyForProcessing checks if a check message is ready for processing
-func (c *DualStreamConsumer) isReadyForProcessing(msg goredis.XMessage) bool {
+// isReadyForProcessing checks whether a check message's check_after timestamp has elapsed.
+// Returns true if the message should be processed now.
+func (c *Consumer) isReadyForProcessing(msg goredis.XMessage) bool {
 	checkAfterStr, ok := msg.Values["check_after"].(string)
 	if !ok {
-		// If no check_after field, process immediately
+		// No check_after field — process immediately.
 		return true
 	}
 
@@ -262,35 +242,33 @@ func (c *DualStreamConsumer) isReadyForProcessing(msg goredis.XMessage) bool {
 	return time.Now().Unix() >= checkAfter
 }
 
-// processMessage processes a single message
-func (c *DualStreamConsumer) processMessage(ctx context.Context, msg goredis.XMessage, streamName string) error {
+// processMessage processes a single message from the stream.
+// Only ACKs after successful handler completion to implement at-least-once delivery.
+func (c *Consumer) processMessage(ctx context.Context, msg goredis.XMessage) error {
 	c.logger.Debug("Processing message",
-		"stream", streamName,
+		"stream", c.stream,
 		"message_id", msg.ID,
 	)
 
-	// Parse message into CheckJobStatus command
 	cmd, err := c.parseCommand(msg)
 	if err != nil {
 		c.logger.Error("Failed to parse message",
-			"stream", streamName,
+			"stream", c.stream,
 			"message_id", msg.ID,
 			"error", err,
 		)
-		// ACK malformed messages to avoid reprocessing loop
-		c.client.XAck(ctx, streamName, c.consumerGroup, msg.ID)
+		// ACK malformed messages to prevent a reprocessing loop.
+		c.client.XAck(ctx, c.stream, c.group, msg.ID)
 		return nil
 	}
 
-	// Handle via message bus
 	if err := c.messageBus.Handle(ctx, cmd); err != nil {
 		return fmt.Errorf("message bus failed: %w", err)
 	}
 
-	// CRITICAL: Only ACK after successful handler completion
-	if err := c.client.XAck(ctx, streamName, c.consumerGroup, msg.ID).Err(); err != nil {
+	if err := c.client.XAck(ctx, c.stream, c.group, msg.ID).Err(); err != nil {
 		c.logger.Error("Failed to ACK message",
-			"stream", streamName,
+			"stream", c.stream,
 			"message_id", msg.ID,
 			"error", err,
 		)
@@ -298,15 +276,15 @@ func (c *DualStreamConsumer) processMessage(ctx context.Context, msg goredis.XMe
 	}
 
 	c.logger.Debug("Successfully processed and ACKed message",
-		"stream", streamName,
+		"stream", c.stream,
 		"message_id", msg.ID,
 	)
 
 	return nil
 }
 
-// parseCommand parses a Redis message into a CheckJobStatus command
-func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJobStatus, error) {
+// parseCommand parses a Redis message into a CheckJobStatus command.
+func (c *Consumer) parseCommand(msg goredis.XMessage) (command.CheckJobStatus, error) {
 	taskIDStr, _ := msg.Values["task_id"].(string)
 	taskID, err := uuid.Parse(taskIDStr)
 	if err != nil {
@@ -379,7 +357,7 @@ func (c *DualStreamConsumer) parseCommand(msg goredis.XMessage) (command.CheckJo
 	return cmd, nil
 }
 
-// Stop stops the consumer
-func (c *DualStreamConsumer) Stop() {
+// Stop stops the consumer gracefully.
+func (c *Consumer) Stop() {
 	close(c.stopCh)
 }

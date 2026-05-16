@@ -1,0 +1,206 @@
+# Source of truth for Redis Stream names and consumer groups across continuo.
+# Regenerate Go/Python bindings: `go generate ./pkg/streams/...`
+#
+# Naming policy:
+#   - Stream name: lowercase, dot-separated, ends with `:vN`. Frozen contract.
+#   - Group name: lowercase kebab-case, no underscores. Frozen per consumer.
+#   - Stream const: PascalCase including version suffix (NodeUpdatedV1).
+#   - Consumer const: PascalCase, service-prefixed (OrchestratorNodeUpdated).
+
+streams:
+  # ---------------- state-produced streams ----------------
+
+  - name: scheduler.started:v1
+    const: SchedulerStartedV1
+    description: Scheduler boot heartbeat; orchestrator hydrates its projections on receipt.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-scheduler-started
+        const: OrchestratorSchedulerStarted
+
+  - name: schedules.loaded:v1
+    const: SchedulesLoadedV1
+    description: Schedules registered/refreshed by state; consumed by state for catalog projections.
+    producers: [orchestrator]
+    consumers:
+      - service: state
+        group: state-schedule-catalog
+        const: StateScheduleCatalog
+
+  - name: run.entries.dispatched:v1
+    const: RunEntriesDispatchedV1
+    description: Run entries that orchestrator successfully dispatched into the executor queue.
+    producers: [orchestrator]
+    consumers:
+      - service: state
+        group: state-run-entries-dispatched
+        const: StateRunEntriesDispatched
+
+  - name: run.entries.dispatch_failed:v1
+    const: RunEntriesDispatchFailedV1
+    description: Run entries orchestrator failed to dispatch.
+    producers: [orchestrator]
+    consumers:
+      - service: state
+        group: state-run-entries-dispatch-failed
+        const: StateRunEntriesDispatchFailed
+
+  - name: task.status.updated:v1
+    const: TaskStatusUpdatedV1
+    description: Per-task status transitions emitted by executor-controller.
+    producers: [executor-controller]
+    consumers:
+      - service: state
+        group: state-task-status-updated
+        const: StateTaskStatusUpdated
+
+  - name: task.execution.recorded:v1
+    const: TaskExecutionRecordedV1
+    description: Completed task executions emitted by k8s-controller's outbox processor.
+    producers: [k8s-controller]
+    consumers:
+      - service: state
+        group: state-task-execution-recorded
+        const: StateTaskExecutionRecorded
+
+  # ---------------- orchestrator-consumed streams ----------------
+
+  - name: node.updated:v1
+    const: NodeUpdatedV1
+    description: Node state transitions; orchestrator updates its projections.
+    producers: [executor-controller, k8s-controller]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-node-updated
+        const: OrchestratorNodeUpdated
+
+  - name: manifest.loaded:v1
+    const: ManifestLoadedV1
+    description: dbt manifest topology loaded by manifest-controller.
+    producers: [manifest-controller]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-manifest-loaded
+        const: OrchestratorManifestLoaded
+
+  - name: initialize.run:v1
+    const: InitializeRunV1
+    description: Trigger to initialize a new run.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-initialize-run
+        const: OrchestratorInitializeRun
+
+  - name: trigger.rerun:v1
+    const: TriggerRerunV1
+    description: User-initiated rerun trigger.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-rerun
+        const: OrchestratorRerun
+
+  - name: trigger.rebase:v1
+    const: TriggerRebaseV1
+    description: User-initiated rebase trigger.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-rebase
+        const: OrchestratorRebase
+
+  - name: trigger.single_node_run:v1
+    const: TriggerSingleNodeRunV1
+    description: User-initiated single-node run trigger.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-single-node-run
+        const: OrchestratorSingleNodeRun
+
+  - name: run.finalized:v1
+    const: RunFinalizedV1
+    description: Run finalization (success or failure) emitted by state; consumed for projections.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-run-finalized
+        const: OrchestratorRunFinalized
+
+  # ---------------- orchestrator-produced streams ----------------
+
+  - name: query.model:v1
+    const: QueryModelV1
+    description: Tasks dispatched by orchestrator for the executor pool.
+    producers: [orchestrator]
+    consumers:
+      - service: executor-controller
+        group: executor-query-model
+        const: ExecutorQueryModel
+
+  # ---------------- executor-controller streams ----------------
+
+  - name: retry.task:v1
+    const: RetryTaskV1
+    description: Retry trigger for tasks; produced by k8s-controller, consumed by executor.
+    producers: [k8s-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-retry
+        const: ExecutorRetry
+
+  - name: node.deployed:v1
+    const: NodeDeployedV1
+    description: Pod-deploy intent from executor; consumed by k8s-controller.
+    producers: [executor-controller]
+    consumers:
+      - service: k8s-controller
+        group: k8s-deployed
+        const: K8sDeployed
+
+  # ---------------- k8s-controller streams ----------------
+
+  - name: check.k8s:v1
+    const: CheckK8sV1
+    description: Delayed status-check tickets; k8s-controller self-loops.
+    producers: [k8s-controller]
+    consumers:
+      - service: k8s-controller
+        group: k8s-check-status
+        const: K8sCheckStatus
+
+  - name: task.failed:v1
+    const: TaskFailedV1
+    description: Terminal task failure emitted by k8s-controller.
+    producers: [k8s-controller]
+    consumers: []
+
+  # ---------------- cross-service fanout ----------------
+
+  - name: schedule.cancelled:v1
+    const: ScheduleCancelledV1
+    description: Schedule cancellation broadcast; fanned out to orchestrator, executor, k8s.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-schedule-cancelled
+        const: OrchestratorScheduleCancelled
+      - service: executor-controller
+        group: executor-schedule-cancelled
+        const: ExecutorScheduleCancelled
+      - service: k8s-controller
+        group: k8s-schedule-cancelled
+        const: K8sScheduleCancelled
+
+  # ---------------- manifest-controller ----------------
+
+  - name: update.graph:v1
+    const: UpdateGraphV1
+    description: Manifest refresh trigger; manifest-controller reloads dbt artifacts.
+    producers: [state]
+    consumers:
+      - service: manifest-controller
+        group: manifest-controller-update-graph
+        const: ManifestUpdateGraph

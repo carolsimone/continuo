@@ -19,24 +19,6 @@ type Config struct {
 	Postgres pkgconfig.PostgresConfig
 	Neo4j    Neo4jConfig
 
-	// Consumer streams
-	NodeUpdatedStream       string
-	NodeUpdatedGroup        string
-	ManifestLoadedStream    string
-	ManifestLoadedGroup     string
-	InitializeRunStream     string
-	InitializeRunGroup      string
-	SchedulerStartedStream  string
-	SchedulerStartedGroup   string
-	RerunStream             string
-	RerunGroup              string
-	RebaseStream            string
-	RebaseGroup             string
-	SingleNodeRunStream     string
-	SingleNodeRunGroup      string
-	RunFinalizedStream      string
-	RunFinalizedGroup       string
-
 	// gRPC
 	GRPCPort int
 	HTTPPort int
@@ -46,8 +28,6 @@ type Config struct {
 	RunSweeperIntervalMinutes int
 
 	// Cancelled schedules consumer
-	ScheduleCancelledStream            string
-	ScheduleCancelledGroup             string
 	CancelledSchedulesTTLHours         int
 	CancelledSchedulesSweepIntervalMin int
 
@@ -77,31 +57,12 @@ func Load(v *pkgconfig.Validator) Config {
 			Password: v.Require("NEO4J_PASSWORD"),
 		},
 
-		NodeUpdatedStream:      v.Require("NODE_UPDATED_STREAM"),
-		NodeUpdatedGroup:       v.Require("NODE_UPDATED_GROUP"),
-		ManifestLoadedStream:   v.Require("MANIFEST_LOADED_STREAM"),
-		ManifestLoadedGroup:    v.Require("MANIFEST_LOADED_GROUP"),
-		InitializeRunStream:    v.Require("INITIALIZE_RUN_STREAM"),
-		InitializeRunGroup:     v.Require("INITIALIZE_RUN_GROUP"),
-		SchedulerStartedStream: v.Require("SCHEDULER_STARTED_STREAM"),
-		SchedulerStartedGroup:  v.Require("SCHEDULER_STARTED_GROUP"),
-		RerunStream:            v.Require("RERUN_STREAM"),
-		RerunGroup:             v.Require("RERUN_GROUP"),
-		RebaseStream:           v.Require("REBASE_STREAM"),
-		RebaseGroup:            v.Require("REBASE_GROUP"),
-		SingleNodeRunStream:    v.Require("SINGLE_NODE_RUN_STREAM"),
-		SingleNodeRunGroup:     v.Require("SINGLE_NODE_RUN_GROUP"),
-		RunFinalizedStream:     v.Require("RUN_FINALIZED_STREAM"),
-		RunFinalizedGroup:      v.Require("RUN_FINALIZED_GROUP"),
-
 		GRPCPort: envInt("GRPC_PORT", 50052),
 		HTTPPort:      envInt("HTTP_PORT", 8087),
 
 		RunHistoryRetentionDays:   envInt("RUN_HISTORY_RETENTION_DAYS", 7),
 		RunSweeperIntervalMinutes: envInt("RUN_SWEEPER_INTERVAL_MINUTES", 60),
 
-		ScheduleCancelledStream:            v.Require("SCHEDULE_CANCELLED_STREAM"),
-		ScheduleCancelledGroup:             v.Require("SCHEDULE_CANCELLED_GROUP"),
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
 

@@ -7,7 +7,6 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
-	"github.com/carolsimone/continuo/executor-controller/service/uow"
 )
 
 // CommandHandler handles a specific command
@@ -18,21 +17,18 @@ type EventHandler func(ctx context.Context, evt event.Event) error
 
 // MessageBus coordinates command and event handling
 type MessageBus struct {
-	uow             uow.UnitOfWork
 	commandHandlers map[string]CommandHandler
 	eventHandlers   map[string][]EventHandler
 	logger          *slog.Logger
 }
 
-// NewMessageBus creates a new MessageBus
+// NewMessageBus creates a new MessageBus.
 func NewMessageBus(
-	uow uow.UnitOfWork,
 	commandHandlers map[string]CommandHandler,
 	eventHandlers map[string][]EventHandler,
 	logger *slog.Logger,
 ) *MessageBus {
 	return &MessageBus{
-		uow:             uow,
 		commandHandlers: commandHandlers,
 		eventHandlers:   eventHandlers,
 		logger:          logger,

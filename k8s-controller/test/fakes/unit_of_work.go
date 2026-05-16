@@ -5,69 +5,61 @@ import (
 
 	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
+	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	"github.com/google/uuid"
 )
 
-// FakeUnitOfWork is a fake implementation of UnitOfWork for testing
-type FakeUnitOfWork struct {
+// FakeTransaction exposes fake repositories for one transaction scope.
+type FakeTransaction struct {
 	OutboxRepoFunc          postgres.OutboxRepository
 	ProcessedEventsRepoFunc postgres.ProcessedEventsRepository
-	BeginFunc               func(ctx context.Context) error
-	CommitFunc              func() error
-	RollbackFunc            func() error
-
-	BeginCallCount    int
-	CommitCallCount   int
-	RollbackCallCount int
 }
 
-func (f *FakeUnitOfWork) OutboxRepo() postgres.OutboxRepository {
+func (f *FakeTransaction) OutboxRepo() postgres.OutboxRepository {
 	if f.OutboxRepoFunc != nil {
 		return f.OutboxRepoFunc
 	}
 	return &FakeOutboxRepository{}
 }
 
-func (f *FakeUnitOfWork) ProcessedEventsRepo() postgres.ProcessedEventsRepository {
+func (f *FakeTransaction) ProcessedEventsRepo() postgres.ProcessedEventsRepository {
 	if f.ProcessedEventsRepoFunc != nil {
 		return f.ProcessedEventsRepoFunc
 	}
 	return &FakeProcessedEventsRepository{}
 }
 
-func (f *FakeUnitOfWork) Begin(ctx context.Context) error {
-	f.BeginCallCount++
-	if f.BeginFunc != nil {
-		return f.BeginFunc(ctx)
-	}
-	return nil
+// FakeTransactionRunner is a fake implementation of TransactionRunner for testing.
+type FakeTransactionRunner struct {
+	Transaction           uow.Transaction
+	WithinTransactionFunc func(context.Context, func(uow.Transaction) error) error
+
+	WithinTransactionCallCount int
 }
 
-func (f *FakeUnitOfWork) Commit() error {
-	f.CommitCallCount++
-	if f.CommitFunc != nil {
-		return f.CommitFunc()
+func (f *FakeTransactionRunner) WithinTransaction(ctx context.Context, fn func(uow.Transaction) error) error {
+	f.WithinTransactionCallCount++
+	if f.WithinTransactionFunc != nil {
+		return f.WithinTransactionFunc(ctx, fn)
 	}
-	return nil
+	if f.Transaction == nil {
+		f.Transaction = &FakeTransaction{}
+	}
+	return fn(f.Transaction)
 }
 
-func (f *FakeUnitOfWork) Rollback() error {
-	f.RollbackCallCount++
-	if f.RollbackFunc != nil {
-		return f.RollbackFunc()
-	}
-	return nil
-}
+var _ uow.Transaction = (*FakeTransaction)(nil)
+var _ uow.TransactionRunner = (*FakeTransactionRunner)(nil)
 
 // FakeOutboxRepository is a fake implementation of OutboxRepository for testing
 type FakeOutboxRepository struct {
-	CreateFunc           func(ctx context.Context, entry *model.K8sStatusOutboxEntry) error
-	GetPendingBatchFunc  func(ctx context.Context, limit int) ([]*model.K8sStatusOutboxEntry, error)
-	MarkProcessedFunc    func(ctx context.Context, id uuid.UUID) error
-	MarkFailedFunc       func(ctx context.Context, id uuid.UUID, errorMessage string) error
-	IncrementRetryFunc   func(ctx context.Context, id uuid.UUID) error
-	GetStuckEntriesFunc  func(ctx context.Context, limit int, stuckThresholdSeconds int) ([]*model.K8sStatusOutboxEntry, error)
-	ForceMarkFailedFunc  func(ctx context.Context, id uuid.UUID, errorMessage string) error
+	CreateFunc          func(ctx context.Context, entry *model.K8sStatusOutboxEntry) error
+	GetPendingBatchFunc func(ctx context.Context, limit int) ([]*model.K8sStatusOutboxEntry, error)
+	MarkProcessedFunc   func(ctx context.Context, id uuid.UUID) error
+	MarkFailedFunc      func(ctx context.Context, id uuid.UUID, errorMessage string) error
+	IncrementRetryFunc  func(ctx context.Context, id uuid.UUID) error
+	GetStuckEntriesFunc func(ctx context.Context, limit int, stuckThresholdSeconds int) ([]*model.K8sStatusOutboxEntry, error)
+	ForceMarkFailedFunc func(ctx context.Context, id uuid.UUID, errorMessage string) error
 
 	CreateCallCount          int
 	GetPendingBatchCallCount int

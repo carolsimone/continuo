@@ -32,7 +32,7 @@ type HandlerConfig struct {
 // CheckStatusHandler handles CheckJobStatus commands
 type CheckStatusHandler struct {
 	k8sClient          K8sStatusChecker
-	uow                uow.UnitOfWork
+	txRunner           uow.TransactionRunner
 	logUploader        s3adapter.LogUploader
 	config             *HandlerConfig
 	cancelledSchedules postgresadapter.CancelledSchedulesRepository
@@ -42,7 +42,7 @@ type CheckStatusHandler struct {
 // NewCheckStatusHandler creates a new CheckStatusHandler
 func NewCheckStatusHandler(
 	k8sClient K8sStatusChecker,
-	uow uow.UnitOfWork,
+	txRunner uow.TransactionRunner,
 	logUploader s3adapter.LogUploader,
 	config *HandlerConfig,
 	cancelledSchedules postgresadapter.CancelledSchedulesRepository,
@@ -50,7 +50,7 @@ func NewCheckStatusHandler(
 ) *CheckStatusHandler {
 	return &CheckStatusHandler{
 		k8sClient:          k8sClient,
-		uow:                uow,
+		txRunner:           txRunner,
 		logUploader:        logUploader,
 		config:             config,
 		cancelledSchedules: cancelledSchedules,
@@ -80,77 +80,56 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, cmd command.CheckJobSta
 		maxRetries = int32(h.config.DefaultTaskMaxRetries)
 	}
 
-	// Step 3: Begin transaction (wraps outbox writes + processed_events insert)
-	if err := h.uow.Begin(ctx); err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer h.uow.Rollback()
-
-	// Step 4: Dedup guard — atomic claim via INSERT ... ON CONFLICT DO NOTHING.
-	// Must run inside the transaction so a later failure rolls back the insert.
-	if cmd.OutboxEntryID != nil {
-		duplicate, err := h.uow.ProcessedEventsRepo().TryMarkProcessed(ctx, *cmd.OutboxEntryID)
-		if err != nil {
-			return fmt.Errorf("dedup check failed: %w", err)
+	// Step 3: Run SQL work inside one fresh transaction so dedup and outbox writes
+	// are atomic without storing transaction state on the shared handler.
+	return h.txRunner.WithinTransaction(ctx, func(tx uow.Transaction) error {
+		// Step 4: Dedup guard — atomic claim via INSERT ... ON CONFLICT DO NOTHING.
+		// Must run inside the transaction so a later failure rolls back the insert.
+		if cmd.OutboxEntryID != nil {
+			duplicate, err := tx.ProcessedEventsRepo().TryMarkProcessed(ctx, *cmd.OutboxEntryID)
+			if err != nil {
+				return fmt.Errorf("dedup check failed: %w", err)
+			}
+			if duplicate {
+				h.logger.Info("Duplicate message — skipping",
+					"outbox_entry_id", cmd.OutboxEntryID,
+					"task_id", cmd.TaskID,
+				)
+				return nil
+			}
 		}
-		if duplicate {
-			h.logger.Info("Duplicate message — skipping",
-				"outbox_entry_id", cmd.OutboxEntryID,
-				"task_id", cmd.TaskID,
-			)
-			// Rollback is handled by defer; consumer will XACK.
+
+		// Guard: if the schedule was cancelled, absorb the result silently.
+		// Running pods are left to complete naturally; results are suppressed here.
+		cancelled, err := h.cancelledSchedules.Exists(ctx, cmd.ScheduleID)
+		if err != nil {
+			return fmt.Errorf("cancelled schedules check: %w", err)
+		}
+		if cancelled {
+			h.logger.Info("Schedule cancelled — absorbing job result",
+				"schedule_id", cmd.ScheduleID, "job_name", cmd.JobName, "status", result.Status)
 			return nil
 		}
-	}
 
-	// Guard: if the schedule was cancelled, absorb the result silently.
-	// Running pods are left to complete naturally; results are suppressed here.
-	cancelled, err := h.cancelledSchedules.Exists(ctx, cmd.ScheduleID)
-	if err != nil {
-		return fmt.Errorf("cancelled schedules check: %w", err)
-	}
-	if cancelled {
-		h.logger.Info("Schedule cancelled — absorbing job result",
-			"schedule_id", cmd.ScheduleID, "job_name", cmd.JobName, "status", result.Status)
-		return nil
-	}
-
-	// Step 5: Write outbox entries (sub-handlers use h.uow.OutboxRepo() — already in-tx)
-	switch result.Status {
-	case model.JobStatusSucceeded:
-		if err := h.handleSucceeded(ctx, cmd, result); err != nil {
-			return err
-		}
-	case model.JobStatusFailed:
-		if retryCount >= maxRetries {
-			if err := h.handleFailedPermanent(ctx, cmd, result, retryCount); err != nil {
-				return err
+		// Step 5: Write outbox entries with repositories scoped to this transaction.
+		switch result.Status {
+		case model.JobStatusSucceeded:
+			return h.handleSucceeded(ctx, tx, cmd, result)
+		case model.JobStatusFailed:
+			if retryCount >= maxRetries {
+				return h.handleFailedPermanent(ctx, tx, cmd, result, retryCount)
 			}
-		} else {
-			if err := h.handleFailedWithRetry(ctx, cmd, result, retryCount, maxRetries); err != nil {
-				return err
-			}
+			return h.handleFailedWithRetry(ctx, tx, cmd, result, retryCount, maxRetries)
+		case model.JobStatusRunning:
+			return h.handleRunning(ctx, tx, cmd)
+		default:
+			return h.handleUnknown(ctx, tx, cmd, result)
 		}
-	case model.JobStatusRunning:
-		if err := h.handleRunning(ctx, cmd); err != nil {
-			return err
-		}
-	default:
-		if err := h.handleUnknown(ctx, cmd, result); err != nil {
-			return err
-		}
-	}
-
-	// Step 6: Commit (outbox entries + processed_events land atomically)
-	if err := h.uow.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return nil
+	})
 }
 
 // handleSucceeded handles successful job completion
-func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
+func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
 	// Create outbox entry for succeeded task
 	// Note: task.succeeded events don't get published to Redis in current design
 	// They're just recorded in state-service
@@ -175,7 +154,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, cmd command.Ch
 		ExecutionSeconds:     result.ExecutionSeconds,
 	}
 
-	if err := h.uow.OutboxRepo().Create(ctx, entry); err != nil {
+	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
 		return fmt.Errorf("failed to create outbox entry: %w", err)
 	}
 
@@ -195,7 +174,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, cmd command.Ch
 		CreateExecution:  false,
 	}
 
-	if err := h.uow.OutboxRepo().Create(ctx, notifyEntry); err != nil {
+	if err := tx.OutboxRepo().Create(ctx, notifyEntry); err != nil {
 		return fmt.Errorf("failed to create notify outbox entry: %w", err)
 	}
 
@@ -250,7 +229,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 }
 
 // handleFailedPermanent handles permanently failed jobs (retry_count >= max_retries)
-func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount int32) error {
+func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount int32) error {
 	newRetryCount := retryCount
 
 	executionID, logS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
@@ -285,7 +264,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, cmd comm
 		ExecutionSeconds:     result.ExecutionSeconds,
 	}
 
-	if err := h.uow.OutboxRepo().Create(ctx, entry); err != nil {
+	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
 		return fmt.Errorf("failed to create outbox entry: %w", err)
 	}
 
@@ -304,7 +283,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, cmd comm
 		UpdateTaskStatus: false,
 		CreateExecution:  false,
 	}
-	if err := h.uow.OutboxRepo().Create(ctx, notifyEntry); err != nil {
+	if err := tx.OutboxRepo().Create(ctx, notifyEntry); err != nil {
 		return fmt.Errorf("failed to create notify outbox entry: %w", err)
 	}
 
@@ -330,7 +309,7 @@ func retryJobName(baseJobName string, retryCount int32) string {
 }
 
 // handleFailedWithRetry handles failed jobs that can be retried
-func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount, maxRetries int32) error {
+func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount, maxRetries int32) error {
 	newRetryCount := retryCount + 1
 
 	executionID, logS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
@@ -369,7 +348,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd comm
 		ExecutionSeconds:     result.ExecutionSeconds,
 	}
 
-	if err := h.uow.OutboxRepo().Create(ctx, entry); err != nil {
+	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
 		return fmt.Errorf("failed to create outbox entry: %w", err)
 	}
 
@@ -384,7 +363,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, cmd comm
 }
 
 // handleRunning handles still-running jobs
-func (h *CheckStatusHandler) handleRunning(ctx context.Context, cmd command.CheckJobStatus) error {
+func (h *CheckStatusHandler) handleRunning(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus) error {
 	checkAfter := time.Now().Add(time.Duration(h.config.CheckDelaySeconds) * time.Second)
 
 	maxRetries := cmd.MaxRetries
@@ -414,7 +393,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, cmd command.Chec
 		CreateExecution:  false, // Don't create execution for running jobs
 	}
 
-	if err := h.uow.OutboxRepo().Create(ctx, entry); err != nil {
+	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
 		return fmt.Errorf("failed to create outbox entry: %w", err)
 	}
 
@@ -428,7 +407,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, cmd command.Chec
 }
 
 // handleUnknown handles unknown job statuses
-func (h *CheckStatusHandler) handleUnknown(ctx context.Context, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
+func (h *CheckStatusHandler) handleUnknown(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
 	errorMsg := h.truncateErrorMessage(result.TerminationMsg)
 	if errorMsg == "" {
 		errorMsg = "Job not found or unknown status"
@@ -457,7 +436,7 @@ func (h *CheckStatusHandler) handleUnknown(ctx context.Context, cmd command.Chec
 		CreateExecution:  true,
 	}
 
-	if err := h.uow.OutboxRepo().Create(ctx, entry); err != nil {
+	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
 		return fmt.Errorf("failed to create outbox entry: %w", err)
 	}
 

@@ -145,7 +145,7 @@ Read-side ports specific to the CQRS query path (`RunReader`, `TopologyStateRead
 | `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes (SUCCEEDED → `query.model:v1` for newly-ready nodes; FAILED → cascade-skip downstream + emit `task.status.updated:v1` for skipped tasks) |
 | `manifest.loaded:v1` | `orchestrator_manifest_loaded` | `IngestTopology` — applies the full manifest snapshot, rewrites `DEPENDS_ON`, retires missing `Table` nodes, then emits `schedules.loaded:v1` |
 | `trigger.rerun:v1` | `orchestrator_rerun` | `HandleRerun` — runs `Snapshot(SourcePinnedDAG{})` against the **new** `:Run` minted by state's `TriggerRerun`, projecting the source's pinned DAG with non-SUCCEEDED tasks + their descendants as rebased PENDING and the rest as inherited at source's stored status; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for rebased rows only |
-| `trigger.rebase:v1` | `orchestrator-rebase` (env: `REBASE_GROUP`) | `HandleRebaseHandler` — runs `Snapshot(RebasePartition)` against the new `:Run`; projects rebase_set ∪ inherit_set against the latest topology; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for rebased rows only |
+| `trigger.rebase:v1` | `orchestrator-rebase` | `HandleRebaseHandler` — runs `Snapshot(RebasePartition)` against the new `:Run`; projects rebase_set ∪ inherit_set against the latest topology; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for rebased rows only |
 | `initialize.run:v1` | `orchestrator_initialize_run` | `InitializeRunHandler` — secondary entry point (no active producer); runs `Snapshot(LatestFullDAG)` + dispatch, same shape as `HandleSchedulerStarted` |
 | `trigger.single_node_run:v1` | `orchestrator_single_node_run` | `HandleSingleNodeRunHandler` — runs `Snapshot(SingleNode)` and dispatches the one task; see details below |
 
@@ -286,7 +286,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 | Redis consumer (`node.updated:v1`) | Reads and dispatches to HandleNodeCompleted handler |
 | Redis consumer (`manifest.loaded:v1`) | Reads and dispatches to IngestTopology handler |
 | Redis consumer (`trigger.rerun:v1`) | Reads and dispatches to HandleRerun handler |
-| Redis consumer (`trigger.rebase:v1`) | Reads and dispatches to HandleRebase handler. Stream/group configurable via env: `REBASE_STREAM` (default `trigger.rebase:v1`), `REBASE_GROUP` (default `orchestrator-rebase`). |
+| Redis consumer (`trigger.rebase:v1`) | Reads and dispatches to HandleRebase handler |
 | Redis consumer (`trigger.single_node_run:v1`) | Reads and dispatches to HandleSingleNodeRunHandler |
 | Redis consumer (`initialize.run:v1`) | Secondary entry path; runs `Snapshot(LatestFullDAG)` + dispatch. No active producer. |
 | Redis consumer (`run.finalized:v1`) | Projects state's terminal scheduler outcome onto Neo4j `:Run.completed_at` / `terminal_status`. Active fallback for runs that produce no `node.updated:v1` traffic. |

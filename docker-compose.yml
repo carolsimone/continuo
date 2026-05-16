@@ -147,14 +147,6 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      - REDIS_CONSUMER_STREAM=query.model:v1
-      - REDIS_CONSUMER_RETRY_STREAM=retry.task:v1
-      - REDIS_CONSUMER_GROUP=executor_controller_consumers
-      - REDIS_PRODUCER_STREAM=node.deployed:v1
-      - REDIS_STATUS_STREAM=task.status.updated:v1
-      - REDIS_NODE_UPDATED_STREAM=node.updated:v1
-      - SCHEDULE_CANCELLED_STREAM=schedule.cancelled:v1
-      - SCHEDULE_CANCELLED_GROUP=executor-schedule-cancelled
       - CANCELLED_SCHEDULES_TTL_HOURS=24
       - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
       # PostgreSQL
@@ -205,15 +197,6 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      - REDIS_CONSUMER_DEPLOYED_STREAM=node.deployed:v1
-      - REDIS_CONSUMER_CHECK_STREAM=check.k8s:v1
-      - REDIS_CONSUMER_GROUP=k8s_controller_consumers
-      - REDIS_PRODUCER_CHECK_STREAM=check.k8s:v1
-      - REDIS_PRODUCER_RETRY_STREAM=retry.task:v1
-      - REDIS_PRODUCER_FAILED_STREAM=task.failed:v1
-      - REDIS_PRODUCER_UPDATE_TABLE_STREAM=node.updated:v1
-      - SCHEDULE_CANCELLED_STREAM=schedule.cancelled:v1
-      - SCHEDULE_CANCELLED_GROUP=k8s-schedule-cancelled
       - CANCELLED_SCHEDULES_TTL_HOURS=24
       - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
       # PostgreSQL
@@ -277,25 +260,6 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      # Consumer streams
-      - NODE_UPDATED_STREAM=node.updated:v1
-      - NODE_UPDATED_GROUP=orchestrator_node_updated
-      - MANIFEST_LOADED_STREAM=manifest.loaded:v1
-      - MANIFEST_LOADED_GROUP=orchestrator_manifest_loaded
-      - INITIALIZE_RUN_STREAM=initialize.run:v1
-      - INITIALIZE_RUN_GROUP=orchestrator_initialize_run
-      - SCHEDULER_STARTED_STREAM=scheduler.started:v1
-      - SCHEDULER_STARTED_GROUP=orchestrator_scheduler_started
-      - RERUN_STREAM=trigger.rerun:v1
-      - RERUN_GROUP=orchestrator_rerun
-      - REBASE_STREAM=trigger.rebase:v1
-      - REBASE_GROUP=orchestrator_rebase
-      - SINGLE_NODE_RUN_STREAM=trigger.single_node_run:v1
-      - SINGLE_NODE_RUN_GROUP=orchestrator_single_node_run
-      - RUN_FINALIZED_STREAM=run.finalized:v1
-      - RUN_FINALIZED_GROUP=orchestrator-run-finalized
-      - SCHEDULE_CANCELLED_STREAM=schedule.cancelled:v1
-      - SCHEDULE_CANCELLED_GROUP=orchestrator-schedule-cancelled
       - CANCELLED_SCHEDULES_TTL_HOURS=24
       - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
       # State gRPC (for watchdog) — same name the Helm chart exposes globally
@@ -436,9 +400,6 @@ services:
     container_name: manifest-controller
     environment:
       REDIS_URL: redis://:continuo@redis:6379
-      REDIS_STREAM: "update.graph:v1"
-      REDIS_GROUP: manifest-controller
-      REDIS_OUTPUT_STREAM: "manifest.loaded:v1"
       REGISTRY_PATH: /data/registry.csv
       MANIFESTS_BASE: /manifests
       S3_ENDPOINT_URL: http://localstack:4566
@@ -449,6 +410,7 @@ services:
       AWS_DEFAULT_REGION: us-east-1
     volumes:
       - ./dbt/services:/manifests:ro
+      - ./pkg:/app/pkg:ro
       - manifest-registry:/data
     depends_on:
       redis:

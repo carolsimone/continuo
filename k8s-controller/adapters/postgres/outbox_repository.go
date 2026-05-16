@@ -298,11 +298,6 @@ type processedEventsRepository struct {
 	logger   *slog.Logger
 }
 
-// NewProcessedEventsRepository creates a ProcessedEventsRepository backed by db.
-func NewProcessedEventsRepository(db *sqlx.DB, logger *slog.Logger) ProcessedEventsRepository {
-	return &processedEventsRepository{executor: db, logger: logger}
-}
-
 // NewProcessedEventsRepositoryWithTx creates a ProcessedEventsRepository backed by tx.
 func NewProcessedEventsRepositoryWithTx(tx *sqlx.Tx, logger *slog.Logger) ProcessedEventsRepository {
 	return &processedEventsRepository{executor: tx, logger: logger}

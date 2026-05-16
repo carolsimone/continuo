@@ -26,10 +26,10 @@ func TestDeployHandler_Handle_Success(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 
-	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
+	txRunner := uow.NewPostgresTransactionRunner(db, logger)
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 
-	handler := handlers.NewDeployHandler(unitOfWork, logger)
+	handler := handlers.NewDeployHandler(txRunner, logger)
 
 	// Create test command
 	taskID := uuid.New()
@@ -81,10 +81,10 @@ func TestDeployHandler_Handle_MultipleCommands(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 
-	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
+	txRunner := uow.NewPostgresTransactionRunner(db, logger)
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 
-	handler := handlers.NewDeployHandler(unitOfWork, logger)
+	handler := handlers.NewDeployHandler(txRunner, logger)
 
 	ctx := context.Background()
 
@@ -140,10 +140,10 @@ func TestDeployHandler_Handle_TransactionRollback(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 
-	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
+	txRunner := uow.NewPostgresTransactionRunner(db, logger)
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 
-	handler := handlers.NewDeployHandler(unitOfWork, logger)
+	handler := handlers.NewDeployHandler(txRunner, logger)
 
 	ctx := context.Background()
 

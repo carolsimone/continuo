@@ -21,16 +21,31 @@ type OutboxRepository interface {
 	IncrementRetry(ctx context.Context, id uuid.UUID) error
 }
 
+// Executor is implemented by both sqlx.DB and sqlx.Tx.
+type Executor interface {
+	NamedExecContext(ctx context.Context, query string, arg interface{}) (sql.Result, error)
+	SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
 type outboxRepository struct {
-	db     *sqlx.DB
-	logger *slog.Logger
+	executor Executor
+	logger   *slog.Logger
 }
 
 // NewOutboxRepository creates a new OutboxRepository
 func NewOutboxRepository(db *sqlx.DB, logger *slog.Logger) OutboxRepository {
 	return &outboxRepository{
-		db:     db,
-		logger: logger,
+		executor: db,
+		logger:   logger,
+	}
+}
+
+// NewOutboxRepositoryWithTx creates a transaction-bound OutboxRepository.
+func NewOutboxRepositoryWithTx(tx *sqlx.Tx, logger *slog.Logger) OutboxRepository {
+	return &outboxRepository{
+		executor: tx,
+		logger:   logger,
 	}
 }
 
@@ -62,7 +77,7 @@ func (r *outboxRepository) Create(ctx context.Context, entry *model.DeploymentOu
 		entry.OutboxMaxRetries = 3
 	}
 
-	_, err := r.db.NamedExecContext(ctx, query, entry)
+	_, err := r.executor.NamedExecContext(ctx, query, entry)
 	if err != nil {
 		r.logger.Error("Failed to create deployment outbox entry",
 			"task_id", entry.TaskID,
@@ -100,7 +115,7 @@ func (r *outboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*m
 	`
 
 	var entries []*model.DeploymentOutboxEntry
-	err := r.db.SelectContext(ctx, &entries, query, string(model.OutboxStatusPending), limit)
+	err := r.executor.SelectContext(ctx, &entries, query, string(model.OutboxStatusPending), limit)
 	if err != nil && err != sql.ErrNoRows {
 		r.logger.Error("Failed to get pending deployment outbox entries", "error", err)
 		return nil, fmt.Errorf("failed to get pending deployment outbox entries: %w", err)
@@ -119,7 +134,7 @@ func (r *outboxRepository) MarkProcessed(ctx context.Context, id uuid.UUID) erro
 		WHERE id = $3
 	`
 
-	result, err := r.db.ExecContext(ctx, query, string(model.OutboxStatusProcessed), time.Now(), id)
+	result, err := r.executor.ExecContext(ctx, query, string(model.OutboxStatusProcessed), time.Now(), id)
 	if err != nil {
 		r.logger.Error("Failed to mark deployment outbox entry as processed",
 			"id", id,
@@ -147,7 +162,7 @@ func (r *outboxRepository) MarkFailed(ctx context.Context, id uuid.UUID, errorMe
 		WHERE id = $3
 	`
 
-	result, err := r.db.ExecContext(ctx, query, string(model.OutboxStatusFailed), errorMessage, id)
+	result, err := r.executor.ExecContext(ctx, query, string(model.OutboxStatusFailed), errorMessage, id)
 	if err != nil {
 		r.logger.Error("Failed to mark deployment outbox entry as failed",
 			"id", id,
@@ -178,7 +193,7 @@ func (r *outboxRepository) IncrementRetry(ctx context.Context, id uuid.UUID) err
 		WHERE id = $1
 	`
 
-	result, err := r.db.ExecContext(ctx, query, id)
+	result, err := r.executor.ExecContext(ctx, query, id)
 	if err != nil {
 		r.logger.Error("Failed to increment retry count",
 			"id", id,

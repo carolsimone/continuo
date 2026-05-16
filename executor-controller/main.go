@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -18,6 +19,8 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/service/messagebus"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -101,13 +104,13 @@ func main() {
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
 
 	// ========================================================================
-	// INITIALIZE UNIT OF WORK & HANDLERS
+	// INITIALIZE TRANSACTION RUNNER & HANDLERS
 	// ========================================================================
 
-	unitOfWork := uow.NewPostgresUnitOfWork(pgDB, logger)
+	txRunner := uow.NewPostgresTransactionRunner(pgDB, logger)
 
 	// Create handler
-	deployHandler := handlers.NewDeployHandler(unitOfWork, logger)
+	deployHandler := handlers.NewDeployHandler(txRunner, logger)
 
 	// Create command handlers map
 	commandHandlers := map[string]messagebus.CommandHandler{
@@ -118,7 +121,6 @@ func main() {
 
 	// Create MessageBus
 	messageBus := messagebus.NewMessageBus(
-		unitOfWork,
 		commandHandlers,
 		map[string][]messagebus.EventHandler{}, // No event handlers yet
 		logger,
@@ -131,31 +133,51 @@ func main() {
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
 	// ========================================================================
-	// INITIALIZE REDIS CONSUMER & PRODUCER
+	// INITIALIZE REDIS CONSUMERS & PRODUCER
 	// ========================================================================
 
-	// Create dual-stream consumer for query.model:v1 and retry.task:v1 streams
-	consumer, err := redis.NewConsumer(
+	// Each stream gets its own consumer instance and consumer group.
+	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String()[:8])
+
+	queryConsumer, err := redis.NewConsumer(
 		redisClient,
-		cfg.RedisConsumerStream,      // query.model:v1
-		cfg.RedisConsumerRetryStream, // retry.task:v1
-		cfg.RedisConsumerGroup,
+		consumerName,
+		streams.ExecutorQueryModel,
+		streams.QueryModelV1,
 		messageBus,
 		pgDB,
 		cancelledSchedulesRepo,
 		logger,
 	)
 	if err != nil {
-		logger.Error("Failed to create Redis consumer", "error", err)
+		logger.Error("Failed to create query.model consumer", "error", err)
 		os.Exit(1)
 	}
-
-	logger.Info("Redis consumer initialized",
-		"streams", []string{cfg.RedisConsumerStream, cfg.RedisConsumerRetryStream},
-		"consumer_group", cfg.RedisConsumerGroup,
+	logger.Info("query.model consumer initialized",
+		"stream", streams.QueryModelV1,
+		"group", streams.ExecutorQueryModel,
 	)
 
-	// Single publisher routes to both job-deployed and task-status streams
+	retryConsumer, err := redis.NewConsumer(
+		redisClient,
+		consumerName,
+		streams.ExecutorRetry,
+		streams.RetryTaskV1,
+		messageBus,
+		pgDB,
+		cancelledSchedulesRepo,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to create retry.task consumer", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("retry.task consumer initialized",
+		"stream", streams.RetryTaskV1,
+		"group", streams.ExecutorRetry,
+	)
+
+	// Single publisher routes to job-deployed, task-status, and node-updated streams.
 	publisher := redis.NewProducer(redisClient, logger)
 
 	// ========================================================================
@@ -166,9 +188,9 @@ func main() {
 		outboxRepo,
 		k8sClient,
 		publisher,
-		cfg.RedisProducerStream,
-		cfg.RedisStatusStream,
-		cfg.RedisNodeUpdatedStream,
+		streams.NodeDeployedV1,
+		streams.TaskStatusUpdatedV1,
+		streams.NodeUpdatedV1,
 		cfg.K8sNamespace,
 		logger,
 	)
@@ -186,8 +208,8 @@ func main() {
 
 	scheduleCancelledConsumer, err := redis.NewScheduleCancelledConsumer(
 		redisClient,
-		cfg.ScheduleCancelledStream,
-		cfg.ScheduleCancelledGroup,
+		streams.ScheduleCancelledV1,
+		streams.ExecutorScheduleCancelled,
 		cancelledSchedulesRepo,
 		logger,
 	)
@@ -236,13 +258,21 @@ func main() {
 	})
 
 	// ========================================================================
-	// START REDIS CONSUMER (BLOCKING)
+	// START REDIS CONSUMERS
 	// ========================================================================
 
-	logger.Info("Service initialization complete, starting consumer")
+	logger.Info("Service initialization complete, starting consumers")
 
-	if err := consumer.Start(ctx); err != nil {
-		logger.Error("Consumer error", "error", err)
+	// Start the retry consumer in a background goroutine.
+	go func() {
+		if err := retryConsumer.Start(ctx); err != nil {
+			logger.Error("retry.task consumer error", "error", err)
+		}
+	}()
+
+	// Block on the query.model consumer; both consumers stop when the context is cancelled.
+	if err := queryConsumer.Start(ctx); err != nil {
+		logger.Error("query.model consumer error", "error", err)
 		os.Exit(1)
 	}
 
