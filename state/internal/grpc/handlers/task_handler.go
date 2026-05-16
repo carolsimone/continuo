@@ -8,8 +8,10 @@ import (
 
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/model"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -18,15 +20,19 @@ import (
 
 // TaskHandler handles all task-related gRPC requests
 type TaskHandler struct {
-	repo   postgres.TaskTrackerRepository
-	logger *slog.Logger
+	repo       postgres.TaskTrackerRepository
+	uowFactory func() uow.UnitOfWork
+	logger     *slog.Logger
 }
 
-// NewTaskHandler creates a new TaskHandler
-func NewTaskHandler(repo postgres.TaskTrackerRepository, logger *slog.Logger) *TaskHandler {
+// NewTaskHandler creates a new TaskHandler.
+// uowFactory is used by the ResetTask method to load and update the Run
+// aggregate within a transaction; other methods use repo directly.
+func NewTaskHandler(repo postgres.TaskTrackerRepository, uowFactory func() uow.UnitOfWork, logger *slog.Logger) *TaskHandler {
 	return &TaskHandler{
-		repo:   repo,
-		logger: logger,
+		repo:       repo,
+		uowFactory: uowFactory,
+		logger:     logger,
 	}
 }
 
@@ -240,56 +246,107 @@ func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksReque
 	}, nil
 }
 
-// ResetTask unconditionally resets a task to PENDING with retry_count=0.
+// ResetTask resets a task to PENDING with retry_count=0 via the Run aggregate.
+// Authorization and valid-transition enforcement live in Run.ResetTaskToPending.
 func (h *TaskHandler) ResetTask(ctx context.Context, req *statev1.ResetTaskRequest) (*statev1.TaskResponse, error) {
 	if req.TaskId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")
 	}
-
 	taskID, err := uuid.Parse(req.TaskId)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
 	}
-
-	// Extract caller identity
 	caller, err := callerFromContext(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing caller identity: set x-caller-id metadata")
 	}
 
-	task, err := h.repo.GetByID(ctx, taskID)
+	// Look up the task to obtain its scheduleID for loading the Run aggregate.
+	t, err := h.repo.GetByID(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "task not found")
 		}
-		h.logger.Error("Failed to get task for reset", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to get task")
+		return nil, status.Errorf(codes.Internal, "get task: %v", err)
 	}
 
-	if err := task.Transition(caller, model.TaskStatusPending); err != nil {
-		if errors.Is(err, model.ErrInvalidTransition) {
-			return nil, status.Errorf(codes.FailedPrecondition,
-				"cannot reset task in state %s", task.Status)
+	u := h.uowFactory()
+	if err := u.Begin(ctx); err != nil {
+		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = u.Rollback()
 		}
-		if errors.Is(err, model.ErrUnauthorizedTransition) {
-			return nil, status.Errorf(codes.PermissionDenied,
-				"caller %q is not authorized to reset tasks", caller)
+	}()
+
+	r, err := u.Run().LoadRunForUpdate(ctx, u.Tx(), t.ScheduleID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "load run: %v", err)
+	}
+	updated, err := r.ResetTaskToPending(ctx, u.TaskCollection(), taskID, run.CallerID(caller), u.Clock().Now())
+	if err != nil {
+		switch {
+		case errors.Is(err, run.ErrAlreadyTerminal):
+			return nil, status.Errorf(codes.FailedPrecondition, "run is in terminal state")
+		case errors.Is(err, run.ErrInvalidTransition):
+			return nil, status.Errorf(codes.FailedPrecondition, "cannot reset task in state %s", t.Status)
+		case errors.Is(err, run.ErrUnauthorizedTransition):
+			return nil, status.Errorf(codes.PermissionDenied, "caller %q is not authorized to reset tasks", caller)
+		case errors.Is(err, run.ErrTaskNotFound):
+			return nil, status.Errorf(codes.NotFound, "task not found")
+		default:
+			return nil, status.Errorf(codes.Internal, "reset: %v", err)
 		}
-		return nil, status.Errorf(codes.Internal, "reset error: %v", err)
 	}
-	task.RetryCount = 0
-
-	if err := h.repo.Update(ctx, task); err != nil {
-		h.logger.Error("Failed to reset task", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to reset task")
+	if err := u.Commit(); err != nil {
+		return nil, status.Errorf(codes.Internal, "commit: %v", err)
 	}
+	committed = true
 
-	return &statev1.TaskResponse{Task: domainToProtoTask(task)}, nil
+	// Carry forward fields not set by ResetTaskToPending so the response is complete.
+	updated.ServiceName = t.ServiceName
+	updated.SchemaName = t.SchemaName
+	updated.TableName = t.TableName
+	updated.JobName = t.JobName
+	updated.MaxRetries = t.MaxRetries
+	updated.CreatedAt = t.CreatedAt
+	// CancelledAt/CancelledBy are intentionally cleared by reset; leave nil.
+
+	return &statev1.TaskResponse{Task: runTaskToProto(updated)}, nil
 }
 
 // ============================================================================
 // CONVERSION HELPERS
 // ============================================================================
+
+// runTaskToProto converts a run.Task aggregate value to the proto Task message.
+// Used by the ResetTask response path; call sites must fill in any fields not
+// populated by the aggregate method before calling this helper.
+func runTaskToProto(t run.Task) *statev1.Task {
+	out := &statev1.Task{
+		TaskId:      t.TaskID.String(),
+		ScheduleId:  t.ScheduleID.String(),
+		Status:      domainToProtoTaskStatus(t.Status),
+		RetryCount:  int32(t.RetryCount),
+		MaxRetries:  int32(t.MaxRetries),
+		ServiceName: t.ServiceName,
+		SchemaName:  t.SchemaName,
+		TableName:   t.TableName,
+		JobName:     t.JobName,
+	}
+	if !t.CreatedAt.IsZero() {
+		out.CreatedAt = timestamppb.New(t.CreatedAt)
+	}
+	if t.CancelledAt != nil {
+		out.CancelledAt = timestamppb.New(*t.CancelledAt)
+	}
+	if t.CancelledBy != nil {
+		out.CancelledBy = *t.CancelledBy
+	}
+	return out
+}
 
 // protoToDomainTaskStatus converts proto status to domain model status
 func protoToDomainTaskStatus(s statev1.TaskStatus) model.TaskStatus {

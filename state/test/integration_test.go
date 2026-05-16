@@ -125,7 +125,7 @@ func TestMain(m *testing.M) {
 	}
 	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)
-	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
+	taskHandler := handlers.NewTaskHandler(taskRepo, integrationUoWFactory, logger)
 	execHandler := handlers.NewTaskExecutionHandler(execRepo, logger)
 	rerunUC := svchandlers.NewTriggerRerunHandler(logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, integrationUoWFactory, logger)
