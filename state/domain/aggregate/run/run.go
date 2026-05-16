@@ -505,3 +505,91 @@ func (r *Run) finalize(outcome SchedulerStatus, now time.Time) []DomainEvent {
 // task.status.updated:v1 event has no timestamp field). Tests can override
 // it via a package_test helper if needed; production uses time.Now.
 var timeNow = time.Now
+
+// CanBeRerunSource enforces the eligibility check for a run to serve as a
+// rerun source: status must be FAILED or CANCELLED, and at least one task
+// must be in a non-SUCCEEDED state. The aggregate orchestrates the predicate
+// call itself; application services do not pre-query.
+func (r *Run) CanBeRerunSource(ctx context.Context, tasks TaskCollection) error {
+	if r.status != SchedulerStatusFailed && r.status != SchedulerStatusCancelled {
+		return ErrSourceMustBeTerminallyFailedOrCancelled
+	}
+	has, err := tasks.HasNonSucceeded(ctx, r.scheduleID)
+	if err != nil {
+		return fmt.Errorf("has non-succeeded: %w", err)
+	}
+	if !has {
+		return ErrNothingToRerun
+	}
+	return nil
+}
+
+// CanBeRebaseSource shares semantics with CanBeRerunSource — same status set,
+// same "at least one non-SUCCEEDED" requirement. Returns ErrNothingToRebase
+// to give the gRPC adapter a stable error variant for the rebase code path.
+func (r *Run) CanBeRebaseSource(ctx context.Context, tasks TaskCollection) error {
+	if r.status != SchedulerStatusFailed && r.status != SchedulerStatusCancelled {
+		return ErrSourceMustBeTerminallyFailedOrCancelled
+	}
+	has, err := tasks.HasNonSucceeded(ctx, r.scheduleID)
+	if err != nil {
+		return fmt.Errorf("has non-succeeded: %w", err)
+	}
+	if !has {
+		return ErrNothingToRebase
+	}
+	return nil
+}
+
+// HasTaskAt is used by TriggerSingleNodeRun's stale-mode precondition: the
+// source run must carry a task at the requested node.
+func (r *Run) HasTaskAt(ctx context.Context, tasks TaskCollection, node NodeID) (bool, error) {
+	_, err := tasks.GetByNode(ctx, r.scheduleID, node)
+	if err == ErrTaskNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get by node: %w", err)
+	}
+	return true, nil
+}
+
+// ResetTaskToPending implements the ResetTask gRPC path. It validates the
+// caller-authorized transition table on the target task and persists via
+// Update. Returns the new task state for the gRPC response. Refuses when the
+// run is already terminal.
+func (r *Run) ResetTaskToPending(
+	ctx context.Context,
+	tasks TaskCollection,
+	taskID uuid.UUID,
+	caller CallerID,
+	_ time.Time,
+) (Task, error) {
+	if r.IsTerminal() {
+		return Task{}, ErrAlreadyTerminal
+	}
+	currentStatus, exists, err := tasks.GetStatus(ctx, taskID)
+	if err != nil {
+		return Task{}, fmt.Errorf("get status: %w", err)
+	}
+	if !exists {
+		return Task{}, ErrTaskNotFound
+	}
+	allowed, ownerOK := canTaskTransition(currentStatus, TaskStatusPending, caller)
+	if !allowed {
+		return Task{}, ErrInvalidTransition
+	}
+	if !ownerOK {
+		return Task{}, ErrUnauthorizedTransition
+	}
+	updated := Task{
+		TaskID:     taskID,
+		ScheduleID: r.scheduleID,
+		Status:     TaskStatusPending,
+		RetryCount: 0,
+	}
+	if err := tasks.Update(ctx, updated); err != nil {
+		return Task{}, fmt.Errorf("update task: %w", err)
+	}
+	return updated, nil
+}

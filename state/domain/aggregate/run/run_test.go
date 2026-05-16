@@ -393,3 +393,67 @@ func TestRecordTaskStatus_TransientWhenTaskRowMissing(t *testing.T) {
 		t.Fatalf("err: got %v want ErrTaskRowNotProjected", err)
 	}
 }
+
+func TestCanBeRerunSource_AcceptsFailedTerminalWithWork(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	_, _ = r.MarkDispatchFailed("orchestrator empty", time.Now())
+	tc.hasNonSucc = true
+
+	if err := r.CanBeRerunSource(ctx, tc); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}
+
+func TestCanBeRerunSource_RejectsNotTerminal(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	tc.hasNonSucc = true
+
+	if err := r.CanBeRerunSource(ctx, tc); err != run.ErrSourceMustBeTerminallyFailedOrCancelled {
+		t.Fatalf("err: got %v want ErrSourceMustBeTerminallyFailedOrCancelled", err)
+	}
+}
+
+func TestCanBeRerunSource_RejectsWhenAllSucceeded(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	_, _ = r.MarkDispatchFailed("any reason", time.Now())
+	tc.hasNonSucc = false
+
+	if err := r.CanBeRerunSource(ctx, tc); err != run.ErrNothingToRerun {
+		t.Fatalf("err: got %v want ErrNothingToRerun", err)
+	}
+}
+
+func TestHasTaskAt_ReturnsTrueWhenPresent(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := freshPendingRun(t)
+	node := run.NodeID{ServiceName: "s", SchemaName: "p", TableName: "a"}
+	tc.byNode[node] = run.Task{TaskID: uuid.New(), Status: run.TaskStatusSucceeded}
+
+	ok, err := r.HasTaskAt(ctx, tc, node)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected true")
+	}
+}
+
+func TestHasTaskAt_ReturnsFalseWhenMissing(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := freshPendingRun(t)
+	ok, err := r.HasTaskAt(ctx, tc, run.NodeID{ServiceName: "x"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected false")
+	}
+}
