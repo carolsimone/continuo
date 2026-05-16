@@ -249,6 +249,18 @@ func (r *Run) PullEvents() []DomainEvent {
 func (r *Run) Changes() changeSet { return r.changes }
 func (r *Run) ResetChanges()      { r.changes = changeSet{} }
 
+// changeSet accessors — exposed so the postgres adapter can read which fields
+// were mutated without coupling to the unexported struct fields.
+func (c changeSet) IsCreated() bool                { return c.created }
+func (c changeSet) IsStatusDirty() bool            { return c.statusDirty }
+func (c changeSet) IsInitStatusDirty() bool        { return c.initStatusDirty }
+func (c changeSet) IsTotalTaskCountDirty() bool    { return c.totalTaskCountDirty }
+func (c changeSet) IsTerminalTaskCountDirty() bool { return c.terminalTaskCountDirty }
+func (c changeSet) IsCancelDirty() bool            { return c.cancelDirty }
+func (c changeSet) IsStartedDirty() bool           { return c.startedDirty }
+func (c changeSet) IsCompletedDirty() bool         { return c.completedDirty }
+func (c changeSet) IsHeartbeatDirty() bool         { return c.heartbeatDirty }
+
 // AcceptDispatch consumes the run.entries.dispatched:v1 projection. The
 // projection IS the full child set (no prior tasks exist), so the aggregate
 // makes the auto-rollup decision in one pass over the input.
