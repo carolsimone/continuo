@@ -178,12 +178,8 @@ type NodeRun struct {
 	LogS3Key        *string    `db:"log_s3_key"`
 }
 
-// ServiceMetadata stays here for one more task (1.3); becomes an alias once it
-// moves into the run package.
-type ServiceMetadata struct {
-	ManifestVersion string `json:"manifest_version"`
-	ImageTag        string `json:"image_tag"`
-}
+// ServiceMetadata aliases run.ServiceMetadata.
+type ServiceMetadata = run.ServiceMetadata
 
 // canSchedulerTransitionViaRun and canTaskTransitionViaRun are private bridges
 // so the legacy Transition shims do not duplicate the table. They will go away
