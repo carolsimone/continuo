@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/model"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
@@ -21,7 +22,7 @@ import (
 // SchedulerHandler handles all scheduler-related gRPC requests.
 type SchedulerHandler struct {
 	repo            postgres.SchedulerTrackerRepository
-	activator       schedulerpkg.ScheduleActivator
+	activate        *svchandlers.ActivateScheduleHandler
 	catalogRepo     postgres.ScheduleCatalogRepository
 	schedulesConfig *schedulerpkg.SchedulesConfig // may be nil
 	uowFactory      func() uow.UnitOfWork
@@ -31,7 +32,7 @@ type SchedulerHandler struct {
 // NewSchedulerHandler creates a new SchedulerHandler.
 func NewSchedulerHandler(
 	repo postgres.SchedulerTrackerRepository,
-	activator schedulerpkg.ScheduleActivator,
+	activate *svchandlers.ActivateScheduleHandler,
 	catalogRepo postgres.ScheduleCatalogRepository,
 	schedulesConfig *schedulerpkg.SchedulesConfig,
 	uowFactory func() uow.UnitOfWork,
@@ -39,7 +40,7 @@ func NewSchedulerHandler(
 ) *SchedulerHandler {
 	return &SchedulerHandler{
 		repo:            repo,
-		activator:       activator,
+		activate:        activate,
 		catalogRepo:     catalogRepo,
 		schedulesConfig: schedulesConfig,
 		uowFactory:      uowFactory,
@@ -336,8 +337,8 @@ func runToProto(r *run.Run) *statev1.Scheduler {
 	return s
 }
 
-// ActivateSchedule triggers a schedule run via the standard activator path.
-// Returns the new schedule_id, or an empty string if a run was already active.
+// ActivateSchedule triggers a cron schedule run. Returns the new schedule_id,
+// or an empty string when a run was already active (silent skip for cron).
 func (h *SchedulerHandler) ActivateSchedule(
 	ctx context.Context,
 	req *statev1.ActivateScheduleRequest,
@@ -345,26 +346,20 @@ func (h *SchedulerHandler) ActivateSchedule(
 	if req.ScheduleName == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
-
-	exists, err := h.catalogRepo.ExistsActive(ctx, req.ScheduleName)
+	u := h.uowFactory()
+	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "catalog lookup: %v", err)
+		switch {
+		case errors.Is(err, run.ErrScheduleNotInCatalog):
+			return nil, status.Errorf(codes.NotFound, "schedule %q not in catalog", req.ScheduleName)
+		default:
+			return nil, status.Errorf(codes.Internal, "activate: %v", err)
+		}
 	}
-	if !exists {
-		return nil, status.Errorf(codes.NotFound, "schedule %q not found in catalog", req.ScheduleName)
+	if outcome == svchandlers.OutcomeSkippedActive {
+		return &statev1.ActivateScheduleResponse{ScheduleId: ""}, nil
 	}
-
-	h.logger.Info("ActivateSchedule called", "schedule_name", req.ScheduleName)
-
-	scheduleID, err := h.activator.ActivateSchedule(ctx, req.ScheduleName, "cron", nil)
-	if err != nil {
-		h.logger.Error("Failed to activate schedule", "schedule_name", req.ScheduleName, "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to activate schedule: %v", err)
-	}
-
-	return &statev1.ActivateScheduleResponse{
-		ScheduleId: scheduleID.String(),
-	}, nil
+	return &statev1.ActivateScheduleResponse{ScheduleId: id.String()}, nil
 }
 
 // ListAllSchedules returns a summary of all active schedules from the catalog,
@@ -415,7 +410,8 @@ func (h *SchedulerHandler) ListAllSchedules(
 	return &statev1.ListAllSchedulesResponse{Schedules: summaries}, nil
 }
 
-// TriggerSchedule manually triggers a schedule run after validating pre-conditions.
+// TriggerSchedule manually triggers a schedule run. Returns FailedPrecondition
+// when a run is already active, NotFound when the schedule is not in catalog.
 func (h *SchedulerHandler) TriggerSchedule(
 	ctx context.Context,
 	req *statev1.TriggerScheduleRequest,
@@ -423,36 +419,20 @@ func (h *SchedulerHandler) TriggerSchedule(
 	if req.ScheduleName == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
-
-	// Pre-condition 1: schedule must exist in catalog.
-	exists, err := h.catalogRepo.ExistsActive(ctx, req.ScheduleName)
+	u := h.uowFactory()
+	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "catalog lookup: %v", err)
+		switch {
+		case errors.Is(err, run.ErrScheduleNotInCatalog):
+			return nil, status.Errorf(codes.NotFound, "schedule %q not in catalog", req.ScheduleName)
+		default:
+			return nil, status.Errorf(codes.Internal, "trigger: %v", err)
+		}
 	}
-	if !exists {
-		return nil, status.Errorf(codes.NotFound, "schedule %q not found", req.ScheduleName)
+	if outcome == svchandlers.OutcomeSkippedActive {
+		return nil, status.Errorf(codes.FailedPrecondition, "schedule %q already has an active run", req.ScheduleName)
 	}
-
-	// Pre-condition 2: no concurrent run in progress.
-	active, err := h.repo.HasActiveSchedule(ctx, req.ScheduleName)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "active schedule check: %v", err)
-	}
-	if active {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"schedule %q already has an active run", req.ScheduleName)
-	}
-
-	scheduleID, err := h.activator.ActivateSchedule(ctx, req.ScheduleName, "cron", nil)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "activate schedule: %v", err)
-	}
-	if scheduleID == uuid.Nil {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"schedule %q already has an active run", req.ScheduleName)
-	}
-
-	return &statev1.TriggerScheduleResponse{ScheduleId: scheduleID.String()}, nil
+	return &statev1.TriggerScheduleResponse{ScheduleId: id.String()}, nil
 }
 
 // GetSchedulerInitStatus returns the initialization_status for a scheduler.

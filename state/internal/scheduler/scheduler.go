@@ -7,6 +7,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
@@ -47,15 +50,16 @@ func LoadSchedulesConfig(path string) (*SchedulesConfig, error) {
 
 // CronScheduler manages scheduled activations driven by schedules.yaml.
 type CronScheduler struct {
-	cron      *cron.Cron
-	activator ScheduleActivator
-	config    *SchedulesConfig
-	logger    *slog.Logger
+	cron       *cron.Cron
+	activate   *svchandlers.ActivateScheduleHandler
+	uowFactory func() uow.UnitOfWork
+	config     *SchedulesConfig
+	logger     *slog.Logger
 }
 
 // NewCronSchedulerWithConfig creates a CronScheduler from the provided config.
 // Fails if the timezone is invalid or any cron expression is malformed.
-func NewCronSchedulerWithConfig(activator ScheduleActivator, logger *slog.Logger, cfg *SchedulesConfig) (*CronScheduler, error) {
+func NewCronSchedulerWithConfig(activate *svchandlers.ActivateScheduleHandler, uowFactory func() uow.UnitOfWork, logger *slog.Logger, cfg *SchedulesConfig) (*CronScheduler, error) {
 	location, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
 		return nil, fmt.Errorf("invalid timezone %q: %w", cfg.Timezone, err)
@@ -69,10 +73,11 @@ func NewCronSchedulerWithConfig(activator ScheduleActivator, logger *slog.Logger
 	}
 
 	s := &CronScheduler{
-		cron:      cronScheduler,
-		activator: activator,
-		config:    cfg,
-		logger:    logger,
+		cron:       cronScheduler,
+		activate:   activate,
+		uowFactory: uowFactory,
+		config:     cfg,
+		logger:     logger,
 	}
 
 	for _, entry := range cfg.Schedules {
@@ -118,7 +123,8 @@ func (s *CronScheduler) activateSchedule(name string) {
 	s.logger.Info("Cron trigger fired", "schedule_name", name)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, err := s.activator.ActivateSchedule(ctx, name, "cron", nil); err != nil {
+	_, _, err := s.activate.Handle(ctx, s.uowFactory(), name, run.KindCron, nil)
+	if err != nil {
 		s.logger.Error("Failed to activate schedule", "schedule_name", name, "error", err)
 	}
 }

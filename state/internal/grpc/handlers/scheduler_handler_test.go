@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/model"
-	"github.com/carolsimone/continuo/state/internal/scheduler"
+	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/ports"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
@@ -24,89 +26,22 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// stubActivator is a minimal fake activator for unit tests.
-type stubActivator struct {
-	id         uuid.UUID
-	err        error
-	calledWith string
-}
-
-func (s *stubActivator) ActivateSchedule(_ context.Context, name string, _ string, _ *uuid.UUID) (uuid.UUID, error) {
-	s.calledWith = name
-	return s.id, s.err
-}
-
-func (s *stubActivator) PrepareActivation(_ context.Context, _ string, _ string, _ *uuid.UUID) (*model.SchedulerTracker, error) {
-	return nil, nil
-}
-
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 // noopUoWFactory returns a UoW factory whose UoW always panics on use. Used for
-// handler tests that do not exercise cancel methods.
+// handler tests that do not exercise the activation or cancel paths.
 func noopUoWFactory() func() uow.UnitOfWork {
 	return func() uow.UnitOfWork {
 		panic("uow not expected to be called in this test")
 	}
 }
 
-func TestSchedulerHandler_ActivateSchedule_Success(t *testing.T) {
-	id := uuid.New()
-	stub := &stubActivator{id: id}
-	catalog := &stubCatalogRepo{existsActive: map[string]bool{"e2e-schedule": true}}
-	h := NewSchedulerHandler(nil, stub, catalog, nil, noopUoWFactory(), newTestLogger())
+// ---- stubs for schedule catalog ----
 
-	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
-		ScheduleName: "e2e-schedule",
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, id.String(), resp.ScheduleId)
-	assert.Equal(t, "e2e-schedule", stub.calledWith)
-}
-
-func TestSchedulerHandler_ActivateSchedule_EmptyName(t *testing.T) {
-	h := NewSchedulerHandler(nil, &stubActivator{}, nil, nil, noopUoWFactory(), newTestLogger())
-
-	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "schedule_name is required")
-}
-
-func TestActivateSchedule_NotInCatalog_ReturnsNotFound(t *testing.T) {
-	catalog := &stubCatalogRepo{existsActive: map[string]bool{}}
-	stub := &stubActivator{id: uuid.New()}
-	h := NewSchedulerHandler(nil, stub, catalog, nil, noopUoWFactory(), newTestLogger())
-
-	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
-		ScheduleName: "unknown-schedule",
-	})
-
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.NotFound, st.Code())
-	assert.Empty(t, stub.calledWith, "activator must not be called when schedule is not in catalog")
-}
-
-func TestActivateSchedule_CatalogHasSchedule_Activates(t *testing.T) {
-	id := uuid.New()
-	catalog := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
-	stub := &stubActivator{id: id}
-	h := NewSchedulerHandler(nil, stub, catalog, nil, noopUoWFactory(), newTestLogger())
-
-	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
-		ScheduleName: "daily",
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, id.String(), resp.ScheduleId)
-}
-
-// ---- stubs for new dependencies ----
-
+// stubCatalogRepo satisfies both postgres.ScheduleCatalogRepository and
+// ports.ScheduleCatalogRepository for handler unit tests.
 type stubCatalogRepo struct {
 	existsActive map[string]bool
 }
@@ -127,8 +62,8 @@ func (s *stubCatalogRepo) ListActive(_ context.Context) ([]string, error) {
 func (s *stubCatalogRepo) ExistsActive(_ context.Context, name string) (bool, error) {
 	return s.existsActive[name], nil
 }
-func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, _ string) (map[string]model.ServiceMetadata, error) {
-	return map[string]model.ServiceMetadata{}, nil
+func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, _ string) (map[string]run.ServiceMetadata, error) {
+	return map[string]run.ServiceMetadata{}, nil
 }
 func (s *stubCatalogRepo) UpsertAllTx(_ context.Context, _ *sqlx.Tx, _ []string, _ map[string]map[string]model.ServiceMetadata) error {
 	return nil
@@ -138,6 +73,15 @@ func (s *stubCatalogRepo) SoftDeleteAbsentTx(_ context.Context, _ *sqlx.Tx, _ []
 }
 func (s *stubCatalogRepo) ListAll(_ context.Context) ([]postgres.ScheduleCatalogRow, error) {
 	return nil, nil
+}
+func (s *stubCatalogRepo) GetCatalog(_ context.Context) (*catalog.ScheduleCatalog, error) {
+	return nil, nil
+}
+func (s *stubCatalogRepo) LoadCatalogForUpdate(_ context.Context, _ *sqlx.Tx) (*catalog.ScheduleCatalog, error) {
+	return nil, nil
+}
+func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *sqlx.Tx, _ *catalog.ScheduleCatalog) error {
+	return nil
 }
 
 type stubSchedulerRepo struct {
@@ -214,13 +158,143 @@ func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID,
 	return s.cancelErr
 }
 
+// ---- fake run repo for activation tests ----
+
+// activateFakeRunRepo satisfies ports.RunRepository for ActivateSchedule /
+// TriggerSchedule handler tests. HasActiveSchedule drives the policy check;
+// SaveRun records the run so tests can inspect it.
+type activateFakeRunRepo struct {
+	hasActive bool
+	savedRun  *run.Run
+	saveErr   error
+}
+
+func (f *activateFakeRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
+	panic("GetRun not used in activate tests")
+}
+func (f *activateFakeRunRepo) LoadRunForUpdate(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*run.Run, error) {
+	panic("LoadRunForUpdate not used in activate tests")
+}
+func (f *activateFakeRunRepo) SaveRun(_ context.Context, _ *sqlx.Tx, r *run.Run) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.savedRun = r
+	return nil
+}
+func (f *activateFakeRunRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
+	return f.hasActive, nil
+}
+func (f *activateFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
+	panic("GetActiveScheduler not used in activate tests")
+}
+func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]ports.LastRunSummary, error) {
+	panic("GetLastRunPerSchedule not used in activate tests")
+}
+
+// ---- fake outbox for activation tests ----
+
+// activateFakeOutbox satisfies ports.OutboxPublisher for activation tests.
+type activateFakeOutbox struct {
+	appended  []run.DomainEvent
+	appendErr error
+}
+
+func (f *activateFakeOutbox) Append(_ context.Context, _ *sqlx.Tx, evts []run.DomainEvent, _ uuid.UUID) error {
+	if f.appendErr != nil {
+		return f.appendErr
+	}
+	f.appended = append(f.appended, evts...)
+	return nil
+}
+
+// newActivateUoWFactory wires a FakeUnitOfWork for activation handler tests
+// and returns both the fake (for inspection) and a factory.
+func newActivateUoWFactory(catalogRepo *stubCatalogRepo, runRepo *activateFakeRunRepo, outbox *activateFakeOutbox) (*uow.FakeUnitOfWork, func() uow.UnitOfWork) {
+	fu := &uow.FakeUnitOfWork{}
+	fu.SetCatalogRepo(catalogRepo)
+	fu.SetRunRepo(runRepo)
+	fu.SetOutboxPublisher(outbox)
+	return fu, func() uow.UnitOfWork { return fu }
+}
+
+// ---- ActivateSchedule tests ----
+
+func TestSchedulerHandler_ActivateSchedule_EmptyName(t *testing.T) {
+	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	h := NewSchedulerHandler(nil, activate, nil, nil, noopUoWFactory(), newTestLogger())
+
+	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "schedule_name is required")
+}
+
+func TestSchedulerHandler_ActivateSchedule_Success(t *testing.T) {
+	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"e2e-schedule": true}}
+	runRepo := &activateFakeRunRepo{hasActive: false}
+	outbox := &activateFakeOutbox{}
+	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+
+	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
+
+	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
+		ScheduleName: "e2e-schedule",
+	})
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.ScheduleId)
+	assert.NotNil(t, runRepo.savedRun, "a new Run must be persisted")
+	require.Len(t, outbox.appended, 1, "RunStarted event must be emitted")
+}
+
+func TestActivateSchedule_NotInCatalog_ReturnsNotFound(t *testing.T) {
+	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{}}
+	runRepo := &activateFakeRunRepo{}
+	outbox := &activateFakeOutbox{}
+	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+
+	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
+
+	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
+		ScheduleName: "unknown-schedule",
+	})
+
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.NotFound, st.Code())
+	assert.Nil(t, runRepo.savedRun, "no run must be created when schedule is not in catalog")
+}
+
+func TestActivateSchedule_AlreadyActive_ReturnsEmptyID(t *testing.T) {
+	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
+	runRepo := &activateFakeRunRepo{hasActive: true}
+	outbox := &activateFakeOutbox{}
+	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+
+	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
+
+	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
+		ScheduleName: "daily",
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, resp.ScheduleId, "cron activation silently skips when a run is already active")
+}
+
 // ---- TriggerSchedule tests ----
 
 func TestTriggerSchedule_Success(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
-	repo := &stubSchedulerRepo{hasActive: false}
-	activator := &stubActivator{id: uuid.New()}
-	h := NewSchedulerHandler(repo, activator, catalogRepo, nil, noopUoWFactory(), newTestLogger())
+	runRepo := &activateFakeRunRepo{hasActive: false}
+	outbox := &activateFakeOutbox{}
+	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+
+	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
 		ScheduleName: "daily",
@@ -231,8 +305,12 @@ func TestTriggerSchedule_Success(t *testing.T) {
 
 func TestTriggerSchedule_AlreadyRunning(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
-	repo := &stubSchedulerRepo{hasActive: true}
-	h := NewSchedulerHandler(repo, nil, catalogRepo, nil, noopUoWFactory(), newTestLogger())
+	runRepo := &activateFakeRunRepo{hasActive: true}
+	outbox := &activateFakeOutbox{}
+	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+
+	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
 		ScheduleName: "daily",
@@ -244,8 +322,12 @@ func TestTriggerSchedule_AlreadyRunning(t *testing.T) {
 
 func TestTriggerSchedule_NotFound(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{}}
-	repo := &stubSchedulerRepo{hasActive: false}
-	h := NewSchedulerHandler(repo, nil, catalogRepo, nil, noopUoWFactory(), newTestLogger())
+	runRepo := &activateFakeRunRepo{}
+	outbox := &activateFakeOutbox{}
+	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+
+	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
 		ScheduleName: "nonexistent",
@@ -253,21 +335,6 @@ func TestTriggerSchedule_NotFound(t *testing.T) {
 	require.Error(t, err)
 	st, _ := status.FromError(err)
 	assert.Equal(t, codes.NotFound, st.Code())
-}
-
-func TestTriggerSchedule_ActivatorReturnsNilUUID(t *testing.T) {
-	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
-	repo := &stubSchedulerRepo{hasActive: false}
-	// activator returns uuid.Nil (race: schedule became active between our check and activation)
-	activator := &stubActivator{id: uuid.Nil}
-	h := NewSchedulerHandler(repo, activator, catalogRepo, nil, noopUoWFactory(), newTestLogger())
-
-	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
-		ScheduleName: "daily",
-	})
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
 }
 
 func TestListAllSchedules_Empty(t *testing.T) {
@@ -287,9 +354,9 @@ func TestListAllSchedules_MergesData(t *testing.T) {
 			"daily": {ScheduleName: "daily", ScheduleID: uuid.New(), Status: model.SchedulerStatusSucceeded, IsRunning: false},
 		},
 	}
-	schedulesConfig := &scheduler.SchedulesConfig{
+	schedulesConfig := &schedulerpkg.SchedulesConfig{
 		Timezone: "Europe/Paris",
-		Schedules: []scheduler.ScheduleEntry{
+		Schedules: []schedulerpkg.ScheduleEntry{
 			{Name: "daily", Cron: "0 1 * * *", Description: "Runs daily"},
 		},
 	}

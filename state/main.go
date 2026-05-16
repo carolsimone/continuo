@@ -213,18 +213,9 @@ func main() {
 		}
 	}()
 
-	// Initialize schedule activator and activation service
-	activator := scheduler.NewScheduleActivator(schedulerRepo, logger)
-	activationService := scheduler.NewScheduleActivationService(
-		db,
-		activator,
-		catalogRepo,
-		schedulerRepo,
-		outboxRepo,
-		streams.SchedulerStartedV1,
-		logger,
-	)
-	logger.Info("Schedule activator and activation service initialized")
+	// Initialize activation handler shared by the cron loop and gRPC methods.
+	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
+	logger.Info("Activation handler initialized")
 
 	// Load schedules config — fail fast if missing or malformed
 	schedulesConfig, err := scheduler.LoadSchedulesConfig(cfg.SchedulesConfigPath)
@@ -235,7 +226,7 @@ func main() {
 	logger.Info("Schedules config loaded", "schedules", len(schedulesConfig.Schedules))
 
 	// Initialize cron scheduler
-	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activationService, logger, schedulesConfig)
+	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activateHandler, uowFactory, logger, schedulesConfig)
 	if err != nil {
 		logger.Error("Failed to create cron scheduler", "error", err)
 		os.Exit(1)
@@ -255,7 +246,7 @@ func main() {
 	logger.Info("Cron scheduler started")
 
 	// Initialize gRPC handlers
-	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activationService, catalogRepo, schedulesConfig, uowFactory, logger)
+	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)

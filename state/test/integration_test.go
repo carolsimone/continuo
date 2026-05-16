@@ -9,12 +9,11 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/domain/model"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
-	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/ports"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -114,9 +113,6 @@ func TestMain(m *testing.M) {
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 	execRepo := postgres.NewTaskExecutionRepository(db, logger)
 
-	// ---- No-op activator (ActivateSchedule not exercised in these tests) ----
-	activator := &noopScheduleActivator{}
-
 	// ---- Build handlers ----
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
@@ -127,7 +123,8 @@ func TestMain(m *testing.M) {
 	integrationUoWFactory := func() uow.UnitOfWork {
 		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
-	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activator, nil, nil, integrationUoWFactory, logger)
+	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
+	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	execHandler := handlers.NewTaskExecutionHandler(execRepo, logger)
 	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, nil, logger)
@@ -165,19 +162,6 @@ func TestMain(m *testing.M) {
 	stateServer.Shutdown(ctx)
 	os.Exit(code)
 }
-
-// noopScheduleActivator satisfies the scheduler.ScheduleActivator interface without I/O
-type noopScheduleActivator struct{}
-
-func (n *noopScheduleActivator) ActivateSchedule(_ context.Context, _ string, _ string, _ *uuid.UUID) (uuid.UUID, error) {
-	return uuid.New(), nil
-}
-
-func (n *noopScheduleActivator) PrepareActivation(_ context.Context, _ string, _ string, _ *uuid.UUID) (*model.SchedulerTracker, error) {
-	return nil, nil
-}
-
-var _ scheduler.ScheduleActivator = (*noopScheduleActivator)(nil)
 
 // ============================================================================
 // Integration tests
