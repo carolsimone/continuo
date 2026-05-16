@@ -4,12 +4,14 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
+	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -36,15 +38,47 @@ func (r *stubOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) er
 }
 func (r *stubOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
 
-// stubUnitOfWork implements uow.UnitOfWork backed by a stubOutboxRepo.
-type stubUnitOfWork struct {
-	outboxRepo *stubOutboxRepo
+type threadSafeStubOutboxRepo struct {
+	mu      sync.Mutex
+	entries []*model.DeploymentOutboxEntry
 }
 
-func (u *stubUnitOfWork) Begin(_ context.Context) error        { return nil }
-func (u *stubUnitOfWork) Commit() error                        { return nil }
-func (u *stubUnitOfWork) Rollback() error                      { return nil }
-func (u *stubUnitOfWork) OutboxRepo() postgres.OutboxRepository { return u.outboxRepo }
+func (r *threadSafeStubOutboxRepo) Create(_ context.Context, entry *model.DeploymentOutboxEntry) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entries = append(r.entries, entry)
+	return nil
+}
+
+func (r *threadSafeStubOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*model.DeploymentOutboxEntry, error) {
+	return nil, nil
+}
+
+func (r *threadSafeStubOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *threadSafeStubOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (r *threadSafeStubOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
+
+func (r *threadSafeStubOutboxRepo) entriesSnapshot() []*model.DeploymentOutboxEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]*model.DeploymentOutboxEntry(nil), r.entries...)
+}
+
+type stubTransaction struct {
+	outboxRepo postgres.OutboxRepository
+}
+
+func (tx *stubTransaction) OutboxRepo() postgres.OutboxRepository { return tx.outboxRepo }
+
+type stubTransactionRunner struct {
+	tx uow.Transaction
+}
+
+func (r *stubTransactionRunner) WithinTransaction(_ context.Context, fn func(uow.Transaction) error) error {
+	return fn(r.tx)
+}
 
 func TestDeployHandler_Handle_WritesOutboxWithPayloadTaskID(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -52,8 +86,8 @@ func TestDeployHandler_Handle_WritesOutboxWithPayloadTaskID(t *testing.T) {
 	}))
 
 	repo := &stubOutboxRepo{}
-	fakeuow := &stubUnitOfWork{outboxRepo: repo}
-	h := handlers.NewDeployHandler(fakeuow, logger)
+	runner := &stubTransactionRunner{tx: &stubTransaction{outboxRepo: repo}}
+	h := handlers.NewDeployHandler(runner, logger)
 
 	taskID := uuid.New()
 	scheduleID := uuid.New()
@@ -89,8 +123,8 @@ func TestDeployHandler_Handle_DoesNotGenerateOwnTaskID(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	repo := &stubOutboxRepo{}
-	fakeuow := &stubUnitOfWork{outboxRepo: repo}
-	h := handlers.NewDeployHandler(fakeuow, logger)
+	runner := &stubTransactionRunner{tx: &stubTransaction{outboxRepo: repo}}
+	h := handlers.NewDeployHandler(runner, logger)
 
 	preAssignedTaskID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
@@ -111,4 +145,38 @@ func TestDeployHandler_Handle_DoesNotGenerateOwnTaskID(t *testing.T) {
 	require.Len(t, repo.entries, 1)
 	assert.Equal(t, preAssignedTaskID, repo.entries[0].TaskID,
 		"handler must propagate the pre-assigned task_id from the orchestrator payload")
+}
+
+func TestDeployHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
+	repo := &threadSafeStubOutboxRepo{}
+	runner := &stubTransactionRunner{
+		tx: &stubTransaction{outboxRepo: repo},
+	}
+	h := handlers.NewDeployHandler(runner, slog.Default())
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, table := range []string{"orders", "customers"} {
+		wg.Add(1)
+		go func(table string) {
+			defer wg.Done()
+			errs <- h.Handle(context.Background(), command.DeployJob{
+				TaskID:       uuid.New(),
+				ScheduleID:   uuid.New(),
+				ScheduleName: "daily",
+				ServiceName:  "dbt",
+				SchemaName:   "public",
+				TableName:    table,
+				JobName:      "job-" + table,
+				NodeType:     pkg_model.NodeTypeDbtModel,
+			})
+		}(table)
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.Len(t, repo.entriesSnapshot(), 2)
 }

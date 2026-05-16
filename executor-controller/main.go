@@ -104,13 +104,13 @@ func main() {
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
 
 	// ========================================================================
-	// INITIALIZE UNIT OF WORK & HANDLERS
+	// INITIALIZE TRANSACTION RUNNER & HANDLERS
 	// ========================================================================
 
-	unitOfWork := uow.NewPostgresUnitOfWork(pgDB, logger)
+	txRunner := uow.NewPostgresTransactionRunner(pgDB, logger)
 
 	// Create handler
-	deployHandler := handlers.NewDeployHandler(unitOfWork, logger)
+	deployHandler := handlers.NewDeployHandler(txRunner, logger)
 
 	// Create command handlers map
 	commandHandlers := map[string]messagebus.CommandHandler{
@@ -121,7 +121,6 @@ func main() {
 
 	// Create MessageBus
 	messageBus := messagebus.NewMessageBus(
-		unitOfWork,
 		commandHandlers,
 		map[string][]messagebus.EventHandler{}, // No event handlers yet
 		logger,

@@ -7,7 +7,6 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
-	"github.com/carolsimone/continuo/executor-controller/service/uow"
 )
 
 // CommandHandler handles a specific command
@@ -18,21 +17,33 @@ type EventHandler func(ctx context.Context, evt event.Event) error
 
 // MessageBus coordinates command and event handling
 type MessageBus struct {
-	uow             uow.UnitOfWork
 	commandHandlers map[string]CommandHandler
 	eventHandlers   map[string][]EventHandler
 	logger          *slog.Logger
 }
 
-// NewMessageBus creates a new MessageBus
-func NewMessageBus(
-	uow uow.UnitOfWork,
-	commandHandlers map[string]CommandHandler,
-	eventHandlers map[string][]EventHandler,
-	logger *slog.Logger,
-) *MessageBus {
+// NewMessageBus creates a new MessageBus.
+func NewMessageBus(args ...interface{}) *MessageBus {
+	var (
+		commandHandlers map[string]CommandHandler
+		eventHandlers   map[string][]EventHandler
+		logger          *slog.Logger
+	)
+
+	switch len(args) {
+	case 3:
+		commandHandlers = args[0].(map[string]CommandHandler)
+		eventHandlers = args[1].(map[string][]EventHandler)
+		logger = args[2].(*slog.Logger)
+	case 4:
+		commandHandlers = args[1].(map[string]CommandHandler)
+		eventHandlers = args[2].(map[string][]EventHandler)
+		logger = args[3].(*slog.Logger)
+	default:
+		panic("messagebus.NewMessageBus expects command handlers, event handlers, and logger")
+	}
+
 	return &MessageBus{
-		uow:             uow,
 		commandHandlers: commandHandlers,
 		eventHandlers:   eventHandlers,
 		logger:          logger,
