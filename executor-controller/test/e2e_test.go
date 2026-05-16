@@ -34,10 +34,10 @@ func TestE2E_DeploymentFlow(t *testing.T) {
 	fakeK8s := fakes.NewFakeK8sClient()
 	fakePublisher := fakes.NewFakeRedisProducer()
 
-	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
+	txRunner := uow.NewPostgresTransactionRunner(db, logger)
 
 	// Create handlers
-	deployHandler := handlers.NewDeployHandler(unitOfWork, logger)
+	deployHandler := handlers.NewDeployHandler(txRunner, logger)
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
@@ -142,9 +142,9 @@ func TestE2E_MultipleDeployments(t *testing.T) {
 	fakeK8s := fakes.NewFakeK8sClient()
 	fakePublisher := fakes.NewFakeRedisProducer()
 
-	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
+	txRunner := uow.NewPostgresTransactionRunner(db, logger)
 
-	deployHandler := handlers.NewDeployHandler(unitOfWork, logger)
+	deployHandler := handlers.NewDeployHandler(txRunner, logger)
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
@@ -229,9 +229,9 @@ func TestE2E_RetryOnFailure(t *testing.T) {
 	fakeK8s := fakes.NewFakeK8sClient()
 	fakePublisher := fakes.NewFakeRedisProducer()
 
-	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
+	txRunner := uow.NewPostgresTransactionRunner(db, logger)
 
-	deployHandler := handlers.NewDeployHandler(unitOfWork, logger)
+	deployHandler := handlers.NewDeployHandler(txRunner, logger)
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
@@ -322,9 +322,9 @@ func TestE2E_IdempotentDeployment(t *testing.T) {
 	fakeK8s := fakes.NewFakeK8sClient()
 	fakePublisher := fakes.NewFakeRedisProducer()
 
-	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
+	txRunner := uow.NewPostgresTransactionRunner(db, logger)
 
-	deployHandler := handlers.NewDeployHandler(unitOfWork, logger)
+	deployHandler := handlers.NewDeployHandler(txRunner, logger)
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,
@@ -417,9 +417,9 @@ func TestE2E_BackgroundProcessing(t *testing.T) {
 	fakeK8s := fakes.NewFakeK8sClient()
 	fakePublisher := fakes.NewFakeRedisProducer()
 
-	unitOfWork := uow.NewPostgresUnitOfWork(db, logger)
+	txRunner := uow.NewPostgresTransactionRunner(db, logger)
 
-	deployHandler := handlers.NewDeployHandler(unitOfWork, logger)
+	deployHandler := handlers.NewDeployHandler(txRunner, logger)
 	outboxProcessor := handlers.NewOutboxProcessor(
 		outboxRepo,
 		fakeK8s,

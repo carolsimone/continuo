@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
@@ -14,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,34 +39,6 @@ func (r *stubOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) er
 	return nil
 }
 func (r *stubOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
-
-type threadSafeStubOutboxRepo struct {
-	mu      sync.Mutex
-	entries []*model.DeploymentOutboxEntry
-}
-
-func (r *threadSafeStubOutboxRepo) Create(_ context.Context, entry *model.DeploymentOutboxEntry) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.entries = append(r.entries, entry)
-	return nil
-}
-
-func (r *threadSafeStubOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*model.DeploymentOutboxEntry, error) {
-	return nil, nil
-}
-
-func (r *threadSafeStubOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
-func (r *threadSafeStubOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (r *threadSafeStubOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
-
-func (r *threadSafeStubOutboxRepo) entriesSnapshot() []*model.DeploymentOutboxEntry {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]*model.DeploymentOutboxEntry(nil), r.entries...)
-}
 
 type stubTransaction struct {
 	outboxRepo postgres.OutboxRepository
@@ -148,10 +122,18 @@ func TestDeployHandler_Handle_DoesNotGenerateOwnTaskID(t *testing.T) {
 }
 
 func TestDeployHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
-	repo := &threadSafeStubOutboxRepo{}
-	runner := &stubTransactionRunner{
-		tx: &stubTransaction{outboxRepo: repo},
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.MatchExpectationsInOrder(false)
+	for range 2 {
+		mock.ExpectBegin()
+		mock.ExpectExec("INSERT INTO deployment_outbox").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
 	}
+
+	runner := uow.NewPostgresTransactionRunner(sqlx.NewDb(db, "sqlmock"), slog.Default())
 	h := handlers.NewDeployHandler(runner, slog.Default())
 
 	var wg sync.WaitGroup
@@ -178,5 +160,5 @@ func TestDeployHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 	for err := range errs {
 		require.NoError(t, err)
 	}
-	require.Len(t, repo.entriesSnapshot(), 2)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -103,6 +103,7 @@ On failure:
 
 - **Inbound dedup**: `processed_events` keyed by `outbox_entry_id` prevents double-deployment from duplicate Redis messages
 - **Deployment outbox**: intent is committed to Postgres before any K8s call; crash-safe
+- **Explicit transaction boundary**: each inbound message runs its outbox insert inside a fresh transaction created by a transaction runner; parallel stream consumers may share one handler safely because transaction state is not stored on the handler or runner
 - **K8s idempotency**: `CreateQueryJob` treats already-exists as success; retries after crash are safe
 - **Step ordering**: K8s creation → `task.status.updated:v1` (RUNNING) → `node.deployed:v1`; if Redis publishes fail after K8s succeeds, the retry will re-attempt idempotently
 - **No state gRPC dependency**: executor-controller no longer calls state gRPC; task status updates flow via `task.status.updated:v1`

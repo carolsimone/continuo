@@ -35,11 +35,6 @@ func NewPostgresTransactionRunner(db *sqlx.DB, logger *slog.Logger) TransactionR
 	return &PostgresTransactionRunner{db: db, logger: logger}
 }
 
-// NewPostgresUnitOfWork creates a PostgreSQL transaction runner.
-func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) TransactionRunner {
-	return NewPostgresTransactionRunner(db, logger)
-}
-
 // WithinTransaction executes fn in one fresh transaction.
 func (r *PostgresTransactionRunner) WithinTransaction(ctx context.Context, fn func(Transaction) error) error {
 	tx, err := r.db.BeginTxx(ctx, nil)
@@ -47,6 +42,15 @@ func (r *PostgresTransactionRunner) WithinTransaction(ctx context.Context, fn fu
 		r.logger.Error("Failed to begin transaction", "error", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				r.logger.Error("Failed to rollback transaction", "error", rollbackErr)
+			}
+			panic(recovered)
+		}
+	}()
 
 	scope := &postgresTransaction{tx: tx, logger: r.logger}
 	if err := fn(scope); err != nil {
