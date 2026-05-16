@@ -23,26 +23,11 @@ type MessageBus struct {
 }
 
 // NewMessageBus creates a new MessageBus.
-func NewMessageBus(args ...interface{}) *MessageBus {
-	var (
-		commandHandlers map[string]CommandHandler
-		eventHandlers   map[string][]EventHandler
-		logger          *slog.Logger
-	)
-
-	switch len(args) {
-	case 3:
-		commandHandlers = args[0].(map[string]CommandHandler)
-		eventHandlers = args[1].(map[string][]EventHandler)
-		logger = args[2].(*slog.Logger)
-	case 4:
-		commandHandlers = args[1].(map[string]CommandHandler)
-		eventHandlers = args[2].(map[string][]EventHandler)
-		logger = args[3].(*slog.Logger)
-	default:
-		panic("messagebus.NewMessageBus expects command handlers, event handlers, and logger")
-	}
-
+func NewMessageBus(
+	commandHandlers map[string]CommandHandler,
+	eventHandlers map[string][]EventHandler,
+	logger *slog.Logger,
+) *MessageBus {
 	return &MessageBus{
 		commandHandlers: commandHandlers,
 		eventHandlers:   eventHandlers,

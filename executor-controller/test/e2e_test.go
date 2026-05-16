@@ -57,7 +57,6 @@ func TestE2E_DeploymentFlow(t *testing.T) {
 	}
 
 	messageBus := messagebus.NewMessageBus(
-		unitOfWork,
 		commandHandlers,
 		map[string][]messagebus.EventHandler{},
 		logger,
@@ -164,7 +163,6 @@ func TestE2E_MultipleDeployments(t *testing.T) {
 	}
 
 	messageBus := messagebus.NewMessageBus(
-		unitOfWork,
 		commandHandlers,
 		map[string][]messagebus.EventHandler{},
 		logger,
@@ -252,7 +250,6 @@ func TestE2E_RetryOnFailure(t *testing.T) {
 	}
 
 	messageBus := messagebus.NewMessageBus(
-		unitOfWork,
 		commandHandlers,
 		map[string][]messagebus.EventHandler{},
 		logger,
@@ -346,7 +343,6 @@ func TestE2E_IdempotentDeployment(t *testing.T) {
 	}
 
 	messageBus := messagebus.NewMessageBus(
-		unitOfWork,
 		commandHandlers,
 		map[string][]messagebus.EventHandler{},
 		logger,
@@ -444,7 +440,6 @@ func TestE2E_BackgroundProcessing(t *testing.T) {
 	}
 
 	messageBus := messagebus.NewMessageBus(
-		unitOfWork,
 		commandHandlers,
 		map[string][]messagebus.EventHandler{},
 		logger,
