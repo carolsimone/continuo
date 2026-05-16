@@ -107,6 +107,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*OutboxEntry, 
 		payload, err := json.Marshal(map[string]string{
 			"schedule_id":   e.ID.String(),
 			"schedule_name": e.Name,
+			"kind":          "rebase",
 			"source_run_id": e.SourceID.String(),
 		})
 		if err != nil {

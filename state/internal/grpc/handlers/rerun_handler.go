@@ -2,45 +2,43 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 // RerunHandler implements the TriggerRerun gRPC method.
 //
-// TriggerRerun mints a new scheduler_tracker row on the source's schedule
-// (kind='rerun', source_run_id=<source>); the source row stays at its
-// terminal status as an immutable historical record. The new run reuses
-// the source's schedule_name so it appears in the same schedule's history.
-// Selection of which tasks to re-execute happens in the orchestrator via
-// Snapshot(SourcePinnedDAG{}) — non-SUCCEEDED source tasks + descendants in
-// the source's pinned :EXECUTES set.
+// TriggerRerun mints a new Run on the source's schedule (kind='rerun',
+// source_run_id=<source>). The source row stays at its terminal status as an
+// immutable historical record. The new run reuses the source's schedule_name
+// so it appears in the same schedule's history. Selection of which tasks to
+// re-execute happens in the orchestrator via Snapshot(SourcePinnedDAG{}) —
+// non-SUCCEEDED source tasks + descendants in the source's pinned :EXECUTES set.
 type RerunHandler struct {
-	db            *sqlx.DB
-	schedulerRepo postgres.SchedulerTrackerRepository
-	taskRepo      postgres.TaskTrackerRepository
-	outboxRepo    postgres.OutboxRepository
-	logger        *slog.Logger
+	useCase    *svchandlers.TriggerRerunHandler
+	uowFactory func() uow.UnitOfWork
+	logger     *slog.Logger
 }
 
+// NewRerunHandler creates a new RerunHandler.
 func NewRerunHandler(
-	db *sqlx.DB,
-	schedulerRepo postgres.SchedulerTrackerRepository,
-	taskRepo postgres.TaskTrackerRepository,
-	outboxRepo postgres.OutboxRepository,
+	useCase *svchandlers.TriggerRerunHandler,
+	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,
 ) *RerunHandler {
-	return &RerunHandler{db: db, schedulerRepo: schedulerRepo, taskRepo: taskRepo, outboxRepo: outboxRepo, logger: logger}
+	return &RerunHandler{useCase: useCase, uowFactory: uowFactory, logger: logger}
 }
 
-// TriggerRerun validates the request and delegates to synthesiseDerivedRun
-// with rerun-specific spec constants (kind='rerun', stream='trigger.rerun:v1').
+// TriggerRerun validates the request and delegates to TriggerRerunHandler.
 func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
 	h.logger.Info("TriggerRerun called", "source_run_id", req.SourceRunId)
 
@@ -52,15 +50,19 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 		return nil, status.Errorf(codes.InvalidArgument, "invalid source_run_id format")
 	}
 
-	newID, scheduleName, err := synthesiseDerivedRun(
-		ctx, h.db, h.schedulerRepo, h.taskRepo, h.outboxRepo, h.logger, srcID,
-		derivedRunSpec{Kind: "rerun", StreamName: "trigger.rerun:v1", EventType: "rerun"},
-	)
+	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), srcID)
 	if err != nil {
-		return nil, err
+		switch {
+		case errors.Is(err, postgres.ErrNotFound):
+			return nil, status.Errorf(codes.NotFound, "source run not found")
+		case errors.Is(err, run.ErrSourceMustBeTerminallyFailedOrCancelled),
+			errors.Is(err, run.ErrNothingToRerun),
+			errors.Is(err, run.ErrScheduleHasActiveRun):
+			return nil, status.Errorf(codes.FailedPrecondition, "%v", err)
+		default:
+			h.logger.Error("TriggerRerun failed", "error", err)
+			return nil, status.Errorf(codes.Internal, "rerun: %v", err)
+		}
 	}
-	return &statev1.TriggerRerunResponse{
-		RunId:        newID.String(),
-		ScheduleName: scheduleName,
-	}, nil
+	return &statev1.TriggerRerunResponse{RunId: id.String(), ScheduleName: name}, nil
 }

@@ -2,42 +2,41 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 // RebaseHandler implements the TriggerRebase gRPC method.
 //
-// A rebase synthesises a NEW scheduler_tracker row that inherits the source's
-// schedule_name, points back to the source via source_run_id, and is marked
-// kind='rebase'. The orchestrator (out-of-band, via trigger.rebase:v1 outbox
-// fanout) is responsible for partitioning and projecting inherited tasks.
+// A rebase synthesises a new Run that inherits the source's schedule_name,
+// points back to the source via source_run_id, and is marked kind='rebase'.
+// The orchestrator (via trigger.rebase:v1 outbox fanout) is responsible for
+// partitioning and projecting inherited tasks.
 type RebaseHandler struct {
-	db            *sqlx.DB
-	schedulerRepo postgres.SchedulerTrackerRepository
-	taskRepo      postgres.TaskTrackerRepository
-	outboxRepo    postgres.OutboxRepository
-	logger        *slog.Logger
+	useCase    *svchandlers.TriggerRebaseHandler
+	uowFactory func() uow.UnitOfWork
+	logger     *slog.Logger
 }
 
+// NewRebaseHandler creates a new RebaseHandler.
 func NewRebaseHandler(
-	db *sqlx.DB,
-	schedulerRepo postgres.SchedulerTrackerRepository,
-	taskRepo postgres.TaskTrackerRepository,
-	outboxRepo postgres.OutboxRepository,
+	useCase *svchandlers.TriggerRebaseHandler,
+	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,
 ) *RebaseHandler {
-	return &RebaseHandler{db: db, schedulerRepo: schedulerRepo, taskRepo: taskRepo, outboxRepo: outboxRepo, logger: logger}
+	return &RebaseHandler{useCase: useCase, uowFactory: uowFactory, logger: logger}
 }
 
-// TriggerRebase validates the request and delegates to synthesiseDerivedRun
-// with rebase-specific spec constants (kind='rebase', stream='trigger.rebase:v1').
+// TriggerRebase validates the request and delegates to TriggerRebaseHandler.
 func (h *RebaseHandler) TriggerRebase(ctx context.Context, req *statev1.TriggerRebaseRequest) (*statev1.TriggerRebaseResponse, error) {
 	h.logger.Info("TriggerRebase called", "source_run_id", req.SourceRunId)
 
@@ -49,15 +48,19 @@ func (h *RebaseHandler) TriggerRebase(ctx context.Context, req *statev1.TriggerR
 		return nil, status.Errorf(codes.InvalidArgument, "invalid source_run_id format")
 	}
 
-	newID, scheduleName, err := synthesiseDerivedRun(
-		ctx, h.db, h.schedulerRepo, h.taskRepo, h.outboxRepo, h.logger, srcID,
-		derivedRunSpec{Kind: "rebase", StreamName: "trigger.rebase:v1", EventType: "rebase"},
-	)
+	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), srcID)
 	if err != nil {
-		return nil, err
+		switch {
+		case errors.Is(err, postgres.ErrNotFound):
+			return nil, status.Errorf(codes.NotFound, "source run not found")
+		case errors.Is(err, run.ErrSourceMustBeTerminallyFailedOrCancelled),
+			errors.Is(err, run.ErrNothingToRebase),
+			errors.Is(err, run.ErrScheduleHasActiveRun):
+			return nil, status.Errorf(codes.FailedPrecondition, "%v", err)
+		default:
+			h.logger.Error("TriggerRebase failed", "error", err)
+			return nil, status.Errorf(codes.Internal, "rebase: %v", err)
+		}
 	}
-	return &statev1.TriggerRebaseResponse{
-		RunId:        newID.String(),
-		ScheduleName: scheduleName,
-	}, nil
+	return &statev1.TriggerRebaseResponse{RunId: id.String(), ScheduleName: name}, nil
 }
