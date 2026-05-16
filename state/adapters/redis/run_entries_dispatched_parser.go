@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -33,9 +33,9 @@ func ParseRunEntriesDispatched(msg goredis.XMessage) (events.RunEntriesDispatche
 		if err != nil {
 			return events.RunEntriesDispatched{}, fmt.Errorf("invalid task_id %q: %w", t.TaskID, err)
 		}
-		status := model.TaskStatusPending
+		status := run.TaskStatusPending
 		if t.Status != "" {
-			s, err := model.ParseTaskStatus(t.Status)
+			s, err := run.ParseTaskStatus(t.Status)
 			if err != nil {
 				return events.RunEntriesDispatched{}, fmt.Errorf("invalid task status %q: %w", t.Status, err)
 			}

@@ -10,7 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -30,12 +30,12 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func createScheduler(t *testing.T, repo postgres.SchedulerTrackerRepository, scheduleName string) *model.SchedulerTracker {
+func createScheduler(t *testing.T, repo postgres.SchedulerTrackerRepository, scheduleName string) *postgres.SchedulerTracker {
 	t.Helper()
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         scheduleName,
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
 	}
@@ -56,7 +56,7 @@ func TestSchedulerRepository_UpdateTx_UpdatesStatusAndTimestamps(t *testing.T) {
 	defer tx.Rollback()
 
 	now := time.Now()
-	tracker.Status = model.SchedulerStatusSucceeded
+	tracker.Status = run.SchedulerStatusSucceeded
 	tracker.LastHeartbeatAt = &now
 
 	err = repo.UpdateTx(context.Background(), tx, tracker)
@@ -65,7 +65,7 @@ func TestSchedulerRepository_UpdateTx_UpdatesStatusAndTimestamps(t *testing.T) {
 
 	updated, err := repo.GetByID(context.Background(), tracker.ScheduleID)
 	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusSucceeded, updated.Status)
+	assert.Equal(t, run.SchedulerStatusSucceeded, updated.Status)
 }
 
 func TestSchedulerRepository_UpdateInitializationStatusTx_UpdatesStatus(t *testing.T) {
@@ -93,10 +93,10 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 
 	scheduleID := uuid.New()
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule-" + uuid.New().String(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		ServiceMetadataRaw:   []byte(`{"svc-a":{"manifest_version":"v3","image_tag":""}}`),
@@ -113,19 +113,19 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 
 	got, err := repo.GetByID(context.Background(), scheduleID)
 	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusPending, got.Status)
+	assert.Equal(t, run.SchedulerStatusPending, got.Status)
 	assert.Equal(t, "pending", got.InitializationStatus)
-	assert.Equal(t, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, got.GetServiceMetadata())
+	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, got.GetServiceMetadata())
 }
 
 func TestSchedulerRepository_IncrementTerminalCountTx(t *testing.T) {
 	db := newTestDB(t)
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	id := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), &model.SchedulerTracker{
+	require.NoError(t, repo.Create(context.Background(), &postgres.SchedulerTracker{
 		ScheduleID:           id,
 		ScheduleName:         "s1-" + id.String(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		InitializationStatus: "pending",
 		TotalTaskCount:       sql.NullInt32{Int32: 3, Valid: true},
 		CreatedAt:            time.Now(),
@@ -147,10 +147,10 @@ func TestSchedulerRepository_DecrementTerminalCountTx(t *testing.T) {
 	db := newTestDB(t)
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	id := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), &model.SchedulerTracker{
+	require.NoError(t, repo.Create(context.Background(), &postgres.SchedulerTracker{
 		ScheduleID:           id,
 		ScheduleName:         "s1-" + id.String(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		InitializationStatus: "pending",
 		TerminalTaskCount:    3,
 		CreatedAt:            time.Now(),
@@ -173,10 +173,10 @@ func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 	db := newTestDB(t)
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	id := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), &model.SchedulerTracker{
+	require.NoError(t, repo.Create(context.Background(), &postgres.SchedulerTracker{
 		ScheduleID:           id,
 		ScheduleName:         "s1-" + id.String(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		InitializationStatus: "pending",
 		CreatedAt:            time.Now(),
 	}))
@@ -200,10 +200,10 @@ func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 
 	id := uuid.New()
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           id,
 		ScheduleName:         "test_schedule",
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		InitializationStatus: "pending",
 		TotalTaskCount:       sql.NullInt32{Int32: 5, Valid: true},
 		TerminalTaskCount:    2,
@@ -227,10 +227,10 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 	sourceRunID := uuid.New()
 	// Schedule names are varchar(50); keep prefix + 8-char suffix safely under limit.
 	shortSuffix := func() string { return uuid.New().String()[:8] }
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "krt-" + shortSuffix(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		Kind:                 "rerun",
@@ -246,10 +246,10 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 	assert.Equal(t, sourceRunID, *got.SourceRunID)
 
 	// Default kind for a tracker constructed without setting Kind.
-	defaultTracker := &model.SchedulerTracker{
+	defaultTracker := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "kdf-" + shortSuffix(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		Kind:                 "cron",
@@ -284,10 +284,10 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	ctx := context.Background()
 
 	id := uuid.New()
-	require.NoError(t, repo.Create(ctx, &model.SchedulerTracker{
+	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
 		ScheduleID:           id,
 		ScheduleName:         "test-cancel-" + id.String(),
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
 	}))
@@ -302,7 +302,7 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 
 	got, err := repo.GetByID(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusCancelled, got.Status)
+	assert.Equal(t, run.SchedulerStatusCancelled, got.Status)
 	assert.NotNil(t, got.CancelledAt)
 	assert.Equal(t, "test-user", *got.CancelledBy)
 	assert.Equal(t, "test reason", *got.CancellationReason)
@@ -324,10 +324,10 @@ func TestSchedulerTrackerRepository_SetTerminalTaskCountTx_GREATEST(t *testing.T
 	ctx := context.Background()
 
 	id := uuid.New()
-	require.NoError(t, repo.Create(ctx, &model.SchedulerTracker{
+	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
 		ScheduleID:           id,
 		ScheduleName:         "greatest-test-" + id.String(),
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "in_progress",
 	}))

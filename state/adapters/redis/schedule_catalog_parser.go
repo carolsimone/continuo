@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -35,9 +35,9 @@ func ParseScheduleCatalogLoaded(msg goredis.XMessage) (events.ScheduleCatalogLoa
 	if err != nil {
 		return events.ScheduleCatalogLoaded{}, fmt.Errorf("invalid event_id UUID: %w", err)
 	}
-	meta := make(map[string]model.ServiceMetadata, len(p.ServiceMetadata))
+	meta := make(map[string]run.ServiceMetadata, len(p.ServiceMetadata))
 	for svc, m := range p.ServiceMetadata {
-		meta[svc] = model.ServiceMetadata{
+		meta[svc] = run.ServiceMetadata{
 			ManifestVersion: m["manifest_version"],
 			ImageTag:        m["image_tag"],
 		}

@@ -8,7 +8,6 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/domain/model"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -69,10 +68,10 @@ func (h *SchedulerHandler) CreateScheduler(ctx context.Context, req *statev1.Cre
 
 	domainStatus := protoToDomainSchedulerStatus(req.Status)
 	if req.Status == statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED {
-		domainStatus = model.SchedulerStatusPending
+		domainStatus = run.SchedulerStatusPending
 	}
 
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           scheduleID,
 		ScheduleName:         req.ScheduleName,
 		Status:               domainStatus,
@@ -237,35 +236,35 @@ func (h *SchedulerHandler) CancelSchedule(
 // ============================================================================
 
 // protoToDomainSchedulerStatus converts proto status to domain model status.
-func protoToDomainSchedulerStatus(s statev1.SchedulerStatus) model.SchedulerStatus {
+func protoToDomainSchedulerStatus(s statev1.SchedulerStatus) run.SchedulerStatus {
 	switch s {
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_PENDING:
-		return model.SchedulerStatusPending
+		return run.SchedulerStatusPending
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING:
-		return model.SchedulerStatusRunning
+		return run.SchedulerStatusRunning
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED:
-		return model.SchedulerStatusSucceeded
+		return run.SchedulerStatusSucceeded
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_FAILED:
-		return model.SchedulerStatusFailed
+		return run.SchedulerStatusFailed
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED:
-		return model.SchedulerStatusCancelled
+		return run.SchedulerStatusCancelled
 	default:
-		return model.SchedulerStatusPending
+		return run.SchedulerStatusPending
 	}
 }
 
 // domainToProtoSchedulerStatus converts domain model status to proto status.
-func domainToProtoSchedulerStatus(s model.SchedulerStatus) statev1.SchedulerStatus {
+func domainToProtoSchedulerStatus(s run.SchedulerStatus) statev1.SchedulerStatus {
 	switch s {
-	case model.SchedulerStatusPending:
+	case run.SchedulerStatusPending:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_PENDING
-	case model.SchedulerStatusRunning:
+	case run.SchedulerStatusRunning:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING
-	case model.SchedulerStatusSucceeded:
+	case run.SchedulerStatusSucceeded:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED
-	case model.SchedulerStatusFailed:
+	case run.SchedulerStatusFailed:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_FAILED
-	case model.SchedulerStatusCancelled:
+	case run.SchedulerStatusCancelled:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED
 	default:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED
@@ -275,7 +274,7 @@ func domainToProtoSchedulerStatus(s model.SchedulerStatus) statev1.SchedulerStat
 // domainToProtoScheduler converts a SchedulerTracker domain model to its proto
 // representation. Used by non-cancel methods (CreateScheduler, GetScheduler)
 // that still work against the low-level tracker repo.
-func domainToProtoScheduler(t *model.SchedulerTracker) *statev1.Scheduler {
+func domainToProtoScheduler(t *postgres.SchedulerTracker) *statev1.Scheduler {
 	s := &statev1.Scheduler{
 		ScheduleId:           t.ScheduleID.String(),
 		ScheduleName:         t.ScheduleName,

@@ -15,7 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/ports"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -164,7 +164,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 
 	// Test 1: Verify scheduler_tracker record exists
 	t.Log("Verifying scheduler_tracker records...")
-	var trackers []model.SchedulerTracker
+	var trackers []postgres.SchedulerTracker
 	err = db.Select(&trackers, `
 		SELECT schedule_id, schedule_name, status, created_at
 		FROM scheduler_tracker
@@ -182,8 +182,8 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NotNil(t, dailyTracker, "Expected to find daily schedule tracker")
 	require.NotNil(t, hourlyTracker, "Expected to find hourly schedule tracker")
 
-	assert.Equal(t, model.SchedulerStatusPending, dailyTracker.Status)
-	assert.Equal(t, model.SchedulerStatusPending, hourlyTracker.Status)
+	assert.Equal(t, run.SchedulerStatusPending, dailyTracker.Status)
+	assert.Equal(t, run.SchedulerStatusPending, hourlyTracker.Status)
 
 	t.Logf("Found daily tracker: %s (status: %s)", dailyTracker.ScheduleID, dailyTracker.Status)
 	t.Logf("Found hourly tracker: %s (status: %s)", hourlyTracker.ScheduleID, hourlyTracker.Status)
@@ -248,7 +248,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Wait for another 30 seconds - should NOT create new records because status is PENDING
 	time.Sleep(32 * time.Second)
 
-	var trackersAfter []model.SchedulerTracker
+	var trackersAfter []postgres.SchedulerTracker
 	err = db.Select(&trackersAfter, `
 		SELECT schedule_id, schedule_name, status, created_at
 		FROM scheduler_tracker
@@ -264,7 +264,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 }
 
 // findTrackerByName finds a scheduler tracker by schedule_name
-func findTrackerByName(trackers []model.SchedulerTracker, name string) *model.SchedulerTracker {
+func findTrackerByName(trackers []postgres.SchedulerTracker, name string) *postgres.SchedulerTracker {
 	for _, tracker := range trackers {
 		if tracker.ScheduleName == name {
 			return &tracker

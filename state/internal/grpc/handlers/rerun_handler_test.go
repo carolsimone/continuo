@@ -7,7 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/ports"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -62,7 +62,7 @@ func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
 	}
 
 	scheduleName := "rerun-happy-" + uuid.New().String()[:8]
-	srcID := seedTerminalRunWithFailedTask(t, fx, scheduleName, model.SchedulerStatusFailed)
+	srcID := seedTerminalRunWithFailedTask(t, fx, scheduleName, run.SchedulerStatusFailed)
 
 	resp, err := rfx.Handler.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{
 		SourceRunId: srcID.String(),
@@ -82,7 +82,7 @@ func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
 	require.Equal(t, "rerun", tracker.Kind)
 	require.NotNil(t, tracker.SourceRunID)
 	require.Equal(t, srcID, *tracker.SourceRunID)
-	require.Equal(t, model.SchedulerStatusPending, tracker.Status)
+	require.Equal(t, run.SchedulerStatusPending, tracker.Status)
 
 	var payloadRaw []byte
 	require.NoError(t, rfx.DB.GetContext(context.Background(), &payloadRaw,

@@ -9,7 +9,6 @@ import (
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/domain/model"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
@@ -71,7 +70,7 @@ func (h *TaskHandler) CreateTask(ctx context.Context, req *statev1.CreateTaskReq
 	// Convert proto status to domain model (default to pending if not specified)
 	domainStatus := protoToDomainTaskStatus(req.Status)
 	if req.Status == statev1.TaskStatus_TASK_STATUS_UNSPECIFIED {
-		domainStatus = model.TaskStatusPending
+		domainStatus = run.TaskStatusPending
 	}
 
 	// Compute k8s-compliant job_name from service/schema/table + schedule_id suffix
@@ -81,7 +80,7 @@ func (h *TaskHandler) CreateTask(ctx context.Context, req *statev1.CreateTaskReq
 		return nil, status.Errorf(codes.InvalidArgument, "invalid service/schema/table names: %v", err)
 	}
 
-	task := &model.TaskTracker{
+	task := &postgres.TaskTracker{
 		TaskID:      taskID,
 		ScheduleID:  scheduleID,
 		CreatedAt:   time.Now(),
@@ -223,7 +222,7 @@ func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksReque
 		offset = int(req.PageOffset)
 	}
 
-	var statusFilter *model.TaskStatus
+	var statusFilter *run.TaskStatus
 	if req.Status != statev1.TaskStatus_TASK_STATUS_UNSPECIFIED {
 		s := protoToDomainTaskStatus(req.Status)
 		statusFilter = &s
@@ -349,35 +348,35 @@ func runTaskToProto(t run.Task) *statev1.Task {
 }
 
 // protoToDomainTaskStatus converts proto status to domain model status
-func protoToDomainTaskStatus(s statev1.TaskStatus) model.TaskStatus {
+func protoToDomainTaskStatus(s statev1.TaskStatus) run.TaskStatus {
 	switch s {
 	case statev1.TaskStatus_TASK_STATUS_PENDING:
-		return model.TaskStatusPending
+		return run.TaskStatusPending
 	case statev1.TaskStatus_TASK_STATUS_RUNNING:
-		return model.TaskStatusRunning
+		return run.TaskStatusRunning
 	case statev1.TaskStatus_TASK_STATUS_SUCCEEDED:
-		return model.TaskStatusSucceeded
+		return run.TaskStatusSucceeded
 	case statev1.TaskStatus_TASK_STATUS_FAILED:
-		return model.TaskStatusFailed
+		return run.TaskStatusFailed
 	case statev1.TaskStatus_TASK_STATUS_CANCELLED:
-		return model.TaskStatusCancelled
+		return run.TaskStatusCancelled
 	default:
-		return model.TaskStatusPending
+		return run.TaskStatusPending
 	}
 }
 
 // domainToProtoTaskStatus converts domain model status to proto status
-func domainToProtoTaskStatus(s model.TaskStatus) statev1.TaskStatus {
+func domainToProtoTaskStatus(s run.TaskStatus) statev1.TaskStatus {
 	switch s {
-	case model.TaskStatusPending:
+	case run.TaskStatusPending:
 		return statev1.TaskStatus_TASK_STATUS_PENDING
-	case model.TaskStatusRunning:
+	case run.TaskStatusRunning:
 		return statev1.TaskStatus_TASK_STATUS_RUNNING
-	case model.TaskStatusSucceeded:
+	case run.TaskStatusSucceeded:
 		return statev1.TaskStatus_TASK_STATUS_SUCCEEDED
-	case model.TaskStatusFailed:
+	case run.TaskStatusFailed:
 		return statev1.TaskStatus_TASK_STATUS_FAILED
-	case model.TaskStatusCancelled:
+	case run.TaskStatusCancelled:
 		return statev1.TaskStatus_TASK_STATUS_CANCELLED
 	default:
 		return statev1.TaskStatus_TASK_STATUS_UNSPECIFIED
@@ -385,7 +384,7 @@ func domainToProtoTaskStatus(s model.TaskStatus) statev1.TaskStatus {
 }
 
 // domainToProtoTask converts domain model to proto message
-func domainToProtoTask(t *model.TaskTracker) *statev1.Task {
+func domainToProtoTask(t *postgres.TaskTracker) *statev1.Task {
 	task := &statev1.Task{
 		TaskId:      t.TaskID.String(),
 		ScheduleId:  t.ScheduleID.String(),

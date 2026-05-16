@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,10 +32,10 @@ func TestNodeRunRepository_List(t *testing.T) {
 
 	// --- scheduler 1: cron, succeeded ---
 	sched1ID := uuid.New()
-	sched1 := &model.SchedulerTracker{
+	sched1 := &postgres.SchedulerTracker{
 		ScheduleID:           sched1ID,
 		ScheduleName:         sch,
-		Status:               model.SchedulerStatusSucceeded,
+		Status:               run.SchedulerStatusSucceeded,
 		Kind:                 "cron",
 		CreatedAt:            time.Now().Add(-2 * time.Minute),
 		InitializationStatus: "completed",
@@ -45,14 +45,14 @@ func TestNodeRunRepository_List(t *testing.T) {
 
 	// task1: on the target node
 	task1ID := uuid.New()
-	task1 := &model.TaskTracker{
+	task1 := &postgres.TaskTracker{
 		TaskID:          task1ID,
 		ScheduleID:      sched1ID,
 		ServiceName:     svc,
 		SchemaName:      sch,
 		TableName:       tbl,
 		JobName:         "job-1",
-		Status:          model.TaskStatusSucceeded,
+		Status:          run.TaskStatusSucceeded,
 		RetryCount:      0,
 		MaxRetries:      3,
 		ManifestVersion: "m1",
@@ -63,7 +63,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task1ID)
 
 	// execution for task1
-	exec1 := &model.TaskExecution{
+	exec1 := &postgres.TaskExecution{
 		ID:        uuid.New(),
 		TaskID:    task1ID,
 		CreatedAt: time.Now().Add(-2 * time.Minute),
@@ -75,14 +75,14 @@ func TestNodeRunRepository_List(t *testing.T) {
 
 	// extra task on (svc, sch, other) — must NOT appear in results
 	taskExtraID := uuid.New()
-	taskExtra := &model.TaskTracker{
+	taskExtra := &postgres.TaskTracker{
 		TaskID:          taskExtraID,
 		ScheduleID:      sched1ID,
 		ServiceName:     svc,
 		SchemaName:      sch,
 		TableName:       other,
 		JobName:         "job-extra",
-		Status:          model.TaskStatusSucceeded,
+		Status:          run.TaskStatusSucceeded,
 		RetryCount:      0,
 		MaxRetries:      3,
 		ManifestVersion: "mx",
@@ -94,10 +94,10 @@ func TestNodeRunRepository_List(t *testing.T) {
 
 	// --- scheduler 2: rerun (source = sched1), failed — created more recently ---
 	sched2ID := uuid.New()
-	sched2 := &model.SchedulerTracker{
+	sched2 := &postgres.SchedulerTracker{
 		ScheduleID:           sched2ID,
 		ScheduleName:         sch,
-		Status:               model.SchedulerStatusFailed,
+		Status:               run.SchedulerStatusFailed,
 		Kind:                 "rerun",
 		SourceRunID:          &sched1ID,
 		CreatedAt:            time.Now().Add(-1 * time.Minute),
@@ -109,14 +109,14 @@ func TestNodeRunRepository_List(t *testing.T) {
 	// task2: on the target node, rerun
 	task2ID := uuid.New()
 	errMsg := "boom"
-	task2 := &model.TaskTracker{
+	task2 := &postgres.TaskTracker{
 		TaskID:          task2ID,
 		ScheduleID:      sched2ID,
 		ServiceName:     svc,
 		SchemaName:      sch,
 		TableName:       tbl,
 		JobName:         "job-2",
-		Status:          model.TaskStatusFailed,
+		Status:          run.TaskStatusFailed,
 		RetryCount:      1,
 		MaxRetries:      3,
 		ManifestVersion: "m2",
@@ -127,7 +127,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task2ID)
 
 	// execution for task2 (with error_message)
-	exec2 := &model.TaskExecution{
+	exec2 := &postgres.TaskExecution{
 		ID:           uuid.New(),
 		TaskID:       task2ID,
 		CreatedAt:    time.Now().Add(-1 * time.Minute),
@@ -173,10 +173,10 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 	tbl := "tbl-" + uuid.New().String()[:8]
 
 	schedID := uuid.New()
-	sched := &model.SchedulerTracker{
+	sched := &postgres.SchedulerTracker{
 		ScheduleID:           schedID,
 		ScheduleName:         sch,
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		Kind:                 "cron",
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
@@ -185,14 +185,14 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", schedID)
 
 	taskID := uuid.New()
-	task := &model.TaskTracker{
+	task := &postgres.TaskTracker{
 		TaskID:          taskID,
 		ScheduleID:      schedID,
 		ServiceName:     svc,
 		SchemaName:      sch,
 		TableName:       tbl,
 		JobName:         "job-pending",
-		Status:          model.TaskStatusPending,
+		Status:          run.TaskStatusPending,
 		RetryCount:      0,
 		MaxRetries:      3,
 		ManifestVersion: "m1",

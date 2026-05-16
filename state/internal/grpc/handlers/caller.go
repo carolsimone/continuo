@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -12,7 +12,7 @@ const callerIDMetadataKey = "x-caller-id"
 
 // callerFromContext extracts the CallerID from the incoming gRPC metadata.
 // Returns an error if the x-caller-id header is absent.
-func callerFromContext(ctx context.Context) (model.CallerID, error) {
+func callerFromContext(ctx context.Context) (run.CallerID, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return "", errors.New("missing gRPC metadata")
@@ -21,5 +21,5 @@ func callerFromContext(ctx context.Context) (model.CallerID, error) {
 	if len(values) == 0 {
 		return "", errors.New("missing x-caller-id metadata")
 	}
-	return model.CallerID(values[0]), nil
+	return run.CallerID(values[0]), nil
 }

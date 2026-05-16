@@ -8,26 +8,26 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
 // TaskTrackerRepository defines all operations for task_tracker table
 type TaskTrackerRepository interface {
-	Create(ctx context.Context, task *model.TaskTracker) error
-	GetByID(ctx context.Context, taskID uuid.UUID) (*model.TaskTracker, error)
-	GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*model.TaskTracker, error)
-	Update(ctx context.Context, task *model.TaskTracker) error
+	Create(ctx context.Context, task *TaskTracker) error
+	GetByID(ctx context.Context, taskID uuid.UUID) (*TaskTracker, error)
+	GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*TaskTracker, error)
+	Update(ctx context.Context, task *TaskTracker) error
 	Delete(ctx context.Context, taskID uuid.UUID) error
-	ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *model.TaskStatus, limit, offset int) ([]*model.TaskTracker, int, error)
-	List(ctx context.Context, filters TaskFilters) ([]*model.TaskTracker, int, error)
+	ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error)
+	List(ctx context.Context, filters TaskFilters) ([]*TaskTracker, int, error)
 	// New: tx-accepting variant for atomic HTTP handler
-	UpdateTx(ctx context.Context, tx *sqlx.Tx, task *model.TaskTracker) error
+	UpdateTx(ctx context.Context, tx *sqlx.Tx, task *TaskTracker) error
 	// BulkCreateTx inserts multiple task_tracker rows within a transaction (ON CONFLICT DO NOTHING).
-	BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*model.TaskTracker) error
+	BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskTracker) error
 	// ListAllByScheduleID returns all task rows for a schedule (no pagination, no status filter).
-	ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*model.TaskTracker, error)
+	ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*TaskTracker, error)
 	// ResetTasksTx sets the given tasks to PENDING and returns the number of rows actually
 	// modified (already-PENDING rows are excluded from the count).
 	ResetTasksTx(ctx context.Context, tx *sqlx.Tx, ids []uuid.UUID) (int32, error)
@@ -57,7 +57,7 @@ type TaskTrackerRepository interface {
 // TaskFilters defines query filters for List operation
 type TaskFilters struct {
 	ScheduleID *uuid.UUID
-	Status     *model.TaskStatus
+	Status     *run.TaskStatus
 	Limit      int
 	Offset     int
 }
@@ -76,7 +76,7 @@ func NewTaskTrackerRepository(db *sqlx.DB, logger *slog.Logger) TaskTrackerRepos
 }
 
 // Create inserts a new task_tracker record into the database
-func (r *taskTrackerRepository) Create(ctx context.Context, task *model.TaskTracker) error {
+func (r *taskTrackerRepository) Create(ctx context.Context, task *TaskTracker) error {
 	query := `
 		INSERT INTO task_tracker (
 			task_id, schedule_id, created_at, service_name, schema_name,
@@ -116,7 +116,7 @@ func (r *taskTrackerRepository) Create(ctx context.Context, task *model.TaskTrac
 }
 
 // GetByID retrieves a task_tracker by task_id
-func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (*model.TaskTracker, error) {
+func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (*TaskTracker, error) {
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
@@ -125,7 +125,7 @@ func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (
 		WHERE task_id = $1
 	`
 
-	var task model.TaskTracker
+	var task TaskTracker
 	err := r.db.GetContext(ctx, &task, query, taskID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -150,7 +150,7 @@ func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (
 }
 
 // GetByScheduleAndNode retrieves a task_tracker by schedule_id and node information
-func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*model.TaskTracker, error) {
+func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*TaskTracker, error) {
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
@@ -162,7 +162,7 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 		  AND table_name = $4
 	`
 
-	var task model.TaskTracker
+	var task TaskTracker
 	err := r.db.GetContext(ctx, &task, query, scheduleID, serviceName, schemaName, tableName)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -192,7 +192,7 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 }
 
 // Update updates task status, retry count, and cancellation fields
-func (r *taskTrackerRepository) Update(ctx context.Context, task *model.TaskTracker) error {
+func (r *taskTrackerRepository) Update(ctx context.Context, task *TaskTracker) error {
 	query := `
 		UPDATE task_tracker
 		SET status = :status,
@@ -257,7 +257,7 @@ func (r *taskTrackerRepository) Delete(ctx context.Context, taskID uuid.UUID) er
 }
 
 // UpdateTx updates task status and retry count within an existing transaction.
-func (r *taskTrackerRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, task *model.TaskTracker) error {
+func (r *taskTrackerRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, task *TaskTracker) error {
 	query := `
 		UPDATE task_tracker
 		SET status = :status,
@@ -278,7 +278,7 @@ func (r *taskTrackerRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, task 
 }
 
 // ListByScheduleID retrieves all tasks for a specific schedule with optional status filter
-func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *model.TaskStatus, limit, offset int) ([]*model.TaskTracker, int, error) {
+func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error) {
 	whereClauses := []string{"schedule_id = :schedule_id"}
 	args := map[string]interface{}{
 		"schedule_id": scheduleID,
@@ -325,7 +325,7 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 	}
 	defer stmt.Close()
 
-	var tasks []*model.TaskTracker
+	var tasks []*TaskTracker
 	if err := stmt.SelectContext(ctx, &tasks, args); err != nil {
 		r.logger.Error("Failed to list tasks by schedule",
 			"schedule_id", scheduleID,
@@ -345,7 +345,7 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 
 // BulkCreateTx inserts multiple task_tracker rows within a transaction.
 // Uses ON CONFLICT (task_id) DO NOTHING for idempotent bulk inserts.
-func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*model.TaskTracker) error {
+func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskTracker) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -367,8 +367,8 @@ func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, t
 }
 
 // ListAllByScheduleID returns all task_tracker rows for a schedule without pagination.
-func (r *taskTrackerRepository) ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*model.TaskTracker, error) {
-	var tasks []*model.TaskTracker
+func (r *taskTrackerRepository) ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*TaskTracker, error) {
+	var tasks []*TaskTracker
 	err := r.db.SelectContext(ctx, &tasks, `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
@@ -496,7 +496,7 @@ func (r *taskTrackerRepository) ResetTasksTx(ctx context.Context, tx *sqlx.Tx, i
 	}
 	placeholders := make([]string, len(ids))
 	args := make([]interface{}, len(ids)+1)
-	args[0] = string(model.TaskStatusPending)
+	args[0] = string(run.TaskStatusPending)
 	for i, id := range ids {
 		placeholders[i] = fmt.Sprintf("$%d", i+2)
 		args[i+1] = id // bind as uuid.UUID so the PK index is used
@@ -528,7 +528,7 @@ func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx
 		    cancelled_by = $3
 		WHERE schedule_id = $4
 		  AND status IN ('pending', 'running')
-	`, model.TaskStatusCancelled, time.Now(), cancelledBy, scheduleID)
+	`, run.TaskStatusCancelled, time.Now(), cancelledBy, scheduleID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to bulk cancel tasks: %w", err)
 	}
@@ -540,7 +540,7 @@ func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx
 }
 
 // List queries tasks with flexible filters and pagination
-func (r *taskTrackerRepository) List(ctx context.Context, filters TaskFilters) ([]*model.TaskTracker, int, error) {
+func (r *taskTrackerRepository) List(ctx context.Context, filters TaskFilters) ([]*TaskTracker, int, error) {
 	// Build dynamic WHERE clause
 	whereClauses := []string{}
 	args := map[string]interface{}{}
@@ -600,7 +600,7 @@ func (r *taskTrackerRepository) List(ctx context.Context, filters TaskFilters) (
 	}
 	defer stmt.Close()
 
-	var tasks []*model.TaskTracker
+	var tasks []*TaskTracker
 	if err := stmt.SelectContext(ctx, &tasks, args); err != nil {
 		r.logger.Error("Failed to list tasks", "error", err)
 		return nil, 0, fmt.Errorf("failed to list tasks: %w", err)

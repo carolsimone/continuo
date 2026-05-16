@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
@@ -17,7 +17,7 @@ func TestCallerFromContext_Success(t *testing.T) {
 	caller, err := callerFromContext(ctx)
 
 	require.NoError(t, err)
-	assert.Equal(t, model.CallerStartupController, caller)
+	assert.Equal(t, run.CallerStartupController, caller)
 }
 
 func TestCallerFromContext_NoMetadata(t *testing.T) {

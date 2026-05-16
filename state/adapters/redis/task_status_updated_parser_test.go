@@ -3,7 +3,7 @@ package redis
 import (
 	"testing"
 
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +22,7 @@ func TestParseTaskStatusUpdated_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, taskID, evt.TaskID)
 	assert.Equal(t, scheduleID, evt.ScheduleID)
-	assert.Equal(t, model.TaskStatusSucceeded, evt.Status)
+	assert.Equal(t, run.TaskStatusSucceeded, evt.Status)
 	assert.Equal(t, int32(2), evt.RetryCount)
 }
 

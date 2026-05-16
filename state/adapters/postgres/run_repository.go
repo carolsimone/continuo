@@ -8,7 +8,6 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/ports"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -158,7 +157,7 @@ func (r *RunRepositoryAdapter) GetLastRunPerSchedule(ctx context.Context) (map[s
 }
 
 // hydrateRun translates a persisted SchedulerTracker into a Run aggregate.
-func hydrateRun(tr *model.SchedulerTracker) *run.Run {
+func hydrateRun(tr *SchedulerTracker) *run.Run {
 	meta := tr.GetServiceMetadata()
 	return run.HydrateRun(
 		tr.ScheduleID,
@@ -178,9 +177,9 @@ func hydrateRun(tr *model.SchedulerTracker) *run.Run {
 
 // dehydrateRun materialises a Run back into the SchedulerTracker shape that
 // CreateTx accepts. Used by SaveRun on the created branch.
-func dehydrateRun(r *run.Run) *model.SchedulerTracker {
+func dehydrateRun(r *run.Run) *SchedulerTracker {
 	metaJSON, _ := json.Marshal(r.ServiceMetadata())
-	return &model.SchedulerTracker{
+	return &SchedulerTracker{
 		ScheduleID:           r.ScheduleID(),
 		ScheduleName:         r.ScheduleName(),
 		Status:               r.Status(),

@@ -6,7 +6,6 @@ import (
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/ports"
 	"github.com/jmoiron/sqlx"
 )
@@ -50,15 +49,15 @@ func (a *CatalogRepositoryAdapter) LoadCatalogForUpdate(ctx context.Context, _ *
 // called after a successful write.
 func (a *CatalogRepositoryAdapter) SaveCatalog(ctx context.Context, tx *sqlx.Tx, c *catalog.ScheduleCatalog) error {
 	var present []string
-	perScheduleMeta := make(map[string]map[string]model.ServiceMetadata)
+	perScheduleMeta := make(map[string]map[string]run.ServiceMetadata)
 
 	for _, name := range c.Names() {
 		e, _ := c.Entry(name)
 		if e.IsActive() {
 			present = append(present, name)
-			inner := make(map[string]model.ServiceMetadata, len(e.ServiceMetadata))
+			inner := make(map[string]run.ServiceMetadata, len(e.ServiceMetadata))
 			for svc, m := range e.ServiceMetadata {
-				inner[svc] = model.ServiceMetadata{ManifestVersion: m.ManifestVersion, ImageTag: m.ImageTag}
+				inner[svc] = run.ServiceMetadata{ManifestVersion: m.ManifestVersion, ImageTag: m.ImageTag}
 			}
 			perScheduleMeta[name] = inner
 		}

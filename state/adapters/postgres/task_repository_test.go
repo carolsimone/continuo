@@ -6,22 +6,22 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func createTask(t *testing.T, repo postgres.TaskTrackerRepository, scheduleID uuid.UUID) *model.TaskTracker {
+func createTask(t *testing.T, repo postgres.TaskTrackerRepository, scheduleID uuid.UUID) *postgres.TaskTracker {
 	t.Helper()
-	task := &model.TaskTracker{
+	task := &postgres.TaskTracker{
 		TaskID:      uuid.New(),
 		ScheduleID:  scheduleID,
 		ServiceName: "svc",
 		SchemaName:  "schema",
 		TableName:   "tbl_" + uuid.New().String()[:8],
 		JobName:     "job",
-		Status:      model.TaskStatusFailed,
+		Status:      run.TaskStatusFailed,
 		RetryCount:  3,
 		MaxRetries:  5,
 		CreatedAt:   time.Now(),
@@ -46,7 +46,7 @@ func TestTaskRepository_UpdateTx_UpdatesStatusAndRetryCount(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	task.Status = model.TaskStatusPending
+	task.Status = run.TaskStatusPending
 	task.RetryCount = 0
 
 	err = taskRepo.UpdateTx(context.Background(), tx, task)
@@ -55,7 +55,7 @@ func TestTaskRepository_UpdateTx_UpdatesStatusAndRetryCount(t *testing.T) {
 
 	updated, err := taskRepo.GetByID(context.Background(), task.TaskID)
 	require.NoError(t, err)
-	assert.Equal(t, model.TaskStatusPending, updated.Status)
+	assert.Equal(t, run.TaskStatusPending, updated.Status)
 	assert.Equal(t, 0, updated.RetryCount)
 }
 
@@ -65,7 +65,7 @@ func TestTaskRepository_HasRetryableFailedTaskTx(t *testing.T) {
 	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
 	ctx := context.Background()
 
-	newScheduler := func(t *testing.T) *model.SchedulerTracker {
+	newScheduler := func(t *testing.T) *postgres.SchedulerTracker {
 		t.Helper()
 		s := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
 		t.Cleanup(func() {
@@ -74,9 +74,9 @@ func TestTaskRepository_HasRetryableFailedTaskTx(t *testing.T) {
 		return s
 	}
 
-	insertTask := func(t *testing.T, scheduleID uuid.UUID, status model.TaskStatus, retryCount, maxRetries int) *model.TaskTracker {
+	insertTask := func(t *testing.T, scheduleID uuid.UUID, status run.TaskStatus, retryCount, maxRetries int) *postgres.TaskTracker {
 		t.Helper()
-		task := &model.TaskTracker{
+		task := &postgres.TaskTracker{
 			TaskID:      uuid.New(),
 			ScheduleID:  scheduleID,
 			ServiceName: "svc",
@@ -108,25 +108,25 @@ func TestTaskRepository_HasRetryableFailedTaskTx(t *testing.T) {
 	t.Run("no failed tasks returns false", func(t *testing.T) {
 		s := newScheduler(t)
 		// Insert a pending task (not failed)
-		insertTask(t, s.ScheduleID, model.TaskStatusPending, 0, 3)
+		insertTask(t, s.ScheduleID, run.TaskStatusPending, 0, 3)
 		assert.False(t, runCheck(t, s.ScheduleID))
 	})
 
 	t.Run("failed task with retry_count < max_retries returns true", func(t *testing.T) {
 		s := newScheduler(t)
-		insertTask(t, s.ScheduleID, model.TaskStatusFailed, 1, 3)
+		insertTask(t, s.ScheduleID, run.TaskStatusFailed, 1, 3)
 		assert.True(t, runCheck(t, s.ScheduleID))
 	})
 
 	t.Run("failed task with retry_count equal to max_retries returns false", func(t *testing.T) {
 		s := newScheduler(t)
-		insertTask(t, s.ScheduleID, model.TaskStatusFailed, 3, 3)
+		insertTask(t, s.ScheduleID, run.TaskStatusFailed, 3, 3)
 		assert.False(t, runCheck(t, s.ScheduleID))
 	})
 
 	t.Run("failed task with retry_count greater than max_retries returns false", func(t *testing.T) {
 		s := newScheduler(t)
-		insertTask(t, s.ScheduleID, model.TaskStatusFailed, 5, 3)
+		insertTask(t, s.ScheduleID, run.TaskStatusFailed, 5, 3)
 		assert.False(t, runCheck(t, s.ScheduleID))
 	})
 
@@ -143,10 +143,10 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	ctx := context.Background()
 
 	schedID := uuid.New()
-	require.NoError(t, schedRepo.Create(ctx, &model.SchedulerTracker{
+	require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
 		ScheduleID:           schedID,
 		ScheduleName:         "bulk-cancel-" + schedID.String(),
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
 	}))
@@ -158,13 +158,13 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	succeededID := uuid.New()
 	for _, tt := range []struct {
 		id     uuid.UUID
-		status model.TaskStatus
+		status run.TaskStatus
 	}{
-		{pendingID, model.TaskStatusPending},
-		{runningID, model.TaskStatusRunning},
-		{succeededID, model.TaskStatusSucceeded},
+		{pendingID, run.TaskStatusPending},
+		{runningID, run.TaskStatusRunning},
+		{succeededID, run.TaskStatusSucceeded},
 	} {
-		require.NoError(t, taskRepo.Create(ctx, &model.TaskTracker{
+		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID:      tt.id,
 			ScheduleID:  schedID,
 			ServiceName: "svc",
@@ -190,7 +190,7 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	for _, id := range []uuid.UUID{pendingID, runningID} {
 		got, err := taskRepo.GetByID(ctx, id)
 		require.NoError(t, err)
-		assert.Equal(t, model.TaskStatusCancelled, got.Status)
+		assert.Equal(t, run.TaskStatusCancelled, got.Status)
 		assert.NotNil(t, got.CancelledAt)
 		assert.Equal(t, "user1", *got.CancelledBy)
 	}
@@ -198,7 +198,7 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	// succeeded task must be untouched
 	got, err := taskRepo.GetByID(ctx, succeededID)
 	require.NoError(t, err)
-	assert.Equal(t, model.TaskStatusSucceeded, got.Status)
+	assert.Equal(t, run.TaskStatusSucceeded, got.Status)
 }
 
 func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
@@ -207,10 +207,10 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 	repo := postgres.NewTaskTrackerRepository(db, discardLogger())
 
 	ctx := context.Background()
-	parent := &model.SchedulerTracker{
+	parent := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "tt-" + uuid.New().String()[:8],
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		Kind:                 "cron",
@@ -218,7 +218,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 	require.NoError(t, schedulerRepo.Create(ctx, parent))
 	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", parent.ScheduleID)
 
-	task := &model.TaskTracker{
+	task := &postgres.TaskTracker{
 		TaskID:          uuid.New(),
 		ScheduleID:      parent.ScheduleID,
 		CreatedAt:       time.Now(),
@@ -226,7 +226,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 		SchemaName:      "analytics",
 		TableName:       "daily_metrics",
 		JobName:         "job-x",
-		Status:          model.TaskStatusPending,
+		Status:          run.TaskStatusPending,
 		RetryCount:      0,
 		MaxRetries:      3,
 		ManifestVersion: "v5",
@@ -247,10 +247,10 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 	repo := postgres.NewTaskTrackerRepository(db, discardLogger())
 
 	ctx := context.Background()
-	parent := &model.SchedulerTracker{
+	parent := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "tt-inh-" + uuid.New().String()[:8],
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		Kind:                 "rebase",
@@ -260,7 +260,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 
 	// Inherited row: non-NULL pointer.
 	rootTaskID := uuid.New()
-	inherited := &model.TaskTracker{
+	inherited := &postgres.TaskTracker{
 		TaskID:              uuid.New(),
 		ScheduleID:          parent.ScheduleID,
 		CreatedAt:           time.Now(),
@@ -268,7 +268,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 		SchemaName:          "s",
 		TableName:           "inherited_table",
 		JobName:             "job-i",
-		Status:              model.TaskStatusSucceeded,
+		Status:              run.TaskStatusSucceeded,
 		RetryCount:          0,
 		MaxRetries:          0,
 		ManifestVersion:     "vOLD",
@@ -284,7 +284,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 	assert.Equal(t, rootTaskID, *gotInherited.InheritedFromTaskID)
 
 	// Real-execution row: NULL pointer should round-trip as nil.
-	real := &model.TaskTracker{
+	real := &postgres.TaskTracker{
 		TaskID:          uuid.New(),
 		ScheduleID:      parent.ScheduleID,
 		CreatedAt:       time.Now(),
@@ -292,7 +292,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 		SchemaName:      "s",
 		TableName:       "real_table",
 		JobName:         "job-r",
-		Status:          model.TaskStatusPending,
+		Status:          run.TaskStatusPending,
 		RetryCount:      0,
 		MaxRetries:      3,
 		ManifestVersion: "vNEW",
@@ -337,5 +337,5 @@ func TestTaskRepository_UpdateStatusIfChangedTx_DoesNotReviveCancelledTask(t *te
 
 	got, err := taskRepo.GetByID(context.Background(), task.TaskID)
 	require.NoError(t, err)
-	assert.Equal(t, model.TaskStatusCancelled, got.Status, "status must remain cancelled")
+	assert.Equal(t, run.TaskStatusCancelled, got.Status, "status must remain cancelled")
 }

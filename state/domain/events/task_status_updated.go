@@ -1,7 +1,7 @@
 package events
 
 import (
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 )
 
@@ -9,6 +9,6 @@ import (
 type TaskStatusUpdated struct {
 	TaskID     uuid.UUID
 	ScheduleID uuid.UUID
-	Status     model.TaskStatus
+	Status     run.TaskStatus
 	RetryCount int32
 }

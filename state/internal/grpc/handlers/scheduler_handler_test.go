@@ -12,7 +12,6 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/domain/model"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/ports"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -46,7 +45,7 @@ type stubCatalogRepo struct {
 	existsActive map[string]bool
 }
 
-func (s *stubCatalogRepo) UpsertAll(_ context.Context, _ []string, _ map[string]model.ServiceMetadata) error {
+func (s *stubCatalogRepo) UpsertAll(_ context.Context, _ []string, _ map[string]run.ServiceMetadata) error {
 	return nil
 }
 func (s *stubCatalogRepo) SoftDeleteAbsent(_ context.Context, _ []string) error { return nil }
@@ -65,7 +64,7 @@ func (s *stubCatalogRepo) ExistsActive(_ context.Context, name string) (bool, er
 func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, _ string) (map[string]run.ServiceMetadata, error) {
 	return map[string]run.ServiceMetadata{}, nil
 }
-func (s *stubCatalogRepo) UpsertAllTx(_ context.Context, _ *sqlx.Tx, _ []string, _ map[string]map[string]model.ServiceMetadata) error {
+func (s *stubCatalogRepo) UpsertAllTx(_ context.Context, _ *sqlx.Tx, _ []string, _ map[string]map[string]run.ServiceMetadata) error {
 	return nil
 }
 func (s *stubCatalogRepo) SoftDeleteAbsentTx(_ context.Context, _ *sqlx.Tx, _ []string) error {
@@ -87,26 +86,26 @@ func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *sqlx.Tx, _ *catalog.
 type stubSchedulerRepo struct {
 	hasActive       bool
 	lastRunData     map[string]postgres.LastRunData
-	getActiveResult *model.SchedulerTracker
+	getActiveResult *postgres.SchedulerTracker
 	getActiveErr    error
 	cancelErr       error
-	getByIDResult   *model.SchedulerTracker
+	getByIDResult   *postgres.SchedulerTracker
 	getByIDErr      error
 }
 
-func (s *stubSchedulerRepo) Create(_ context.Context, _ *model.SchedulerTracker) error { return nil }
-func (s *stubSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*model.SchedulerTracker, error) {
+func (s *stubSchedulerRepo) Create(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
+func (s *stubSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
 	return s.getByIDResult, s.getByIDErr
 }
-func (s *stubSchedulerRepo) Update(_ context.Context, _ *model.SchedulerTracker) error { return nil }
+func (s *stubSchedulerRepo) Update(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
 func (s *stubSchedulerRepo) Cancel(_ context.Context, _ uuid.UUID, _, _ string) error {
 	return s.cancelErr
 }
 
-func (s *stubSchedulerRepo) GetActiveScheduler(_ context.Context, _ string) (*model.SchedulerTracker, error) {
+func (s *stubSchedulerRepo) GetActiveScheduler(_ context.Context, _ string) (*postgres.SchedulerTracker, error) {
 	return s.getActiveResult, s.getActiveErr
 }
-func (s *stubSchedulerRepo) List(_ context.Context, _ postgres.SchedulerFilters) ([]*model.SchedulerTracker, int, error) {
+func (s *stubSchedulerRepo) List(_ context.Context, _ postgres.SchedulerFilters) ([]*postgres.SchedulerTracker, int, error) {
 	return nil, 0, nil
 }
 func (s *stubSchedulerRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
@@ -124,13 +123,13 @@ func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context) (map[string
 	}
 	return map[string]postgres.LastRunData{}, nil
 }
-func (s *stubSchedulerRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, _ *model.SchedulerTracker) error {
+func (s *stubSchedulerRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
 	return nil
 }
 func (s *stubSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (s *stubSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *model.SchedulerTracker) error {
+func (s *stubSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
 	return nil
 }
 func (s *stubSchedulerRepo) IncrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (int32, int32, error) {
@@ -148,7 +147,7 @@ func (s *stubSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx
 func (s *stubSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (s *stubSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
+func (s *stubSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
 	return s.getByIDResult, s.getByIDErr
 }
 func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
@@ -351,7 +350,7 @@ func TestListAllSchedules_MergesData(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
 	repo := &stubSchedulerRepo{
 		lastRunData: map[string]postgres.LastRunData{
-			"daily": {ScheduleName: "daily", ScheduleID: uuid.New(), Status: model.SchedulerStatusSucceeded, IsRunning: false},
+			"daily": {ScheduleName: "daily", ScheduleID: uuid.New(), Status: run.SchedulerStatusSucceeded, IsRunning: false},
 		},
 	}
 	schedulesConfig := &schedulerpkg.SchedulesConfig{
@@ -380,7 +379,7 @@ func TestListAllSchedules_PopulatesLastRunId(t *testing.T) {
 			"daily": {
 				ScheduleName: "daily",
 				ScheduleID:   id,
-				Status:       model.SchedulerStatusSucceeded,
+				Status:       run.SchedulerStatusSucceeded,
 				CreatedAt:    time.Now(),
 				IsRunning:    false,
 			},
@@ -735,19 +734,19 @@ func TestCancelSchedule_OutboxError(t *testing.T) {
 // ---- fakeSchedulerRepo for non-cancel tests ----
 
 type fakeSchedulerRepo struct {
-	tracker *model.SchedulerTracker
+	tracker *postgres.SchedulerTracker
 }
 
-func (f *fakeSchedulerRepo) Create(_ context.Context, _ *model.SchedulerTracker) error { return nil }
-func (f *fakeSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*model.SchedulerTracker, error) {
+func (f *fakeSchedulerRepo) Create(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
+func (f *fakeSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
 	return f.tracker, nil
 }
-func (f *fakeSchedulerRepo) Update(_ context.Context, _ *model.SchedulerTracker) error { return nil }
+func (f *fakeSchedulerRepo) Update(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
 func (f *fakeSchedulerRepo) Cancel(_ context.Context, _ uuid.UUID, _, _ string) error  { return nil }
-func (f *fakeSchedulerRepo) GetActiveScheduler(_ context.Context, _ string) (*model.SchedulerTracker, error) {
+func (f *fakeSchedulerRepo) GetActiveScheduler(_ context.Context, _ string) (*postgres.SchedulerTracker, error) {
 	return nil, nil
 }
-func (f *fakeSchedulerRepo) List(_ context.Context, _ postgres.SchedulerFilters) ([]*model.SchedulerTracker, int, error) {
+func (f *fakeSchedulerRepo) List(_ context.Context, _ postgres.SchedulerFilters) ([]*postgres.SchedulerTracker, int, error) {
 	return nil, 0, nil
 }
 func (f *fakeSchedulerRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
@@ -762,13 +761,13 @@ func (f *fakeSchedulerRepo) ResetInProgressInitializations(_ context.Context) (i
 func (f *fakeSchedulerRepo) GetLastRunPerSchedule(_ context.Context) (map[string]postgres.LastRunData, error) {
 	return map[string]postgres.LastRunData{}, nil
 }
-func (f *fakeSchedulerRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, _ *model.SchedulerTracker) error {
+func (f *fakeSchedulerRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
 	return nil
 }
 func (f *fakeSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (f *fakeSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *model.SchedulerTracker) error {
+func (f *fakeSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
 	return nil
 }
 func (f *fakeSchedulerRepo) IncrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (int32, int32, error) {
@@ -786,7 +785,7 @@ func (f *fakeSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx
 func (f *fakeSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (f *fakeSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*model.SchedulerTracker, error) {
+func (f *fakeSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
 	return f.tracker, nil
 }
 func (f *fakeSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
@@ -799,7 +798,7 @@ func (f *fakeSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID,
 // ---- GetSchedulerInitStatus tests ----
 
 func TestGetSchedulerInitStatus_ReturnsStatus(t *testing.T) {
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "daily",
 		InitializationStatus: "completed",

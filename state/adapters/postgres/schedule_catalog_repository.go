@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -17,7 +17,7 @@ import (
 type ScheduleCatalogRow struct {
 	ScheduleName    string
 	RemovedAt       *time.Time
-	ServiceMetadata map[string]model.ServiceMetadata
+	ServiceMetadata map[string]run.ServiceMetadata
 }
 
 // ScheduleCatalogRepository manages the schedule_catalog table.
@@ -26,11 +26,11 @@ type ScheduleCatalogRepository interface {
 	// internal transaction. On conflict: sets last_seen_at=now(), removed_at=NULL.
 	// serviceMetadata is a flat map of service_name → ServiceMetadata applied to
 	// all schedules in the batch.
-	UpsertAll(ctx context.Context, names []string, serviceMetadata map[string]model.ServiceMetadata) error
+	UpsertAll(ctx context.Context, names []string, serviceMetadata map[string]run.ServiceMetadata) error
 	// UpsertAllTx is the tx-bound variant of UpsertAll for callers that manage
 	// their own transaction. serviceMetadata is keyed by schedule_name; each
 	// inner map holds service_name → ServiceMetadata for that schedule.
-	UpsertAllTx(ctx context.Context, tx *sqlx.Tx, names []string, serviceMetadata map[string]map[string]model.ServiceMetadata) error
+	UpsertAllTx(ctx context.Context, tx *sqlx.Tx, names []string, serviceMetadata map[string]map[string]run.ServiceMetadata) error
 	// SoftDeleteAbsent soft-deletes any active row whose name is not in names.
 	SoftDeleteAbsent(ctx context.Context, names []string) error
 	// SoftDeleteAbsentTx is the tx-bound variant of SoftDeleteAbsent.
@@ -39,7 +39,7 @@ type ScheduleCatalogRepository interface {
 	ListActive(ctx context.Context) ([]string, error)
 	// ExistsActive returns true if schedule_name is active in the catalog.
 	ExistsActive(ctx context.Context, scheduleName string) (bool, error)
-	GetServiceMetadata(ctx context.Context, scheduleName string) (map[string]model.ServiceMetadata, error)
+	GetServiceMetadata(ctx context.Context, scheduleName string) (map[string]run.ServiceMetadata, error)
 	// ListAll returns every row in schedule_catalog, including soft-deleted
 	// rows, for aggregate hydration.
 	ListAll(ctx context.Context) ([]ScheduleCatalogRow, error)
@@ -55,7 +55,7 @@ func NewScheduleCatalogRepository(db *sqlx.DB, logger *slog.Logger) ScheduleCata
 	return &scheduleCatalogRepository{db: db, logger: logger}
 }
 
-func (r *scheduleCatalogRepository) UpsertAll(ctx context.Context, names []string, serviceMetadata map[string]model.ServiceMetadata) error {
+func (r *scheduleCatalogRepository) UpsertAll(ctx context.Context, names []string, serviceMetadata map[string]run.ServiceMetadata) error {
 	if len(names) == 0 {
 		return nil
 	}
@@ -135,7 +135,7 @@ func (r *scheduleCatalogRepository) ExistsActive(ctx context.Context, scheduleNa
 	return exists, nil
 }
 
-func (r *scheduleCatalogRepository) GetServiceMetadata(ctx context.Context, scheduleName string) (map[string]model.ServiceMetadata, error) {
+func (r *scheduleCatalogRepository) GetServiceMetadata(ctx context.Context, scheduleName string) (map[string]run.ServiceMetadata, error) {
 	var raw []byte
 	err := r.db.QueryRowContext(ctx,
 		`SELECT service_metadata FROM schedule_catalog WHERE schedule_name = $1`,
@@ -145,12 +145,12 @@ func (r *scheduleCatalogRepository) GetServiceMetadata(ctx context.Context, sche
 		return nil, fmt.Errorf("get service_metadata for %q: %w", scheduleName, err)
 	}
 
-	var meta map[string]model.ServiceMetadata
+	var meta map[string]run.ServiceMetadata
 	if err := json.Unmarshal(raw, &meta); err != nil {
 		return nil, fmt.Errorf("unmarshal service_metadata: %w", err)
 	}
 	if meta == nil {
-		meta = map[string]model.ServiceMetadata{}
+		meta = map[string]run.ServiceMetadata{}
 	}
 	return meta, nil
 }
@@ -158,7 +158,7 @@ func (r *scheduleCatalogRepository) GetServiceMetadata(ctx context.Context, sche
 // UpsertAllTx is the tx-bound variant of UpsertAll. Each schedule in names
 // is upserted with its own per-schedule service metadata from the
 // serviceMetadata map (keyed by schedule_name).
-func (r *scheduleCatalogRepository) UpsertAllTx(ctx context.Context, tx *sqlx.Tx, names []string, serviceMetadata map[string]map[string]model.ServiceMetadata) error {
+func (r *scheduleCatalogRepository) UpsertAllTx(ctx context.Context, tx *sqlx.Tx, names []string, serviceMetadata map[string]map[string]run.ServiceMetadata) error {
 	if len(names) == 0 {
 		return nil
 	}
@@ -228,14 +228,14 @@ func (r *scheduleCatalogRepository) ListAll(ctx context.Context) ([]ScheduleCata
 		if err := rows.Scan(&name, &removedAt, &rawMeta); err != nil {
 			return nil, fmt.Errorf("scan schedule_catalog row: %w", err)
 		}
-		var meta map[string]model.ServiceMetadata
+		var meta map[string]run.ServiceMetadata
 		if len(rawMeta) > 0 {
 			if err := json.Unmarshal(rawMeta, &meta); err != nil {
 				return nil, fmt.Errorf("unmarshal service_metadata for %q: %w", name, err)
 			}
 		}
 		if meta == nil {
-			meta = map[string]model.ServiceMetadata{}
+			meta = map[string]run.ServiceMetadata{}
 		}
 		out = append(out, ScheduleCatalogRow{
 			ScheduleName:    name,

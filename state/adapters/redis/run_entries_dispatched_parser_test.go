@@ -3,7 +3,7 @@ package redis
 import (
 	"testing"
 
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -34,7 +34,7 @@ func TestParseRunEntriesDispatched_HappyPath(t *testing.T) {
 	assert.Equal(t, int32(1), evt.TotalTaskCount)
 	require.Len(t, evt.AllTasks, 1)
 	assert.Equal(t, taskID, evt.AllTasks[0].TaskID)
-	assert.Equal(t, model.TaskStatusPending, evt.AllTasks[0].Status)
+	assert.Equal(t, run.TaskStatusPending, evt.AllTasks[0].Status)
 	assert.Nil(t, evt.AllTasks[0].InheritedFromTaskID)
 }
 
@@ -58,7 +58,7 @@ func TestParseRunEntriesDispatched_InheritedTask(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, evt.AllTasks[0].InheritedFromTaskID)
 	assert.Equal(t, inheritedFrom, *evt.AllTasks[0].InheritedFromTaskID)
-	assert.Equal(t, model.TaskStatusSucceeded, evt.AllTasks[0].Status)
+	assert.Equal(t, run.TaskStatusSucceeded, evt.AllTasks[0].Status)
 }
 
 func TestParseRunEntriesDispatched_MissingPayload(t *testing.T) {

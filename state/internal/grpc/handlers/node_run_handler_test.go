@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/projection"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -14,12 +15,12 @@ import (
 )
 
 type fakeNodeRunRepo struct {
-	rows     []*model.NodeRun
+	rows     []*projection.NodeRun
 	err      error
 	gotLimit int
 }
 
-func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _ string, limit int) ([]*model.NodeRun, error) {
+func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _ string, limit int) ([]*projection.NodeRun, error) {
 	f.gotLimit = limit
 	if f.err != nil {
 		return nil, f.err
@@ -30,11 +31,11 @@ func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _ string, limit int) ([]
 func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
 	now := time.Now().UTC()
 	repo := &fakeNodeRunRepo{
-		rows: []*model.NodeRun{
+		rows: []*projection.NodeRun{
 			{
 				ScheduleID: uuid.New(), ScheduleName: "daily", Kind: "cron",
 				TerminalStatus: "succeeded",
-				TaskID: uuid.New(), TaskStatus: model.TaskStatusSucceeded,
+				TaskID: uuid.New(), TaskStatus: run.TaskStatusSucceeded,
 				RetryCount: 0, ImageTag: "v1", ManifestVersion: "m1",
 				CreatedAt: now,
 			},

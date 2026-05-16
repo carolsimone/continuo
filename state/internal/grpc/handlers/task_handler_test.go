@@ -8,7 +8,6 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/ports"
 	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
@@ -23,20 +22,20 @@ import (
 
 // stubTaskRepo is a minimal in-memory fake for TaskTrackerRepository.
 type stubTaskRepo struct {
-	tasks     map[uuid.UUID]*model.TaskTracker
+	tasks     map[uuid.UUID]*postgres.TaskTracker
 	updateErr error
 }
 
 func newStubTaskRepo() *stubTaskRepo {
-	return &stubTaskRepo{tasks: make(map[uuid.UUID]*model.TaskTracker)}
+	return &stubTaskRepo{tasks: make(map[uuid.UUID]*postgres.TaskTracker)}
 }
 
-func (s *stubTaskRepo) Create(_ context.Context, task *model.TaskTracker) error {
+func (s *stubTaskRepo) Create(_ context.Context, task *postgres.TaskTracker) error {
 	s.tasks[task.TaskID] = task
 	return nil
 }
 
-func (s *stubTaskRepo) GetByID(_ context.Context, id uuid.UUID) (*model.TaskTracker, error) {
+func (s *stubTaskRepo) GetByID(_ context.Context, id uuid.UUID) (*postgres.TaskTracker, error) {
 	t, ok := s.tasks[id]
 	if !ok {
 		return nil, postgres.ErrNotFound
@@ -44,11 +43,11 @@ func (s *stubTaskRepo) GetByID(_ context.Context, id uuid.UUID) (*model.TaskTrac
 	return t, nil
 }
 
-func (s *stubTaskRepo) GetByScheduleAndNode(_ context.Context, _ uuid.UUID, _, _, _ string) (*model.TaskTracker, error) {
+func (s *stubTaskRepo) GetByScheduleAndNode(_ context.Context, _ uuid.UUID, _, _, _ string) (*postgres.TaskTracker, error) {
 	return nil, postgres.ErrNotFound
 }
 
-func (s *stubTaskRepo) Update(_ context.Context, task *model.TaskTracker) error {
+func (s *stubTaskRepo) Update(_ context.Context, task *postgres.TaskTracker) error {
 	if s.updateErr != nil {
 		return s.updateErr
 	}
@@ -67,25 +66,25 @@ func (s *stubTaskRepo) Delete(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (s *stubTaskRepo) ListByScheduleID(_ context.Context, _ uuid.UUID, _ *model.TaskStatus, _, _ int) ([]*model.TaskTracker, int, error) {
+func (s *stubTaskRepo) ListByScheduleID(_ context.Context, _ uuid.UUID, _ *run.TaskStatus, _, _ int) ([]*postgres.TaskTracker, int, error) {
 	return nil, 0, nil
 }
 
-func (s *stubTaskRepo) List(_ context.Context, _ postgres.TaskFilters) ([]*model.TaskTracker, int, error) {
+func (s *stubTaskRepo) List(_ context.Context, _ postgres.TaskFilters) ([]*postgres.TaskTracker, int, error) {
 	return nil, 0, nil
 }
 
-func (s *stubTaskRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, task *model.TaskTracker) error {
+func (s *stubTaskRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, task *postgres.TaskTracker) error {
 	if _, ok := s.tasks[task.TaskID]; !ok {
 		return postgres.ErrNotFound
 	}
 	s.tasks[task.TaskID] = task
 	return nil
 }
-func (s *stubTaskRepo) BulkCreateTx(_ context.Context, _ *sqlx.Tx, _ []*model.TaskTracker) error {
+func (s *stubTaskRepo) BulkCreateTx(_ context.Context, _ *sqlx.Tx, _ []*postgres.TaskTracker) error {
 	return nil
 }
-func (s *stubTaskRepo) ListAllByScheduleID(_ context.Context, _ uuid.UUID) ([]*model.TaskTracker, error) {
+func (s *stubTaskRepo) ListAllByScheduleID(_ context.Context, _ uuid.UUID) ([]*postgres.TaskTracker, error) {
 	return nil, nil
 }
 func (s *stubTaskRepo) ResetTasksTx(_ context.Context, _ *sqlx.Tx, _ []uuid.UUID) (int32, error) {
@@ -113,14 +112,14 @@ func (s *stubTaskRepo) BulkCancelByScheduleIDTx(_ context.Context, _ *sqlx.Tx, _
 	return 0, nil
 }
 
-func ctxWithCaller(caller model.CallerID) context.Context {
+func ctxWithCaller(caller run.CallerID) context.Context {
 	md := metadata.Pairs("x-caller-id", string(caller))
 	return metadata.NewIncomingContext(context.Background(), md)
 }
 
 // helper to create a task in the stub repo
-func makeTask(repo *stubTaskRepo, taskStatus model.TaskStatus, retryCount int) *model.TaskTracker {
-	task := &model.TaskTracker{
+func makeTask(repo *stubTaskRepo, taskStatus run.TaskStatus, retryCount int) *postgres.TaskTracker {
+	task := &postgres.TaskTracker{
 		TaskID:      uuid.New(),
 		ScheduleID:  uuid.New(),
 		CreatedAt:   time.Now(),
@@ -269,7 +268,7 @@ func TestResetTask_InvalidTaskIDFormat(t *testing.T) {
 
 func TestResetTask_RequiresCallerIdentity(t *testing.T) {
 	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusFailed, 3)
+	task := makeTask(repo, run.TaskStatusFailed, 3)
 	h := NewTaskHandler(repo, noopUoWFactory(), newTestLogger())
 
 	_, err := h.ResetTask(context.Background(), &statev1.ResetTaskRequest{
@@ -285,7 +284,7 @@ func TestResetTask_NotFound(t *testing.T) {
 	repo := newStubTaskRepo()
 	h := NewTaskHandler(repo, noopUoWFactory(), newTestLogger())
 
-	_, err := h.ResetTask(ctxWithCaller(model.CallerStartupController), &statev1.ResetTaskRequest{
+	_, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
 		TaskId: uuid.NewString(),
 	})
 
@@ -296,7 +295,7 @@ func TestResetTask_NotFound(t *testing.T) {
 
 func TestResetTask_HappyPath_FailedToStartupController(t *testing.T) {
 	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusFailed, 3)
+	task := makeTask(repo, run.TaskStatusFailed, 3)
 
 	tasks := newResetFakeTaskCollection()
 	tasks.statuses[task.TaskID] = run.TaskStatusFailed
@@ -305,7 +304,7 @@ func TestResetTask_HappyPath_FailedToStartupController(t *testing.T) {
 
 	h := NewTaskHandler(repo, factory, newTestLogger())
 
-	resp, err := h.ResetTask(ctxWithCaller(model.CallerStartupController), &statev1.ResetTaskRequest{
+	resp, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
 		TaskId: task.TaskID.String(),
 	})
 
@@ -326,7 +325,7 @@ func TestResetTask_HappyPath_FailedToStartupController(t *testing.T) {
 
 func TestResetTask_RunIsTerminal_ReturnsFailedPrecondition(t *testing.T) {
 	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusFailed, 0)
+	task := makeTask(repo, run.TaskStatusFailed, 0)
 
 	terminalRun := run.HydrateRun(
 		task.ScheduleID, "sched",
@@ -346,7 +345,7 @@ func TestResetTask_RunIsTerminal_ReturnsFailedPrecondition(t *testing.T) {
 
 	h := NewTaskHandler(repo, factory, newTestLogger())
 
-	_, err := h.ResetTask(ctxWithCaller(model.CallerStartupController), &statev1.ResetTaskRequest{
+	_, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
 		TaskId: task.TaskID.String(),
 	})
 
@@ -358,7 +357,7 @@ func TestResetTask_RunIsTerminal_ReturnsFailedPrecondition(t *testing.T) {
 func TestResetTask_InvalidTransition_ReturnsFailedPrecondition(t *testing.T) {
 	// Task is PENDING → transition to PENDING is not in the table, yields ErrInvalidTransition.
 	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusPending, 0)
+	task := makeTask(repo, run.TaskStatusPending, 0)
 
 	tasks := newResetFakeTaskCollection()
 	tasks.statuses[task.TaskID] = run.TaskStatusPending // already pending
@@ -367,7 +366,7 @@ func TestResetTask_InvalidTransition_ReturnsFailedPrecondition(t *testing.T) {
 
 	h := NewTaskHandler(repo, factory, newTestLogger())
 
-	_, err := h.ResetTask(ctxWithCaller(model.CallerStartupController), &statev1.ResetTaskRequest{
+	_, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
 		TaskId: task.TaskID.String(),
 	})
 
@@ -380,7 +379,7 @@ func TestResetTask_UnauthorizedCaller_ReturnsPermissionDenied(t *testing.T) {
 	// executor-controller is not authorized to reset tasks (failed→pending is
 	// owned by startup-controller only).
 	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusFailed, 2)
+	task := makeTask(repo, run.TaskStatusFailed, 2)
 
 	tasks := newResetFakeTaskCollection()
 	tasks.statuses[task.TaskID] = run.TaskStatusFailed
@@ -389,7 +388,7 @@ func TestResetTask_UnauthorizedCaller_ReturnsPermissionDenied(t *testing.T) {
 
 	h := NewTaskHandler(repo, factory, newTestLogger())
 
-	_, err := h.ResetTask(ctxWithCaller(model.CallerExecutorController), &statev1.ResetTaskRequest{
+	_, err := h.ResetTask(ctxWithCaller(run.CallerExecutorController), &statev1.ResetTaskRequest{
 		TaskId: task.TaskID.String(),
 	})
 
@@ -402,7 +401,7 @@ func TestResetTask_TaskNotFoundInAggregate_ReturnsNotFound(t *testing.T) {
 	// Task exists in the pre-load repo but not in the task collection seen by
 	// the aggregate (e.g. race condition). Aggregate returns ErrTaskNotFound.
 	repo := newStubTaskRepo()
-	task := makeTask(repo, model.TaskStatusFailed, 0)
+	task := makeTask(repo, run.TaskStatusFailed, 0)
 
 	tasks := newResetFakeTaskCollection()
 	// No entry for task.TaskID in tasks.statuses → GetStatus returns exists=false.
@@ -411,7 +410,7 @@ func TestResetTask_TaskNotFoundInAggregate_ReturnsNotFound(t *testing.T) {
 
 	h := NewTaskHandler(repo, factory, newTestLogger())
 
-	_, err := h.ResetTask(ctxWithCaller(model.CallerStartupController), &statev1.ResetTaskRequest{
+	_, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
 		TaskId: task.TaskID.String(),
 	})
 

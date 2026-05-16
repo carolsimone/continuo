@@ -19,13 +19,13 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/jmoiron/sqlx"
 )
 
 // NodeRunRepository reads per-node run history.
 type NodeRunRepository interface {
-	List(ctx context.Context, serviceName, schemaName, tableName string, limit int) ([]*model.NodeRun, error)
+	List(ctx context.Context, serviceName, schemaName, tableName string, limit int) ([]*projection.NodeRun, error)
 }
 
 type nodeRunRepository struct {
@@ -53,7 +53,7 @@ func (r *nodeRunRepository) List(
 	ctx context.Context,
 	serviceName, schemaName, tableName string,
 	limit int,
-) ([]*model.NodeRun, error) {
+) ([]*projection.NodeRun, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 50
 	}
@@ -96,7 +96,7 @@ func (r *nodeRunRepository) List(
 		LIMIT $4
 	`
 
-	rows := []*model.NodeRun{}
+	rows := []*projection.NodeRun{}
 	if err := r.db.SelectContext(ctx, &rows, query,
 		serviceName, schemaName, tableName, limit); err != nil {
 		r.logger.Error("Failed to list node runs",

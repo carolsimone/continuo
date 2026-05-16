@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -26,13 +26,13 @@ var (
 
 // SchedulerTrackerRepository defines all operations for scheduler_tracker table
 type SchedulerTrackerRepository interface {
-	Create(ctx context.Context, tracker *model.SchedulerTracker) error
-	GetByID(ctx context.Context, scheduleID uuid.UUID) (*model.SchedulerTracker, error)
-	Update(ctx context.Context, tracker *model.SchedulerTracker) error
+	Create(ctx context.Context, tracker *SchedulerTracker) error
+	GetByID(ctx context.Context, scheduleID uuid.UUID) (*SchedulerTracker, error)
+	Update(ctx context.Context, tracker *SchedulerTracker) error
 	Cancel(ctx context.Context, scheduleID uuid.UUID, cancelledBy, reason string) error
 	// CancelTx cancels a scheduler within an existing transaction.
 	CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string) error
-	List(ctx context.Context, filters SchedulerFilters) ([]*model.SchedulerTracker, int, error)
+	List(ctx context.Context, filters SchedulerFilters) ([]*SchedulerTracker, int, error)
 	HasActiveSchedule(ctx context.Context, scheduleName string) (bool, error)
 	UpdateInitializationStatus(ctx context.Context, scheduleID uuid.UUID, status string) error
 	ResetInProgressInitializations(ctx context.Context) (int, error)
@@ -41,11 +41,11 @@ type SchedulerTrackerRepository interface {
 	GetLastRunPerSchedule(ctx context.Context) (map[string]LastRunData, error)
 	// GetActiveScheduler returns the most recently created PENDING or RUNNING run for a schedule.
 	// Returns nil, nil when no active run exists (never returns ErrNotFound).
-	GetActiveScheduler(ctx context.Context, scheduleName string) (*model.SchedulerTracker, error)
+	GetActiveScheduler(ctx context.Context, scheduleName string) (*SchedulerTracker, error)
 	// New: tx-accepting variants for atomic HTTP handler
-	UpdateTx(ctx context.Context, tx *sqlx.Tx, tracker *model.SchedulerTracker) error
+	UpdateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error
 	UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status string) error
-	CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *model.SchedulerTracker) error
+	CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error
 	// Task count helpers for event-driven run finalization
 	IncrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (terminal, total int32, err error)
 	DecrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, n int32) error
@@ -57,21 +57,21 @@ type SchedulerTrackerRepository interface {
 	FinalizeRunTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
 	// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row for the given id
 	// using SELECT ... FOR UPDATE. Must be called within a transaction.
-	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*model.SchedulerTracker, error)
+	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*SchedulerTracker, error)
 }
 
 // LastRunData holds the summary of the most recent run for a schedule.
 type LastRunData struct {
 	ScheduleName string
 	ScheduleID   uuid.UUID
-	Status       model.SchedulerStatus
+	Status       run.SchedulerStatus
 	CreatedAt    time.Time
 	IsRunning    bool
 }
 
 // SchedulerFilters defines query filters for List operation
 type SchedulerFilters struct {
-	Status       *model.SchedulerStatus
+	Status       *run.SchedulerStatus
 	ScheduleName *string
 	Limit        int
 	Offset       int
@@ -91,7 +91,7 @@ func NewSchedulerTrackerRepository(db *sqlx.DB, logger *slog.Logger) SchedulerTr
 }
 
 // Create inserts a new scheduler_tracker record into the database
-func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.SchedulerTracker) error {
+func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *SchedulerTracker) error {
 	metaJSON, err := json.Marshal(tracker.GetServiceMetadata())
 	if err != nil {
 		return fmt.Errorf("marshal service_metadata: %w", err)
@@ -150,7 +150,7 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *model.
 }
 
 // CreateTx inserts a new scheduler_tracker record within an existing transaction.
-func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *model.SchedulerTracker) error {
+func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error {
 	metaJSON, err := json.Marshal(tracker.GetServiceMetadata())
 	if err != nil {
 		return fmt.Errorf("marshal service_metadata: %w", err)
@@ -190,7 +190,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 }
 
 // GetByID retrieves a scheduler_tracker by schedule_id
-func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uuid.UUID) (*model.SchedulerTracker, error) {
+func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uuid.UUID) (*SchedulerTracker, error) {
 	query := `
 		SELECT
 			schedule_id, schedule_name, status, created_at,
@@ -203,7 +203,7 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 		WHERE schedule_id = $1
 	`
 
-	var tracker model.SchedulerTracker
+	var tracker SchedulerTracker
 	err := r.db.GetContext(ctx, &tracker, query, scheduleID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -230,7 +230,7 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 }
 
 // Update updates scheduler status and timestamps
-func (r *schedulerTrackerRepository) Update(ctx context.Context, tracker *model.SchedulerTracker) error {
+func (r *schedulerTrackerRepository) Update(ctx context.Context, tracker *SchedulerTracker) error {
 	query := `
 		UPDATE scheduler_tracker
 		SET status = :status,
@@ -278,7 +278,7 @@ func (r *schedulerTrackerRepository) Cancel(ctx context.Context, scheduleID uuid
 	`
 
 	result, err := r.db.ExecContext(ctx, query,
-		model.SchedulerStatusCancelled,
+		run.SchedulerStatusCancelled,
 		time.Now(),
 		cancelledBy,
 		reason,
@@ -318,7 +318,7 @@ func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, 
 		    cancellation_reason = $4
 		WHERE schedule_id = $5
 		  AND status NOT IN ('succeeded', 'failed', 'cancelled')
-	`, model.SchedulerStatusCancelled, time.Now(), cancelledBy, reason, scheduleID)
+	`, run.SchedulerStatusCancelled, time.Now(), cancelledBy, reason, scheduleID)
 	if err != nil {
 		return fmt.Errorf("failed to cancel scheduler tx: %w", err)
 	}
@@ -330,7 +330,7 @@ func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, 
 }
 
 // List queries schedulers with filters and pagination
-func (r *schedulerTrackerRepository) List(ctx context.Context, filters SchedulerFilters) ([]*model.SchedulerTracker, int, error) {
+func (r *schedulerTrackerRepository) List(ctx context.Context, filters SchedulerFilters) ([]*SchedulerTracker, int, error) {
 	// Build dynamic WHERE clause
 	whereClauses := []string{}
 	args := map[string]interface{}{}
@@ -392,7 +392,7 @@ func (r *schedulerTrackerRepository) List(ctx context.Context, filters Scheduler
 	}
 	defer stmt.Close()
 
-	var trackers []*model.SchedulerTracker
+	var trackers []*SchedulerTracker
 	if err := stmt.SelectContext(ctx, &trackers, args); err != nil {
 		r.logger.Error("Failed to list schedulers", "error", err)
 		return nil, 0, fmt.Errorf("failed to list schedulers: %w", err)
@@ -503,7 +503,7 @@ func (r *schedulerTrackerRepository) ResetInProgressInitializations(ctx context.
 
 // GetActiveScheduler returns the most recently created PENDING or RUNNING run for the given schedule name.
 // Returns nil, nil when no active run exists — never returns ErrNotFound.
-func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, scheduleName string) (*model.SchedulerTracker, error) {
+func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, scheduleName string) (*SchedulerTracker, error) {
 	query := `
 		SELECT
 			schedule_id, schedule_name, status, created_at,
@@ -519,7 +519,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 		LIMIT 1
 	`
 
-	var tracker model.SchedulerTracker
+	var tracker SchedulerTracker
 	err := r.db.GetContext(ctx, &tracker, query, scheduleName)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -544,7 +544,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 }
 
 // UpdateTx updates scheduler status, timestamps, kind, and source_run_id within an existing transaction.
-func (r *schedulerTrackerRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, tracker *model.SchedulerTracker) error {
+func (r *schedulerTrackerRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error {
 	result, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
 		SET status            = $2,
@@ -668,8 +668,8 @@ func (r *schedulerTrackerRepository) SetTerminalTaskCountTx(ctx context.Context,
 
 // GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row using SELECT ... FOR UPDATE.
 // Returns ErrNotFound when no row exists for the given id.
-func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*model.SchedulerTracker, error) {
-	var tracker model.SchedulerTracker
+func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*SchedulerTracker, error) {
+	var tracker SchedulerTracker
 	err := tx.QueryRowxContext(ctx, `
 		SELECT
 			schedule_id, schedule_name, status, created_at,
@@ -764,7 +764,7 @@ func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) 
 		if err := rows.Scan(&d.ScheduleName, &d.ScheduleID, &statusStr, &d.CreatedAt, &d.IsRunning); err != nil {
 			return nil, fmt.Errorf("scan last run row: %w", err)
 		}
-		d.Status = model.SchedulerStatus(statusStr)
+		d.Status = run.SchedulerStatus(statusStr)
 		result[d.ScheduleName] = d
 	}
 	return result, rows.Err()

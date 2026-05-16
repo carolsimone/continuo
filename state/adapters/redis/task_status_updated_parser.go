@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -36,7 +36,7 @@ func ParseTaskStatusUpdated(msg goredis.XMessage) (events.TaskStatusUpdated, err
 	if err != nil {
 		return events.TaskStatusUpdated{}, fmt.Errorf("invalid schedule_id: %w", err)
 	}
-	status, err := model.ParseTaskStatus(strings.ToLower(statusStr))
+	status, err := run.ParseTaskStatus(strings.ToLower(statusStr))
 	if err != nil {
 		return events.TaskStatusUpdated{}, fmt.Errorf("invalid status %q: %w", statusStr, err)
 	}

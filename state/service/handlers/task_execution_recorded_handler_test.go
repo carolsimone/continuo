@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/events"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
@@ -22,15 +22,15 @@ import (
 // unit tests. Only CreateTx is exercised by the handler; the other methods
 // are stubbed to return zero values.
 type fakeTaskExecutionRepo struct {
-	created   []*model.TaskExecution
+	created   []*postgres.TaskExecution
 	createErr error
 }
 
-func (f *fakeTaskExecutionRepo) Create(_ context.Context, _ *model.TaskExecution) error {
+func (f *fakeTaskExecutionRepo) Create(_ context.Context, _ *postgres.TaskExecution) error {
 	return nil
 }
 
-func (f *fakeTaskExecutionRepo) CreateTx(_ context.Context, _ *sqlx.Tx, e *model.TaskExecution) error {
+func (f *fakeTaskExecutionRepo) CreateTx(_ context.Context, _ *sqlx.Tx, e *postgres.TaskExecution) error {
 	if f.createErr != nil {
 		return f.createErr
 	}
@@ -38,11 +38,11 @@ func (f *fakeTaskExecutionRepo) CreateTx(_ context.Context, _ *sqlx.Tx, e *model
 	return nil
 }
 
-func (f *fakeTaskExecutionRepo) GetByID(_ context.Context, _ uuid.UUID) (*model.TaskExecution, error) {
+func (f *fakeTaskExecutionRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.TaskExecution, error) {
 	return nil, nil
 }
 
-func (f *fakeTaskExecutionRepo) ListByScheduleID(_ context.Context, _ string, _, _ int) ([]*model.TaskExecution, int, error) {
+func (f *fakeTaskExecutionRepo) ListByScheduleID(_ context.Context, _ string, _, _ int) ([]*postgres.TaskExecution, int, error) {
 	return nil, 0, nil
 }
 

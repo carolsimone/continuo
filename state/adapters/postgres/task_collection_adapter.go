@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -87,9 +86,9 @@ func (a *TaskCollectionAdapter) UpdateStatusIfChanged(ctx context.Context, taskI
 }
 
 func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task) error {
-	rows := make([]*model.TaskTracker, 0, len(tasks))
+	rows := make([]*TaskTracker, 0, len(tasks))
 	for _, t := range tasks {
-		rows = append(rows, &model.TaskTracker{
+		rows = append(rows, &TaskTracker{
 			TaskID:              t.TaskID,
 			ScheduleID:          t.ScheduleID,
 			CreatedAt:           t.CreatedAt,
@@ -116,7 +115,7 @@ func (a *TaskCollectionAdapter) BulkCancel(ctx context.Context, runID uuid.UUID,
 }
 
 func (a *TaskCollectionAdapter) Update(ctx context.Context, t run.Task) error {
-	return a.repo.UpdateTx(ctx, a.tx, &model.TaskTracker{
+	return a.repo.UpdateTx(ctx, a.tx, &TaskTracker{
 		TaskID:              t.TaskID,
 		ScheduleID:          t.ScheduleID,
 		CreatedAt:           t.CreatedAt,

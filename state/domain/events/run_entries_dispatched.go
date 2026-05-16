@@ -1,7 +1,7 @@
 package events
 
 import (
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 )
 
@@ -19,7 +19,7 @@ type RunEntriesDispatchedTask struct {
 	ServiceName         string
 	SchemaName          string
 	TableName           string
-	Status              model.TaskStatus
+	Status              run.TaskStatus
 	MaxRetries          int32
 	ManifestVersion     string
 	ImageTag            string
