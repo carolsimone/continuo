@@ -377,3 +377,131 @@ func (r *Run) Cancel(
 	r.events = append(r.events, evt)
 	return []DomainEvent{evt}, nil
 }
+
+// RecordTaskStatus is the hot-path mutator driven by task.status.updated:v1.
+// Returns no events when:
+//   - the run is already terminal (stale event)
+//   - the task row exists but the status did not change (replay)
+//   - the new status is non-terminal (running) — handler ACKs, no finalize
+//   - the new status is terminal but terminal_task_count != total_task_count
+//     or retryable-failed remains, so finalize is deferred
+//
+// Returns ErrTaskRowNotProjected when the task row is not yet present; the
+// adapter binding treats this as a transient error and the consumer redelivers.
+func (r *Run) RecordTaskStatus(
+	ctx context.Context,
+	tasks TaskCollection,
+	taskID uuid.UUID,
+	newStatus TaskStatus,
+	retryCount int32,
+) ([]DomainEvent, error) {
+	if r.IsTerminal() {
+		return nil, nil
+	}
+	prev, exists, err := tasks.GetStatus(ctx, taskID)
+	if err != nil {
+		// Mirror the legacy lenient behaviour: treat read failure as
+		// "no previous status" and let the update-if-changed branch below
+		// disambiguate replay vs. missing-row.
+		prev = ""
+		exists = false
+	}
+
+	// Guard: if the row is not present, return a transient error so the
+	// consumer redelivers after the projection arrives.
+	if !exists {
+		present, exErr := tasks.Exists(ctx, taskID)
+		if exErr != nil {
+			return nil, fmt.Errorf("exists check: %w", exErr)
+		}
+		if !present {
+			return nil, ErrTaskRowNotProjected
+		}
+		// Row exists (GetStatus may have errored); proceed with empty prev.
+	}
+
+	affected, err := tasks.UpdateStatusIfChanged(ctx, taskID, newStatus, retryCount)
+	if err != nil {
+		return nil, fmt.Errorf("update task status: %w", err)
+	}
+	if affected == 0 {
+		// Status unchanged — replay, no-op.
+		return nil, nil
+	}
+
+	isTerminal := newStatus.IsTerminal()
+	prevWasTerminal := prev != "" && prev.IsTerminal()
+
+	if !isTerminal {
+		if prevWasTerminal {
+			// FAILED→RUNNING (k8s retry) — un-fill the slot.
+			r.terminalTaskCount--
+			if r.terminalTaskCount < 0 {
+				r.terminalTaskCount = 0
+			}
+			r.changes.terminalTaskCountDirty = true
+		}
+		return nil, nil
+	}
+
+	// Terminal transition — increment the counter.
+	r.terminalTaskCount++
+	r.changes.terminalTaskCountDirty = true
+
+	if !r.totalTaskCount.Valid || r.terminalTaskCount != r.totalTaskCount.Int32 {
+		return nil, nil
+	}
+	if r.initStatus != InitStatusCompleted {
+		return nil, nil
+	}
+	if r.status != SchedulerStatusRunning {
+		return nil, nil
+	}
+	hasRetryable, err := tasks.HasRetryableFailed(ctx, r.scheduleID)
+	if err != nil {
+		return nil, fmt.Errorf("has retryable failed: %w", err)
+	}
+	if hasRetryable {
+		return nil, nil
+	}
+	anyFailed, err := tasks.HasFailed(ctx, r.scheduleID)
+	if err != nil {
+		return nil, fmt.Errorf("has failed: %w", err)
+	}
+
+	outcome := SchedulerStatusSucceeded
+	if anyFailed {
+		outcome = SchedulerStatusFailed
+	}
+	return r.finalize(outcome, timeNow()), nil
+}
+
+// MarkDispatchFailed is called when orchestrator emits
+// run.entries.dispatch_failed:v1. Records RunFinalized(FAILED) and a side
+// RunDispatchFailed for observability. No-op when r is already terminal.
+func (r *Run) MarkDispatchFailed(reason string, now time.Time) ([]DomainEvent, error) {
+	if r.IsTerminal() {
+		return nil, nil
+	}
+	evts := r.finalize(SchedulerStatusFailed, now)
+	side := RunDispatchFailed{ID: r.scheduleID, Name: r.scheduleName, Reason: reason}
+	r.events = append(r.events, side)
+	return append(evts, side), nil
+}
+
+func (r *Run) finalize(outcome SchedulerStatus, now time.Time) []DomainEvent {
+	r.status = outcome
+	completedAt := now
+	r.completedAt = &completedAt
+	r.changes.statusDirty = true
+	r.changes.completedDirty = true
+	evt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: outcome}
+	r.events = append(r.events, evt)
+	return []DomainEvent{evt}
+}
+
+// timeNow is a package-private hook so RecordTaskStatus can timestamp its
+// finalize event without taking a Clock parameter (the inbound
+// task.status.updated:v1 event has no timestamp field). Tests can override
+// it via a package_test helper if needed; production uses time.Now.
+var timeNow = time.Now

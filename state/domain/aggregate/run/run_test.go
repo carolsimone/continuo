@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -244,5 +245,151 @@ func TestAcceptDispatch_NoOpWhenAlreadyTerminal(t *testing.T) {
 	}
 	if len(events) != 0 || len(tc.bulkCreated) != 0 {
 		t.Fatalf("expected no-op on terminal run; events=%d bulk=%d", len(events), len(tc.bulkCreated))
+	}
+}
+
+// runningRunWithProjection puts a Run through AcceptDispatch with all
+// pending tasks so it is RUNNING with init=completed, total=N, terminal=0.
+func runningRunWithProjection(t *testing.T, tc *fakeTaskCollection, taskIDs ...uuid.UUID) *run.Run {
+	t.Helper()
+	r := freshPendingRun(t)
+	projection := make([]run.DispatchedTask, 0, len(taskIDs))
+	for i, id := range taskIDs {
+		projection = append(projection, run.DispatchedTask{
+			TaskID:      id,
+			ServiceName: "s", SchemaName: "p", TableName: fmt.Sprintf("t%d", i),
+			Status: run.TaskStatusPending, MaxRetries: 3,
+		})
+	}
+	if _, err := r.AcceptDispatch(context.Background(), tc, projection, time.Now()); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	return r
+}
+
+func TestRecordTaskStatus_FinalizesWhenAllSucceeded(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1, id2 := uuid.New(), uuid.New()
+	r := runningRunWithProjection(t, tc, id1, id2)
+
+	// First task → SUCCEEDED, not yet finalized.
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(events) != 0 || r.IsTerminal() {
+		t.Fatalf("premature finalize: events=%d terminal=%v", len(events), r.IsTerminal())
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("terminal_task_count: got %d want 1", r.TerminalTaskCount())
+	}
+
+	// Second task → SUCCEEDED, finalize.
+	tc.hasFailed = false
+	tc.hasRetryable = false
+	events, err = r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusSucceeded, 0)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !r.IsTerminal() || r.Status() != run.SchedulerStatusSucceeded {
+		t.Fatalf("expected SUCCEEDED terminal, got %s", r.Status())
+	}
+	fin, ok := events[0].(run.RunFinalized)
+	if !ok || fin.Outcome != run.SchedulerStatusSucceeded {
+		t.Fatalf("expected RunFinalized succeeded, got %+v", events[0])
+	}
+}
+
+func TestRecordTaskStatus_FinalizesAsFailedWhenAnyFailed(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1, id2 := uuid.New(), uuid.New()
+	r := runningRunWithProjection(t, tc, id1, id2)
+
+	_, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0)
+	tc.hasFailed = true
+	tc.hasRetryable = false
+	events, err := r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusSucceeded, 0)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if r.Status() != run.SchedulerStatusFailed {
+		t.Fatalf("status: got %s want failed", r.Status())
+	}
+	fin, ok := events[0].(run.RunFinalized)
+	if !ok || fin.Outcome != run.SchedulerStatusFailed {
+		t.Fatalf("expected RunFinalized failed, got %+v", events[0])
+	}
+}
+
+func TestRecordTaskStatus_DefersFinalizeWhenRetryablePending(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1, id2 := uuid.New(), uuid.New()
+	r := runningRunWithProjection(t, tc, id1, id2)
+
+	_, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0)
+	tc.hasFailed = true
+	tc.hasRetryable = true // a retry will come
+	events, err := r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusFailed, 0)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected finalize deferred, got %d events", len(events))
+	}
+	if r.IsTerminal() {
+		t.Fatalf("status: got %s want still running", r.Status())
+	}
+	if r.TerminalTaskCount() != 2 {
+		t.Fatalf("terminal_task_count: got %d want 2", r.TerminalTaskCount())
+	}
+}
+
+func TestRecordTaskStatus_DecrementsOnRetry(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1 := uuid.New()
+	r := runningRunWithProjection(t, tc, id1, uuid.New())
+
+	_, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0)
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("pre-retry terminal: got %d want 1", r.TerminalTaskCount())
+	}
+	// k8s-controller emits RUNNING on retry; FAILED→RUNNING must un-fill.
+	tc.statuses[id1] = run.TaskStatusFailed
+	_, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if r.TerminalTaskCount() != 0 {
+		t.Fatalf("post-retry terminal: got %d want 0", r.TerminalTaskCount())
+	}
+}
+
+func TestRecordTaskStatus_NoOpWhenSchedulerTerminal(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	_, _ = r.Cancel(ctx, tc, "tester", "drift", time.Now())
+
+	events, err := r.RecordTaskStatus(ctx, tc, uuid.New(), run.TaskStatusSucceeded, 0)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected no-op, got %d events", len(events))
+	}
+}
+
+func TestRecordTaskStatus_TransientWhenTaskRowMissing(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+
+	_, err := r.RecordTaskStatus(ctx, tc, uuid.New() /* not in tc.statuses */, run.TaskStatusSucceeded, 0)
+	if err != run.ErrTaskRowNotProjected {
+		t.Fatalf("err: got %v want ErrTaskRowNotProjected", err)
 	}
 }
