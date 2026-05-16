@@ -7,9 +7,25 @@ import yaml
 import streams_contract
 
 
+def _find_contract_yaml() -> Path:
+    """Walk up from this file until pkg/streams/contract.yaml is found.
+
+    Locally the test runs from the host and the file lives at the repo root.
+    In CI the test runs inside the manifest-controller container, where the
+    repo's pkg/ is mounted at /app/pkg. Either way, walking ancestors finds it.
+    """
+    start = Path(__file__).resolve()
+    for parent in [start.parent, *start.parents]:
+        candidate = parent / "pkg" / "streams" / "contract.yaml"
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        f"contract.yaml not found in any ancestor of {start}"
+    )
+
+
 def test_streams_contract_matches_yaml():
-    repo_root = Path(__file__).resolve().parents[2]
-    contract_path = repo_root / "pkg" / "streams" / "contract.yaml"
+    contract_path = _find_contract_yaml()
     contract = yaml.safe_load(contract_path.read_text())
 
     expected = {}

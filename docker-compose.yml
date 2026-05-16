@@ -410,6 +410,7 @@ services:
       AWS_DEFAULT_REGION: us-east-1
     volumes:
       - ./dbt/services:/manifests:ro
+      - ./pkg:/app/pkg:ro
       - manifest-registry:/data
     depends_on:
       redis:
