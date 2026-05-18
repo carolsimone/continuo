@@ -48,7 +48,7 @@ func (h *RunEntriesDispatchedHandler) Handle(
 	domainEvents, err := r.AcceptDispatch(ctx, u.TaskCollection(), projection, u.Clock().Now())
 	if err != nil {
 		if errors.Is(err, run.ErrInvalidDispatchedTask) {
-			return fmt.Errorf("%w: %v", pkgevents.ErrPermanent, err)
+			return errors.Join(pkgevents.ErrPermanent, err)
 		}
 		return fmt.Errorf("accept dispatch: %w", err)
 	}

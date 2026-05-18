@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
@@ -47,6 +48,7 @@ func (h *ScheduleCatalogHandler) Handle(
 	if _, err := c.Reconcile(evt.ScheduleNames, broadcastServiceMetadata(evt.ScheduleNames, evt.ServiceMetadata), u.Clock().Now()); err != nil {
 		if errors.Is(err, catalog.ErrEmptyReconciliation) {
 			h.logger.Error("schedules.loaded: empty schedule_names list — refusing to nuke catalog")
+			return errors.Join(pkgevents.ErrPermanent, err)
 		}
 		return fmt.Errorf("reconcile: %w", err)
 	}

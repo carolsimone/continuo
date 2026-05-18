@@ -431,10 +431,9 @@ func TestRunEntriesDispatched_InvalidTaskNameWrapsAsPermanent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid task name")
 	}
-	// FIXME(task-2): use errors.Join to propagate both sentinels
-	// if !errors.Is(err, run.ErrInvalidDispatchedTask) {
-	// 	t.Errorf("error must wrap run.ErrInvalidDispatchedTask, got: %v", err)
-	// }
+	if !errors.Is(err, run.ErrInvalidDispatchedTask) {
+		t.Errorf("error must wrap run.ErrInvalidDispatchedTask, got: %v", err)
+	}
 	if !errors.Is(err, pkgevents.ErrPermanent) {
 		t.Errorf("error must wrap pkgevents.ErrPermanent so the binding ACKs-and-drops, got: %v", err)
 	}

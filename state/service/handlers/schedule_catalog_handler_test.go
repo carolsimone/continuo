@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
@@ -177,4 +178,30 @@ func TestScheduleCatalogHandler_SaveErrorPropagates(t *testing.T) {
 		EventID: uuid.New(), ScheduleNames: []string{"s"},
 	}, uuid.New())
 	require.Error(t, err)
+}
+
+// TestScheduleCatalogHandler_EmptyListWrapsAsPermanent asserts that when
+// schedules.loaded:v1 arrives with schedule_names=[], the handler returns
+// an error that satisfies BOTH errors.Is(err, catalog.ErrEmptyReconciliation)
+// (the domain reason) AND errors.Is(err, pkgevents.ErrPermanent) (the infra
+// contract that tells the Redis binding to ACK-and-drop). Without the
+// permanent wrap, the binding NACKs the poison payload and reclaims it
+// forever — defeating the empty-list guard's own intent.
+func TestScheduleCatalogHandler_EmptyListWrapsAsPermanent(t *testing.T) {
+	repo := &fakeCatalogPortRepo{}
+	u := &uow.FakeUnitOfWork{}
+	u.SetCatalogRepo(repo)
+	h := handlers.NewScheduleCatalogHandler(testLogger())
+
+	err := h.Handle(context.Background(), u, events.ScheduleCatalogLoaded{
+		EventID:       uuid.New(),
+		ScheduleNames: []string{},
+	}, uuid.New())
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, catalog.ErrEmptyReconciliation),
+		"error must wrap catalog.ErrEmptyReconciliation, got: %v", err)
+	assert.True(t, errors.Is(err, pkgevents.ErrPermanent),
+		"error must wrap pkgevents.ErrPermanent so the binding ACKs-and-drops, got: %v", err)
+	assert.Nil(t, repo.saved, "SaveCatalog must not be called on empty list")
 }
