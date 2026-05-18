@@ -1,0 +1,32 @@
+package redis
+
+import (
+	"testing"
+
+	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestParseScheduleCancelled_HappyPath(t *testing.T) {
+	id := uuid.New()
+	msg := goredis.XMessage{ID: "3-0", Values: map[string]interface{}{
+		"schedule_id": id.String(),
+	}}
+	evt, err := ParseScheduleCancelled(msg)
+	require.NoError(t, err)
+	assert.Equal(t, id, evt.ScheduleID)
+}
+
+func TestParseScheduleCancelled_MissingScheduleID(t *testing.T) {
+	_, err := ParseScheduleCancelled(goredis.XMessage{ID: "3-0", Values: map[string]interface{}{}})
+	require.Error(t, err)
+}
+
+func TestParseScheduleCancelled_InvalidScheduleID(t *testing.T) {
+	_, err := ParseScheduleCancelled(goredis.XMessage{ID: "3-0", Values: map[string]interface{}{
+		"schedule_id": "not-a-uuid",
+	}})
+	require.Error(t, err)
+}
