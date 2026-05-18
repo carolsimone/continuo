@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -13,14 +12,12 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/config"
-	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/internal/lifecycle"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
-	"github.com/carolsimone/continuo/executor-controller/service/messagebus"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -102,83 +99,50 @@ func main() {
 	// ========================================================================
 
 	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
-
-	// ========================================================================
-	// INITIALIZE TRANSACTION RUNNER & HANDLERS
-	// ========================================================================
-
-	txRunner := uow.NewPostgresTransactionRunner(pgDB, logger)
-
-	// Create handler
-	deployHandler := handlers.NewDeployHandler(txRunner, logger)
-
-	// Create command handlers map
-	commandHandlers := map[string]messagebus.CommandHandler{
-		"command.DeployJob": func(ctx context.Context, cmd command.Command) error {
-			return deployHandler.Handle(ctx, cmd.(command.DeployJob))
-		},
-	}
-
-	// Create MessageBus
-	messageBus := messagebus.NewMessageBus(
-		commandHandlers,
-		map[string][]messagebus.EventHandler{}, // No event handlers yet
-		logger,
-	)
-
-	// ========================================================================
-	// INITIALIZE CANCELLED SCHEDULES REPOSITORY
-	// ========================================================================
-
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
 	// ========================================================================
-	// INITIALIZE REDIS CONSUMERS & PRODUCER
+	// INITIALIZE UOW FACTORY + HANDLERS + BINDINGS
 	// ========================================================================
 
-	// Each stream gets its own consumer instance and consumer group.
-	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String()[:8])
-
-	queryConsumer, err := redis.NewConsumer(
-		redisClient,
-		consumerName,
-		streams.ExecutorQueryModel,
-		streams.QueryModelV1,
-		messageBus,
-		pgDB,
-		cancelledSchedulesRepo,
-		logger,
-	)
-	if err != nil {
-		logger.Error("Failed to create query.model consumer", "error", err)
-		os.Exit(1)
+	// uowFactory returns a fresh PostgresUnitOfWork per inbound message so
+	// concurrent handlers never share transaction state.
+	uowFactory := func() uow.UnitOfWork {
+		return uow.NewPostgresUnitOfWork(pgDB, logger)
 	}
-	logger.Info("query.model consumer initialized",
-		"stream", streams.QueryModelV1,
-		"group", streams.ExecutorQueryModel,
-	)
 
-	retryConsumer, err := redis.NewConsumer(
-		redisClient,
-		consumerName,
-		streams.ExecutorRetry,
-		streams.RetryTaskV1,
-		messageBus,
-		pgDB,
-		cancelledSchedulesRepo,
-		logger,
-	)
-	if err != nil {
-		logger.Error("Failed to create retry.task consumer", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("retry.task consumer initialized",
-		"stream", streams.RetryTaskV1,
-		"group", streams.ExecutorRetry,
-	)
+	queryHandler := handlers.NewQueryModelHandler(logger)
+	retryHandler := handlers.NewRetryTaskHandler(logger)
+	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
 
-	// Single publisher routes to job-deployed, task-status, and node-updated streams.
+	queryBinding := redis.NewQueryModelBinding(uowFactory, queryHandler, logger)
+	retryBinding := redis.NewRetryTaskBinding(uowFactory, retryHandler, logger)
+	scheduleCancelledBinding := redis.NewScheduleCancelledBinding(
+		uowFactory, scheduleCancelledHandler, logger)
+
+	// ========================================================================
+	// INITIALIZE REDIS PRODUCERS + CONSUMERS
+	// ========================================================================
+
 	publisher := redis.NewProducer(redisClient, logger)
+
+	queryConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.QueryModelV1, streams.ExecutorQueryModel,
+		queryBinding, logger)
+	logger.Info("query.model consumer initialized",
+		"stream", streams.QueryModelV1, "group", streams.ExecutorQueryModel)
+
+	retryConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.RetryTaskV1, streams.ExecutorRetry,
+		retryBinding, logger)
+	logger.Info("retry.task consumer initialized",
+		"stream", streams.RetryTaskV1, "group", streams.ExecutorRetry)
+
+	scheduleCancelledConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ScheduleCancelledV1, streams.ExecutorScheduleCancelled,
+		scheduleCancelledBinding, logger)
+	logger.Info("schedule.cancelled consumer initialized",
+		"stream", streams.ScheduleCancelledV1, "group", streams.ExecutorScheduleCancelled)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -195,7 +159,6 @@ func main() {
 		logger,
 	)
 
-	// Start outbox processor in background goroutine
 	go func() {
 		if err := outboxProcessor.Run(ctx); err != nil {
 			logger.Error("Outbox processor error", "error", err)
@@ -203,25 +166,8 @@ func main() {
 	}()
 
 	// ========================================================================
-	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER
+	// CANCELLED SCHEDULES TTL SWEEPER
 	// ========================================================================
-
-	scheduleCancelledConsumer, err := redis.NewScheduleCancelledConsumer(
-		redisClient,
-		streams.ScheduleCancelledV1,
-		streams.ExecutorScheduleCancelled,
-		cancelledSchedulesRepo,
-		logger,
-	)
-	if err != nil {
-		logger.Error("Failed to create schedule cancelled consumer", "error", err)
-		os.Exit(1)
-	}
-	go func() {
-		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
-			logger.Error("Schedule cancelled consumer error", "error", err)
-		}
-	}()
 
 	go func() {
 		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
@@ -263,14 +209,18 @@ func main() {
 
 	logger.Info("Service initialization complete, starting consumers")
 
-	// Start the retry consumer in a background goroutine.
 	go func() {
 		if err := retryConsumer.Start(ctx); err != nil {
 			logger.Error("retry.task consumer error", "error", err)
 		}
 	}()
+	go func() {
+		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
+			logger.Error("schedule.cancelled consumer error", "error", err)
+		}
+	}()
 
-	// Block on the query.model consumer; both consumers stop when the context is cancelled.
+	// Block on the query.model consumer; all consumers stop when ctx is cancelled.
 	if err := queryConsumer.Start(ctx); err != nil {
 		logger.Error("query.model consumer error", "error", err)
 		os.Exit(1)
