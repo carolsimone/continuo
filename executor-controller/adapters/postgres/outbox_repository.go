@@ -9,7 +9,6 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 )
 
 // OutboxRepository defines operations for the deployment_outbox table
@@ -33,18 +32,12 @@ type outboxRepository struct {
 	logger   *slog.Logger
 }
 
-// NewOutboxRepository creates a new OutboxRepository
-func NewOutboxRepository(db *sqlx.DB, logger *slog.Logger) OutboxRepository {
+// NewOutboxRepository creates an OutboxRepository against any sqlx executor
+// (either *sqlx.DB for autocommit work, or *sqlx.Tx when bound to an active
+// transaction).
+func NewOutboxRepository(executor Executor, logger *slog.Logger) OutboxRepository {
 	return &outboxRepository{
-		executor: db,
-		logger:   logger,
-	}
-}
-
-// NewOutboxRepositoryWithTx creates a transaction-bound OutboxRepository.
-func NewOutboxRepositoryWithTx(tx *sqlx.Tx, logger *slog.Logger) OutboxRepository {
-	return &outboxRepository{
-		executor: tx,
+		executor: executor,
 		logger:   logger,
 	}
 }

@@ -69,5 +69,5 @@ func (r *PostgresTransactionRunner) WithinTransaction(ctx context.Context, fn fu
 }
 
 func (tx *postgresTransaction) OutboxRepo() postgres.OutboxRepository {
-	return postgres.NewOutboxRepositoryWithTx(tx.tx, tx.logger)
+	return postgres.NewOutboxRepository(tx.tx, tx.logger)
 }
