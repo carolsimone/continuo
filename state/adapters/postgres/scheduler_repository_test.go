@@ -363,3 +363,57 @@ func TestSchedulerTrackerRepository_SetTerminalTaskCountTx_GREATEST(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, int32(7), got.TerminalTaskCount, "higher value must advance terminal_task_count")
 }
+
+// TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow walks the full
+// FAILED → RUNNING → FAILED → RUNNING → FAILED transition sequence that a
+// retry-exhausting task produces in production. The aggregate increments the
+// counter in memory on each FAILED and decrements it on each FAILED→RUNNING
+// retry, then SaveRun writes the absolute value via SetTerminalTaskCountTx.
+// If SetTerminalTaskCountTx silently ignores decrements (the pre-fix
+// GREATEST behaviour), the final stored count is 3 instead of the correct 1.
+//
+// This is the unit-level guard against the inflation bug that broke
+// TestE2E_FailurePath_RerunRebasesBothFailureSubtrees in PR #61 CI.
+func TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	id := uuid.New()
+	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+		ScheduleID:           id,
+		ScheduleName:         "retry-flow-" + id.String(),
+		Status:               run.SchedulerStatusRunning,
+		CreatedAt:            time.Now(),
+		InitializationStatus: "completed",
+		TotalTaskCount:       sql.NullInt32{Int32: 1, Valid: true},
+	}))
+	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+
+	// Each row models one SaveRun call from the aggregate after a task event.
+	// The "want" column is what terminal_task_count must equal in the DB
+	// AFTER the SaveRun commit for the corresponding event.
+	steps := []struct {
+		event      string
+		writeValue int32
+		want       int32
+	}{
+		{"RUNNING→FAILED(0): aggregate ++", 1, 1},
+		{"FAILED→RUNNING(1): aggregate --", 0, 0}, // decrement MUST land
+		{"RUNNING→FAILED(1): aggregate ++", 1, 1},
+		{"FAILED→RUNNING(2): aggregate --", 0, 0}, // decrement MUST land
+		{"RUNNING→FAILED(2): aggregate ++", 1, 1}, // final terminal
+	}
+
+	for _, s := range steps {
+		tx, err := db.BeginTxx(ctx, nil)
+		require.NoError(t, err)
+		require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx, id, s.writeValue), s.event)
+		require.NoError(t, tx.Commit(), s.event)
+
+		got, err := repo.GetByID(ctx, id)
+		require.NoError(t, err, s.event)
+		assert.Equal(t, s.want, got.TerminalTaskCount,
+			"after event %q: stored terminal_task_count must be %d", s.event, s.want)
+	}
+}
