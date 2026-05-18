@@ -76,7 +76,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | `deployment_outbox` (+ `image_tag` column), `processed_events` |
+| Durable state | `deployment_outbox` (+ `image_tag` column), `message_processing`, `cancelled_schedules` |
 | gRPC server methods owned | none |
 | Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1` |
 | Redis produces | `node.deployed:v1`, `task.status.updated:v1` (RUNNING; **also FAILED on permanent dispatch error or retry-exhaustion**), `node.updated:v1` (FAILED on terminal dispatch failure only) |

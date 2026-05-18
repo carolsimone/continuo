@@ -17,7 +17,7 @@ flowchart LR
     STDB[(Postgres: state)]
     ORPG[(Postgres: orchestrator)]
     GRDB[(Neo4j: graph)]
-    ECPG[(Postgres: deployment_outbox/processed_events)]
+    ECPG[(Postgres: deployment_outbox/message_processing/cancelled_schedules)]
     KCPG[(Postgres: k8s_status_outbox/processed_events)]
     S3[(S3/LocalStack)]
     K8S[(Kubernetes API)]
