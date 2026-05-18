@@ -9,7 +9,10 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/ports"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -48,7 +51,7 @@ func getOutboxByAggregate(t *testing.T, db *sqlx.DB, aggregateID uuid.UUID) *pos
 }
 
 // setupSingleNodeRunFixture builds a postgres-backed SingleNodeRunHandler
-// using the same DB/repo construction as buildRerunHandlerFullDB.
+// wired with the UoW factory pattern used by the live server.
 func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	t.Helper()
 	db, err := database.GetPostgresConnection()
@@ -60,7 +63,17 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	handler := NewSingleNodeRunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
+	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
+	clk := ports.SystemClock{}
+	factory := func() uow.UnitOfWork {
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+	}
+	useCase := svchandlers.NewTriggerSingleNodeRunHandler(logger)
+	handler := NewSingleNodeRunHandler(useCase, factory, logger)
 
 	cleanup := func() { db.Close() }
 	return &singleNodeRunFixture{
@@ -130,10 +143,10 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 
 	// Seed a terminal source run with a matching task.
 	srcID := uuid.New()
-	srcTracker := &model.SchedulerTracker{
+	srcTracker := &postgres.SchedulerTracker{
 		ScheduleID:           srcID,
 		ScheduleName:         "src-schedule",
-		Status:               model.SchedulerStatusSucceeded,
+		Status:               run.SchedulerStatusSucceeded,
 		CreatedAt:            time.Now().Add(-time.Hour),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
@@ -141,13 +154,13 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), srcTracker))
 
 	taskID := uuid.New()
-	srcTask := &model.TaskTracker{
+	srcTask := &postgres.TaskTracker{
 		TaskID:          taskID,
 		ScheduleID:      srcID,
 		ServiceName:     "svcA",
 		SchemaName:      "public",
 		TableName:       "users",
-		Status:          model.TaskStatusSucceeded,
+		Status:          run.TaskStatusSucceeded,
 		ManifestVersion: "m1",
 		ImageTag:        "v1",
 		CreatedAt:       time.Now().Add(-time.Hour),
@@ -195,10 +208,10 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 
 	// Seed a non-terminal source run for FAILED_PRECONDITION coverage.
 	runningID := uuid.New()
-	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &model.SchedulerTracker{
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.SchedulerTracker{
 		ScheduleID:           runningID,
 		ScheduleName:         "running-src",
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
@@ -206,10 +219,10 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 
 	// Seed a terminal source run with NO matching task for NOT_FOUND coverage.
 	terminalNoTaskID := uuid.New()
-	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &model.SchedulerTracker{
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.SchedulerTracker{
 		ScheduleID:           terminalNoTaskID,
 		ScheduleName:         "terminal-no-task",
-		Status:               model.SchedulerStatusSucceeded,
+		Status:               run.SchedulerStatusSucceeded,
 		CreatedAt:            time.Now(),
 		Kind:                 "cron",
 		InitializationStatus: "completed",

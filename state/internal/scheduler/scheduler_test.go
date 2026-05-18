@@ -1,14 +1,13 @@
 package scheduler_test
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"testing"
 
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
-	"github.com/google/uuid"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -66,9 +65,13 @@ func TestNewCronSchedulerWithConfig_DynamicSchedules(t *testing.T) {
 		WithSeconds: true,
 	}
 
-	var activated []string
-	stub := &stubActivator{fn: func(name string) { activated = append(activated, name) }}
-	s, err := scheduler.NewCronSchedulerWithConfig(stub, testLogger(), cfg)
+	activate := svchandlers.NewActivateScheduleHandler(testLogger())
+	// The UoW factory panics if called — the constructor test does not fire cron
+	// ticks so no activation occurs during this test.
+	uowFactory := func() uow.UnitOfWork {
+		panic("uow must not be called during constructor test")
+	}
+	s, err := scheduler.NewCronSchedulerWithConfig(activate, uowFactory, testLogger(), cfg)
 	require.NoError(t, err)
 	require.NotNil(t, s)
 }
@@ -78,23 +81,9 @@ func TestNewCronSchedulerWithConfig_InvalidTimezone(t *testing.T) {
 		Timezone:  "Not/ATimezone",
 		Schedules: []scheduler.ScheduleEntry{{Name: "x", Cron: "0 * * * *"}},
 	}
-	_, err := scheduler.NewCronSchedulerWithConfig(nil, testLogger(), cfg)
+	activate := svchandlers.NewActivateScheduleHandler(testLogger())
+	_, err := scheduler.NewCronSchedulerWithConfig(activate, nil, testLogger(), cfg)
 	require.Error(t, err)
-}
-
-type stubActivator struct {
-	fn func(name string)
-}
-
-func (s *stubActivator) ActivateSchedule(_ context.Context, name string, _ string, _ *uuid.UUID) (uuid.UUID, error) {
-	if s.fn != nil {
-		s.fn(name)
-	}
-	return uuid.Nil, nil
-}
-
-func (s *stubActivator) PrepareActivation(_ context.Context, _ string, _ string, _ *uuid.UUID) (*model.SchedulerTracker, error) {
-	return nil, nil
 }
 
 func testLogger() *slog.Logger {

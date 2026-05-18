@@ -9,6 +9,8 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/ports"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -20,6 +22,10 @@ import (
 //
 // MessageProcessingRepo returns a fresh repo bound to the current tx (or
 // the autocommit DB if no tx is active), mirroring orchestrator's pattern.
+//
+// The aggregate-level accessors (Run, Catalog, Outbox, TaskCollection, Clock)
+// are used by handlers that operate on domain aggregates rather than the
+// low-level tracker repos.
 type UnitOfWork interface {
 	SchedulerRepo() postgres.SchedulerTrackerRepository
 	TaskRepo() postgres.TaskTrackerRepository
@@ -27,6 +33,13 @@ type UnitOfWork interface {
 	ScheduleCatalogRepo() postgres.ScheduleCatalogRepository
 	OutboxRepo() postgres.OutboxRepository
 	MessageProcessingRepo() messageprocessing.Repository
+
+	// Aggregate-level accessors used by the new handler bodies.
+	Run() ports.RunRepository
+	Catalog() ports.ScheduleCatalogRepository
+	Outbox() ports.OutboxPublisher
+	TaskCollection() run.TaskCollection
+	Clock() ports.Clock
 
 	// Tx returns the underlying *sqlx.Tx during a transaction, or nil otherwise.
 	Tx() *sqlx.Tx
@@ -45,12 +58,21 @@ type PostgresUnitOfWork struct {
 	taskExecutionRepo postgres.TaskExecutionRepository
 	catalogRepo       postgres.ScheduleCatalogRepository
 	outboxRepo        postgres.OutboxRepository
+	runRepoPort       ports.RunRepository
+	catalogRepoPort   ports.ScheduleCatalogRepository
+	outboxPub         ports.OutboxPublisher
+	clock             ports.Clock
 	logger            *slog.Logger
 }
 
 // NewPostgresUnitOfWork constructs a PostgresUnitOfWork. The passed-in repos
 // are the autocommit (*sqlx.DB-bound) instances; tx-bound calls happen via
 // the *Tx repo methods that take Tx() explicitly.
+//
+// The aggregate-level ports (runRepoPort, catalogRepoPort, outboxPub, clock)
+// power the Run(), Catalog(), Outbox(), and Clock() accessors used by
+// aggregate-aware handlers. TaskCollection() is constructed fresh per call
+// from taskRepo and the current transaction.
 func NewPostgresUnitOfWork(
 	db *sqlx.DB,
 	schedulerRepo postgres.SchedulerTrackerRepository,
@@ -58,6 +80,10 @@ func NewPostgresUnitOfWork(
 	taskExecutionRepo postgres.TaskExecutionRepository,
 	catalogRepo postgres.ScheduleCatalogRepository,
 	outboxRepo postgres.OutboxRepository,
+	runRepoPort ports.RunRepository,
+	catalogRepoPort ports.ScheduleCatalogRepository,
+	outboxPub ports.OutboxPublisher,
+	clock ports.Clock,
 	logger *slog.Logger,
 ) *PostgresUnitOfWork {
 	return &PostgresUnitOfWork{
@@ -67,6 +93,10 @@ func NewPostgresUnitOfWork(
 		taskExecutionRepo: taskExecutionRepo,
 		catalogRepo:       catalogRepo,
 		outboxRepo:        outboxRepo,
+		runRepoPort:       runRepoPort,
+		catalogRepoPort:   catalogRepoPort,
+		outboxPub:         outboxPub,
+		clock:             clock,
 		logger:            logger,
 	}
 }
@@ -123,6 +153,18 @@ func (u *PostgresUnitOfWork) Rollback() error {
 	err := u.tx.Rollback()
 	u.tx = nil
 	return err
+}
+
+func (u *PostgresUnitOfWork) Run() ports.RunRepository                 { return u.runRepoPort }
+func (u *PostgresUnitOfWork) Catalog() ports.ScheduleCatalogRepository { return u.catalogRepoPort }
+func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher            { return u.outboxPub }
+func (u *PostgresUnitOfWork) Clock() ports.Clock                       { return u.clock }
+
+// TaskCollection returns a TaskCollectionAdapter bound to the current
+// transaction (or nil tx if no transaction is in progress). Each call
+// returns a fresh adapter so callers always see the active tx.
+func (u *PostgresUnitOfWork) TaskCollection() run.TaskCollection {
+	return postgres.NewTaskCollectionAdapter(u.taskRepo, u.tx)
 }
 
 // Compile-time interface assertions.

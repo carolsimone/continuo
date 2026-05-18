@@ -1,7 +1,7 @@
 package events
 
 import (
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 )
 
@@ -9,5 +9,5 @@ import (
 type ScheduleCatalogLoaded struct {
 	EventID         uuid.UUID
 	ScheduleNames   []string
-	ServiceMetadata map[string]model.ServiceMetadata
+	ServiceMetadata map[string]run.ServiceMetadata
 }

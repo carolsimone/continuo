@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/domain/model"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -89,7 +88,7 @@ func (h *TaskExecutionHandler) GetTaskExecution(ctx context.Context, req *statev
 // ============================================================================
 
 // domainToProtoTaskExecution converts domain model to proto message
-func domainToProtoTaskExecution(e *model.TaskExecution) *statev1.TaskExecution {
+func domainToProtoTaskExecution(e *postgres.TaskExecution) *statev1.TaskExecution {
 	execution := &statev1.TaskExecution{
 		Id:        e.ID.String(),
 		TaskId:    e.TaskID.String(),

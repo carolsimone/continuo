@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -95,10 +95,10 @@ func TestSchedulerTrackerRepository_Create(t *testing.T) {
 
 	// Create test data
 	scheduleID := uuid.New()
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule",
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 	}
@@ -126,10 +126,10 @@ func TestSchedulerTrackerRepository_Create_DuplicateKey(t *testing.T) {
 
 	// Create test data
 	scheduleID := uuid.New()
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule",
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 	}
@@ -156,10 +156,10 @@ func TestSchedulerTrackerRepository_GetByID(t *testing.T) {
 	// Create test data
 	scheduleID := uuid.New()
 	startedAt := time.Now().Add(-1 * time.Hour)
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule-get",
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now().Add(-2 * time.Hour),
 		StartedAt:            &startedAt,
 		InitializationStatus: "pending",
@@ -177,7 +177,7 @@ func TestSchedulerTrackerRepository_GetByID(t *testing.T) {
 	require.NotNil(t, retrieved, "Retrieved tracker is nil")
 	assert.Equal(t, scheduleID, retrieved.ScheduleID)
 	assert.Equal(t, "test-schedule-get", retrieved.ScheduleName)
-	assert.Equal(t, model.SchedulerStatusRunning, retrieved.Status)
+	assert.Equal(t, run.SchedulerStatusRunning, retrieved.Status)
 	assert.NotNil(t, retrieved.StartedAt)
 }
 
@@ -212,10 +212,10 @@ func TestSchedulerTrackerRepository_Create_WithNullableFields(t *testing.T) {
 	cancellationReason := "Test cancellation"
 	cancelledAt := time.Now()
 
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule-cancelled",
-		Status:               model.SchedulerStatusCancelled,
+		Status:               run.SchedulerStatusCancelled,
 		CreatedAt:            time.Now(),
 		CancelledAt:          &cancelledAt,
 		CancelledBy:          &cancelledBy,
@@ -258,7 +258,7 @@ func TestScheduleCatalogRepository_UpsertAll_Insert(t *testing.T) {
 
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
-	serviceMetadata := map[string]model.ServiceMetadata{
+	serviceMetadata := map[string]run.ServiceMetadata{
 		"svc-a": {ManifestVersion: "v3", ImageTag: "sha256:aaa"},
 		"svc-b": {ManifestVersion: "v5", ImageTag: "sha256:bbb"},
 	}
@@ -284,11 +284,11 @@ func TestScheduleCatalogRepository_UpsertAll_ReactivatesRemoved(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert and then soft-delete "daily"
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
 	require.NoError(t, repo.SoftDeleteAbsent(ctx, []string{})) // delete all
 
 	// Upsert again — should reactivate
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v2", ImageTag: ""}}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v2", ImageTag: ""}}))
 
 	active, err := repo.ListActive(ctx)
 	require.NoError(t, err)
@@ -296,7 +296,7 @@ func TestScheduleCatalogRepository_UpsertAll_ReactivatesRemoved(t *testing.T) {
 
 	meta, err := repo.GetServiceMetadata(ctx, "daily")
 	require.NoError(t, err)
-	assert.Equal(t, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v2", ImageTag: ""}}, meta)
+	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v2", ImageTag: ""}}, meta)
 }
 
 func TestScheduleCatalogRepository_SoftDeleteAbsent(t *testing.T) {
@@ -307,7 +307,7 @@ func TestScheduleCatalogRepository_SoftDeleteAbsent(t *testing.T) {
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily", "hourly", "weekly"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily", "hourly", "weekly"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
 	// Payload now only contains daily and hourly — weekly should be soft-deleted
 	require.NoError(t, repo.SoftDeleteAbsent(ctx, []string{"daily", "hourly"}))
 
@@ -325,7 +325,7 @@ func TestScheduleCatalogRepository_ExistsActive(t *testing.T) {
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
 
 	exists, err := repo.ExistsActive(ctx, "daily")
 	require.NoError(t, err)
@@ -344,7 +344,7 @@ func TestScheduleCatalogRepository_ExistsActive_SoftDeletedReturnsFalse(t *testi
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
+	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
 	require.NoError(t, repo.SoftDeleteAbsent(ctx, []string{}))
 
 	exists, err := repo.ExistsActive(ctx, "daily")
@@ -362,24 +362,24 @@ func TestSchedulerRepository_GetLastRunPerSchedule(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert two runs for "daily", one for "hourly"
-	dailyOld := &model.SchedulerTracker{
+	dailyOld := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "daily",
-		Status:               model.SchedulerStatusSucceeded,
+		Status:               run.SchedulerStatusSucceeded,
 		CreatedAt:            time.Now().Add(-2 * time.Hour),
 		InitializationStatus: "completed",
 	}
-	dailyNew := &model.SchedulerTracker{
+	dailyNew := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "daily",
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 	}
-	hourly := &model.SchedulerTracker{
+	hourly := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "hourly",
-		Status:               model.SchedulerStatusFailed,
+		Status:               run.SchedulerStatusFailed,
 		CreatedAt:            time.Now().Add(-30 * time.Minute),
 		InitializationStatus: "completed",
 	}
@@ -391,11 +391,11 @@ func TestSchedulerRepository_GetLastRunPerSchedule(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, lastRuns, "daily")
-	assert.Equal(t, model.SchedulerStatusRunning, lastRuns["daily"].Status)
+	assert.Equal(t, run.SchedulerStatusRunning, lastRuns["daily"].Status)
 	assert.True(t, lastRuns["daily"].IsRunning)
 
 	assert.Contains(t, lastRuns, "hourly")
-	assert.Equal(t, model.SchedulerStatusFailed, lastRuns["hourly"].Status)
+	assert.Equal(t, run.SchedulerStatusFailed, lastRuns["hourly"].Status)
 	assert.False(t, lastRuns["hourly"].IsRunning)
 }
 
@@ -415,10 +415,10 @@ func TestSchedulerTrackerRepository_GetActiveScheduler(t *testing.T) {
 
 	t.Run("returns tracker when pending run exists", func(t *testing.T) {
 		schedID := uuid.New()
-		tracker := &model.SchedulerTracker{
+		tracker := &postgres.SchedulerTracker{
 			ScheduleID:           schedID,
 			ScheduleName:         "active-pending",
-			Status:               model.SchedulerStatusPending,
+			Status:               run.SchedulerStatusPending,
 			CreatedAt:            time.Now(),
 			InitializationStatus: "pending",
 		}
@@ -428,15 +428,15 @@ func TestSchedulerTrackerRepository_GetActiveScheduler(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, schedID, result.ScheduleID)
-		assert.Equal(t, model.SchedulerStatusPending, result.Status)
+		assert.Equal(t, run.SchedulerStatusPending, result.Status)
 	})
 
 	t.Run("returns tracker when running run exists", func(t *testing.T) {
 		schedID := uuid.New()
-		tracker := &model.SchedulerTracker{
+		tracker := &postgres.SchedulerTracker{
 			ScheduleID:           schedID,
 			ScheduleName:         "active-running",
-			Status:               model.SchedulerStatusRunning,
+			Status:               run.SchedulerStatusRunning,
 			CreatedAt:            time.Now(),
 			InitializationStatus: "in_progress",
 		}
@@ -450,10 +450,10 @@ func TestSchedulerTrackerRepository_GetActiveScheduler(t *testing.T) {
 
 	t.Run("returns nil after run is cancelled", func(t *testing.T) {
 		schedID := uuid.New()
-		tracker := &model.SchedulerTracker{
+		tracker := &postgres.SchedulerTracker{
 			ScheduleID:           schedID,
 			ScheduleName:         "post-cancel",
-			Status:               model.SchedulerStatusRunning,
+			Status:               run.SchedulerStatusRunning,
 			CreatedAt:            time.Now(),
 			InitializationStatus: "pending",
 		}
@@ -475,10 +475,10 @@ func TestSchedulerTrackerRepository_Cancel_AlreadyTerminal(t *testing.T) {
 	ctx := context.Background()
 
 	schedID := uuid.New()
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           schedID,
 		ScheduleName:         "already-terminal",
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 	}

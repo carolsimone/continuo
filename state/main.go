@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
+	"github.com/carolsimone/continuo/state/ports"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -98,11 +99,18 @@ func main() {
 		}
 	}()
 
+	// Aggregate-level port adapters wired into the UoW so handlers that
+	// operate on domain aggregates (Run, ScheduleCatalog) have typed access.
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
+	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	clk := ports.SystemClock{}
+
 	// UoW factory shared by every stream binding below. Each invocation
 	// returns a fresh PostgresUnitOfWork over the same repos and *sqlx.DB
 	// so concurrent message handlers do not share transaction state.
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, logger)
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
 
 	// Schedule catalog consumer (consumes schedules.loaded:v1). The
@@ -205,18 +213,9 @@ func main() {
 		}
 	}()
 
-	// Initialize schedule activator and activation service
-	activator := scheduler.NewScheduleActivator(schedulerRepo, logger)
-	activationService := scheduler.NewScheduleActivationService(
-		db,
-		activator,
-		catalogRepo,
-		schedulerRepo,
-		outboxRepo,
-		streams.SchedulerStartedV1,
-		logger,
-	)
-	logger.Info("Schedule activator and activation service initialized")
+	// Initialize activation handler shared by the cron loop and gRPC methods.
+	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
+	logger.Info("Activation handler initialized")
 
 	// Load schedules config — fail fast if missing or malformed
 	schedulesConfig, err := scheduler.LoadSchedulesConfig(cfg.SchedulesConfigPath)
@@ -227,7 +226,7 @@ func main() {
 	logger.Info("Schedules config loaded", "schedules", len(schedulesConfig.Schedules))
 
 	// Initialize cron scheduler
-	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activationService, logger, schedulesConfig)
+	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activateHandler, uowFactory, logger, schedulesConfig)
 	if err != nil {
 		logger.Error("Failed to create cron scheduler", "error", err)
 		os.Exit(1)
@@ -247,13 +246,15 @@ func main() {
 	logger.Info("Cron scheduler started")
 
 	// Initialize gRPC handlers
-	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activationService, catalogRepo, schedulesConfig, logger)
-	schedulerHandler.WithCancelDeps(db, taskRepo, outboxRepo)
-	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
+	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
+	taskHandler := handlers.NewTaskHandler(taskRepo, uowFactory, logger)
 	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
-	rerunHandler := handlers.NewRerunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
-	rebaseHandler := handlers.NewRebaseHandler(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	rerunUC := svchandlers.NewTriggerRerunHandler(logger)
+	rerunHandler := handlers.NewRerunHandler(rerunUC, uowFactory, logger)
+	rebaseUC := svchandlers.NewTriggerRebaseHandler(logger)
+	rebaseHandler := handlers.NewRebaseHandler(rebaseUC, uowFactory, logger)
+	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(logger)
+	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
 	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
 

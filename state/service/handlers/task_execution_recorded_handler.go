@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/events"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
@@ -37,7 +37,7 @@ func (h *TaskExecutionRecordedHandler) Handle(
 	evt events.TaskExecutionRecorded,
 	_ uuid.UUID,
 ) error {
-	execution := &model.TaskExecution{
+	execution := &postgres.TaskExecution{
 		ID:                   evt.ExecutionID,
 		TaskID:               evt.TaskID,
 		CreatedAt:            time.Now(),

@@ -2,30 +2,23 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
-	"github.com/carolsimone/continuo/pkg/domain"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
 
 // RunEntriesDispatchedHandler processes run.entries.dispatched:v1 events.
-// On success it bulk-creates task_tracker rows, sets total_task_count and
-// terminal_task_count, transitions initialization_status to "completed",
-// and either auto-rolls-up the run to a terminal state (when every projected
-// task is already terminal at creation) or transitions the scheduler to
-// running. Auto-rollup also emits a run.finalized:v1 outbox entry carrying
-// the originating message_processing_id.
-//
-// The handler is pure orchestration: it takes a UnitOfWork and a typed event,
-// and never parses JSON, manages a transaction, or runs dedup itself — those
-// responsibilities live in the adapter binding that wires the parser, dedup,
-// and UoW lifecycle around this call.
+// Loads the Run aggregate, invokes AcceptDispatch (which bulk-creates child
+// tasks via the TaskCollection port, seeds counters, transitions
+// init_status=completed, and either rolls up to terminal or transitions to
+// RUNNING based on the projection), persists via SaveRun, and publishes
+// emitted domain events via OutboxPublisher.
 type RunEntriesDispatchedHandler struct {
 	logger *slog.Logger
 }
@@ -36,119 +29,58 @@ func NewRunEntriesDispatchedHandler(logger *slog.Logger) *RunEntriesDispatchedHa
 }
 
 // Handle orchestrates the dispatched flow.
+//
 // Caller contract: u.Begin(ctx) has been called; the handler MUST NOT commit.
-// Returning nil tells the binding to commit; returning an error triggers rollback.
-// msgProcID is stored on the outbox entry (auto-rollup branch) for provenance
-// back to the inbound message.
+// Returning nil tells the binding to commit; returning an error triggers
+// rollback. msgProcID is stored on the outbox entry (auto-rollup branch) for
+// provenance back to the inbound message.
 func (h *RunEntriesDispatchedHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	evt events.RunEntriesDispatched,
 	msgProcID uuid.UUID,
 ) error {
-	scheduler, err := u.SchedulerRepo().GetByIDForUpdateTx(ctx, u.Tx(), evt.ScheduleID)
+	r, err := u.Run().LoadRunForUpdate(ctx, u.Tx(), evt.ScheduleID)
 	if err != nil {
-		return fmt.Errorf("lock scheduler row: %w", err)
+		return fmt.Errorf("load run: %w", err)
 	}
-	if isTerminalSchedulerStatus(scheduler.Status) {
-		h.logger.Info("run.entries.dispatched: scheduler already terminal — skipping",
-			"schedule_id", evt.ScheduleID, "status", scheduler.Status)
-		return nil
-	}
-
-	now := time.Now()
-	tasks := make([]*model.TaskTracker, 0, len(evt.AllTasks))
-	for _, t := range evt.AllTasks {
-		jobName, err := domain.ComputeJobName(t.ServiceName, t.SchemaName, t.TableName, evt.ScheduleID.String())
-		if err != nil {
-			return fmt.Errorf("%w: compute job_name: %v", pkgevents.ErrPermanent, err)
+	projection := toDispatchedTasks(evt)
+	domainEvents, err := r.AcceptDispatch(ctx, u.TaskCollection(), projection, u.Clock().Now())
+	if err != nil {
+		if errors.Is(err, run.ErrInvalidDispatchedTask) {
+			return errors.Join(pkgevents.ErrPermanent, err)
 		}
-		tasks = append(tasks, &model.TaskTracker{
+		return fmt.Errorf("accept dispatch: %w", err)
+	}
+	if err := u.Run().SaveRun(ctx, u.Tx(), r); err != nil {
+		return fmt.Errorf("save run: %w", err)
+	}
+	if err := u.Outbox().Append(ctx, u.Tx(), domainEvents, msgProcID); err != nil {
+		return fmt.Errorf("append outbox: %w", err)
+	}
+	h.logger.Info("run.entries.dispatched: processed",
+		"schedule_id", evt.ScheduleID,
+		"task_count", len(projection),
+		"total_task_count", evt.TotalTaskCount,
+	)
+	return nil
+}
+
+// toDispatchedTasks converts event task entries to the aggregate's DispatchedTask projection.
+func toDispatchedTasks(evt events.RunEntriesDispatched) []run.DispatchedTask {
+	out := make([]run.DispatchedTask, 0, len(evt.AllTasks))
+	for _, t := range evt.AllTasks {
+		out = append(out, run.DispatchedTask{
 			TaskID:              t.TaskID,
-			ScheduleID:          evt.ScheduleID,
-			CreatedAt:           now,
 			ServiceName:         t.ServiceName,
 			SchemaName:          t.SchemaName,
 			TableName:           t.TableName,
-			JobName:             jobName,
 			Status:              t.Status,
-			MaxRetries:          int(t.MaxRetries),
+			MaxRetries:          t.MaxRetries,
 			ManifestVersion:     t.ManifestVersion,
 			ImageTag:            t.ImageTag,
 			InheritedFromTaskID: t.InheritedFromTaskID,
 		})
 	}
-
-	if err := u.TaskRepo().BulkCreateTx(ctx, u.Tx(), tasks); err != nil {
-		return fmt.Errorf("bulk create tasks: %w", err)
-	}
-	if err := u.SchedulerRepo().SetTotalTaskCountTx(ctx, u.Tx(), evt.ScheduleID, evt.TotalTaskCount); err != nil {
-		return fmt.Errorf("set total_task_count: %w", err)
-	}
-	if err := u.SchedulerRepo().UpdateInitializationStatusTx(ctx, u.Tx(), evt.ScheduleID, "completed"); err != nil {
-		return fmt.Errorf("update initialization_status: %w", err)
-	}
-
-	// Auto-rollup: if every projected task is already terminal, the run is born
-	// complete and transitions straight to a terminal status (with completed_at)
-	// rather than going through RUNNING. Mixed-terminal (some failed/cancelled)
-	// is treated as FAILED conservatively. Any PENDING/RUNNING in the projection
-	// keeps the standard cron/single-node-run/rerun behaviour: go to RUNNING.
-	allTerminal := true
-	allSucceeded := true
-	terminalCount := int32(0)
-	for _, task := range tasks {
-		if task.Status == model.TaskStatusPending || task.Status == model.TaskStatusRunning {
-			allTerminal = false
-			allSucceeded = false
-			continue
-		}
-		terminalCount++
-		if task.Status != model.TaskStatusSucceeded {
-			allSucceeded = false
-		}
-	}
-
-	if allTerminal {
-		terminal := string(model.SchedulerStatusFailed)
-		if allSucceeded {
-			terminal = string(model.SchedulerStatusSucceeded)
-		}
-		if err := u.SchedulerRepo().FinalizeRunTx(ctx, u.Tx(), evt.ScheduleID, terminal); err != nil {
-			return fmt.Errorf("finalize scheduler to %s: %w", terminal, err)
-		}
-		// Seed terminal_task_count for observability — FinalizeRunTx only updates
-		// status + completed_at, so without this the rolled-up row carries
-		// terminal_task_count=0 despite all tasks being terminal.
-		if terminalCount > 0 {
-			if err := u.SchedulerRepo().SetTerminalTaskCountTx(ctx, u.Tx(), evt.ScheduleID, terminalCount); err != nil {
-				return fmt.Errorf("seed terminal_task_count on rollup: %w", err)
-			}
-		}
-
-		// Emit run.finalized:v1 in the same tx so orchestrator finalizes the
-		// Neo4j :Run. Without this, the auto-rollup run stays "active" in the
-		// orchestrator's projection forever.
-		if err := emitRunFinalized(ctx, u, evt.ScheduleID, scheduler.ScheduleName, terminal, msgProcID); err != nil {
-			return fmt.Errorf("create outbox entry for run.finalized: %w", err)
-		}
-	} else {
-		// Seed terminal_task_count from inherited terminal rows so the run can
-		// finalize when the remaining pending tasks reach terminal status.
-		if terminalCount > 0 {
-			if err := u.SchedulerRepo().SetTerminalTaskCountTx(ctx, u.Tx(), evt.ScheduleID, terminalCount); err != nil {
-				return fmt.Errorf("seed terminal_task_count: %w", err)
-			}
-		}
-		if err := u.SchedulerRepo().UpdateStatusTx(ctx, u.Tx(), evt.ScheduleID, string(model.SchedulerStatusRunning)); err != nil {
-			return fmt.Errorf("update status to running: %w", err)
-		}
-	}
-
-	h.logger.Info("run.entries.dispatched: processed",
-		"schedule_id", evt.ScheduleID,
-		"task_count", len(tasks),
-		"total_task_count", evt.TotalTaskCount,
-	)
-	return nil
+	return out
 }

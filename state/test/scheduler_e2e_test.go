@@ -15,9 +15,11 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
+	"github.com/carolsimone/continuo/state/ports"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 )
 
 // schedulerStartedEvent holds the fields read back from the Redis stream.
@@ -75,7 +77,7 @@ func setupRedis(t *testing.T) (*goredis.Client, func()) {
 }
 
 // TestSchedulerActivation_E2E tests the full scheduler activation flow using the
-// transactional outbox pattern: ScheduleActivationService writes atomically to
+// transactional outbox pattern: ActivateScheduleHandler writes atomically to
 // scheduler_tracker + state_outbox, then OutboxProcessor publishes to Redis.
 func TestSchedulerActivation_E2E(t *testing.T) {
 	if testing.Short() {
@@ -100,25 +102,36 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	defer cleanupRedis()
 
 	// Initialize repositories
-	repo := postgres.NewSchedulerTrackerRepository(db, logger)
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	execRepo := postgres.NewTaskExecutionRepository(db, logger)
+	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	outboxRepo := postgres.NewOutboxRepository(db, logger)
 
-	// Initialize activator and activation service (transactional outbox)
-	streamName := "scheduler.started:v1"
-	activator := scheduler.NewScheduleActivator(repo, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
-	activationService := scheduler.NewScheduleActivationService(
-		db,
-		activator,
-		catalogRepo,
-		repo,
-		outboxRepo,
-		streamName,
-		logger,
-	)
+	// Seed schedule_catalog rows so the activation policy can verify existence.
+	// removed_at IS NULL means active. The e2e test uses "daily" and "hourly".
+	_, err := db.Exec(`
+		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
+		VALUES ('daily',  NOW(), NOW(), NULL, '{}'),
+		       ('hourly', NOW(), NOW(), NULL, '{}')
+		ON CONFLICT (schedule_name) DO NOTHING
+	`)
+	require.NoError(t, err, "Failed to seed schedule_catalog")
+
+	// Wire the UoW factory. Each cron tick gets a fresh UoW.
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
+	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	clk := ports.SystemClock{}
+	uowFactory := func() uow.UnitOfWork {
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+	}
+
+	// Initialize activation handler
+	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
 
 	// Start outbox processor in background — picks up pending outbox entries and
-	// publishes them to Redis
+	// publishes them to Redis.
 	outboxProcessor := svchandlers.NewOutboxProcessor(outboxRepo, redisClient, logger)
 	go func() {
 		if err := outboxProcessor.Run(ctx); err != nil {
@@ -135,7 +148,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 		},
 		WithSeconds: true,
 	}
-	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activationService, logger, cfg)
+	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activateHandler, uowFactory, logger, cfg)
 	require.NoError(t, err, "Failed to create cron scheduler")
 
 	// Start cron scheduler
@@ -151,7 +164,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 
 	// Test 1: Verify scheduler_tracker record exists
 	t.Log("Verifying scheduler_tracker records...")
-	var trackers []model.SchedulerTracker
+	var trackers []postgres.SchedulerTracker
 	err = db.Select(&trackers, `
 		SELECT schedule_id, schedule_name, status, created_at
 		FROM scheduler_tracker
@@ -169,8 +182,8 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NotNil(t, dailyTracker, "Expected to find daily schedule tracker")
 	require.NotNil(t, hourlyTracker, "Expected to find hourly schedule tracker")
 
-	assert.Equal(t, model.SchedulerStatusPending, dailyTracker.Status)
-	assert.Equal(t, model.SchedulerStatusPending, hourlyTracker.Status)
+	assert.Equal(t, run.SchedulerStatusPending, dailyTracker.Status)
+	assert.Equal(t, run.SchedulerStatusPending, hourlyTracker.Status)
 
 	t.Logf("Found daily tracker: %s (status: %s)", dailyTracker.ScheduleID, dailyTracker.Status)
 	t.Logf("Found hourly tracker: %s (status: %s)", hourlyTracker.ScheduleID, hourlyTracker.Status)
@@ -180,6 +193,8 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 
 	// Allow outbox processor a moment to publish any remaining entries
 	time.Sleep(2 * time.Second)
+
+	streamName := "scheduler.started:v1"
 
 	// Read all messages from stream
 	readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -233,7 +248,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Wait for another 30 seconds - should NOT create new records because status is PENDING
 	time.Sleep(32 * time.Second)
 
-	var trackersAfter []model.SchedulerTracker
+	var trackersAfter []postgres.SchedulerTracker
 	err = db.Select(&trackersAfter, `
 		SELECT schedule_id, schedule_name, status, created_at
 		FROM scheduler_tracker
@@ -249,7 +264,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 }
 
 // findTrackerByName finds a scheduler tracker by schedule_name
-func findTrackerByName(trackers []model.SchedulerTracker, name string) *model.SchedulerTracker {
+func findTrackerByName(trackers []postgres.SchedulerTracker, name string) *postgres.SchedulerTracker {
 	for _, tracker := range trackers {
 		if tracker.ScheduleName == name {
 			return &tracker
@@ -267,3 +282,4 @@ func findEventByName(events []schedulerStartedEvent, name string) *schedulerStar
 	}
 	return nil
 }
+

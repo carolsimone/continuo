@@ -2,64 +2,55 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// SchedulerHandler handles all scheduler-related gRPC requests
+// SchedulerHandler handles all scheduler-related gRPC requests.
 type SchedulerHandler struct {
 	repo            postgres.SchedulerTrackerRepository
-	activator       schedulerpkg.ScheduleActivator
+	activate        *svchandlers.ActivateScheduleHandler
 	catalogRepo     postgres.ScheduleCatalogRepository
 	schedulesConfig *schedulerpkg.SchedulesConfig // may be nil
+	uowFactory      func() uow.UnitOfWork
 	logger          *slog.Logger
-	// Cancel dependencies — injected after construction via WithCancelDeps.
-	db         *sqlx.DB
-	taskRepo   postgres.TaskTrackerRepository
-	outboxRepo postgres.OutboxRepository
 }
 
-// NewSchedulerHandler creates a new SchedulerHandler
+// NewSchedulerHandler creates a new SchedulerHandler.
 func NewSchedulerHandler(
 	repo postgres.SchedulerTrackerRepository,
-	activator schedulerpkg.ScheduleActivator,
+	activate *svchandlers.ActivateScheduleHandler,
 	catalogRepo postgres.ScheduleCatalogRepository,
 	schedulesConfig *schedulerpkg.SchedulesConfig,
+	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,
 ) *SchedulerHandler {
 	return &SchedulerHandler{
 		repo:            repo,
-		activator:       activator,
+		activate:        activate,
 		catalogRepo:     catalogRepo,
 		schedulesConfig: schedulesConfig,
+		uowFactory:      uowFactory,
 		logger:          logger,
 	}
 }
 
-// WithCancelDeps injects the dependencies needed by CancelSchedule.
-func (h *SchedulerHandler) WithCancelDeps(db *sqlx.DB, taskRepo postgres.TaskTrackerRepository, outboxRepo postgres.OutboxRepository) {
-	h.db = db
-	h.taskRepo = taskRepo
-	h.outboxRepo = outboxRepo
-}
-
-// CreateScheduler creates a new scheduler
+// CreateScheduler creates a new scheduler.
 func (h *SchedulerHandler) CreateScheduler(ctx context.Context, req *statev1.CreateSchedulerRequest) (*statev1.SchedulerResponse, error) {
 	h.logger.Info("Creating scheduler", "schedule_name", req.ScheduleName)
 
-	// Parse or generate UUID
 	var scheduleID uuid.UUID
 	var err error
 	if req.ScheduleId != "" {
@@ -71,18 +62,16 @@ func (h *SchedulerHandler) CreateScheduler(ctx context.Context, req *statev1.Cre
 		scheduleID = uuid.New()
 	}
 
-	// Validate schedule name
 	if req.ScheduleName == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
 
-	// Convert proto status to domain model (default to pending if not specified)
 	domainStatus := protoToDomainSchedulerStatus(req.Status)
 	if req.Status == statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED {
-		domainStatus = model.SchedulerStatusPending
+		domainStatus = run.SchedulerStatusPending
 	}
 
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           scheduleID,
 		ScheduleName:         req.ScheduleName,
 		Status:               domainStatus,
@@ -103,7 +92,7 @@ func (h *SchedulerHandler) CreateScheduler(ctx context.Context, req *statev1.Cre
 	}, nil
 }
 
-// GetScheduler retrieves a scheduler by ID
+// GetScheduler retrieves a scheduler by ID.
 func (h *SchedulerHandler) GetScheduler(ctx context.Context, req *statev1.GetSchedulerRequest) (*statev1.SchedulerResponse, error) {
 	h.logger.Debug("Getting scheduler", "schedule_id", req.ScheduleId)
 
@@ -130,119 +119,225 @@ func (h *SchedulerHandler) GetScheduler(ctx context.Context, req *statev1.GetSch
 	}, nil
 }
 
-// CancelScheduler cancels a scheduler
+// CancelScheduler cancels a run by its schedule_id UUID. It loads the Run
+// aggregate, calls Run.Cancel, and persists the result via SaveRun and
+// OutboxPublisher.Append inside a single transaction.
 func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.CancelSchedulerRequest) (*statev1.SchedulerResponse, error) {
 	h.logger.Info("Cancelling scheduler", "schedule_id", req.ScheduleId, "cancelled_by", req.CancelledBy)
 
 	if req.ScheduleId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
 	}
-
 	scheduleID, err := uuid.Parse(req.ScheduleId)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	if err := h.repo.Cancel(ctx, scheduleID, req.CancelledBy, req.CancellationReason); err != nil {
-		if errors.Is(err, postgres.ErrNotCancellable) {
-			return nil, status.Errorf(codes.FailedPrecondition, "scheduler not found or already in terminal state")
+	u := h.uowFactory()
+	if err := u.Begin(ctx); err != nil {
+		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = u.Rollback()
 		}
-		h.logger.Error("Failed to cancel scheduler", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to cancel scheduler: %v", err)
-	}
+	}()
 
-	// Fetch updated scheduler
-	tracker, err := h.repo.GetByID(ctx, scheduleID)
+	r, err := u.Run().LoadRunForUpdate(ctx, u.Tx(), scheduleID)
 	if err != nil {
-		h.logger.Error("Failed to fetch cancelled scheduler", "error", err)
-		return nil, status.Errorf(codes.Internal, "scheduler cancelled but failed to fetch updated state")
+		if errors.Is(err, postgres.ErrNotFound) {
+			return nil, status.Errorf(codes.NotFound, "scheduler not found")
+		}
+		return nil, status.Errorf(codes.Internal, "load: %v", err)
+	}
+	domainEvents, err := r.Cancel(ctx, u.TaskCollection(), req.CancelledBy, req.CancellationReason, u.Clock().Now())
+	if err != nil {
+		if errors.Is(err, run.ErrAlreadyTerminal) {
+			return nil, status.Errorf(codes.FailedPrecondition, "scheduler already in terminal state")
+		}
+		return nil, status.Errorf(codes.Internal, "cancel: %v", err)
+	}
+	if err := u.Run().SaveRun(ctx, u.Tx(), r); err != nil {
+		return nil, status.Errorf(codes.Internal, "save: %v", err)
+	}
+	if err := u.Outbox().Append(ctx, u.Tx(), domainEvents, uuid.Nil); err != nil {
+		return nil, status.Errorf(codes.Internal, "outbox: %v", err)
+	}
+	if err := u.Commit(); err != nil {
+		return nil, status.Errorf(codes.Internal, "commit: %v", err)
+	}
+	committed = true
+
+	return &statev1.SchedulerResponse{Scheduler: runToProto(r)}, nil
+}
+
+// CancelSchedule cancels the active run of a named schedule. It looks up the
+// active run, then loads its Run aggregate, calls Run.Cancel, and persists the
+// result via SaveRun and OutboxPublisher.Append inside a single transaction.
+func (h *SchedulerHandler) CancelSchedule(
+	ctx context.Context,
+	req *statev1.CancelScheduleRequest,
+) (*statev1.CancelScheduleResponse, error) {
+	if req.ScheduleName == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
 
-	return &statev1.SchedulerResponse{
-		Scheduler: domainToProtoScheduler(tracker),
-	}, nil
+	// Look up the active run for the named schedule via a separate UoW
+	// (read-only path, no transaction needed).
+	lookup := h.uowFactory()
+	active, err := lookup.Run().GetActiveScheduler(ctx, req.ScheduleName)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get active: %v", err)
+	}
+	if active == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "no active run for schedule %q", req.ScheduleName)
+	}
+
+	u := h.uowFactory()
+	if err := u.Begin(ctx); err != nil {
+		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = u.Rollback()
+		}
+	}()
+
+	r, err := u.Run().LoadRunForUpdate(ctx, u.Tx(), active.ScheduleID())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "load: %v", err)
+	}
+	domainEvents, err := r.Cancel(ctx, u.TaskCollection(), req.CancelledBy, req.CancellationReason, u.Clock().Now())
+	if err != nil {
+		if errors.Is(err, run.ErrAlreadyTerminal) {
+			return nil, status.Errorf(codes.FailedPrecondition, "schedule run already in terminal state")
+		}
+		return nil, status.Errorf(codes.Internal, "cancel: %v", err)
+	}
+	if err := u.Run().SaveRun(ctx, u.Tx(), r); err != nil {
+		return nil, status.Errorf(codes.Internal, "save: %v", err)
+	}
+	if err := u.Outbox().Append(ctx, u.Tx(), domainEvents, uuid.Nil); err != nil {
+		return nil, status.Errorf(codes.Internal, "outbox: %v", err)
+	}
+	if err := u.Commit(); err != nil {
+		return nil, status.Errorf(codes.Internal, "commit: %v", err)
+	}
+	committed = true
+
+	h.logger.Info("Schedule cancelled", "schedule_name", req.ScheduleName, "schedule_id", r.ScheduleID())
+	return &statev1.CancelScheduleResponse{ScheduleId: r.ScheduleID().String()}, nil
 }
 
 // ============================================================================
 // CONVERSION HELPERS
 // ============================================================================
 
-// protoToDomainSchedulerStatus converts proto status to domain model status
-func protoToDomainSchedulerStatus(s statev1.SchedulerStatus) model.SchedulerStatus {
+// protoToDomainSchedulerStatus converts proto status to domain model status.
+func protoToDomainSchedulerStatus(s statev1.SchedulerStatus) run.SchedulerStatus {
 	switch s {
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_PENDING:
-		return model.SchedulerStatusPending
+		return run.SchedulerStatusPending
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING:
-		return model.SchedulerStatusRunning
+		return run.SchedulerStatusRunning
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED:
-		return model.SchedulerStatusSucceeded
+		return run.SchedulerStatusSucceeded
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_FAILED:
-		return model.SchedulerStatusFailed
+		return run.SchedulerStatusFailed
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED:
-		return model.SchedulerStatusCancelled
+		return run.SchedulerStatusCancelled
 	default:
-		return model.SchedulerStatusPending
+		return run.SchedulerStatusPending
 	}
 }
 
-// domainToProtoSchedulerStatus converts domain model status to proto status
-func domainToProtoSchedulerStatus(s model.SchedulerStatus) statev1.SchedulerStatus {
+// domainToProtoSchedulerStatus converts domain model status to proto status.
+func domainToProtoSchedulerStatus(s run.SchedulerStatus) statev1.SchedulerStatus {
 	switch s {
-	case model.SchedulerStatusPending:
+	case run.SchedulerStatusPending:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_PENDING
-	case model.SchedulerStatusRunning:
+	case run.SchedulerStatusRunning:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING
-	case model.SchedulerStatusSucceeded:
+	case run.SchedulerStatusSucceeded:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED
-	case model.SchedulerStatusFailed:
+	case run.SchedulerStatusFailed:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_FAILED
-	case model.SchedulerStatusCancelled:
+	case run.SchedulerStatusCancelled:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED
 	default:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED
 	}
 }
 
-// domainToProtoScheduler converts domain model to proto message
-func domainToProtoScheduler(t *model.SchedulerTracker) *statev1.Scheduler {
+// domainToProtoScheduler converts a SchedulerTracker domain model to its proto
+// representation. Used by non-cancel methods (CreateScheduler, GetScheduler)
+// that still work against the low-level tracker repo.
+func domainToProtoScheduler(t *postgres.SchedulerTracker) *statev1.Scheduler {
 	s := &statev1.Scheduler{
-		ScheduleId:   t.ScheduleID.String(),
-		ScheduleName: t.ScheduleName,
-		Status:       domainToProtoSchedulerStatus(t.Status),
-		CreatedAt:    timestamppb.New(t.CreatedAt),
+		ScheduleId:           t.ScheduleID.String(),
+		ScheduleName:         t.ScheduleName,
+		Status:               domainToProtoSchedulerStatus(t.Status),
+		CreatedAt:            timestamppb.New(t.CreatedAt),
+		InitializationStatus: t.InitializationStatus,
 	}
 
 	if t.StartedAt != nil {
 		s.StartedAt = timestamppb.New(*t.StartedAt)
 	}
-
 	if t.CompletedAt != nil {
 		s.CompletedAt = timestamppb.New(*t.CompletedAt)
 	}
-
 	if t.LastHeartbeatAt != nil {
 		s.LastHeartbeatAt = timestamppb.New(*t.LastHeartbeatAt)
 	}
-
 	if t.CancelledAt != nil {
 		s.CancelledAt = timestamppb.New(*t.CancelledAt)
 	}
-
 	if t.CancelledBy != nil {
 		s.CancelledBy = *t.CancelledBy
 	}
-
 	if t.CancellationReason != nil {
 		s.CancellationReason = *t.CancellationReason
 	}
 
-	s.InitializationStatus = t.InitializationStatus
-
 	return s
 }
 
-// ActivateSchedule triggers a schedule run via the standard activator path.
-// Returns the new schedule_id, or an empty string if a run was already active.
+// runToProto converts a Run aggregate to its proto Scheduler representation.
+// Used by cancel methods that operate on the Run aggregate directly.
+func runToProto(r *run.Run) *statev1.Scheduler {
+	s := &statev1.Scheduler{
+		ScheduleId:           r.ScheduleID().String(),
+		ScheduleName:         r.ScheduleName(),
+		Status:               domainToProtoSchedulerStatus(r.Status()),
+		CreatedAt:            timestamppb.New(r.CreatedAt()),
+		InitializationStatus: string(r.InitializationStatus()),
+	}
+	if r.StartedAt() != nil {
+		s.StartedAt = timestamppb.New(*r.StartedAt())
+	}
+	if r.CompletedAt() != nil {
+		s.CompletedAt = timestamppb.New(*r.CompletedAt())
+	}
+	if r.LastHeartbeatAt() != nil {
+		s.LastHeartbeatAt = timestamppb.New(*r.LastHeartbeatAt())
+	}
+	if r.CancelledAt() != nil {
+		s.CancelledAt = timestamppb.New(*r.CancelledAt())
+	}
+	if r.CancelledBy() != nil {
+		s.CancelledBy = *r.CancelledBy()
+	}
+	if r.CancellationReason() != nil {
+		s.CancellationReason = *r.CancellationReason()
+	}
+	return s
+}
+
+// ActivateSchedule triggers a cron schedule run. Returns the new schedule_id,
+// or an empty string when a run was already active (silent skip for cron).
 func (h *SchedulerHandler) ActivateSchedule(
 	ctx context.Context,
 	req *statev1.ActivateScheduleRequest,
@@ -250,26 +345,20 @@ func (h *SchedulerHandler) ActivateSchedule(
 	if req.ScheduleName == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
-
-	exists, err := h.catalogRepo.ExistsActive(ctx, req.ScheduleName)
+	u := h.uowFactory()
+	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "catalog lookup: %v", err)
+		switch {
+		case errors.Is(err, run.ErrScheduleNotInCatalog):
+			return nil, status.Errorf(codes.NotFound, "schedule %q not in catalog", req.ScheduleName)
+		default:
+			return nil, status.Errorf(codes.Internal, "activate: %v", err)
+		}
 	}
-	if !exists {
-		return nil, status.Errorf(codes.NotFound, "schedule %q not found in catalog", req.ScheduleName)
+	if outcome == svchandlers.OutcomeSkippedActive {
+		return &statev1.ActivateScheduleResponse{ScheduleId: ""}, nil
 	}
-
-	h.logger.Info("ActivateSchedule called", "schedule_name", req.ScheduleName)
-
-	scheduleID, err := h.activator.ActivateSchedule(ctx, req.ScheduleName, "cron", nil)
-	if err != nil {
-		h.logger.Error("Failed to activate schedule", "schedule_name", req.ScheduleName, "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to activate schedule: %v", err)
-	}
-
-	return &statev1.ActivateScheduleResponse{
-		ScheduleId: scheduleID.String(),
-	}, nil
+	return &statev1.ActivateScheduleResponse{ScheduleId: id.String()}, nil
 }
 
 // ListAllSchedules returns a summary of all active schedules from the catalog,
@@ -288,7 +377,7 @@ func (h *SchedulerHandler) ListAllSchedules(
 		return nil, status.Errorf(codes.Internal, "get last runs: %v", err)
 	}
 
-	// Build cron config lookup from in-memory schedules config
+	// Build cron config lookup from in-memory schedules config.
 	cronLookup := map[string]schedulerpkg.ScheduleEntry{}
 	timezone := ""
 	if h.schedulesConfig != nil {
@@ -320,7 +409,8 @@ func (h *SchedulerHandler) ListAllSchedules(
 	return &statev1.ListAllSchedulesResponse{Schedules: summaries}, nil
 }
 
-// TriggerSchedule manually triggers a schedule run after validating pre-conditions.
+// TriggerSchedule manually triggers a schedule run. Returns FailedPrecondition
+// when a run is already active, NotFound when the schedule is not in catalog.
 func (h *SchedulerHandler) TriggerSchedule(
 	ctx context.Context,
 	req *statev1.TriggerScheduleRequest,
@@ -328,36 +418,20 @@ func (h *SchedulerHandler) TriggerSchedule(
 	if req.ScheduleName == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
-
-	// Pre-condition 1: schedule must exist in catalog
-	exists, err := h.catalogRepo.ExistsActive(ctx, req.ScheduleName)
+	u := h.uowFactory()
+	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "catalog lookup: %v", err)
+		switch {
+		case errors.Is(err, run.ErrScheduleNotInCatalog):
+			return nil, status.Errorf(codes.NotFound, "schedule %q not in catalog", req.ScheduleName)
+		default:
+			return nil, status.Errorf(codes.Internal, "trigger: %v", err)
+		}
 	}
-	if !exists {
-		return nil, status.Errorf(codes.NotFound, "schedule %q not found", req.ScheduleName)
+	if outcome == svchandlers.OutcomeSkippedActive {
+		return nil, status.Errorf(codes.FailedPrecondition, "schedule %q already has an active run", req.ScheduleName)
 	}
-
-	// Pre-condition 2: no concurrent run in progress
-	active, err := h.repo.HasActiveSchedule(ctx, req.ScheduleName)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "active schedule check: %v", err)
-	}
-	if active {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"schedule %q already has an active run", req.ScheduleName)
-	}
-
-	scheduleID, err := h.activator.ActivateSchedule(ctx, req.ScheduleName, "cron", nil)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "activate schedule: %v", err)
-	}
-	if scheduleID == uuid.Nil {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"schedule %q already has an active run", req.ScheduleName)
-	}
-
-	return &statev1.TriggerScheduleResponse{ScheduleId: scheduleID.String()}, nil
+	return &statev1.TriggerScheduleResponse{ScheduleId: id.String()}, nil
 }
 
 // GetSchedulerInitStatus returns the initialization_status for a scheduler.
@@ -384,72 +458,4 @@ func (h *SchedulerHandler) GetSchedulerInitStatus(ctx context.Context, req *stat
 	return &statev1.GetSchedulerInitStatusResponse{
 		InitializationStatus: tracker.InitializationStatus,
 	}, nil
-}
-
-// CancelSchedule cancels the active run of a named schedule.
-func (h *SchedulerHandler) CancelSchedule(
-	ctx context.Context,
-	req *statev1.CancelScheduleRequest,
-) (*statev1.CancelScheduleResponse, error) {
-	if req.ScheduleName == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
-	}
-
-	active, err := h.repo.GetActiveScheduler(ctx, req.ScheduleName)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "get active scheduler: %v", err)
-	}
-	if active == nil {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"no active run for schedule %q", req.ScheduleName)
-	}
-
-	if h.db == nil || h.taskRepo == nil || h.outboxRepo == nil {
-		return nil, status.Errorf(codes.Internal, "cancel dependencies not initialised")
-	}
-
-	tx, err := h.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	if err := h.repo.CancelTx(ctx, tx, active.ScheduleID, req.CancelledBy, req.CancellationReason); err != nil {
-		if errors.Is(err, postgres.ErrNotCancellable) {
-			return nil, status.Errorf(codes.FailedPrecondition,
-				"schedule %q run already in terminal state", req.ScheduleName)
-		}
-		h.logger.Error("Failed to cancel scheduler", "error", err)
-		return nil, status.Errorf(codes.Internal, "cancel scheduler: %v", err)
-	}
-
-	if _, err := h.taskRepo.BulkCancelByScheduleIDTx(ctx, tx, active.ScheduleID, req.CancelledBy); err != nil {
-		h.logger.Error("Failed to bulk-cancel tasks", "schedule_id", active.ScheduleID, "error", err)
-		return nil, status.Errorf(codes.Internal, "bulk cancel tasks: %v", err)
-	}
-
-	payload, _ := json.Marshal(map[string]string{
-		"schedule_id":   active.ScheduleID.String(),
-		"schedule_name": active.ScheduleName,
-	})
-	if err := h.outboxRepo.Create(ctx, tx, &postgres.OutboxEntry{
-		ID:            uuid.New(),
-		AggregateType: "scheduler",
-		AggregateID:   active.ScheduleID,
-		EventType:     "schedule_cancelled",
-		Payload:       payload,
-		StreamName:    "schedule.cancelled:v1",
-		Status:        "pending",
-		MaxRetries:    3,
-		CreatedAt:     time.Now(),
-	}); err != nil {
-		return nil, status.Errorf(codes.Internal, "write outbox: %v", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, status.Errorf(codes.Internal, "commit: %v", err)
-	}
-
-	h.logger.Info("Schedule cancelled", "schedule_name", req.ScheduleName, "schedule_id", active.ScheduleID)
-	return &statev1.CancelScheduleResponse{ScheduleId: active.ScheduleID.String()}, nil
 }

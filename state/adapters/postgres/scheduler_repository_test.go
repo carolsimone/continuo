@@ -10,7 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
-	"github.com/carolsimone/continuo/state/domain/model"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -30,12 +30,12 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func createScheduler(t *testing.T, repo postgres.SchedulerTrackerRepository, scheduleName string) *model.SchedulerTracker {
+func createScheduler(t *testing.T, repo postgres.SchedulerTrackerRepository, scheduleName string) *postgres.SchedulerTracker {
 	t.Helper()
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         scheduleName,
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
 	}
@@ -56,7 +56,7 @@ func TestSchedulerRepository_UpdateTx_UpdatesStatusAndTimestamps(t *testing.T) {
 	defer tx.Rollback()
 
 	now := time.Now()
-	tracker.Status = model.SchedulerStatusSucceeded
+	tracker.Status = run.SchedulerStatusSucceeded
 	tracker.LastHeartbeatAt = &now
 
 	err = repo.UpdateTx(context.Background(), tx, tracker)
@@ -65,7 +65,7 @@ func TestSchedulerRepository_UpdateTx_UpdatesStatusAndTimestamps(t *testing.T) {
 
 	updated, err := repo.GetByID(context.Background(), tracker.ScheduleID)
 	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusSucceeded, updated.Status)
+	assert.Equal(t, run.SchedulerStatusSucceeded, updated.Status)
 }
 
 func TestSchedulerRepository_UpdateInitializationStatusTx_UpdatesStatus(t *testing.T) {
@@ -93,10 +93,10 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 
 	scheduleID := uuid.New()
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule-" + uuid.New().String(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		ServiceMetadataRaw:   []byte(`{"svc-a":{"manifest_version":"v3","image_tag":""}}`),
@@ -113,70 +113,19 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 
 	got, err := repo.GetByID(context.Background(), scheduleID)
 	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusPending, got.Status)
+	assert.Equal(t, run.SchedulerStatusPending, got.Status)
 	assert.Equal(t, "pending", got.InitializationStatus)
-	assert.Equal(t, map[string]model.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, got.GetServiceMetadata())
-}
-
-func TestSchedulerRepository_IncrementTerminalCountTx(t *testing.T) {
-	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	id := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), &model.SchedulerTracker{
-		ScheduleID:           id,
-		ScheduleName:         "s1-" + id.String(),
-		Status:               model.SchedulerStatusPending,
-		InitializationStatus: "pending",
-		TotalTaskCount:       sql.NullInt32{Int32: 3, Valid: true},
-		CreatedAt:            time.Now(),
-	}))
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-
-	terminal, total, err := repo.IncrementTerminalCountTx(context.Background(), tx, id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), terminal)
-	assert.Equal(t, int32(3), total)
-	require.NoError(t, tx.Commit())
-}
-
-func TestSchedulerRepository_DecrementTerminalCountTx(t *testing.T) {
-	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	id := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), &model.SchedulerTracker{
-		ScheduleID:           id,
-		ScheduleName:         "s1-" + id.String(),
-		Status:               model.SchedulerStatusPending,
-		InitializationStatus: "pending",
-		TerminalTaskCount:    3,
-		CreatedAt:            time.Now(),
-	}))
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-
-	require.NoError(t, repo.DecrementTerminalCountTx(context.Background(), tx, id, 2))
-	require.NoError(t, tx.Commit())
-
-	got, err := repo.GetByID(context.Background(), id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), got.TerminalTaskCount)
+	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, got.GetServiceMetadata())
 }
 
 func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 	db := newTestDB(t)
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	id := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), &model.SchedulerTracker{
+	require.NoError(t, repo.Create(context.Background(), &postgres.SchedulerTracker{
 		ScheduleID:           id,
 		ScheduleName:         "s1-" + id.String(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		InitializationStatus: "pending",
 		CreatedAt:            time.Now(),
 	}))
@@ -200,10 +149,10 @@ func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 
 	id := uuid.New()
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           id,
 		ScheduleName:         "test_schedule",
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		InitializationStatus: "pending",
 		TotalTaskCount:       sql.NullInt32{Int32: 5, Valid: true},
 		TerminalTaskCount:    2,
@@ -227,10 +176,10 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 	sourceRunID := uuid.New()
 	// Schedule names are varchar(50); keep prefix + 8-char suffix safely under limit.
 	shortSuffix := func() string { return uuid.New().String()[:8] }
-	tracker := &model.SchedulerTracker{
+	tracker := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "krt-" + shortSuffix(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		Kind:                 "rerun",
@@ -246,10 +195,10 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 	assert.Equal(t, sourceRunID, *got.SourceRunID)
 
 	// Default kind for a tracker constructed without setting Kind.
-	defaultTracker := &model.SchedulerTracker{
+	defaultTracker := &postgres.SchedulerTracker{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "kdf-" + shortSuffix(),
-		Status:               model.SchedulerStatusPending,
+		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		Kind:                 "cron",
@@ -284,10 +233,10 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	ctx := context.Background()
 
 	id := uuid.New()
-	require.NoError(t, repo.Create(ctx, &model.SchedulerTracker{
+	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
 		ScheduleID:           id,
 		ScheduleName:         "test-cancel-" + id.String(),
-		Status:               model.SchedulerStatusRunning,
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
 	}))
@@ -302,7 +251,7 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 
 	got, err := repo.GetByID(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, model.SchedulerStatusCancelled, got.Status)
+	assert.Equal(t, run.SchedulerStatusCancelled, got.Status)
 	assert.NotNil(t, got.CancelledAt)
 	assert.Equal(t, "test-user", *got.CancelledBy)
 	assert.Equal(t, "test reason", *got.CancellationReason)
@@ -314,52 +263,88 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, "test-user", "duplicate"), postgres.ErrNotCancellable)
 }
 
-// TestSchedulerTrackerRepository_SetTerminalTaskCountTx_GREATEST verifies that
-// SetTerminalTaskCountTx never reduces an already-correct terminal_task_count.
-// A duplicate or stale delivery with a lower count must leave the stored value
-// unchanged; a higher count must advance it.
-func TestSchedulerTrackerRepository_SetTerminalTaskCountTx_GREATEST(t *testing.T) {
+// TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow walks the full
+// FAILED → RUNNING → FAILED → RUNNING → FAILED transition sequence that a
+// retry-exhausting task produces in production. The aggregate increments the
+// counter in memory on each FAILED and decrements it on each FAILED→RUNNING
+// retry, then SaveRun writes the absolute value via SetTerminalTaskCountTx.
+// If SetTerminalTaskCountTx silently ignores decrements (the pre-fix
+// GREATEST behaviour), the final stored count is 3 instead of the correct 1.
+//
+// This is the unit-level guard against the inflation bug that broke
+// TestE2E_FailurePath_RerunRebasesBothFailureSubtrees in PR #61 CI.
+func TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow(t *testing.T) {
 	db := newTestDB(t)
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	ctx := context.Background()
 
 	id := uuid.New()
-	require.NoError(t, repo.Create(ctx, &model.SchedulerTracker{
+	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
 		ScheduleID:           id,
-		ScheduleName:         "greatest-test-" + id.String(),
-		Status:               model.SchedulerStatusRunning,
+		ScheduleName:         "retry-flow-" + id.String(),
+		Status:               run.SchedulerStatusRunning,
+		CreatedAt:            time.Now(),
+		InitializationStatus: "completed",
+		TotalTaskCount:       sql.NullInt32{Int32: 1, Valid: true},
+	}))
+	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+
+	// Each row models one SaveRun call from the aggregate after a task event.
+	// The "want" column is what terminal_task_count must equal in the DB
+	// AFTER the SaveRun commit for the corresponding event.
+	steps := []struct {
+		event      string
+		writeValue int32
+		want       int32
+	}{
+		{"RUNNING→FAILED(0): aggregate ++", 1, 1},
+		{"FAILED→RUNNING(1): aggregate --", 0, 0}, // decrement MUST land
+		{"RUNNING→FAILED(1): aggregate ++", 1, 1},
+		{"FAILED→RUNNING(2): aggregate --", 0, 0}, // decrement MUST land
+		{"RUNNING→FAILED(2): aggregate ++", 1, 1}, // final terminal
+	}
+
+	for _, s := range steps {
+		tx, err := db.BeginTxx(ctx, nil)
+		require.NoError(t, err)
+		require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx, id, s.writeValue), s.event)
+		require.NoError(t, tx.Commit(), s.event)
+
+		got, err := repo.GetByID(ctx, id)
+		require.NoError(t, err, s.event)
+		assert.Equal(t, s.want, got.TerminalTaskCount,
+			"after event %q: stored terminal_task_count must be %d", s.event, s.want)
+	}
+}
+
+// TestSchedulerTrackerRepository_SetTerminalTaskCountTx_AbsoluteWrite asserts
+// that SetTerminalTaskCountTx writes the value absolutely — including
+// decreasing writes. This replaces the deleted _GREATEST test, which guarded
+// the old monotonic-MAX semantics that the aggregate refactor obsoleted.
+func TestSchedulerTrackerRepository_SetTerminalTaskCountTx_AbsoluteWrite(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	id := uuid.New()
+	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+		ScheduleID:           id,
+		ScheduleName:         "abs-" + id.String()[:8],
+		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "in_progress",
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
 
-	// Seed to 5.
-	tx, err := db.BeginTxx(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx, id, 5))
-	require.NoError(t, tx.Commit())
+	// Set to 5, then 3 (decrease), then 7 (increase). Each must land verbatim.
+	for _, want := range []int32{5, 3, 7} {
+		tx, err := db.BeginTxx(ctx, nil)
+		require.NoError(t, err)
+		require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx, id, want))
+		require.NoError(t, tx.Commit())
 
-	got, err := repo.GetByID(ctx, id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(5), got.TerminalTaskCount)
-
-	// A lower value must not regress the count.
-	tx2, err := db.BeginTxx(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx2, id, 3))
-	require.NoError(t, tx2.Commit())
-
-	got, err = repo.GetByID(ctx, id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(5), got.TerminalTaskCount, "lower value must not reduce terminal_task_count")
-
-	// A higher value must advance the count.
-	tx3, err := db.BeginTxx(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx3, id, 7))
-	require.NoError(t, tx3.Commit())
-
-	got, err = repo.GetByID(ctx, id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(7), got.TerminalTaskCount, "higher value must advance terminal_task_count")
+		got, err := repo.GetByID(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, want, got.TerminalTaskCount, "absolute write must land verbatim")
+	}
 }

@@ -7,17 +7,16 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/carolsimone/continuo/state/domain/model"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
 // TaskExecutionRepository defines all operations for task_execution table
 type TaskExecutionRepository interface {
-	Create(ctx context.Context, execution *model.TaskExecution) error
-	CreateTx(ctx context.Context, tx *sqlx.Tx, execution *model.TaskExecution) error
-	GetByID(ctx context.Context, id uuid.UUID) (*model.TaskExecution, error)
-	ListByScheduleID(ctx context.Context, scheduleID string, pageSize, pageOffset int) ([]*model.TaskExecution, int, error)
+	Create(ctx context.Context, execution *TaskExecution) error
+	CreateTx(ctx context.Context, tx *sqlx.Tx, execution *TaskExecution) error
+	GetByID(ctx context.Context, id uuid.UUID) (*TaskExecution, error)
+	ListByScheduleID(ctx context.Context, scheduleID string, pageSize, pageOffset int) ([]*TaskExecution, int, error)
 }
 
 type taskExecutionRepository struct {
@@ -34,7 +33,7 @@ func NewTaskExecutionRepository(db *sqlx.DB, logger *slog.Logger) TaskExecutionR
 }
 
 // Create inserts a new task_execution record
-func (r *taskExecutionRepository) Create(ctx context.Context, execution *model.TaskExecution) error {
+func (r *taskExecutionRepository) Create(ctx context.Context, execution *TaskExecution) error {
 	query := `
 		INSERT INTO task_execution (
 			id, task_id, created_at, started_at, completed_at,
@@ -83,7 +82,7 @@ func (r *taskExecutionRepository) Create(ctx context.Context, execution *model.T
 
 // CreateTx inserts a new task_execution record within an existing transaction.
 // Uses ON CONFLICT (id) DO NOTHING for idempotency.
-func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, execution *model.TaskExecution) error {
+func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, execution *TaskExecution) error {
 	_, err := tx.NamedExecContext(ctx, `
 		INSERT INTO task_execution (
 			id, task_id, created_at, started_at, completed_at,
@@ -114,7 +113,7 @@ func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, exe
 }
 
 // GetByID retrieves a task_execution by id
-func (r *taskExecutionRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.TaskExecution, error) {
+func (r *taskExecutionRepository) GetByID(ctx context.Context, id uuid.UUID) (*TaskExecution, error) {
 	query := `
 		SELECT
 			id, task_id, created_at, started_at, completed_at,
@@ -125,7 +124,7 @@ func (r *taskExecutionRepository) GetByID(ctx context.Context, id uuid.UUID) (*m
 		WHERE id = $1
 	`
 
-	var execution model.TaskExecution
+	var execution TaskExecution
 	err := r.db.GetContext(ctx, &execution, query, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -150,7 +149,7 @@ func (r *taskExecutionRepository) GetByID(ctx context.Context, id uuid.UUID) (*m
 }
 
 // ListByScheduleID retrieves all task executions for a given schedule, paginated
-func (r *taskExecutionRepository) ListByScheduleID(ctx context.Context, scheduleID string, pageSize, pageOffset int) ([]*model.TaskExecution, int, error) {
+func (r *taskExecutionRepository) ListByScheduleID(ctx context.Context, scheduleID string, pageSize, pageOffset int) ([]*TaskExecution, int, error) {
 	countQuery := `
 		SELECT COUNT(*)
 		FROM task_execution te
@@ -174,7 +173,7 @@ func (r *taskExecutionRepository) ListByScheduleID(ctx context.Context, schedule
 		LIMIT $2 OFFSET $3
 	`
 
-	var executions []*model.TaskExecution
+	var executions []*TaskExecution
 	if err := r.db.SelectContext(ctx, &executions, query, scheduleID, pageSize, pageOffset); err != nil {
 		return nil, 0, fmt.Errorf("failed to list task executions: %w", err)
 	}
