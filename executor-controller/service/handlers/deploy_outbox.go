@@ -17,8 +17,7 @@ import (
 // QueryModelHandler and RetryTaskHandler call this helper; the only
 // difference between them is which retry values get passed in.
 //
-// MaxRetries <= 0 falls back to the service default of 2 (preserving
-// the prior DeployHandler.Handle behavior).
+// MaxRetries <= 0 falls back to the service default of 2.
 func createDeploymentOutboxEntry(
 	ctx context.Context,
 	u uow.UnitOfWork,
