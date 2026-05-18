@@ -22,10 +22,13 @@ import (
 
 // stubOutboxRepo captures creates for assertion without a real DB.
 type stubOutboxRepo struct {
+	mu      sync.Mutex
 	entries []*model.DeploymentOutboxEntry
 }
 
 func (r *stubOutboxRepo) Create(ctx context.Context, entry *model.DeploymentOutboxEntry) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.entries = append(r.entries, entry)
 	return nil
 }
