@@ -132,12 +132,6 @@ func (s *stubSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *s
 func (s *stubSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
 	return nil
 }
-func (s *stubSchedulerRepo) IncrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (int32, int32, error) {
-	return 0, 0, nil
-}
-func (s *stubSchedulerRepo) DecrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
-	return nil
-}
 func (s *stubSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
 	return nil
 }
@@ -768,12 +762,6 @@ func (f *fakeSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *s
 	return nil
 }
 func (f *fakeSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
-	return nil
-}
-func (f *fakeSchedulerRepo) IncrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (int32, int32, error) {
-	return 0, 0, nil
-}
-func (f *fakeSchedulerRepo) DecrementTerminalCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
 	return nil
 }
 func (f *fakeSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {

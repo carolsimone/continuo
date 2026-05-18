@@ -118,57 +118,6 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, got.GetServiceMetadata())
 }
 
-func TestSchedulerRepository_IncrementTerminalCountTx(t *testing.T) {
-	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	id := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), &postgres.SchedulerTracker{
-		ScheduleID:           id,
-		ScheduleName:         "s1-" + id.String(),
-		Status:               run.SchedulerStatusPending,
-		InitializationStatus: "pending",
-		TotalTaskCount:       sql.NullInt32{Int32: 3, Valid: true},
-		CreatedAt:            time.Now(),
-	}))
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-
-	terminal, total, err := repo.IncrementTerminalCountTx(context.Background(), tx, id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), terminal)
-	assert.Equal(t, int32(3), total)
-	require.NoError(t, tx.Commit())
-}
-
-func TestSchedulerRepository_DecrementTerminalCountTx(t *testing.T) {
-	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	id := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), &postgres.SchedulerTracker{
-		ScheduleID:           id,
-		ScheduleName:         "s1-" + id.String(),
-		Status:               run.SchedulerStatusPending,
-		InitializationStatus: "pending",
-		TerminalTaskCount:    3,
-		CreatedAt:            time.Now(),
-	}))
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-
-	require.NoError(t, repo.DecrementTerminalCountTx(context.Background(), tx, id, 2))
-	require.NoError(t, tx.Commit())
-
-	got, err := repo.GetByID(context.Background(), id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), got.TerminalTaskCount)
-}
-
 func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 	db := newTestDB(t)
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
@@ -314,56 +263,6 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, "test-user", "duplicate"), postgres.ErrNotCancellable)
 }
 
-// TestSchedulerTrackerRepository_SetTerminalTaskCountTx_GREATEST verifies that
-// SetTerminalTaskCountTx never reduces an already-correct terminal_task_count.
-// A duplicate or stale delivery with a lower count must leave the stored value
-// unchanged; a higher count must advance it.
-func TestSchedulerTrackerRepository_SetTerminalTaskCountTx_GREATEST(t *testing.T) {
-	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	ctx := context.Background()
-
-	id := uuid.New()
-	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
-		ScheduleID:           id,
-		ScheduleName:         "greatest-test-" + id.String(),
-		Status:               run.SchedulerStatusRunning,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "in_progress",
-	}))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
-
-	// Seed to 5.
-	tx, err := db.BeginTxx(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx, id, 5))
-	require.NoError(t, tx.Commit())
-
-	got, err := repo.GetByID(ctx, id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(5), got.TerminalTaskCount)
-
-	// A lower value must not regress the count.
-	tx2, err := db.BeginTxx(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx2, id, 3))
-	require.NoError(t, tx2.Commit())
-
-	got, err = repo.GetByID(ctx, id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(5), got.TerminalTaskCount, "lower value must not reduce terminal_task_count")
-
-	// A higher value must advance the count.
-	tx3, err := db.BeginTxx(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx3, id, 7))
-	require.NoError(t, tx3.Commit())
-
-	got, err = repo.GetByID(ctx, id)
-	require.NoError(t, err)
-	assert.Equal(t, int32(7), got.TerminalTaskCount, "higher value must advance terminal_task_count")
-}
-
 // TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow walks the full
 // FAILED → RUNNING → FAILED → RUNNING → FAILED transition sequence that a
 // retry-exhausting task produces in production. The aggregate increments the
@@ -415,5 +314,37 @@ func TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow(t *testing.T)
 		require.NoError(t, err, s.event)
 		assert.Equal(t, s.want, got.TerminalTaskCount,
 			"after event %q: stored terminal_task_count must be %d", s.event, s.want)
+	}
+}
+
+// TestSchedulerTrackerRepository_SetTerminalTaskCountTx_AbsoluteWrite asserts
+// that SetTerminalTaskCountTx writes the value absolutely — including
+// decreasing writes. This replaces the deleted _GREATEST test, which guarded
+// the old monotonic-MAX semantics that the aggregate refactor obsoleted.
+func TestSchedulerTrackerRepository_SetTerminalTaskCountTx_AbsoluteWrite(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	id := uuid.New()
+	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+		ScheduleID:           id,
+		ScheduleName:         "abs-" + id.String()[:8],
+		Status:               run.SchedulerStatusRunning,
+		CreatedAt:            time.Now(),
+		InitializationStatus: "in_progress",
+	}))
+	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+
+	// Set to 5, then 3 (decrease), then 7 (increase). Each must land verbatim.
+	for _, want := range []int32{5, 3, 7} {
+		tx, err := db.BeginTxx(ctx, nil)
+		require.NoError(t, err)
+		require.NoError(t, repo.SetTerminalTaskCountTx(ctx, tx, id, want))
+		require.NoError(t, tx.Commit())
+
+		got, err := repo.GetByID(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, want, got.TerminalTaskCount, "absolute write must land verbatim")
 	}
 }

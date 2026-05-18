@@ -47,8 +47,6 @@ type SchedulerTrackerRepository interface {
 	UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status string) error
 	CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error
 	// Task count helpers for event-driven run finalization
-	IncrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (terminal, total int32, err error)
-	DecrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, n int32) error
 	SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error
 	SetTerminalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, terminal int32) error
 	// UpdateStatusTx updates the status column within an existing transaction.
@@ -589,41 +587,6 @@ func (r *schedulerTrackerRepository) UpdateInitializationStatusTx(ctx context.Co
 	return nil
 }
 
-// IncrementTerminalCountTx atomically increments terminal_task_count and returns
-// the new terminal count and the current total_task_count (-1 if NULL).
-func (r *schedulerTrackerRepository) IncrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (terminal, total int32, err error) {
-	err = tx.QueryRowxContext(ctx, `
-		UPDATE scheduler_tracker
-		SET terminal_task_count = terminal_task_count + 1
-		WHERE schedule_id = $1
-		RETURNING terminal_task_count, COALESCE(total_task_count, -1)
-	`, id).Scan(&terminal, &total)
-	if errors.Is(err, sql.ErrNoRows) {
-		err = fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
-	}
-	return
-}
-
-// DecrementTerminalCountTx decrements terminal_task_count by n, floor 0.
-func (r *schedulerTrackerRepository) DecrementTerminalCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, n int32) error {
-	res, err := tx.ExecContext(ctx, `
-		UPDATE scheduler_tracker
-		SET terminal_task_count = GREATEST(terminal_task_count - $2, 0)
-		WHERE schedule_id = $1
-	`, id, n)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
-	}
-	return nil
-}
-
 // SetTotalTaskCountTx sets total_task_count for the given schedule.
 func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error {
 	res, err := tx.ExecContext(ctx, `
@@ -644,13 +607,17 @@ func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx
 	return nil
 }
 
-// SetTerminalTaskCountTx sets terminal_task_count for the given schedule.
-// Used by RunEntriesDispatchedHandler to seed the count when a projection
-// includes already-terminal task rows (e.g. SUCCEEDED inherits in a rebase).
+// SetTerminalTaskCountTx writes terminal_task_count absolutely (overwriting
+// any prior value) inside the caller's transaction. Callers must hold a
+// SELECT ... FOR UPDATE lock on the scheduler_tracker row before invoking;
+// the aggregate's LoadRunForUpdate provides this. Decreasing writes succeed
+// — the GREATEST monotonic-MAX semantics that lived here pre-aggregate
+// existed only to guard against unsynchronised writers, which no longer
+// exist after the load-mutate-save refactor.
 func (r *schedulerTrackerRepository) SetTerminalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, terminal int32) error {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
-		SET terminal_task_count = GREATEST(terminal_task_count, $2)
+		SET terminal_task_count = $2
 		WHERE schedule_id = $1
 	`, id, terminal)
 	if err != nil {
