@@ -153,32 +153,6 @@ func (r *Run) cascadeSkip(from NodeKey) []DomainEvent {
 	return events
 }
 
-// ResetDownstream resets all transitively downstream SKIPPED nodes back to PENDING.
-// Called when an upstream node is retried. Requires ScopeResetDownstream subgraph.
-func (r *Run) ResetDownstream(from NodeKey) ([]DomainEvent, error) {
-	if _, ok := r.nodes[from]; !ok {
-		return nil, ErrNodeNotInScope
-	}
-	r.Version++
-	r.resetSkipped(from)
-	return nil, nil
-}
-
-func (r *Run) resetSkipped(from NodeKey) {
-	n := r.nodes[from]
-	for _, dk := range n.Downstreams {
-		downstream, ok := r.nodes[dk]
-		if !ok {
-			continue
-		}
-		if downstream.Status == "SKIPPED" {
-			downstream.Status = "PENDING"
-			r.TerminalCount--
-			r.resetSkipped(dk)
-		}
-	}
-}
-
 // checkUnblocked emits NodeUnblocked for each immediate downstream node whose
 // every upstream is now terminal.
 func (r *Run) checkUnblocked(from NodeKey) []DomainEvent {

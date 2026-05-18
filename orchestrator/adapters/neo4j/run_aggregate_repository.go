@@ -29,8 +29,6 @@ func (r *RunAggregateRepository) Rehydrate(ctx context.Context, runID string, sc
 		return r.rehydrateFull(ctx, runID)
 	case domainRun.ScopeNodeCompletion:
 		return r.rehydrateForCompletion(ctx, runID, s)
-	case domainRun.ScopeResetDownstream:
-		return r.rehydrateForReset(ctx, runID, s)
 	default:
 		return nil, fmt.Errorf("RunAggregateRepository.Rehydrate: unknown scope type %T", scope)
 	}
@@ -169,53 +167,6 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
 	})
 	if err != nil {
 		return nil, fmt.Errorf("rehydrateForCompletion: %w", err)
-	}
-	return r.collectRunFromFlatRows(ctx, runID, result)
-}
-
-// rehydrateForReset loads the transitive downstream of the target node.
-func (r *RunAggregateRepository) rehydrateForReset(ctx context.Context, runID string, s domainRun.ScopeResetDownstream) (*domainRun.Run, error) {
-	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
-
-	result, err := session.Run(ctx, `
-        MATCH (run:Run {run_id: $run_id})
-        MATCH (run)-[:EXECUTES]->(target:Table {schema_name: $schema_name, table_name: $table_name})
-        OPTIONAL MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
-        WHERE (run)-[:EXECUTES]->(downstream)
-        WITH run, collect(DISTINCT target) + collect(DISTINCT downstream) AS allNodes
-        UNWIND allNodes AS t
-        WITH run, t WHERE t IS NOT NULL
-        MATCH (run)-[e:EXECUTES]->(t)
-        RETURN
-            run.schedule_name                  AS schedule_name,
-            run.terminal_status                AS terminal_status,
-            COALESCE(run.total_nodes,    0)    AS total_nodes,
-            COALESCE(run.terminal_count, 0)    AS terminal_count,
-            COALESCE(run.failed_count,   0)    AS failed_count,
-            COALESCE(run.version,        0)    AS version,
-            e.task_id                          AS task_id,
-            COALESCE(e.status, 'PENDING')      AS status,
-            COALESCE(e.manifest_version, '')   AS manifest_version,
-            COALESCE(e.image_tag, '')          AS image_tag,
-            t.table_name                       AS table_name,
-            t.schema_name                      AS schema_name,
-            t.service_name                     AS service_name,
-            t.node_type                        AS node_type,
-            t.schedule_name                    AS schedule_name_t,
-            [(t)-[:DEPENDS_ON]->(up:Table)<-[:EXECUTES]-(run) |
-                {schema_name: up.schema_name, table_name: up.table_name, service_name: up.service_name}
-            ] AS upstreams,
-            [(down:Table)-[:DEPENDS_ON]->(t)<-[:EXECUTES]-(run) |
-                {schema_name: down.schema_name, table_name: down.table_name, service_name: down.service_name}
-            ] AS downstreams
-    `, map[string]interface{}{
-		"run_id":      runID,
-		"schema_name": s.Key.SchemaName,
-		"table_name":  s.Key.TableName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("rehydrateForReset: %w", err)
 	}
 	return r.collectRunFromFlatRows(ctx, runID, result)
 }

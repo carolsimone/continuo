@@ -38,7 +38,7 @@ Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run sna
 | `total_nodes` | int | Number of `:EXECUTES` edges materialised at `Snapshot` time. Used by the `Run` aggregate to detect terminal-count == total-count finalization. |
 | `terminal_count` | int | Number of `:EXECUTES` edges currently in a terminal status (`SUCCEEDED`, `FAILED`, `SKIPPED`, `CANCELLED`). Incremented by `AggregateRepository.Save` as nodes complete; equal to `total_nodes` when the run finalises. |
 | `failed_count` | int | Number of `:EXECUTES` edges that transitioned to `FAILED` directly (cascade-skipped nodes do not count). Drives the aggregate's terminal-status decision when `terminal_count == total_nodes` so finalisation works even when the failed node is outside the currently loaded subgraph. |
-| `version` | int | Optimistic-concurrency token. Incremented on every aggregate mutation (`CompleteNode`, `ResetDownstream`); `AggregateRepository.Save` compares against `COALESCE(run.version, 0)` and returns `ErrVersionConflict` on mismatch. |
+| `version` | int | Optimistic-concurrency token. Incremented on every aggregate mutation (`CompleteNode`); `AggregateRepository.Save` compares against `COALESCE(run.version, 0)` and returns `ErrVersionConflict` on mismatch. |
 
 ### Run aggregate (`orchestrator/domain/run`)
 
@@ -46,7 +46,6 @@ The write-side of node-completion processing is the `Run` aggregate root. It own
 
 - `NewRun(runID, scheduleName, nodes) *Run` — constructs the aggregate from its initial node set; called once after `Snapshot` materialises the `:EXECUTES` edges.
 - `CompleteNode(key, status) ([]DomainEvent, error)` — transitions the target node, enforces cascade-skip on `FAILED`, computes immediate unblocks on `SUCCEEDED`/`SKIPPED`, and emits `RunFinalized` when `TerminalCount == TotalNodes`.
-- `ResetDownstream(key) ([]DomainEvent, error)` — walks the transitive downstream of a retried node and resets any `SKIPPED` rows back to `PENDING`.
 
 Domain events live in `orchestrator/domain/run/events.go`:
 
@@ -61,13 +60,12 @@ Ports (`orchestrator/domain/run/ports.go`):
 - `AggregateRepository` (write-side) — `Rehydrate(ctx, runID, scope) (*Run, error)` reconstitutes an operation-scoped subgraph; `Save(ctx, *Run) error` persists node statuses, `total_nodes`/`terminal_count`/`failed_count`/`version`, and `:Run.terminal_status`/`completed_at` when finalised. `Save` checks `Version` against the loaded value (with `COALESCE(run.version, 0)` to admit legacy in-flight runs) and returns `ErrVersionConflict` on mismatch; the handler retries from `Rehydrate`. `terminal_status`/`completed_at` are first-writer-wins so state's authoritative `run.finalized:v1` projection cannot be overwritten by a later aggregate save.
 - `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`.
 
-`Scope` is a sealed interface with three variants that the adapter uses to scope the Cypher read:
+`Scope` is a sealed interface with two variants that the adapter uses to scope the Cypher read:
 
 | Hint | Subgraph loaded |
 |---|---|
 | `ScopeFull` | Every `:EXECUTES` edge for the run (used at initialisation only). |
 | `ScopeNodeCompletion{Key, Status}` | `Status="FAILED"` → target + full transitive downstream; `Status="SUCCEEDED"`/`SKIPPED` → target + immediate downstream + each downstream's upstreams. |
-| `ScopeResetDownstream{Key}` | Target + full transitive downstream. |
 
 Adapter implementations:
 - `orchestrator/adapters/neo4j/run_aggregate_repository.go` — `RunAggregateRepository` implements `AggregateRepository`. Also owns `DeleteExpiredRuns` for the sweeper.

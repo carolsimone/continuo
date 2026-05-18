@@ -28,14 +28,6 @@ type ScopeNodeCompletion struct {
 
 func (ScopeNodeCompletion) scope() {}
 
-// ScopeResetDownstream rehydrates the transitive downstream of the target node.
-// Used by ResetDownstream to reset SKIPPED nodes back to PENDING.
-type ScopeResetDownstream struct {
-	Key NodeKey
-}
-
-func (ScopeResetDownstream) scope() {}
-
 // AggregateRepository is the write-side port for the Run aggregate.
 // Rehydrate reconstitutes the aggregate from persistent state for the given
 // scope. Save persists only the nodes present in the loaded subgraph plus
