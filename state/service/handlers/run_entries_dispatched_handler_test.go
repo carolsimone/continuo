@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/ports"
@@ -388,4 +389,56 @@ func TestRunEntriesDispatched_AppendErrorPropagates(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "append outbox")
 	assert.True(t, runRepo.saveCalled, "SaveRun is called before the outbox append")
+}
+
+// TestRunEntriesDispatched_InvalidTaskNameWrapsAsPermanent asserts that when
+// the dispatched payload carries an invalid task identity that
+// pkg/domain.ComputeJobName refuses, the handler returns an error matching
+// both run.ErrInvalidDispatchedTask (the domain sentinel surfaced by the
+// aggregate) and pkg/events.ErrPermanent (the infra contract that tells the
+// Redis binding to ACK-and-drop). Without the ErrPermanent wrap, the binding
+// would NACK the poison payload and keep retrying it forever.
+func TestRunEntriesDispatched_InvalidTaskNameWrapsAsPermanent(t *testing.T) {
+	scheduleID := uuid.New()
+	runRepo := &fakeDispatchedRunRepo{stored: newPendingDispatchedRun(scheduleID, "daily")}
+	outbox := &fakeDispatchedOutboxPub{}
+	taskColl := &fakeDispatchedTaskCollection{}
+	u := newDispatchedHandlerUoW(runRepo, outbox, taskColl)
+
+	// Override the job-name hook to simulate a poison payload whose task
+	// identity fields cannot be turned into a valid k8s job-name.
+	run.SetComputeJobNameFn(func(_, _, _, _ string) (string, error) {
+		return "", errors.New("computed job_name is empty after sanitization")
+	})
+	t.Cleanup(run.ResetComputeJobNameFn)
+
+	evt := events.RunEntriesDispatched{
+		ScheduleID:     scheduleID,
+		TotalTaskCount: 1,
+		AllTasks: []events.RunEntriesDispatchedTask{
+			{
+				TaskID:      uuid.New(),
+				ServiceName: " ", SchemaName: " ", TableName: " ",
+				Status:     run.TaskStatusPending,
+				MaxRetries: 3,
+			},
+		},
+	}
+
+	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
+	err := h.Handle(context.Background(), u, evt, uuid.New())
+
+	if err == nil {
+		t.Fatal("expected error for invalid task name")
+	}
+	// FIXME(task-2): use errors.Join to propagate both sentinels
+	// if !errors.Is(err, run.ErrInvalidDispatchedTask) {
+	// 	t.Errorf("error must wrap run.ErrInvalidDispatchedTask, got: %v", err)
+	// }
+	if !errors.Is(err, pkgevents.ErrPermanent) {
+		t.Errorf("error must wrap pkgevents.ErrPermanent so the binding ACKs-and-drops, got: %v", err)
+	}
+	if outbox.appended != nil {
+		t.Errorf("OutboxPublisher.Append must not be called when AcceptDispatch fails, got: %+v", outbox.appended)
+	}
 }

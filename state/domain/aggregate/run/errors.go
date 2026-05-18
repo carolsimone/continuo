@@ -47,4 +47,11 @@ var (
 	// ErrTaskNotFound is returned by Run.HasTaskAt and by TaskCollection
 	// implementations when a specific task lookup yields nothing.
 	ErrTaskNotFound = errors.New("task not found")
+
+	// ErrInvalidDispatchedTask is returned by AcceptDispatch when a projected
+	// task's identity fields (service/schema/table) cannot be turned into a
+	// valid k8s job-name by pkg/domain.ComputeJobName. The payload is
+	// defective and cannot succeed on retry; the application handler maps
+	// this to pkg/events.ErrPermanent so the Redis binding ACKs-and-drops.
+	ErrInvalidDispatchedTask = errors.New("dispatched task has invalid identity fields")
 )

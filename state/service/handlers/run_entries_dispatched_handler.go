@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -45,6 +47,9 @@ func (h *RunEntriesDispatchedHandler) Handle(
 	projection := toDispatchedTasks(evt)
 	domainEvents, err := r.AcceptDispatch(ctx, u.TaskCollection(), projection, u.Clock().Now())
 	if err != nil {
+		if errors.Is(err, run.ErrInvalidDispatchedTask) {
+			return fmt.Errorf("%w: %v", pkgevents.ErrPermanent, err)
+		}
 		return fmt.Errorf("accept dispatch: %w", err)
 	}
 	if err := u.Run().SaveRun(ctx, u.Tx(), r); err != nil {

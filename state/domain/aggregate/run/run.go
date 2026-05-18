@@ -289,9 +289,9 @@ func (r *Run) AcceptDispatch(
 
 	built := make([]Task, 0, len(projection))
 	for _, p := range projection {
-		jobName, err := domain.ComputeJobName(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
+		jobName, err := computeJobName(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
 		if err != nil {
-			return nil, fmt.Errorf("compute job_name: %w", err)
+			return nil, fmt.Errorf("%w: %v", ErrInvalidDispatchedTask, err)
 		}
 		built = append(built, Task{
 			TaskID:              p.TaskID,
@@ -517,6 +517,28 @@ func (r *Run) finalize(outcome SchedulerStatus, now time.Time) []DomainEvent {
 // task.status.updated:v1 event has no timestamp field). Tests can override
 // it via a package_test helper if needed; production uses time.Now.
 var timeNow = time.Now
+
+// defaultComputeJobName is the production implementation of the job-name
+// computation. Stored separately so tests can restore it via
+// ResetComputeJobNameFn after injecting a failure.
+var defaultComputeJobName = domain.ComputeJobName
+
+// computeJobName is a package-level hook that delegates to
+// pkg/domain.ComputeJobName. Tests can override it via SetComputeJobNameFn to
+// inject errors for the ErrInvalidDispatchedTask code path.
+var computeJobName = defaultComputeJobName
+
+// SetComputeJobNameFn replaces the job-name computation hook for the duration
+// of a test. Always paired with t.Cleanup(run.ResetComputeJobNameFn).
+func SetComputeJobNameFn(fn func(service, schema, table, scheduleID string) (string, error)) {
+	computeJobName = fn
+}
+
+// ResetComputeJobNameFn restores the job-name computation hook to the
+// production default.
+func ResetComputeJobNameFn() {
+	computeJobName = defaultComputeJobName
+}
 
 // CanBeRerunSource enforces the eligibility check for a run to serve as a
 // rerun source: status must be FAILED or CANCELLED, and at least one task

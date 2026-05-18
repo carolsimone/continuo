@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -455,5 +456,46 @@ func TestHasTaskAt_ReturnsFalseWhenMissing(t *testing.T) {
 	}
 	if ok {
 		t.Fatalf("expected false")
+	}
+}
+
+// TestAcceptDispatch_InvalidTaskNameReturnsErrInvalidDispatchedTask asserts
+// that when ComputeJobName rejects a projected task's identity (e.g. all
+// whitespace, characters that cannot survive k8s job-name sanitization),
+// AcceptDispatch returns an error wrapping the typed domain sentinel
+// run.ErrInvalidDispatchedTask. The application handler relies on this
+// sentinel to map the failure to pkg/events.ErrPermanent so the consumer
+// binding ACKs-and-drops the poison message instead of NACK-retrying it
+// forever.
+func TestAcceptDispatch_InvalidTaskNameReturnsErrInvalidDispatchedTask(t *testing.T) {
+	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, nil, time.Now())
+	if err != nil {
+		t.Fatalf("NewPendingRun setup: %v", err)
+	}
+	tc := newFakeTaskCollection()
+
+	// Override the package-level hook so ComputeJobName always returns an
+	// error, simulating a poison payload whose task identity fields cannot be
+	// turned into a valid k8s job-name.
+	run.SetComputeJobNameFn(func(_, _, _, _ string) (string, error) {
+		return "", errors.New("computed job_name is empty after sanitization")
+	})
+	t.Cleanup(func() { run.ResetComputeJobNameFn() })
+
+	projection := []run.DispatchedTask{
+		{
+			TaskID:      uuid.New(),
+			ServiceName: " ", SchemaName: " ", TableName: " ",
+			Status:     run.TaskStatusPending,
+			MaxRetries: 3,
+		},
+	}
+
+	_, err = r.AcceptDispatch(context.Background(), tc, projection, time.Now())
+	if err == nil {
+		t.Fatal("expected an error from AcceptDispatch with all-whitespace task identity")
+	}
+	if !errors.Is(err, run.ErrInvalidDispatchedTask) {
+		t.Fatalf("error must wrap run.ErrInvalidDispatchedTask, got: %v", err)
 	}
 }
