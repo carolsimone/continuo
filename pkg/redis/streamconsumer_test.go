@@ -145,7 +145,8 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 		secondCalled.Add(1)
 		return nil
 	}
-	succeeding := redis.NewStreamConsumer(rc, stream, group, succeedingHandler, logger)
+	succeeding := redis.NewStreamConsumer(rc, stream, group, succeedingHandler, logger,
+		redis.WithReclaimMinIdle(0))
 
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer recoverCancel()
@@ -293,7 +294,8 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 	permHandler := func(_ context.Context, _ goredis.XMessage) error {
 		return fmt.Errorf("%w: validator rejected payload", events.ErrPermanent)
 	}
-	reclaiming := redis.NewStreamConsumer(rc, stream, group, permHandler, logger)
+	reclaiming := redis.NewStreamConsumer(rc, stream, group, permHandler, logger,
+		redis.WithReclaimMinIdle(0))
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer recoverCancel()
 	go reclaiming.Start(recoverCtx) //nolint:errcheck
@@ -313,6 +315,81 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 // no-ACK. This collapses the worst-case retry latency from `reclaimInterval`
 // (minutes) to ~seconds. The periodic PEL sweep remains the safety net for
 // crashed-consumer recovery only. ErrPermanent is *not* retried.
+
+// TestStreamConsumer_Reclaim_RespectsMinIdle: a fresh PEL entry (still actively
+// being processed by another replica) MUST NOT be stolen by a parallel
+// consumer's reclaim sweep when its WithReclaimMinIdle gate has not elapsed.
+// This is the multi-replica safety property that XCLAIM/XAUTOCLAIM's
+// min-idle-time parameter exists to enforce.
+func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
+	rc := redisClientForTest(t)
+	ctx := context.Background()
+	defer rc.Close()
+
+	stream := fmt.Sprintf("test-stream-minidle-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+
+	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{
+		Stream: stream,
+		Values: map[string]interface{}{"k": "v"},
+	}).Result()
+	require.NoError(t, err)
+
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Consumer A: takes delivery, fails every retry → leaves the entry in PEL
+	// with idle time ~= 0 from A's perspective (A has just last-interacted).
+	failingHandler := func(_ context.Context, _ goredis.XMessage) error {
+		return errors.New("transient blip")
+	}
+	a := redis.NewStreamConsumer(rc, stream, group, failingHandler, logger,
+		redis.WithReclaimMinIdle(0))
+	aCtx, aCancel := context.WithTimeout(ctx, 4*time.Second)
+	defer aCancel()
+	go a.Start(aCtx) //nolint:errcheck
+	time.Sleep(3 * time.Second) // long enough for one retry budget to exhaust
+
+	// Confirm the message is in the PEL with a small idle time.
+	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	require.NoError(t, err)
+	require.NotEmpty(t, pending, "phase 1: message must be in PEL")
+
+	// Consumer B: parallel replica with an absurdly large MinIdle. Its startup
+	// reclaim MUST NOT claim A's in-flight entry.
+	var bCalled atomic.Int32
+	bHandler := func(_ context.Context, _ goredis.XMessage) error {
+		bCalled.Add(1)
+		return nil
+	}
+	b := redis.NewStreamConsumer(rc, stream, group, bHandler, logger,
+		redis.WithReclaimMinIdle(1*time.Hour))
+	bCtx, bCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer bCancel()
+	go b.Start(bCtx) //nolint:errcheck
+	time.Sleep(1500 * time.Millisecond)
+
+	assert.Equal(t, int32(0), bCalled.Load(),
+		"consumer B must not have processed the message — MinIdle gate not elapsed")
+
+	// Message still parked in PEL — neither A's no-ACK nor B's gated reclaim ACKed it.
+	pending, err = rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	require.NoError(t, err)
+	found := false
+	for _, p := range pending {
+		if p.ID == msgID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "message must remain in PEL — gated reclaim must not steal it")
+}
 
 // TestStreamConsumer_TransientError_RetriedInProcess_ThenACKed: handler fails
 // the first two attempts and succeeds on the third. With in-process retry
@@ -494,7 +571,7 @@ func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	// Phase 2: reclaim with another transient-failing handler. Must stay in PEL.
 	second := redis.NewStreamConsumer(rc, stream, group, func(_ context.Context, _ goredis.XMessage) error {
 		return errors.New("second failure")
-	}, logger)
+	}, logger, redis.WithReclaimMinIdle(0))
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer recoverCancel()
 	go second.Start(recoverCtx) //nolint:errcheck

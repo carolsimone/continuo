@@ -18,12 +18,32 @@ type MessageHandler func(ctx context.Context, msg goredis.XMessage) error
 // StreamConsumer is a generic Redis Streams consumer that delegates message
 // processing to a MessageHandler callback
 type StreamConsumer struct {
-	client        *goredis.Client
-	streamName    string
-	consumerGroup string
-	consumerName  string
-	handler       MessageHandler
-	logger        *slog.Logger
+	client         *goredis.Client
+	streamName     string
+	consumerGroup  string
+	consumerName   string
+	handler        MessageHandler
+	logger         *slog.Logger
+	reclaimMinIdle time.Duration
+}
+
+// ConsumerOption tunes optional behaviour on a StreamConsumer.
+type ConsumerOption func(*StreamConsumer)
+
+// defaultReclaimMinIdle is the MinIdle gate applied to the periodic PEL sweep.
+// At 30s it is large enough that a healthy peer replica's in-flight message —
+// including its in-process retry budget — will never be stolen by another
+// replica's sweep, and small enough that a crashed consumer's PEL entry is
+// recovered well within the 2-minute reclaim cadence.
+const defaultReclaimMinIdle = 30 * time.Second
+
+// WithReclaimMinIdle overrides the minimum idle time a pending entry must have
+// accumulated before this consumer's reclaim sweep is allowed to claim it. The
+// default is conservative (30s) for production safety against multi-replica
+// stealing; tests that exercise the reclaim path inside a single process
+// typically pass 0 to disable the gate.
+func WithReclaimMinIdle(d time.Duration) ConsumerOption {
+	return func(c *StreamConsumer) { c.reclaimMinIdle = d }
 }
 
 // NewStreamConsumer creates a new StreamConsumer
@@ -32,16 +52,22 @@ func NewStreamConsumer(
 	streamName, consumerGroup string,
 	handler MessageHandler,
 	logger *slog.Logger,
+	opts ...ConsumerOption,
 ) *StreamConsumer {
 	consumerName := fmt.Sprintf("%s-%d", consumerGroup, time.Now().UnixNano())
-	return &StreamConsumer{
-		client:        client,
-		streamName:    streamName,
-		consumerGroup: consumerGroup,
-		consumerName:  consumerName,
-		handler:       handler,
-		logger:        logger,
+	c := &StreamConsumer{
+		client:         client,
+		streamName:     streamName,
+		consumerGroup:  consumerGroup,
+		consumerName:   consumerName,
+		handler:        handler,
+		logger:         logger,
+		reclaimMinIdle: defaultReclaimMinIdle,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // reclaimInterval is how often the consumer re-scans the PEL for messages
@@ -130,43 +156,35 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 }
 
 // reclaimPending claims and reprocesses messages left in the pending entry list
-// (PEL) by any consumer in the group. This covers messages delivered to a
-// previous ephemeral consumer name that crashed before ACKing.
+// (PEL) by consumers other than this one — typically a previous instance that
+// crashed before ACKing. Only entries idle for at least reclaimMinIdle are
+// eligible; this prevents a parallel replica from stealing a peer's in-flight
+// message during a periodic sweep.
+//
+// Implementation note: XAUTOCLAIM (Redis 6.2+) replaces the older XPENDING +
+// per-ID XCLAIM loop, collapsing 1+N round-trips into a single cursor-paged
+// command per page of up to 100 entries.
 func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
-	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: c.streamName,
-		Group:  c.consumerGroup,
-		Start:  "-",
-		End:    "+",
-		Count:  100,
-	}).Result()
-	if err != nil {
-		return fmt.Errorf("failed to get pending messages: %w", err)
-	}
-	if len(pending) == 0 {
-		return nil
-	}
-
-	c.logger.Warn("Reclaiming pending messages from previous consumers",
-		"stream", c.streamName,
-		"count", len(pending),
-	)
-
-	for _, p := range pending {
-		msgs, err := c.client.XClaim(ctx, &goredis.XClaimArgs{
+	cursor := "0-0"
+	for {
+		msgs, next, err := c.client.XAutoClaim(ctx, &goredis.XAutoClaimArgs{
 			Stream:   c.streamName,
 			Group:    c.consumerGroup,
 			Consumer: c.consumerName,
-			MinIdle:  0,
-			Messages: []string{p.ID},
+			MinIdle:  c.reclaimMinIdle,
+			Start:    cursor,
+			Count:    100,
 		}).Result()
 		if err != nil {
-			c.logger.Error("Failed to claim message",
+			return fmt.Errorf("XAUTOCLAIM failed: %w", err)
+		}
+
+		if len(msgs) > 0 {
+			c.logger.Warn("Reclaiming pending messages from previous consumers",
 				"stream", c.streamName,
-				"message_id", p.ID,
-				"error", err,
+				"count", len(msgs),
+				"min_idle", c.reclaimMinIdle,
 			)
-			continue
 		}
 
 		for _, msg := range msgs {
@@ -192,9 +210,12 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 				)
 			}
 		}
-	}
 
-	return nil
+		if next == "0-0" {
+			return nil
+		}
+		cursor = next
+	}
 }
 
 func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
