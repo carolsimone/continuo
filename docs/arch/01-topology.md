@@ -17,8 +17,8 @@ flowchart LR
     STDB[(Postgres: state)]
     ORPG[(Postgres: orchestrator)]
     GRDB[(Neo4j: graph)]
-    ECPG[(Postgres: deployment_outbox/message_processing/cancelled_schedules)]
-    KCPG[(Postgres: k8s_status_outbox/processed_events)]
+    ECPG[(Postgres: executor_outbox/message_processing/cancelled_schedules)]
+    KCPG[(Postgres: k8s_outbox/processed_events)]
     S3[(S3/LocalStack)]
     K8S[(Kubernetes API)]
     R[(Redis Streams)]
@@ -119,8 +119,8 @@ flowchart TD
 | Dependency topology and run projection | `orchestrator` | Neo4j |
 | Node completion, downstream unlock, run finalization | `orchestrator` | Postgres outbox + Neo4j |
 | Schedule/bootstrap dispatch intents | `orchestrator` | Postgres outbox |
-| Deployment intents / inbound dedup | `executor-controller` | Postgres |
-| Runtime status / retry orchestration | `k8s-controller` | Postgres |
+| Deployment intents / inbound dedup | `executor-controller` | Postgres (`executor_outbox`, `message_processing`) |
+| Runtime status / retry orchestration | `k8s-controller` | Postgres (`k8s_outbox`, `processed_events`) |
 | Cancelled schedule guard (local copy) | `orchestrator`, `executor-controller`, `k8s-controller` | Postgres (`cancelled_schedules`) |
 | Manifest ingestion | `manifest-controller` | Redis + filesystem/S3 |
 | UI/API facade + graph update command | `ui-service` | none (publishes to Redis) |

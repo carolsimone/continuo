@@ -19,7 +19,7 @@ State mutates these records in two ways: via gRPC for UI-facing reads and user-i
 | `task_tracker` | One row per task within a run |
 | `task_execution` | One row per execution attempt of a task |
 | `schedule_catalog` | Active schedule names derived from manifests; soft-delete by `removed_at` |
-| `state_outbox` | Transactional outbox for Redis publication |
+| `state_outbox` | Canonical transactional outbox — one row per Redis publish intent; `pkg/outbox.Processor` polls and publishes each row to its `stream_name` |
 | `message_processing` | Inbound dedup: one row per consumed Redis message ID, scoped by `stream_name`; tracks state (`processing` / `completed` / `acked`) |
 
 ### Aggregate boundaries
@@ -190,7 +190,7 @@ Transient handler errors (e.g. `task_tracker` row not found because `RunEntriesD
 
 ### Redis producers (via transactional outbox)
 
-All Redis publishes go through `state_outbox` → background `OutboxProcessor`. The outbox entry and the state mutation are committed in the same transaction, guaranteeing at-least-once delivery.
+All Redis publishes go through `state_outbox` → background `pkg/outbox.Processor`. The outbox entry and the state mutation are committed in the same transaction, guaranteeing at-least-once delivery.
 
 #### `scheduler.started:v1`
 
@@ -291,7 +291,7 @@ If **every** dispatched task is in a terminal state (i.e. there is nothing to ex
 | Loop | Description |
 |---|---|
 | `CronScheduler` | Fires on schedule per `schedules.yaml`; calls `ActivateSchedule` via `ScheduleActivationService` |
-| `OutboxProcessor` | Polls `state_outbox` for pending entries; publishes to Redis and marks processed |
+| Outbox processor (`pkg/outbox.Processor`) | Polls `state_outbox` for pending entries; publishes each row to its `stream_name` via `state/adapters/postgres.OutboxPublisher` |
 | `pkg/redis.StreamConsumer` (one per stream) | Reads each consumed stream and delegates to the matching binding in `state/adapters/redis/`. One instance per stream: `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1`, `task.execution.recorded:v1`. Includes a periodic reclaim ticker that re-delivers messages whose handler returned a non-`ErrPermanent` error. |
 | gRPC server | Serves `StateService` on port 50051 |
 | HTTP server | Serves health endpoint on port 8082 |
@@ -318,7 +318,7 @@ Cron tick
     → CatalogRepo.GetServiceMetadata
     → tx: RunRepo.CreateRun(scheduler_tracker) + OutboxRepo.Create(state_outbox)
     → UnitOfWork.Commit
-    → OutboxProcessor publishes scheduler.started:v1
+    → pkg/outbox.Processor publishes scheduler.started:v1
 
 UI manual trigger
     → TriggerSchedule gRPC handler
@@ -328,7 +328,7 @@ UI manual trigger
     → CatalogRepo.GetServiceMetadata
     → tx: RunRepo.CreateRun(scheduler_tracker) + OutboxRepo.Create(state_outbox)
     → UnitOfWork.Commit
-    → OutboxProcessor publishes scheduler.started:v1
+    → pkg/outbox.Processor publishes scheduler.started:v1
 ```
 
 ## Redis Behavior

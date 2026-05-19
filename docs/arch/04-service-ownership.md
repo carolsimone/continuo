@@ -52,7 +52,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | Neo4j `Table` nodes (+ `image_tag`, `topology_generation` props), `Run` nodes (+ `topology_generation`, `service_metadata` props), `DEPENDS_ON` edges, `EXECUTES` edges (+ `image_tag` prop); Neo4j `:TopologyRoot {id:'singleton'}` (generation + service_metadata); Postgres `topology_state`, `message_processing`, `outbox`, `published_messages` |
+| Durable state | Neo4j `Table` nodes (+ `image_tag`, `topology_generation` props), `Run` nodes (+ `topology_generation`, `service_metadata` props), `DEPENDS_ON` edges, `EXECUTES` edges (+ `image_tag` prop); Neo4j `:TopologyRoot {id:'singleton'}` (generation + service_metadata); Postgres `topology_state`, `message_processing`, `orchestrator_outbox` |
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
 | Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1` |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1` |
@@ -76,7 +76,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | `deployment_outbox` (+ `image_tag` column), `message_processing`, `cancelled_schedules` |
+| Durable state | `executor_outbox`, `message_processing`, `cancelled_schedules` |
 | gRPC server methods owned | none |
 | Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1` |
 | Redis produces | `node.deployed:v1`, `task.status.updated:v1` (RUNNING; **also FAILED on permanent dispatch error or retry-exhaustion**), `node.updated:v1` (FAILED on terminal dispatch failure only) |
@@ -101,7 +101,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | `k8s_status_outbox`, `processed_events` |
+| Durable state | `k8s_outbox`, `processed_events` |
 | gRPC server methods owned | none |
 | Redis consumes | `node.deployed:v1`, `check.k8s:v1`, `schedule.cancelled:v1` |
 | Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `task.status.updated:v1` (SUCCEEDED/FAILED), `task.execution.recorded:v1`, `node.updated:v1` |

@@ -39,13 +39,7 @@ Add new emitters to this table as they land.
 | Site | Behaviour on `errors.Is(err, events.ErrPermanent)` |
 |---|---|
 | `pkg/redis/streamconsumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND periodic reclaim. Plain (non-`ErrPermanent`) errors are left in the PEL so the reclaim ticker retries them. Used by every Go service's Redis ingest path. |
-| `executor-controller/service/handlers/outbox_processor.go` (`processEntry`) | call `MarkTaskTerminallyFailed` (publishes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED + marks outbox failed), return `errPermanentFailure` so `ProcessBatch` skips retry-increment |
-
-The local `errPermanentFailure` sentinel in `outbox_processor.go` is
-**flow control** between `processEntry` and `ProcessBatch` — it tells
-`ProcessBatch` that `MarkFailed` has already been called and the retry
-counter must not be incremented. It is unrelated to `events.ErrPermanent`,
-which is the cross-service classification key.
+| `executor-controller/adapters/publisher/outbox_publisher.go` (`Publish`) | wraps the invalid-payload error with `errors.Join(err, pkgevents.ErrPermanent)` so `pkg/outbox.Processor` exhausts the retry budget immediately and invokes `TerminalFailureHook` (publishes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED), then calls `MarkFailed` |
 
 ## When NOT to use it
 
