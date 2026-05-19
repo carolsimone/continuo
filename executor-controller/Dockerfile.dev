@@ -33,6 +33,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY pkg/ ./pkg/
 COPY executor-controller/ ./executor-controller/
 
+# executor-controller/test/migrations.go loads db/migration/executor/V*.sql
+# at test runtime so the in-container integration tests apply the same
+# Flyway DDL as production.
+COPY db/migration/executor/ ./db/migration/executor/
+
 WORKDIR /app/executor-controller
 
 # Pre-compile the binary for faster startup in K8s.
