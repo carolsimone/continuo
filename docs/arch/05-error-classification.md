@@ -38,7 +38,7 @@ Add new emitters to this table as they land.
 
 | Site | Behaviour on `errors.Is(err, events.ErrPermanent)` |
 |---|---|
-| `pkg/redis/streamconsumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND periodic reclaim. Plain (non-`ErrPermanent`) errors are left in the PEL so the reclaim ticker retries them. Used by every Go service's Redis ingest path. |
+| `pkg/redis/streamconsumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND periodic reclaim. **Read path** retries plain (non-`ErrPermanent`) errors inline via `invokeWithRetry` (backoff schedule `0 / 100ms / 500ms / 2s`, ~2.6s budget); if every attempt fails the message is left un-ACKed in the PEL. **Reclaim path** is single-shot: the handler is called exactly once per claimed entry, and on failure the entry stays in the PEL — the next periodic sweep (every `reclaimInterval`) is the retry cadence. This split keeps the read loop responsive when a large backlog of pending entries is being swept. The sweep itself uses `XAUTOCLAIM` (cursor-paged, one round-trip per 100 entries) gated by a `MinIdle` threshold (default 30s, overridable via `WithReclaimMinIdle`) so a multi-replica deployment cannot have one replica steal an in-flight message that a peer is actively retrying. `ErrPermanent` ACKs immediately on either path. Used by every Go service's Redis ingest path. |
 | `executor-controller/service/handlers/outbox_processor.go` (`processEntry`) | call `MarkTaskTerminallyFailed` (publishes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED + marks outbox failed), return `errPermanentFailure` so `ProcessBatch` skips retry-increment |
 
 The local `errPermanentFailure` sentinel in `outbox_processor.go` is
@@ -50,8 +50,12 @@ which is the cross-service classification key.
 ## When NOT to use it
 
 - **Transient errors** (network, timeout, k8s API quota, redis blip).
-  These must keep the existing no-ACK + retry behaviour so the system
-  self-heals at the next reclaim cycle.
+  These must keep the existing no-ACK + retry behaviour. On the **read
+  path** the consumer retries them inline within a bounded backoff budget
+  (~2.6s); if that budget is exhausted the message stays in the PEL. On
+  the **reclaim path** the handler is single-shot — successive periodic
+  sweeps are the retry cadence, so a flapping handler does not
+  head-of-line-block the read loop during a sweep.
 - **Errors where the cause is unknown.** Wrap only when you're sure
   retry will never succeed.
 - **Programmer errors** (panics, nil pointer derefs). Let the runtime

@@ -172,7 +172,7 @@ On success: a new `scheduler_tracker` row is inserted with `kind='rerun'`, `sour
 
 Every consumed stream follows the same three-layer path:
 
-1. **Adapter** (`state/adapters/redis/`): a `pkg/redis.StreamConsumer` reads the stream and delegates each `goredis.XMessage` to a per-stream binding (`*_binding.go`). The binding calls a per-stream parser (`*_parser.go`) to turn the raw `XMessage` into a typed `events.<Event>` struct from `state/domain/events`. Parser failures (malformed payload, missing required field, bad UUID, unknown enum value) are wrapped with `pkg/events.ErrPermanent`; `pkg/redis.StreamConsumer` ACKs and drops `ErrPermanent`-wrapped errors so they leave the pending list immediately. Plain handler errors stay in the PEL and are reclaimed by the consumer's periodic ticker.
+1. **Adapter** (`state/adapters/redis/`): a `pkg/redis.StreamConsumer` reads the stream and delegates each `goredis.XMessage` to a per-stream binding (`*_binding.go`). The binding calls a per-stream parser (`*_parser.go`) to turn the raw `XMessage` into a typed `events.<Event>` struct from `state/domain/events`. Parser failures (malformed payload, missing required field, bad UUID, unknown enum value) are wrapped with `pkg/events.ErrPermanent`; `pkg/redis.StreamConsumer` ACKs and drops `ErrPermanent`-wrapped errors so they leave the pending list immediately. Plain handler errors are retried inline by the consumer (~2.6s bounded backoff); if every attempt still fails the message stays in the PEL and the periodic reclaim sweep picks it up.
 2. **Dedup + transaction** (in the binding): the binding obtains a `state/service/uow.UnitOfWork`, calls `Begin`, then runs `pkg/messageprocessing.Dedup` against state's `message_processing` table keyed on `(message_id, stream_name)`. A duplicate commits the empty txn and returns nil (consumer ACKs). A miss inserts a `processing` row and continues into the handler under the same tx.
 3. **Handler** (`state/service/handlers/`): pure orchestration over `uow.UnitOfWork` — no `sqlx`, no `goredis`, no JSON parsing. The handler reads/writes through the repos exposed by the UnitOfWork (`SchedulerRepo`, `TaskRepo`, `TaskExecutionRepo`, `ScheduleCatalogRepo`, `OutboxRepo`). On success the binding marks the `message_processing` row `completed`, the outbox-and-state writes commit together, and the consumer ACKs.
 
@@ -184,7 +184,7 @@ Every consumed stream follows the same three-layer path:
 | `task.status.updated:v1` | state service | `TaskStatusUpdatedHandler` — updates task status, drives finalization state machine |
 | `task.execution.recorded:v1` | state service | `TaskExecutionRecordedHandler` — persists task execution records |
 
-Transient handler errors (e.g. `task_tracker` row not found because `RunEntriesDispatchedHandler` has not yet caught up) intentionally return plain errors — the message stays pending and is reclaimed on the next tick.
+Transient handler errors (e.g. `task_tracker` row not found because `RunEntriesDispatchedHandler` has not yet caught up) intentionally return plain errors. The consumer retries them inline first (~2.6s budget); only if that budget is exhausted does the message stay pending for the periodic reclaim tick.
 
 ## Outbound Interfaces
 

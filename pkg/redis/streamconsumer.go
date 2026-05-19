@@ -18,12 +18,32 @@ type MessageHandler func(ctx context.Context, msg goredis.XMessage) error
 // StreamConsumer is a generic Redis Streams consumer that delegates message
 // processing to a MessageHandler callback
 type StreamConsumer struct {
-	client        *goredis.Client
-	streamName    string
-	consumerGroup string
-	consumerName  string
-	handler       MessageHandler
-	logger        *slog.Logger
+	client         *goredis.Client
+	streamName     string
+	consumerGroup  string
+	consumerName   string
+	handler        MessageHandler
+	logger         *slog.Logger
+	reclaimMinIdle time.Duration
+}
+
+// ConsumerOption tunes optional behaviour on a StreamConsumer.
+type ConsumerOption func(*StreamConsumer)
+
+// defaultReclaimMinIdle is the MinIdle gate applied to the periodic PEL sweep.
+// At 30s it is large enough that a healthy peer replica's in-flight message —
+// including its in-process retry budget — will never be stolen by another
+// replica's sweep, and small enough that a crashed consumer's PEL entry is
+// recovered well within the 2-minute reclaim cadence.
+const defaultReclaimMinIdle = 30 * time.Second
+
+// WithReclaimMinIdle overrides the minimum idle time a pending entry must have
+// accumulated before this consumer's reclaim sweep is allowed to claim it. The
+// default is conservative (30s) for production safety against multi-replica
+// stealing; tests that exercise the reclaim path inside a single process
+// typically pass 0 to disable the gate.
+func WithReclaimMinIdle(d time.Duration) ConsumerOption {
+	return func(c *StreamConsumer) { c.reclaimMinIdle = d }
 }
 
 // NewStreamConsumer creates a new StreamConsumer
@@ -32,23 +52,67 @@ func NewStreamConsumer(
 	streamName, consumerGroup string,
 	handler MessageHandler,
 	logger *slog.Logger,
+	opts ...ConsumerOption,
 ) *StreamConsumer {
 	consumerName := fmt.Sprintf("%s-%d", consumerGroup, time.Now().UnixNano())
-	return &StreamConsumer{
-		client:        client,
-		streamName:    streamName,
-		consumerGroup: consumerGroup,
-		consumerName:  consumerName,
-		handler:       handler,
-		logger:        logger,
+	c := &StreamConsumer{
+		client:         client,
+		streamName:     streamName,
+		consumerGroup:  consumerGroup,
+		consumerName:   consumerName,
+		handler:        handler,
+		logger:         logger,
+		reclaimMinIdle: defaultReclaimMinIdle,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
-// reclaimInterval is how often the consumer re-scans the PEL for messages whose
-// handler returned an error (and were therefore never ACKed). A periodic sweep
-// ensures that transient handler failures do not leave messages stuck forever —
-// without it, PEL entries are only reclaimed at service startup.
+// reclaimInterval is how often the consumer re-scans the PEL for messages
+// abandoned by *other* consumer instances (crash recovery). Transient handler
+// errors are retried in-process by invokeWithRetry before falling through to
+// the PEL, so this interval no longer bounds same-instance retry latency.
 const reclaimInterval = 2 * time.Minute
+
+// transientRetryBackoffs is the inline retry schedule applied to non-permanent
+// handler errors before the consumer gives up and leaves the message un-ACKed
+// for the periodic PEL sweep. Total budget ≈ 2.6s.
+var transientRetryBackoffs = []time.Duration{
+	0,
+	100 * time.Millisecond,
+	500 * time.Millisecond,
+	2 * time.Second,
+}
+
+// invokeWithRetry calls the handler with bounded retries on transient errors.
+// ErrPermanent short-circuits the loop; context cancellation aborts it. The
+// final error (or nil) is returned to the caller, which decides whether to
+// ACK based on the existing ErrPermanent classification.
+func (c *StreamConsumer) invokeWithRetry(ctx context.Context, msg goredis.XMessage) error {
+	var err error
+	for attempt, delay := range transientRetryBackoffs {
+		if delay > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+			c.logger.Warn("Retrying transient handler error",
+				"stream", c.streamName,
+				"message_id", msg.ID,
+				"attempt", attempt+1,
+				"previous_error", err,
+			)
+		}
+		err = c.handler(ctx, msg)
+		if err == nil || errors.Is(err, events.ErrPermanent) {
+			return err
+		}
+	}
+	return err
+}
 
 // Start begins consuming messages from the Redis stream until the context is cancelled
 func (c *StreamConsumer) Start(ctx context.Context) error {
@@ -92,43 +156,44 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 }
 
 // reclaimPending claims and reprocesses messages left in the pending entry list
-// (PEL) by any consumer in the group. This covers messages delivered to a
-// previous ephemeral consumer name that crashed before ACKing.
+// (PEL) by consumers other than this one — typically a previous instance that
+// crashed before ACKing. Only entries idle for at least reclaimMinIdle are
+// eligible; this prevents a parallel replica from stealing a peer's in-flight
+// message during a periodic sweep.
+//
+// Handler invocations here are **single-shot**: a PEL entry either landed here
+// because a prior owner already burned its inline retry budget on the read
+// path, or because that owner crashed. Re-running the read path's retry
+// schedule inside the sweep would (a) head-of-line-block the read loop for up
+// to ~2.6s per pending entry, and (b) duplicate work for the common case where
+// a single attempt under the new owner already succeeds. If the single attempt
+// fails, the entry stays in the PEL and the next sweep (≤ reclaimInterval)
+// becomes the retry cadence.
+//
+// Implementation note: XAUTOCLAIM (Redis 6.2+) replaces the older XPENDING +
+// per-ID XCLAIM loop, collapsing 1+N round-trips into a single cursor-paged
+// command per page of up to 100 entries.
 func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
-	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: c.streamName,
-		Group:  c.consumerGroup,
-		Start:  "-",
-		End:    "+",
-		Count:  100,
-	}).Result()
-	if err != nil {
-		return fmt.Errorf("failed to get pending messages: %w", err)
-	}
-	if len(pending) == 0 {
-		return nil
-	}
-
-	c.logger.Warn("Reclaiming pending messages from previous consumers",
-		"stream", c.streamName,
-		"count", len(pending),
-	)
-
-	for _, p := range pending {
-		msgs, err := c.client.XClaim(ctx, &goredis.XClaimArgs{
+	cursor := "0-0"
+	for {
+		msgs, next, err := c.client.XAutoClaim(ctx, &goredis.XAutoClaimArgs{
 			Stream:   c.streamName,
 			Group:    c.consumerGroup,
 			Consumer: c.consumerName,
-			MinIdle:  0,
-			Messages: []string{p.ID},
+			MinIdle:  c.reclaimMinIdle,
+			Start:    cursor,
+			Count:    100,
 		}).Result()
 		if err != nil {
-			c.logger.Error("Failed to claim message",
+			return fmt.Errorf("XAUTOCLAIM failed: %w", err)
+		}
+
+		if len(msgs) > 0 {
+			c.logger.Warn("Reclaiming pending messages from previous consumers",
 				"stream", c.streamName,
-				"message_id", p.ID,
-				"error", err,
+				"count", len(msgs),
+				"min_idle", c.reclaimMinIdle,
 			)
-			continue
 		}
 
 		for _, msg := range msgs {
@@ -140,11 +205,11 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 					)
 					// fall through to XAck
 				} else {
-					c.logger.Error("Failed to process reclaimed message",
+					c.logger.Error("Reclaimed message still failing — leaving in PEL for next sweep",
 						"message_id", msg.ID,
 						"error", err,
 					)
-					continue // no-ACK; existing transient retry semantics
+					continue // no-ACK; next periodic sweep is the retry cadence
 				}
 			}
 			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {
@@ -154,9 +219,12 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 				)
 			}
 		}
-	}
 
-	return nil
+		if next == "0-0" {
+			return nil
+		}
+		cursor = next
+	}
 }
 
 func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
@@ -180,7 +248,7 @@ func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 
 	for _, stream := range streams {
 		for _, msg := range stream.Messages {
-			if err := c.handler(ctx, msg); err != nil {
+			if err := c.invokeWithRetry(ctx, msg); err != nil {
 				if errors.Is(err, events.ErrPermanent) {
 					c.logger.Error("Permanent handler error — ACKing to drop from PEL",
 						"message_id", msg.ID,
@@ -188,8 +256,8 @@ func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 					)
 					// fall through to XAck
 				} else {
-					c.logger.Error("Failed to process message", "message_id", msg.ID, "error", err)
-					continue // no-ACK; existing transient retry semantics
+					c.logger.Error("Message still failing after in-process retries", "message_id", msg.ID, "error", err)
+					continue // no-ACK; PEL sweep remains the safety net
 				}
 			}
 			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {
