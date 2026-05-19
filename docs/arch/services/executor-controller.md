@@ -6,7 +6,7 @@
 
 It is responsible for:
 - consuming executable node intents from Redis
-- deduplicating repeated dispatches by upstream `outbox_entry_id`
+- deduplicating repeated dispatches via `pkg/messageprocessing` keyed on `(message_id, stream_name)`
 - durably recording deployment intent in its own outbox
 - creating K8s Jobs via the Kubernetes API
 - publishing `task.status.updated:v1` (RUNNING) so `state` can track task progress
@@ -17,22 +17,33 @@ It is responsible for:
 | Table | Purpose |
 |---|---|
 | `deployment_outbox` | One row per pending K8s deployment intent; tracks retry count, status (`pending` → `processed` / `failed`) |
-| `processed_events` | Inbound dedup: keyed by upstream `outbox_entry_id`; prevents double-deployment |
+| `message_processing` | Inbound dedup: keyed on `(message_id, stream_name)`; prevents double-processing of duplicate Redis messages |
+| `cancelled_schedules` | Records schedule cancellations; consulted by deploy handlers before writing to `deployment_outbox` |
 
 ## Inbound Interfaces
 
 ### Redis consumers
 
-| Stream | Description |
-|---|---|
-| `query.model:v1` | Primary dispatch: new node ready for execution |
-| `retry.task:v1` | Retry dispatch: re-attempt a previously-failed node |
+| Stream | Consumer group | Description |
+|---|---|---|
+| `query.model:v1` | `executor-query-model` | Primary dispatch: new node ready for execution |
+| `retry.task:v1` | `executor-retry` | Retry dispatch: re-attempt a failed node |
+| `schedule.cancelled:v1` | `executor-schedule-cancelled` | Schedule cancellation: suppress future deployments for the schedule |
 
-Both streams carry the same fields:
-- `outbox_entry_id` (used for dedup in `processed_events`)
+`query.model:v1` and `retry.task:v1` carry the same fields:
 - `task_id`, `schedule_id`, `schedule_name`
 - `service_name`, `schema_name`, `table_name`, `job_name`
 - `node_type`
+
+### Inbound message processing
+
+executor-controller consumes the three streams above via `pkg/redis.StreamConsumer`. For each stream the wire path is:
+
+`pkg/redis.StreamConsumer` → `adapters/redis/<stream>_binding.go` → `service/handlers/<stream>_handler.go`
+
+The binding parses the XMessage into a typed `domain/events.<Event>`, runs `pkg/messageprocessing.Dedup` against the per-service `message_processing` table (keyed on `(message_id, stream_name)`), and invokes the handler inside a single Unit-of-Work transaction. `schedule.cancelled:v1` skips dedup because `cancelled_schedules.Insert` is `INSERT ... ON CONFLICT DO NOTHING` and is naturally idempotent.
+
+The cancelled-schedule guard runs inside `QueryModelHandler` and `RetryTaskHandler` via `uow.CancelledSchedulesRepo().Exists`; a cancelled match commits the dedup row (so the message is ACKed and never reprocessed) and returns without writing to `deployment_outbox`.
 
 ### HTTP (port 8084)
 
@@ -71,10 +82,12 @@ Both streams carry the same fields:
 ### On `query.model:v1` or `retry.task:v1`
 
 ```
-1. If outbox_entry_id present: check processed_events
-   → if already present: skip (dedup)
-2. Write deployment intent to deployment_outbox (pending)
-3. Commit
+1. Dedup check via pkg/messageprocessing against message_processing (message_id, stream_name)
+   → if already present: skip (ACK without processing)
+2. Check cancelled_schedules for the schedule_id
+   → if cancelled: commit dedup row and return (no deployment written)
+3. Write deployment intent to deployment_outbox (pending)
+4. Commit (dedup row + outbox entry in one transaction)
 ```
 
 ### Outbox processor (every 5 seconds, batch of 100)
@@ -96,17 +109,17 @@ On failure:
 
 | Loop | Description |
 |---|---|
-| Redis consumer (dual-stream) | Reads `query.model:v1` and `retry.task:v1`; crash-recovery for pending messages on startup |
+| Redis consumers (three streams) | Reads `query.model:v1`, `retry.task:v1`, and `schedule.cancelled:v1` via `pkg/redis.StreamConsumer`; crash-recovery for pending messages on startup |
 | Outbox processor | Polls `deployment_outbox` every 5 seconds; processes up to 100 entries per batch |
 
 ## Reliability Patterns
 
-- **Inbound dedup**: `processed_events` keyed by `outbox_entry_id` prevents double-deployment from duplicate Redis messages
+- **Inbound dedup**: `message_processing` keyed on `(message_id, stream_name)` prevents double-processing of duplicate Redis messages; managed by `pkg/messageprocessing.Dedup`
 - **Deployment outbox**: intent is committed to Postgres before any K8s call; crash-safe
-- **Explicit transaction boundary**: each inbound message runs its outbox insert inside a fresh transaction created by a transaction runner; parallel stream consumers may share one handler safely because transaction state is not stored on the handler or runner
+- **Explicit transaction boundary**: each inbound message runs dedup + outbox insert inside a single Unit-of-Work transaction; the dedup row and deployment intent are committed atomically
 - **K8s idempotency**: `CreateQueryJob` treats already-exists as success; retries after crash are safe
 - **Step ordering**: K8s creation → `task.status.updated:v1` (RUNNING) → `node.deployed:v1`; if Redis publishes fail after K8s succeeds, the retry will re-attempt idempotently
-- **No state gRPC dependency**: executor-controller no longer calls state gRPC; task status updates flow via `task.status.updated:v1`
+- **No state gRPC dependency**: executor-controller does not call state gRPC; task status updates flow via `task.status.updated:v1`
 - **Permanent failure**: invalid `node_type` (data corruption) is immediately marked failed rather than retried indefinitely
 - **Outbox delivery retries**: 3 per `deployment_outbox` entry (governs K8s job creation attempts); after that, entry is marked `failed` and must be manually recovered
 - **Task max retries**: `task_max_retries` written into `deployment_outbox` defaults to 2 (3 total execution attempts: initial + 2 retries); propagated to `k8s-controller` via `node.deployed:v1` to govern task-level retry logic

@@ -9,7 +9,6 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 )
 
 // OutboxRepository defines operations for the deployment_outbox table
@@ -33,34 +32,41 @@ type outboxRepository struct {
 	logger   *slog.Logger
 }
 
-// NewOutboxRepository creates a new OutboxRepository
-func NewOutboxRepository(db *sqlx.DB, logger *slog.Logger) OutboxRepository {
+// NewOutboxRepository creates an OutboxRepository against any sqlx executor
+// (either *sqlx.DB for autocommit work, or *sqlx.Tx when bound to an active
+// transaction).
+func NewOutboxRepository(executor Executor, logger *slog.Logger) OutboxRepository {
 	return &outboxRepository{
-		executor: db,
+		executor: executor,
 		logger:   logger,
 	}
 }
 
-// NewOutboxRepositoryWithTx creates a transaction-bound OutboxRepository.
-func NewOutboxRepositoryWithTx(tx *sqlx.Tx, logger *slog.Logger) OutboxRepository {
-	return &outboxRepository{
-		executor: tx,
-		logger:   logger,
-	}
-}
-
-// Create inserts a new deployment outbox entry
+// Create inserts a new deployment outbox entry.
+//
+// When entry.OutboxEntryID is set, the INSERT uses ON CONFLICT against
+// the partial unique index deployment_outbox_outbox_entry_id_key (see
+// migration V10) and silently no-ops on conflict. This is the
+// application-level idempotency layer that catches publisher retries
+// producing a new Redis msg.ID for the same orchestrator outbox row.
+// Conflict → 0 rows affected; the caller's transaction commits the
+// dedup row in message_processing and the message ACKs.
+//
+// When entry.OutboxEntryID is nil (retry.task:v1 does not carry one on
+// the wire today), the partial index does not apply and dedup degrades
+// to the shared (msg.ID, stream_name) layer in message_processing.
 func (r *outboxRepository) Create(ctx context.Context, entry *model.DeploymentOutboxEntry) error {
 	query := `
 		INSERT INTO deployment_outbox (
-			id, task_id, schedule_id, schedule_name, service_name, schema_name,
+			id, outbox_entry_id, task_id, schedule_id, schedule_name, service_name, schema_name,
 			table_name, job_name, node_type, image_tag, task_retry_count, task_max_retries,
 			status, created_at, retry_count, max_retries
 		) VALUES (
-			:id, :task_id, :schedule_id, :schedule_name, :service_name, :schema_name,
+			:id, :outbox_entry_id, :task_id, :schedule_id, :schedule_name, :service_name, :schema_name,
 			:table_name, :job_name, :node_type, :image_tag, :task_retry_count, :task_max_retries,
 			:status, :created_at, :retry_count, :max_retries
 		)
+		ON CONFLICT (outbox_entry_id) WHERE outbox_entry_id IS NOT NULL DO NOTHING
 	`
 
 	// Set defaults if not provided
@@ -100,7 +106,7 @@ func (r *outboxRepository) Create(ctx context.Context, entry *model.DeploymentOu
 // Uses FOR UPDATE SKIP LOCKED for safe concurrent processing
 func (r *outboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*model.DeploymentOutboxEntry, error) {
 	query := `
-		SELECT id, task_id, schedule_id, schedule_name, service_name, schema_name,
+		SELECT id, outbox_entry_id, task_id, schedule_id, schedule_name, service_name, schema_name,
 		       table_name, job_name, node_type, image_tag,
 		       COALESCE(task_retry_count, 0) as task_retry_count,
 		       COALESCE(task_max_retries, 2) as task_max_retries,

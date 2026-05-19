@@ -16,6 +16,15 @@ Handlers should be thin and delegate to application/use-case services. Use repos
 Apply SOLID, clean code, repository, service-layer, and design-pattern practices pragmatically. Prefer clear, testable, explicit code over abstraction for its own sake.
 Shared cross-service logic belongs in `pkg`; service-specific logic belongs inside the owning service.
 
+# Stream and consumer-group names
+Every Redis stream and consumer group is declared in `pkg/streams/contract.yaml`. A Go generator emits `pkg/streams/streams.gen.go` (`streams.QueryModelV1`, `streams.RetryTaskV1`, `streams.ExecutorRetry`, etc.) and `manifest-controller/streams_contract.py` for Python.
+
+Rules:
+- Never inline a versioned stream name (`"query.model:v1"`) or a service-prefixed consumer-group name in Go, Python, or tests. Always reference the constant from `pkg/streams` (Go) or `streams_contract` (Python).
+- This applies to production code, integration tests, unit-test fixtures, and adapter bindings (`message_processing.stream_name` values must come from the constant, not a local `const fooStreamName = "foo:v1"`).
+- The AST wiring detector in `pkg/streams/wiring_test.go` rejects hardcoded versioned-stream literals in service `main.go` files; new occurrences in handlers, bindings, or tests should be removed for the same reason.
+- Adding a new stream or group means editing `pkg/streams/contract.yaml`, regenerating (`go generate ./pkg/streams/...`), and committing the regenerated files. CI's `go generate && git diff --exit-code` check enforces freshness.
+
 # graphify
 This project has a graphify knowledge graph at graphify-out/.
 

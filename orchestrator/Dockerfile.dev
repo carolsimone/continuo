@@ -1,16 +1,21 @@
 FROM continuo-base:latest
 
-# Install kubectl for e2e test port-forwarding
+# Install kubectl for e2e test port-forwarding (orchestrator is the
+# in-cluster container the CI uses to drive e2e tests).
 RUN ARCH=$(dpkg --print-architecture) && \
     curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/${ARCH}/kubectl" && \
     chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
 
 WORKDIR /app
 
-# Layer 1: Workspace (rarely changes)
+# Layer 1: Workspace stub. All go.mod / go.sum files are copied so
+# `go mod download` can satisfy every dependency cited by go.work, but
+# only the modules this image builds against (pkg, orchestrator, and
+# state/proto for the gRPC client stubs) get their source trees later.
+# Limiting the source-copy layers to the dirs this service actually
+# touches means a change to executor-controller or k8s-controller does
+# not invalidate this image's cache.
 COPY go.work go.work.sum* ./
-
-# Layer 2: All go.mod files (changes when deps update)
 COPY state/go.mod state/go.sum ./state/
 COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
@@ -18,17 +23,25 @@ COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller
 COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 
-# Layer 3: Download dependencies with cache mount
+# Layer 2: Drop unused use-directives so `go build` does not require the
+# other services' source trees to be present in this image. `./state`
+# stays because orchestrator imports state/proto/state/v1 (gRPC client
+# stubs); only state/proto/ source is copied below.
+RUN go work edit -dropuse=./executor-controller \
+    && go work edit -dropuse=./k8s-controller \
+    && go work edit -dropuse=./tests/e2e
+
+# Layer 3: Download dependencies with cache mount.
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-# Layer 4: Copy source code (changes frequently)
-COPY state/ ./state/
+# Layer 4: Source. pkg/ and state/proto/ are lower-churn dependencies of
+# orchestrator (state/proto/ is the gRPC client stubs imported by the
+# watchdog and main.go). orchestrator/ comes last so changes here do not
+# invalidate the earlier layers.
 COPY pkg/ ./pkg/
+COPY state/proto/ ./state/proto/
 COPY orchestrator/ ./orchestrator/
-COPY executor-controller/ ./executor-controller/
-COPY k8s-controller/ ./k8s-controller/
-COPY tests/e2e/ ./tests/e2e/
 
 WORKDIR /app/orchestrator
 

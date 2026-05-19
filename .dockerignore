@@ -1,0 +1,29 @@
+# Worktrees: never part of any build context.
+.worktree/
+
+# IDE / editor / agent state.
+.claude/
+.codex/
+.opencode/
+.github/
+
+# Local artifacts and superpowers docs that live in-repo but are not
+# referenced by any service.
+docs/superpowers/
+
+# CI / git internals (small but irrelevant to image builds).
+.git/
+.gitignore
+
+# Node artifacts. ui-service installs deps inside the build.
+ui-service/node_modules/
+**/node_modules/
+**/.next/
+**/dist/
+**/dist-server/
+
+# Compiled binaries.
+**/bin/
+
+# Local kubeconfigs (the kind-cluster one is bind-mounted at runtime).
+kubeconfig/

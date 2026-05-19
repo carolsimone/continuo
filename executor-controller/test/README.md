@@ -15,12 +15,6 @@ Production-like implementations of external dependencies that maintain state in 
 
 ### Unit Tests
 
-#### `deploy_handler_test.go`
-Tests the DeployHandler which writes deployment intents to the outbox table:
-- ✓ Successful command handling
-- ✓ Multiple concurrent commands
-- ✓ Transaction rollback behavior
-
 #### `outbox_processor_test.go`
 Tests the OutboxProcessor background worker:
 - ✓ Successful batch processing (K8s + state + Redis)
@@ -41,14 +35,6 @@ Tests database operations using **real PostgreSQL** via testcontainers:
 - ✓ Max retries filtering
 
 **Why Real DB?** Repository tests use testcontainers to spin up real PostgreSQL instances, ensuring SQL queries work correctly against actual database constraints and indexes.
-
-### E2E Tests (`e2e_test.go`)
-End-to-end integration tests covering complete workflows:
-- ✓ Full deployment flow (command → outbox → K8s → state → Redis)
-- ✓ Multiple concurrent deployments
-- ✓ Retry on failure with eventual success
-- ✓ Idempotent reprocessing
-- ✓ Background processor simulation
 
 ## Running Tests
 

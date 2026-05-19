@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewOutboxRepositoryWithTx_UsesTransactionExecutorForWrites(t *testing.T) {
+func TestOutboxRepository_UsesPassedExecutorForWrites(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
@@ -25,7 +25,7 @@ func TestNewOutboxRepositoryWithTx_UsesTransactionExecutorForWrites(t *testing.T
 	tx, err := sqlxDB.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 
-	repo := NewOutboxRepositoryWithTx(tx, slog.Default())
+	repo := NewOutboxRepository(tx, slog.Default())
 	require.Same(t, tx, repo.(*outboxRepository).executor)
 
 	err = repo.Create(context.Background(), &model.DeploymentOutboxEntry{

@@ -51,7 +51,7 @@ Legend:
 
 ### Calls to `state`
 
-Internal pipeline writes to `state` are now event-driven (via Redis). The only remaining gRPC callers are UI-facing services.
+Internal pipeline writes to `state` are event-driven (via Redis). The only remaining gRPC callers are UI-facing services.
 
 | Caller | Methods used |
 |---|---|
@@ -79,7 +79,7 @@ Internal pipeline writes to `state` are now event-driven (via Redis). The only r
 |---|---|
 | `state` | `scheduler_tracker`, `schedule_catalog` (+ `service_metadata` JSONB), `task_tracker` (+ `manifest_version` column), `task_execution`, `state_outbox`, `message_processing` |
 | `orchestrator` | Neo4j `Table` (+ `image_tag`, `topology_generation`), `Run` (+ `topology_generation`, `service_metadata`), `DEPENDS_ON`, `EXECUTES` (+ `image_tag`); Neo4j `:TopologyRoot {id:'singleton'}`; Postgres `topology_state`, `message_processing`, `outbox`, `published_messages`, `rejected_topology_messages` (forensic sink for V7 ingest validation rejections) |
-| `executor-controller` | `deployment_outbox` (+ `image_tag` column), `processed_events` |
+| `executor-controller` | `deployment_outbox` (+ `image_tag` column), `message_processing`, `cancelled_schedules` |
 | `k8s-controller` | `k8s_status_outbox`, `processed_events` |
 | `manifest-controller` | none |
 | `ui-service` | none |
