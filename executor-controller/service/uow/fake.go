@@ -7,14 +7,15 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/jmoiron/sqlx"
 )
 
 // FakeUnitOfWork is an in-memory UnitOfWork for handler unit tests.
 // Construct it with fake repo implementations satisfying the
-// postgres.* and messageprocessing.* interfaces. Tx() returns nil.
+// pkgoutbox.Repository and messageprocessing.* interfaces. Tx() returns nil.
 type FakeUnitOfWork struct {
-	Outbox            postgres.OutboxRepository
+	Outbox            pkgoutbox.Repository
 	Cancelled         postgres.CancelledSchedulesRepository
 	MessageProcessing messageprocessing.Repository
 
@@ -25,7 +26,7 @@ type FakeUnitOfWork struct {
 	inTx bool
 }
 
-func (f *FakeUnitOfWork) OutboxRepo() postgres.OutboxRepository { return f.Outbox }
+func (f *FakeUnitOfWork) OutboxRepo() pkgoutbox.Repository { return f.Outbox }
 func (f *FakeUnitOfWork) CancelledSchedulesRepo() postgres.CancelledSchedulesRepository {
 	return f.Cancelled
 }

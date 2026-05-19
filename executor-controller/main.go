@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -10,12 +11,14 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/http"
 	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/executor-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/config"
 	"github.com/carolsimone/continuo/executor-controller/internal/lifecycle"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
@@ -48,7 +51,7 @@ func main() {
 	// INITIALIZE DEPENDENCIES
 	// ========================================================================
 
-	// 1. PostgreSQL (for deployment_outbox table)
+	// 1. PostgreSQL (for executor_outbox table)
 	pgDB, err := postgres.NewPostgresClient(
 		cfg.Postgres.Host,
 		cfg.Postgres.Port,
@@ -98,7 +101,6 @@ func main() {
 	// INITIALIZE REPOSITORIES
 	// ========================================================================
 
-	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
 	// ========================================================================
@@ -124,8 +126,6 @@ func main() {
 	// INITIALIZE REDIS PRODUCERS + CONSUMERS
 	// ========================================================================
 
-	publisher := redis.NewProducer(redisClient, logger)
-
 	queryConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.QueryModelV1, streams.ExecutorQueryModel,
 		queryBinding, logger)
@@ -148,20 +148,20 @@ func main() {
 	// INITIALIZE OUTBOX PROCESSOR
 	// ========================================================================
 
-	outboxProcessor := handlers.NewOutboxProcessor(
-		outboxRepo,
-		k8sClient,
-		publisher,
-		streams.NodeDeployedV1,
-		streams.TaskStatusUpdatedV1,
-		streams.NodeUpdatedV1,
-		cfg.K8sNamespace,
+	outboxPub := publisher.NewOutboxPublisher(k8sClient, redisClient, cfg.K8sNamespace, logger)
+	terminalHook := publisher.NewTerminalFailureHook(redisClient, logger)
+	outboxProcessor := pkgoutbox.NewProcessor(
+		pgDB,
+		"executor_outbox",
+		outboxPub,
+		terminalHook,
 		logger,
+		pkgoutbox.ProcessorConfig{Tick: 5 * time.Second, BatchSize: 100},
 	)
 
 	go func() {
-		if err := outboxProcessor.Run(ctx); err != nil {
-			logger.Error("Outbox processor error", "error", err)
+		if err := outboxProcessor.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Outbox processor exited", "error", err)
 		}
 	}()
 

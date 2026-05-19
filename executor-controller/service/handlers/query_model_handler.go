@@ -12,7 +12,7 @@ import (
 )
 
 // QueryModelHandler processes query.model:v1 events by writing a row to
-// the executor's deployment_outbox table. The cancelled-schedule guard
+// the executor's executor_outbox table. The cancelled-schedule guard
 // runs through the UoW-bound CancelledSchedulesRepo so it shares the
 // same snapshot as the dedup row that the binding inserts immediately
 // before the handler runs.
@@ -29,10 +29,8 @@ func NewQueryModelHandler(logger *slog.Logger) *QueryModelHandler {
 // pure orchestration: it takes a UnitOfWork and a typed event, and
 // never parses JSON, manages a transaction, or runs dedup itself.
 //
-// msgProcID is the dedup row's UUID; it is accepted to keep the
-// handler signature uniform with state/orchestrator but is not
-// currently stamped onto deployment_outbox (the outbox row keys by
-// task_id; provenance is not load-bearing for this service).
+// msgProcID is the dedup row's UUID from message_processing; it is
+// stored as message_processing_id on the outbox row for provenance.
 func (h *QueryModelHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
