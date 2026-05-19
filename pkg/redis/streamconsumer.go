@@ -161,6 +161,15 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 // eligible; this prevents a parallel replica from stealing a peer's in-flight
 // message during a periodic sweep.
 //
+// Handler invocations here are **single-shot**: a PEL entry either landed here
+// because a prior owner already burned its inline retry budget on the read
+// path, or because that owner crashed. Re-running the read path's retry
+// schedule inside the sweep would (a) head-of-line-block the read loop for up
+// to ~2.6s per pending entry, and (b) duplicate work for the common case where
+// a single attempt under the new owner already succeeds. If the single attempt
+// fails, the entry stays in the PEL and the next sweep (≤ reclaimInterval)
+// becomes the retry cadence.
+//
 // Implementation note: XAUTOCLAIM (Redis 6.2+) replaces the older XPENDING +
 // per-ID XCLAIM loop, collapsing 1+N round-trips into a single cursor-paged
 // command per page of up to 100 entries.
@@ -188,7 +197,7 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 		}
 
 		for _, msg := range msgs {
-			if err := c.invokeWithRetry(ctx, msg); err != nil {
+			if err := c.handler(ctx, msg); err != nil {
 				if errors.Is(err, events.ErrPermanent) {
 					c.logger.Error("Permanent handler error — ACKing to drop from PEL",
 						"message_id", msg.ID,
@@ -196,11 +205,11 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 					)
 					// fall through to XAck
 				} else {
-					c.logger.Error("Reclaimed message still failing after in-process retries",
+					c.logger.Error("Reclaimed message still failing — leaving in PEL for next sweep",
 						"message_id", msg.ID,
 						"error", err,
 					)
-					continue // no-ACK; PEL sweep remains the safety net
+					continue // no-ACK; next periodic sweep is the retry cadence
 				}
 			}
 			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {

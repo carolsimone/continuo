@@ -591,3 +591,64 @@ func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	}
 	assert.True(t, found, "transient error during reclaim must NOT ACK → message remains in PEL")
 }
+
+func TestStreamConsumer_ReclaimPath_TransientError_IsSingleShot(t *testing.T) {
+	rc := redisClientForTest(t)
+	ctx := context.Background()
+	defer rc.Close()
+
+	stream := fmt.Sprintf("test-stream-trans-reclaim-single-shot-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+
+	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{
+		Stream: stream,
+		Values: map[string]interface{}{"k": "v"},
+	}).Result()
+	require.NoError(t, err)
+
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+
+	delivered, err := rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
+		Group:    group,
+		Consumer: "abandoned-consumer",
+		Streams:  []string{stream, ">"},
+		Count:    1,
+	}).Result()
+	require.NoError(t, err)
+	require.Len(t, delivered, 1)
+	require.Len(t, delivered[0].Messages, 1)
+
+	var called atomic.Int32
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	reclaiming := redis.NewStreamConsumer(rc, stream, group, func(_ context.Context, _ goredis.XMessage) error {
+		called.Add(1)
+		return errors.New("still transient")
+	}, logger, redis.WithReclaimMinIdle(0))
+
+	recoverCtx, recoverCancel := context.WithTimeout(ctx, time.Second)
+	defer recoverCancel()
+	go reclaiming.Start(recoverCtx) //nolint:errcheck
+
+	require.Eventually(t, func() bool {
+		return called.Load() >= 1
+	}, time.Second, 10*time.Millisecond, "reclaim path must process the pending message")
+	time.Sleep(250 * time.Millisecond)
+
+	assert.Equal(t, int32(1), called.Load(),
+		"reclaim path must not run the read-path retry sleeps inline")
+
+	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	require.NoError(t, err)
+
+	found := false
+	for _, p := range pending {
+		if p.ID == msgID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "single-shot transient reclaim must leave the message in PEL")
+}
