@@ -209,6 +209,14 @@ func main() {
 
 	logger.Info("Service initialization complete, starting consumers")
 
+	// All three consumers run as goroutines so no single stream blocks
+	// the main goroutine. Lifecycle is tied to ctx; the lifecycle
+	// manager cancels ctx on shutdown, which exits each Start cleanly.
+	go func() {
+		if err := queryConsumer.Start(ctx); err != nil {
+			logger.Error("query.model consumer error", "error", err)
+		}
+	}()
 	go func() {
 		if err := retryConsumer.Start(ctx); err != nil {
 			logger.Error("retry.task consumer error", "error", err)
@@ -220,11 +228,9 @@ func main() {
 		}
 	}()
 
-	// Block on the query.model consumer; all consumers stop when ctx is cancelled.
-	if err := queryConsumer.Start(ctx); err != nil {
-		logger.Error("query.model consumer error", "error", err)
-		os.Exit(1)
-	}
+	// Block until shutdown is requested. Each consumer's Start returns
+	// when ctx is cancelled.
+	<-ctx.Done()
 
 	logger.Info("Executor-controller service stopped")
 }
