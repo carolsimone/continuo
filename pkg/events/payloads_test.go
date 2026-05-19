@@ -92,3 +92,43 @@ func TestDispatchedTask_RoundtripWithNewFields(t *testing.T) {
 	assert.Equal(t, "succeeded", got.Status)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got.InheritedFromTaskID)
 }
+
+func TestTaskExecutionRecordedToMap(t *testing.T) {
+	in := events.TaskExecutionRecorded{
+		ExecutionID:      "exec-1",
+		TaskID:           "task-1",
+		JobName:          "job-1",
+		StartedAt:        "2026-05-19T10:00:00Z",
+		CompletedAt:      "2026-05-19T10:00:05Z",
+		ExecutionSeconds: 5.0,
+		ErrorMessage:     "",
+		LogS3Key:         "logs/exec-1",
+	}
+	m := in.ToMap()
+	require.Equal(t, "exec-1", m["execution_id"])
+	require.Equal(t, "task-1", m["task_id"])
+	require.Equal(t, "job-1", m["job_name"])
+	require.Equal(t, 5.0, m["execution_seconds"])
+	require.Equal(t, "2026-05-19T10:00:00Z", m["started_at"])
+	require.Equal(t, "2026-05-19T10:00:05Z", m["completed_at"])
+	require.NotContains(t, m, "error_message") // omitempty
+	require.Equal(t, "logs/exec-1", m["log_s3_key"])
+}
+
+func TestTaskExecutionRecordedToMap_OmitsEmptyOptionalFields(t *testing.T) {
+	in := events.TaskExecutionRecorded{
+		ExecutionID:      "exec-2",
+		TaskID:           "task-2",
+		JobName:          "job-2",
+		ExecutionSeconds: 1.5,
+	}
+	m := in.ToMap()
+	require.NotContains(t, m, "started_at")
+	require.NotContains(t, m, "completed_at")
+	require.NotContains(t, m, "error_message")
+	require.NotContains(t, m, "log_s3_key")
+	require.Contains(t, m, "execution_id")
+	require.Contains(t, m, "task_id")
+	require.Contains(t, m, "job_name")
+	require.Contains(t, m, "execution_seconds")
+}

@@ -33,3 +33,28 @@ type TaskExecutionRecorded struct {
 	ErrorMessage     string  `json:"error_message,omitempty"`
 	LogS3Key         string  `json:"log_s3_key,omitempty"`
 }
+
+// ToMap converts TaskExecutionRecorded to a flat map for Redis stream publishing.
+// Optional fields with empty values are omitted from the map to keep the wire
+// payload compact and match TaskExecutionRecorded's `omitempty` JSON behavior.
+func (e TaskExecutionRecorded) ToMap() map[string]interface{} {
+	m := map[string]interface{}{
+		"execution_id":      e.ExecutionID,
+		"task_id":           e.TaskID,
+		"job_name":          e.JobName,
+		"execution_seconds": e.ExecutionSeconds,
+	}
+	if e.StartedAt != "" {
+		m["started_at"] = e.StartedAt
+	}
+	if e.CompletedAt != "" {
+		m["completed_at"] = e.CompletedAt
+	}
+	if e.ErrorMessage != "" {
+		m["error_message"] = e.ErrorMessage
+	}
+	if e.LogS3Key != "" {
+		m["log_s3_key"] = e.LogS3Key
+	}
+	return m
+}
