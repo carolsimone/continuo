@@ -13,15 +13,16 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-const retryTaskStreamName = "retry.task:v1"
-
 // NewRetryTaskBinding mirrors NewQueryModelBinding for the retry.task:v1
-// stream. The shapes are intentionally parallel so the same operational
-// behaviour (parse-permanent → ErrPermanent, dup → ACK, transient
-// handler error → no-ACK) applies to both deploy paths.
+// stream. The wire-stable stream name is sourced from pkg/streams
+// (streams.RetryTaskV1); no stream literal lives in this file. The shapes
+// are intentionally parallel so the same operational behaviour
+// (parse-permanent → ErrPermanent, dup → ACK, transient handler error →
+// no-ACK) applies to both deploy paths.
 func NewRetryTaskBinding(
 	uowFactory func() uow.UnitOfWork,
 	handler *handlers.RetryTaskHandler,
@@ -55,7 +56,7 @@ func NewRetryTaskBinding(
 
 		msgProcID, dup, err := messageprocessing.Dedup(
 			ctx, u.MessageProcessingRepo(), logger,
-			msg.ID, retryTaskStreamName, payload,
+			msg.ID, streams.RetryTaskV1, payload,
 		)
 		if err != nil {
 			return err

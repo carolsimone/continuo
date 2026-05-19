@@ -13,17 +13,15 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// queryModelStreamName is the wire-stable name of the Redis stream whose
-// messages this binding handles. It is also the value stored in
-// message_processing.stream_name column for dedup rows.
-const queryModelStreamName = "query.model:v1"
-
 // NewQueryModelBinding returns a pkg/redis.MessageHandler that parses each
 // query.model:v1 message, runs dedup, and invokes QueryModelHandler inside
-// a single Unit-of-Work transaction.
+// a single Unit-of-Work transaction. The wire-stable stream name is sourced
+// from pkg/streams (streams.QueryModelV1); no stream literal lives in this
+// file.
 //
 // Errors are surfaced to the StreamConsumer so it can pick the right ACK
 // policy: parse failures are wrapped with events.ErrPermanent (NACK and
@@ -63,7 +61,7 @@ func NewQueryModelBinding(
 
 		msgProcID, dup, err := messageprocessing.Dedup(
 			ctx, u.MessageProcessingRepo(), logger,
-			msg.ID, queryModelStreamName, payload,
+			msg.ID, streams.QueryModelV1, payload,
 		)
 		if err != nil {
 			return err

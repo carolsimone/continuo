@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	executortest "github.com/carolsimone/continuo/executor-controller/test"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -23,8 +24,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
-
-const testStreamQuery = "query.model:v1"
 
 // setupPostgres spins a Postgres testcontainer, applies executor's Flyway
 // migrations, and returns a connected *sqlx.DB plus a cleanup func.
@@ -133,7 +132,7 @@ func TestQueryModelBinding_SingleMessageHappyPath(t *testing.T) {
 
 	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployment_outbox`))
 	assert.Equal(t, 1, countRows(t, db,
-		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, testStreamQuery))
+		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.QueryModelV1))
 }
 
 func TestQueryModelBinding_ConcurrentDedup(t *testing.T) {
@@ -163,7 +162,7 @@ func TestQueryModelBinding_ConcurrentDedup(t *testing.T) {
 		"exactly one outbox row even with %d concurrent handlers", goroutines)
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
-		msg.ID, testStreamQuery))
+		msg.ID, streams.QueryModelV1))
 }
 
 func TestQueryModelBinding_CancelledScheduleDropsMessage(t *testing.T) {

@@ -12,14 +12,13 @@ import (
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-const testStreamRetry = "retry.task:v1"
 
 // retryTaskXMessage builds a goredis.XMessage fixture for retry.task:v1.
 // node_type is "dbt-model" (hyphen) per the wire format used by the orchestrator.
@@ -73,7 +72,7 @@ func TestRetryTaskBinding_SingleMessageHappyPath(t *testing.T) {
 
 	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployment_outbox`))
 	assert.Equal(t, 1, countRows(t, db,
-		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, testStreamRetry))
+		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.RetryTaskV1))
 
 	// Verify the retry fields are stored faithfully from the wire payload.
 	assert.Equal(t, 2, countRowsIntColumn(t, db,
@@ -109,7 +108,7 @@ func TestRetryTaskBinding_ConcurrentDedup(t *testing.T) {
 		"exactly one outbox row even with %d concurrent handlers", goroutines)
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
-		msg.ID, testStreamRetry))
+		msg.ID, streams.RetryTaskV1))
 }
 
 func TestRetryTaskBinding_CrossStreamIsolation(t *testing.T) {
@@ -141,8 +140,8 @@ func TestRetryTaskBinding_CrossStreamIsolation(t *testing.T) {
 		"two message_processing rows: one per stream")
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
-		sharedMsgID, testStreamQuery))
+		sharedMsgID, streams.QueryModelV1))
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
-		sharedMsgID, testStreamRetry))
+		sharedMsgID, streams.RetryTaskV1))
 }
