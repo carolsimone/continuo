@@ -4,8 +4,10 @@ package outbox_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -104,4 +106,46 @@ func TestProcessor_NoHookConfiguredStillMarksFailed(t *testing.T) {
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM test_outbox WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "failed", status)
+}
+
+// permanentFailingPublisher returns an error wrapping events.ErrPermanent on
+// every call, simulating a deterministic-failure payload (e.g., corrupt data,
+// invalid params that won't be fixed by retrying).
+type permanentFailingPublisher struct {
+	calls int
+}
+
+func (p *permanentFailingPublisher) Publish(_ context.Context, _ *outbox.Entry) error {
+	p.calls++
+	return fmt.Errorf("validation failed: %w", pkgevents.ErrPermanent)
+}
+
+// TestProcessor_PermanentErrorShortCircuitsRetries verifies that a publish
+// error wrapping events.ErrPermanent bypasses the retry budget and goes
+// straight to MarkFailed + TerminalFailureHook on the first attempt, even
+// when MaxRetries would otherwise allow more attempts.
+func TestProcessor_PermanentErrorShortCircuitsRetries(t *testing.T) {
+	db := dbForTest(t)
+	// MaxRetries = 5 so the row has plenty of budget; permanent error must
+	// override and terminate on attempt 1.
+	id := seedRow(t, db, 5)
+
+	hookCalled := 0
+	hook := outbox.TerminalFailureHook(func(_ context.Context, e *outbox.Entry, cause error) error {
+		hookCalled++
+		assert.Equal(t, id, e.ID)
+		assert.True(t, errors.Is(cause, pkgevents.ErrPermanent), "hook must receive the permanent error")
+		return nil
+	})
+	pub := &permanentFailingPublisher{}
+	p := outbox.NewProcessor(db, "test_outbox", pub, hook, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+
+	var status string
+	var rc int
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM test_outbox WHERE id=$1`, id).Scan(&status, &rc))
+	assert.Equal(t, "failed", status, "permanent error must mark row failed even with retries remaining")
+	assert.Equal(t, 0, rc, "retry_count must NOT be incremented on permanent error")
+	assert.Equal(t, 1, hookCalled, "terminal failure hook must fire on permanent error")
+	assert.Equal(t, 1, pub.calls, "publisher must be called exactly once before short-circuit")
 }

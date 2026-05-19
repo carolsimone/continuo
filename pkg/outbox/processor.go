@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -124,14 +125,18 @@ func (p *Processor) ProcessBatch(ctx context.Context) error {
 			continue
 		}
 		p.logger.Error("Publish failed", "entry_id", entry.ID, "event_type", entry.EventType, "error", pubErr)
+		// Permanent errors (events.ErrPermanent) bypass the retry budget. Retrying
+		// a deterministic-failure payload would burn the budget for no benefit and
+		// leave the task/schedule in limbo longer than necessary.
+		permanent := errors.Is(pubErr, pkgevents.ErrPermanent)
 		// retry_count is the count of past failures; +1 to evaluate "if we retry now, would this be the Nth attempt?"
-		if entry.RetryCount+1 < entry.MaxRetries {
+		if !permanent && entry.RetryCount+1 < entry.MaxRetries {
 			if err := repo.IncrementRetry(ctx, entry.ID); err != nil {
 				p.logger.Error("Increment retry failed", "entry_id", entry.ID, "error", err)
 			}
 			continue
 		}
-		// Terminal: budget exhausted.
+		// Terminal: either ErrPermanent or budget exhausted.
 		if p.onTerminalFailure != nil {
 			if hookErr := p.onTerminalFailure(ctx, entry, pubErr); hookErr != nil {
 				p.logger.Error("Terminal failure hook failed", "entry_id", entry.ID, "error", hookErr)
