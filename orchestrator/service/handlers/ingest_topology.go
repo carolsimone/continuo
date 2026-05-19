@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
@@ -16,6 +15,8 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -163,14 +164,14 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainModel.Inge
 		return fmt.Errorf("failed to marshal outbox payload: %w", err)
 	}
 
-	outboxEntry := &domain.OutboxEntry{
+	outboxEntry := &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         uuid.New(),
 		EventType:           "topology_ingested",
 		Payload:             outboxPayload,
-		StreamName:          "schedules.loaded:v1",
+		StreamName:          streams.SchedulesLoadedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}

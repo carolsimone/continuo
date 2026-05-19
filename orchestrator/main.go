@@ -14,6 +14,7 @@ import (
 	httpinfra "github.com/carolsimone/continuo/orchestrator/adapters/http"
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
+	orchpublisher "github.com/carolsimone/continuo/orchestrator/adapters/publisher"
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
 	"github.com/carolsimone/continuo/orchestrator/config"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
@@ -26,6 +27,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
@@ -127,8 +129,6 @@ func main() {
 	runAggRepo := neo4jinfra.NewRunAggregateRepository(neo4jClient, logger)
 	snapshotTxRunner := neo4jinfra.NewSnapshotTxRunner(neo4jClient)
 	snapshotService := snapshotsvc.NewService(snapshotTxRunner, logger)
-	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
-	publishedRepo := postgres.NewPublishedMessagesRepository(pgDB, logger)
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
 	// ========================================================================
@@ -154,11 +154,18 @@ func main() {
 	// INITIALIZE OUTBOX PROCESSOR
 	// ========================================================================
 
-	outboxProcessor := handlers.NewOutboxProcessor(outboxRepo, publishedRepo, redisClient, logger)
-
+	outboxPub := orchpublisher.NewOutboxPublisher(redisClient, logger)
+	outboxProc := pkgoutbox.NewProcessor(
+		pgDB,
+		"orchestrator_outbox",
+		outboxPub,
+		nil, // no terminal-failure hook for orchestrator
+		logger,
+		pkgoutbox.ProcessorConfig{Tick: time.Second, BatchSize: 100},
+	)
 	go func() {
-		if err := outboxProcessor.Run(ctx); err != nil {
-			logger.Error("Outbox processor error", "error", err)
+		if err := outboxProc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Outbox processor exited", "error", err)
 		}
 	}()
 

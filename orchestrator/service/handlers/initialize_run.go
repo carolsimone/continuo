@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -91,14 +92,14 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.Initi
 		return fmt.Errorf("failed to build outbox payload: %w", err)
 	}
 
-	outboxEntry := &domain.OutboxEntry{
+	outboxEntry := &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         uuid.New(),
 		EventType:           "run_initialized",
 		Payload:             outboxPayload,
-		StreamName:          "run.initialized:v1",
+		StreamName:          streams.RunInitializedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}

@@ -5,22 +5,21 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
-	"github.com/carolsimone/continuo/orchestrator/domain/repository"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/google/uuid"
 )
 
 // fakeOutboxRepository captures created outbox entries in memory.
 type fakeOutboxRepository struct {
-	CreatedEntries []*domain.OutboxEntry
+	CreatedEntries []*pkgoutbox.Entry
 }
 
-func (f *fakeOutboxRepository) Create(ctx context.Context, entry *domain.OutboxEntry) error {
+func (f *fakeOutboxRepository) Create(ctx context.Context, entry *pkgoutbox.Entry) error {
 	f.CreatedEntries = append(f.CreatedEntries, entry)
 	return nil
 }
-func (f *fakeOutboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*domain.OutboxEntry, error) {
+func (f *fakeOutboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*pkgoutbox.Entry, error) {
 	return nil, nil
 }
 func (f *fakeOutboxRepository) MarkProcessed(ctx context.Context, id uuid.UUID) error { return nil }
@@ -28,9 +27,6 @@ func (f *fakeOutboxRepository) MarkFailed(ctx context.Context, id uuid.UUID, err
 	return nil
 }
 func (f *fakeOutboxRepository) IncrementRetry(ctx context.Context, id uuid.UUID) error { return nil }
-func (f *fakeOutboxRepository) UpdateStatus(ctx context.Context, id uuid.UUID, newStatus, expectedStatus string) error {
-	return nil
-}
 
 // fakeMessageProcessingRepository is an in-memory message_processing store
 // keyed by messageID.
@@ -93,7 +89,7 @@ func newFakeUnitOfWork() *fakeUnitOfWork {
 	}
 }
 
-func (f *fakeUnitOfWork) OutboxRepo() repository.OutboxRepository { return f.outboxRepo }
+func (f *fakeUnitOfWork) OutboxRepo() pkgoutbox.Repository { return f.outboxRepo }
 func (f *fakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
 	return f.msgProcRepo
 }

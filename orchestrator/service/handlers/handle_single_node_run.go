@@ -9,6 +9,8 @@ import (
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
@@ -150,14 +152,14 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 	if err != nil {
 		return fmt.Errorf("marshal run.entries.dispatched: %w", err)
 	}
-	if err := h.uow.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+	if err := h.uow.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
 		EventType:           "run_entries_dispatched",
 		Payload:             dispatchedPayload,
-		StreamName:          "run.entries.dispatched:v1",
+		StreamName:          streams.RunEntriesDispatchedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}); err != nil {
@@ -185,14 +187,14 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 	if err != nil {
 		return fmt.Errorf("marshal query.model: %w", err)
 	}
-	if err := h.uow.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+	if err := h.uow.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
 		EventType:           "node_ready_for_execution",
 		Payload:             queryPayload,
-		StreamName:          "query.model:v1",
+		StreamName:          streams.QueryModelV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}); err != nil {

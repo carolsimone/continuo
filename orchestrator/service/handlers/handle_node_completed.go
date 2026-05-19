@@ -10,6 +10,8 @@ import (
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
@@ -208,14 +210,14 @@ func (h *HandleNodeCompletedHandler) writeNodeUnblockedEntry(
 		return fmt.Errorf("marshal NodeReadyForExecution: %w", err)
 	}
 
-	entry := &domain.OutboxEntry{
+	entry := &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         cmd.ScheduleID,
 		EventType:           "node_ready_for_execution",
 		Payload:             evtPayload,
-		StreamName:          "query.model:v1",
+		StreamName:          streams.QueryModelV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}
@@ -245,14 +247,14 @@ func (h *HandleNodeCompletedHandler) writeCascadeSkippedEntry(
 		return fmt.Errorf("marshal CascadeTaskSkipped: %w", err)
 	}
 
-	entry := &domain.OutboxEntry{
+	entry := &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         cmd.ScheduleID,
 		EventType:           "cascade_task_skipped",
 		Payload:             evtPayload,
-		StreamName:          "task.status.updated:v1",
+		StreamName:          streams.TaskStatusUpdatedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}

@@ -10,6 +10,8 @@ import (
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
@@ -117,14 +119,14 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		return fmt.Errorf("failed to build run.entries.dispatched payload: %w", err)
 	}
 
-	entriesDispatchedEntry := &domain.OutboxEntry{
+	entriesDispatchedEntry := &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         evt.ScheduleID,
 		EventType:           "run_entries_dispatched",
 		Payload:             dispatchedPayload,
-		StreamName:          "run.entries.dispatched:v1",
+		StreamName:          streams.RunEntriesDispatchedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}
@@ -170,14 +172,14 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 			return fmt.Errorf("failed to marshal NodeReadyForExecution for %s.%s: %w", node.SchemaName, node.TableName, err)
 		}
 
-		outboxEntry := &domain.OutboxEntry{
+		outboxEntry := &pkgoutbox.Entry{
 			ID:                  uuid.New(),
 			MessageProcessingID: &msgProcessingID,
 			AggregateType:       "orchestrator",
 			AggregateID:         evt.ScheduleID,
 			EventType:           "node_ready_for_execution",
 			Payload:             evtPayload,
-			StreamName:          "query.model:v1",
+			StreamName:          streams.QueryModelV1,
 			Status:              "pending",
 			MaxRetries:          3,
 		}

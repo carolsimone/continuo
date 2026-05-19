@@ -8,8 +8,9 @@ import (
 	"log/slog"
 
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
@@ -54,14 +55,14 @@ func EmitDispatchFailed(
 	}
 
 	msgProcID := p.MessageProcessingID
-	if err := u.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
 		EventType:           "run_entries_dispatch_failed",
 		Payload:             payload,
-		StreamName:          "run.entries.dispatch_failed:v1",
+		StreamName:          streams.RunEntriesDispatchFailedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}); err != nil {
