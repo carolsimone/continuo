@@ -35,7 +35,7 @@ func (h *QueryModelHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	evt events.QueryModel,
-	_ uuid.UUID,
+	msgProcID uuid.UUID,
 ) error {
 	cancelled, err := u.CancelledSchedulesRepo().Exists(ctx, evt.ScheduleID)
 	if err != nil {
@@ -46,5 +46,5 @@ func (h *QueryModelHandler) Handle(
 			"schedule_id", evt.ScheduleID, "task_id", evt.TaskID)
 		return nil
 	}
-	return createDeploymentOutboxEntry(ctx, u, evt, 0, 0)
+	return createDeploymentOutboxEntry(ctx, u, evt, msgProcID, 0, 0)
 }

@@ -1,10 +1,10 @@
 go 1.25.1
 
 use (
-	./tests/e2e
 	./executor-controller
 	./k8s-controller
 	./orchestrator
 	./pkg
 	./state
+	./tests/e2e
 )

@@ -19,15 +19,16 @@ import (
 // QueryModelHandler and RetryTaskHandler call this helper; the only
 // difference between them is which retry values get passed in.
 //
-// msgProcID is the inbound message's dedup UUID; it is stored as
-// message_processing_id in the outbox row so the Processor can trace
-// provenance. Pass uuid.Nil when no inbound trigger applies.
+// msgProcID is the binding-layer dedup row's UUID (from message_processing);
+// it is stored as message_processing_id in the outbox row for provenance.
+// Pass uuid.Nil when no inbound trigger applies.
 //
 // MaxRetries <= 0 falls back to the service default of 2.
 func createDeploymentOutboxEntry(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	base events.QueryModel,
+	msgProcID uuid.UUID,
 	taskRetryCount, maxRetries int,
 ) error {
 	if maxRetries <= 0 {
@@ -53,14 +54,14 @@ func createDeploymentOutboxEntry(
 
 	taskID := base.TaskID
 
-	var msgProcID *uuid.UUID
-	if base.OutboxEntryID != uuid.Nil {
-		id := base.OutboxEntryID
-		msgProcID = &id
+	var procID *uuid.UUID
+	if msgProcID != uuid.Nil {
+		id := msgProcID
+		procID = &id
 	}
 
 	entry := &pkgoutbox.Entry{
-		MessageProcessingID: msgProcID,
+		MessageProcessingID: procID,
 		AggregateType:       "task",
 		AggregateID:         taskID,
 		EventType:           "deploy_task",

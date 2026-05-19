@@ -93,3 +93,36 @@ func TestQueryModelHandler_DropsWhenScheduleCancelled(t *testing.T) {
 	require.NoError(t, err, "cancelled-schedule path returns nil so the binding commits and ACKs")
 	assert.Empty(t, stub.entries, "no outbox row when schedule is cancelled")
 }
+
+// TestQueryModelHandler_PropagatesMsgProcIDToOutboxRow guards against the
+// regression where the handler ignored msgProcID and set message_processing_id
+// from base.OutboxEntryID instead. That caused a FK violation because the
+// executor_outbox.message_processing_id column references the executor's own
+// message_processing table — not the orchestrator's outbox row.
+func TestQueryModelHandler_PropagatesMsgProcIDToOutboxRow(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	stub := &stubOutboxRepo{}
+	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{}}
+	u := newFakeUoW(stub, cancelled)
+
+	msgProcID := uuid.New()
+	evt := events.QueryModel{
+		TaskID:        uuid.New(),
+		ScheduleID:    uuid.New(),
+		OutboxEntryID: uuid.New(), // orchestrator outbox ID — must NOT end up as message_processing_id
+		NodeType:      pkg_model.NodeTypeDbtModel,
+		JobName:       "j",
+	}
+
+	h := handlers.NewQueryModelHandler(logger)
+	require.NoError(t, h.Handle(context.Background(), u, evt, msgProcID))
+	require.Len(t, stub.entries, 1)
+
+	entry := stub.entries[0]
+	require.NotNil(t, entry.MessageProcessingID,
+		"outbox row must carry the binding-layer dedup UUID, not nil")
+	assert.Equal(t, msgProcID, *entry.MessageProcessingID,
+		"MessageProcessingID must be the binding-layer dedup row UUID, not the orchestrator's outbox entry ID")
+	assert.NotEqual(t, evt.OutboxEntryID, *entry.MessageProcessingID,
+		"orchestrator's OutboxEntryID must never be used as the executor's message_processing FK")
+}
