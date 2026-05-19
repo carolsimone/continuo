@@ -16,6 +16,14 @@ type MessageProcessing struct {
 	State      string // "processing", "completed", "acked"
 	Payload    []byte
 	Error      *string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// OutboxEntryID, when non-nil, is the upstream pkg/outbox row UUID that
+	// produced this Redis message. It carries a secondary uniqueness invariant:
+	// the same outbox row published twice (e.g., after the Processor crashes
+	// between XADD and MarkProcessed) yields two Redis messages with different
+	// stream-assigned message_ids but the same outbox_entry_id. Deduping on
+	// outbox_entry_id catches the redelivery that (message_id, stream_name)
+	// alone would miss.
+	OutboxEntryID *uuid.UUID
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }

@@ -49,7 +49,7 @@ func NewHandleSchedulerStartedHandler(
 }
 
 // Handle processes a domain.SchedulerStarted event.
-func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.SchedulerStarted, messageID string) error {
+func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.SchedulerStarted, messageID string, outboxEntryID *uuid.UUID) error {
 	h.logger.Info("Processing scheduler started",
 		"message_id", messageID,
 		"schedule_id", evt.ScheduleID,
@@ -69,7 +69,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 	defer h.uow.Rollback() //nolint:errcheck
 
 	// Dedup: skip if already processed.
-	msgProcessingID, shouldSkip, err := h.dedup(ctx, messageID, payload)
+	msgProcessingID, shouldSkip, err := h.dedup(ctx, messageID, payload, outboxEntryID)
 	if err != nil {
 		return fmt.Errorf("message deduplication failed: %w", err)
 	}
@@ -213,46 +213,20 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 	return nil
 }
 
-// dedup checks if the message was already processed.
-// Returns (messageProcessingID, shouldSkip, error).
+// dedup checks if the message was already processed. Delegates to
+// pkg/messageprocessing.DedupWithOutboxEntryID so that producer-side
+// Processor-crash redeliveries (same outbox row republished with a fresh
+// Redis msg_id) are caught by the outbox_entry_id secondary uniqueness key.
 func (h *HandleSchedulerStartedHandler) dedup(
 	ctx context.Context,
 	messageID string,
 	messagePayload []byte,
+	outboxEntryID *uuid.UUID,
 ) (uuid.UUID, bool, error) {
-	msgProc := &messageprocessing.MessageProcessing{
-		MessageID:  messageID,
-		StreamName: "scheduler.started:v1",
-		State:      "processing",
-		Payload:    messagePayload,
-	}
-
-	id, inserted, err := h.uow.MessageProcessingRepo().InsertIfNotExists(ctx, msgProc)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("failed to insert message processing: %w", err)
-	}
-
-	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "scheduler.started:v1")
-		if err != nil {
-			return uuid.Nil, false, fmt.Errorf("failed to get existing message: %w", err)
-		}
-
-		if existing.State == "completed" || existing.State == "acked" {
-			h.logger.Info("Message already processed, skipping",
-				"message_id", messageID,
-				"state", existing.State,
-			)
-			return existing.ID, true, nil
-		}
-
-		h.logger.Warn("Message being processed by another instance",
-			"message_id", messageID,
-		)
-		return existing.ID, true, nil
-	}
-
-	return id, false, nil
+	return messageprocessing.DedupWithOutboxEntryID(
+		ctx, h.uow.MessageProcessingRepo(), h.logger,
+		messageID, "scheduler.started:v1", messagePayload, outboxEntryID,
+	)
 }
 
 // buildRunEntriesDispatchedPayload constructs the JSON payload for run.entries.dispatched:v1

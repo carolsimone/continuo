@@ -27,6 +27,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -271,7 +272,7 @@ func main() {
 			TableName:    msg.Values["table_name"].(string),
 			Status:       msg.Values["status"].(string),
 		}
-		return handleNodeCompletedHandler.Handle(ctx, cmd, msg.ID)
+		return handleNodeCompletedHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 	nodeUpdatedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
@@ -292,7 +293,7 @@ func main() {
 			return fmt.Errorf("failed to unmarshal manifest.loaded payload: %w", err)
 		}
 		cmd := domainModel.IngestTopologyInput{Nodes: nodes}
-		return ingestTopologyHandler.Handle(ctx, cmd, msg.ID)
+		return ingestTopologyHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 	manifestLoadedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
@@ -310,7 +311,7 @@ func main() {
 			ScheduleName: scheduleName,
 			RunID:        runID,
 		}
-		return initializeRunHandler.Handle(ctx, cmd, msg.ID)
+		return initializeRunHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 	initRunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
@@ -326,7 +327,7 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("scheduler.started message %s: %w", msg.ID, err)
 		}
-		return handleSchedulerStartedHandler.Handle(ctx, evt, msg.ID)
+		return handleSchedulerStartedHandler.Handle(ctx, evt, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 	schedulerStartedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
@@ -349,7 +350,7 @@ func main() {
 			ScheduleName: scheduleName,
 			SourceRunID:  sourceRunID,
 		}
-		return handleRerunHandler.Handle(ctx, cmd, msg.ID)
+		return handleRerunHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 	rerunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
@@ -372,7 +373,7 @@ func main() {
 			ScheduleName: scheduleName,
 			SourceRunID:  sourceRunID,
 		}
-		return handleRebaseHandler.Handle(ctx, cmd, msg.ID)
+		return handleRebaseHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 	rebaseConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
@@ -417,7 +418,7 @@ func main() {
 			MetadataSource: metadataSource,
 			SourceRunID:    sourceRunID,
 		}
-		return handleSingleNodeRunHandler.Handle(ctx, req, msg.ID)
+		return handleSingleNodeRunHandler.Handle(ctx, req, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 	singleNodeRunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,

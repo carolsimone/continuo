@@ -32,6 +32,10 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 	if err := json.Unmarshal(entry.Payload, &fields); err != nil {
 		return fmt.Errorf("unmarshal payload for stream %s: %w", entry.StreamName, err)
 	}
+	// Inject outbox_entry_id so consumer-side dedup via
+	// pkg/messageprocessing.DedupWithOutboxEntryID can catch Processor-crash
+	// redeliveries (same outbox row republished with a fresh Redis msg_id).
+	fields["outbox_entry_id"] = entry.ID.String()
 	normalized, err := normalizeRedisFields(fields)
 	if err != nil {
 		return fmt.Errorf("normalize fields for stream %s: %w", entry.StreamName, err)

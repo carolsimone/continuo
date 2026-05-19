@@ -13,17 +13,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeRepo is an in-memory Repository for unit tests. The map is keyed on
-// (messageID, streamName) to match the per-stream dedup invariant: the same
-// Redis message_id can appear on multiple streams and must NOT collide.
+// fakeRepo is an in-memory Repository for unit tests. It mirrors the
+// production uniqueness contract: both (messageID, streamName) AND
+// outbox_entry_id (when set) are independent dedup keys. The same Redis
+// message_id can appear on multiple streams and must NOT collide; the same
+// upstream outbox row republished with a fresh Redis message_id MUST collide.
 type fakeRepo struct {
-	byKey     map[string]*mp.MessageProcessing
-	insertErr error
-	getErr    error
+	byKey         map[string]*mp.MessageProcessing
+	byOutboxEntry map[uuid.UUID]*mp.MessageProcessing
+	byID          map[uuid.UUID]*mp.MessageProcessing
+	insertErr     error
+	getErr        error
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{byKey: map[string]*mp.MessageProcessing{}}
+	return &fakeRepo{
+		byKey:         map[string]*mp.MessageProcessing{},
+		byOutboxEntry: map[uuid.UUID]*mp.MessageProcessing{},
+		byID:          map[uuid.UUID]*mp.MessageProcessing{},
+	}
 }
 
 func fakeKey(messageID, streamName string) string {
@@ -38,10 +46,19 @@ func (f *fakeRepo) InsertIfNotExists(_ context.Context, m *mp.MessageProcessing)
 	if existing, ok := f.byKey[k]; ok {
 		return existing.ID, false, nil
 	}
+	if m.OutboxEntryID != nil {
+		if existing, ok := f.byOutboxEntry[*m.OutboxEntryID]; ok {
+			return existing.ID, false, nil
+		}
+	}
 	id := uuid.New()
 	stored := *m
 	stored.ID = id
 	f.byKey[k] = &stored
+	f.byID[id] = &stored
+	if m.OutboxEntryID != nil {
+		f.byOutboxEntry[*m.OutboxEntryID] = &stored
+	}
 	return id, true, nil
 }
 
@@ -50,6 +67,17 @@ func (f *fakeRepo) GetByMessageIDAndStream(_ context.Context, messageID, streamN
 		return nil, f.getErr
 	}
 	m, ok := f.byKey[fakeKey(messageID, streamName)]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return m, nil
+}
+
+func (f *fakeRepo) GetByID(_ context.Context, id uuid.UUID) (*mp.MessageProcessing, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	m, ok := f.byID[id]
 	if !ok {
 		return nil, errors.New("not found")
 	}
@@ -118,5 +146,84 @@ func TestDedup_SameMessageIDDifferentStreamBothInsertSuccessfully(t *testing.T) 
 	require.NoError(t, err2)
 	require.False(t, dup2, "same message_id on a different stream must NOT be treated as duplicate")
 	require.NotEqual(t, uuid.Nil, id2)
+	require.NotEqual(t, id1, id2)
+}
+
+// TestDedupWithOutboxEntryID_SameOutboxEntryFreshMessageIDIsDuplicate is the
+// regression guard for the P1 correctness gap raised against pkg/outbox.
+// Scenario: pkg/outbox.Processor publishes an outbox row (XADD succeeds, gets
+// Redis msg_id=A) but then crashes before MarkProcessed; on the next tick it
+// republishes the same row (XADD succeeds, gets fresh Redis msg_id=B). With
+// only (message_id, stream_name) dedup the consumer sees msg_id=B as a brand
+// new message and runs the handler twice. The fix is the outbox_entry_id
+// secondary uniqueness key, which catches the redelivery because both XADDs
+// carry the same upstream outbox row UUID.
+func TestDedupWithOutboxEntryID_SameOutboxEntryFreshMessageIDIsDuplicate(t *testing.T) {
+	r := newFakeRepo()
+	entryID := uuid.New()
+
+	// First delivery: msg_id=A, outbox_entry_id=entryID.
+	id1, dup1, err := mp.DedupWithOutboxEntryID(
+		context.Background(), r, newLogger(),
+		"msg-A", "stream:v1", []byte(`{}`), &entryID)
+	require.NoError(t, err)
+	require.False(t, dup1)
+	require.NotEqual(t, uuid.Nil, id1)
+
+	// Mark first delivery completed so the Info log path is exercised on dup.
+	r.byID[id1].State = "completed"
+
+	// Second delivery: DIFFERENT msg_id but SAME outbox_entry_id (the
+	// Processor-crash redelivery case).
+	id2, dup2, err := mp.DedupWithOutboxEntryID(
+		context.Background(), r, newLogger(),
+		"msg-B", "stream:v1", []byte(`{}`), &entryID)
+	require.NoError(t, err)
+	require.True(t, dup2, "different msg_id but same outbox_entry_id MUST be treated as duplicate")
+	require.Equal(t, id1, id2, "must return the existing row's ID, not a fresh one")
+}
+
+// TestDedupWithOutboxEntryID_NilOutboxEntryFallsBackToMessageIDStream verifies
+// the backward-compat path: when outboxEntryID is nil (HTTP triggers,
+// scheduler ticks, anything not originating from pkg/outbox), behavior is
+// identical to Dedup.
+func TestDedupWithOutboxEntryID_NilOutboxEntryFallsBackToMessageIDStream(t *testing.T) {
+	r := newFakeRepo()
+
+	id1, dup1, err := mp.DedupWithOutboxEntryID(
+		context.Background(), r, newLogger(),
+		"msg-1", "stream:v1", []byte(`{}`), nil)
+	require.NoError(t, err)
+	require.False(t, dup1)
+
+	// Second delivery: same msg_id+stream — duplicate via primary key.
+	id2, dup2, err := mp.DedupWithOutboxEntryID(
+		context.Background(), r, newLogger(),
+		"msg-1", "stream:v1", []byte(`{}`), nil)
+	require.NoError(t, err)
+	require.True(t, dup2)
+	require.Equal(t, id1, id2)
+}
+
+// TestDedupWithOutboxEntryID_DifferentOutboxEntriesAreNotDuplicates verifies
+// outbox_entry_id is treated as a uniqueness key, not just an arbitrary tag:
+// two messages with different outbox_entry_ids on the same stream with
+// different msg_ids must both insert successfully.
+func TestDedupWithOutboxEntryID_DifferentOutboxEntriesAreNotDuplicates(t *testing.T) {
+	r := newFakeRepo()
+	entry1 := uuid.New()
+	entry2 := uuid.New()
+
+	id1, dup1, err := mp.DedupWithOutboxEntryID(
+		context.Background(), r, newLogger(),
+		"msg-A", "stream:v1", []byte(`{}`), &entry1)
+	require.NoError(t, err)
+	require.False(t, dup1)
+
+	id2, dup2, err := mp.DedupWithOutboxEntryID(
+		context.Background(), r, newLogger(),
+		"msg-B", "stream:v1", []byte(`{}`), &entry2)
+	require.NoError(t, err)
+	require.False(t, dup2)
 	require.NotEqual(t, id1, id2)
 }

@@ -62,6 +62,15 @@ func (f *fakeMessageProcessingRepository) GetByMessageIDAndStream(ctx context.Co
 	return msg, nil
 }
 
+func (f *fakeMessageProcessingRepository) GetByID(ctx context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error) {
+	for _, msg := range f.messages {
+		if msg.ID == id {
+			return msg, nil
+		}
+	}
+	return nil, nil
+}
+
 func (f *fakeMessageProcessingRepository) UpdateState(ctx context.Context, id uuid.UUID, state string) error {
 	for _, msg := range f.messages {
 		if msg.ID == id {

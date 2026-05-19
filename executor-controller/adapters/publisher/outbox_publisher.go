@@ -82,11 +82,16 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 		Status:     "RUNNING",
 		RetryCount: int32(d.TaskRetryCount),
 	}
-	if err := p.xadd(ctx, streams.TaskStatusUpdatedV1, status.ToMap()); err != nil {
+	statusMap := status.ToMap()
+	// outbox_entry_id is injected on every XADD so consumer-side
+	// DedupWithOutboxEntryID can catch Processor-crash redeliveries.
+	statusMap["outbox_entry_id"] = entry.ID.String()
+	if err := p.xadd(ctx, streams.TaskStatusUpdatedV1, statusMap); err != nil {
 		return err
 	}
 
-	// Step 3: announce node.deployed:v1 for k8s-controller.
+	// Step 3: announce node.deployed:v1 for k8s-controller (ToDeployedMap
+	// already embeds outbox_entry_id into the JobDeployed payload).
 	if err := p.xadd(ctx, streams.NodeDeployedV1, d.ToDeployedMap(entry.ID.String())); err != nil {
 		return err
 	}

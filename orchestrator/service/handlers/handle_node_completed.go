@@ -46,7 +46,7 @@ func NewHandleNodeCompletedHandler(
 
 // Handle processes a node-completed input by loading the Run aggregate,
 // applying CompleteNode, persisting, and dispatching domain events as outbox entries.
-func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainModel.NodeCompletedInput, messageID string) error {
+func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainModel.NodeCompletedInput, messageID string, outboxEntryID *uuid.UUID) error {
 	h.logger.Info("Processing node completed",
 		"message_id", messageID,
 		"task_id", cmd.TaskID,
@@ -66,7 +66,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainModel
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	msgProcessingID, shouldSkip, err := h.handleDedup(ctx, messageID, payload)
+	msgProcessingID, shouldSkip, err := h.handleDedup(ctx, messageID, payload, outboxEntryID)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
 	}
@@ -268,28 +268,10 @@ func (h *HandleNodeCompletedHandler) handleDedup(
 	ctx context.Context,
 	messageID string,
 	payload []byte,
+	outboxEntryID *uuid.UUID,
 ) (uuid.UUID, bool, error) {
-	msgProc := &messageprocessing.MessageProcessing{
-		MessageID:  messageID,
-		StreamName: "node.updated:v1",
-		State:      "processing",
-		Payload:    payload,
-	}
-	id, inserted, err := h.uow.MessageProcessingRepo().InsertIfNotExists(ctx, msgProc)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("insert message processing: %w", err)
-	}
-	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "node.updated:v1")
-		if err != nil {
-			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
-		}
-		if existing.State == "completed" || existing.State == "acked" {
-			h.logger.Info("Message already processed", "message_id", messageID)
-			return existing.ID, true, nil
-		}
-		h.logger.Warn("Message in-flight on another instance", "message_id", messageID)
-		return existing.ID, true, nil
-	}
-	return id, false, nil
+	return messageprocessing.DedupWithOutboxEntryID(
+		ctx, h.uow.MessageProcessingRepo(), h.logger,
+		messageID, "node.updated:v1", payload, outboxEntryID,
+	)
 }

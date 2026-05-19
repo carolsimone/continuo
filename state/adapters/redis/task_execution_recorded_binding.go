@@ -75,9 +75,10 @@ func NewTaskExecutionRecordedBinding(
 			}
 		}()
 
-		_, dup, err := messageprocessing.Dedup(
+		_, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
 			msg.ID, taskExecutionRecordedStreamName, payload,
+			messageprocessing.ExtractOutboxEntryID(msg.Values),
 		)
 		if err != nil {
 			return err

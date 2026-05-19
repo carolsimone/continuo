@@ -27,7 +27,7 @@ func NewHandleRerunHandler(u uow.UnitOfWork, snapshotSvc SnapshotService, logger
 	return &HandleRerunHandler{uow: u, snapshotSvc: snapshotSvc, logger: logger}
 }
 
-func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunInput, messageID string) error {
+func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunInput, messageID string, outboxEntryID *uuid.UUID) error {
 	h.logger.Info("Processing rerun", "message_id", messageID, "run_id", cmd.RunID, "source_run_id", cmd.SourceRunID)
 
 	cmdPayload, err := json.Marshal(cmd)
@@ -40,7 +40,7 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunIn
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	msgProcessingID, shouldSkip, err := messageprocessing.Dedup(ctx, h.uow.MessageProcessingRepo(), h.logger, messageID, "trigger.rerun:v1", cmdPayload)
+	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(ctx, h.uow.MessageProcessingRepo(), h.logger, messageID, "trigger.rerun:v1", cmdPayload, outboxEntryID)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
 	}

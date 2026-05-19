@@ -35,6 +35,10 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 	if err != nil {
 		return err
 	}
+	// Inject outbox_entry_id on every XADD so consumer-side
+	// DedupWithOutboxEntryID can catch Processor-crash redeliveries (same
+	// outbox row republished with a fresh Redis msg_id).
+	values["outbox_entry_id"] = entry.ID.String()
 	if _, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
 		Stream: entry.StreamName,
 		Values: values,

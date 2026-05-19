@@ -110,12 +110,22 @@ func (f *FakeOutboxRepository) IncrementRetry(ctx context.Context, id uuid.UUID)
 // InsertIfNotExists tracks seen (messageID, streamName) pairs: the first call inserts (returns true),
 // subsequent calls with the same pair are duplicates (returns false).
 type FakeMessageProcessingRepository struct {
-	InsertIfNotExistsFunc        func(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error)
-	GetByMessageIDAndStreamFunc  func(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error)
-	UpdateStateFunc              func(ctx context.Context, id uuid.UUID, state string) error
+	InsertIfNotExistsFunc       func(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error)
+	GetByMessageIDAndStreamFunc func(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error)
+	GetByIDFunc                 func(ctx context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error)
+	UpdateStateFunc             func(ctx context.Context, id uuid.UUID, state string) error
 
 	InsertIfNotExistsCallCount int
 	seen                       map[string]uuid.UUID // key: "messageID\x00streamName"
+}
+
+// GetByID returns a synthetic "completed" row by default. Override GetByIDFunc
+// in tests that need fine control over the returned state.
+func (f *FakeMessageProcessingRepository) GetByID(ctx context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error) {
+	if f.GetByIDFunc != nil {
+		return f.GetByIDFunc(ctx, id)
+	}
+	return &messageprocessing.MessageProcessing{ID: id, State: "completed"}, nil
 }
 
 func (f *FakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {

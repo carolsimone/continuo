@@ -136,6 +136,10 @@ func (r *fakeMessageProcessingRepo) GetByMessageIDAndStream(_ context.Context, m
 	return &messageprocessing.MessageProcessing{ID: uuid.New(), MessageID: messageID, StreamName: streamName, State: "completed"}, nil
 }
 
+func (r *fakeMessageProcessingRepo) GetByID(_ context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error) {
+	return &messageprocessing.MessageProcessing{ID: id, State: "completed"}, nil
+}
+
 func (r *fakeMessageProcessingRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }

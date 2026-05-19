@@ -18,26 +18,28 @@ type executor interface {
 }
 
 type row struct {
-	ID         uuid.UUID `db:"id"`
-	MessageID  string    `db:"message_id"`
-	StreamName string    `db:"stream_name"`
-	State      string    `db:"state"`
-	Payload    []byte    `db:"payload"`
-	Error      *string   `db:"error"`
-	CreatedAt  time.Time `db:"created_at"`
-	UpdatedAt  time.Time `db:"updated_at"`
+	ID            uuid.UUID  `db:"id"`
+	MessageID     string     `db:"message_id"`
+	StreamName    string     `db:"stream_name"`
+	State         string     `db:"state"`
+	Payload       []byte     `db:"payload"`
+	Error         *string    `db:"error"`
+	OutboxEntryID *uuid.UUID `db:"outbox_entry_id"`
+	CreatedAt     time.Time  `db:"created_at"`
+	UpdatedAt     time.Time  `db:"updated_at"`
 }
 
 func fromRow(r *row) *MessageProcessing {
 	return &MessageProcessing{
-		ID:         r.ID,
-		MessageID:  r.MessageID,
-		StreamName: r.StreamName,
-		State:      r.State,
-		Payload:    r.Payload,
-		Error:      r.Error,
-		CreatedAt:  r.CreatedAt,
-		UpdatedAt:  r.UpdatedAt,
+		ID:            r.ID,
+		MessageID:     r.MessageID,
+		StreamName:    r.StreamName,
+		State:         r.State,
+		Payload:       r.Payload,
+		Error:         r.Error,
+		OutboxEntryID: r.OutboxEntryID,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
 	}
 }
 
@@ -57,22 +59,38 @@ func NewPostgresRepository(exec executor, logger *slog.Logger) Repository {
 func (r *postgresRepository) InsertIfNotExists(
 	ctx context.Context, msgProc *MessageProcessing,
 ) (uuid.UUID, bool, error) {
+	// Two unique constraints can fire here:
+	//   1. UNIQUE (message_id, stream_name) — primary inbound dedup key.
+	//   2. UNIQUE (outbox_entry_id) WHERE outbox_entry_id IS NOT NULL —
+	//      catches the rare case where a producer's outbox Processor crashed
+	//      between XADD and MarkProcessed and republished the same outbox
+	//      row, producing a fresh Redis message_id but the same upstream
+	//      outbox_entry_id.
+	// ON CONFLICT DO NOTHING (no target) handles either violation. When the
+	// insert is suppressed, we look up the existing row by whichever key
+	// matched.
 	query := `
-		INSERT INTO message_processing (message_id, stream_name, state, payload)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (message_id, stream_name) DO NOTHING
+		INSERT INTO message_processing (message_id, stream_name, state, payload, outbox_entry_id)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT DO NOTHING
 		RETURNING id
 	`
 	var id uuid.UUID
 	err := r.exec.QueryRowContext(ctx, query,
-		msgProc.MessageID, msgProc.StreamName, msgProc.State, msgProc.Payload,
+		msgProc.MessageID, msgProc.StreamName, msgProc.State, msgProc.Payload, msgProc.OutboxEntryID,
 	).Scan(&id)
 	if err == sql.ErrNoRows {
-		err = r.exec.GetContext(ctx, &id,
-			`SELECT id FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
-			msgProc.MessageID, msgProc.StreamName)
+		// Either constraint was violated. Look up the existing row by either
+		// key; outbox_entry_id IS NOT NULL guard keeps the OR safe when the
+		// caller didn't supply one.
+		err = r.exec.GetContext(ctx, &id, `
+			SELECT id FROM message_processing
+			WHERE (message_id = $1 AND stream_name = $2)
+			   OR (outbox_entry_id IS NOT NULL AND outbox_entry_id = $3)
+			LIMIT 1
+		`, msgProc.MessageID, msgProc.StreamName, msgProc.OutboxEntryID)
 		if err != nil {
-			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
+			return uuid.Nil, false, fmt.Errorf("get existing message after conflict: %w", err)
 		}
 		return id, false, nil
 	}
@@ -94,6 +112,21 @@ func (r *postgresRepository) GetByMessageIDAndStream(
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get message processing: %w", err)
+	}
+	return fromRow(&rr), nil
+}
+
+func (r *postgresRepository) GetByID(
+	ctx context.Context, id uuid.UUID,
+) (*MessageProcessing, error) {
+	var rr row
+	err := r.exec.GetContext(ctx, &rr,
+		`SELECT * FROM message_processing WHERE id = $1`, id)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("message_processing row not found: %s", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get message processing by id: %w", err)
 	}
 	return fromRow(&rr), nil
 }
