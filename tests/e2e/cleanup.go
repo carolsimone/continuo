@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/jmoiron/sqlx"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -15,10 +16,11 @@ func cleanupTestData(t *testing.T, ctx context.Context, clients *testClients, sc
 	// Clean Neo4j
 	cleanupNeo4j(t, ctx, clients, scheduleName)
 
-	// Clean Redis streams before Postgres dedup tables: deleting processed_events
-	// while the k8s consumer still has pending node.deployed:v1 / check.k8s:v1
-	// messages re-enables those messages and can trigger replays that recreate
-	// k8s_status_outbox rows before the streams are gone.
+	// Clean Redis streams before Postgres dedup tables: deleting consumer-side
+	// dedup state (message_processing, processed_events) while the k8s consumer
+	// still has pending node.deployed:v1 / check.k8s:v1 messages re-enables
+	// those messages and can trigger replays that recreate k8s_outbox rows
+	// before the streams are gone.
 	cleanupRedis(t, ctx, clients)
 
 	// Clean PostgreSQL databases
@@ -72,20 +74,33 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 		SELECT schedule_id FROM scheduler_tracker WHERE schedule_name = $1
 	`, scheduleName)
 
-	// Clean deployment_outbox
-	_, _ = clients.executorDB.Exec("DELETE FROM deployment_outbox WHERE schedule_name = $1", scheduleName)
+	// Clean executor_outbox (renamed from deployment_outbox). The canonical
+	// schema stores domain fields in JSONB payload — no schedule_name column —
+	// so wipe the whole table. The e2e harness owns it for the duration of
+	// the suite; leaving stale pending rows would cause pkg/outbox.Processor
+	// to retry them forever, drowning Redis in noise that destabilises
+	// manifest-controller's consumer group across subsequent tests.
+	_, _ = clients.executorDB.Exec("DELETE FROM executor_outbox")
 
-	// Clean processed_events (deduplication tables) - must be cleared so re-runs can process the same outbox IDs
-	_, _ = clients.executorDB.Exec("DELETE FROM processed_events")
+	// Clean processed_events on k8s (vestigial pre-pkg/messageprocessing dedup;
+	// executor's processed_events table was dropped in executor V9).
 	_, _ = clients.k8sDB.Exec("DELETE FROM processed_events")
 
-	// Clean orchestrator outbox
-	if schedulerID != "" {
-		_, _ = clients.orchestratorDB.Exec("DELETE FROM outbox WHERE aggregate_id = $1", schedulerID)
+	// Clean per-service message_processing (canonical consumer-side dedup
+	// from #57). Must clear so re-runs aren't false-positive-deduped by
+	// the new outbox_entry_id secondary uniqueness key.
+	for _, db := range []*sqlx.DB{clients.stateDB, clients.orchestratorDB, clients.executorDB, clients.k8sDB} {
+		_, _ = db.Exec("DELETE FROM message_processing")
 	}
 
-	// Clean k8s_status_outbox
-	_, _ = clients.k8sDB.Exec("DELETE FROM k8s_status_outbox WHERE schedule_name = $1", scheduleName)
+	// Clean orchestrator_outbox (renamed from outbox).
+	if schedulerID != "" {
+		_, _ = clients.orchestratorDB.Exec("DELETE FROM orchestrator_outbox WHERE aggregate_id = $1", schedulerID)
+	}
+
+	// Clean k8s_outbox (renamed from k8s_status_outbox; schedule_name lives
+	// in the JSONB payload, not a column).
+	_, _ = clients.k8sDB.Exec("DELETE FROM k8s_outbox")
 
 	// Clean state_outbox (written by rerun handler)
 	if schedulerID != "" {
