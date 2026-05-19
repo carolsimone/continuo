@@ -116,16 +116,21 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	`)
 	require.NoError(t, err, "Failed to create k8s_outbox table")
 
-	// Create the processed_events dedup table used by consumer-side dedup
+	// Create the message_processing dedup table for consumer-side dedup keyed on (message_id, stream_name).
 	_, err = db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS processed_events (
-			outbox_entry_id UUID        PRIMARY KEY,
-			processed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		CREATE TABLE IF NOT EXISTS message_processing (
+			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			message_id  VARCHAR(255) NOT NULL,
+			stream_name VARCHAR(100) NOT NULL,
+			state       VARCHAR(50)  NOT NULL CHECK (state IN ('processing', 'completed', 'acked')),
+			payload     JSONB        NOT NULL,
+			error       TEXT,
+			created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+			updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+			CONSTRAINT message_processing_message_id_stream_name_key UNIQUE (message_id, stream_name)
 		);
-		CREATE INDEX IF NOT EXISTS idx_k8s_processed_events_processed_at
-			ON processed_events(processed_at);
 	`)
-	require.NoError(t, err, "Failed to create processed_events table")
+	require.NoError(t, err, "Failed to create message_processing table")
 
 	// Cleanup function
 	cleanup := func() {

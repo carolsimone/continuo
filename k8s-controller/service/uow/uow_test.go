@@ -24,7 +24,7 @@ func TestPostgresTransactionRunner_WithinTransaction_CommitsOnSuccess(t *testing
 	runner := NewPostgresTransactionRunner(sqlxDB, slog.Default())
 	err = runner.WithinTransaction(context.Background(), func(tx Transaction) error {
 		require.NotNil(t, tx.OutboxRepo())
-		require.NotNil(t, tx.ProcessedEventsRepo())
+		require.NotNil(t, tx.MessageProcessingRepo())
 		return nil
 	})
 	require.NoError(t, err)

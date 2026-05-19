@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -326,7 +327,16 @@ func (c *Consumer) parseCommand(msg goredis.XMessage) (command.CheckJobStatus, e
 		}
 	}
 
-	cmd := command.CheckJobStatus{
+	// Serialize the raw message fields as the dedup payload stored in message_processing.
+	payload, err := json.Marshal(msg.Values)
+	if err != nil {
+		payload = []byte("{}")
+	}
+
+	return command.CheckJobStatus{
+		MessageID:    msg.ID,
+		StreamName:   c.stream,
+		Payload:      payload,
 		TaskID:       taskID,
 		ScheduleID:   scheduleID,
 		ScheduleName: scheduleName,
@@ -338,23 +348,7 @@ func (c *Consumer) parseCommand(msg goredis.XMessage) (command.CheckJobStatus, e
 		ImageTag:     imageTag,
 		RetryCount:   retryCount,
 		MaxRetries:   maxRetries,
-	}
-
-	// Extract outbox_entry_id for deduplication.
-	// If absent (old executor-controller during rollout), leave nil — handler skips dedup.
-	if outboxEntryIDStr, _ := msg.Values["outbox_entry_id"].(string); outboxEntryIDStr != "" {
-		parsed, err := uuid.Parse(outboxEntryIDStr)
-		if err != nil {
-			c.logger.Warn("Invalid outbox_entry_id, skipping dedup",
-				"raw", outboxEntryIDStr,
-				"message_id", msg.ID,
-			)
-		} else {
-			cmd.OutboxEntryID = &parsed
-		}
-	}
-
-	return cmd, nil
+	}, nil
 }
 
 // Stop stops the consumer gracefully.

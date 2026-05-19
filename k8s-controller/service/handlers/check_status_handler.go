@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -88,20 +89,20 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, cmd command.CheckJobSta
 	// Step 3: Run SQL work inside one fresh transaction so dedup and outbox writes
 	// are atomic without storing transaction state on the shared handler.
 	return h.txRunner.WithinTransaction(ctx, func(tx uow.Transaction) error {
-		// Step 4: Dedup guard — atomic claim via INSERT ... ON CONFLICT DO NOTHING.
+		// Step 4: Dedup guard — per-stream message dedup via pkg/messageprocessing.
+		// Atomically inserts (message_id, stream_name) keyed row; duplicate means skip.
 		// Must run inside the transaction so a later failure rolls back the insert.
-		if cmd.OutboxEntryID != nil {
-			duplicate, err := tx.ProcessedEventsRepo().TryMarkProcessed(ctx, *cmd.OutboxEntryID)
-			if err != nil {
-				return fmt.Errorf("dedup check failed: %w", err)
-			}
-			if duplicate {
-				h.logger.Info("Duplicate message — skipping",
-					"outbox_entry_id", cmd.OutboxEntryID,
-					"task_id", cmd.TaskID,
-				)
-				return nil
-			}
+		_, duplicate, err := messageprocessing.Dedup(ctx, tx.MessageProcessingRepo(), h.logger, cmd.MessageID, cmd.StreamName, cmd.Payload)
+		if err != nil {
+			return fmt.Errorf("dedup: %w", err)
+		}
+		if duplicate {
+			h.logger.Info("Duplicate message — skipping",
+				"msg_id", cmd.MessageID,
+				"stream", cmd.StreamName,
+				"task_id", cmd.TaskID,
+			)
+			return nil
 		}
 
 		// Guard: if the schedule was cancelled, absorb the result silently.

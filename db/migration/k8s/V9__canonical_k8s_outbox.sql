@@ -1,3 +1,7 @@
+-- Legacy outbox-entry-id dedup is superseded by per-stream message_processing
+-- (consumer-side dedup keyed on (message_id, stream_name)).
+DROP TABLE IF EXISTS processed_events CASCADE;
+
 -- Drop the legacy typed outbox; replaced by the canonical k8s_outbox below.
 -- Data loss is tolerated: this is a pre-prod migration.
 DROP TABLE IF EXISTS k8s_status_outbox CASCADE;

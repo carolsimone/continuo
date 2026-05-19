@@ -18,8 +18,7 @@ It is responsible for:
 | Table | Purpose |
 |---|---|
 | `k8s_outbox` | Canonical transactional outbox — each write-time side effect is a separate row with a JSONB payload; `pkg/outbox.Processor` polls and publishes to the typed Redis stream per row |
-| `message_processing` | Per-stream message tracking for consumer-side dedup and observability |
-| `processed_events` | Legacy inbound dedup table: keyed by upstream `outbox_entry_id` (INSERT ON CONFLICT DO NOTHING, inside transaction) |
+| `message_processing` | Per-stream inbound dedup table keyed on `(message_id, stream_name)`; `pkg/messageprocessing.Dedup` inserts atomically inside the same transaction as outbox writes |
 
 All `k8s_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`.
 
@@ -32,7 +31,7 @@ All `k8s_outbox` rows conform to the canonical schema: `id`, `message_processing
 | `node.deployed:v1` | New job deployed; triggers first status check |
 | `check.k8s:v1` | Delayed re-check for still-running jobs |
 
-Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type` (plus `check_after` on `check.k8s:v1`).
+Both streams carry: `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type` (plus `check_after` on `check.k8s:v1`). The Redis message ID (`msg.ID`) and stream name are used as the dedup key — no application-level `outbox_entry_id` field is required.
 
 ### HTTP (port 8085)
 
@@ -73,10 +72,10 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
 1. GetJobStatus (K8s) — query current pod status; `started_at` uses a three-tier priority: job-level `StartTime` (persists after pod GC) → pod-level `StartTime` → container-level `terminated.StartedAt`
 2. Determine retry_count from message payload (max_retries from config default = 2, meaning 3 total attempts: initial + 2 retries)
 3. Begin Postgres transaction
-4. Dedup: TryMarkProcessed(outbox_entry_id) — INSERT ON CONFLICT DO NOTHING
-   → if duplicate: rollback + XACK
+4. Dedup: messageprocessing.Dedup(msg.ID, stream_name) — INSERT ON CONFLICT DO NOTHING in message_processing
+   → if duplicate: skip, return nil (consumer ACKs)
 5. Write outbox entries per outcome (see Outcome branches)
-6. Commit (outbox entries + processed_events land atomically)
+6. Commit (message_processing insert + outbox entries land atomically)
 ```
 
 ### Outcome branches
@@ -111,7 +110,7 @@ Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single tr
 ## Redis Payload Reference
 
 ### `check.k8s:v1`
-`outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`, `retry_count`, `max_retries`, `image_tag`
 
 ### `retry.task:v1`
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `retry_count`, `node_type`
@@ -140,7 +139,7 @@ Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single tr
 ## Reliability Patterns
 
 - **Canonical outbox (D1 fanout)**: each business decision writes 1–3 `k8s_outbox` rows in a single transaction; the `pkg/outbox.Processor` publishes each row independently — no multi-effect fanout in the publisher
-- **Inbound dedup inside transaction**: `processed_events` insert and outbox writes are in the same transaction; a crash after commit is idempotent on retry (dedup fires)
+- **Inbound dedup inside transaction**: `message_processing` insert (keyed on `(message_id, stream_name)`) and outbox writes are in the same transaction; a crash after commit is idempotent on retry (dedup fires)
 - **Explicit transaction boundary**: each status message gets its own transaction-scoped repositories for dedup and outbox writes; parallel `node.deployed:v1` and `check.k8s:v1` consumers can reuse one handler without sharing mutable transaction state
 - **S3 soft-fail**: log upload failure does not block task completion; execution record is written with empty S3 key
 - **No state gRPC dependency**: k8s-controller no longer calls state gRPC; all state mutations flow via `task.status.updated:v1` and `task.execution.recorded:v1`

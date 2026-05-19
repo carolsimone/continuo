@@ -3,16 +3,16 @@ package fakes
 import (
 	"context"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
 
 // FakeTransaction exposes fake repositories for one transaction scope.
 type FakeTransaction struct {
-	OutboxRepoFunc          pkgoutbox.Repository
-	ProcessedEventsRepoFunc postgres.ProcessedEventsRepository
+	OutboxRepoFunc             pkgoutbox.Repository
+	MessageProcessingRepoFunc  messageprocessing.Repository
 }
 
 func (f *FakeTransaction) OutboxRepo() pkgoutbox.Repository {
@@ -22,11 +22,11 @@ func (f *FakeTransaction) OutboxRepo() pkgoutbox.Repository {
 	return &FakeOutboxRepository{}
 }
 
-func (f *FakeTransaction) ProcessedEventsRepo() postgres.ProcessedEventsRepository {
-	if f.ProcessedEventsRepoFunc != nil {
-		return f.ProcessedEventsRepoFunc
+func (f *FakeTransaction) MessageProcessingRepo() messageprocessing.Repository {
+	if f.MessageProcessingRepoFunc != nil {
+		return f.MessageProcessingRepoFunc
 	}
-	return &FakeProcessedEventsRepository{}
+	return &FakeMessageProcessingRepository{}
 }
 
 // FakeTransactionRunner is a fake implementation of TransactionRunner for testing.
@@ -106,24 +106,61 @@ func (f *FakeOutboxRepository) IncrementRetry(ctx context.Context, id uuid.UUID)
 	return nil
 }
 
-// FakeProcessedEventsRepository is a fake for testing
-type FakeProcessedEventsRepository struct {
-	TryMarkProcessedFunc func(ctx context.Context, id uuid.UUID) (bool, error)
+// FakeMessageProcessingRepository is a fake implementation of messageprocessing.Repository for testing.
+// InsertIfNotExists tracks seen (messageID, streamName) pairs: the first call inserts (returns true),
+// subsequent calls with the same pair are duplicates (returns false).
+type FakeMessageProcessingRepository struct {
+	InsertIfNotExistsFunc        func(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error)
+	GetByMessageIDAndStreamFunc  func(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error)
+	UpdateStateFunc              func(ctx context.Context, id uuid.UUID, state string) error
 
-	TryMarkProcessedCallCount int
-	ProcessedIDs              []uuid.UUID
+	InsertIfNotExistsCallCount int
+	seen                       map[string]uuid.UUID // key: "messageID\x00streamName"
 }
 
-func (f *FakeProcessedEventsRepository) TryMarkProcessed(ctx context.Context, id uuid.UUID) (bool, error) {
-	f.TryMarkProcessedCallCount++
-	if f.TryMarkProcessedFunc != nil {
-		return f.TryMarkProcessedFunc(ctx, id)
+func (f *FakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
+	f.InsertIfNotExistsCallCount++
+	if f.InsertIfNotExistsFunc != nil {
+		return f.InsertIfNotExistsFunc(ctx, msgProc)
 	}
-	for _, seen := range f.ProcessedIDs {
-		if seen == id {
-			return true, nil // duplicate
+	if f.seen == nil {
+		f.seen = make(map[string]uuid.UUID)
+	}
+	key := msgProc.MessageID + "\x00" + msgProc.StreamName
+	if id, exists := f.seen[key]; exists {
+		return id, false, nil // already seen → duplicate
+	}
+	id := uuid.New()
+	f.seen[key] = id
+	return id, true, nil // newly inserted
+}
+
+func (f *FakeMessageProcessingRepository) GetByMessageIDAndStream(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
+	if f.GetByMessageIDAndStreamFunc != nil {
+		return f.GetByMessageIDAndStreamFunc(ctx, messageID, streamName)
+	}
+	if f.seen != nil {
+		key := messageID + "\x00" + streamName
+		if id, exists := f.seen[key]; exists {
+			return &messageprocessing.MessageProcessing{
+				ID:         id,
+				MessageID:  messageID,
+				StreamName: streamName,
+				State:      "completed",
+			}, nil
 		}
 	}
-	f.ProcessedIDs = append(f.ProcessedIDs, id)
-	return false, nil // newly claimed
+	return &messageprocessing.MessageProcessing{
+		ID:         uuid.New(),
+		MessageID:  messageID,
+		StreamName: streamName,
+		State:      "completed",
+	}, nil
+}
+
+func (f *FakeMessageProcessingRepository) UpdateState(ctx context.Context, id uuid.UUID, state string) error {
+	if f.UpdateStateFunc != nil {
+		return f.UpdateStateFunc(ctx, id, state)
+	}
+	return nil
 }

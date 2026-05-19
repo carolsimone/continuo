@@ -12,46 +12,6 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// Executor abstracts sqlx.DB and sqlx.Tx for database operations
-type Executor interface {
-	SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-}
-
-// ProcessedEventsRepository defines operations for consumer-side dedup.
-type ProcessedEventsRepository interface {
-	// TryMarkProcessed atomically tries to record outbox_entry_id as processed.
-	// Returns (true, nil)  — entry already processed; caller should skip.
-	// Returns (false, nil) — newly inserted; caller should proceed.
-	// Must be called inside a transaction so a later rollback undoes the insert.
-	TryMarkProcessed(ctx context.Context, outboxEntryID uuid.UUID) (bool, error)
-}
-
-type processedEventsRepository struct {
-	executor Executor
-	logger   *slog.Logger
-}
-
-// NewProcessedEventsRepositoryWithTx creates a ProcessedEventsRepository backed by tx.
-func NewProcessedEventsRepositoryWithTx(tx *sqlx.Tx, logger *slog.Logger) ProcessedEventsRepository {
-	return &processedEventsRepository{executor: tx, logger: logger}
-}
-
-func (r *processedEventsRepository) TryMarkProcessed(ctx context.Context, outboxEntryID uuid.UUID) (bool, error) {
-	res, err := r.executor.ExecContext(ctx,
-		`INSERT INTO processed_events (outbox_entry_id) VALUES ($1) ON CONFLICT DO NOTHING`,
-		outboxEntryID)
-	if err != nil {
-		return false, fmt.Errorf("processed_events TryMarkProcessed: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("processed_events TryMarkProcessed rows affected: %w", err)
-	}
-	return n == 0, nil // n==0 → conflict → already processed
-}
-
 // stuckOutboxRow is the internal scan struct for canonical k8s_outbox stuck-entry queries.
 type stuckOutboxRow struct {
 	ID           uuid.UUID  `db:"id"`

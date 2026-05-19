@@ -25,6 +25,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	"github.com/carolsimone/continuo/k8s-controller/test/fakes"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -92,8 +93,8 @@ func (w *wrappedTransaction) OutboxRepo() pkgoutbox.Repository {
 	return w.outboxRepo
 }
 
-func (w *wrappedTransaction) ProcessedEventsRepo() postgresadapter.ProcessedEventsRepository {
-	return w.tx.ProcessedEventsRepo()
+func (w *wrappedTransaction) MessageProcessingRepo() messageprocessing.Repository {
+	return w.tx.MessageProcessingRepo()
 }
 
 var _ uow.Transaction = (*wrappedTransaction)(nil)

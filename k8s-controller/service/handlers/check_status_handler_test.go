@@ -9,12 +9,13 @@ import (
 	"time"
 
 	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
-	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
+	postgresadapter "github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
@@ -103,28 +104,52 @@ func (f *fakeCancelledSchedulesRepo) DeleteExpired(_ context.Context, _ time.Dur
 	return 0, nil
 }
 
-var _ postgres.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepo)(nil)
+var _ postgresadapter.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepo)(nil)
 
 func noopCancelledRepo() *fakeCancelledSchedulesRepo {
 	return &fakeCancelledSchedulesRepo{ids: map[uuid.UUID]bool{}}
 }
 
-type fakeProcessedEventsRepo struct{}
-
-func (r *fakeProcessedEventsRepo) TryMarkProcessed(_ context.Context, _ uuid.UUID) (bool, error) {
-	return false, nil // always "not yet processed" → proceed
+// fakeMessageProcessingRepo is a fake for testing that allows first call to proceed and second to be a duplicate.
+type fakeMessageProcessingRepo struct {
+	seen map[string]uuid.UUID
 }
 
-var _ postgres.ProcessedEventsRepository = (*fakeProcessedEventsRepo)(nil)
+func (r *fakeMessageProcessingRepo) InsertIfNotExists(_ context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
+	if r.seen == nil {
+		r.seen = make(map[string]uuid.UUID)
+	}
+	key := msgProc.MessageID + "\x00" + msgProc.StreamName
+	if id, exists := r.seen[key]; exists {
+		return id, false, nil // already seen → duplicate
+	}
+	id := uuid.New()
+	r.seen[key] = id
+	return id, true, nil // newly inserted
+}
+
+func (r *fakeMessageProcessingRepo) GetByMessageIDAndStream(_ context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
+	key := messageID + "\x00" + streamName
+	if id, exists := r.seen[key]; exists {
+		return &messageprocessing.MessageProcessing{ID: id, MessageID: messageID, StreamName: streamName, State: "completed"}, nil
+	}
+	return &messageprocessing.MessageProcessing{ID: uuid.New(), MessageID: messageID, StreamName: streamName, State: "completed"}, nil
+}
+
+func (r *fakeMessageProcessingRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+
+var _ messageprocessing.Repository = (*fakeMessageProcessingRepo)(nil)
 
 type fakeTransaction struct {
-	outboxRepo          pkgoutbox.Repository
-	processedEventsRepo postgres.ProcessedEventsRepository
+	outboxRepo            pkgoutbox.Repository
+	msgProcessingRepo     messageprocessing.Repository
 }
 
 func (tx *fakeTransaction) OutboxRepo() pkgoutbox.Repository { return tx.outboxRepo }
-func (tx *fakeTransaction) ProcessedEventsRepo() postgres.ProcessedEventsRepository {
-	return tx.processedEventsRepo
+func (tx *fakeTransaction) MessageProcessingRepo() messageprocessing.Repository {
+	return tx.msgProcessingRepo
 }
 
 type fakeTransactionRunner struct {
@@ -144,8 +169,8 @@ func newFakeRunnerFixture() (*fakeRunnerFixture, uow.TransactionRunner) {
 	return fixture, &fakeTransactionRunner{
 		newTx: func() uow.Transaction {
 			return &fakeTransaction{
-				outboxRepo:          fixture.outboxRepo,
-				processedEventsRepo: &fakeProcessedEventsRepo{},
+				outboxRepo:        fixture.outboxRepo,
+				msgProcessingRepo: &fakeMessageProcessingRepo{},
 			}
 		},
 	}
@@ -167,7 +192,7 @@ func failedResult() *model.K8sPodResult {
 	}
 }
 
-func newHandler(k8s handlers.K8sStatusChecker, txRunner uow.TransactionRunner, cancelledSchedules postgres.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
+func newHandler(k8s handlers.K8sStatusChecker, txRunner uow.TransactionRunner, cancelledSchedules postgresadapter.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
 	cfg := &handlers.HandlerConfig{
 		K8sNamespace:          "default",
 		CheckDelaySeconds:     30,
@@ -251,8 +276,8 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 	runner := &fakeTransactionRunner{
 		newTx: func() uow.Transaction {
 			return &fakeTransaction{
-				outboxRepo:          repo,
-				processedEventsRepo: &fakeProcessedEventsRepo{},
+				outboxRepo:        repo,
+				msgProcessingRepo: &fakeMessageProcessingRepo{},
 			}
 		},
 	}

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/jmoiron/sqlx"
 )
@@ -13,7 +13,7 @@ import (
 // Transaction exposes repositories scoped to one database transaction.
 type Transaction interface {
 	OutboxRepo() pkgoutbox.Repository
-	ProcessedEventsRepo() postgres.ProcessedEventsRepository
+	MessageProcessingRepo() messageprocessing.Repository
 }
 
 // TransactionRunner executes work inside a fresh database transaction.
@@ -79,6 +79,6 @@ func (tx *postgresTransaction) OutboxRepo() pkgoutbox.Repository {
 	return pkgoutbox.NewPostgresRepository(tx.tx, "k8s_outbox", tx.logger)
 }
 
-func (tx *postgresTransaction) ProcessedEventsRepo() postgres.ProcessedEventsRepository {
-	return postgres.NewProcessedEventsRepositoryWithTx(tx.tx, tx.logger)
+func (tx *postgresTransaction) MessageProcessingRepo() messageprocessing.Repository {
+	return messageprocessing.NewPostgresRepository(tx.tx, tx.logger)
 }
