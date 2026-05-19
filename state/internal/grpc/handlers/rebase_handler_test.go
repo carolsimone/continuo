@@ -23,7 +23,6 @@ type rebaseFixture struct {
 	Handler       *RebaseHandler
 	SchedulerRepo postgres.SchedulerTrackerRepository
 	TaskRepo      postgres.TaskTrackerRepository
-	OutboxRepo    postgres.OutboxRepository
 	DB            *sqlx.DB
 	Cleanup       func()
 }
@@ -37,21 +36,20 @@ func setupRebaseFixture(t *testing.T) *rebaseFixture {
 	logger := newTestLogger()
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
-	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
+	outboxPub := postgres.NewOutboxPublisher(logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
 	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
 	useCase := svchandlers.NewTriggerRebaseHandler(logger)
 	handler := NewRebaseHandler(useCase, factory, logger)
 	return &rebaseFixture{
 		Handler: handler, SchedulerRepo: schedulerRepo, TaskRepo: taskRepo,
-		OutboxRepo: outboxRepo, DB: db, Cleanup: func() { db.Close() },
+		DB: db, Cleanup: func() { db.Close() },
 	}
 }
 

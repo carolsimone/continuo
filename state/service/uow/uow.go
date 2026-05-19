@@ -31,10 +31,9 @@ type UnitOfWork interface {
 	TaskRepo() postgres.TaskTrackerRepository
 	TaskExecutionRepo() postgres.TaskExecutionRepository
 	ScheduleCatalogRepo() postgres.ScheduleCatalogRepository
-	OutboxRepo() postgres.OutboxRepository
 	MessageProcessingRepo() messageprocessing.Repository
 
-	// Aggregate-level accessors used by the new handler bodies.
+	// Aggregate-level accessors used by handler bodies.
 	Run() ports.RunRepository
 	Catalog() ports.ScheduleCatalogRepository
 	Outbox() ports.OutboxPublisher
@@ -57,7 +56,6 @@ type PostgresUnitOfWork struct {
 	taskRepo          postgres.TaskTrackerRepository
 	taskExecutionRepo postgres.TaskExecutionRepository
 	catalogRepo       postgres.ScheduleCatalogRepository
-	outboxRepo        postgres.OutboxRepository
 	runRepoPort       ports.RunRepository
 	catalogRepoPort   ports.ScheduleCatalogRepository
 	outboxPub         ports.OutboxPublisher
@@ -79,7 +77,6 @@ func NewPostgresUnitOfWork(
 	taskRepo postgres.TaskTrackerRepository,
 	taskExecutionRepo postgres.TaskExecutionRepository,
 	catalogRepo postgres.ScheduleCatalogRepository,
-	outboxRepo postgres.OutboxRepository,
 	runRepoPort ports.RunRepository,
 	catalogRepoPort ports.ScheduleCatalogRepository,
 	outboxPub ports.OutboxPublisher,
@@ -92,7 +89,6 @@ func NewPostgresUnitOfWork(
 		taskRepo:          taskRepo,
 		taskExecutionRepo: taskExecutionRepo,
 		catalogRepo:       catalogRepo,
-		outboxRepo:        outboxRepo,
 		runRepoPort:       runRepoPort,
 		catalogRepoPort:   catalogRepoPort,
 		outboxPub:         outboxPub,
@@ -111,7 +107,6 @@ func (u *PostgresUnitOfWork) TaskExecutionRepo() postgres.TaskExecutionRepositor
 func (u *PostgresUnitOfWork) ScheduleCatalogRepo() postgres.ScheduleCatalogRepository {
 	return u.catalogRepo
 }
-func (u *PostgresUnitOfWork) OutboxRepo() postgres.OutboxRepository { return u.outboxRepo }
 
 func (u *PostgresUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
 	if u.tx != nil {

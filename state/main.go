@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/http"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/config"
 	"github.com/carolsimone/continuo/state/database"
@@ -20,6 +22,7 @@ import (
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
@@ -68,7 +71,6 @@ func main() {
 	logger.Info("Schedule catalog repository initialized")
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
 
 	// Initialize Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
@@ -91,26 +93,36 @@ func main() {
 		return redisClient.Close()
 	})
 
-	// Start outbox processor
-	outboxProcessor := svchandlers.NewOutboxProcessor(outboxRepo, redisClient, logger)
+	// Start outbox processor backed by pkg/outbox. The publisher XADDs each
+	// entry's JSONB payload to its stream. Nested non-scalar fields are
+	// re-encoded to JSON strings so Redis receives only plain scalars.
+	outboxPub := statepublisher.NewOutboxPublisher(redisClient, logger)
+	outboxProc := pkgoutbox.NewProcessor(
+		db,
+		"state_outbox",
+		outboxPub,
+		nil, // no terminal-failure hook for state
+		logger,
+		pkgoutbox.ProcessorConfig{Tick: 500 * time.Millisecond, BatchSize: 10},
+	)
 	go func() {
-		if err := outboxProcessor.Run(ctx); err != nil {
-			logger.Error("Outbox processor error", "error", err)
+		if err := outboxProc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Outbox processor exited", "error", err)
 		}
 	}()
 
 	// Aggregate-level port adapters wired into the UoW so handlers that
 	// operate on domain aggregates (Run, ScheduleCatalog) have typed access.
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
 	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
-	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	domainOutboxPub := postgres.NewOutboxPublisher(logger)
 	clk := ports.SystemClock{}
 
 	// UoW factory shared by every stream binding below. Each invocation
 	// returns a fresh PostgresUnitOfWork over the same repos and *sqlx.DB
 	// so concurrent message handlers do not share transaction state.
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, runRepoPort, catalogRepoPort, domainOutboxPub, clk, logger)
 	}
 
 	// Schedule catalog consumer (consumes schedules.loaded:v1). The

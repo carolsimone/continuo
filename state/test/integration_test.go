@@ -114,14 +114,13 @@ func TestMain(m *testing.M) {
 	execRepo := postgres.NewTaskExecutionRepository(db, logger)
 
 	// ---- Build handlers ----
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
 	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
-	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	outboxPub := postgres.NewOutboxPublisher(logger)
 	clk := ports.SystemClock{}
 	integrationUoWFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
 	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)

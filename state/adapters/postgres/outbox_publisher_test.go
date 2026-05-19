@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -16,8 +17,7 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 
-	outboxRepo := postgres.NewOutboxRepository(db, discardLogger())
-	pub := postgres.NewOutboxPublisher(outboxRepo)
+	pub := postgres.NewOutboxPublisher(discardLogger())
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
@@ -35,23 +35,28 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 
 	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
 
-	pending, err := outboxRepo.ListPending(ctx, 10)
-	require.NoError(t, err)
-
-	var found *postgres.OutboxEntry
-	for _, e := range pending {
-		if e.AggregateID == scheduleID {
-			found = e
-			break
-		}
+	// Read back the row directly from the table.
+	type outboxRow struct {
+		StreamName    string    `db:"stream_name"`
+		AggregateType string    `db:"aggregate_type"`
+		EventType     string    `db:"event_type"`
+		MaxRetries    int       `db:"max_retries"`
+		MsgProcID     *uuid.UUID `db:"message_processing_id"`
+		Payload       []byte    `db:"payload"`
 	}
-	require.NotNil(t, found, "expected an outbox row for scheduleID %s", scheduleID)
+	var found outboxRow
+	err = db.GetContext(ctx, &found,
+		`SELECT stream_name, aggregate_type, event_type, max_retries, message_processing_id, payload
+		 FROM state_outbox WHERE aggregate_id = $1 LIMIT 1`,
+		scheduleID,
+	)
+	require.NoError(t, err)
 
 	assert.Equal(t, "run.finalized:v1", found.StreamName, "stream_name")
 	assert.Equal(t, "scheduler_tracker", found.AggregateType, "aggregate_type")
 	assert.Equal(t, "run.finalized:v1", found.EventType, "event_type")
 	assert.Equal(t, 5, found.MaxRetries, "max_retries")
-	assert.Nil(t, found.MessageProcessingID, "message_processing_id should be nil for uuid.Nil input")
+	assert.Nil(t, found.MsgProcID, "message_processing_id should be nil for uuid.Nil input")
 
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal(found.Payload, &payload))
@@ -64,8 +69,7 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 
-	outboxRepo := postgres.NewOutboxRepository(db, discardLogger())
-	pub := postgres.NewOutboxPublisher(outboxRepo)
+	pub := postgres.NewOutboxPublisher(discardLogger())
 
 	scheduleID := uuid.New()
 	sourceID := uuid.New()
@@ -156,42 +160,77 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rowID := uuid.New()
-			// Use a unique aggregate_id per sub-test so ListPending doesn't
-			// pick up rows from other sub-tests.
-			type idSetter interface {
-				withID(uuid.UUID) run.DomainEvent
-			}
-			_ = rowID
+			// Use a fresh aggregate ID per sub-test to avoid cross-test pollution.
+			aggID := uuid.New()
+
+			// Patch the event's ID field via a new event with the unique aggID.
+			// Since event structs are value types, build a new one where needed.
+			event := patchEventID(tc.event, aggID)
 
 			tx, err := db.BeginTxx(ctx, nil)
 			require.NoError(t, err)
 
-			err = pub.Append(ctx, tx, []run.DomainEvent{tc.event}, uuid.Nil)
+			err = pub.Append(ctx, tx, []run.DomainEvent{event}, uuid.Nil)
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit())
 
-			defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
+			defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", aggID)
 
 			if tc.wantRows == 0 {
-				// No specific assertion needed beyond no error above.
+				// Verify no row was inserted.
+				var count int
+				_ = db.GetContext(ctx, &count, `SELECT COUNT(*) FROM state_outbox WHERE aggregate_id = $1`, aggID)
+				assert.Equal(t, 0, count, "RunDispatchFailed should produce no outbox row")
 				return
 			}
 
-			pending, err := outboxRepo.ListPending(ctx, 100)
-			require.NoError(t, err)
-
-			var found *postgres.OutboxEntry
-			for _, e := range pending {
-				if e.AggregateID == scheduleID && e.StreamName == tc.wantStream {
-					found = e
-					break
-				}
+			type outboxRow struct {
+				StreamName    string    `db:"stream_name"`
+				EventType     string    `db:"event_type"`
+				AggregateType string    `db:"aggregate_type"`
+				MaxRetries    int       `db:"max_retries"`
+				CreatedAt     time.Time `db:"created_at"`
 			}
-			require.NotNilf(t, found, "expected outbox row with stream %q for %s", tc.wantStream, tc.name)
+			var found outboxRow
+			err = db.GetContext(ctx, &found,
+				`SELECT stream_name, event_type, aggregate_type, max_retries, created_at
+				 FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+				aggID, tc.wantStream,
+			)
+			require.NoErrorf(t, err, "expected outbox row with stream %q for %s", tc.wantStream, tc.name)
 			assert.Equal(t, tc.wantEventType, found.EventType, "event_type")
 			assert.Equal(t, tc.wantAggType, found.AggregateType, "aggregate_type")
 			assert.Equal(t, tc.wantRetries, found.MaxRetries, "max_retries")
 		})
+	}
+}
+
+// patchEventID returns a copy of evt with its ID field replaced by newID.
+// This lets each sub-test use a unique aggregate_id so they don't pollute each other.
+func patchEventID(evt run.DomainEvent, newID uuid.UUID) run.DomainEvent {
+	switch e := evt.(type) {
+	case run.RunStarted:
+		e.ID = newID
+		return e
+	case run.RunFinalized:
+		e.ID = newID
+		return e
+	case run.RunCancelled:
+		e.ID = newID
+		return e
+	case run.RerunRequested:
+		e.ID = newID
+		return e
+	case run.RebaseRequested:
+		e.ID = newID
+		return e
+	case run.SingleNodeRunRequested:
+		e.ID = newID
+		return e
+	case run.RunDispatchFailed:
+		e.ID = newID
+		return e
+	default:
+		return evt
 	}
 }

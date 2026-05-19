@@ -27,21 +27,24 @@ type singleNodeRunFixture struct {
 	Handler       *SingleNodeRunHandler
 	SchedulerRepo postgres.SchedulerTrackerRepository
 	TaskRepo      postgres.TaskTrackerRepository
-	OutboxRepo    postgres.OutboxRepository
 	DB            *sqlx.DB
 	Cleanup       func()
 }
 
-// getOutboxByAggregate reads the (typically single) state_outbox row for the
-// given aggregate_id. Used in place of OutboxRepo.ListPending(N) when the test
-// only cares about a specific schedule's row, so accumulated unrelated pending
-// rows on the shared test DB don't cause overflow-past-limit flakes.
-func getOutboxByAggregate(t *testing.T, db *sqlx.DB, aggregateID uuid.UUID) *postgres.OutboxEntry {
+// outboxRow holds the fields read back from state_outbox in tests.
+type outboxRow struct {
+	StreamName string `db:"stream_name"`
+	Payload    []byte `db:"payload"`
+}
+
+// getOutboxByAggregate reads the state_outbox row for the given aggregate_id.
+// Used instead of a ListPending call so that accumulated unrelated pending rows
+// on the shared test DB don't cause limit-overflow flakes.
+func getOutboxByAggregate(t *testing.T, db *sqlx.DB, aggregateID uuid.UUID) *outboxRow {
 	t.Helper()
-	var entry postgres.OutboxEntry
+	var entry outboxRow
 	err := db.GetContext(context.Background(), &entry,
-		`SELECT id, aggregate_type, aggregate_id, event_type, payload, stream_name, status, max_retries, retry_count, created_at
-		 FROM state_outbox WHERE aggregate_id = $1 LIMIT 1`,
+		`SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1 LIMIT 1`,
 		aggregateID,
 	)
 	if err != nil {
@@ -62,15 +65,14 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	logger := newTestLogger()
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
-	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
+	outboxPub := postgres.NewOutboxPublisher(logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
 	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
 	useCase := svchandlers.NewTriggerSingleNodeRunHandler(logger)
 	handler := NewSingleNodeRunHandler(useCase, factory, logger)
@@ -80,7 +82,6 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 		Handler:       handler,
 		SchedulerRepo: schedulerRepo,
 		TaskRepo:      taskRepo,
-		OutboxRepo:    outboxRepo,
 		DB:            db,
 		Cleanup:       cleanup,
 	}
