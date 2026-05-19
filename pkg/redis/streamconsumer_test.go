@@ -306,6 +306,163 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 	assert.Empty(t, pending, "permanent error during reclaim must ACK → PEL empty")
 }
 
+// ── In-process retry on transient errors (issue #63) ───────────────────────
+//
+// On a transient handler error the consumer retries the same message inline,
+// with bounded attempts and exponential backoff, before falling through to
+// no-ACK. This collapses the worst-case retry latency from `reclaimInterval`
+// (minutes) to ~seconds. The periodic PEL sweep remains the safety net for
+// crashed-consumer recovery only. ErrPermanent is *not* retried.
+
+// TestStreamConsumer_TransientError_RetriedInProcess_ThenACKed: handler fails
+// the first two attempts and succeeds on the third. With in-process retry
+// the message is ACKed in the same Start() invocation, so the PEL ends empty
+// and the handler is called at least 3 times.
+func TestStreamConsumer_TransientError_RetriedInProcess_ThenACKed(t *testing.T) {
+	rc := redisClientForTest(t)
+	ctx := context.Background()
+	defer rc.Close()
+
+	stream := fmt.Sprintf("test-stream-retry-success-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+
+	_, err := rc.XAdd(ctx, &goredis.XAddArgs{
+		Stream: stream,
+		Values: map[string]interface{}{"k": "v"},
+	}).Result()
+	require.NoError(t, err)
+
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+
+	var called atomic.Int32
+	handler := func(_ context.Context, _ goredis.XMessage) error {
+		n := called.Add(1)
+		if n < 3 {
+			return errors.New("transient blip")
+		}
+		return nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
+
+	// Budget: 0 + 100ms + 500ms + 2s = ~2.6s, plus read-loop overhead.
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	go consumer.Start(runCtx) //nolint:errcheck
+	time.Sleep(3500 * time.Millisecond)
+
+	assert.GreaterOrEqual(t, called.Load(), int32(3),
+		"handler must be retried in-process until it succeeds")
+
+	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	require.NoError(t, err)
+	assert.Empty(t, pending, "successful in-process retry must ACK → PEL empty")
+}
+
+// TestStreamConsumer_PermanentError_NotRetried: ErrPermanent short-circuits
+// the retry loop. Handler must be called exactly once.
+func TestStreamConsumer_PermanentError_NotRetried(t *testing.T) {
+	rc := redisClientForTest(t)
+	ctx := context.Background()
+	defer rc.Close()
+
+	stream := fmt.Sprintf("test-stream-perm-noretry-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+
+	_, err := rc.XAdd(ctx, &goredis.XAddArgs{
+		Stream: stream,
+		Values: map[string]interface{}{"k": "v"},
+	}).Result()
+	require.NoError(t, err)
+
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+
+	var called atomic.Int32
+	handler := func(_ context.Context, _ goredis.XMessage) error {
+		called.Add(1)
+		return fmt.Errorf("%w: bad payload", events.ErrPermanent)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
+
+	runCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	go consumer.Start(runCtx) //nolint:errcheck
+	time.Sleep(1500 * time.Millisecond)
+
+	assert.Equal(t, int32(1), called.Load(),
+		"ErrPermanent must NOT trigger in-process retries")
+
+	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	require.NoError(t, err)
+	assert.Empty(t, pending, "permanent error must still ACK → PEL empty")
+}
+
+// TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL: handler keeps
+// failing transiently. After the retry budget is exhausted the consumer must
+// no-ACK so the message remains in the PEL for the periodic sweep / next
+// consumer instance to handle as the fallback path.
+func TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL(t *testing.T) {
+	rc := redisClientForTest(t)
+	ctx := context.Background()
+	defer rc.Close()
+
+	stream := fmt.Sprintf("test-stream-retry-exhaust-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+
+	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{
+		Stream: stream,
+		Values: map[string]interface{}{"k": "v"},
+	}).Result()
+	require.NoError(t, err)
+
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+
+	var called atomic.Int32
+	handler := func(_ context.Context, _ goredis.XMessage) error {
+		called.Add(1)
+		return errors.New("always transient")
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
+
+	// Long enough for one full retry budget (~2.6s) but short enough not to
+	// pick up a second cycle from periodic reclaim (2 min).
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	go consumer.Start(runCtx) //nolint:errcheck
+	time.Sleep(3500 * time.Millisecond)
+
+	// Handler called for every attempt in the retry budget (>= 2 distinguishes
+	// from "called once and abandoned").
+	assert.GreaterOrEqual(t, called.Load(), int32(2),
+		"transient errors must trigger in-process retries before giving up")
+
+	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	require.NoError(t, err)
+
+	found := false
+	for _, p := range pending {
+		if p.ID == msgID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "exhausted retries must leave the message in PEL for the sweep")
+}
+
 func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()

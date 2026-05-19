@@ -44,11 +44,49 @@ func NewStreamConsumer(
 	}
 }
 
-// reclaimInterval is how often the consumer re-scans the PEL for messages whose
-// handler returned an error (and were therefore never ACKed). A periodic sweep
-// ensures that transient handler failures do not leave messages stuck forever —
-// without it, PEL entries are only reclaimed at service startup.
+// reclaimInterval is how often the consumer re-scans the PEL for messages
+// abandoned by *other* consumer instances (crash recovery). Transient handler
+// errors are retried in-process by invokeWithRetry before falling through to
+// the PEL, so this interval no longer bounds same-instance retry latency.
 const reclaimInterval = 2 * time.Minute
+
+// transientRetryBackoffs is the inline retry schedule applied to non-permanent
+// handler errors before the consumer gives up and leaves the message un-ACKed
+// for the periodic PEL sweep. Total budget ≈ 2.6s.
+var transientRetryBackoffs = []time.Duration{
+	0,
+	100 * time.Millisecond,
+	500 * time.Millisecond,
+	2 * time.Second,
+}
+
+// invokeWithRetry calls the handler with bounded retries on transient errors.
+// ErrPermanent short-circuits the loop; context cancellation aborts it. The
+// final error (or nil) is returned to the caller, which decides whether to
+// ACK based on the existing ErrPermanent classification.
+func (c *StreamConsumer) invokeWithRetry(ctx context.Context, msg goredis.XMessage) error {
+	var err error
+	for attempt, delay := range transientRetryBackoffs {
+		if delay > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+			c.logger.Warn("Retrying transient handler error",
+				"stream", c.streamName,
+				"message_id", msg.ID,
+				"attempt", attempt+1,
+				"previous_error", err,
+			)
+		}
+		err = c.handler(ctx, msg)
+		if err == nil || errors.Is(err, events.ErrPermanent) {
+			return err
+		}
+	}
+	return err
+}
 
 // Start begins consuming messages from the Redis stream until the context is cancelled
 func (c *StreamConsumer) Start(ctx context.Context) error {
@@ -132,7 +170,7 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 		}
 
 		for _, msg := range msgs {
-			if err := c.handler(ctx, msg); err != nil {
+			if err := c.invokeWithRetry(ctx, msg); err != nil {
 				if errors.Is(err, events.ErrPermanent) {
 					c.logger.Error("Permanent handler error — ACKing to drop from PEL",
 						"message_id", msg.ID,
@@ -140,11 +178,11 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 					)
 					// fall through to XAck
 				} else {
-					c.logger.Error("Failed to process reclaimed message",
+					c.logger.Error("Reclaimed message still failing after in-process retries",
 						"message_id", msg.ID,
 						"error", err,
 					)
-					continue // no-ACK; existing transient retry semantics
+					continue // no-ACK; PEL sweep remains the safety net
 				}
 			}
 			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {
@@ -180,7 +218,7 @@ func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 
 	for _, stream := range streams {
 		for _, msg := range stream.Messages {
-			if err := c.handler(ctx, msg); err != nil {
+			if err := c.invokeWithRetry(ctx, msg); err != nil {
 				if errors.Is(err, events.ErrPermanent) {
 					c.logger.Error("Permanent handler error — ACKing to drop from PEL",
 						"message_id", msg.ID,
@@ -188,8 +226,8 @@ func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 					)
 					// fall through to XAck
 				} else {
-					c.logger.Error("Failed to process message", "message_id", msg.ID, "error", err)
-					continue // no-ACK; existing transient retry semantics
+					c.logger.Error("Message still failing after in-process retries", "message_id", msg.ID, "error", err)
+					continue // no-ACK; PEL sweep remains the safety net
 				}
 			}
 			if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, msg.ID).Err(); err != nil {
