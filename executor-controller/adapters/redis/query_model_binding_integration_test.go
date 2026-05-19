@@ -98,18 +98,29 @@ func buildBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) 
 
 // queryModelXMessage builds a goredis.XMessage fixture for query.model:v1.
 // node_type is "dbt-model" (hyphen) per the wire format used by the orchestrator.
+// outbox_entry_id is set to a fresh UUID so the test exercises the
+// application-level idempotency layer; pass a specific value for the
+// publisher-retry regression test.
 func queryModelXMessage(t *testing.T, msgID string, taskID, scheduleID uuid.UUID) goredis.XMessage {
 	t.Helper()
+	return queryModelXMessageWithOutboxID(t, msgID, taskID, scheduleID, uuid.New())
+}
+
+func queryModelXMessageWithOutboxID(
+	t *testing.T, msgID string, taskID, scheduleID, outboxEntryID uuid.UUID,
+) goredis.XMessage {
+	t.Helper()
 	return goredis.XMessage{ID: msgID, Values: map[string]interface{}{
-		"task_id":       taskID.String(),
-		"schedule_id":   scheduleID.String(),
-		"schedule_name": "daily",
-		"service_name":  "dbt",
-		"schema_name":   "public",
-		"table_name":    "orders",
-		"job_name":      "dbt-public-orders",
-		"node_type":     "dbt-model",
-		"image_tag":     "sha-abc",
+		"outbox_entry_id": outboxEntryID.String(),
+		"task_id":         taskID.String(),
+		"schedule_id":     scheduleID.String(),
+		"schedule_name":   "daily",
+		"service_name":    "dbt",
+		"schema_name":     "public",
+		"table_name":      "orders",
+		"job_name":        "dbt-public-orders",
+		"node_type":       "dbt-model",
+		"image_tag":       "sha-abc",
 	}}
 }
 
@@ -163,6 +174,69 @@ func TestQueryModelBinding_ConcurrentDedup(t *testing.T) {
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
 		msg.ID, streams.QueryModelV1))
+}
+
+func TestQueryModelBinding_PublisherRetrySameOutboxEntryIDDedups(t *testing.T) {
+	// Regression for the case described in PR #64 review: when the
+	// orchestrator's outbox processor sees an ambiguous XADD (succeeded
+	// but error returned) and re-publishes, Redis assigns a new msg.ID
+	// to the second delivery. The shared (msg.ID, stream_name) dedup
+	// treats the two as distinct, so without the application-level
+	// idempotency layer on deployment_outbox.outbox_entry_id the
+	// executor would create two outbox rows and deploy two K8s jobs.
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	binding, _ := buildBinding(db)
+	outboxEntryID := uuid.New()
+	taskID := uuid.New()
+	scheduleID := uuid.New()
+
+	// First delivery: msg.ID "10-0".
+	msg1 := queryModelXMessageWithOutboxID(t, "10-0", taskID, scheduleID, outboxEntryID)
+	require.NoError(t, binding(context.Background(), msg1))
+
+	// Second delivery: same payload (same outbox_entry_id), different msg.ID.
+	msg2 := queryModelXMessageWithOutboxID(t, "11-0", taskID, scheduleID, outboxEntryID)
+	require.NoError(t, binding(context.Background(), msg2))
+
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployment_outbox`),
+		"only one outbox row per outbox_entry_id even across two msg.IDs")
+	// Two message_processing rows are expected: shared dedup is keyed
+	// on msg.ID, so each delivery records itself. The application-level
+	// idempotency layer catches the duplicate at the outbox insert.
+	assert.Equal(t, 2, countRows(t, db,
+		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.QueryModelV1))
+}
+
+func TestQueryModelBinding_NoOutboxEntryIDStillDedupsByMessageID(t *testing.T) {
+	// When the inbound message has no outbox_entry_id, the
+	// application-level idempotency layer is disabled (NULL column,
+	// partial unique index does not apply), and dedup falls back
+	// entirely to (msg.ID, stream_name) in message_processing.
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	binding, _ := buildBinding(db)
+	msg := goredis.XMessage{ID: "12-0", Values: map[string]interface{}{
+		"task_id":       uuid.New().String(),
+		"schedule_id":   uuid.New().String(),
+		"schedule_name": "daily",
+		"service_name":  "dbt",
+		"schema_name":   "public",
+		"table_name":    "orders",
+		"job_name":      "dbt-public-orders",
+		"node_type":     "dbt-model",
+		"image_tag":     "sha-abc",
+	}}
+
+	require.NoError(t, binding(context.Background(), msg))
+	require.NoError(t, binding(context.Background(), msg))
+
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployment_outbox`),
+		"second delivery with same msg.ID is caught by shared dedup")
+	assert.Equal(t, 1, countRows(t, db,
+		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1`, msg.ID))
 }
 
 func TestQueryModelBinding_CancelledScheduleDropsMessage(t *testing.T) {

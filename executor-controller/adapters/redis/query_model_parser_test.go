@@ -14,19 +14,22 @@ import (
 func TestParseQueryModel_HappyPath(t *testing.T) {
 	taskID := uuid.New()
 	scheduleID := uuid.New()
+	outboxEntryID := uuid.New()
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
-		"task_id":       taskID.String(),
-		"schedule_id":   scheduleID.String(),
-		"schedule_name": "daily",
-		"service_name":  "dbt",
-		"schema_name":   "public",
-		"table_name":    "orders",
-		"job_name":      "dbt-public-orders",
-		"node_type":     "dbt-model",
-		"image_tag":     "sha-abc",
+		"outbox_entry_id": outboxEntryID.String(),
+		"task_id":         taskID.String(),
+		"schedule_id":     scheduleID.String(),
+		"schedule_name":   "daily",
+		"service_name":    "dbt",
+		"schema_name":     "public",
+		"table_name":      "orders",
+		"job_name":        "dbt-public-orders",
+		"node_type":       "dbt-model",
+		"image_tag":       "sha-abc",
 	}}
 	evt, err := ParseQueryModel(msg)
 	require.NoError(t, err)
+	assert.Equal(t, outboxEntryID, evt.OutboxEntryID)
 	assert.Equal(t, taskID, evt.TaskID)
 	assert.Equal(t, scheduleID, evt.ScheduleID)
 	assert.Equal(t, "daily", evt.ScheduleName)
@@ -36,6 +39,27 @@ func TestParseQueryModel_HappyPath(t *testing.T) {
 	assert.Equal(t, "dbt-public-orders", evt.JobName)
 	assert.Equal(t, pkg_model.NodeTypeDbtModel, evt.NodeType)
 	assert.Equal(t, "sha-abc", evt.ImageTag)
+}
+
+func TestParseQueryModel_OutboxEntryIDAbsentIsNilUUID(t *testing.T) {
+	evt, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
+		"task_id":     uuid.New().String(),
+		"schedule_id": uuid.New().String(),
+		"node_type":   "dbt-model",
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Nil, evt.OutboxEntryID,
+		"absent outbox_entry_id is uuid.Nil so dedup degrades to (msg.ID, stream_name)")
+}
+
+func TestParseQueryModel_OutboxEntryIDInvalidIsPermanentError(t *testing.T) {
+	_, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
+		"outbox_entry_id": "not-a-uuid",
+		"task_id":         uuid.New().String(),
+		"schedule_id":     uuid.New().String(),
+		"node_type":       "dbt-model",
+	}})
+	require.Error(t, err)
 }
 
 func TestParseQueryModel_MissingTaskID(t *testing.T) {

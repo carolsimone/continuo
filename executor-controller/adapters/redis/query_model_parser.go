@@ -33,16 +33,28 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 	if err != nil {
 		return events.QueryModel{}, fmt.Errorf("invalid node_type: %w", err)
 	}
+	// outbox_entry_id is the orchestrator's outbox row ID, used as an
+	// application-level idempotency key on deployment_outbox. Absent or
+	// empty → uuid.Nil (dedup degrades to (msg.ID, stream_name)).
+	// Present-but-malformed → permanent error.
+	var outboxEntryID uuid.UUID
+	if s := stringField(msg.Values, "outbox_entry_id"); s != "" {
+		outboxEntryID, err = uuid.Parse(s)
+		if err != nil {
+			return events.QueryModel{}, fmt.Errorf("invalid outbox_entry_id: %w", err)
+		}
+	}
 	return events.QueryModel{
-		TaskID:       taskID,
-		ScheduleID:   scheduleID,
-		ScheduleName: stringField(msg.Values, "schedule_name"),
-		ServiceName:  stringField(msg.Values, "service_name"),
-		SchemaName:   stringField(msg.Values, "schema_name"),
-		TableName:    stringField(msg.Values, "table_name"),
-		JobName:      stringField(msg.Values, "job_name"),
-		NodeType:     nodeType,
-		ImageTag:     stringField(msg.Values, "image_tag"),
+		OutboxEntryID: outboxEntryID,
+		TaskID:        taskID,
+		ScheduleID:    scheduleID,
+		ScheduleName:  stringField(msg.Values, "schedule_name"),
+		ServiceName:   stringField(msg.Values, "service_name"),
+		SchemaName:    stringField(msg.Values, "schema_name"),
+		TableName:     stringField(msg.Values, "table_name"),
+		JobName:       stringField(msg.Values, "job_name"),
+		NodeType:      nodeType,
+		ImageTag:      stringField(msg.Values, "image_tag"),
 	}, nil
 }
 
