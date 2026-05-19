@@ -149,13 +149,19 @@ func newSucceededHandler(txRunner uow.TransactionRunner, logger *slog.Logger) *h
 }
 
 // newSucceededCmd returns a minimal CheckJobStatus command for the given task ID.
+// MessageID/StreamName/Payload are required because check_status_handler runs
+// messageprocessing.DedupWithOutboxEntryID, which writes Payload into
+// message_processing.payload (a JSONB NOT NULL column).
 func newSucceededCmd(taskID uuid.UUID) command.CheckJobStatus {
 	return command.CheckJobStatus{
-		TaskID:     taskID,
-		ScheduleID: uuid.New(),
-		JobName:    "job-fanout-test",
-		RetryCount: 0,
-		MaxRetries: 3,
+		TaskID:      taskID,
+		ScheduleID:  uuid.New(),
+		JobName:     "job-fanout-test",
+		MessageID:   "msg-" + taskID.String(),
+		StreamName:  "check.k8s:v1",
+		Payload:     []byte(`{}`),
+		RetryCount:  0,
+		MaxRetries:  3,
 	}
 }
 
