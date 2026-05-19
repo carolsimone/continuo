@@ -17,8 +17,11 @@ It is responsible for:
 
 | Table | Purpose |
 |---|---|
-| `k8s_status_outbox` | Stages all side effects (task status events, execution record events, Redis publishes) atomically before execution |
-| `processed_events` | Inbound dedup: keyed by upstream `outbox_entry_id` (INSERT ON CONFLICT DO NOTHING, inside transaction) |
+| `k8s_outbox` | Canonical transactional outbox — each write-time side effect is a separate row with a JSONB payload; `pkg/outbox.Processor` polls and publishes to the typed Redis stream per row |
+| `message_processing` | Per-stream message tracking for consumer-side dedup and observability |
+| `processed_events` | Legacy inbound dedup table: keyed by upstream `outbox_entry_id` (INSERT ON CONFLICT DO NOTHING, inside transaction) |
+
+All `k8s_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`.
 
 ## Inbound Interfaces
 
@@ -86,12 +89,17 @@ Both streams carry: `outbox_entry_id`, `task_id`, `schedule_id`, `schedule_name`
 | **Succeeded** | Entry A: publish `task.status.updated:v1` (SUCCEEDED) + `task.execution.recorded:v1`; entry B: publish `node.updated:v1` SUCCEEDED |
 | **NotFound** (K8s API returns 404) | Mapped to `JobStatusFailed`; flows through the same Failed path as above (retryable or permanent) |
 
-### Outbox processor
+### Write-time fanout (D1 pattern)
 
-Reads `k8s_status_outbox` entries and executes the staged side effects:
-- Publishes `task.status.updated:v1` to Redis
-- Publishes `task.execution.recorded:v1` to Redis (includes timing, S3 log key, error message)
-- Publishes to `node.updated:v1`, `retry.task:v1`, `task.failed:v1`, or `check.k8s:v1` as appropriate
+Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single transaction. The `pkg/outbox.Processor` polls the table and publishes each row to its `stream_name` via `k8s-controller/adapters/publisher.OutboxPublisher`, which routes the JSONB payload to the correct typed struct per `event_type`.
+
+| Outcome | Rows written |
+|---|---|
+| Succeeded | `task_status_updated` (SUCCEEDED) + `task_execution_recorded` + `node_status_updated` |
+| Failed, retryable | `task_status_updated` (FAILED) + `task_execution_recorded` + `task_retry` |
+| Failed, permanent | `task_status_updated` (FAILED) + `task_execution_recorded` + `node_status_updated` |
+| Running | `check_delayed` (1 row) |
+| Unknown | `task_status_updated` (FAILED) + `task_failed` |
 
 ## S3 Log Behavior
 
@@ -126,12 +134,12 @@ Reads `k8s_status_outbox` entries and executes the staged side effects:
 |---|---|
 | Redis consumer (dual-stream) | Reads `node.deployed:v1` and `check.k8s:v1`; includes crash-recovery for pending messages |
 | Delayed requeue | Holds `check.k8s:v1` messages until `check_after` time before dispatching to handler |
-| Outbox processor | Polls `k8s_status_outbox`; executes staged Redis publishes |
-| Stuck entry resolver | Periodically finds `k8s_status_outbox` entries stuck in pending beyond `stuck_threshold_seconds`; force-marks them failed; tracks resolve attempts in memory; escalates with CRITICAL log if `max_resolve_attempts` exceeded |
+| Outbox processor (`pkg/outbox.Processor`) | Polls `k8s_outbox`; publishes each row to its `stream_name` via `OutboxPublisher` |
+| Stuck entry resolver | Periodically finds `k8s_outbox` entries stuck in pending beyond `stuck_threshold_seconds`; force-marks them failed via `K8sOutboxStuckRepository`; tracks resolve attempts in memory; escalates with CRITICAL log if `max_resolve_attempts` exceeded |
 
 ## Reliability Patterns
 
-- **Two-entry outbox pattern**: internal side effects (state events) and external notifications (Redis) are staged as separate outbox entries within the same transaction — both commit or neither does
+- **Canonical outbox (D1 fanout)**: each business decision writes 1–3 `k8s_outbox` rows in a single transaction; the `pkg/outbox.Processor` publishes each row independently — no multi-effect fanout in the publisher
 - **Inbound dedup inside transaction**: `processed_events` insert and outbox writes are in the same transaction; a crash after commit is idempotent on retry (dedup fires)
 - **Explicit transaction boundary**: each status message gets its own transaction-scoped repositories for dedup and outbox writes; parallel `node.deployed:v1` and `check.k8s:v1` consumers can reuse one handler without sharing mutable transaction state
 - **S3 soft-fail**: log upload failure does not block task completion; execution record is written with empty S3 key

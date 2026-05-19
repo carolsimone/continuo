@@ -6,12 +6,13 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/jmoiron/sqlx"
 )
 
 // Transaction exposes repositories scoped to one database transaction.
 type Transaction interface {
-	OutboxRepo() postgres.OutboxRepository
+	OutboxRepo() pkgoutbox.Repository
 	ProcessedEventsRepo() postgres.ProcessedEventsRepository
 }
 
@@ -74,8 +75,8 @@ func (r *PostgresTransactionRunner) WithinTransaction(ctx context.Context, fn fu
 	return nil
 }
 
-func (tx *postgresTransaction) OutboxRepo() postgres.OutboxRepository {
-	return postgres.NewOutboxRepositoryWithTx(tx.tx, tx.logger)
+func (tx *postgresTransaction) OutboxRepo() pkgoutbox.Repository {
+	return pkgoutbox.NewPostgresRepository(tx.tx, "k8s_outbox", tx.logger)
 }
 
 func (tx *postgresTransaction) ProcessedEventsRepo() postgres.ProcessedEventsRepository {

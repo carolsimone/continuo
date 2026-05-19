@@ -4,18 +4,18 @@ import (
 	"context"
 
 	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
-	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
 
 // FakeTransaction exposes fake repositories for one transaction scope.
 type FakeTransaction struct {
-	OutboxRepoFunc          postgres.OutboxRepository
+	OutboxRepoFunc          pkgoutbox.Repository
 	ProcessedEventsRepoFunc postgres.ProcessedEventsRepository
 }
 
-func (f *FakeTransaction) OutboxRepo() postgres.OutboxRepository {
+func (f *FakeTransaction) OutboxRepo() pkgoutbox.Repository {
 	if f.OutboxRepoFunc != nil {
 		return f.OutboxRepoFunc
 	}
@@ -51,26 +51,22 @@ func (f *FakeTransactionRunner) WithinTransaction(ctx context.Context, fn func(u
 var _ uow.Transaction = (*FakeTransaction)(nil)
 var _ uow.TransactionRunner = (*FakeTransactionRunner)(nil)
 
-// FakeOutboxRepository is a fake implementation of OutboxRepository for testing
+// FakeOutboxRepository is a fake implementation of pkgoutbox.Repository for testing
 type FakeOutboxRepository struct {
-	CreateFunc          func(ctx context.Context, entry *model.K8sStatusOutboxEntry) error
-	GetPendingBatchFunc func(ctx context.Context, limit int) ([]*model.K8sStatusOutboxEntry, error)
+	CreateFunc          func(ctx context.Context, entry *pkgoutbox.Entry) error
+	GetPendingBatchFunc func(ctx context.Context, limit int) ([]*pkgoutbox.Entry, error)
 	MarkProcessedFunc   func(ctx context.Context, id uuid.UUID) error
 	MarkFailedFunc      func(ctx context.Context, id uuid.UUID, errorMessage string) error
 	IncrementRetryFunc  func(ctx context.Context, id uuid.UUID) error
-	GetStuckEntriesFunc func(ctx context.Context, limit int, stuckThresholdSeconds int) ([]*model.K8sStatusOutboxEntry, error)
-	ForceMarkFailedFunc func(ctx context.Context, id uuid.UUID, errorMessage string) error
 
 	CreateCallCount          int
 	GetPendingBatchCallCount int
 	MarkProcessedCallCount   int
 	MarkFailedCallCount      int
 	IncrementRetryCallCount  int
-	GetStuckEntriesCallCount int
-	ForceMarkFailedCallCount int
 }
 
-func (f *FakeOutboxRepository) Create(ctx context.Context, entry *model.K8sStatusOutboxEntry) error {
+func (f *FakeOutboxRepository) Create(ctx context.Context, entry *pkgoutbox.Entry) error {
 	f.CreateCallCount++
 	if f.CreateFunc != nil {
 		return f.CreateFunc(ctx, entry)
@@ -78,7 +74,7 @@ func (f *FakeOutboxRepository) Create(ctx context.Context, entry *model.K8sStatu
 	return nil
 }
 
-func (f *FakeOutboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*model.K8sStatusOutboxEntry, error) {
+func (f *FakeOutboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*pkgoutbox.Entry, error) {
 	f.GetPendingBatchCallCount++
 	if f.GetPendingBatchFunc != nil {
 		return f.GetPendingBatchFunc(ctx, limit)
@@ -106,22 +102,6 @@ func (f *FakeOutboxRepository) IncrementRetry(ctx context.Context, id uuid.UUID)
 	f.IncrementRetryCallCount++
 	if f.IncrementRetryFunc != nil {
 		return f.IncrementRetryFunc(ctx, id)
-	}
-	return nil
-}
-
-func (f *FakeOutboxRepository) GetStuckEntries(ctx context.Context, limit int, stuckThresholdSeconds int) ([]*model.K8sStatusOutboxEntry, error) {
-	f.GetStuckEntriesCallCount++
-	if f.GetStuckEntriesFunc != nil {
-		return f.GetStuckEntriesFunc(ctx, limit, stuckThresholdSeconds)
-	}
-	return nil, nil
-}
-
-func (f *FakeOutboxRepository) ForceMarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error {
-	f.ForceMarkFailedCallCount++
-	if f.ForceMarkFailedFunc != nil {
-		return f.ForceMarkFailedFunc(ctx, id, errorMessage)
 	}
 	return nil
 }

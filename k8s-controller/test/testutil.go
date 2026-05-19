@@ -34,7 +34,8 @@ func checkTCPReachable(addr string, timeout time.Duration) error {
 	return nil
 }
 
-// setupPostgres starts a PostgreSQL testcontainer and runs migrations
+// setupPostgres starts a PostgreSQL testcontainer and runs migrations to create
+// the canonical k8s_outbox schema used by the standardized outbox pattern.
 func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	ctx := context.Background()
 
@@ -86,112 +87,45 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	}
 	require.NoError(t, err, "Failed to connect to database after retries")
 
-	// Run migration V1: create k8s_status_outbox table
-	migrationV1 := `
-		CREATE TABLE k8s_status_outbox (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-			-- Event identification
-			event_type VARCHAR(50) NOT NULL,
-			stream_name VARCHAR(100) NOT NULL,
-
-			-- Task context (copied from consumed message)
-			task_id UUID NOT NULL,
-			schedule_id UUID NOT NULL,
-			schedule_name VARCHAR(255) NOT NULL,
-			service_name VARCHAR(255) NOT NULL,
-			schema_name VARCHAR(255) NOT NULL,
-			table_name VARCHAR(255) NOT NULL,
-			job_name VARCHAR(63) NOT NULL,
-			image_tag TEXT NOT NULL DEFAULT '',
-
-			-- Event-specific data
-			error_message TEXT,
-			task_retry_count INT DEFAULT 0,
-			check_after BIGINT,
-
-			-- State update flags (what gRPC calls to make in OutboxProcessor)
-			update_task_status BOOLEAN DEFAULT false,
-			new_task_status VARCHAR(20),
-			new_retry_count INT,
-			create_execution BOOLEAN DEFAULT false,
-			execution_started_at TIMESTAMP WITH TIME ZONE,
-			execution_completed_at TIMESTAMP WITH TIME ZONE,
-			execution_seconds DOUBLE PRECISION,
-
-			-- Outbox processing status
-			status VARCHAR(20) NOT NULL DEFAULT 'pending',
-			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-			processed_at TIMESTAMP WITH TIME ZONE,
-			outbox_retry_count INT DEFAULT 0,
-			max_retries INT DEFAULT 3,
-			outbox_error_message TEXT,
-
-			CONSTRAINT k8s_status_outbox_status_check CHECK (
-				status IN ('pending', 'processed', 'failed')
-			)
+	// Create the canonical k8s_outbox table (matches V9 migration schema)
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE k8s_outbox (
+			id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			message_processing_id  UUID NULL,
+			aggregate_type         TEXT NOT NULL,
+			aggregate_id           UUID NOT NULL,
+			event_type             TEXT NOT NULL,
+			payload                JSONB NOT NULL,
+			stream_name            TEXT NOT NULL,
+			status                 TEXT NOT NULL DEFAULT 'pending',
+			retry_count            INT  NOT NULL DEFAULT 0,
+			max_retries            INT  NOT NULL DEFAULT 3,
+			created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			processed_at           TIMESTAMPTZ NULL,
+			error_message          TEXT NULL,
+			CONSTRAINT k8s_outbox_status_check
+				CHECK (status IN ('pending', 'processed', 'failed'))
 		);
 
-		-- Index for efficient polling by OutboxProcessor
-		CREATE INDEX idx_k8s_status_outbox_pending
-		ON k8s_status_outbox(created_at)
-		WHERE status = 'pending' AND outbox_retry_count < max_retries;
+		CREATE INDEX idx_k8s_outbox_pending
+			ON k8s_outbox (created_at)
+			WHERE status = 'pending';
 
-		-- Index for monitoring failed entries
-		CREATE INDEX idx_k8s_status_outbox_failed
-		ON k8s_status_outbox(created_at)
-		WHERE status = 'failed';
-	`
+		CREATE INDEX idx_k8s_outbox_aggregate
+			ON k8s_outbox (aggregate_type, aggregate_id);
+	`)
+	require.NoError(t, err, "Failed to create k8s_outbox table")
 
-	_, err = db.ExecContext(ctx, migrationV1)
-	require.NoError(t, err, "Failed to run migration V1")
-
-	// Run migration V2: add stuck entry index
-	migrationV2 := `
-		CREATE INDEX idx_k8s_status_outbox_stuck
-		ON k8s_status_outbox(created_at)
-		WHERE status = 'pending' AND outbox_retry_count >= max_retries;
-	`
-
-	_, err = db.ExecContext(ctx, migrationV2)
-	require.NoError(t, err, "Failed to run migration V2")
-
-	// Run migration V3: processed_events dedup table
-	migrationV3 := `
+	// Create the processed_events dedup table used by consumer-side dedup
+	_, err = db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS processed_events (
 			outbox_entry_id UUID        PRIMARY KEY,
 			processed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 		CREATE INDEX IF NOT EXISTS idx_k8s_processed_events_processed_at
 			ON processed_events(processed_at);
-	`
-	_, err = db.ExecContext(ctx, migrationV3)
-	require.NoError(t, err, "Failed to run migration V3")
-
-	// Run migration V4: add node_type column to k8s_status_outbox
-	migrationV4 := `
-		ALTER TABLE k8s_status_outbox
-		    ADD COLUMN node_type TEXT NOT NULL DEFAULT 'dbt-model';
-	`
-	_, err = db.ExecContext(ctx, migrationV4)
-	require.NoError(t, err, "Failed to run migration V4")
-
-	// Run migration V5: add execution_id and log_s3_key to k8s_status_outbox
-	migrationV5 := `
-		ALTER TABLE k8s_status_outbox
-		    ADD COLUMN execution_id UUID,
-		    ADD COLUMN log_s3_key   TEXT;
-	`
-	_, err = db.ExecContext(ctx, migrationV5)
-	require.NoError(t, err, "Failed to run migration V5")
-
-	// Run migration V6: add task_max_retries to k8s_status_outbox
-	migrationV6 := `
-		ALTER TABLE k8s_status_outbox
-		    ADD COLUMN task_max_retries INT;
-	`
-	_, err = db.ExecContext(ctx, migrationV6)
-	require.NoError(t, err, "Failed to run migration V6")
+	`)
+	require.NoError(t, err, "Failed to create processed_events table")
 
 	// Cleanup function
 	cleanup := func() {
