@@ -34,7 +34,7 @@ func seedRow(t *testing.T, db *sqlx.DB, maxRetries int) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(
-		`INSERT INTO test_outbox (id, aggregate_type, aggregate_id, event_type, payload, stream_name, max_retries)
+		`INSERT INTO orchestrator_outbox (id, aggregate_type, aggregate_id, event_type, payload, stream_name, max_retries)
 		 VALUES ($1, 'task', $2, 'x', '{}'::jsonb, 'x:v1', $3)`,
 		id, uuid.New(), maxRetries,
 	)
@@ -47,11 +47,11 @@ func TestProcessor_SuccessMarksProcessed(t *testing.T) {
 	id := seedRow(t, db, 3)
 
 	pub := &fakePublisher{}
-	p := outbox.NewProcessor(db, "test_outbox", pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
 	require.NoError(t, p.ProcessBatch(context.Background()))
 
 	var status string
-	require.NoError(t, db.QueryRow(`SELECT status FROM test_outbox WHERE id=$1`, id).Scan(&status))
+	require.NoError(t, db.QueryRow(`SELECT status FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "processed", status)
 	assert.Equal(t, 1, pub.calls)
 }
@@ -61,12 +61,12 @@ func TestProcessor_TransientErrorIncrementsRetry(t *testing.T) {
 	id := seedRow(t, db, 3)
 
 	pub := &fakePublisher{failTimes: 1}
-	p := outbox.NewProcessor(db, "test_outbox", pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
 	require.NoError(t, p.ProcessBatch(context.Background()))
 
 	var status string
 	var rc int
-	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM test_outbox WHERE id=$1`, id).Scan(&status, &rc))
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status, &rc))
 	assert.Equal(t, "pending", status)
 	assert.Equal(t, 1, rc)
 }
@@ -84,12 +84,12 @@ func TestProcessor_RetryBudgetExhaustedMarksFailedAndCallsHook(t *testing.T) {
 		return nil
 	})
 	pub := &fakePublisher{failTimes: 10}
-	p := outbox.NewProcessor(db, "test_outbox", pub, hook, newTestLogger(), outbox.ProcessorConfig{})
+	p := outbox.NewProcessor(db, testOutboxTable, pub, hook, newTestLogger(), outbox.ProcessorConfig{})
 	require.NoError(t, p.ProcessBatch(context.Background()))
 
 	var status string
 	var errMsg string
-	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM test_outbox WHERE id=$1`, id).Scan(&status, &errMsg))
+	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status, &errMsg))
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, "synthetic publisher error", errMsg)
 	assert.Equal(t, 1, hookCalled)
@@ -100,11 +100,11 @@ func TestProcessor_NoHookConfiguredStillMarksFailed(t *testing.T) {
 	id := seedRow(t, db, 1)
 
 	pub := &fakePublisher{failTimes: 10}
-	p := outbox.NewProcessor(db, "test_outbox", pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
 	require.NoError(t, p.ProcessBatch(context.Background()))
 
 	var status string
-	require.NoError(t, db.QueryRow(`SELECT status FROM test_outbox WHERE id=$1`, id).Scan(&status))
+	require.NoError(t, db.QueryRow(`SELECT status FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "failed", status)
 }
 
@@ -138,12 +138,12 @@ func TestProcessor_PermanentErrorShortCircuitsRetries(t *testing.T) {
 		return nil
 	})
 	pub := &permanentFailingPublisher{}
-	p := outbox.NewProcessor(db, "test_outbox", pub, hook, newTestLogger(), outbox.ProcessorConfig{})
+	p := outbox.NewProcessor(db, testOutboxTable, pub, hook, newTestLogger(), outbox.ProcessorConfig{})
 	require.NoError(t, p.ProcessBatch(context.Background()))
 
 	var status string
 	var rc int
-	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM test_outbox WHERE id=$1`, id).Scan(&status, &rc))
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status, &rc))
 	assert.Equal(t, "failed", status, "permanent error must mark row failed even with retries remaining")
 	assert.Equal(t, 0, rc, "retry_count must NOT be incremented on permanent error")
 	assert.Equal(t, 1, hookCalled, "terminal failure hook must fire on permanent error")

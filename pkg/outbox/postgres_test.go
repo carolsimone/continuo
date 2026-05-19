@@ -3,11 +3,15 @@ package outbox_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/testmigrations"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -15,32 +19,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testTableDDL = `
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE TABLE IF NOT EXISTS test_outbox (
-    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    message_processing_id  UUID NULL,
-    aggregate_type         TEXT NOT NULL,
-    aggregate_id           UUID NOT NULL,
-    event_type             TEXT NOT NULL,
-    payload                JSONB NOT NULL,
-    stream_name            TEXT NOT NULL,
-    status                 TEXT NOT NULL DEFAULT 'pending',
-    retry_count            INT  NOT NULL DEFAULT 0,
-    max_retries            INT  NOT NULL DEFAULT 3,
-    created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    processed_at           TIMESTAMPTZ NULL,
-    error_message          TEXT NULL,
-    CONSTRAINT test_outbox_status_check
-        CHECK (status IN ('pending','processed','failed'))
-);
-`
+// testOutboxTable is the canonical outbox table the pkg/outbox repository
+// tests run against. We apply orchestrator's full Flyway migration set to
+// stand it up, so this test schema stays in lock-step with production and
+// can never silently drift.
+const testOutboxTable = "orchestrator_outbox"
 
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-// dbForTest reads OUTBOX_TEST_DSN; skips the test if unset, so unit-only runs pass.
+// orchestratorMigrationDir resolves <repo>/db/migration/orchestrator/ from
+// this source file's location, so tests work both inside the service
+// container (source mounted at /src) and on a developer machine running
+// `go test ./pkg/outbox/...` from the repo root.
+func orchestratorMigrationDir() (string, error) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("runtime.Caller failed — cannot locate pkg/outbox/postgres_test.go")
+	}
+	// thisFile = <repo>/pkg/outbox/postgres_test.go
+	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
+	return filepath.Join(repoRoot, "db", "migration", "orchestrator"), nil
+}
+
+// dbForTest reads OUTBOX_TEST_DSN; skips the test if unset, so unit-only
+// runs pass. Each test drops every orchestrator-owned table, reapplies the
+// real migration set from db/migration/orchestrator/, and truncates the
+// outbox table between tests for isolation.
 func dbForTest(t *testing.T) *sqlx.DB {
 	t.Helper()
 	dsn := os.Getenv("OUTBOX_TEST_DSN")
@@ -49,17 +55,36 @@ func dbForTest(t *testing.T) *sqlx.DB {
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
-	_, err = db.Exec(`DROP TABLE IF EXISTS test_outbox`)
+
+	// Drop orchestrator artefacts so the migration set sees a clean slate.
+	// Order matters because of FK dependencies into message_processing.
+	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS orchestrator_outbox CASCADE`,
+		`DROP TABLE IF EXISTS outbox CASCADE`,
+		`DROP TABLE IF EXISTS published_messages CASCADE`,
+		`DROP TABLE IF EXISTS rejected_topology_messages CASCADE`,
+		`DROP TABLE IF EXISTS topology_state CASCADE`,
+		`DROP TABLE IF EXISTS cancelled_schedules CASCADE`,
+		`DROP TABLE IF EXISTS message_processing CASCADE`,
+	} {
+		_, err = db.Exec(stmt)
+		require.NoError(t, err, "drop: %s", stmt)
+	}
+
+	dir, err := orchestratorMigrationDir()
 	require.NoError(t, err)
-	_, err = db.Exec(testTableDDL)
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Exec(`DROP TABLE IF EXISTS test_outbox`); db.Close() })
+	require.NoError(t, testmigrations.Apply(db.DB, dir))
+
+	t.Cleanup(func() {
+		_, _ = db.Exec(`TRUNCATE ` + testOutboxTable)
+		db.Close()
+	})
 	return db
 }
 
 func TestPostgresRepository_CreateAndGetPending(t *testing.T) {
 	db := dbForTest(t)
-	repo := outbox.NewPostgresRepository(db, "test_outbox", newTestLogger())
+	repo := outbox.NewPostgresRepository(db, testOutboxTable, newTestLogger())
 
 	entry := &outbox.Entry{
 		AggregateType: "task",
@@ -74,7 +99,7 @@ func TestPostgresRepository_CreateAndGetPending(t *testing.T) {
 	// GetPendingBatch must run inside a tx (SKIP LOCKED locks)
 	tx, err := db.Beginx()
 	require.NoError(t, err)
-	txRepo := outbox.NewPostgresRepository(tx, "test_outbox", newTestLogger())
+	txRepo := outbox.NewPostgresRepository(tx, testOutboxTable, newTestLogger())
 	pending, err := txRepo.GetPendingBatch(context.Background(), 10)
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
@@ -89,7 +114,7 @@ func TestPostgresRepository_CreateAndGetPending(t *testing.T) {
 
 func TestPostgresRepository_MarkProcessed(t *testing.T) {
 	db := dbForTest(t)
-	repo := outbox.NewPostgresRepository(db, "test_outbox", newTestLogger())
+	repo := outbox.NewPostgresRepository(db, testOutboxTable, newTestLogger())
 	entry := &outbox.Entry{
 		AggregateType: "task", AggregateID: uuid.New(),
 		EventType: "x", Payload: []byte(`{}`), StreamName: "x:v1",
@@ -99,14 +124,14 @@ func TestPostgresRepository_MarkProcessed(t *testing.T) {
 
 	var status string
 	var processedAt *string
-	require.NoError(t, db.QueryRow(`SELECT status, processed_at::text FROM test_outbox WHERE id=$1`, entry.ID).Scan(&status, &processedAt))
+	require.NoError(t, db.QueryRow(`SELECT status, processed_at::text FROM orchestrator_outbox WHERE id=$1`, entry.ID).Scan(&status, &processedAt))
 	assert.Equal(t, "processed", status)
 	require.NotNil(t, processedAt)
 }
 
 func TestPostgresRepository_MarkFailed(t *testing.T) {
 	db := dbForTest(t)
-	repo := outbox.NewPostgresRepository(db, "test_outbox", newTestLogger())
+	repo := outbox.NewPostgresRepository(db, testOutboxTable, newTestLogger())
 	entry := &outbox.Entry{
 		AggregateType: "task", AggregateID: uuid.New(),
 		EventType: "x", Payload: []byte(`{}`), StreamName: "x:v1",
@@ -115,14 +140,14 @@ func TestPostgresRepository_MarkFailed(t *testing.T) {
 	require.NoError(t, repo.MarkFailed(context.Background(), entry.ID, "boom"))
 
 	var status, errMsg string
-	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM test_outbox WHERE id=$1`, entry.ID).Scan(&status, &errMsg))
+	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM orchestrator_outbox WHERE id=$1`, entry.ID).Scan(&status, &errMsg))
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, "boom", errMsg)
 }
 
 func TestPostgresRepository_IncrementRetryDoesNotChangeStatus(t *testing.T) {
 	db := dbForTest(t)
-	repo := outbox.NewPostgresRepository(db, "test_outbox", newTestLogger())
+	repo := outbox.NewPostgresRepository(db, testOutboxTable, newTestLogger())
 	entry := &outbox.Entry{
 		AggregateType: "task", AggregateID: uuid.New(),
 		EventType: "x", Payload: []byte(`{}`), StreamName: "x:v1",
@@ -132,14 +157,14 @@ func TestPostgresRepository_IncrementRetryDoesNotChangeStatus(t *testing.T) {
 
 	var status string
 	var rc int
-	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM test_outbox WHERE id=$1`, entry.ID).Scan(&status, &rc))
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM orchestrator_outbox WHERE id=$1`, entry.ID).Scan(&status, &rc))
 	assert.Equal(t, "pending", status)
 	assert.Equal(t, 1, rc)
 }
 
 func TestPostgresRepository_SkipLockedIsolatesConcurrentBatches(t *testing.T) {
 	db := dbForTest(t)
-	repo := outbox.NewPostgresRepository(db, "test_outbox", newTestLogger())
+	repo := outbox.NewPostgresRepository(db, testOutboxTable, newTestLogger())
 
 	// Create 3 pending rows.
 	for i := 0; i < 3; i++ {
@@ -156,9 +181,9 @@ func TestPostgresRepository_SkipLockedIsolatesConcurrentBatches(t *testing.T) {
 	require.NoError(t, err)
 	defer tx2.Rollback()
 
-	batch1, err := outbox.NewPostgresRepository(tx1, "test_outbox", newTestLogger()).GetPendingBatch(context.Background(), 10)
+	batch1, err := outbox.NewPostgresRepository(tx1, testOutboxTable, newTestLogger()).GetPendingBatch(context.Background(), 10)
 	require.NoError(t, err)
-	batch2, err := outbox.NewPostgresRepository(tx2, "test_outbox", newTestLogger()).GetPendingBatch(context.Background(), 10)
+	batch2, err := outbox.NewPostgresRepository(tx2, testOutboxTable, newTestLogger()).GetPendingBatch(context.Background(), 10)
 	require.NoError(t, err)
 
 	// Combined coverage = 3 rows, disjoint by ID (SKIP LOCKED ensures no row is claimed by both transactions).
