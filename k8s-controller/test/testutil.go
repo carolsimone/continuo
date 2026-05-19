@@ -5,15 +5,30 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/testmigrations"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+// k8sMigrationDir resolves <repo>/db/migration/k8s/ from this source file's
+// path so the testcontainer schema is always in lock-step with production.
+func k8sMigrationDir() (string, error) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("runtime.Caller failed — cannot locate k8s-controller/test/testutil.go")
+	}
+	// thisFile = <repo>/k8s-controller/test/testutil.go
+	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
+	return filepath.Join(repoRoot, "db", "migration", "k8s"), nil
+}
 
 // getEnvOrDefault returns the value of an env var or a fallback default.
 func getEnvOrDefault(key, defaultVal string) string {
@@ -87,50 +102,15 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	}
 	require.NoError(t, err, "Failed to connect to database after retries")
 
-	// Create the canonical k8s_outbox table (matches V9 migration schema)
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE k8s_outbox (
-			id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			message_processing_id  UUID NULL,
-			aggregate_type         TEXT NOT NULL,
-			aggregate_id           UUID NOT NULL,
-			event_type             TEXT NOT NULL,
-			payload                JSONB NOT NULL,
-			stream_name            TEXT NOT NULL,
-			status                 TEXT NOT NULL DEFAULT 'pending',
-			retry_count            INT  NOT NULL DEFAULT 0,
-			max_retries            INT  NOT NULL DEFAULT 3,
-			created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			processed_at           TIMESTAMPTZ NULL,
-			error_message          TEXT NULL,
-			CONSTRAINT k8s_outbox_status_check
-				CHECK (status IN ('pending', 'processed', 'failed'))
-		);
-
-		CREATE INDEX idx_k8s_outbox_pending
-			ON k8s_outbox (created_at)
-			WHERE status = 'pending';
-
-		CREATE INDEX idx_k8s_outbox_aggregate
-			ON k8s_outbox (aggregate_type, aggregate_id);
-	`)
-	require.NoError(t, err, "Failed to create k8s_outbox table")
-
-	// Create the message_processing dedup table for consumer-side dedup keyed on (message_id, stream_name).
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS message_processing (
-			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			message_id  VARCHAR(255) NOT NULL,
-			stream_name VARCHAR(100) NOT NULL,
-			state       VARCHAR(50)  NOT NULL CHECK (state IN ('processing', 'completed', 'acked')),
-			payload     JSONB        NOT NULL,
-			error       TEXT,
-			created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-			updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-			CONSTRAINT message_processing_message_id_stream_name_key UNIQUE (message_id, stream_name)
-		);
-	`)
-	require.NoError(t, err, "Failed to create message_processing table")
+	// Apply the real db/migration/k8s/V*.sql migrations in version order.
+	// Mirrors state/test and executor-controller/test, and keeps the
+	// testcontainer schema (k8s_outbox, message_processing, processed_events,
+	// and any later columns like message_processing.outbox_entry_id) in
+	// lock-step with production. Hand-rolled inline DDL drifts the first
+	// time a new migration adds a column; this can't.
+	dir, err := k8sMigrationDir()
+	require.NoError(t, err, "resolve k8s migration dir")
+	require.NoError(t, testmigrations.Apply(db.DB, dir), "apply k8s migrations")
 
 	// Cleanup function
 	cleanup := func() {
