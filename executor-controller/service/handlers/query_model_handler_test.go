@@ -2,19 +2,18 @@ package handlers_test
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
-	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,96 +32,75 @@ func (r *stubCancelledRepo) DeleteExpired(_ context.Context, _ time.Duration) (i
 	return 0, nil
 }
 
-func newFakeUoW(outbox pkgoutbox.Repository, cancelled postgres.CancelledSchedulesRepository) *uow.FakeUnitOfWork {
-	return &uow.FakeUnitOfWork{Outbox: outbox, Cancelled: cancelled}
+func newFakeUoW(depl repository.DeploymentRepository, cancelled postgres.CancelledSchedulesRepository) *uow.FakeUnitOfWork {
+	return &uow.FakeUnitOfWork{Deployments: depl, Cancelled: cancelled}
 }
 
-func TestQueryModelHandler_WritesOutboxRow(t *testing.T) {
+func TestQueryModelHandler_EnqueuesDeployment(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	stub := &stubOutboxRepo{}
+	depl := &stubDeploymentsRepo{}
 	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{}}
-	u := newFakeUoW(stub, cancelled)
+	u := newFakeUoW(depl, cancelled)
 
 	taskID := uuid.New()
 	scheduleID := uuid.New()
 	evt := events.QueryModel{
-		TaskID:       taskID,
-		ScheduleID:   scheduleID,
-		ScheduleName: "daily",
-		ServiceName:  "dbt",
-		SchemaName:   "public",
-		TableName:    "orders",
-		JobName:      "dbt-public-orders",
-		NodeType:     pkg_model.NodeTypeDbtModel,
-		ImageTag:     "sha-abc",
+		TaskID: taskID, ScheduleID: scheduleID, ScheduleName: "daily",
+		ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		JobName: "dbt-public-orders", NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "sha-abc",
 	}
 
 	h := handlers.NewQueryModelHandler(logger)
-	err := h.Handle(context.Background(), u, evt, uuid.New())
-	require.NoError(t, err)
-	require.Len(t, stub.entries, 1)
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+	require.Len(t, depl.added, 1)
 
-	entry := stub.entries[0]
-	assert.Equal(t, "task", entry.AggregateType)
-	assert.Equal(t, taskID, entry.AggregateID)
-	assert.Equal(t, "deploy_task", entry.EventType)
+	dep := depl.added[0]
+	assert.Equal(t, model.StatusPending, dep.Status())
 
-	var d event.DeployTask
-	require.NoError(t, json.Unmarshal(entry.Payload, &d))
-	assert.Equal(t, taskID.String(), d.TaskID)
-	assert.Equal(t, "dbt-public-orders", d.JobName)
-	assert.Equal(t, 0, d.TaskRetryCount)
-	assert.Equal(t, 2, d.TaskMaxRetries, "default max retries when not on the retry stream")
+	cmd := dep.Command()
+	assert.Equal(t, taskID.String(), cmd.TaskID)
+	assert.Equal(t, scheduleID.String(), cmd.ScheduleID)
+	assert.Equal(t, "dbt-public-orders", cmd.JobName)
+	assert.Equal(t, 0, cmd.TaskRetryCount)
+	assert.Equal(t, 2, cmd.TaskMaxRetries, "default task max retries off the retry stream")
+	assert.True(t, dep.IsDeployable())
 }
 
 func TestQueryModelHandler_DropsWhenScheduleCancelled(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	stub := &stubOutboxRepo{}
+	depl := &stubDeploymentsRepo{}
 	scheduleID := uuid.New()
 	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{scheduleID: true}}
-	u := newFakeUoW(stub, cancelled)
+	u := newFakeUoW(depl, cancelled)
 
-	evt := events.QueryModel{
-		TaskID:     uuid.New(),
-		ScheduleID: scheduleID,
-		NodeType:   pkg_model.NodeTypeDbtModel,
-	}
+	evt := events.QueryModel{TaskID: uuid.New(), ScheduleID: scheduleID, NodeType: pkg_model.NodeTypeDbtModel}
 
 	h := handlers.NewQueryModelHandler(logger)
-	err := h.Handle(context.Background(), u, evt, uuid.New())
-	require.NoError(t, err, "cancelled-schedule path returns nil so the binding commits and ACKs")
-	assert.Empty(t, stub.entries, "no outbox row when schedule is cancelled")
+	// Cancelled-schedule path returns nil so the binding commits and ACKs the
+	// message rather than leaving it pending for endless redelivery.
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+	assert.Empty(t, depl.added, "no deployment enqueued when schedule is cancelled")
 }
 
-// TestQueryModelHandler_PropagatesMsgProcIDToOutboxRow guards against the
-// regression where the handler ignored msgProcID and set message_processing_id
-// from base.OutboxEntryID instead. That caused a FK violation because the
-// executor_outbox.message_processing_id column references the executor's own
-// message_processing table — not the orchestrator's outbox row.
-func TestQueryModelHandler_PropagatesMsgProcIDToOutboxRow(t *testing.T) {
+func TestQueryModelHandler_PropagatesMsgProcIDToDeployment(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	stub := &stubOutboxRepo{}
+	depl := &stubDeploymentsRepo{}
 	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{}}
-	u := newFakeUoW(stub, cancelled)
+	u := newFakeUoW(depl, cancelled)
 
 	msgProcID := uuid.New()
 	evt := events.QueryModel{
-		TaskID:        uuid.New(),
-		ScheduleID:    uuid.New(),
-		OutboxEntryID: uuid.New(), // orchestrator outbox ID — must NOT end up as message_processing_id
-		NodeType:      pkg_model.NodeTypeDbtModel,
-		JobName:       "j",
+		TaskID: uuid.New(), ScheduleID: uuid.New(),
+		OutboxEntryID: uuid.New(), NodeType: pkg_model.NodeTypeDbtModel, JobName: "j",
 	}
 
 	h := handlers.NewQueryModelHandler(logger)
 	require.NoError(t, h.Handle(context.Background(), u, evt, msgProcID))
-	require.Len(t, stub.entries, 1)
+	require.Len(t, depl.added, 1)
 
-	entry := stub.entries[0]
-	require.NotNil(t, entry.MessageProcessingID,
-		"outbox row must carry the binding-layer dedup UUID, not nil")
-	assert.Equal(t, msgProcID, *entry.MessageProcessingID,
-		"MessageProcessingID must be the binding-layer dedup row UUID, not the orchestrator's outbox entry ID")
-	assert.NotEqual(t, evt.OutboxEntryID, *entry.MessageProcessingID,
+	dep := depl.added[0]
+	require.NotNil(t, dep.MessageProcessingID())
+	assert.Equal(t, msgProcID, *dep.MessageProcessingID())
+	assert.NotEqual(t, evt.OutboxEntryID, *dep.MessageProcessingID(),
 		"orchestrator's OutboxEntryID must never be used as the executor's message_processing FK")
 }

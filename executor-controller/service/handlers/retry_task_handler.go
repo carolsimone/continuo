@@ -12,7 +12,7 @@ import (
 )
 
 // RetryTaskHandler processes retry.task:v1 events. Same shape as
-// QueryModelHandler but the outbox row carries the inbound
+// QueryModelHandler but the deployment row carries the inbound
 // task_retry_count and max_retries instead of defaulting to (0, 2).
 type RetryTaskHandler struct {
 	logger *slog.Logger
@@ -39,5 +39,5 @@ func (h *RetryTaskHandler) Handle(
 			"schedule_id", evt.ScheduleID, "task_id", evt.TaskID)
 		return nil
 	}
-	return createDeploymentOutboxEntry(ctx, u, evt.QueryModel, msgProcID, evt.TaskRetryCount, evt.MaxRetries)
+	return createDeployment(ctx, u, evt.QueryModel, msgProcID, evt.TaskRetryCount, evt.MaxRetries)
 }

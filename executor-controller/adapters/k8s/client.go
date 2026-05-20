@@ -33,7 +33,7 @@ type JobParams struct {
 
 // K8sClient provides methods to interact with Kubernetes
 type K8sClient struct {
-	clientset *kubernetes.Clientset
+	clientset kubernetes.Interface
 	logger    *slog.Logger
 }
 
@@ -167,6 +167,29 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	// Step 3: Create the job
 	return c.CreateJob(ctx, job)
 }
+
+// CountActiveJobs returns the number of Jobs in the namespace matching
+// labelSelector that currently have a running pod (.status.active > 0). Jobs
+// that are created but whose pod is still Pending/unscheduled (active == 0) do
+// not count. Used by deployer.Dispatcher to enforce the concurrent-Job cap.
+func (c *K8sClient) CountActiveJobs(ctx context.Context, namespace, labelSelector string) (int, error) {
+	list, err := c.clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("list jobs for active count: %w", err)
+	}
+	active := 0
+	for i := range list.Items {
+		if list.Items[i].Status.Active > 0 {
+			active++
+		}
+	}
+	return active, nil
+}
+
+// setClientsetForTest swaps the clientset for a fake in unit tests.
+func (c *K8sClient) setClientsetForTest(cs kubernetes.Interface) { c.clientset = cs }
 
 // buildPodSpec constructs the PodSpec for a query executor job.
 // PostgreSQL connection env vars are forwarded from the executor-controller's

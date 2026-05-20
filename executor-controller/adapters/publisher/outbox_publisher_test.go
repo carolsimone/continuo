@@ -3,91 +3,119 @@ package publisher_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"os"
 	"testing"
 
-	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/executor-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type fakeK8s struct {
-	calls int
-	err   error
+func newRedis(t *testing.T) *goredis.Client {
+	t.Helper()
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	return goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 }
 
-func (f *fakeK8s) CreateQueryJob(_ context.Context, _ k8s.JobParams) error {
-	f.calls++
-	return f.err
+func lastEntryFields(t *testing.T, r *goredis.Client, stream string) map[string]interface{} {
+	t.Helper()
+	res, err := r.XRange(context.Background(), stream, "-", "+").Result()
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	return res[0].Values
 }
 
-// TestPublisher_DeployFailureShortCircuits verifies that a K8s error stops
-// processing before Redis is called. Redis is nil here; if it were reached the
-// test would panic, confirming the short-circuit behavior.
-func TestPublisher_DeployFailureShortCircuits(t *testing.T) {
+func TestPublisher_TaskStatusUpdated(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	k := &fakeK8s{err: errors.New("apiserver down")}
+	r := newRedis(t)
+	pub := publisher.NewOutboxPublisher(r, logger)
 
-	payload, err := json.Marshal(event.DeployTask{
-		TaskID:     uuid.New().String(),
-		ScheduleID: uuid.New().String(),
-		JobName:    "j",
-		ServiceName: "s",
-		SchemaName: "sch",
-		TableName:  "t",
-		NodeType:   "dbt-model",
-		ImageTag:   "v1",
+	payload, err := json.Marshal(pkgevents.TaskStatusUpdated{
+		TaskID: "t1", ScheduleID: "s1", Status: "RUNNING", RetryCount: 0,
 	})
 	require.NoError(t, err)
 
-	pub := publisher.NewOutboxPublisher(k, nil, "ns", logger)
-	pubErr := pub.Publish(context.Background(), &outbox.Entry{
-		ID:        uuid.New(),
-		EventType: "deploy_task",
-		Payload:   payload,
-	})
-	require.Error(t, pubErr)
-	assert.Contains(t, pubErr.Error(), "k8s deployment failed")
-	assert.Equal(t, 1, k.calls)
+	id := uuid.New()
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: id, EventType: "task_status_updated", StreamName: streams.TaskStatusUpdatedV1, Payload: payload,
+	}))
+
+	v := lastEntryFields(t, r, streams.TaskStatusUpdatedV1)
+	assert.Equal(t, "t1", v["task_id"])
+	assert.Equal(t, "RUNNING", v["status"])
+	assert.Equal(t, id.String(), v["outbox_entry_id"])
 }
 
-// TestPublisher_InvalidPayloadReturnsPermanentError verifies that a payload
-// that cannot be parsed triggers a permanent error (so the Processor exhausts
-// retries immediately rather than retrying indefinitely).
-func TestPublisher_InvalidPayloadReturnsPermanentError(t *testing.T) {
+func TestPublisher_NodeDeployed(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	k := &fakeK8s{}
+	r := newRedis(t)
+	pub := publisher.NewOutboxPublisher(r, logger)
 
-	pub := publisher.NewOutboxPublisher(k, nil, "ns", logger)
-	pubErr := pub.Publish(context.Background(), &outbox.Entry{
-		ID:        uuid.New(),
-		EventType: "deploy_task",
-		Payload:   []byte(`not json`),
+	payload, err := json.Marshal(event.JobDeployed{
+		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskRetryCount: 2, MaxRetries: 5,
 	})
-	require.Error(t, pubErr)
-	assert.Contains(t, pubErr.Error(), "unmarshal deploy_task payload")
-	assert.Equal(t, 0, k.calls, "K8s must not be called when payload is invalid")
+	require.NoError(t, err)
+
+	id := uuid.New()
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: id, EventType: "node_deployed", StreamName: streams.NodeDeployedV1, Payload: payload,
+	}))
+
+	v := lastEntryFields(t, r, streams.NodeDeployedV1)
+	// node.deployed:v1 carries a typed JSON payload; outbox_entry_id is a flat sibling.
+	assert.Equal(t, id.String(), v["outbox_entry_id"])
+	_, hasFlatJobName := v["job_name"]
+	assert.False(t, hasFlatJobName, "business fields move into the typed payload, not flat keys")
+
+	payloadStr, ok := v["payload"].(string)
+	require.True(t, ok, "expected a string payload field")
+	var nd pkgevents.NodeDeployed
+	require.NoError(t, json.Unmarshal([]byte(payloadStr), &nd))
+	assert.Equal(t, pkgevents.NodeDeployed{
+		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskRetryCount: 2, MaxRetries: 5,
+	}, nd)
 }
 
-// TestPublisher_UnknownEventType returns an error for unexpected event types
-// without touching K8s or Redis.
+func TestPublisher_NodeUpdatedFailed(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	r := newRedis(t)
+	pub := publisher.NewOutboxPublisher(r, logger)
+
+	payload, err := json.Marshal(event.NodeUpdated{
+		TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "dbt",
+		SchemaName: "public", TableName: "orders", Status: "FAILED",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: uuid.New(), EventType: "node_updated", StreamName: streams.NodeUpdatedV1, Payload: payload,
+	}))
+
+	v := lastEntryFields(t, r, streams.NodeUpdatedV1)
+	assert.Equal(t, "FAILED", v["status"])
+	assert.Equal(t, "orders", v["table_name"])
+}
+
 func TestPublisher_UnknownEventType(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	k := &fakeK8s{}
+	r := newRedis(t)
+	pub := publisher.NewOutboxPublisher(r, logger)
 
-	pub := publisher.NewOutboxPublisher(k, nil, "ns", logger)
-	pubErr := pub.Publish(context.Background(), &outbox.Entry{
-		ID:        uuid.New(),
-		EventType: "unknown_type",
-		Payload:   []byte(`{}`),
+	err := pub.Publish(context.Background(), &outbox.Entry{
+		ID: uuid.New(), EventType: "unknown_type", StreamName: "x:v1", Payload: []byte(`{}`),
 	})
-	require.Error(t, pubErr)
-	assert.Contains(t, pubErr.Error(), "unknown event_type")
-	assert.Equal(t, 0, k.calls)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown event_type")
 }

@@ -32,6 +32,9 @@ type TerminalFailureHook func(ctx context.Context, entry *Entry, cause error) er
 type ProcessorConfig struct {
 	Tick      time.Duration // poll interval; default 1s
 	BatchSize int           // max rows per batch; default 100
+	// PerAggregateFIFO publishes rows sharing an aggregate_id in creation order
+	// (a later row waits until the earlier one is processed). Off by default.
+	PerAggregateFIFO bool
 }
 
 // Processor owns the poll loop. Each tick:
@@ -49,6 +52,7 @@ type Processor struct {
 	logger            *slog.Logger
 	tick              time.Duration
 	batchSize         int
+	repoOpts          []Option
 }
 
 func NewProcessor(
@@ -67,6 +71,10 @@ func NewProcessor(
 	if batchSize == 0 {
 		batchSize = 100
 	}
+	var repoOpts []Option
+	if cfg.PerAggregateFIFO {
+		repoOpts = append(repoOpts, WithPerAggregateOrdering())
+	}
 	return &Processor{
 		db:                db,
 		tableName:         tableName,
@@ -75,6 +83,7 @@ func NewProcessor(
 		logger:            logger,
 		tick:              tick,
 		batchSize:         batchSize,
+		repoOpts:          repoOpts,
 	}
 }
 
@@ -107,7 +116,7 @@ func (p *Processor) ProcessBatch(ctx context.Context) error {
 		}
 	}()
 
-	repo := NewPostgresRepository(tx, p.tableName, p.logger)
+	repo := NewPostgresRepository(tx, p.tableName, p.logger, p.repoOpts...)
 	entries, err := repo.GetPendingBatch(ctx, p.batchSize)
 	if err != nil {
 		return fmt.Errorf("get pending batch: %w", err)

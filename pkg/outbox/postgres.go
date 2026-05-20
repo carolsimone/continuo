@@ -47,17 +47,36 @@ func entryFromRow(r *outboxRow) *Entry {
 }
 
 type postgresRepository struct {
-	exec      Executor
-	tableName string
-	logger    *slog.Logger
+	exec             Executor
+	tableName        string
+	logger           *slog.Logger
+	perAggregateFIFO bool
+}
+
+// Option configures a postgresRepository.
+type Option func(*postgresRepository)
+
+// WithPerAggregateOrdering makes GetPendingBatch return only the oldest pending
+// row per aggregate, so rows sharing an aggregate_id are published in creation
+// order — a later row is withheld until the earlier one is processed. Rows for
+// different aggregates are unaffected and still drain in parallel. Use this for
+// producers that write multiple ordered events for the same aggregate and need
+// the consumer to observe them in order (e.g. executor's RUNNING before
+// node_deployed).
+func WithPerAggregateOrdering() Option {
+	return func(r *postgresRepository) { r.perAggregateFIFO = true }
 }
 
 // NewPostgresRepository constructs a Repository bound to a specific physical
 // table. Pass *sqlx.DB for autocommit operations (the Processor's GetPendingBatch
 // holds its own tx) or *sqlx.Tx for transactional writes (the writer's Create
 // must run inside the UoW transaction).
-func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger) Repository {
-	return &postgresRepository{exec: exec, tableName: tableName, logger: logger}
+func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger, opts ...Option) Repository {
+	r := &postgresRepository{exec: exec, tableName: tableName, logger: logger}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
@@ -94,17 +113,33 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 }
 
 func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]*Entry, error) {
+	// When per-aggregate ordering is enabled, withhold any row that has an
+	// older still-pending sibling for the same aggregate, so events for one
+	// aggregate publish strictly in creation order. created_at is assigned per
+	// Create call (time.Now), so siblings written in one writer transaction get
+	// distinct, ordered timestamps.
+	fifoClause := ""
+	if r.perAggregateFIFO {
+		fifoClause = fmt.Sprintf(`
+		  AND NOT EXISTS (
+		      SELECT 1 FROM %s older
+		      WHERE older.aggregate_type = o.aggregate_type
+		        AND older.aggregate_id   = o.aggregate_id
+		        AND older.status = 'pending'
+		        AND older.created_at < o.created_at
+		  )`, r.tableName)
+	}
 	query := fmt.Sprintf(`
 		SELECT id, message_processing_id, aggregate_type, aggregate_id,
 		       event_type, payload, stream_name,
 		       status, retry_count, max_retries,
 		       created_at, processed_at, error_message
-		FROM %s
-		WHERE status = 'pending'
+		FROM %s o
+		WHERE status = 'pending'%s
 		ORDER BY created_at ASC
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
-	`, r.tableName)
+	`, r.tableName, fifoClause)
 
 	var rows []*outboxRow
 	if err := r.exec.SelectContext(ctx, &rows, query, limit); err != nil && err != sql.ErrNoRows {

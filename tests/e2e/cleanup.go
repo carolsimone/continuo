@@ -81,6 +81,13 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	// manifest-controller's consumer group across subsequent tests.
 	_, _ = clients.executorDB.Exec("DELETE FROM executor_outbox")
 
+	// Clean executor_deployments (the deploy command queue) BEFORE
+	// message_processing: its message_processing_id FK references
+	// message_processing(id), so deleting message_processing first fails the
+	// FK and (errors being ignored here) would leave dedup/deployment rows
+	// behind for later runs.
+	_, _ = clients.executorDB.Exec("DELETE FROM executor_deployments")
+
 	// Clean per-service message_processing (canonical consumer-side dedup
 	// from #57). Must clear so re-runs aren't false-positive-deduped by
 	// the new outbox_entry_id secondary uniqueness key.

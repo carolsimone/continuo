@@ -158,6 +158,7 @@ services:
       # Kubernetes
       - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
       - K8S_NAMESPACE=default
+      - MAX_CONCURRENT_JOBS=50
       # dbt PostgreSQL target (forwarded to K8s job pods)
       - DBT_POSTGRES_DB=continuo_dbt
       # Application

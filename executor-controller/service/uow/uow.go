@@ -11,6 +11,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/jmoiron/sqlx"
@@ -22,6 +23,7 @@ import (
 // state/service/uow's pattern.
 type UnitOfWork interface {
 	OutboxRepo() pkgoutbox.Repository
+	DeploymentsRepo() repository.DeploymentRepository
 	CancelledSchedulesRepo() postgres.CancelledSchedulesRepository
 	MessageProcessingRepo() messageprocessing.Repository
 
@@ -53,6 +55,13 @@ func (u *PostgresUnitOfWork) OutboxRepo() pkgoutbox.Repository {
 		return pkgoutbox.NewPostgresRepository(u.tx, "executor_outbox", u.logger)
 	}
 	return pkgoutbox.NewPostgresRepository(u.db, "executor_outbox", u.logger)
+}
+
+func (u *PostgresUnitOfWork) DeploymentsRepo() repository.DeploymentRepository {
+	if u.tx != nil {
+		return postgres.NewDeploymentsRepository(u.tx, u.logger)
+	}
+	return postgres.NewDeploymentsRepository(u.db, u.logger)
 }
 
 func (u *PostgresUnitOfWork) CancelledSchedulesRepo() postgres.CancelledSchedulesRepository {

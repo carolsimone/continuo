@@ -39,13 +39,7 @@ Add new emitters to this table as they land.
 | Site | Behaviour on `errors.Is(err, events.ErrPermanent)` |
 |---|---|
 | `pkg/redis/streamconsumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND periodic reclaim. **Read path** retries plain (non-`ErrPermanent`) errors inline via `invokeWithRetry` (backoff schedule `0 / 100ms / 500ms / 2s`, ~2.6s budget); if every attempt fails the message is left un-ACKed in the PEL. **Reclaim path** is single-shot: the handler is called exactly once per claimed entry, and on failure the entry stays in the PEL — the next periodic sweep (every `reclaimInterval`) is the retry cadence. This split keeps the read loop responsive when a large backlog of pending entries is being swept. The sweep itself uses `XAUTOCLAIM` (cursor-paged, one round-trip per 100 entries) gated by a `MinIdle` threshold (default 30s, overridable via `WithReclaimMinIdle`) so a multi-replica deployment cannot have one replica steal an in-flight message that a peer is actively retrying. `ErrPermanent` ACKs immediately on either path. Used by every Go service's Redis ingest path. |
-| `executor-controller/service/handlers/outbox_processor.go` (`processEntry`) | call `MarkTaskTerminallyFailed` (publishes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED + marks outbox failed), return `errPermanentFailure` so `ProcessBatch` skips retry-increment |
-
-The local `errPermanentFailure` sentinel in `outbox_processor.go` is
-**flow control** between `processEntry` and `ProcessBatch` — it tells
-`ProcessBatch` that `MarkFailed` has already been called and the retry
-counter must not be incremented. It is unrelated to `events.ErrPermanent`,
-which is the cross-service classification key.
+| `executor-controller/service/deployer/dispatcher.go` (`dispatchRow`) | call `writeFailed` (writes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED as `executor_outbox` rows, marks `executor_deployments` row `failed`) |
 
 ## When NOT to use it
 
