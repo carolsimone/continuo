@@ -145,6 +145,35 @@ func TestRepo_MarkFailed(t *testing.T) {
 	assert.Equal(t, "exhausted", errMsg)
 }
 
+func TestRepo_Create_SetsDefaults(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := deployer.NewPostgresRepository(db, testLogger())
+
+	d := &deployer.Deployment{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobParams:  []byte(`{}`),
+	}
+	require.NoError(t, repo.Create(context.Background(), d))
+
+	// Create must populate the in-memory struct with generated defaults.
+	assert.NotEqual(t, uuid.Nil, d.ID, "ID must be generated")
+
+	// Read the persisted row and verify server-side defaults.
+	var (
+		status     string
+		maxRetries int
+		nextAt     time.Time
+	)
+	require.NoError(t, db.QueryRow(
+		`SELECT status, max_retries, next_attempt_at FROM executor_deployments WHERE id = $1`, d.ID,
+	).Scan(&status, &maxRetries, &nextAt))
+	assert.Equal(t, "pending", status)
+	assert.Equal(t, 3, maxRetries)
+	assert.False(t, nextAt.IsZero(), "next_attempt_at must be set")
+}
+
 func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -174,10 +203,6 @@ func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
 
 	selectedWg.Add(workers)
 	commitWg.Add(workers)
-	var txs []*sqlx.Tx
-
-	var txMu sync.Mutex
-	txs = make([]*sqlx.Tx, workers)
 	for w := 0; w < workers; w++ {
 		wCopy := w
 		go func() {
@@ -188,9 +213,6 @@ func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
 				commitWg.Done()
 				return
 			}
-			txMu.Lock()
-			txs[wCopy] = tx
-			txMu.Unlock()
 
 			// Wait for all goroutines to reach this point before issuing SELECT.
 			startWg.Wait()

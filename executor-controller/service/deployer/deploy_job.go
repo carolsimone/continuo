@@ -21,8 +21,11 @@ type DeployJob struct {
 	JobName        string `json:"job_name"`
 	NodeType       string `json:"node_type"`
 	ImageTag       string `json:"image_tag"`
-	TaskRetryCount int    `json:"task_retry_count"`
-	TaskMaxRetries int    `json:"task_max_retries"`
+	// TaskRetryCount and TaskMaxRetries are the task-level retry counters the
+	// Dispatcher uses to build the RUNNING/FAILED announcement rows and to decide
+	// exhaustion. They are deliberately NOT forwarded into k8s.JobParams by ToJobParams.
+	TaskRetryCount int `json:"task_retry_count"`
+	TaskMaxRetries int `json:"task_max_retries"`
 }
 
 // ToJobParams converts DeployJob to k8s.JobParams for CreateQueryJob.
