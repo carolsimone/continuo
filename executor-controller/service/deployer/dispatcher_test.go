@@ -1,0 +1,160 @@
+//go:build integration
+
+package deployer_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
+	"github.com/carolsimone/continuo/executor-controller/service/deployer"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type fakeDeployer struct {
+	createErr   error
+	createCalls int
+	active      int
+}
+
+func (f *fakeDeployer) CreateQueryJob(_ context.Context, _ k8s.JobParams) error {
+	f.createCalls++
+	return f.createErr
+}
+func (f *fakeDeployer) CountActiveJobs(_ context.Context, _, _ string) (int, error) {
+	return f.active, nil
+}
+
+func seedJob(t *testing.T, db *sqlx.DB, maxRetries, retryCount int) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	payload, err := json.Marshal(deployer.DeployJob{
+		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskRetryCount: 0, TaskMaxRetries: 2,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW() - interval '1 minute')`,
+		id, uuid.New(), uuid.New(), payload, maxRetries, retryCount)
+	require.NoError(t, err)
+	return id
+}
+
+func outboxCountByType(t *testing.T, db *sqlx.DB, eventType string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM executor_outbox WHERE event_type=$1`, eventType).Scan(&n))
+	return n
+}
+
+func TestDispatcher_SuccessWritesRunningAndDeployed(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	id := seedJob(t, db, 3, 0)
+	fk := &fakeDeployer{active: 0}
+
+	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	require.NoError(t, disp.ProcessBatch(context.Background()))
+
+	assert.Equal(t, 1, fk.createCalls)
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
+	assert.Equal(t, "deployed", status)
+	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
+	assert.Equal(t, 1, outboxCountByType(t, db, "node_deployed"))
+	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"))
+}
+
+func TestDispatcher_TransientErrorReschedules(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	id := seedJob(t, db, 3, 0)
+	fk := &fakeDeployer{createErr: errors.New("apiserver down")}
+
+	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	require.NoError(t, disp.ProcessBatch(context.Background()))
+
+	var status string
+	var rc int
+	var na time.Time
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count, next_attempt_at FROM executor_deployments WHERE id=$1`, id).Scan(&status, &rc, &na))
+	assert.Equal(t, "pending", status)
+	assert.Equal(t, 1, rc)
+	assert.True(t, na.After(time.Now()), "next_attempt_at pushed into the future")
+	assert.Equal(t, 0, outboxCountByType(t, db, "task_status_updated"), "no announcement on transient retry")
+}
+
+func TestDispatcher_BudgetExhaustedWritesFailed(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	id := seedJob(t, db, 3, 2)
+	fk := &fakeDeployer{createErr: errors.New("apiserver down")}
+
+	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	require.NoError(t, disp.ProcessBatch(context.Background()))
+
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
+	assert.Equal(t, "failed", status)
+	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
+	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
+	assert.Equal(t, 0, outboxCountByType(t, db, "node_deployed"))
+}
+
+func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	id := seedJob(t, db, 3, 0)
+	fk := &fakeDeployer{createErr: errors.Join(errors.New("bad"), pkgevents.ErrPermanent)}
+
+	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	require.NoError(t, disp.ProcessBatch(context.Background()))
+
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
+	assert.Equal(t, "failed", status, "permanent error skips the retry budget")
+}
+
+func TestDispatcher_CapZeroHeadroomDeploysNothing(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	id := seedJob(t, db, 3, 0)
+	fk := &fakeDeployer{active: 5}
+
+	disp := deployer.NewDispatcher(db, fk, "default", 5, testLogger(), deployer.DispatcherConfig{})
+	require.NoError(t, disp.ProcessBatch(context.Background()))
+
+	assert.Equal(t, 0, fk.createCalls, "no deploys when cap reached")
+	var status string
+	var rc int
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM executor_deployments WHERE id=$1`, id).Scan(&status, &rc))
+	assert.Equal(t, "pending", status, "throttled row stays pending")
+	assert.Equal(t, 0, rc, "throttle is not a retry — retry_count unchanged")
+}
+
+func TestDispatcher_HeadroomLimitsBatch(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	for i := 0; i < 5; i++ {
+		seedJob(t, db, 3, 0)
+	}
+	fk := &fakeDeployer{active: 3}
+
+	disp := deployer.NewDispatcher(db, fk, "default", 5, testLogger(), deployer.DispatcherConfig{})
+	require.NoError(t, disp.ProcessBatch(context.Background()))
+
+	assert.Equal(t, 2, fk.createCalls, "only headroom (cap-active) rows deployed")
+	var deployed int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM executor_deployments WHERE status='deployed'`).Scan(&deployed))
+	assert.Equal(t, 2, deployed)
+}
