@@ -77,6 +77,8 @@ func TestQueryModelHandler_DropsWhenScheduleCancelled(t *testing.T) {
 	evt := events.QueryModel{TaskID: uuid.New(), ScheduleID: scheduleID, NodeType: pkg_model.NodeTypeDbtModel}
 
 	h := handlers.NewQueryModelHandler(logger)
+	// Cancelled-schedule path returns nil so the binding commits and ACKs the
+	// message rather than leaving it pending for endless redelivery.
 	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
 	assert.Empty(t, depl.rows, "no deployment row when schedule is cancelled")
 }

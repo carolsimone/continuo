@@ -108,7 +108,7 @@ func TestRetryTaskBinding_ConcurrentDedup(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
-		"exactly one outbox row even with %d concurrent handlers", goroutines)
+		"exactly one deployment row even with %d concurrent handlers", goroutines)
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
 		msg.ID, streams.RetryTaskV1))
@@ -133,9 +133,9 @@ func TestRetryTaskBinding_CrossStreamIsolation(t *testing.T) {
 	require.NoError(t, queryBinding(context.Background(), queryMsg))
 	require.NoError(t, retryBinding(context.Background(), retryMsg))
 
-	// Both streams must produce their own independent outbox row.
+	// Both streams must produce their own independent deployment row.
 	assert.Equal(t, 2, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
-		"each stream produces its own outbox row; no false-dedup across streams")
+		"each stream produces its own deployment row; no false-dedup across streams")
 
 	// Each stream must produce exactly one dedup row keyed to its own stream_name.
 	assert.Equal(t, 2, countRows(t, db,

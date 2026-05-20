@@ -170,7 +170,7 @@ func TestQueryModelBinding_ConcurrentDedup(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
-		"exactly one outbox row even with %d concurrent handlers", goroutines)
+		"exactly one deployment row even with %d concurrent handlers", goroutines)
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
 		msg.ID, streams.QueryModelV1))
@@ -212,7 +212,7 @@ func TestQueryModelBinding_PublisherRetrySameOutboxEntryIDDedups(t *testing.T) {
 func TestQueryModelBinding_NoOutboxEntryIDStillDedupsByMessageID(t *testing.T) {
 	// When the inbound message has no outbox_entry_id, dedup falls back entirely
 	// to (msg.ID, stream_name) in message_processing. A repeated delivery with
-	// the same msg.ID produces only one outbox row.
+	// the same msg.ID produces only one deployment row.
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
@@ -253,7 +253,7 @@ func TestQueryModelBinding_CancelledScheduleDropsMessage(t *testing.T) {
 	require.NoError(t, binding(context.Background(), msg))
 
 	assert.Equal(t, 0, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
-		"no outbox row written when schedule is cancelled")
+		"no deployment row written when schedule is cancelled")
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1`, msg.ID),
 		"dedup row IS created so future redeliveries skip")
