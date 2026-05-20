@@ -48,6 +48,7 @@ func runCheckJobBinding(
 	cmd command.CheckJobStatus,
 	streamName string,
 ) error {
+	// Best-effort dedup payload; marshalling a map of Redis string values does not realistically fail.
 	payload, _ := json.Marshal(msg.Values)
 
 	u := uowFactory()
