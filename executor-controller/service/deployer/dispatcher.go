@@ -101,7 +101,10 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	}
 }
 
-// ProcessBatch runs one cycle. Exported for tests.
+// ProcessBatch runs one cycle. The concurrency cap is evaluated once, then up
+// to headroom deployments are processed — each in its OWN transaction so a
+// failure on one deployment never rolls back another, and the K8s deploy holds
+// only a single row's lock. Exported for tests.
 func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
 	active, err := d.deployer.CountActive(ctx)
 	if err != nil {
@@ -117,12 +120,28 @@ func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
 		headroom = d.batchSize
 	}
 
+	for i := 0; i < headroom; i++ {
+		processed, err := d.processOne(ctx)
+		if err != nil {
+			return fmt.Errorf("process deployment: %w", err)
+		}
+		if !processed {
+			break // no more due deployments this cycle
+		}
+	}
+	return nil
+}
+
+// processOne claims and processes at most one due deployment inside its own
+// transaction. It returns false when no due deployment is available.
+func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 	tx, err := d.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return false, fmt.Errorf("begin tx: %w", err)
 	}
+	committed := false
 	defer func() {
-		if tx != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -130,26 +149,27 @@ func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
 	repo := d.newRepo(tx)
 	outboxRepo := outbox.NewPostgresRepository(tx, "executor_outbox", d.logger)
 
-	deployments, err := repo.GetDueBatch(ctx, headroom)
+	due, err := repo.GetDueBatch(ctx, 1)
 	if err != nil {
-		return fmt.Errorf("get due batch: %w", err)
+		return false, fmt.Errorf("get due deployment: %w", err)
 	}
-	if len(deployments) == 0 {
-		return tx.Commit()
-	}
-
-	for _, dep := range deployments {
-		if err := d.dispatchOne(ctx, repo, outboxRepo, dep); err != nil {
-			return fmt.Errorf("dispatch deployment %s: %w", dep.ID(), err)
+	if len(due) == 0 {
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("commit empty tx: %w", err)
 		}
+		committed = true
+		return false, nil
 	}
 
-	err = tx.Commit()
-	tx = nil
-	if err != nil {
-		return fmt.Errorf("commit tx: %w", err)
+	if err := d.dispatchOne(ctx, repo, outboxRepo, due[0]); err != nil {
+		return false, fmt.Errorf("dispatch deployment %s: %w", due[0].ID(), err)
 	}
-	return nil
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return true, nil
 }
 
 func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, dep *model.Deployment) error {

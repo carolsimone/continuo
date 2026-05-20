@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -217,4 +218,71 @@ func mustDeploymentID(t *testing.T, db *sqlx.DB, taskID uuid.UUID) uuid.UUID {
 	var id uuid.UUID
 	require.NoError(t, db.QueryRow(`SELECT id FROM executor_deployments WHERE task_id=$1`, taskID).Scan(&id))
 	return id
+}
+
+// seedDeployableAt inserts a deployable pending row due at the given time.
+func seedDeployableAt(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	payload, err := json.Marshal(command.DeployTask{
+		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskMaxRetries: 2,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		 VALUES ($1, $2, $3, $4, 3, 0, $5)`,
+		id, uuid.New(), uuid.New(), payload, nextAttempt)
+	require.NoError(t, err)
+	return id
+}
+
+// countingFailSaveRepo wraps a real repository and fails the Nth Save call,
+// to exercise per-row transaction isolation.
+type countingFailSaveRepo struct {
+	repository.DeploymentRepository
+	count  *int
+	failAt int
+}
+
+func (r *countingFailSaveRepo) Save(ctx context.Context, d *model.Deployment) error {
+	*r.count++
+	if *r.count == r.failAt {
+		return errors.New("save boom")
+	}
+	return r.DeploymentRepository.Save(ctx, d)
+}
+
+// TestDispatcher_PerRowTransaction_FailureDoesNotRollBackOthers verifies that
+// each deployment commits in its own transaction: when the second deployment's
+// Save fails, the first remains deployed (committed) rather than rolling back
+// with it — the behaviour a single batch-wide transaction would NOT give.
+func TestDispatcher_PerRowTransaction_FailureDoesNotRollBackOthers(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	older := seedDeployableAt(t, db, time.Now().Add(-2*time.Minute))
+	newer := seedDeployableAt(t, db, time.Now().Add(-1*time.Minute))
+
+	saveCount := 0
+	factory := func(exec outbox.Executor) repository.DeploymentRepository {
+		return &countingFailSaveRepo{
+			DeploymentRepository: postgres.NewDeploymentsRepository(exec, testLogger()),
+			count:                &saveCount,
+			failAt:               2, // the second deployment's Save fails
+		}
+	}
+	fk := &fakeDeployer{active: 0}
+	disp := deployer.NewDispatcher(db, fk, factory, 50, testLogger(), deployer.DispatcherConfig{})
+
+	require.Error(t, disp.ProcessBatch(context.Background()), "second row's Save error surfaces")
+
+	var olderStatus, newerStatus string
+	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, older).Scan(&olderStatus))
+	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, newer).Scan(&newerStatus))
+	assert.Equal(t, "deployed", olderStatus, "first deployment committed in its own transaction")
+	assert.Equal(t, "pending", newerStatus, "second deployment's transaction rolled back — stays pending for retry")
+	assert.Equal(t, 2, fk.deployCalls)
 }
