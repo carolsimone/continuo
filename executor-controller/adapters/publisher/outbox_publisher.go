@@ -47,6 +47,8 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 	return nil
 }
 
+// toValues routes entry.EventType to the matching typed struct, unmarshals
+// entry.Payload, and returns the flat field map for XADD.
 func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{}, error) {
 	switch entry.EventType {
 	case "task_status_updated":
