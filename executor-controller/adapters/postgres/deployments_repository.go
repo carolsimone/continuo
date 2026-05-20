@@ -1,4 +1,4 @@
-package deployer
+package postgres
 
 import (
 	"context"
@@ -7,23 +7,27 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
 
-type postgresRepository struct {
+// deploymentsRepository is the Postgres adapter implementing
+// deployer.Repository over the executor_deployments table.
+type deploymentsRepository struct {
 	exec   outbox.Executor
 	logger *slog.Logger
 }
 
-// NewPostgresRepository constructs a Repository over executor_deployments.
-// Pass *sqlx.DB for autocommit or *sqlx.Tx for transactional use; outbox.Executor
-// abstracts both (QueryRowContext / SelectContext / ExecContext).
-func NewPostgresRepository(exec outbox.Executor, logger *slog.Logger) Repository {
-	return &postgresRepository{exec: exec, logger: logger}
+// NewDeploymentsRepository constructs a deployer.Repository over
+// executor_deployments. Pass *sqlx.DB for autocommit or *sqlx.Tx for
+// transactional use; outbox.Executor abstracts both (QueryRowContext /
+// SelectContext / ExecContext).
+func NewDeploymentsRepository(exec outbox.Executor, logger *slog.Logger) deployer.Repository {
+	return &deploymentsRepository{exec: exec, logger: logger}
 }
 
-func (r *postgresRepository) Create(ctx context.Context, d *Deployment) error {
+func (r *deploymentsRepository) Create(ctx context.Context, d *deployer.Deployment) error {
 	if d.ID == uuid.Nil {
 		d.ID = uuid.New()
 	}
@@ -54,7 +58,7 @@ func (r *postgresRepository) Create(ctx context.Context, d *Deployment) error {
 	return nil
 }
 
-func (r *postgresRepository) GetDueBatch(ctx context.Context, limit int) ([]*Deployment, error) {
+func (r *deploymentsRepository) GetDueBatch(ctx context.Context, limit int) ([]*deployer.Deployment, error) {
 	const query = `
 		SELECT id, message_processing_id, task_id, schedule_id, job_params,
 		       status, retry_count, max_retries, next_attempt_at,
@@ -64,19 +68,19 @@ func (r *postgresRepository) GetDueBatch(ctx context.Context, limit int) ([]*Dep
 		ORDER BY next_attempt_at ASC
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED`
-	var rows []*Deployment
+	var rows []*deployer.Deployment
 	if err := r.exec.SelectContext(ctx, &rows, query, limit); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("get due deployments batch: %w", err)
 	}
 	return rows, nil
 }
 
-func (r *postgresRepository) MarkDeployed(ctx context.Context, id uuid.UUID) error {
+func (r *deploymentsRepository) MarkDeployed(ctx context.Context, id uuid.UUID) error {
 	const query = `UPDATE executor_deployments SET status = 'deployed', deployed_at = NOW() WHERE id = $1`
 	return r.exec1(ctx, query, "mark deployed", id)
 }
 
-func (r *postgresRepository) Reschedule(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time, errMsg string) error {
+func (r *deploymentsRepository) Reschedule(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time, errMsg string) error {
 	const query = `
 		UPDATE executor_deployments
 		SET retry_count = retry_count + 1, next_attempt_at = $2, error_message = $3
@@ -91,7 +95,7 @@ func (r *postgresRepository) Reschedule(ctx context.Context, id uuid.UUID, nextA
 	return nil
 }
 
-func (r *postgresRepository) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string) error {
+func (r *deploymentsRepository) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string) error {
 	const query = `UPDATE executor_deployments SET status = 'failed', error_message = $2 WHERE id = $1`
 	res, err := r.exec.ExecContext(ctx, query, id, errMsg)
 	if err != nil {
@@ -103,7 +107,7 @@ func (r *postgresRepository) MarkFailed(ctx context.Context, id uuid.UUID, errMs
 	return nil
 }
 
-func (r *postgresRepository) exec1(ctx context.Context, query, op string, id uuid.UUID) error {
+func (r *deploymentsRepository) exec1(ctx context.Context, query, op string, id uuid.UUID) error {
 	res, err := r.exec.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("%s deployment %s: %w", op, id, err)

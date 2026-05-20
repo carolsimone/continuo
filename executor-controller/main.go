@@ -166,7 +166,11 @@ func main() {
 	}()
 
 	deployDispatcher := deployer.NewDispatcher(
-		pgDB, k8sClient, cfg.K8sNamespace, cfg.MaxConcurrentJobs, logger,
+		pgDB, k8sClient,
+		func(exec pkgoutbox.Executor) deployer.Repository {
+			return postgres.NewDeploymentsRepository(exec, logger)
+		},
+		cfg.K8sNamespace, cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
 	)
 

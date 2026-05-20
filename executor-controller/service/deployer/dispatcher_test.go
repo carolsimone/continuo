@@ -10,13 +10,27 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
+	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newTestDispatcher builds a Dispatcher whose deployments-repo factory is the
+// real Postgres adapter bound to the per-batch tx.
+func newTestDispatcher(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int) *deployer.Dispatcher {
+	return deployer.NewDispatcher(
+		db, fk,
+		func(exec outbox.Executor) deployer.Repository {
+			return postgres.NewDeploymentsRepository(exec, testLogger())
+		},
+		"default", maxConcurrent, testLogger(), deployer.DispatcherConfig{},
+	)
+}
 
 type fakeDeployer struct {
 	createErr   error
@@ -63,7 +77,7 @@ func TestDispatcher_SuccessWritesRunningAndDeployed(t *testing.T) {
 	id := seedJob(t, db, 3, 0)
 	fk := &fakeDeployer{active: 0}
 
-	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	disp := newTestDispatcher(db, fk, 50)
 	require.NoError(t, disp.ProcessBatch(context.Background()))
 
 	assert.Equal(t, 1, fk.createCalls)
@@ -81,7 +95,7 @@ func TestDispatcher_TransientErrorReschedules(t *testing.T) {
 	id := seedJob(t, db, 3, 0)
 	fk := &fakeDeployer{createErr: errors.New("apiserver down")}
 
-	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	disp := newTestDispatcher(db, fk, 50)
 	require.NoError(t, disp.ProcessBatch(context.Background()))
 
 	var status string
@@ -100,7 +114,7 @@ func TestDispatcher_BudgetExhaustedWritesFailed(t *testing.T) {
 	id := seedJob(t, db, 3, 2)
 	fk := &fakeDeployer{createErr: errors.New("apiserver down")}
 
-	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	disp := newTestDispatcher(db, fk, 50)
 	require.NoError(t, disp.ProcessBatch(context.Background()))
 
 	var status string
@@ -117,7 +131,7 @@ func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
 	id := seedJob(t, db, 3, 0)
 	fk := &fakeDeployer{createErr: errors.Join(errors.New("bad"), pkgevents.ErrPermanent)}
 
-	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	disp := newTestDispatcher(db, fk, 50)
 	require.NoError(t, disp.ProcessBatch(context.Background()))
 
 	var status string
@@ -131,7 +145,7 @@ func TestDispatcher_CapZeroHeadroomDeploysNothing(t *testing.T) {
 	id := seedJob(t, db, 3, 0)
 	fk := &fakeDeployer{active: 5}
 
-	disp := deployer.NewDispatcher(db, fk, "default", 5, testLogger(), deployer.DispatcherConfig{})
+	disp := newTestDispatcher(db, fk, 5)
 	require.NoError(t, disp.ProcessBatch(context.Background()))
 
 	assert.Equal(t, 0, fk.createCalls, "no deploys when cap reached")
@@ -150,7 +164,7 @@ func TestDispatcher_HeadroomLimitsBatch(t *testing.T) {
 	}
 	fk := &fakeDeployer{active: 3}
 
-	disp := deployer.NewDispatcher(db, fk, "default", 5, testLogger(), deployer.DispatcherConfig{})
+	disp := newTestDispatcher(db, fk, 5)
 	require.NoError(t, disp.ProcessBatch(context.Background()))
 
 	assert.Equal(t, 2, fk.createCalls, "only headroom (cap-active) rows deployed")
@@ -174,7 +188,7 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	require.NoError(t, err)
 
 	fk := &fakeDeployer{active: 0}
-	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	disp := newTestDispatcher(db, fk, 50)
 	require.NoError(t, disp.ProcessBatch(context.Background()))
 
 	assert.Equal(t, 0, fk.createCalls, "deploy never attempted when payload is corrupt")

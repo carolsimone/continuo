@@ -1,6 +1,6 @@
 //go:build integration
 
-package deployer_test
+package postgres_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	executortest "github.com/carolsimone/continuo/executor-controller/test"
 	"github.com/google/uuid"
@@ -86,7 +87,7 @@ func TestRepo_GetDueBatch_OnlyDueRowsOldestFirst(t *testing.T) {
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	txRepo := deployer.NewPostgresRepository(tx, testLogger())
+	txRepo := postgres.NewDeploymentsRepository(tx, testLogger())
 
 	rows, err := txRepo.GetDueBatch(context.Background(), 10)
 	require.NoError(t, err)
@@ -98,7 +99,7 @@ func TestRepo_GetDueBatch_OnlyDueRowsOldestFirst(t *testing.T) {
 func TestRepo_MarkDeployed(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	repo := deployer.NewPostgresRepository(db, testLogger())
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
 	id := newPending(t, db, time.Now())
 
 	require.NoError(t, repo.MarkDeployed(context.Background(), id))
@@ -113,7 +114,7 @@ func TestRepo_MarkDeployed(t *testing.T) {
 func TestRepo_RescheduleBumpsRetryAndDelays(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	repo := deployer.NewPostgresRepository(db, testLogger())
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
 	id := newPending(t, db, time.Now())
 
 	next := time.Now().Add(20 * time.Second).UTC()
@@ -134,7 +135,7 @@ func TestRepo_RescheduleBumpsRetryAndDelays(t *testing.T) {
 func TestRepo_MarkFailed(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	repo := deployer.NewPostgresRepository(db, testLogger())
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
 	id := newPending(t, db, time.Now())
 
 	require.NoError(t, repo.MarkFailed(context.Background(), id, "exhausted"))
@@ -148,7 +149,7 @@ func TestRepo_MarkFailed(t *testing.T) {
 func TestRepo_Create_SetsDefaults(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	repo := deployer.NewPostgresRepository(db, testLogger())
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
 
 	d := &deployer.Deployment{
 		TaskID:     uuid.New(),
@@ -189,11 +190,11 @@ func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
 	// This guarantees all transactions are concurrently open during the SELECT phase,
 	// which is the condition FOR UPDATE SKIP LOCKED is designed for.
 	var (
-		selectedWg sync.WaitGroup // counts down once each goroutine has selected
-		commitWg   sync.WaitGroup // counts down once each goroutine is ready to let main proceed
-		startWg    sync.WaitGroup // used as a start barrier so all goroutines select together
+		selectedWg sync.WaitGroup
+		commitWg   sync.WaitGroup
+		startWg    sync.WaitGroup
 	)
-	startWg.Add(1) // released after all goroutines are ready
+	startWg.Add(1)
 
 	type result struct {
 		ids []uuid.UUID
@@ -214,27 +215,22 @@ func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
 				return
 			}
 
-			// Wait for all goroutines to reach this point before issuing SELECT.
 			startWg.Wait()
 
-			repo := deployer.NewPostgresRepository(tx, testLogger())
+			repo := postgres.NewDeploymentsRepository(tx, testLogger())
 			rows, err := repo.GetDueBatch(context.Background(), 2)
 			results[wCopy].err = err
 			for _, r := range rows {
 				results[wCopy].ids = append(results[wCopy].ids, r.ID)
 			}
-			// Signal that this goroutine has selected its rows.
 			selectedWg.Done()
-			// Wait for all goroutines to finish selecting before committing.
 			selectedWg.Wait()
 			_ = tx.Commit()
 			commitWg.Done()
 		}()
 	}
 
-	// Release all goroutines to SELECT simultaneously.
 	startWg.Done()
-	// Wait for all goroutines to commit.
 	commitWg.Wait()
 
 	for w, res := range results {

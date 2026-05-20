@@ -36,9 +36,16 @@ type DispatcherConfig struct {
 // maxConcurrent live Jobs) and writes the canonical announcement rows to
 // executor_outbox. The K8s deploy is a command effect kept off the outbox so
 // every outbox Publisher stays a uniform marshal-and-XADD.
+// DeploymentsRepoFactory builds a Repository bound to a specific executor
+// (a *sqlx.Tx the dispatcher opens per batch). Injecting it keeps the concrete
+// Postgres adapter out of this package — the dispatcher depends only on the
+// Repository port.
+type DeploymentsRepoFactory func(exec outbox.Executor) Repository
+
 type Dispatcher struct {
 	db            *sqlx.DB
 	k8s           K8sDeployer
+	newDeplRepo   DeploymentsRepoFactory
 	namespace     string
 	maxConcurrent int
 	logger        *slog.Logger
@@ -51,6 +58,7 @@ type Dispatcher struct {
 func NewDispatcher(
 	db *sqlx.DB,
 	k8sDeployer K8sDeployer,
+	newDeplRepo DeploymentsRepoFactory,
 	namespace string,
 	maxConcurrent int,
 	logger *slog.Logger,
@@ -69,7 +77,8 @@ func NewDispatcher(
 		cfg.BackoffCap = 2 * time.Minute
 	}
 	return &Dispatcher{
-		db: db, k8s: k8sDeployer, namespace: namespace, maxConcurrent: maxConcurrent,
+		db: db, k8s: k8sDeployer, newDeplRepo: newDeplRepo,
+		namespace: namespace, maxConcurrent: maxConcurrent,
 		logger: logger, tick: cfg.Tick, batchSize: cfg.BatchSize,
 		backoffBase: cfg.BackoffBase, backoffCap: cfg.BackoffCap,
 	}
@@ -118,7 +127,7 @@ func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
 		}
 	}()
 
-	deplRepo := NewPostgresRepository(tx, d.logger)
+	deplRepo := d.newDeplRepo(tx)
 	outboxRepo := outbox.NewPostgresRepository(tx, "executor_outbox", d.logger)
 
 	rows, err := deplRepo.GetDueBatch(ctx, headroom)

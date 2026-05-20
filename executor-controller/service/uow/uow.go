@@ -59,9 +59,9 @@ func (u *PostgresUnitOfWork) OutboxRepo() pkgoutbox.Repository {
 
 func (u *PostgresUnitOfWork) DeploymentsRepo() deployer.Repository {
 	if u.tx != nil {
-		return deployer.NewPostgresRepository(u.tx, u.logger)
+		return postgres.NewDeploymentsRepository(u.tx, u.logger)
 	}
-	return deployer.NewPostgresRepository(u.db, u.logger)
+	return postgres.NewDeploymentsRepository(u.db, u.logger)
 }
 
 func (u *PostgresUnitOfWork) CancelledSchedulesRepo() postgres.CancelledSchedulesRepository {
