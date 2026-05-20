@@ -1,0 +1,104 @@
+package model_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/carolsimone/continuo/executor-controller/domain/command"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func deployableCmd() command.DeployTask {
+	return command.DeployTask{
+		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		JobName: "dbt-public-orders", NodeType: "dbt-model",
+		TaskRetryCount: 0, TaskMaxRetries: 2,
+	}
+}
+
+func TestNewDeployment_Defaults(t *testing.T) {
+	now := time.Now()
+	d := model.NewDeployment(deployableCmd(), nil, now)
+
+	assert.NotEqual(t, uuid.Nil, d.ID())
+	assert.Equal(t, model.StatusPending, d.Status())
+	assert.Equal(t, 0, d.RetryCount())
+	assert.Equal(t, 3, d.MaxRetries(), "default deploy-attempt budget")
+	assert.Equal(t, now, d.NextAttemptAt(), "due immediately")
+	assert.Nil(t, d.DeployedAt())
+	assert.True(t, d.IsDeployable())
+}
+
+func TestIsDeployable_FalseWhenIdentityOnly(t *testing.T) {
+	// Mimics a corrupt row recovered with only task/schedule identity.
+	cmd := command.DeployTask{TaskID: uuid.New().String(), ScheduleID: uuid.New().String()}
+	d := model.NewDeployment(cmd, nil, time.Now())
+	assert.False(t, d.IsDeployable(), "missing JobName/NodeType => not deployable")
+}
+
+func TestMarkDeployed_OnlyFromPending(t *testing.T) {
+	now := time.Now()
+	d := model.NewDeployment(deployableCmd(), nil, now)
+
+	require.NoError(t, d.MarkDeployed(now))
+	assert.Equal(t, model.StatusDeployed, d.Status())
+	require.NotNil(t, d.DeployedAt())
+	assert.Equal(t, now, *d.DeployedAt())
+
+	// A second transition is rejected.
+	assert.Error(t, d.MarkDeployed(now))
+}
+
+func TestRegisterFailure_ReschedulesWhileBudgetRemains(t *testing.T) {
+	now := time.Now()
+	d := model.NewDeployment(deployableCmd(), nil, now) // maxRetries 3, retryCount 0
+	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 2 * time.Minute}
+
+	terminal := d.RegisterFailure(now, false, "apiserver down", backoff)
+	assert.False(t, terminal, "0+1 < 3 => retry")
+	assert.Equal(t, model.StatusPending, d.Status())
+	assert.Equal(t, 1, d.RetryCount())
+	assert.Equal(t, now.Add(5*time.Second), d.NextAttemptAt(), "first backoff = base<<0")
+	require.NotNil(t, d.ErrorMessage())
+	assert.Equal(t, "apiserver down", *d.ErrorMessage())
+}
+
+func TestRegisterFailure_FailsWhenBudgetExhausted(t *testing.T) {
+	now := time.Now()
+	// retryCount 2, maxRetries 3 => 2+1 == 3, exhausted.
+	d := model.Reconstitute(uuid.New(), nil, deployableCmd(), model.StatusPending, 2, 3, now, now, nil, nil)
+	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 2 * time.Minute}
+
+	terminal := d.RegisterFailure(now, false, "boom", backoff)
+	assert.True(t, terminal)
+	assert.Equal(t, model.StatusFailed, d.Status())
+	assert.Equal(t, 2, d.RetryCount(), "no further retry once exhausted")
+}
+
+func TestRegisterFailure_PermanentFailsImmediately(t *testing.T) {
+	now := time.Now()
+	d := model.NewDeployment(deployableCmd(), nil, now) // budget remains
+	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 2 * time.Minute}
+
+	terminal := d.RegisterFailure(now, true, "invalid node type", backoff)
+	assert.True(t, terminal, "permanent error skips the retry budget")
+	assert.Equal(t, model.StatusFailed, d.Status())
+}
+
+func TestBackoff_CapAndOverflow(t *testing.T) {
+	now := time.Now()
+	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 30 * time.Second}
+	// retryCount climbs; delay must never exceed Cap and never go negative.
+	d := model.Reconstitute(uuid.New(), nil, deployableCmd(), model.StatusPending, 0, 100, now, now, nil, nil)
+	prev := now
+	for i := 0; i < 70; i++ {
+		d.RegisterFailure(now, false, "x", backoff)
+		gap := d.NextAttemptAt().Sub(now)
+		assert.LessOrEqual(t, gap, 30*time.Second, "delay capped")
+		assert.GreaterOrEqual(t, gap, time.Duration(0), "delay never negative (overflow guard)")
+		_ = prev
+	}
+}

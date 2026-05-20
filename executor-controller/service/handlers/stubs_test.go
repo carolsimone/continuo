@@ -4,29 +4,22 @@ import (
 	"context"
 	"sync"
 
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/google/uuid"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
 )
 
-// stubOutboxRepo captures creates for assertion without a real DB.
-type stubOutboxRepo struct {
-	mu      sync.Mutex
-	entries []*pkgoutbox.Entry
+// stubDeploymentsRepo captures Add calls for assertion without a real DB.
+type stubDeploymentsRepo struct {
+	mu    sync.Mutex
+	added []*model.Deployment
 }
 
-func (r *stubOutboxRepo) Create(_ context.Context, entry *pkgoutbox.Entry) error {
+func (r *stubDeploymentsRepo) Add(_ context.Context, d *model.Deployment) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.entries = append(r.entries, entry)
+	r.added = append(r.added, d)
 	return nil
 }
-
-func (r *stubOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*pkgoutbox.Entry, error) {
+func (r *stubDeploymentsRepo) GetDueBatch(_ context.Context, _ int) ([]*model.Deployment, error) {
 	return nil, nil
 }
-
-func (r *stubOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
-func (r *stubOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (r *stubOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *stubDeploymentsRepo) Save(_ context.Context, _ *model.Deployment) error { return nil }

@@ -79,7 +79,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 |---|---|
 | `state` | `scheduler_tracker`, `schedule_catalog` (+ `service_metadata` JSONB), `task_tracker` (+ `manifest_version` column), `task_execution`, `state_outbox`, `message_processing` |
 | `orchestrator` | Neo4j `Table` (+ `image_tag`, `topology_generation`), `Run` (+ `topology_generation`, `service_metadata`), `DEPENDS_ON`, `EXECUTES` (+ `image_tag`); Neo4j `:TopologyRoot {id:'singleton'}`; Postgres `topology_state`, `message_processing`, `orchestrator_outbox`, `rejected_topology_messages` (forensic sink for ingest validation rejections) |
-| `executor-controller` | `executor_outbox`, `message_processing`, `cancelled_schedules` |
+| `executor-controller` | `executor_deployments`, `executor_outbox`, `message_processing`, `cancelled_schedules` |
 | `k8s-controller` | `k8s_outbox`, `message_processing` |
 | `manifest-controller` | none |
 | `ui-service` | none |

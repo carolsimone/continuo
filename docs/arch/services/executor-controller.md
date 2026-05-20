@@ -16,11 +16,14 @@ It is responsible for:
 
 | Table | Purpose |
 |---|---|
-| `executor_outbox` | Canonical transactional outbox — one row per pending K8s deployment intent; `pkg/outbox.Processor` polls and performs K8s deploy + two Redis XADDs per row |
+| `executor_deployments` | K8s-deploy command queue. Handlers write a `pending` row here inside their Unit-of-Work transaction (pure Postgres write, no Kubernetes I/O). `deployer.Dispatcher` drains due rows, calls `CreateQueryJob`, and on success writes canonical announcement rows to `executor_outbox`. |
+| `executor_outbox` | Canonical transactional outbox — one row per pending Redis announcement (`task_status_updated` RUNNING/FAILED and `node_deployed`/`node_updated`); `pkg/outbox.Processor` polls and performs the Redis XADD per row. |
 | `message_processing` | Inbound dedup: keyed on `(message_id, stream_name)`; prevents double-processing of duplicate Redis messages |
-| `cancelled_schedules` | Records schedule cancellations; consulted by deploy handlers before writing to `executor_outbox` |
+| `cancelled_schedules` | Records schedule cancellations; consulted by deploy handlers before writing to `executor_deployments` |
 
-All `executor_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`.
+`executor_deployments` schema: `id`, `message_processing_id` (nullable FK), `task_id`, `schedule_id`, `job_params` (JSONB), `status` (`pending` / `deployed` / `failed`), `retry_count`, `max_retries`, `next_attempt_at`, `created_at`, `deployed_at`, `error_message`.
+
+`executor_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`.
 
 ## Inbound Interfaces
 
@@ -45,7 +48,7 @@ executor-controller consumes the three streams above via `pkg/redis.StreamConsum
 
 The binding parses the XMessage into a typed `domain/events.<Event>`, runs `pkg/messageprocessing.Dedup` against the per-service `message_processing` table (keyed on `(message_id, stream_name)`), and invokes the handler inside a single Unit-of-Work transaction. `schedule.cancelled:v1` skips dedup because `cancelled_schedules.Insert` is `INSERT ... ON CONFLICT DO NOTHING` and is naturally idempotent.
 
-The cancelled-schedule guard runs inside `QueryModelHandler` and `RetryTaskHandler` via `uow.CancelledSchedulesRepo().Exists`; a cancelled match commits the dedup row (so the message is ACKed and never reprocessed) and returns without writing to `executor_outbox`.
+The cancelled-schedule guard runs inside `QueryModelHandler` and `RetryTaskHandler` via `uow.CancelledSchedulesRepo().Exists`; a cancelled match commits the dedup row (so the message is ACKed and never reprocessed) and returns without writing to `executor_deployments`.
 
 ### HTTP (port 8084)
 
@@ -55,15 +58,15 @@ The cancelled-schedule guard runs inside `QueryModelHandler` and `RetryTaskHandl
 
 ### Redis producers (via outbox)
 
-Each `executor_outbox` row with `event_type=deploy_task` triggers the `OutboxPublisher` (D6 pattern), which performs three ordered side effects per row:
+`deployer.Dispatcher` writes canonical announcement rows to `executor_outbox` as part of each deploy cycle (never at inbound-message time). `pkg/outbox.Processor` then drains those rows via the executor `OutboxPublisher`, which is a uniform marshal-and-XADD — one Redis XADD per row, no K8s I/O and no executor-specific fanout logic in the publisher.
 
-1. `CreateQueryJob` (K8s) — idempotent by job name.
-2. XADD `task.status.updated:v1` with `status=RUNNING`.
-3. XADD `node.deployed:v1` for k8s-controller.
+On a successful deploy, the dispatcher writes two outbox rows in one transaction:
+1. `task_status_updated` (RUNNING) → XADD `task.status.updated:v1`
+2. `node_deployed` → XADD `node.deployed:v1`
 
-When the retry budget is exhausted or a permanent error is detected, `TerminalFailureHook` publishes:
-- `task.status.updated:v1` with `status=FAILED` — so state marks the task terminal.
-- `node.updated:v1` with `status=FAILED` — so orchestrator's `HandleNodeCompleted` advances the schedule.
+On terminal failure (permanent error or retry-budget exhaustion), the dispatcher writes two outbox rows:
+1. `task_status_updated` (FAILED) → XADD `task.status.updated:v1`
+2. `node_updated` (FAILED) → XADD `node.updated:v1`
 
 | Stream | Description |
 |---|---|
@@ -74,7 +77,7 @@ When the retry budget is exhausted or a permanent error is detected, `TerminalFa
 `task.status.updated:v1` payload fields:
 - `task_id`, `schedule_id`, `schedule_name`
 - `service_name`, `schema_name`, `table_name`
-- `status` — always `RUNNING` from this producer
+- `status` — `RUNNING` on success, `FAILED` on terminal failure
 
 `node.deployed:v1` payload fields:
 - `outbox_entry_id`
@@ -98,29 +101,49 @@ When the retry budget is exhausted or a permanent error is detected, `TerminalFa
 1. Dedup check via pkg/messageprocessing against message_processing (message_id, stream_name)
    → if already present: skip (ACK without processing)
 2. Check cancelled_schedules for the schedule_id
-   → if cancelled: commit dedup row and return (no outbox entry written)
-3. Write deploy intent to executor_outbox (pending, event_type=deploy_task)
-4. Commit (dedup row + outbox entry in one transaction)
+   → if cancelled: commit dedup row and return (no deployment row written)
+3. Write deploy intent to executor_deployments (status=pending)
+4. Commit (dedup row + deployment row in one transaction)
+```
+
+### Deploy dispatcher (every 5 seconds)
+
+`deployer.Dispatcher` polls `executor_deployments` for due rows, capped by active K8s Jobs:
+
+```
+1. CountActiveJobs — label selector app=dbt-job, .status.active > 0
+   headroom = max(0, MAX_CONCURRENT_JOBS - active)
+   if headroom == 0: return (pending rows stay pending until next tick)
+
+2. GetDueBatch(headroom) — rows WHERE status='pending' AND next_attempt_at <= NOW()
+   up to min(headroom, batchSize) rows
+
+For each due row (inside one transaction for the batch):
+  a. Unmarshal job_params into DeployJob
+     → unmarshal failure or invalid fields: writeFailed → write FAILED outbox rows, MarkFailed
+  b. CreateQueryJob (K8s) — idempotent by job name
+     → success: writeDeployed
+       - write task_status_updated (RUNNING) + node_deployed outbox rows
+       - MarkDeployed
+     → transient error AND retry budget remains:
+       - Reschedule with exponential backoff (base 5s, cap 2m) via next_attempt_at
+     → permanent error (errors.Is ErrPermanent) OR retry budget exhausted:
+       - writeFailed: write task_status_updated (FAILED) + node_updated (FAILED) outbox rows, MarkFailed
 ```
 
 ### Outbox processor (every 5 seconds, batch of 100)
 
-`pkg/outbox.Processor` polls `executor_outbox` and calls `OutboxPublisher.Publish` per entry:
+`pkg/outbox.Processor` polls `executor_outbox` and calls `OutboxPublisher.Publish` per entry. The publisher marshals the payload and performs a single Redis XADD. There is no `TerminalFailureHook` — terminal outcomes are written as ordinary outbox rows by the dispatcher.
 
 ```
 For each pending executor_outbox entry:
-  1. Unmarshal deploy_task payload; if invalid: wrap ErrPermanent → TerminalFailureHook
-  2. CreateQueryJob (K8s) — idempotent by JobName; failure → retry up to MaxRetries
-  3. XADD task.status.updated:v1 with status=RUNNING
-  4. XADD node.deployed:v1 for k8s-controller
-  5. MarkProcessed
+  1. Marshal payload (already a typed event struct)
+  2. XADD to the row's stream_name
+  3. MarkProcessed
 
-On failure:
+On XADD failure:
   - retry_count < max_retries: retry on next poll
-  - retry_count >= max_retries OR ErrPermanent: TerminalFailureHook fires
-    → XADD task.status.updated:v1 FAILED
-    → XADD node.updated:v1 FAILED
-    → MarkFailed
+  - retry_count >= max_retries: MarkFailed (the deployment row is already failed/deployed)
 ```
 
 ## Background Loops
@@ -128,16 +151,18 @@ On failure:
 | Loop | Description |
 |---|---|
 | Redis consumers (three streams) | Reads `query.model:v1`, `retry.task:v1`, and `schedule.cancelled:v1` via `pkg/redis.StreamConsumer`; crash-recovery for pending messages on startup |
-| Outbox processor (`pkg/outbox.Processor`) | Polls `executor_outbox` every 5 seconds; processes up to 100 entries per batch via `OutboxPublisher` |
+| Deploy dispatcher (`deployer.Dispatcher`) | Polls `executor_deployments` every 5 seconds; creates K8s Jobs and writes outbox announcement rows, capped by `MAX_CONCURRENT_JOBS` |
+| Outbox processor (`pkg/outbox.Processor`) | Polls `executor_outbox` every 5 seconds; processes up to 100 entries per batch via `OutboxPublisher` (uniform marshal-and-XADD) |
 
 ## Reliability Patterns
 
 - **Inbound dedup**: `message_processing` keyed on `(message_id, stream_name)` prevents double-processing of duplicate Redis messages; managed by `pkg/messageprocessing.Dedup`
-- **Canonical outbox (D6 pattern)**: one `executor_outbox` row per deploy intent; the `OutboxPublisher` performs K8s deploy + 2 Redis XADDs per row — no multi-row fanout at write time
-- **Explicit transaction boundary**: each inbound message runs dedup + outbox insert inside a single Unit-of-Work transaction; the dedup row and deployment intent are committed atomically
-- **K8s idempotency**: `CreateQueryJob` treats already-exists as success; retries after crash are safe
-- **Step ordering**: K8s creation → `task.status.updated:v1` (RUNNING) → `node.deployed:v1`; if Redis publishes fail after K8s succeeds, the retry will re-attempt idempotently
-- **Terminal failure hook**: on `ErrPermanent` or retry-budget exhaustion, `TerminalFailureHook` publishes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED before marking the entry failed — ensuring orchestrator and state always learn of the terminal outcome
+- **Decoupled command queue**: inbound handlers write only a `pending` row to `executor_deployments` (a pure Postgres write, no Kubernetes I/O); the K8s deploy happens asynchronously in the dispatcher, keeping the Unit-of-Work transaction free of external side effects
+- **Explicit transaction boundary**: each inbound message runs dedup + deployment row insert inside a single Unit-of-Work transaction; the dedup row and deployment intent are committed atomically
+- **Concurrency cap**: `deployer.Dispatcher` counts live K8s Jobs (`app=dbt-job`, `.status.active > 0`) on every tick and processes at most `max(0, MAX_CONCURRENT_JOBS - active)` rows; rows beyond the cap stay `pending` until the next tick
+- **K8s idempotency**: `CreateQueryJob` treats already-exists as success; a dispatcher restart or crash after K8s success but before commit will re-attempt safely
+- **Dispatcher backoff**: transient K8s failures reschedule the row via `next_attempt_at` with exponential backoff (base 5s, cap 2 min); the row stays `pending` and is retried on the next tick when due
+- **Terminal failure propagation**: on `ErrPermanent` or retry-budget exhaustion, the dispatcher writes `task_status_updated` FAILED + `node_updated` FAILED as ordinary `executor_outbox` rows before marking the deployment `failed` — ensuring orchestrator and state always learn of the terminal outcome
+- **Uniform outbox publisher**: the executor `OutboxPublisher` is a plain marshal-and-XADD; it carries no K8s deploy logic and has no `TerminalFailureHook`; all failure signalling is handled upstream by the dispatcher
 - **No state gRPC dependency**: executor-controller does not call state gRPC; task status updates flow via `task.status.updated:v1`
-- **Outbox delivery retries**: 3 per `executor_outbox` entry (governs K8s job creation attempts); after that, `TerminalFailureHook` fires and the entry is marked `failed`
-- **Task max retries**: `task_max_retries` written into the `executor_outbox` payload defaults to 2 (3 total execution attempts: initial + 2 retries); propagated to `k8s-controller` via `node.deployed:v1` to govern task-level retry logic
+- **Task max retries**: `task_max_retries` written into `executor_deployments.job_params` defaults to 2 (3 total execution attempts: initial + 2 retries); propagated to `k8s-controller` via `node.deployed:v1` to govern task-level retry logic
