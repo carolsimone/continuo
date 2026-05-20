@@ -42,6 +42,9 @@ func TestParseNodeDeployed_MapsFieldsAndTaskRetryCount(t *testing.T) {
 	if cmd.MaxRetries != 5 {
 		t.Fatalf("expected max_retries 5, got %d", cmd.MaxRetries)
 	}
+	if cmd.ScheduleName != "daily" || cmd.ServiceName != "svc" || cmd.SchemaName != "public" || cmd.TableName != "orders" {
+		t.Fatalf("name/service/schema/table fields not mapped: %+v", cmd)
+	}
 }
 
 func TestParseCheckK8s_UsesRetryCountField(t *testing.T) {

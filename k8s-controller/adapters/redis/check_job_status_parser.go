@@ -53,6 +53,7 @@ func parseCheckJobStatus(msg goredis.XMessage, retryCountField string, defaultMa
 		}
 	}
 
+	// A non-positive max_retries is treated as absent; fall back to the default.
 	maxRetries := int32(defaultMaxRetries)
 	if s, _ := msg.Values["max_retries"].(string); s != "" {
 		if n, convErr := strconv.ParseInt(s, 10, 32); convErr == nil && n > 0 {
