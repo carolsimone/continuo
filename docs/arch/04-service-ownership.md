@@ -101,7 +101,7 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | `k8s_outbox`, `processed_events` |
+| Durable state | `k8s_outbox`, `message_processing` |
 | gRPC server methods owned | none |
 | Redis consumes | `node.deployed:v1`, `check.k8s:v1`, `schedule.cancelled:v1` |
 | Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `task.status.updated:v1` (SUCCEEDED/FAILED), `task.execution.recorded:v1`, `node.updated:v1` |

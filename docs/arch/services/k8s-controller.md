@@ -26,12 +26,15 @@ All `k8s_outbox` rows conform to the canonical schema: `id`, `message_processing
 
 ### Redis consumers
 
-| Stream | Description |
-|---|---|
-| `node.deployed:v1` | New job deployed; triggers first status check |
-| `check.k8s:v1` | Delayed re-check for still-running jobs |
+All three streams are consumed via `pkg/redis.StreamConsumer` with per-stream parser + binding pairs.
 
-Both streams carry: `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type` (plus `check_after` on `check.k8s:v1`). The Redis message ID (`msg.ID`) and stream name are used as the dedup key — no application-level `outbox_entry_id` field is required.
+| Stream | Consumer group | Binding pattern |
+|---|---|---|
+| `node.deployed:v1` | `K8sDeployed` | Full: parse → `UnitOfWork.Begin` → dedup via `pkg/messageprocessing.DedupWithOutboxEntryID` → `CheckStatusHandler.Handle` → commit |
+| `check.k8s:v1` | `K8sCheckStatus` | Full (same as above); binding also gates on `check_after`: if the timestamp is in the future, re-circulates a fresh copy via XADD and ACKs without processing |
+| `schedule.cancelled:v1` | `K8sScheduleCancelled` | Lightweight: parse `schedule_id` → insert into `cancelled_schedules` guard table (idempotent); no dedup, no outbox |
+
+`node.deployed:v1` and `check.k8s:v1` carry: `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type` (plus `check_after` on `check.k8s:v1`). The Redis message ID (`msg.ID`) and stream name are used as the dedup key — no application-level `outbox_entry_id` field is required.
 
 ### HTTP (port 8085)
 
@@ -58,7 +61,7 @@ Both streams carry: `task_id`, `schedule_id`, `schedule_name`, `service_name`, `
 | Kubernetes API | `GetPodLogs` — fetch full log + configurable tail (default configured) |
 | S3 | `PutObject` — upload full pod log; key format: `logs/task-executions/{service_name}/{schema_name}/{table_name}/{execution_id}.log` |
 
-`k8s-controller` no longer calls `state` gRPC. All state mutations flow via `task.status.updated:v1` and `task.execution.recorded:v1` Redis events.
+`k8s-controller` does not call `state` gRPC. All state mutations flow via `task.status.updated:v1` and `task.execution.recorded:v1` Redis events.
 
 ### K8s client configuration
 
@@ -131,7 +134,7 @@ Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single tr
 
 | Loop | Description |
 |---|---|
-| Redis consumer (dual-stream) | Reads `node.deployed:v1` and `check.k8s:v1`; includes crash-recovery for pending messages |
+| Redis consumer (three-stream) | Reads `node.deployed:v1`, `check.k8s:v1`, and `schedule.cancelled:v1` via `pkg/redis.StreamConsumer`; periodic XAUTOCLAIM sweep reclaims pending entries after `MinIdle` threshold for crash recovery |
 | Delayed requeue | Holds `check.k8s:v1` messages until `check_after` time before dispatching to handler |
 | Outbox processor (`pkg/outbox.Processor`) | Polls `k8s_outbox`; publishes each row to its `stream_name` via `OutboxPublisher` |
 | Stuck entry resolver | Periodically finds `k8s_outbox` entries stuck in pending beyond `stuck_threshold_seconds`; force-marks them failed via `K8sOutboxStuckRepository`; tracks resolve attempts in memory; escalates with CRITICAL log if `max_resolve_attempts` exceeded |
@@ -140,9 +143,9 @@ Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single tr
 
 - **Canonical outbox (D1 fanout)**: each business decision writes 1–3 `k8s_outbox` rows in a single transaction; the `pkg/outbox.Processor` publishes each row independently — no multi-effect fanout in the publisher
 - **Inbound dedup inside transaction**: `message_processing` insert (keyed on `(message_id, stream_name)`) and outbox writes are in the same transaction; a crash after commit is idempotent on retry (dedup fires)
-- **Explicit transaction boundary**: each status message gets its own transaction-scoped repositories for dedup and outbox writes; parallel `node.deployed:v1` and `check.k8s:v1` consumers can reuse one handler without sharing mutable transaction state
+- **Explicit transaction boundary via `UnitOfWork`**: each binding calls `UnitOfWork.Begin` before the handler and `Commit/Rollback` after; dedup and outbox writes land in the same Postgres transaction; parallel consumers for `node.deployed:v1` and `check.k8s:v1` share the handler without shared mutable state
 - **S3 soft-fail**: log upload failure does not block task completion; execution record is written with empty S3 key
-- **No state gRPC dependency**: k8s-controller no longer calls state gRPC; all state mutations flow via `task.status.updated:v1` and `task.execution.recorded:v1`
+- **No state gRPC dependency**: all state mutations flow via `task.status.updated:v1` and `task.execution.recorded:v1` Redis events
 - **Retry count in payload**: `retry_count` flows through Redis messages; `max_retries` uses the service config default (default = 2, meaning 3 total execution attempts: initial + 2 retries); permanent failure occurs when `retry_count >= max_retries`
 - **Stuck resolver**: catches outbox entries that exceed `max_retries` but haven't been cleaned up; force-marks them as failed with a diagnostic message; escalates to CRITICAL log if auto-resolution fails after `max_resolve_attempts`
 - **`task.failed:v1`**: currently has no in-repo consumer; exists for external observability or future integration
