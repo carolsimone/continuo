@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/config"
 	"github.com/carolsimone/continuo/executor-controller/internal/lifecycle"
+	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -148,13 +149,12 @@ func main() {
 	// INITIALIZE OUTBOX PROCESSOR
 	// ========================================================================
 
-	outboxPub := publisher.NewOutboxPublisher(k8sClient, redisClient, cfg.K8sNamespace, logger)
-	terminalHook := publisher.NewTerminalFailureHook(redisClient, logger)
+	outboxPub := publisher.NewOutboxPublisher(redisClient, logger)
 	outboxProcessor := pkgoutbox.NewProcessor(
 		pgDB,
 		"executor_outbox",
 		outboxPub,
-		terminalHook,
+		nil, // terminal failures are ordinary outbox rows written by the dispatcher
 		logger,
 		pkgoutbox.ProcessorConfig{Tick: 5 * time.Second, BatchSize: 100},
 	)
@@ -162,6 +162,17 @@ func main() {
 	go func() {
 		if err := outboxProcessor.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("Outbox processor exited", "error", err)
+		}
+	}()
+
+	deployDispatcher := deployer.NewDispatcher(
+		pgDB, k8sClient, cfg.K8sNamespace, cfg.MaxConcurrentJobs, logger,
+		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
+	)
+
+	go func() {
+		if err := deployDispatcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Deploy dispatcher exited", "error", err)
 		}
 	}()
 
