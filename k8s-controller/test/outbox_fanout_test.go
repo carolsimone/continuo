@@ -67,38 +67,27 @@ func (r *countingOutboxRepo) IncrementRetry(ctx context.Context, id uuid.UUID) e
 
 var _ pkgoutbox.Repository = (*countingOutboxRepo)(nil)
 
-// injectingTransactionRunner wraps the real runner but replaces the OutboxRepo
-// inside each transaction with the result of wrapOutbox.
-type injectingTransactionRunner struct {
-	real       uow.TransactionRunner
+// injectingUnitOfWork wraps a real UnitOfWork but replaces the OutboxRepo with
+// the result of wrapOutbox, so tests can inject a failing outbox write while the
+// real transaction still governs commit/rollback atomicity.
+type injectingUnitOfWork struct {
+	real       uow.UnitOfWork
 	wrapOutbox func(pkgoutbox.Repository) pkgoutbox.Repository
 }
 
-func (r *injectingTransactionRunner) WithinTransaction(ctx context.Context, fn func(uow.Transaction) error) error {
-	return r.real.WithinTransaction(ctx, func(tx uow.Transaction) error {
-		wrapped := &wrappedTransaction{
-			tx:         tx,
-			outboxRepo: r.wrapOutbox(tx.OutboxRepo()),
-		}
-		return fn(wrapped)
-	})
+func (u *injectingUnitOfWork) OutboxRepo() pkgoutbox.Repository {
+	return u.wrapOutbox(u.real.OutboxRepo())
 }
 
-type wrappedTransaction struct {
-	tx         uow.Transaction
-	outboxRepo pkgoutbox.Repository
+func (u *injectingUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
+	return u.real.MessageProcessingRepo()
 }
 
-func (w *wrappedTransaction) OutboxRepo() pkgoutbox.Repository {
-	return w.outboxRepo
-}
+func (u *injectingUnitOfWork) Begin(ctx context.Context) error { return u.real.Begin(ctx) }
+func (u *injectingUnitOfWork) Commit() error                   { return u.real.Commit() }
+func (u *injectingUnitOfWork) Rollback() error                 { return u.real.Rollback() }
 
-func (w *wrappedTransaction) MessageProcessingRepo() messageprocessing.Repository {
-	return w.tx.MessageProcessingRepo()
-}
-
-var _ uow.Transaction = (*wrappedTransaction)(nil)
-var _ uow.TransactionRunner = (*injectingTransactionRunner)(nil)
+var _ uow.UnitOfWork = (*injectingUnitOfWork)(nil)
 
 // fakeCancelledSchedulesRepoFanout always reports no cancellation.
 type fakeCancelledSchedulesRepoFanout struct{}
@@ -115,9 +104,9 @@ func (f *fakeCancelledSchedulesRepoFanout) DeleteExpired(_ context.Context, _ ti
 
 var _ postgresadapter.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepoFanout)(nil)
 
-// newSucceededHandler builds a CheckStatusHandler wired to the given transaction runner
-// and a K8s stub that always returns JobStatusSucceeded.
-func newSucceededHandler(txRunner uow.TransactionRunner, logger *slog.Logger) *handlers.CheckStatusHandler {
+// newSucceededHandler builds a CheckStatusHandler wired to a K8s stub that
+// always returns JobStatusSucceeded.
+func newSucceededHandler(logger *slog.Logger) *handlers.CheckStatusHandler {
 	now := time.Now()
 	k8sClient := &fakes.FakeK8sClient{
 		GetJobStatusFunc: func(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
@@ -140,7 +129,6 @@ func newSucceededHandler(txRunner uow.TransactionRunner, logger *slog.Logger) *h
 
 	return handlers.NewCheckStatusHandler(
 		k8sClient,
-		txRunner,
 		&fakes.FakeLogUploader{},
 		cfg,
 		&fakeCancelledSchedulesRepoFanout{},
@@ -149,20 +137,27 @@ func newSucceededHandler(txRunner uow.TransactionRunner, logger *slog.Logger) *h
 }
 
 // newSucceededCmd returns a minimal CheckJobStatus command for the given task ID.
-// MessageID/StreamName/Payload are required because check_status_handler runs
-// messageprocessing.DedupWithOutboxEntryID, which writes Payload into
-// message_processing.payload (a JSONB NOT NULL column).
 func newSucceededCmd(taskID uuid.UUID) command.CheckJobStatus {
 	return command.CheckJobStatus{
-		TaskID:      taskID,
-		ScheduleID:  uuid.New(),
-		JobName:     "job-fanout-test",
-		MessageID:   "msg-" + taskID.String(),
-		StreamName:  "check.k8s:v1",
-		Payload:     []byte(`{}`),
-		RetryCount:  0,
-		MaxRetries:  3,
+		TaskID:     taskID,
+		ScheduleID: uuid.New(),
+		JobName:    "job-fanout-test",
+		RetryCount: 0,
+		MaxRetries: 3,
 	}
+}
+
+// runInUoW drives handler.Handle inside a fresh transaction on u, mirroring the
+// commit/rollback discipline the production bindings apply.
+func runInUoW(ctx context.Context, u uow.UnitOfWork, handler *handlers.CheckStatusHandler, cmd command.CheckJobStatus) error {
+	if err := u.Begin(ctx); err != nil {
+		return err
+	}
+	if err := handler.Handle(ctx, u, cmd, uuid.Nil); err != nil {
+		_ = u.Rollback()
+		return err
+	}
+	return u.Commit()
 }
 
 // countOutboxRows returns the number of rows in k8s_outbox for the given aggregate_id.
@@ -210,11 +205,11 @@ func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 	db, logger, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	txRunner := uow.NewPostgresTransactionRunner(db, logger)
-	handler := newSucceededHandler(txRunner, logger)
+	handler := newSucceededHandler(logger)
 
 	taskID := uuid.New()
-	if err := handler.Handle(context.Background(), newSucceededCmd(taskID)); err != nil {
+	u := uow.NewPostgresUnitOfWork(db, logger)
+	if err := runInUoW(context.Background(), u, handler, newSucceededCmd(taskID)); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -246,20 +241,22 @@ func TestK8sFanout_HandleSucceeded_AtomicRollback(t *testing.T) {
 	db, logger, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	realRunner := uow.NewPostgresTransactionRunner(db, logger)
+	handler := newSucceededHandler(logger)
 
-	// Inject a failure on the 3rd Create call (node_status_updated).
-	failOn3rd := &injectingTransactionRunner{
-		real: realRunner,
+	// Inject a failure on the 3rd Create call (node_status_updated). The counting
+	// repo is created once and reused across OutboxRepo() calls so failOnN counts
+	// every Create within the single transaction.
+	counting := &countingOutboxRepo{failOnN: 3}
+	u := &injectingUnitOfWork{
+		real: uow.NewPostgresUnitOfWork(db, logger),
 		wrapOutbox: func(repo pkgoutbox.Repository) pkgoutbox.Repository {
-			return &countingOutboxRepo{real: repo, failOnN: 3}
+			counting.real = repo
+			return counting
 		},
 	}
 
-	handler := newSucceededHandler(failOn3rd, logger)
-
 	taskID := uuid.New()
-	err := handler.Handle(context.Background(), newSucceededCmd(taskID))
+	err := runInUoW(context.Background(), u, handler, newSucceededCmd(taskID))
 	if err == nil {
 		t.Fatal("expected Handle to return an error when the 3rd Create is injected, got nil")
 	}

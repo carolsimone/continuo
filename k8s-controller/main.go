@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -16,15 +15,13 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
 	"github.com/carolsimone/continuo/k8s-controller/config"
-	"github.com/carolsimone/continuo/k8s-controller/domain/command"
 	"github.com/carolsimone/continuo/k8s-controller/internal/lifecycle"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
-	"github.com/carolsimone/continuo/k8s-controller/service/messagebus"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -81,9 +78,6 @@ func main() {
 		return pgDB.Close()
 	})
 
-	// Step 6: Initialize transaction runner for handler writes
-	txRunner := uow.NewPostgresTransactionRunner(pgDB, logger)
-
 	logger.Info("PostgreSQL repositories initialized")
 
 	// Step 8: Initialize K8s client
@@ -107,7 +101,7 @@ func main() {
 	// Initialize cancelled schedules repository (needed by CheckStatusHandler guard)
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
-	// Step 10b: Initialize check status handler with transaction runner
+	// Step 10b: Initialize check status handler.
 	handlerConfig := &handlers.HandlerConfig{
 		K8sNamespace:          cfg.K8sNamespace,
 		CheckDelaySeconds:     cfg.K8sCheckDelaySeconds,
@@ -115,53 +109,29 @@ func main() {
 		LogTailLines:          int64(cfg.LogTailLines),
 		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
 	}
-	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, txRunner, s3Client, handlerConfig, cancelledSchedulesRepo, logger)
 
-	// Step 11: Create command handlers map (CQRS pattern)
-	commandHandlers := map[string]messagebus.CommandHandler{
-		"command.CheckJobStatus": func(ctx context.Context, cmd command.Command) error {
-			return checkStatusHandler.Handle(ctx, cmd.(command.CheckJobStatus))
-		},
+	// UnitOfWork factory — a fresh transaction-scoped UoW per message. Creating
+	// it per message keeps concurrent handler invocations isolated.
+	uowFactory := func() uow.UnitOfWork {
+		return uow.NewPostgresUnitOfWork(pgDB, logger)
 	}
 
-	// Step 12: Create MessageBus
-	messageBus := messagebus.NewMessageBus(commandHandlers, logger)
+	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, s3Client, handlerConfig, cancelledSchedulesRepo, logger)
 
-	logger.Info("Message bus initialized")
-
-	// Step 13: Initialize per-stream Redis consumers.
-	// Each consumer runs in its own goroutine against a dedicated consumer group.
-	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String()[:8])
-
-	deployedConsumer, err := redis.NewConsumer(
+	deployedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		consumerName,
-		streams.K8sDeployed,
 		streams.NodeDeployedV1,
-		messageBus,
-		cfg.DefaultTaskMaxRetries,
-		false, // node.deployed:v1 messages are processed immediately
+		streams.K8sDeployed,
+		redis.NewNodeDeployedBinding(uowFactory, checkStatusHandler, logger),
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to initialize deployed consumer", "error", err)
-		os.Exit(1)
-	}
-
-	checkConsumer, err := redis.NewConsumer(
+	checkConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
-		consumerName,
-		streams.K8sCheckStatus,
 		streams.CheckK8sV1,
-		messageBus,
-		cfg.DefaultTaskMaxRetries,
-		true, // check.k8s:v1 messages are re-circulated until check_after elapses
+		streams.K8sCheckStatus,
+		redis.NewCheckK8sBinding(redisClient, uowFactory, checkStatusHandler, logger),
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to initialize check consumer", "error", err)
-		os.Exit(1)
-	}
 
 	logger.Info("Redis consumers initialized",
 		"deployed_stream", streams.NodeDeployedV1,
@@ -237,17 +207,13 @@ func main() {
 	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER
 	// ========================================================================
 
-	scheduleCancelledConsumer, err := redis.NewScheduleCancelledConsumer(
+	scheduleCancelledConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		streams.ScheduleCancelledV1,
 		streams.K8sScheduleCancelled,
-		cancelledSchedulesRepo,
+		redis.NewScheduleCancelledBinding(cancelledSchedulesRepo, logger),
 		logger,
 	)
-	if err != nil {
-		logger.Error("Failed to create schedule cancelled consumer", "error", err)
-		os.Exit(1)
-	}
 	go func() {
 		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
 			logger.Error("Schedule cancelled consumer error", "error", err)

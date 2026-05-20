@@ -2,19 +2,9 @@ package command
 
 import "github.com/google/uuid"
 
-// Command is a marker interface for all commands
-type Command interface {
-	isCommand()
-}
-
-// CheckJobStatus command to check K8s job and handle result
+// CheckJobStatus carries the parsed fields needed to check a K8s job and act on
+// the result. It is produced by the node.deployed:v1 and check.k8s:v1 parsers.
 type CheckJobStatus struct {
-	// MessageID and StreamName identify the inbound Redis message for dedup via pkg/messageprocessing.
-	MessageID  string
-	StreamName string
-	// Payload is the JSON-serialized Redis message fields map, used as the dedup payload.
-	Payload []byte
-
 	TaskID       uuid.UUID
 	ScheduleID   uuid.UUID
 	ScheduleName string
@@ -24,8 +14,6 @@ type CheckJobStatus struct {
 	JobName      string
 	NodeType     string
 	ImageTag     string
-	RetryCount   int32 // current task retry count (carried from node.deployed:v1 / check.k8s:v1)
-	MaxRetries   int32 // maximum task retries allowed (default from config if absent in message)
+	RetryCount   int32 // current task retry count
+	MaxRetries   int32 // maximum task retries allowed (default from config if absent)
 }
-
-func (CheckJobStatus) isCommand() {}

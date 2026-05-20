@@ -9,47 +9,47 @@ import (
 	"github.com/google/uuid"
 )
 
-// FakeTransaction exposes fake repositories for one transaction scope.
-type FakeTransaction struct {
-	OutboxRepoFunc             pkgoutbox.Repository
-	MessageProcessingRepoFunc  messageprocessing.Repository
+// FakeUnitOfWork is a fake implementation of uow.UnitOfWork for testing. It
+// exposes injectable fake repositories and records Begin/Commit/Rollback calls.
+type FakeUnitOfWork struct {
+	OutboxRepoFunc            pkgoutbox.Repository
+	MessageProcessingRepoFunc messageprocessing.Repository
+
+	BeginCallCount    int
+	CommitCallCount   int
+	RollbackCallCount int
 }
 
-func (f *FakeTransaction) OutboxRepo() pkgoutbox.Repository {
+func (f *FakeUnitOfWork) OutboxRepo() pkgoutbox.Repository {
 	if f.OutboxRepoFunc != nil {
 		return f.OutboxRepoFunc
 	}
 	return &FakeOutboxRepository{}
 }
 
-func (f *FakeTransaction) MessageProcessingRepo() messageprocessing.Repository {
+func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
 	if f.MessageProcessingRepoFunc != nil {
 		return f.MessageProcessingRepoFunc
 	}
 	return &FakeMessageProcessingRepository{}
 }
 
-// FakeTransactionRunner is a fake implementation of TransactionRunner for testing.
-type FakeTransactionRunner struct {
-	Transaction           uow.Transaction
-	WithinTransactionFunc func(context.Context, func(uow.Transaction) error) error
-
-	WithinTransactionCallCount int
+func (f *FakeUnitOfWork) Begin(context.Context) error {
+	f.BeginCallCount++
+	return nil
 }
 
-func (f *FakeTransactionRunner) WithinTransaction(ctx context.Context, fn func(uow.Transaction) error) error {
-	f.WithinTransactionCallCount++
-	if f.WithinTransactionFunc != nil {
-		return f.WithinTransactionFunc(ctx, fn)
-	}
-	if f.Transaction == nil {
-		f.Transaction = &FakeTransaction{}
-	}
-	return fn(f.Transaction)
+func (f *FakeUnitOfWork) Commit() error {
+	f.CommitCallCount++
+	return nil
 }
 
-var _ uow.Transaction = (*FakeTransaction)(nil)
-var _ uow.TransactionRunner = (*FakeTransactionRunner)(nil)
+func (f *FakeUnitOfWork) Rollback() error {
+	f.RollbackCallCount++
+	return nil
+}
+
+var _ uow.UnitOfWork = (*FakeUnitOfWork)(nil)
 
 // FakeOutboxRepository is a fake implementation of pkgoutbox.Repository for testing
 type FakeOutboxRepository struct {
