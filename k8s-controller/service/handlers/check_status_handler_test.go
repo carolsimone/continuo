@@ -2,17 +2,21 @@ package handlers_test
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
+	postgresadapter "github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
 
@@ -35,16 +39,16 @@ type fakeLogUploader struct{}
 
 func (f *fakeLogUploader) UploadLog(_ context.Context, _ string, _ string) error { return nil }
 
-// fakeOutboxRepo records Create calls.
+// fakeOutboxRepo records Create calls using canonical pkgoutbox.Entry.
 type fakeOutboxRepo struct {
-	entries []*model.K8sStatusOutboxEntry
+	entries []*pkgoutbox.Entry
 }
 
-func (r *fakeOutboxRepo) Create(_ context.Context, e *model.K8sStatusOutboxEntry) error {
+func (r *fakeOutboxRepo) Create(_ context.Context, e *pkgoutbox.Entry) error {
 	r.entries = append(r.entries, e)
 	return nil
 }
-func (r *fakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*model.K8sStatusOutboxEntry, error) {
+func (r *fakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*pkgoutbox.Entry, error) {
 	return nil, nil
 }
 func (r *fakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
@@ -52,28 +56,22 @@ func (r *fakeOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) er
 	return nil
 }
 func (r *fakeOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
-func (r *fakeOutboxRepo) GetStuckEntries(_ context.Context, _ int, _ int) ([]*model.K8sStatusOutboxEntry, error) {
-	return nil, nil
-}
-func (r *fakeOutboxRepo) ForceMarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
-	return nil
-}
 
 // Verify at compile time.
-var _ postgres.OutboxRepository = (*fakeOutboxRepo)(nil)
+var _ pkgoutbox.Repository = (*fakeOutboxRepo)(nil)
 
 type threadSafeFakeOutboxRepo struct {
 	mu      sync.Mutex
-	entries []*model.K8sStatusOutboxEntry
+	entries []*pkgoutbox.Entry
 }
 
-func (r *threadSafeFakeOutboxRepo) Create(_ context.Context, e *model.K8sStatusOutboxEntry) error {
+func (r *threadSafeFakeOutboxRepo) Create(_ context.Context, e *pkgoutbox.Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.entries = append(r.entries, e)
 	return nil
 }
-func (r *threadSafeFakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*model.K8sStatusOutboxEntry, error) {
+func (r *threadSafeFakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*pkgoutbox.Entry, error) {
 	return nil, nil
 }
 func (r *threadSafeFakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error {
@@ -85,20 +83,14 @@ func (r *threadSafeFakeOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ 
 func (r *threadSafeFakeOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
-func (r *threadSafeFakeOutboxRepo) GetStuckEntries(_ context.Context, _ int, _ int) ([]*model.K8sStatusOutboxEntry, error) {
-	return nil, nil
-}
-func (r *threadSafeFakeOutboxRepo) ForceMarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
-	return nil
-}
 
-func (r *threadSafeFakeOutboxRepo) entriesSnapshot() []*model.K8sStatusOutboxEntry {
+func (r *threadSafeFakeOutboxRepo) entriesSnapshot() []*pkgoutbox.Entry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]*model.K8sStatusOutboxEntry(nil), r.entries...)
+	return append([]*pkgoutbox.Entry(nil), r.entries...)
 }
 
-var _ postgres.OutboxRepository = (*threadSafeFakeOutboxRepo)(nil)
+var _ pkgoutbox.Repository = (*threadSafeFakeOutboxRepo)(nil)
 
 type fakeCancelledSchedulesRepo struct {
 	ids map[uuid.UUID]bool
@@ -112,28 +104,56 @@ func (f *fakeCancelledSchedulesRepo) DeleteExpired(_ context.Context, _ time.Dur
 	return 0, nil
 }
 
-var _ postgres.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepo)(nil)
+var _ postgresadapter.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepo)(nil)
 
 func noopCancelledRepo() *fakeCancelledSchedulesRepo {
 	return &fakeCancelledSchedulesRepo{ids: map[uuid.UUID]bool{}}
 }
 
-type fakeProcessedEventsRepo struct{}
-
-func (r *fakeProcessedEventsRepo) TryMarkProcessed(_ context.Context, _ uuid.UUID) (bool, error) {
-	return false, nil // always "not yet processed" → proceed
+// fakeMessageProcessingRepo is a fake for testing that allows first call to proceed and second to be a duplicate.
+type fakeMessageProcessingRepo struct {
+	seen map[string]uuid.UUID
 }
 
-var _ postgres.ProcessedEventsRepository = (*fakeProcessedEventsRepo)(nil)
+func (r *fakeMessageProcessingRepo) InsertIfNotExists(_ context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
+	if r.seen == nil {
+		r.seen = make(map[string]uuid.UUID)
+	}
+	key := msgProc.MessageID + "\x00" + msgProc.StreamName
+	if id, exists := r.seen[key]; exists {
+		return id, false, nil // already seen → duplicate
+	}
+	id := uuid.New()
+	r.seen[key] = id
+	return id, true, nil // newly inserted
+}
+
+func (r *fakeMessageProcessingRepo) GetByMessageIDAndStream(_ context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
+	key := messageID + "\x00" + streamName
+	if id, exists := r.seen[key]; exists {
+		return &messageprocessing.MessageProcessing{ID: id, MessageID: messageID, StreamName: streamName, State: "completed"}, nil
+	}
+	return &messageprocessing.MessageProcessing{ID: uuid.New(), MessageID: messageID, StreamName: streamName, State: "completed"}, nil
+}
+
+func (r *fakeMessageProcessingRepo) GetByID(_ context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error) {
+	return &messageprocessing.MessageProcessing{ID: id, State: "completed"}, nil
+}
+
+func (r *fakeMessageProcessingRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+
+var _ messageprocessing.Repository = (*fakeMessageProcessingRepo)(nil)
 
 type fakeTransaction struct {
-	outboxRepo          postgres.OutboxRepository
-	processedEventsRepo postgres.ProcessedEventsRepository
+	outboxRepo            pkgoutbox.Repository
+	msgProcessingRepo     messageprocessing.Repository
 }
 
-func (tx *fakeTransaction) OutboxRepo() postgres.OutboxRepository { return tx.outboxRepo }
-func (tx *fakeTransaction) ProcessedEventsRepo() postgres.ProcessedEventsRepository {
-	return tx.processedEventsRepo
+func (tx *fakeTransaction) OutboxRepo() pkgoutbox.Repository { return tx.outboxRepo }
+func (tx *fakeTransaction) MessageProcessingRepo() messageprocessing.Repository {
+	return tx.msgProcessingRepo
 }
 
 type fakeTransactionRunner struct {
@@ -153,8 +173,8 @@ func newFakeRunnerFixture() (*fakeRunnerFixture, uow.TransactionRunner) {
 	return fixture, &fakeTransactionRunner{
 		newTx: func() uow.Transaction {
 			return &fakeTransaction{
-				outboxRepo:          fixture.outboxRepo,
-				processedEventsRepo: &fakeProcessedEventsRepo{},
+				outboxRepo:        fixture.outboxRepo,
+				msgProcessingRepo: &fakeMessageProcessingRepo{},
 			}
 		},
 	}
@@ -176,7 +196,7 @@ func failedResult() *model.K8sPodResult {
 	}
 }
 
-func newHandler(k8s handlers.K8sStatusChecker, txRunner uow.TransactionRunner, cancelledSchedules postgres.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
+func newHandler(k8s handlers.K8sStatusChecker, txRunner uow.TransactionRunner, cancelledSchedules postgresadapter.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
 	cfg := &handlers.HandlerConfig{
 		K8sNamespace:          "default",
 		CheckDelaySeconds:     30,
@@ -187,10 +207,28 @@ func newHandler(k8s handlers.K8sStatusChecker, txRunner uow.TransactionRunner, c
 	return handlers.NewCheckStatusHandler(k8s, txRunner, &fakeLogUploader{}, cfg, cancelledSchedules, slog.Default())
 }
 
+// eventTypeOf returns the event_type of the i-th outbox entry.
+func eventTypeOf(entries []*pkgoutbox.Entry, i int) string {
+	if i >= len(entries) {
+		return ""
+	}
+	return entries[i].EventType
+}
+
+// findEntryByEventType returns the first entry with the given event_type.
+func findEntryByEventType(entries []*pkgoutbox.Entry, eventType string) *pkgoutbox.Entry {
+	for _, e := range entries {
+		if e.EventType == eventType {
+			return e
+		}
+	}
+	return nil
+}
+
 // --- tests ---
 
 // TestHandleFailedWithRetry verifies that a failed job whose retryCount < maxRetries
-// produces a "task_retry" outbox entry — using cmd fields, no gRPC.
+// produces 3 canonical outbox rows: task_status_updated, task_execution_recorded, task_retry.
 func TestHandleFailedWithRetry(t *testing.T) {
 	fw, runner := newFakeRunnerFixture()
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, runner, noopCancelledRepo(), 3)
@@ -207,11 +245,33 @@ func TestHandleFailedWithRetry(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	if len(fw.outboxRepo.entries) == 0 {
-		t.Fatal("expected outbox entries, got none")
+	entries := fw.outboxRepo.entries
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 outbox entries (task_status_updated + task_execution_recorded + task_retry), got %d", len(entries))
 	}
-	if got := fw.outboxRepo.entries[0].EventType; got != "task_retry" {
-		t.Errorf("expected event_type=task_retry, got %q", got)
+
+	// Check event types
+	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
+		t.Errorf("entries[0]: expected task_status_updated, got %q", got)
+	}
+	if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
+		t.Errorf("entries[1]: expected task_execution_recorded, got %q", got)
+	}
+	if got := eventTypeOf(entries, 2); got != "task_retry" {
+		t.Errorf("entries[2]: expected task_retry, got %q", got)
+	}
+
+	// Verify task_status_updated payload
+	statusEntry := findEntryByEventType(entries, "task_status_updated")
+	if statusEntry == nil {
+		t.Fatal("missing task_status_updated entry")
+	}
+	var statusPayload pkgevents.TaskStatusUpdated
+	if err := json.Unmarshal(statusEntry.Payload, &statusPayload); err != nil {
+		t.Fatalf("unmarshal task_status_updated: %v", err)
+	}
+	if statusPayload.Status != "FAILED" {
+		t.Errorf("task_status_updated status: expected FAILED, got %q", statusPayload.Status)
 	}
 }
 
@@ -220,8 +280,8 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 	runner := &fakeTransactionRunner{
 		newTx: func() uow.Transaction {
 			return &fakeTransaction{
-				outboxRepo:          repo,
-				processedEventsRepo: &fakeProcessedEventsRepo{},
+				outboxRepo:        repo,
+				msgProcessingRepo: &fakeMessageProcessingRepo{},
 			}
 		},
 	}
@@ -250,13 +310,14 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 			t.Fatalf("Handle: %v", err)
 		}
 	}
-	if got := len(repo.entriesSnapshot()); got != 2 {
-		t.Fatalf("expected 2 outbox entries, got %d", got)
+	// 2 concurrent calls × 3 rows each = 6 total
+	if got := len(repo.entriesSnapshot()); got != 6 {
+		t.Fatalf("expected 6 outbox entries (2 calls × 3 rows), got %d", got)
 	}
 }
 
-// TestHandleFailedPermanent verifies that a failed job whose retryCount >= maxRetries
-// produces a "task_failed" outbox entry — using cmd fields, no gRPC.
+// TestHandleFailedPermanent verifies that a permanently failed job produces
+// 3 canonical outbox rows: task_status_updated, task_execution_recorded, node_status_updated.
 func TestHandleFailedPermanent(t *testing.T) {
 	fw, runner := newFakeRunnerFixture()
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, runner, noopCancelledRepo(), 3)
@@ -273,17 +334,24 @@ func TestHandleFailedPermanent(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	if len(fw.outboxRepo.entries) == 0 {
-		t.Fatal("expected outbox entries, got none")
+	entries := fw.outboxRepo.entries
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 outbox entries (task_status_updated + task_execution_recorded + node_status_updated), got %d", len(entries))
 	}
-	if got := fw.outboxRepo.entries[0].EventType; got != "task_failed" {
-		t.Errorf("expected event_type=task_failed, got %q", got)
+
+	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
+		t.Errorf("entries[0]: expected task_status_updated, got %q", got)
+	}
+	if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
+		t.Errorf("entries[1]: expected task_execution_recorded, got %q", got)
+	}
+	if got := eventTypeOf(entries, 2); got != "node_status_updated" {
+		t.Errorf("entries[2]: expected node_status_updated, got %q", got)
 	}
 }
 
 // TestHandleRunningCarriesRetryInfo verifies that a running job's check_delayed entry
-// carries TaskRetryCount and TaskMaxRetries forward so the next check cycle
-// doesn't need to call state gRPC.
+// carries RetryCount and MaxRetries forward in its payload.
 func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 	fw, runner := newFakeRunnerFixture()
 	handler := newHandler(
@@ -303,18 +371,25 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	if len(fw.outboxRepo.entries) == 0 {
-		t.Fatal("expected outbox entry, got none")
+	entries := fw.outboxRepo.entries
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 outbox entry (check_delayed), got %d", len(entries))
 	}
-	entry := fw.outboxRepo.entries[0]
+	entry := entries[0]
 	if entry.EventType != "check_delayed" {
 		t.Errorf("expected event_type=check_delayed, got %q", entry.EventType)
 	}
-	if entry.TaskRetryCount != 1 {
-		t.Errorf("expected TaskRetryCount=1, got %d", entry.TaskRetryCount)
+
+	// Verify payload carries retry info
+	var payload map[string]interface{}
+	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal check_delayed: %v", err)
 	}
-	if entry.TaskMaxRetries != 5 {
-		t.Errorf("expected TaskMaxRetries=5, got %d", entry.TaskMaxRetries)
+	if got := int(payload["retry_count"].(float64)); got != 1 {
+		t.Errorf("expected retry_count=1, got %d", got)
+	}
+	if got := int(payload["max_retries"].(float64)); got != 5 {
+		t.Errorf("expected max_retries=5, got %d", got)
 	}
 }
 
@@ -337,12 +412,14 @@ func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	if len(fw.outboxRepo.entries) == 0 {
-		t.Fatal("expected outbox entry, got none")
+	entries := fw.outboxRepo.entries
+	if len(entries) == 0 {
+		t.Fatal("expected outbox entries, got none")
 	}
-	// RetryCount(0) < defaultMaxRetries(3) → should retry, not permanent fail
-	if got := fw.outboxRepo.entries[0].EventType; got != "task_retry" {
-		t.Errorf("expected event_type=task_retry (default max_retries applied), got %q", got)
+	// RetryCount(0) < defaultMaxRetries(3) → retry path → last row is task_retry
+	lastEntry := entries[len(entries)-1]
+	if lastEntry.EventType != "task_retry" {
+		t.Errorf("expected last event_type=task_retry (default max_retries applied), got %q", lastEntry.EventType)
 	}
 }
 
@@ -364,11 +441,19 @@ func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	if len(fw.outboxRepo.entries) == 0 {
+	entries := fw.outboxRepo.entries
+	if len(entries) == 0 {
 		t.Fatal("expected outbox entries, got none")
 	}
-	if got := fw.outboxRepo.entries[0].EventType; got != "task_failed" {
-		t.Errorf("expected event_type=task_failed, got %q", got)
+	// Permanent fail path produces: task_status_updated + task_execution_recorded + node_status_updated
+	hasNodeUpdated := false
+	for _, e := range entries {
+		if e.EventType == "node_status_updated" {
+			hasNodeUpdated = true
+		}
+	}
+	if !hasNodeUpdated {
+		t.Error("expected node_status_updated entry for permanent failure")
 	}
 }
 
@@ -424,17 +509,20 @@ func TestNotFoundRetry(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	if len(fw.outboxRepo.entries) == 0 {
-		t.Fatal("expected outbox entry, got none")
+	entries := fw.outboxRepo.entries
+	if len(entries) == 0 {
+		t.Fatal("expected outbox entries, got none")
 	}
-	if got := fw.outboxRepo.entries[0].EventType; got != "task_retry" {
-		t.Errorf("expected event_type=task_retry (not_found retried), got %q", got)
+	// Retry path → last entry is task_retry
+	lastEntry := entries[len(entries)-1]
+	if lastEntry.EventType != "task_retry" {
+		t.Errorf("expected last event_type=task_retry (not_found retried), got %q", lastEntry.EventType)
 	}
 }
 
 // TestNotFoundPermanentFailureNotifiesOrchestrator verifies that when "Job not found" retries
-// are exhausted, handleFailedPermanent is called — which writes both task_failed AND
-// node_status_updated (node.updated:v1) entries, so the orchestrator cascades failure.
+// are exhausted, handleFailedPermanent is called — which writes task_status_updated,
+// task_execution_recorded, and node_status_updated entries, so the orchestrator cascades failure.
 func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 	notFoundResult := &model.K8sPodResult{
 		Status:         model.JobStatusFailed,
@@ -456,31 +544,97 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	if len(fw.outboxRepo.entries) < 2 {
-		t.Fatalf("expected 2 outbox entries (task_failed + node_status_updated), got %d", len(fw.outboxRepo.entries))
+	entries := fw.outboxRepo.entries
+	if len(entries) < 2 {
+		t.Fatalf("expected at least 2 outbox entries, got %d", len(entries))
 	}
 
-	eventTypes := make([]string, len(fw.outboxRepo.entries))
-	for i, e := range fw.outboxRepo.entries {
+	eventTypes := make([]string, len(entries))
+	for i, e := range entries {
 		eventTypes[i] = e.EventType
 	}
 
-	hasTaskFailed := false
-	hasNodeUpdated := false
-	for _, e := range fw.outboxRepo.entries {
-		if e.EventType == "task_failed" {
-			hasTaskFailed = true
-		}
-		if e.EventType == "node_status_updated" && e.StreamName == "node.updated:v1" {
-			hasNodeUpdated = true
-		}
-	}
+	hasTaskStatusUpdated := findEntryByEventType(entries, "task_status_updated") != nil
+	hasNodeUpdated := findEntryByEventType(entries, "node_status_updated") != nil
 
-	if !hasTaskFailed {
-		t.Errorf("expected task_failed entry, got event_types: %v", eventTypes)
+	if !hasTaskStatusUpdated {
+		t.Errorf("expected task_status_updated entry, got event_types: %v", eventTypes)
 	}
 	if !hasNodeUpdated {
-		t.Errorf("expected node_status_updated entry on node.updated:v1, got event_types: %v", eventTypes)
+		t.Errorf("expected node_status_updated entry, got event_types: %v", eventTypes)
+	}
+
+	// Verify the node_status_updated stream is correct
+	nodeEntry := findEntryByEventType(entries, "node_status_updated")
+	if nodeEntry != nil && nodeEntry.StreamName != "node.updated:v1" {
+		t.Errorf("node_status_updated stream: expected node.updated:v1, got %q", nodeEntry.StreamName)
+	}
+}
+
+// TestHandleSucceeded verifies that a succeeded job produces 3 canonical rows:
+// task_status_updated (SUCCEEDED), task_execution_recorded, node_status_updated.
+func TestHandleSucceeded(t *testing.T) {
+	now := time.Now()
+	succeededResult := &model.K8sPodResult{
+		Status:           model.JobStatusSucceeded,
+		StartedAt:        &now,
+		CompletedAt:      &now,
+		ExecutionSeconds: 5.0,
+	}
+
+	fw, runner := newFakeRunnerFixture()
+	handler := newHandler(&fakeK8sClient{status: succeededResult}, runner, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-succeeded",
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), cmd); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := fw.outboxRepo.entries
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 outbox entries for succeeded job, got %d", len(entries))
+	}
+
+	// Row order: task_status_updated, task_execution_recorded, node_status_updated
+	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
+		t.Errorf("entries[0]: expected task_status_updated, got %q", got)
+	}
+	if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
+		t.Errorf("entries[1]: expected task_execution_recorded, got %q", got)
+	}
+	if got := eventTypeOf(entries, 2); got != "node_status_updated" {
+		t.Errorf("entries[2]: expected node_status_updated, got %q", got)
+	}
+
+	// Verify task_status_updated payload has SUCCEEDED
+	var statusPayload pkgevents.TaskStatusUpdated
+	if err := json.Unmarshal(entries[0].Payload, &statusPayload); err != nil {
+		t.Fatalf("unmarshal task_status_updated: %v", err)
+	}
+	if statusPayload.Status != "SUCCEEDED" {
+		t.Errorf("expected status=SUCCEEDED, got %q", statusPayload.Status)
+	}
+	if statusPayload.RetryCount != 0 {
+		t.Errorf("expected retry_count=0, got %d", statusPayload.RetryCount)
+	}
+
+	// Verify task_execution_recorded payload
+	var execPayload pkgevents.TaskExecutionRecorded
+	if err := json.Unmarshal(entries[1].Payload, &execPayload); err != nil {
+		t.Fatalf("unmarshal task_execution_recorded: %v", err)
+	}
+	if execPayload.JobName != "job-succeeded" {
+		t.Errorf("expected job_name=job-succeeded, got %q", execPayload.JobName)
+	}
+	if execPayload.ExecutionSeconds != 5.0 {
+		t.Errorf("expected execution_seconds=5.0, got %f", execPayload.ExecutionSeconds)
 	}
 }
 

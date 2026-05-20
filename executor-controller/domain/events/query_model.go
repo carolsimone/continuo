@@ -9,14 +9,10 @@ import (
 // QueryModel is the parsed query.model:v1 stream payload — a typed,
 // in-process representation of a deploy request emitted by the orchestrator.
 //
-// OutboxEntryID is the application-level idempotency key set by the
-// orchestrator's outbox processor (the ID of the orchestrator's own
-// outbox row). It is used as the unique key on
-// deployment_outbox.outbox_entry_id so that an ambiguous publisher retry
-// (same payload, new Redis msg.ID) does not produce a duplicate K8s
-// deploy. Zero value (uuid.Nil) means the inbound message did not carry
-// the field; the dedup degrades to the shared (msg.ID, stream_name)
-// layer only.
+// OutboxEntryID is the orchestrator's outbox row ID, carried through
+// as the message_processing_id provenance field on the executor's outbox
+// row. Zero value (uuid.Nil) means the inbound message did not carry the
+// field; dedup relies solely on the shared (msg.ID, stream_name) layer.
 type QueryModel struct {
 	OutboxEntryID uuid.UUID
 	TaskID        uuid.UUID

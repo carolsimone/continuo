@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -9,8 +10,13 @@ import (
 	postgresadapter "github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
+	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -83,20 +89,20 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, cmd command.CheckJobSta
 	// Step 3: Run SQL work inside one fresh transaction so dedup and outbox writes
 	// are atomic without storing transaction state on the shared handler.
 	return h.txRunner.WithinTransaction(ctx, func(tx uow.Transaction) error {
-		// Step 4: Dedup guard — atomic claim via INSERT ... ON CONFLICT DO NOTHING.
+		// Step 4: Dedup guard — per-stream message dedup via pkg/messageprocessing.
+		// Atomically inserts (message_id, stream_name) keyed row; duplicate means skip.
 		// Must run inside the transaction so a later failure rolls back the insert.
-		if cmd.OutboxEntryID != nil {
-			duplicate, err := tx.ProcessedEventsRepo().TryMarkProcessed(ctx, *cmd.OutboxEntryID)
-			if err != nil {
-				return fmt.Errorf("dedup check failed: %w", err)
-			}
-			if duplicate {
-				h.logger.Info("Duplicate message — skipping",
-					"outbox_entry_id", cmd.OutboxEntryID,
-					"task_id", cmd.TaskID,
-				)
-				return nil
-			}
+		_, duplicate, err := messageprocessing.Dedup(ctx, tx.MessageProcessingRepo(), h.logger, cmd.MessageID, cmd.StreamName, cmd.Payload)
+		if err != nil {
+			return fmt.Errorf("dedup: %w", err)
+		}
+		if duplicate {
+			h.logger.Info("Duplicate message — skipping",
+				"msg_id", cmd.MessageID,
+				"stream", cmd.StreamName,
+				"task_id", cmd.TaskID,
+			)
+			return nil
 		}
 
 		// Guard: if the schedule was cancelled, absorb the result silently.
@@ -128,57 +134,31 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, cmd command.CheckJobSta
 	})
 }
 
-// handleSucceeded handles successful job completion
+// handleSucceeded handles successful job completion.
+// Writes 3 canonical outbox rows in the transaction:
+//   - task_status_updated (SUCCEEDED)
+//   - task_execution_recorded
+//   - node_status_updated (→ node.updated:v1)
 func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
-	// Create outbox entry for succeeded task
-	// Note: task.succeeded events don't get published to Redis in current design
-	// They're just recorded in state-service
-	entry := &model.K8sStatusOutboxEntry{
-		EventType:    "task_succeeded",
-		StreamName:   "", // No Redis event for success
-		TaskID:       cmd.TaskID,
-		ScheduleID:   cmd.ScheduleID,
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  cmd.ServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		JobName:      cmd.JobName,
+	repo := tx.OutboxRepo()
+	executionID := uuid.New()
 
-		UpdateTaskStatus:     true,
-		NewTaskStatus:        "succeeded",
-		NewRetryCount:        0,
-		CreateExecution:      true,
-		ExecutionID:          uuid.New(),
-		ExecutionStartedAt:   result.StartedAt,
-		ExecutionCompletedAt: result.CompletedAt,
-		ExecutionSeconds:     result.ExecutionSeconds,
+	// Row 1: task_status_updated
+	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "SUCCEEDED", 0); err != nil {
+		return fmt.Errorf("task_status_updated: %w", err)
 	}
 
-	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
-		return fmt.Errorf("failed to create outbox entry: %w", err)
+	// Row 2: task_execution_recorded
+	if err := h.writeTaskExecutionRecordedWithLogS3Key(ctx, repo, cmd, executionID, result, "", ""); err != nil {
+		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
-	// Second outbox entry: notify orchestrator of node status change
-	notifyEntry := &model.K8sStatusOutboxEntry{
-		EventType:        "node_status_updated",
-		StreamName:       "node.updated:v1",
-		TaskID:           cmd.TaskID,
-		ScheduleID:       cmd.ScheduleID,
-		ScheduleName:     cmd.ScheduleName,
-		ServiceName:      cmd.ServiceName,
-		SchemaName:       cmd.SchemaName,
-		TableName:        cmd.TableName,
-		JobName:          cmd.JobName,
-		NewTaskStatus:    "SUCCEEDED",
-		UpdateTaskStatus: false,
-		CreateExecution:  false,
+	// Row 3: node_status_updated → node.updated:v1
+	if err := h.writeNodeStatusUpdated(ctx, repo, cmd, "SUCCEEDED"); err != nil {
+		return fmt.Errorf("node_status_updated: %w", err)
 	}
 
-	if err := tx.OutboxRepo().Create(ctx, notifyEntry); err != nil {
-		return fmt.Errorf("failed to create notify outbox entry: %w", err)
-	}
-
-	h.logger.Info("Job succeeded - outbox entries created",
+	h.logger.Info("Job succeeded — outbox entries created",
 		"task_id", cmd.TaskID,
 		"job_name", cmd.JobName,
 		"execution_time", result.ExecutionSeconds,
@@ -228,8 +208,13 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	return executionID, key, tail
 }
 
-// handleFailedPermanent handles permanently failed jobs (retry_count >= max_retries)
+// handleFailedPermanent handles permanently failed jobs (retry_count >= max_retries).
+// Writes 3 canonical outbox rows in the transaction:
+//   - task_status_updated (FAILED)
+//   - task_execution_recorded
+//   - node_status_updated (→ node.updated:v1)
 func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount int32) error {
+	repo := tx.OutboxRepo()
 	newRetryCount := retryCount
 
 	executionID, logS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
@@ -239,55 +224,22 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, tx uow.T
 		errorMsg = h.truncateErrorMessage(result.TerminationMsg)
 	}
 
-	entry := &model.K8sStatusOutboxEntry{
-		EventType:    "task_failed",
-		StreamName:   "task.failed:v1",
-		TaskID:       cmd.TaskID,
-		ScheduleID:   cmd.ScheduleID,
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  cmd.ServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		JobName:      cmd.JobName,
-
-		ErrorMessage:   errorMsg,
-		TaskRetryCount: int(newRetryCount),
-		ExecutionID:    executionID,
-		LogS3Key:       logS3Key,
-
-		UpdateTaskStatus:     true,
-		NewTaskStatus:        "failed",
-		NewRetryCount:        int(newRetryCount),
-		CreateExecution:      true,
-		ExecutionStartedAt:   result.StartedAt,
-		ExecutionCompletedAt: result.CompletedAt,
-		ExecutionSeconds:     result.ExecutionSeconds,
+	// Row 1: task_status_updated (FAILED)
+	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", int32(newRetryCount)); err != nil {
+		return fmt.Errorf("task_status_updated: %w", err)
 	}
 
-	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
-		return fmt.Errorf("failed to create outbox entry: %w", err)
+	// Row 2: task_execution_recorded
+	if err := h.writeTaskExecutionRecordedWithLogS3Key(ctx, repo, cmd, executionID, result, errorMsg, logS3Key); err != nil {
+		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
-	// Second outbox entry: notify orchestrator
-	notifyEntry := &model.K8sStatusOutboxEntry{
-		EventType:        "node_status_updated",
-		StreamName:       "node.updated:v1",
-		TaskID:           cmd.TaskID,
-		ScheduleID:       cmd.ScheduleID,
-		ScheduleName:     cmd.ScheduleName,
-		ServiceName:      cmd.ServiceName,
-		SchemaName:       cmd.SchemaName,
-		TableName:        cmd.TableName,
-		JobName:          cmd.JobName,
-		NewTaskStatus:    "FAILED",
-		UpdateTaskStatus: false,
-		CreateExecution:  false,
-	}
-	if err := tx.OutboxRepo().Create(ctx, notifyEntry); err != nil {
-		return fmt.Errorf("failed to create notify outbox entry: %w", err)
+	// Row 3: node_status_updated → node.updated:v1
+	if err := h.writeNodeStatusUpdated(ctx, repo, cmd, "FAILED"); err != nil {
+		return fmt.Errorf("node_status_updated: %w", err)
 	}
 
-	h.logger.Warn("Job failed permanently - outbox entries created",
+	h.logger.Warn("Job failed permanently — outbox entries created",
 		"task_id", cmd.TaskID,
 		"job_name", cmd.JobName,
 		"retry_count", newRetryCount,
@@ -308,8 +260,13 @@ func retryJobName(baseJobName string, retryCount int32) string {
 	return baseJobName + suffix
 }
 
-// handleFailedWithRetry handles failed jobs that can be retried
+// handleFailedWithRetry handles failed jobs that can be retried.
+// Writes 3 canonical outbox rows in the transaction:
+//   - task_status_updated (FAILED)
+//   - task_execution_recorded
+//   - task_retry (→ retry.task:v1)
 func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount, maxRetries int32) error {
+	repo := tx.OutboxRepo()
 	newRetryCount := retryCount + 1
 
 	executionID, logS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
@@ -320,39 +277,44 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, tx uow.T
 	}
 	newJobName := retryJobName(cmd.JobName, newRetryCount)
 
-	entry := &model.K8sStatusOutboxEntry{
-		EventType:    "task_retry",
-		StreamName:   "retry.task:v1",
-		TaskID:       cmd.TaskID,
-		ScheduleID:   cmd.ScheduleID,
+	// Row 1: task_status_updated (FAILED, with new retry count)
+	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", newRetryCount); err != nil {
+		return fmt.Errorf("task_status_updated: %w", err)
+	}
+
+	// Row 2: task_execution_recorded (for the failed attempt)
+	if err := h.writeTaskExecutionRecordedWithLogS3Key(ctx, repo, cmd, executionID, result, errorMsg, logS3Key); err != nil {
+		return fmt.Errorf("task_execution_recorded: %w", err)
+	}
+
+	// Row 3: task_retry → retry.task:v1
+	retryPayload, err := json.Marshal(event.TaskRetry{
+		TaskID:       cmd.TaskID.String(),
+		ScheduleID:   cmd.ScheduleID.String(),
 		ScheduleName: cmd.ScheduleName,
 		ServiceName:  cmd.ServiceName,
 		SchemaName:   cmd.SchemaName,
 		TableName:    cmd.TableName,
 		JobName:      newJobName,
-		NodeType:     cmd.NodeType,
 		ImageTag:     cmd.ImageTag,
-
-		ErrorMessage:   errorMsg,
-		TaskRetryCount: int(retryCount),
-		TaskMaxRetries: int(maxRetries),
-		ExecutionID:    executionID,
-		LogS3Key:       logS3Key,
-
-		UpdateTaskStatus:     true,
-		NewTaskStatus:        "failed",
-		NewRetryCount:        int(newRetryCount),
-		CreateExecution:      true,
-		ExecutionStartedAt:   result.StartedAt,
-		ExecutionCompletedAt: result.CompletedAt,
-		ExecutionSeconds:     result.ExecutionSeconds,
+		RetryCount:   int(newRetryCount),
+		MaxRetries:   int(maxRetries),
+		NodeType:     cmd.NodeType,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal task_retry: %w", err)
+	}
+	if err := repo.Create(ctx, &pkgoutbox.Entry{
+		AggregateType: "task",
+		AggregateID:   cmd.TaskID,
+		EventType:     "task_retry",
+		Payload:       retryPayload,
+		StreamName:    streams.RetryTaskV1,
+	}); err != nil {
+		return fmt.Errorf("create task_retry row: %w", err)
 	}
 
-	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
-		return fmt.Errorf("failed to create outbox entry: %w", err)
-	}
-
-	h.logger.Warn("Job failed, scheduling retry - outbox entry created",
+	h.logger.Warn("Job failed, scheduling retry — outbox entries created",
 		"task_id", cmd.TaskID,
 		"job_name", cmd.JobName,
 		"retry_count", newRetryCount,
@@ -362,8 +324,10 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, tx uow.T
 	return nil
 }
 
-// handleRunning handles still-running jobs
+// handleRunning handles still-running jobs.
+// Writes 1 canonical outbox row: check_delayed (→ check.k8s:v1)
 func (h *CheckStatusHandler) handleRunning(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus) error {
+	repo := tx.OutboxRepo()
 	checkAfter := time.Now().Add(time.Duration(h.config.CheckDelaySeconds) * time.Second)
 
 	maxRetries := cmd.MaxRetries
@@ -371,33 +335,40 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, tx uow.Transacti
 		maxRetries = int32(h.config.DefaultTaskMaxRetries)
 	}
 
-	// Create outbox entry for delayed check
-	entry := &model.K8sStatusOutboxEntry{
-		EventType:    "check_delayed",
-		StreamName:   "check.k8s:v1", // Publish back to check stream for re-check
-		TaskID:       cmd.TaskID,
-		ScheduleID:   cmd.ScheduleID,
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  cmd.ServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		JobName:      cmd.JobName,
-		NodeType:     cmd.NodeType,
-		ImageTag:     cmd.ImageTag,
+	// Determine the outbox entry ID to carry forward for future dedup; use a new UUID
+	// so each check-delayed row has its own identity in the check.k8s:v1 stream.
+	outboxEntryID := uuid.New()
 
-		TaskRetryCount: int(cmd.RetryCount),
-		TaskMaxRetries: int(maxRetries),
-		CheckAfter:     checkAfter.Unix(),
-
-		UpdateTaskStatus: false, // Don't update task status for running jobs
-		CreateExecution:  false, // Don't create execution for running jobs
+	checkPayload, err := json.Marshal(event.JobCheckRequest{
+		OutboxEntryID: outboxEntryID.String(),
+		TaskID:        cmd.TaskID.String(),
+		ScheduleID:    cmd.ScheduleID.String(),
+		ScheduleName:  cmd.ScheduleName,
+		ServiceName:   cmd.ServiceName,
+		SchemaName:    cmd.SchemaName,
+		TableName:     cmd.TableName,
+		JobName:       cmd.JobName,
+		CheckAfter:    checkAfter.Unix(),
+		NodeType:      cmd.NodeType,
+		ImageTag:      cmd.ImageTag,
+		RetryCount:    int(cmd.RetryCount),
+		MaxRetries:    int(maxRetries),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal check_delayed: %w", err)
+	}
+	if err := repo.Create(ctx, &pkgoutbox.Entry{
+		ID:            outboxEntryID,
+		AggregateType: "task",
+		AggregateID:   cmd.TaskID,
+		EventType:     "check_delayed",
+		Payload:       checkPayload,
+		StreamName:    streams.CheckK8sV1,
+	}); err != nil {
+		return fmt.Errorf("create check_delayed row: %w", err)
 	}
 
-	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
-		return fmt.Errorf("failed to create outbox entry: %w", err)
-	}
-
-	h.logger.Debug("Job still running, scheduling re-check - outbox entry created",
+	h.logger.Debug("Job still running, scheduling re-check — outbox entry created",
 		"task_id", cmd.TaskID,
 		"job_name", cmd.JobName,
 		"check_after", checkAfter,
@@ -406,8 +377,12 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, tx uow.Transacti
 	return nil
 }
 
-// handleUnknown handles unknown job statuses
+// handleUnknown handles unknown job statuses (treated as permanent failure).
+// Writes 2 canonical outbox rows in the transaction:
+//   - task_status_updated (FAILED)
+//   - task_failed (→ task.failed:v1)
 func (h *CheckStatusHandler) handleUnknown(ctx context.Context, tx uow.Transaction, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
+	repo := tx.OutboxRepo()
 	errorMsg := h.truncateErrorMessage(result.TerminationMsg)
 	if errorMsg == "" {
 		errorMsg = "Job not found or unknown status"
@@ -415,38 +390,134 @@ func (h *CheckStatusHandler) handleUnknown(ctx context.Context, tx uow.Transacti
 
 	newRetryCount := cmd.RetryCount
 
-	// Create outbox entry for unknown status (treat as failed permanently)
-	entry := &model.K8sStatusOutboxEntry{
-		EventType:    "task_failed",
-		StreamName:   "task.failed:v1",
-		TaskID:       cmd.TaskID,
-		ScheduleID:   cmd.ScheduleID,
+	// Row 1: task_status_updated (FAILED)
+	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", newRetryCount); err != nil {
+		return fmt.Errorf("task_status_updated: %w", err)
+	}
+
+	// Row 2: task_failed → task.failed:v1
+	failedPayload, err := json.Marshal(event.TaskFailed{
+		TaskID:       cmd.TaskID.String(),
+		ScheduleID:   cmd.ScheduleID.String(),
 		ScheduleName: cmd.ScheduleName,
 		ServiceName:  cmd.ServiceName,
 		SchemaName:   cmd.SchemaName,
 		TableName:    cmd.TableName,
 		JobName:      cmd.JobName,
-
-		ErrorMessage:   errorMsg,
-		TaskRetryCount: int(newRetryCount),
-
-		UpdateTaskStatus: true,
-		NewTaskStatus:    "failed",
-		NewRetryCount:    int(newRetryCount),
-		CreateExecution:  true,
+		ErrorMessage: errorMsg,
+		RetryCount:   int(newRetryCount),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal task_failed: %w", err)
+	}
+	if err := repo.Create(ctx, &pkgoutbox.Entry{
+		AggregateType: "task",
+		AggregateID:   cmd.TaskID,
+		EventType:     "task_failed",
+		Payload:       failedPayload,
+		StreamName:    streams.TaskFailedV1,
+	}); err != nil {
+		return fmt.Errorf("create task_failed row: %w", err)
 	}
 
-	if err := tx.OutboxRepo().Create(ctx, entry); err != nil {
-		return fmt.Errorf("failed to create outbox entry: %w", err)
-	}
-
-	h.logger.Error("Job status unknown - outbox entry created",
+	h.logger.Error("Job status unknown — outbox entries created",
 		"task_id", cmd.TaskID,
 		"job_name", cmd.JobName,
 		"error", errorMsg,
 	)
 
 	return nil
+}
+
+// writeTaskStatusUpdated writes a task_status_updated canonical outbox row.
+func (h *CheckStatusHandler) writeTaskStatusUpdated(
+	ctx context.Context,
+	repo pkgoutbox.Repository,
+	taskID, scheduleID uuid.UUID,
+	status string,
+	retryCount int32,
+) error {
+	payload, err := json.Marshal(pkgevents.TaskStatusUpdated{
+		TaskID:     taskID.String(),
+		ScheduleID: scheduleID.String(),
+		Status:     status,
+		RetryCount: retryCount,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	return repo.Create(ctx, &pkgoutbox.Entry{
+		AggregateType: "task",
+		AggregateID:   taskID,
+		EventType:     "task_status_updated",
+		Payload:       payload,
+		StreamName:    streams.TaskStatusUpdatedV1,
+	})
+}
+
+// writeTaskExecutionRecordedWithLogS3Key writes a task_execution_recorded canonical outbox row.
+func (h *CheckStatusHandler) writeTaskExecutionRecordedWithLogS3Key(
+	ctx context.Context,
+	repo pkgoutbox.Repository,
+	cmd command.CheckJobStatus,
+	executionID uuid.UUID,
+	result *model.K8sPodResult,
+	errorMsg, logS3Key string,
+) error {
+	exec := pkgevents.TaskExecutionRecorded{
+		ExecutionID:      executionID.String(),
+		TaskID:           cmd.TaskID.String(),
+		JobName:          cmd.JobName,
+		ExecutionSeconds: result.ExecutionSeconds,
+		ErrorMessage:     errorMsg,
+		LogS3Key:         logS3Key,
+	}
+	if result.StartedAt != nil {
+		exec.StartedAt = result.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if result.CompletedAt != nil {
+		exec.CompletedAt = result.CompletedAt.UTC().Format(time.RFC3339)
+	}
+
+	payload, err := json.Marshal(exec)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	return repo.Create(ctx, &pkgoutbox.Entry{
+		AggregateType: "task",
+		AggregateID:   cmd.TaskID,
+		EventType:     "task_execution_recorded",
+		Payload:       payload,
+		StreamName:    streams.TaskExecutionRecordedV1,
+	})
+}
+
+// writeNodeStatusUpdated writes a node_status_updated canonical outbox row (→ node.updated:v1).
+func (h *CheckStatusHandler) writeNodeStatusUpdated(
+	ctx context.Context,
+	repo pkgoutbox.Repository,
+	cmd command.CheckJobStatus,
+	status string,
+) error {
+	payload, err := json.Marshal(event.NodeStatusUpdated{
+		TaskID:       cmd.TaskID.String(),
+		ScheduleID:   cmd.ScheduleID.String(),
+		ScheduleName: cmd.ScheduleName,
+		ServiceName:  cmd.ServiceName,
+		SchemaName:   cmd.SchemaName,
+		TableName:    cmd.TableName,
+		Status:       status,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	return repo.Create(ctx, &pkgoutbox.Entry{
+		AggregateType: "task",
+		AggregateID:   cmd.TaskID,
+		EventType:     "node_status_updated",
+		Payload:       payload,
+		StreamName:    streams.NodeUpdatedV1,
+	})
 }
 
 // truncateErrorMessage truncates error messages to configured max length

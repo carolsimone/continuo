@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
-	"github.com/carolsimone/continuo/orchestrator/domain/repository"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/jmoiron/sqlx"
 )
 
 // UnitOfWork defines the interface for managing database transactions
 type UnitOfWork interface {
-	OutboxRepo() repository.OutboxRepository
+	OutboxRepo() pkgoutbox.Repository
 	MessageProcessingRepo() messageprocessing.Repository
 	Begin(ctx context.Context) error
 	Commit() error
@@ -24,7 +23,6 @@ type UnitOfWork interface {
 type PostgresUnitOfWork struct {
 	db                *sqlx.DB
 	tx                *sqlx.Tx
-	outboxRepo        repository.OutboxRepository
 	msgProcessingRepo messageprocessing.Repository
 	logger            *slog.Logger
 	inTx              bool
@@ -38,12 +36,14 @@ func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) UnitOfWork {
 	}
 }
 
-// OutboxRepo returns the outbox repository
-func (uow *PostgresUnitOfWork) OutboxRepo() repository.OutboxRepository {
+// OutboxRepo returns a shared outbox repository bound to orchestrator_outbox.
+// When a transaction is active the repository operates inside it, so outbox
+// writes are atomic with the rest of the handler's changes.
+func (uow *PostgresUnitOfWork) OutboxRepo() pkgoutbox.Repository {
 	if uow.tx != nil {
-		return postgres.NewOutboxRepositoryWithExecutor(uow.tx, uow.logger)
+		return pkgoutbox.NewPostgresRepository(uow.tx, "orchestrator_outbox", uow.logger)
 	}
-	return postgres.NewOutboxRepository(uow.db, uow.logger)
+	return pkgoutbox.NewPostgresRepository(uow.db, "orchestrator_outbox", uow.logger)
 }
 
 // MessageProcessingRepo returns the message processing repository

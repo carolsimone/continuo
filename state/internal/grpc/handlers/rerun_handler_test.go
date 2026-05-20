@@ -22,7 +22,6 @@ type rerunFixture struct {
 	Handler       *RerunHandler
 	SchedulerRepo postgres.SchedulerTrackerRepository
 	TaskRepo      postgres.TaskTrackerRepository
-	OutboxRepo    postgres.OutboxRepository
 	DB            *sqlx.DB
 	Cleanup       func()
 }
@@ -36,19 +35,18 @@ func setupRerunFixture(t *testing.T) *rerunFixture {
 	logger := newTestLogger()
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
-	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
+	outboxPub := postgres.NewOutboxPublisher(logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
 	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
 	useCase := svchandlers.NewTriggerRerunHandler(logger)
 	handler := NewRerunHandler(useCase, factory, logger)
-	return &rerunFixture{Handler: handler, SchedulerRepo: schedulerRepo, TaskRepo: taskRepo, OutboxRepo: outboxRepo, DB: db, Cleanup: func() { db.Close() }}
+	return &rerunFixture{Handler: handler, SchedulerRepo: schedulerRepo, TaskRepo: taskRepo, DB: db, Cleanup: func() { db.Close() }}
 }
 
 func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
@@ -58,7 +56,7 @@ func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
 	// Reuse rebase fixture's seeders — they're not rebase-specific.
 	fx := &rebaseFixture{
 		Handler: nil, SchedulerRepo: rfx.SchedulerRepo, TaskRepo: rfx.TaskRepo,
-		OutboxRepo: rfx.OutboxRepo, DB: rfx.DB, Cleanup: func() {},
+		DB: rfx.DB, Cleanup: func() {},
 	}
 
 	scheduleName := "rerun-happy-" + uuid.New().String()[:8]

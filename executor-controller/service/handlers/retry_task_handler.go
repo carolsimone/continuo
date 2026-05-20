@@ -28,7 +28,7 @@ func (h *RetryTaskHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	evt events.RetryTask,
-	_ uuid.UUID,
+	msgProcID uuid.UUID,
 ) error {
 	cancelled, err := u.CancelledSchedulesRepo().Exists(ctx, evt.ScheduleID)
 	if err != nil {
@@ -39,5 +39,5 @@ func (h *RetryTaskHandler) Handle(
 			"schedule_id", evt.ScheduleID, "task_id", evt.TaskID)
 		return nil
 	}
-	return createDeploymentOutboxEntry(ctx, u, evt.QueryModel, evt.TaskRetryCount, evt.MaxRetries)
+	return createDeploymentOutboxEntry(ctx, u, evt.QueryModel, msgProcID, evt.TaskRetryCount, evt.MaxRetries)
 }

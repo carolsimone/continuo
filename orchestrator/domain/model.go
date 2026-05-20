@@ -2,8 +2,6 @@ package domain
 
 import (
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type Criticality string
@@ -61,31 +59,6 @@ type TableNode struct {
 type ScheduleGraph struct {
 	Nodes []*TableNode
 	Edges []*GraphEdge
-}
-
-// OutboxEntry represents an event staged for publishing
-type OutboxEntry struct {
-	ID                  uuid.UUID
-	MessageProcessingID *uuid.UUID
-	AggregateType       string
-	AggregateID         uuid.UUID
-	EventType           string
-	Payload             []byte
-	StreamName          string
-	CreatedAt           time.Time
-	ProcessedAt         *time.Time
-	Status              string
-	RetryCount          int
-	MaxRetries          int
-	ErrorMessage        *string
-}
-
-// PublishedMessage tracks published outbox entries for dedup
-type PublishedMessage struct {
-	ID             uuid.UUID
-	OutboxEntryID  uuid.UUID
-	RedisMessageID *string
-	PublishedAt    time.Time
 }
 
 // CascadeTaskSkipped is the event payload written to task.status.updated:v1 outbox entries

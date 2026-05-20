@@ -7,10 +7,24 @@ import (
 	"sync"
 	"time"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
-	"github.com/carolsimone/continuo/k8s-controller/domain/model"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
+
+// StuckEntryRepository provides the read and remediation operations needed by
+// StuckEntryResolver against the k8s_outbox table. These operations are not
+// part of the canonical pkg/outbox.Repository because they are operational
+// tooling specific to the stuck-entry recovery path.
+type StuckEntryRepository interface {
+	// GetStuckEntries returns outbox entries whose retry budget is exhausted and
+	// that have been in pending state longer than stuckThresholdSeconds.
+	// Implementations must use FOR UPDATE SKIP LOCKED.
+	GetStuckEntries(ctx context.Context, limit int, stuckThresholdSeconds int) ([]*pkgoutbox.Entry, error)
+
+	// ForceMarkFailed marks an entry as failed with a provided error message,
+	// also setting processed_at. Used only by the stuck-entry resolver.
+	ForceMarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error
+}
 
 // ResolverConfig holds configuration for the StuckEntryResolver
 type ResolverConfig struct {
@@ -22,16 +36,16 @@ type ResolverConfig struct {
 
 // StuckEntryResolver detects and resolves outbox entries stuck in pending state
 type StuckEntryResolver struct {
-	outboxRepo     postgres.OutboxRepository
+	outboxRepo     StuckEntryRepository
 	config         *ResolverConfig
 	logger         *slog.Logger
 	resolveTracker map[uuid.UUID]int // Tracks resolve attempt count per entry
-	mu             sync.Mutex         // Protects resolveTracker
+	mu             sync.Mutex        // Protects resolveTracker
 }
 
 // NewStuckEntryResolver creates a new StuckEntryResolver
 func NewStuckEntryResolver(
-	outboxRepo postgres.OutboxRepository,
+	outboxRepo StuckEntryRepository,
 	config *ResolverConfig,
 	logger *slog.Logger,
 ) *StuckEntryResolver {
@@ -96,7 +110,7 @@ func (r *StuckEntryResolver) ResolveStuckEntries(ctx context.Context) error {
 		if err := r.resolveEntry(ctx, entry); err != nil {
 			r.logger.Error("Failed to resolve stuck entry",
 				"entry_id", entry.ID,
-				"task_id", entry.TaskID,
+				"aggregate_id", entry.AggregateID,
 				"error", err,
 			)
 		}
@@ -106,9 +120,9 @@ func (r *StuckEntryResolver) ResolveStuckEntries(ctx context.Context) error {
 }
 
 // resolveEntry attempts to mark a single entry as failed
-func (r *StuckEntryResolver) resolveEntry(ctx context.Context, entry *model.K8sStatusOutboxEntry) error {
+func (r *StuckEntryResolver) resolveEntry(ctx context.Context, entry *pkgoutbox.Entry) error {
 	entryID := entry.ID
-	taskID := entry.TaskID
+	aggregateID := entry.AggregateID
 
 	// Get current attempt count
 	r.mu.Lock()
@@ -118,14 +132,17 @@ func (r *StuckEntryResolver) resolveEntry(ctx context.Context, entry *model.K8sS
 	r.mu.Unlock()
 
 	// Build error message
-	originalError := entry.OutboxErrorMessage
+	originalError := ""
+	if entry.ErrorMessage != nil {
+		originalError = *entry.ErrorMessage
+	}
 	if originalError == "" {
 		originalError = "unknown error"
 	}
 
 	errorMessage := fmt.Sprintf(
 		"STUCK_ENTRY_RESOLVED: Entry exceeded max_retries (%d >= %d). Original error: %s. Resolved at attempt %d.",
-		entry.OutboxRetryCount,
+		entry.RetryCount,
 		entry.MaxRetries,
 		originalError,
 		currentAttempts,
@@ -135,7 +152,7 @@ func (r *StuckEntryResolver) resolveEntry(ctx context.Context, entry *model.K8sS
 	if err := r.outboxRepo.ForceMarkFailed(ctx, entryID, errorMessage); err != nil {
 		// Check if we've exceeded max resolve attempts
 		if currentAttempts >= r.config.MaxResolveAttempts {
-			r.escalateAlert(entryID, taskID, currentAttempts, err)
+			r.escalateAlert(entryID, aggregateID, currentAttempts, err)
 		}
 		return fmt.Errorf("failed to force mark entry as failed: %w", err)
 	}
@@ -147,9 +164,9 @@ func (r *StuckEntryResolver) resolveEntry(ctx context.Context, entry *model.K8sS
 
 	r.logger.Warn("Successfully resolved stuck entry",
 		"entry_id", entryID,
-		"task_id", taskID,
+		"aggregate_id", aggregateID,
 		"attempt", currentAttempts,
-		"retry_count", entry.OutboxRetryCount,
+		"retry_count", entry.RetryCount,
 		"max_retries", entry.MaxRetries,
 	)
 
@@ -157,14 +174,14 @@ func (r *StuckEntryResolver) resolveEntry(ctx context.Context, entry *model.K8sS
 }
 
 // escalateAlert logs a critical alert for entries that cannot be auto-resolved
-func (r *StuckEntryResolver) escalateAlert(entryID, taskID uuid.UUID, attempts int, err error) {
+func (r *StuckEntryResolver) escalateAlert(entryID, aggregateID uuid.UUID, attempts int, err error) {
 	r.logger.Error("CRITICAL: Stuck entry cannot be auto-resolved",
 		"alert_level", "CRITICAL",
 		"action_required", "MANUAL_DATABASE_INTERVENTION",
 		"entry_id", entryID,
-		"task_id", taskID,
+		"aggregate_id", aggregateID,
 		"resolve_attempts", attempts,
 		"error", err,
-		"recommended_action", fmt.Sprintf("UPDATE k8s_status_outbox SET status='failed', outbox_error_message='Manual intervention required', processed_at=NOW() WHERE id='%s'", entryID),
+		"recommended_action", fmt.Sprintf("UPDATE k8s_outbox SET status='failed', error_message='Manual intervention required', processed_at=NOW() WHERE id='%s'", entryID),
 	)
 }

@@ -56,9 +56,10 @@ func NewScheduleCatalogBinding(
 			}
 		}()
 
-		_, dup, err := messageprocessing.Dedup(
+		_, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
 			msg.ID, scheduleCatalogStreamName, []byte(payload),
+			messageprocessing.ExtractOutboxEntryID(msg.Values),
 		)
 		if err != nil {
 			return err

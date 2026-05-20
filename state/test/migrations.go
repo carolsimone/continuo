@@ -3,17 +3,11 @@ package test
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"sort"
-	"strconv"
-	"strings"
-)
 
-// migrationVersionRE matches Flyway versioned migrations: V<n>__<description>.sql
-var migrationVersionRE = regexp.MustCompile(`^V(\d+)__`)
+	"github.com/carolsimone/continuo/pkg/testmigrations"
+)
 
 // ApplyMigrations runs every Flyway migration in db/migration/state/ against
 // the provided *sql.DB, in ascending version order. Keeps integration and
@@ -25,48 +19,11 @@ var migrationVersionRE = regexp.MustCompile(`^V(\d+)__`)
 // and on a developer machine running `go test ./state/test/...` from the
 // repo root.
 func ApplyMigrations(db *sql.DB) error {
-	migrationDir, err := stateMigrationDir()
+	dir, err := stateMigrationDir()
 	if err != nil {
 		return err
 	}
-
-	entries, err := os.ReadDir(migrationDir)
-	if err != nil {
-		return fmt.Errorf("read migration dir %s: %w", migrationDir, err)
-	}
-
-	type migration struct {
-		version int
-		name    string
-		path    string
-	}
-	var migrations []migration
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
-			continue
-		}
-		match := migrationVersionRE.FindStringSubmatch(e.Name())
-		if match == nil {
-			continue
-		}
-		v, err := strconv.Atoi(match[1])
-		if err != nil {
-			return fmt.Errorf("parse version from %s: %w", e.Name(), err)
-		}
-		migrations = append(migrations, migration{v, e.Name(), filepath.Join(migrationDir, e.Name())})
-	}
-	sort.Slice(migrations, func(i, j int) bool { return migrations[i].version < migrations[j].version })
-
-	for _, m := range migrations {
-		contents, err := os.ReadFile(m.path)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", m.name, err)
-		}
-		if _, err := db.Exec(string(contents)); err != nil {
-			return fmt.Errorf("apply %s: %w", m.name, err)
-		}
-	}
-	return nil
+	return testmigrations.Apply(db, dir)
 }
 
 // stateMigrationDir returns the absolute path to db/migration/state/ as a

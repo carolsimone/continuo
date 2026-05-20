@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/adapters/http"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
+	k8spub "github.com/carolsimone/continuo/k8s-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
 	"github.com/carolsimone/continuo/k8s-controller/config"
@@ -20,6 +22,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/service/messagebus"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -78,8 +81,7 @@ func main() {
 		return pgDB.Close()
 	})
 
-	// Step 6: Initialize repositories and transaction runner
-	outboxRepo := postgres.NewOutboxRepository(pgDB, logger)
+	// Step 6: Initialize transaction runner for handler writes
 	txRunner := uow.NewPostgresTransactionRunner(pgDB, logger)
 
 	logger.Info("PostgreSQL repositories initialized")
@@ -91,20 +93,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Step 9: Initialize Redis producer
-	producer := redis.NewMultiProducer(
-		redisClient,
-		streams.CheckK8sV1,
-		streams.RetryTaskV1,
-		streams.TaskFailedV1,
-		logger,
-	)
-
-	logger.Info("Redis producer initialized",
-		"check_stream", streams.CheckK8sV1,
-		"retry_stream", streams.RetryTaskV1,
-		"failed_stream", streams.TaskFailedV1,
-	)
+	logger.Info("K8s client initialized")
 
 	// Step 10: Initialize S3 log uploader
 	s3Client := s3adapter.NewS3Client(
@@ -181,23 +170,30 @@ func main() {
 		"check_group", streams.K8sCheckStatus,
 	)
 
-	// Step 14: Initialize and start OutboxProcessor (background)
-	outboxProcessor := handlers.NewOutboxProcessor(
-		outboxRepo,
-		producer,
+	// Step 14: Initialize and start the canonical outbox processor (background).
+	// The OutboxPublisher routes each k8s_outbox row to its typed Redis stream.
+	outboxPub := k8spub.NewOutboxPublisher(redisClient, logger)
+	outboxProc := pkgoutbox.NewProcessor(
+		pgDB,
+		"k8s_outbox",
+		outboxPub,
+		nil, // no terminal-failure hook for k8s
 		logger,
+		pkgoutbox.ProcessorConfig{Tick: time.Second, BatchSize: 100},
 	)
 
 	go func() {
 		logger.Info("Starting outbox processor")
-		if err := outboxProcessor.Run(ctx); err != nil && err != context.Canceled {
+		if err := outboxProc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("Outbox processor stopped with error", "error", err)
 		}
 	}()
 
 	logger.Info("Outbox processor started")
 
-	// Step 15: Initialize and start StuckEntryResolver (background)
+	// Step 15: Initialize and start StuckEntryResolver (background).
+	// Uses a dedicated repository against k8s_outbox for stuck-entry remediation.
+	stuckRepo := postgres.NewK8sOutboxStuckRepository(pgDB, logger)
 	resolverConfig := &handlers.ResolverConfig{
 		CheckIntervalSeconds:  cfg.Resolver.CheckIntervalSeconds,
 		StuckThresholdSeconds: cfg.Resolver.StuckThresholdSeconds,
@@ -206,14 +202,14 @@ func main() {
 	}
 
 	stuckEntryResolver := handlers.NewStuckEntryResolver(
-		outboxRepo,
+		stuckRepo,
 		resolverConfig,
 		logger,
 	)
 
 	go func() {
 		logger.Info("Starting stuck entry resolver")
-		if err := stuckEntryResolver.Run(ctx); err != nil && err != context.Canceled {
+		if err := stuckEntryResolver.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("Stuck entry resolver stopped with error", "error", err)
 		}
 	}()
@@ -280,13 +276,13 @@ func main() {
 	// The deployed consumer runs in the background; the check consumer runs as the main blocking loop.
 	go func() {
 		logger.Info("Starting deployed consumer")
-		if err := deployedConsumer.Start(ctx); err != nil && err != context.Canceled {
+		if err := deployedConsumer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("Deployed consumer stopped with error", "error", err)
 		}
 	}()
 
 	logger.Info("Starting check consumer (main loop)")
-	if err := checkConsumer.Start(ctx); err != nil && err != context.Canceled {
+	if err := checkConsumer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("Check consumer stopped with error", "error", err)
 		os.Exit(1)
 	}

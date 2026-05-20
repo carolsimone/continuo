@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -37,7 +38,7 @@ func NewInitializeRunHandler(
 }
 
 // Handle processes the initialize-run input.
-func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.InitializeRunInput, messageID string) error {
+func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.InitializeRunInput, messageID string, outboxEntryID *uuid.UUID) error {
 	h.logger.Info("Processing run initialization",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
@@ -57,7 +58,7 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.Initi
 	defer h.uow.Rollback() //nolint:errcheck
 
 	// Check for duplicate message.
-	msgProcessingID, shouldSkip, err := h.handleInitRunDedup(ctx, messageID, payload)
+	msgProcessingID, shouldSkip, err := h.handleInitRunDedup(ctx, messageID, payload, outboxEntryID)
 	if err != nil {
 		return fmt.Errorf("message deduplication failed: %w", err)
 	}
@@ -91,14 +92,14 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.Initi
 		return fmt.Errorf("failed to build outbox payload: %w", err)
 	}
 
-	outboxEntry := &domain.OutboxEntry{
+	outboxEntry := &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         uuid.New(),
 		EventType:           "run_initialized",
 		Payload:             outboxPayload,
-		StreamName:          "run.initialized:v1",
+		StreamName:          streams.RunInitializedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}
@@ -126,45 +127,20 @@ func (h *InitializeRunHandler) Handle(ctx context.Context, cmd domainModel.Initi
 }
 
 // handleInitRunDedup checks if message was already processed.
-// Returns (messageProcessingID, shouldSkip, error).
+// handleInitRunDedup delegates to pkg/messageprocessing.DedupWithOutboxEntryID
+// so producer-side Processor-crash redeliveries (same outbox row republished
+// with a fresh Redis msg_id) are caught by the outbox_entry_id secondary
+// uniqueness key.
 func (h *InitializeRunHandler) handleInitRunDedup(
 	ctx context.Context,
 	messageID string,
 	messagePayload []byte,
+	outboxEntryID *uuid.UUID,
 ) (uuid.UUID, bool, error) {
-	msgProc := &messageprocessing.MessageProcessing{
-		MessageID:  messageID,
-		StreamName: "initialize.run:v1",
-		State:      "processing",
-		Payload:    messagePayload,
-	}
-
-	id, inserted, err := h.uow.MessageProcessingRepo().InsertIfNotExists(ctx, msgProc)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("failed to insert message processing: %w", err)
-	}
-
-	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "initialize.run:v1")
-		if err != nil {
-			return uuid.Nil, false, fmt.Errorf("failed to get existing message: %w", err)
-		}
-
-		if existing.State == "completed" || existing.State == "acked" {
-			h.logger.Info("Message already processed, skipping",
-				"message_id", messageID,
-				"state", existing.State,
-			)
-			return existing.ID, true, nil
-		}
-
-		h.logger.Warn("Message being processed by another instance",
-			"message_id", messageID,
-		)
-		return existing.ID, true, nil
-	}
-
-	return id, false, nil
+	return messageprocessing.DedupWithOutboxEntryID(
+		ctx, h.uow.MessageProcessingRepo(), h.logger,
+		messageID, "initialize.run:v1", messagePayload, outboxEntryID,
+	)
 }
 
 // buildRunInitializedPayloadFromProjection serializes task projection into the outbox JSON payload.

@@ -237,24 +237,12 @@ func TestSchedulerTrackerRepository_Create_WithNullableFields(t *testing.T) {
 }
 
 // ---- Schedule Catalog Repository Tests ----
-
-func setupCatalogSchema(t *testing.T, db *sqlx.DB) {
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS schedule_catalog (
-			schedule_name VARCHAR(50) PRIMARY KEY,
-			first_seen_at TIMESTAMPTZ NOT NULL,
-			last_seen_at  TIMESTAMPTZ NOT NULL,
-			removed_at    TIMESTAMPTZ,
-			service_metadata JSONB NOT NULL DEFAULT '{}'
-		)
-	`)
-	require.NoError(t, err, "Failed to create schedule_catalog table")
-}
+// schedule_catalog is created by db/migration/state/V*.sql, which setupPostgres
+// applies via ApplyMigrations — these tests just consume it.
 
 func TestScheduleCatalogRepository_UpsertAll_Insert(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	setupCatalogSchema(t, db)
 
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
@@ -278,7 +266,6 @@ func TestScheduleCatalogRepository_UpsertAll_Insert(t *testing.T) {
 func TestScheduleCatalogRepository_UpsertAll_ReactivatesRemoved(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	setupCatalogSchema(t, db)
 
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
@@ -302,7 +289,6 @@ func TestScheduleCatalogRepository_UpsertAll_ReactivatesRemoved(t *testing.T) {
 func TestScheduleCatalogRepository_SoftDeleteAbsent(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	setupCatalogSchema(t, db)
 
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
@@ -320,7 +306,6 @@ func TestScheduleCatalogRepository_SoftDeleteAbsent(t *testing.T) {
 func TestScheduleCatalogRepository_ExistsActive(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	setupCatalogSchema(t, db)
 
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
@@ -339,7 +324,6 @@ func TestScheduleCatalogRepository_ExistsActive(t *testing.T) {
 func TestScheduleCatalogRepository_ExistsActive_SoftDeletedReturnsFalse(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	setupCatalogSchema(t, db)
 
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()

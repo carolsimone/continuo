@@ -14,12 +14,15 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/ports"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // schedulerStartedEvent holds the fields read back from the Redis stream.
@@ -106,7 +109,6 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 	execRepo := postgres.NewTaskExecutionRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
-	outboxRepo := postgres.NewOutboxRepository(db, logger)
 
 	// Seed schedule_catalog rows so the activation policy can verify existence.
 	// removed_at IS NULL means active. The e2e test uses "daily" and "hourly".
@@ -119,12 +121,12 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NoError(t, err, "Failed to seed schedule_catalog")
 
 	// Wire the UoW factory. Each cron tick gets a fresh UoW.
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, outboxRepo, logger)
+	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
 	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
-	outboxPub := postgres.NewOutboxPublisher(outboxRepo)
+	domainOutboxPub := postgres.NewOutboxPublisher(logger)
 	clk := ports.SystemClock{}
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, outboxRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, runRepoPort, catalogRepoPort, domainOutboxPub, clk, logger)
 	}
 
 	// Initialize activation handler
@@ -132,7 +134,15 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 
 	// Start outbox processor in background — picks up pending outbox entries and
 	// publishes them to Redis.
-	outboxProcessor := svchandlers.NewOutboxProcessor(outboxRepo, redisClient, logger)
+	redisPub := statepublisher.NewOutboxPublisher(redisClient, logger)
+	outboxProcessor := pkgoutbox.NewProcessor(
+		db,
+		"state_outbox",
+		redisPub,
+		nil,
+		logger,
+		pkgoutbox.ProcessorConfig{Tick: 500 * time.Millisecond, BatchSize: 10},
+	)
 	go func() {
 		if err := outboxProcessor.Run(ctx); err != nil {
 			logger.Error("Outbox processor error", "error", err)
@@ -194,7 +204,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Allow outbox processor a moment to publish any remaining entries
 	time.Sleep(2 * time.Second)
 
-	streamName := "scheduler.started:v1"
+	streamName := streams.SchedulerStartedV1
 
 	// Read all messages from stream
 	readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)

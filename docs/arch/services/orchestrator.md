@@ -109,11 +109,12 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 | Table | Purpose |
 |---|---|
 | `message_processing` | Inbound dedup: one row per consumed Redis message, scoped by `(message_id, stream_name)`; tracks state (`processing` / `completed` / `acked`) |
-| `outbox` | Outbound dispatch intents: one row per downstream node ready for execution |
-| `published_messages` | Outbound idempotency: records `(outbox_entry_id, redis_message_id)` after successful publish |
+| `orchestrator_outbox` | Canonical transactional outbox — each write-time side effect is a separate row with a JSONB payload; `pkg/outbox.Processor` polls and publishes to the typed Redis stream per row |
 | `topology_state` | Singleton row holding the monotonic `topology_generation` counter |
 | `cancelled_schedules` | Schedule IDs cancelled by an upstream control-plane signal; consulted to short-circuit terminal-state processing for already-cancelled runs |
 | `rejected_topology_messages` | Forensics for permanently-rejected `manifest.loaded:v1` payloads |
+
+All `orchestrator_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`.
 
 ### Adapter-replaceable ports
 
@@ -123,7 +124,6 @@ All ports the service layer depends on for adapter-replaceable storage live in `
 |---|---|
 | `OutboxRepository` | Postgres |
 | `MessageProcessingRepository` | Postgres |
-| `PublishedMessagesRepository` | Postgres |
 | `CancelledSchedulesRepository` | Postgres |
 | `RejectedTopologyRepository` | Postgres |
 | `TopologyStateRepository` | Postgres |
@@ -288,7 +288,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 | Redis consumer (`trigger.single_node_run:v1`) | Reads and dispatches to HandleSingleNodeRunHandler |
 | Redis consumer (`initialize.run:v1`) | Secondary entry path; runs `Snapshot(LatestFullDAG)` + dispatch. No active producer. |
 | Redis consumer (`run.finalized:v1`) | Projects state's terminal scheduler outcome onto Neo4j `:Run.completed_at` / `terminal_status`. Active fallback for runs that produce no `node.updated:v1` traffic. |
-| Outbox processor | Polls outbox for pending entries; publishes to `query.model:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `schedules.loaded:v1`; records in `published_messages` |
+| Outbox processor (`pkg/outbox.Processor`) | Polls `orchestrator_outbox` for pending entries; publishes each row to its `stream_name` via `orchestrator/adapters/publisher.OutboxPublisher` |
 | RunSweeper | Periodically deletes expired `Run` nodes (and their `EXECUTES` edges) older than `retention_days` |
 
 ## gRPC Callers
@@ -339,7 +339,6 @@ as warnings by `RunQueryService` but otherwise pass through unmodified.
 ## Reliability Patterns
 
 - **Inbound dedup**: `message_processing` keyed by `(message_id, stream_name)`; INSERT IF NOT EXISTS prevents double-processing. The composite key is required because Redis Streams assign IDs per-stream, so a single publisher can emit two messages to two streams in the same millisecond and produce identical message IDs that must not collide.
-- **Outbound idempotency**: `published_messages` tracks published outbox entries; republishing is safe
 - **Neo4j updates are outside the Postgres tx**: topology and status writes are idempotent; if the tx fails the message will be redelivered
 - **Snapshot reconciliation**: `manifest.loaded:v1` is treated as authoritative; nodes missing from the latest payload are retired from the current topology automatically
 - **Pre-assigned task UUIDs**: task IDs are committed to Neo4j EXECUTES edges before `run.entries.dispatched:v1` is produced; the outbox processor reads them at publish time, ensuring consistent IDs across retries

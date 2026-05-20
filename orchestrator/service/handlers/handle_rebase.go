@@ -27,7 +27,7 @@ func NewHandleRebaseHandler(u uow.UnitOfWork, snapshotSvc SnapshotService, logge
 	return &HandleRebaseHandler{uow: u, snapshotSvc: snapshotSvc, logger: logger}
 }
 
-func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainModel.RebaseInput, messageID string) error {
+func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainModel.RebaseInput, messageID string, outboxEntryID *uuid.UUID) error {
 	h.logger.Info("Processing rebase", "message_id", messageID, "run_id", cmd.RunID, "source_run_id", cmd.SourceRunID)
 
 	cmdPayload, err := json.Marshal(cmd)
@@ -40,7 +40,7 @@ func (h *HandleRebaseHandler) Handle(ctx context.Context, cmd domainModel.Rebase
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	msgProcessingID, shouldSkip, err := messageprocessing.Dedup(ctx, h.uow.MessageProcessingRepo(), h.logger, messageID, "trigger.rebase:v1", cmdPayload)
+	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(ctx, h.uow.MessageProcessingRepo(), h.logger, messageID, "trigger.rebase:v1", cmdPayload, outboxEntryID)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
 	}

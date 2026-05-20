@@ -13,7 +13,7 @@ sequenceDiagram
 
   Cron->>ST: CronScheduler.activateSchedule(name)
   Note over ST: ScheduleActivationService.ActivateSchedule (1 tx)<br/>scheduler_tracker INSERT — status=PENDING, init_status=in_progress, kind='cron'<br/>state_outbox INSERT for scheduler.started v1
-  ST->>R: publish scheduler.started v1 (state OutboxProcessor)
+  ST->>R: publish scheduler.started v1 (via pkg/outbox.Processor)
   Note right of R: payload — runner_id, schedule_name, service_metadata, kind='cron', source_run_id=''
 
   R->>OR: consume scheduler.started v1
@@ -31,7 +31,7 @@ sequenceDiagram
       Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker (skip if cancelled)<br/>BulkCreate task_tracker rows — status=PENDING<br/>SetTotalTaskCount, init_status=completed, status=RUNNING
     and executor launches seed/root jobs
       R->>EC: consume query.model v1
-      Note over EC: write deployment_outbox<br/>OutboxProcessor — CreateQueryJob (idempotent on JobName)
+      Note over EC: write executor_outbox<br/>OutboxPublisher — CreateQueryJob (idempotent on JobName)
       EC->>R: publish task.status.updated v1 (RUNNING)
       EC->>R: publish node.deployed v1
       R->>ST: consume task.status.updated v1 (RUNNING)
@@ -57,7 +57,7 @@ sequenceDiagram
   R->>KC: node.deployed:v1
   KC->>KC: GetJobStatus
   KC->>ST: GetTask(task_id)
-  KC->>KC: write k8s_status_outbox(task_succeeded + node_status_updated)
+  KC->>KC: write k8s_outbox(task_succeeded + node_status_updated)
   KC->>ST: UpdateTask(status=succeeded)
   KC->>ST: CreateTaskExecution(...)
   KC->>R: publish node.updated:v1
@@ -68,7 +68,7 @@ sequenceDiagram
   OR->>R: publish query.model:v1
 
   R->>EC: consume query.model:v1
-  EC->>EC: write deployment_outbox
+  EC->>EC: write executor_outbox
   EC->>ST: UpdateTask(status=RUNNING)
   EC->>R: publish node.deployed:v1
 ```
@@ -98,7 +98,7 @@ sequenceDiagram
   KC->>KC: GetJobStatus -> FAILED
   KC->>ST: GetTask(task_id)
   alt retries remain
-    KC->>KC: write k8s_status_outbox(task_retry)
+    KC->>KC: write k8s_outbox(task_retry)
     KC->>ST: UpdateTask(status=failed, retry_count+1)
     KC->>ST: CreateTaskExecution(...)
     KC->>S3: upload pod logs
@@ -107,7 +107,7 @@ sequenceDiagram
     EC->>ST: UpdateTask(status=RUNNING)
     EC->>R: publish node.deployed:v1
   else retries exhausted
-    KC->>KC: write k8s_status_outbox(task_failed + node_status_updated)
+    KC->>KC: write k8s_outbox(task_failed + node_status_updated)
     KC->>ST: UpdateTask(status=failed)
     KC->>ST: CreateTaskExecution(...)
     KC->>S3: upload pod logs
@@ -136,7 +136,7 @@ sequenceDiagram
   Note over ST: RerunHandler.TriggerRerun (sync, 1 tx) — delegates to<br/>synthesiseDerivedRun(kind='rerun', stream='trigger.rerun:v1'):<br/>validations — source exists / source FAILED|CANCELLED / source has ≥1 non-SUCCEEDED task / no active run on schedule_name<br/>scheduler_tracker INSERT — new row, kind='rerun', source_run_id=src, schedule_name=src.schedule_name, status=PENDING<br/>state_outbox INSERT for trigger.rerun:v1 with payload {schedule_id, schedule_name, kind, source_run_id}<br/>source row left untouched — stays at terminal status forever
   ST-->>UI: TriggerRerunResponse { run_id, schedule_name }
 
-  ST->>R: publish trigger.rerun:v1 (via state OutboxProcessor)
+  ST->>R: publish trigger.rerun:v1 (via pkg/outbox.Processor)
 
   R->>OR: consume trigger.rerun:v1
   Note over OR: HandleRerunHandler.Handle (1 tx)<br/>Snapshot(SourcePinnedDAG{}) in Neo4j —<br/>  read source :Run's :EXECUTES set<br/>  seed rebase set with non-SUCCEEDED source tasks<br/>  grow rebase set by DescendantsInSourceRun<br/>  MERGE new :Run inheriting topology_generation + service_metadata from source :Run<br/>  project rebased rows → PENDING with source's pinned (image_tag, manifest_version)<br/>  project everything else → InitialStatus = source's stored status, with inherited_from_task_id (root-resolved)<br/>DispatchDerivedRun helper writes 1× run.entries.dispatched:v1 (full projection, per-task Status + InheritedFromTaskID) + N× query.model:v1 (rebased rows only)
@@ -191,7 +191,7 @@ sequenceDiagram
   ST-->>UI: CancelScheduleResponse { schedule_id }
   UI-->>U: 200 OK { schedule_id }
 
-  ST->>R: publish schedule.cancelled:v1 (via OutboxProcessor)
+  ST->>R: publish schedule.cancelled:v1 (via pkg/outbox.Processor)
 
   par each consumer receives independently
     R->>OR: consume schedule.cancelled:v1
@@ -309,7 +309,7 @@ sequenceDiagram
   ST-->>UI: TriggerSingleNodeRunResponse { run_id, schedule_name }
   UI-->>U: 200 OK
 
-  ST->>R: publish trigger.single_node_run:v1 (via state OutboxProcessor)
+  ST->>R: publish trigger.single_node_run:v1 (via pkg/outbox.Processor)
   Note right of R: payload — schedule_id, schedule_name, service_name,<br/>schema_name, table_name, metadata_source, source_run_id?
 
   R->>OR: consume trigger.single_node_run:v1
@@ -328,7 +328,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker row (1 row)<br/>SetTotalTaskCount=1, init_status=completed, status=RUNNING
   and executor launches the job
     R->>EC: consume query.model:v1
-    Note over EC: identical to Flow 1 from here<br/>deployment_outbox → CreateQueryJob → task.status.updated:v1 RUNNING + node.deployed:v1
+    Note over EC: identical to Flow 1 from here<br/>executor_outbox → OutboxPublisher → CreateQueryJob → task.status.updated:v1 RUNNING + node.deployed:v1
   end
 ```
 
@@ -357,7 +357,7 @@ sequenceDiagram
   Note over ST: RebaseHandler.TriggerRebase (sync, 1 tx)<br/>eligibility — source exists, terminal FAILED|CANCELLED, ≥1 non-SUCCEEDED task<br/>scheduler_tracker INSERT — new row, kind='rebase', source_run_id=src, schedule_name=src.schedule_name, status=PENDING<br/>state_outbox INSERT for trigger.rebase v1<br/>source row left untouched
   ST-->>UI: TriggerRebaseResponse { run_id, schedule_name }
   UI-->>U: 200 OK
-  ST->>R: publish trigger.rebase v1 (via state OutboxProcessor)
+  ST->>R: publish trigger.rebase v1 (via pkg/outbox.Processor)
   Note right of R: payload — schedule_id (NEW run), schedule_name, source_run_id
 
   R->>OR: consume trigger.rebase v1
@@ -374,7 +374,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker — inherited rows land at SUCCEEDED with inherited_from_task_id<br/>rebased rows land at PENDING<br/>SetTotalTaskCount, init_status=completed<br/>auto-rollup if every task already terminal (defensive — no-op rebase)<br/>else status=RUNNING
   and executor launches rebased K8s Jobs
     R->>EC: consume query.model v1
-    Note over EC: identical to Flow 1 from here<br/>deployment_outbox → CreateQueryJob → task.status.updated v1 RUNNING + node.deployed v1
+    Note over EC: identical to Flow 1 from here<br/>executor_outbox → OutboxPublisher → CreateQueryJob → task.status.updated v1 RUNNING + node.deployed v1
   end
 ```
 

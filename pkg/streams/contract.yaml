@@ -131,6 +131,21 @@ streams:
 
   # ---------------- orchestrator-produced streams ----------------
 
+  - name: run.initialized:v1
+    const: RunInitializedV1
+    description: Run graph snapshot emitted by orchestrator after initializing a new run.
+    producers: [orchestrator]
+    consumers:
+      - service: state
+        group: state-run-initialized
+        const: StateRunInitialized
+
+  - name: rerun.ready:v1
+    const: RerunReadyV1
+    description: Rerun-ready signal emitted by orchestrator when a rerun is prepared.
+    producers: [orchestrator]
+    consumers: []
+
   - name: query.model:v1
     const: QueryModelV1
     description: Tasks dispatched by orchestrator for the executor pool.

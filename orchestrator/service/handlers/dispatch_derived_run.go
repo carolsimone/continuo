@@ -9,6 +9,8 @@ import (
 
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
@@ -74,14 +76,14 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 	if err != nil {
 		return fmt.Errorf("marshal run.entries.dispatched: %w", err)
 	}
-	if err := u.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &d.MessageProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
 		EventType:           "run_entries_dispatched",
 		Payload:             dispatchedPayload,
-		StreamName:          "run.entries.dispatched:v1",
+		StreamName:          streams.RunEntriesDispatchedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}); err != nil {
@@ -109,14 +111,14 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 		if err != nil {
 			return fmt.Errorf("marshal query.model: %w", err)
 		}
-		if err := u.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+		if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 			ID:                  uuid.New(),
 			MessageProcessingID: &d.MessageProcessingID,
 			AggregateType:       "orchestrator",
 			AggregateID:         scheduleUUID,
 			EventType:           "node_ready_for_execution",
 			Payload:             queryPayload,
-			StreamName:          "query.model:v1",
+			StreamName:          streams.QueryModelV1,
 			Status:              "pending",
 			MaxRetries:          3,
 		}); err != nil {

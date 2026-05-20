@@ -33,9 +33,9 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 	if err != nil {
 		return events.QueryModel{}, fmt.Errorf("invalid node_type: %w", err)
 	}
-	// outbox_entry_id is the orchestrator's outbox row ID, used as an
-	// application-level idempotency key on deployment_outbox. Absent or
-	// empty → uuid.Nil (dedup degrades to (msg.ID, stream_name)).
+	// outbox_entry_id is the orchestrator's outbox row ID, carried as
+	// provenance on the executor outbox row. Absent or empty → uuid.Nil
+	// (dedup relies solely on (msg.ID, stream_name) in message_processing).
 	// Present-but-malformed → permanent error.
 	var outboxEntryID uuid.UUID
 	if s := stringField(msg.Values, "outbox_entry_id"); s != "" {

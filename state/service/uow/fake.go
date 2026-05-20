@@ -24,7 +24,6 @@ type FakeUnitOfWork struct {
 	Task              postgres.TaskTrackerRepository
 	TaskExecution     postgres.TaskExecutionRepository
 	ScheduleCatalog   postgres.ScheduleCatalogRepository
-	OutboxStore       postgres.OutboxRepository
 	MessageProcessing messageprocessing.Repository
 
 	BeginCalled    int
@@ -50,7 +49,6 @@ func (f *FakeUnitOfWork) TaskExecutionRepo() postgres.TaskExecutionRepository {
 func (f *FakeUnitOfWork) ScheduleCatalogRepo() postgres.ScheduleCatalogRepository {
 	return f.ScheduleCatalog
 }
-func (f *FakeUnitOfWork) OutboxRepo() postgres.OutboxRepository               { return f.OutboxStore }
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository { return f.MessageProcessing }
 func (f *FakeUnitOfWork) Tx() *sqlx.Tx                                        { return nil }
 

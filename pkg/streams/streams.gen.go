@@ -30,6 +30,10 @@ const (
 	TriggerSingleNodeRunV1 = "trigger.single_node_run:v1"
 	// RunFinalizedV1 — Run finalization (success or failure) emitted by state; consumed for projections.
 	RunFinalizedV1 = "run.finalized:v1"
+	// RunInitializedV1 — Run graph snapshot emitted by orchestrator after initializing a new run.
+	RunInitializedV1 = "run.initialized:v1"
+	// RerunReadyV1 — Rerun-ready signal emitted by orchestrator when a rerun is prepared.
+	RerunReadyV1 = "rerun.ready:v1"
 	// QueryModelV1 — Tasks dispatched by orchestrator for the executor pool.
 	QueryModelV1 = "query.model:v1"
 	// RetryTaskV1 — Retry trigger for tasks; produced by k8s-controller, consumed by executor.
@@ -74,6 +78,8 @@ const (
 	OrchestratorSingleNodeRun = "orchestrator-single-node-run"
 	// OrchestratorRunFinalized — orchestrator consumer group on run.finalized:v1.
 	OrchestratorRunFinalized = "orchestrator-run-finalized"
+	// StateRunInitialized — state consumer group on run.initialized:v1.
+	StateRunInitialized = "state-run-initialized"
 	// ExecutorQueryModel — executor-controller consumer group on query.model:v1.
 	ExecutorQueryModel = "executor-query-model"
 	// ExecutorRetry — executor-controller consumer group on retry.task:v1.

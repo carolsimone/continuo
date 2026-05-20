@@ -4,12 +4,14 @@ package redis_test
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"sync"
 	"testing"
 
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
+	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -51,14 +53,16 @@ func buildRetryBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMess
 	return executorredis.NewRetryTaskBinding(uowFactory, handler, logger), logger
 }
 
-// countRowsIntColumn executes a query that returns a single integer column in a
-// single row and returns the value. Useful for asserting task_retry_count or
-// task_max_retries fields stored in the outbox.
-func countRowsIntColumn(t *testing.T, db *sqlx.DB, query string, args ...interface{}) int {
+// readOutboxPayload scans the JSONB payload from the single executor_outbox row
+// and unmarshals it into a DeployTask for field assertions.
+func readOutboxPayload(t *testing.T, db *sqlx.DB) event.DeployTask {
 	t.Helper()
-	var n int
-	require.NoError(t, db.QueryRowContext(context.Background(), query, args...).Scan(&n))
-	return n
+	var raw []byte
+	require.NoError(t, db.QueryRowContext(context.Background(),
+		`SELECT payload FROM executor_outbox LIMIT 1`).Scan(&raw))
+	var d event.DeployTask
+	require.NoError(t, json.Unmarshal(raw, &d))
+	return d
 }
 
 func TestRetryTaskBinding_SingleMessageHappyPath(t *testing.T) {
@@ -70,15 +74,14 @@ func TestRetryTaskBinding_SingleMessageHappyPath(t *testing.T) {
 
 	require.NoError(t, binding(context.Background(), msg))
 
-	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployment_outbox`))
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_outbox`))
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.RetryTaskV1))
 
-	// Verify the retry fields are stored faithfully from the wire payload.
-	assert.Equal(t, 2, countRowsIntColumn(t, db,
-		`SELECT task_retry_count FROM deployment_outbox LIMIT 1`))
-	assert.Equal(t, 5, countRowsIntColumn(t, db,
-		`SELECT task_max_retries FROM deployment_outbox LIMIT 1`))
+	// Verify the retry fields are stored faithfully inside the JSONB payload.
+	d := readOutboxPayload(t, db)
+	assert.Equal(t, 2, d.TaskRetryCount)
+	assert.Equal(t, 5, d.TaskMaxRetries)
 }
 
 func TestRetryTaskBinding_ConcurrentDedup(t *testing.T) {
@@ -104,7 +107,7 @@ func TestRetryTaskBinding_ConcurrentDedup(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployment_outbox`),
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_outbox`),
 		"exactly one outbox row even with %d concurrent handlers", goroutines)
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
@@ -131,7 +134,7 @@ func TestRetryTaskBinding_CrossStreamIsolation(t *testing.T) {
 	require.NoError(t, retryBinding(context.Background(), retryMsg))
 
 	// Both streams must produce their own independent outbox row.
-	assert.Equal(t, 2, countRows(t, db, `SELECT COUNT(*) FROM deployment_outbox`),
+	assert.Equal(t, 2, countRows(t, db, `SELECT COUNT(*) FROM executor_outbox`),
 		"each stream produces its own outbox row; no false-dedup across streams")
 
 	// Each stream must produce exactly one dedup row keyed to its own stream_name.

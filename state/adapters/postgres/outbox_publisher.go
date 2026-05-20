@@ -4,32 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
+	"log/slog"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/ports"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
-// OutboxPublisher translates run.DomainEvent values to OutboxEntry rows and
-// writes them inside the caller's transaction via the existing OutboxRepository.
+// OutboxPublisher translates run.DomainEvent values to pkg/outbox.Entry rows
+// and writes them inside the caller's transaction.
 // RunDispatchFailed events are informational and produce no outbox row.
 type OutboxPublisher struct {
-	repo OutboxRepository
+	logger *slog.Logger
 }
 
-// NewOutboxPublisher constructs the publisher backed by the given repository.
-func NewOutboxPublisher(repo OutboxRepository) *OutboxPublisher {
-	return &OutboxPublisher{repo: repo}
+// NewOutboxPublisher constructs the publisher.
+func NewOutboxPublisher(logger *slog.Logger) *OutboxPublisher {
+	return &OutboxPublisher{logger: logger}
 }
 
-// Append writes one OutboxEntry per event into the caller's transaction.
+// Append writes one outbox entry per event into the caller's transaction.
 // The per-event mapping (stream_name, event_type, aggregate_type, retry budget,
 // payload shape) is defined in translateRunEvent. RunDispatchFailed is skipped
 // (no outbox row). An unknown event type returns an error.
 func (p *OutboxPublisher) Append(ctx context.Context, tx *sqlx.Tx, events []run.DomainEvent, msgProcID uuid.UUID) error {
+	repo := pkgoutbox.NewPostgresRepository(tx, "state_outbox", p.logger)
 	for _, evt := range events {
 		entry, skip, err := translateRunEvent(evt, msgProcID)
 		if err != nil {
@@ -38,18 +41,18 @@ func (p *OutboxPublisher) Append(ctx context.Context, tx *sqlx.Tx, events []run.
 		if skip {
 			continue
 		}
-		if err := p.repo.Create(ctx, tx, entry); err != nil {
+		if err := repo.Create(ctx, entry); err != nil {
 			return fmt.Errorf("create outbox entry for %T: %w", evt, err)
 		}
 	}
 	return nil
 }
 
-// translateRunEvent maps one run.DomainEvent to an OutboxEntry.
+// translateRunEvent maps one run.DomainEvent to a pkg/outbox.Entry.
 // Returns (entry, false, nil) on success, (nil, true, nil) when the event
 // produces no row (RunDispatchFailed), and (nil, false, err) on marshal failure
 // or an unknown event type.
-func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*OutboxEntry, bool, error) {
+func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Entry, bool, error) {
 	var msgProcPtr *uuid.UUID
 	if msgProcID != uuid.Nil {
 		mp := msgProcID
@@ -68,7 +71,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*OutboxEntry, 
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "scheduler_started", "scheduler.started:v1", payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "scheduler_started", streams.SchedulerStartedV1, payload, 3, msgProcPtr), false, nil
 
 	case run.RunFinalized:
 		payload, err := json.Marshal(pkgevents.RunFinalized{
@@ -79,7 +82,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*OutboxEntry, 
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler_tracker", "run.finalized:v1", "run.finalized:v1", payload, 5, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler_tracker", "run.finalized:v1", streams.RunFinalizedV1, payload, 5, msgProcPtr), false, nil
 
 	case run.RunCancelled:
 		payload, err := json.Marshal(map[string]string{
@@ -89,7 +92,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*OutboxEntry, 
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "schedule_cancelled", "schedule.cancelled:v1", payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "schedule_cancelled", streams.ScheduleCancelledV1, payload, 3, msgProcPtr), false, nil
 
 	case run.RerunRequested:
 		payload, err := json.Marshal(map[string]string{
@@ -101,7 +104,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*OutboxEntry, 
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "rerun", "trigger.rerun:v1", payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "rerun", streams.TriggerRerunV1, payload, 3, msgProcPtr), false, nil
 
 	case run.RebaseRequested:
 		payload, err := json.Marshal(map[string]string{
@@ -113,7 +116,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*OutboxEntry, 
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "rebase", "trigger.rebase:v1", payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "rebase", streams.TriggerRebaseV1, payload, 3, msgProcPtr), false, nil
 
 	case run.SingleNodeRunRequested:
 		payload, err := json.Marshal(map[string]string{
@@ -129,7 +132,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*OutboxEntry, 
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "single_node_run", "trigger.single_node_run:v1", payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "single_node_run", streams.TriggerSingleNodeRunV1, payload, 3, msgProcPtr), false, nil
 
 	case run.RunDispatchFailed:
 		// Informational event — no downstream stream yet; omit from outbox.
@@ -140,15 +143,15 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*OutboxEntry, 
 	}
 }
 
-// buildEntry constructs an OutboxEntry with generated ID and current timestamp.
+// buildEntry constructs a pkg/outbox.Entry with a generated ID and current timestamp.
 func buildEntry(
 	aggregateID uuid.UUID,
 	aggregateType, eventType, streamName string,
 	payload []byte,
 	maxRetries int,
 	msgProcID *uuid.UUID,
-) *OutboxEntry {
-	return &OutboxEntry{
+) *pkgoutbox.Entry {
+	return &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: msgProcID,
 		AggregateType:       aggregateType,
@@ -159,7 +162,6 @@ func buildEntry(
 		Status:              "pending",
 		MaxRetries:          maxRetries,
 		RetryCount:          0,
-		CreatedAt:           time.Now(),
 	}
 }
 

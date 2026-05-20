@@ -74,9 +74,10 @@ func NewTaskStatusUpdatedBinding(
 			}
 		}()
 
-		msgProcID, dup, err := messageprocessing.Dedup(
+		msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
 			msg.ID, taskStatusUpdatedStreamName, payload,
+			messageprocessing.ExtractOutboxEntryID(msg.Values),
 		)
 		if err != nil {
 			return err

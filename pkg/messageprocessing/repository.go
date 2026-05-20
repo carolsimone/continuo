@@ -18,5 +18,10 @@ import (
 type Repository interface {
 	InsertIfNotExists(ctx context.Context, msgProc *MessageProcessing) (uuid.UUID, bool, error)
 	GetByMessageIDAndStream(ctx context.Context, messageID, streamName string) (*MessageProcessing, error)
+	// GetByID fetches a row by its primary key. Dedup uses this to look up the
+	// existing row after a conflict on either of the unique constraints
+	// (message_id+stream_name or outbox_entry_id), since GetByMessageIDAndStream
+	// would miss the second case.
+	GetByID(ctx context.Context, id uuid.UUID) (*MessageProcessing, error)
 	UpdateState(ctx context.Context, id uuid.UUID, state string) error
 }

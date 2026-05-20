@@ -3,62 +3,56 @@ package test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
-	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
-// setupTestDB starts a PostgreSQL testcontainer with migrations
-func setupTestDB(t *testing.T) (*sqlx.DB, *slog.Logger, func()) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
-	db, cleanup := setupPostgres(t)
-
-	return db, logger, cleanup
-}
-
-// cleanupOutboxTable removes all test entries from the outbox table
+// cleanupOutboxTable removes all test entries from the k8s_outbox table
 func cleanupOutboxTable(t *testing.T, db *sqlx.DB) {
-	_, err := db.Exec("DELETE FROM k8s_status_outbox WHERE service_name LIKE 'test-%'")
+	_, err := db.Exec("DELETE FROM k8s_outbox WHERE aggregate_type = 'task'")
 	if err != nil {
 		t.Logf("Warning: Failed to cleanup outbox table: %v", err)
 	}
 }
 
-// createStuckEntry creates a stuck outbox entry for testing with default service name
+// createStuckEntry creates a stuck outbox entry in k8s_outbox for testing
 func createStuckEntry(t *testing.T, db *sqlx.DB, retryCount int, maxRetries int, createdAt time.Time) uuid.UUID {
-	return createStuckEntryWithService(t, db, "test-stuck-resolver", retryCount, maxRetries, createdAt)
+	return createStuckEntryWithAggregateID(t, db, uuid.New(), retryCount, maxRetries, createdAt)
 }
 
-// createStuckEntryWithService creates a stuck outbox entry for testing with custom service name
-func createStuckEntryWithService(t *testing.T, db *sqlx.DB, serviceName string, retryCount int, maxRetries int, createdAt time.Time) uuid.UUID {
+// createStuckEntryWithAggregateID creates a stuck outbox entry with a specific aggregate_id
+func createStuckEntryWithAggregateID(t *testing.T, db *sqlx.DB, aggregateID uuid.UUID, retryCount int, maxRetries int, createdAt time.Time) uuid.UUID {
 	entryID := uuid.New()
-	taskID := uuid.New()
-	scheduleID := uuid.New()
+
+	payload, err := json.Marshal(map[string]string{
+		"task_id": aggregateID.String(),
+		"type":    "test",
+	})
+	if err != nil {
+		t.Fatalf("Failed to marshal payload: %v", err)
+	}
 
 	query := `
-		INSERT INTO k8s_status_outbox (
-			id, event_type, stream_name,
-			task_id, schedule_id, schedule_name, service_name, schema_name,
-			table_name, job_name,
-			status, created_at, outbox_retry_count, max_retries, outbox_error_message
+		INSERT INTO k8s_outbox (
+			id, aggregate_type, aggregate_id, event_type, payload, stream_name,
+			status, created_at, retry_count, max_retries, error_message
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, 'task', $2, 'task_retry', $3, 'retry.task:v1',
+			'pending', $4, $5, $6, 'Original test error'
 		)
 	`
 
-	_, err := db.Exec(query,
-		entryID, "task_retry", "retry.task:v1",
-		taskID, scheduleID, "test-schedule", serviceName, "public",
-		"test-table", "test-job",
-		string(model.OutboxStatusPending), createdAt, retryCount, maxRetries, "Original test error",
+	_, err = db.Exec(query,
+		entryID, aggregateID, payload, createdAt, retryCount, maxRetries,
 	)
 	if err != nil {
 		t.Fatalf("Failed to create stuck entry: %v", err)
@@ -67,30 +61,27 @@ func createStuckEntryWithService(t *testing.T, db *sqlx.DB, serviceName string, 
 	return entryID
 }
 
-// getOutboxEntry retrieves an outbox entry by ID
-func getOutboxEntry(t *testing.T, db *sqlx.DB, entryID uuid.UUID) *model.K8sStatusOutboxEntry {
-	query := `
-		SELECT id, event_type, stream_name,
-		       task_id, schedule_id, schedule_name, service_name, schema_name,
-		       table_name, job_name,
-		       COALESCE(error_message, '') as error_message,
-		       COALESCE(task_retry_count, 0) as task_retry_count,
-		       COALESCE(check_after, 0) as check_after,
-		       COALESCE(update_task_status, false) as update_task_status,
-		       COALESCE(new_task_status, '') as new_task_status,
-		       COALESCE(new_retry_count, 0) as new_retry_count,
-		       COALESCE(create_execution, false) as create_execution,
-		       execution_started_at, execution_completed_at,
-		       COALESCE(execution_seconds, 0) as execution_seconds,
-		       status, created_at, processed_at,
-		       outbox_retry_count, max_retries,
-		       COALESCE(outbox_error_message, '') as outbox_error_message
-		FROM k8s_status_outbox
-		WHERE id = $1
-	`
+// getOutboxEntry retrieves a canonical outbox entry by ID
+func getOutboxEntry(t *testing.T, db *sqlx.DB, entryID uuid.UUID) *pkgoutbox.Entry {
+	type row struct {
+		ID           uuid.UUID  `db:"id"`
+		AggregateID  uuid.UUID  `db:"aggregate_id"`
+		EventType    string     `db:"event_type"`
+		RetryCount   int        `db:"retry_count"`
+		MaxRetries   int        `db:"max_retries"`
+		Status       string     `db:"status"`
+		CreatedAt    time.Time  `db:"created_at"`
+		ProcessedAt  *time.Time `db:"processed_at"`
+		ErrorMessage *string    `db:"error_message"`
+	}
 
-	var entry model.K8sStatusOutboxEntry
-	err := db.Get(&entry, query, entryID)
+	var r row
+	err := db.Get(&r, `
+		SELECT id, aggregate_id, event_type, retry_count, max_retries,
+		       status, created_at, processed_at, error_message
+		FROM k8s_outbox
+		WHERE id = $1
+	`, entryID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil
@@ -98,7 +89,17 @@ func getOutboxEntry(t *testing.T, db *sqlx.DB, entryID uuid.UUID) *model.K8sStat
 		t.Fatalf("Failed to get outbox entry: %v", err)
 	}
 
-	return &entry
+	return &pkgoutbox.Entry{
+		ID:           r.ID,
+		AggregateID:  r.AggregateID,
+		EventType:    r.EventType,
+		RetryCount:   r.RetryCount,
+		MaxRetries:   r.MaxRetries,
+		Status:       r.Status,
+		CreatedAt:    r.CreatedAt,
+		ProcessedAt:  r.ProcessedAt,
+		ErrorMessage: r.ErrorMessage,
+	}
 }
 
 // TestStuckEntryResolver_GetStuckEntries tests the repository method
@@ -108,7 +109,7 @@ func TestStuckEntryResolver_GetStuckEntries(t *testing.T) {
 	defer cleanupOutboxTable(t, db)
 
 	ctx := context.Background()
-	repo := postgres.NewOutboxRepository(db, logger)
+	repo := postgres.NewK8sOutboxStuckRepository(db, logger)
 
 	t.Run("NoStuckEntries", func(t *testing.T) {
 		entries, err := repo.GetStuckEntries(ctx, 50, 60)
@@ -122,6 +123,8 @@ func TestStuckEntryResolver_GetStuckEntries(t *testing.T) {
 	})
 
 	t.Run("FindStuckEntries", func(t *testing.T) {
+		cleanupOutboxTable(t, db)
+
 		// Create a stuck entry (retry_count >= max_retries, created 2 minutes ago)
 		stuckTime := time.Now().Add(-2 * time.Minute)
 		stuckID1 := createStuckEntry(t, db, 5, 3, stuckTime)
@@ -182,7 +185,7 @@ func TestStuckEntryResolver_ForceMarkFailed(t *testing.T) {
 	defer cleanupOutboxTable(t, db)
 
 	ctx := context.Background()
-	repo := postgres.NewOutboxRepository(db, logger)
+	repo := postgres.NewK8sOutboxStuckRepository(db, logger)
 
 	t.Run("SuccessfulMarkFailed", func(t *testing.T) {
 		entryID := createStuckEntry(t, db, 5, 3, time.Now().Add(-2*time.Minute))
@@ -199,12 +202,12 @@ func TestStuckEntryResolver_ForceMarkFailed(t *testing.T) {
 			t.Fatal("Entry not found after ForceMarkFailed")
 		}
 
-		if entry.Status != model.OutboxStatusFailed {
+		if entry.Status != "failed" {
 			t.Errorf("Expected status 'failed', got: %s", entry.Status)
 		}
 
-		if entry.OutboxErrorMessage != errorMsg {
-			t.Errorf("Expected error message '%s', got: '%s'", errorMsg, entry.OutboxErrorMessage)
+		if entry.ErrorMessage == nil || *entry.ErrorMessage != errorMsg {
+			t.Errorf("Expected error message '%s', got: %v", errorMsg, entry.ErrorMessage)
 		}
 
 		if entry.ProcessedAt == nil {
@@ -246,7 +249,7 @@ func TestStuckEntryResolver_ResolverLogic(t *testing.T) {
 	defer cleanupOutboxTable(t, db)
 
 	ctx := context.Background()
-	repo := postgres.NewOutboxRepository(db, logger)
+	repo := postgres.NewK8sOutboxStuckRepository(db, logger)
 
 	t.Run("DisabledResolver", func(t *testing.T) {
 		config := &handlers.ResolverConfig{
@@ -320,24 +323,28 @@ func TestStuckEntryResolver_ResolverLogic(t *testing.T) {
 		entry1 := getOutboxEntry(t, db, entryID1)
 		entry2 := getOutboxEntry(t, db, entryID2)
 
-		if entry1.Status != model.OutboxStatusFailed {
+		if entry1.Status != "failed" {
 			t.Errorf("Entry1: Expected status 'failed', got: %s", entry1.Status)
 		}
 
-		if entry2.Status != model.OutboxStatusFailed {
+		if entry2.Status != "failed" {
 			t.Errorf("Entry2: Expected status 'failed', got: %s", entry2.Status)
 		}
 
 		// Verify error messages contain resolution info
-		if entry1.OutboxErrorMessage == "" {
+		if entry1.ErrorMessage == nil || *entry1.ErrorMessage == "" {
 			t.Error("Entry1: Expected error message to be set")
 		}
-		if entry2.OutboxErrorMessage == "" {
+		if entry2.ErrorMessage == nil || *entry2.ErrorMessage == "" {
 			t.Error("Entry2: Expected error message to be set")
 		}
 
-		t.Logf("Entry1 error message: %s", entry1.OutboxErrorMessage)
-		t.Logf("Entry2 error message: %s", entry2.OutboxErrorMessage)
+		if entry1.ErrorMessage != nil {
+			t.Logf("Entry1 error message: %s", *entry1.ErrorMessage)
+		}
+		if entry2.ErrorMessage != nil {
+			t.Logf("Entry2 error message: %s", *entry2.ErrorMessage)
+		}
 	})
 
 	t.Run("ResolverRun", func(t *testing.T) {
@@ -372,7 +379,7 @@ func TestStuckEntryResolver_ResolverLogic(t *testing.T) {
 
 		// Verify entry was resolved
 		entry := getOutboxEntry(t, db, entryID)
-		if entry.Status != model.OutboxStatusFailed {
+		if entry.Status != "failed" {
 			t.Errorf("Expected entry to be resolved, got status: %s", entry.Status)
 		}
 	})
@@ -395,7 +402,7 @@ func TestStuckEntryResolver_ConcurrentAccess(t *testing.T) {
 			createStuckEntry(t, db, 5, 3, stuckTime.Add(time.Duration(-i)*10*time.Second))
 		}
 
-		repo := postgres.NewOutboxRepository(db, logger)
+		repo := postgres.NewK8sOutboxStuckRepository(db, logger)
 		config := &handlers.ResolverConfig{
 			CheckIntervalSeconds:  1,
 			StuckThresholdSeconds: 60,
@@ -437,9 +444,8 @@ func TestStuckEntryResolver_ConcurrentAccess(t *testing.T) {
 		var failedCount int
 		err := db.Get(&failedCount, `
 			SELECT COUNT(*)
-			FROM k8s_status_outbox
-			WHERE service_name = 'test-stuck-resolver'
-			  AND status = 'failed'
+			FROM k8s_outbox
+			WHERE status = 'failed'
 		`)
 		if err != nil {
 			t.Fatalf("Failed to count failed entries: %v", err)
@@ -459,74 +465,56 @@ func TestStuckEntryResolver_EdgeCases(t *testing.T) {
 	defer cleanupOutboxTable(t, db)
 
 	ctx := context.Background()
-	repo := postgres.NewOutboxRepository(db, logger)
+	repo := postgres.NewK8sOutboxStuckRepository(db, logger)
 
 	t.Run("StuckThresholdBoundary", func(t *testing.T) {
-		// Use unique service name for this test
-		serviceName := "test-boundary-" + uuid.New().String()[:8]
+		cleanupOutboxTable(t, db)
 
 		// Entry below threshold (should not be returned)
-		createStuckEntryWithService(t, db, serviceName, 5, 3, time.Now().Add(-59*time.Second))
+		createStuckEntry(t, db, 5, 3, time.Now().Add(-59*time.Second))
 
 		// Entry past threshold (should be returned)
-		entryID := createStuckEntryWithService(t, db, serviceName, 5, 3, time.Now().Add(-65*time.Second))
+		entryID := createStuckEntry(t, db, 5, 3, time.Now().Add(-65*time.Second))
 
 		entries, err := repo.GetStuckEntries(ctx, 50, 60)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
 
-		// Filter for our test entries only
-		var testEntries []*model.K8sStatusOutboxEntry
-		for _, e := range entries {
-			if e.ServiceName == serviceName {
-				testEntries = append(testEntries, e)
-			}
-		}
-
-		if len(testEntries) != 1 {
-			t.Errorf("Expected 1 entry with service %s, got: %d", serviceName, len(testEntries))
-			for i, e := range testEntries {
+		if len(entries) != 1 {
+			t.Errorf("Expected 1 entry past threshold, got: %d", len(entries))
+			for i, e := range entries {
 				t.Logf("Entry %d: ID=%s, age=%v", i, e.ID, time.Since(e.CreatedAt))
 			}
 		}
 
-		if len(testEntries) == 1 && testEntries[0].ID != entryID {
-			t.Errorf("Got wrong entry: %s (expected %s)", testEntries[0].ID, entryID)
+		if len(entries) == 1 && entries[0].ID != entryID {
+			t.Errorf("Got wrong entry: %s (expected %s)", entries[0].ID, entryID)
 		}
 	})
 
 	t.Run("AlreadyProcessedEntry", func(t *testing.T) {
 		cleanupOutboxTable(t, db)
 
-		// Create entry that's already been processed
+		// Create entry that's already been processed (status=failed)
 		entryID := uuid.New()
-		taskID := uuid.New()
-		scheduleID := uuid.New()
+		aggregateID := uuid.New()
+		payload := []byte(`{"type":"test"}`)
 
-		query := `
-			INSERT INTO k8s_status_outbox (
-				id, event_type, stream_name,
-				task_id, schedule_id, schedule_name, service_name, schema_name,
-				table_name, job_name,
-				status, created_at, processed_at, outbox_retry_count, max_retries
+		_, err := db.Exec(`
+			INSERT INTO k8s_outbox (
+				id, aggregate_type, aggregate_id, event_type, payload, stream_name,
+				status, created_at, processed_at, retry_count, max_retries
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+				$1, 'task', $2, 'task_retry', $3, 'retry.task:v1',
+				'failed', $4, $5, 5, 3
 			)
-		`
-
-		processedTime := time.Now()
-		_, err := db.Exec(query,
-			entryID, "task_retry", "retry.task:v1",
-			taskID, scheduleID, "test-schedule", "test-stuck-resolver", "public",
-			"test-table", "test-job",
-			string(model.OutboxStatusFailed), time.Now().Add(-2*time.Minute), processedTime, 5, 3,
-		)
+		`, entryID, aggregateID, payload, time.Now().Add(-2*time.Minute), time.Now())
 		if err != nil {
 			t.Fatalf("Failed to create processed entry: %v", err)
 		}
 
-		// GetStuckEntries should not return processed entries
+		// GetStuckEntries should not return failed entries
 		entries, err := repo.GetStuckEntries(ctx, 50, 60)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
@@ -557,4 +545,11 @@ func TestStuckEntryResolver_EdgeCases(t *testing.T) {
 			t.Errorf("Expected context.Canceled error, got: %v", err)
 		}
 	})
+}
+
+// setupTestDB wraps setupPostgres and adds a logger.
+func setupTestDB(t *testing.T) (*sqlx.DB, *slog.Logger, func()) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	db, cleanup := setupPostgres(t)
+	return db, logger, cleanup
 }

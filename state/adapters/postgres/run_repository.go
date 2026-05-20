@@ -17,11 +17,10 @@ import (
 // existing tuned SchedulerTrackerRepository methods. SaveRun consults
 // run.Run.Changes() to dispatch column-by-column.
 type RunRepositoryAdapter struct {
-	db         *sqlx.DB
-	schedRepo  SchedulerTrackerRepository
-	taskRepo   TaskTrackerRepository
-	outboxRepo OutboxRepository
-	logger     *slog.Logger
+	db        *sqlx.DB
+	schedRepo SchedulerTrackerRepository
+	taskRepo  TaskTrackerRepository
+	logger    *slog.Logger
 }
 
 // NewRunRepository constructs the adapter.
@@ -29,15 +28,13 @@ func NewRunRepository(
 	db *sqlx.DB,
 	schedRepo SchedulerTrackerRepository,
 	taskRepo TaskTrackerRepository,
-	outboxRepo OutboxRepository,
 	logger *slog.Logger,
 ) *RunRepositoryAdapter {
 	return &RunRepositoryAdapter{
-		db:         db,
-		schedRepo:  schedRepo,
-		taskRepo:   taskRepo,
-		outboxRepo: outboxRepo,
-		logger:     logger,
+		db:        db,
+		schedRepo: schedRepo,
+		taskRepo:  taskRepo,
+		logger:    logger,
 	}
 }
 

@@ -140,7 +140,7 @@ func TestIngestTopology_ThreeNodesTwoSchedules(t *testing.T) {
 	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
 	cmd := makeIngestTopologyCmd()
 
-	err := h.Handle(ctx, cmd, "msg-ingest-1")
+	err := h.Handle(ctx, cmd, "msg-ingest-1", nil)
 	require.NoError(t, err)
 
 	require.Len(t, topoRepo.applySnapshotCalls, 1, "ApplySnapshot should be called once per manifest message")
@@ -189,7 +189,7 @@ func TestIngestTopology_DuplicateMessage(t *testing.T) {
 	cmd := makeIngestTopologyCmd()
 
 	// First call: processes normally
-	err := h.Handle(ctx, cmd, "dup-ingest-1")
+	err := h.Handle(ctx, cmd, "dup-ingest-1", nil)
 	require.NoError(t, err)
 	require.Len(t, topoRepo.applySnapshotCalls, 1)
 	assert.Len(t, topoRepo.applySnapshotCalls[0], 3)
@@ -200,7 +200,7 @@ func TestIngestTopology_DuplicateMessage(t *testing.T) {
 	uow.CommittedTx = false
 
 	// Second call with same message ID: should be skipped
-	err = h.Handle(ctx, cmd, "dup-ingest-1")
+	err = h.Handle(ctx, cmd, "dup-ingest-1", nil)
 	require.NoError(t, err)
 
 	assert.Len(t, topoRepo.applySnapshotCalls, 0, "ApplySnapshot must NOT be called for duplicate")
@@ -221,7 +221,7 @@ func TestIngestTopology_BadPayload_ReturnsWrappedPermanent(t *testing.T) {
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 
-	err := h.Handle(ctx, cmd, "msg-bad-1")
+	err := h.Handle(ctx, cmd, "msg-bad-1", nil)
 	if !errors.Is(err, events.ErrPermanent) {
 		t.Fatalf("expected wrapped ErrPermanent, got %v", err)
 	}
@@ -239,7 +239,7 @@ func TestIngestTopology_BadPayload_SkipsUnitOfWork(t *testing.T) {
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 
-	_ = h.Handle(ctx, cmd, "msg-bad-2")
+	_ = h.Handle(ctx, cmd, "msg-bad-2", nil)
 
 	if uow.BegunTx {
 		t.Fatalf("expected uow.Begin not called, got BegunTx=true")
@@ -261,7 +261,7 @@ func TestIngestTopology_BadPayload_WritesForensicsRow(t *testing.T) {
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 
-	_ = h.Handle(ctx, cmd, "msg-bad-3")
+	_ = h.Handle(ctx, cmd, "msg-bad-3", nil)
 
 	if got := len(rejectedRepo.InsertCalls); got != 1 {
 		t.Fatalf("expected exactly 1 forensics insert, got %d", got)
@@ -296,7 +296,7 @@ func TestIngestTopology_MultipleBadNodes_WritesSingleAggregatedForensicsRow(t *t
 		{ServiceName: "svc-3", SchemaName: "raw", TableName: "items", ImageTag: ""},
 	}}
 
-	_ = h.Handle(ctx, cmd, "msg-multi-bad")
+	_ = h.Handle(ctx, cmd, "msg-multi-bad", nil)
 
 	// Contract: ONE forensics row per BATCH, not one per offender. A future
 	// refactor that loops Insert per offender would multiply rows under
@@ -322,7 +322,7 @@ func TestIngestTopology_BadPayload_SkipsApplySnapshot(t *testing.T) {
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 
-	_ = h.Handle(ctx, cmd, "msg-bad-4")
+	_ = h.Handle(ctx, cmd, "msg-bad-4", nil)
 
 	if got := len(topoRepo.applySnapshotCalls); got != 0 {
 		t.Fatalf("expected ApplySnapshot not called, got %d call(s)", got)
@@ -341,7 +341,7 @@ func TestIngestTopology_BadPayload_ForensicsFailureStillReturnsPermanent(t *test
 		{ServiceName: "svc-1", SchemaName: "raw", TableName: "users", ImageTag: ""},
 	}}
 
-	err := h.Handle(ctx, cmd, "msg-bad-5")
+	err := h.Handle(ctx, cmd, "msg-bad-5", nil)
 	if !errors.Is(err, events.ErrPermanent) {
 		t.Fatalf("expected wrapped ErrPermanent (forensics is best-effort), got %v", err)
 	}
@@ -357,7 +357,7 @@ func TestIngestTopology_HappyPath_DoesNotInsertForensics(t *testing.T) {
 	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
 	cmd := makeIngestTopologyCmd() // helper at line 56 — all nodes have non-empty image_tag
 
-	if err := h.Handle(ctx, cmd, "msg-ok"); err != nil {
+	if err := h.Handle(ctx, cmd, "msg-ok", nil); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 	if got := len(rejectedRepo.InsertCalls); got != 0 {

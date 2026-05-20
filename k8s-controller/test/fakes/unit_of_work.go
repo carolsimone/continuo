@@ -3,30 +3,30 @@ package fakes
 import (
 	"context"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
-	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
 
 // FakeTransaction exposes fake repositories for one transaction scope.
 type FakeTransaction struct {
-	OutboxRepoFunc          postgres.OutboxRepository
-	ProcessedEventsRepoFunc postgres.ProcessedEventsRepository
+	OutboxRepoFunc             pkgoutbox.Repository
+	MessageProcessingRepoFunc  messageprocessing.Repository
 }
 
-func (f *FakeTransaction) OutboxRepo() postgres.OutboxRepository {
+func (f *FakeTransaction) OutboxRepo() pkgoutbox.Repository {
 	if f.OutboxRepoFunc != nil {
 		return f.OutboxRepoFunc
 	}
 	return &FakeOutboxRepository{}
 }
 
-func (f *FakeTransaction) ProcessedEventsRepo() postgres.ProcessedEventsRepository {
-	if f.ProcessedEventsRepoFunc != nil {
-		return f.ProcessedEventsRepoFunc
+func (f *FakeTransaction) MessageProcessingRepo() messageprocessing.Repository {
+	if f.MessageProcessingRepoFunc != nil {
+		return f.MessageProcessingRepoFunc
 	}
-	return &FakeProcessedEventsRepository{}
+	return &FakeMessageProcessingRepository{}
 }
 
 // FakeTransactionRunner is a fake implementation of TransactionRunner for testing.
@@ -51,26 +51,22 @@ func (f *FakeTransactionRunner) WithinTransaction(ctx context.Context, fn func(u
 var _ uow.Transaction = (*FakeTransaction)(nil)
 var _ uow.TransactionRunner = (*FakeTransactionRunner)(nil)
 
-// FakeOutboxRepository is a fake implementation of OutboxRepository for testing
+// FakeOutboxRepository is a fake implementation of pkgoutbox.Repository for testing
 type FakeOutboxRepository struct {
-	CreateFunc          func(ctx context.Context, entry *model.K8sStatusOutboxEntry) error
-	GetPendingBatchFunc func(ctx context.Context, limit int) ([]*model.K8sStatusOutboxEntry, error)
+	CreateFunc          func(ctx context.Context, entry *pkgoutbox.Entry) error
+	GetPendingBatchFunc func(ctx context.Context, limit int) ([]*pkgoutbox.Entry, error)
 	MarkProcessedFunc   func(ctx context.Context, id uuid.UUID) error
 	MarkFailedFunc      func(ctx context.Context, id uuid.UUID, errorMessage string) error
 	IncrementRetryFunc  func(ctx context.Context, id uuid.UUID) error
-	GetStuckEntriesFunc func(ctx context.Context, limit int, stuckThresholdSeconds int) ([]*model.K8sStatusOutboxEntry, error)
-	ForceMarkFailedFunc func(ctx context.Context, id uuid.UUID, errorMessage string) error
 
 	CreateCallCount          int
 	GetPendingBatchCallCount int
 	MarkProcessedCallCount   int
 	MarkFailedCallCount      int
 	IncrementRetryCallCount  int
-	GetStuckEntriesCallCount int
-	ForceMarkFailedCallCount int
 }
 
-func (f *FakeOutboxRepository) Create(ctx context.Context, entry *model.K8sStatusOutboxEntry) error {
+func (f *FakeOutboxRepository) Create(ctx context.Context, entry *pkgoutbox.Entry) error {
 	f.CreateCallCount++
 	if f.CreateFunc != nil {
 		return f.CreateFunc(ctx, entry)
@@ -78,7 +74,7 @@ func (f *FakeOutboxRepository) Create(ctx context.Context, entry *model.K8sStatu
 	return nil
 }
 
-func (f *FakeOutboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*model.K8sStatusOutboxEntry, error) {
+func (f *FakeOutboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*pkgoutbox.Entry, error) {
 	f.GetPendingBatchCallCount++
 	if f.GetPendingBatchFunc != nil {
 		return f.GetPendingBatchFunc(ctx, limit)
@@ -110,40 +106,71 @@ func (f *FakeOutboxRepository) IncrementRetry(ctx context.Context, id uuid.UUID)
 	return nil
 }
 
-func (f *FakeOutboxRepository) GetStuckEntries(ctx context.Context, limit int, stuckThresholdSeconds int) ([]*model.K8sStatusOutboxEntry, error) {
-	f.GetStuckEntriesCallCount++
-	if f.GetStuckEntriesFunc != nil {
-		return f.GetStuckEntriesFunc(ctx, limit, stuckThresholdSeconds)
-	}
-	return nil, nil
+// FakeMessageProcessingRepository is a fake implementation of messageprocessing.Repository for testing.
+// InsertIfNotExists tracks seen (messageID, streamName) pairs: the first call inserts (returns true),
+// subsequent calls with the same pair are duplicates (returns false).
+type FakeMessageProcessingRepository struct {
+	InsertIfNotExistsFunc       func(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error)
+	GetByMessageIDAndStreamFunc func(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error)
+	GetByIDFunc                 func(ctx context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error)
+	UpdateStateFunc             func(ctx context.Context, id uuid.UUID, state string) error
+
+	InsertIfNotExistsCallCount int
+	seen                       map[string]uuid.UUID // key: "messageID\x00streamName"
 }
 
-func (f *FakeOutboxRepository) ForceMarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error {
-	f.ForceMarkFailedCallCount++
-	if f.ForceMarkFailedFunc != nil {
-		return f.ForceMarkFailedFunc(ctx, id, errorMessage)
+// GetByID returns a synthetic "completed" row by default. Override GetByIDFunc
+// in tests that need fine control over the returned state.
+func (f *FakeMessageProcessingRepository) GetByID(ctx context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error) {
+	if f.GetByIDFunc != nil {
+		return f.GetByIDFunc(ctx, id)
 	}
-	return nil
+	return &messageprocessing.MessageProcessing{ID: id, State: "completed"}, nil
 }
 
-// FakeProcessedEventsRepository is a fake for testing
-type FakeProcessedEventsRepository struct {
-	TryMarkProcessedFunc func(ctx context.Context, id uuid.UUID) (bool, error)
-
-	TryMarkProcessedCallCount int
-	ProcessedIDs              []uuid.UUID
+func (f *FakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
+	f.InsertIfNotExistsCallCount++
+	if f.InsertIfNotExistsFunc != nil {
+		return f.InsertIfNotExistsFunc(ctx, msgProc)
+	}
+	if f.seen == nil {
+		f.seen = make(map[string]uuid.UUID)
+	}
+	key := msgProc.MessageID + "\x00" + msgProc.StreamName
+	if id, exists := f.seen[key]; exists {
+		return id, false, nil // already seen → duplicate
+	}
+	id := uuid.New()
+	f.seen[key] = id
+	return id, true, nil // newly inserted
 }
 
-func (f *FakeProcessedEventsRepository) TryMarkProcessed(ctx context.Context, id uuid.UUID) (bool, error) {
-	f.TryMarkProcessedCallCount++
-	if f.TryMarkProcessedFunc != nil {
-		return f.TryMarkProcessedFunc(ctx, id)
+func (f *FakeMessageProcessingRepository) GetByMessageIDAndStream(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
+	if f.GetByMessageIDAndStreamFunc != nil {
+		return f.GetByMessageIDAndStreamFunc(ctx, messageID, streamName)
 	}
-	for _, seen := range f.ProcessedIDs {
-		if seen == id {
-			return true, nil // duplicate
+	if f.seen != nil {
+		key := messageID + "\x00" + streamName
+		if id, exists := f.seen[key]; exists {
+			return &messageprocessing.MessageProcessing{
+				ID:         id,
+				MessageID:  messageID,
+				StreamName: streamName,
+				State:      "completed",
+			}, nil
 		}
 	}
-	f.ProcessedIDs = append(f.ProcessedIDs, id)
-	return false, nil // newly claimed
+	return &messageprocessing.MessageProcessing{
+		ID:         uuid.New(),
+		MessageID:  messageID,
+		StreamName: streamName,
+		State:      "completed",
+	}, nil
+}
+
+func (f *FakeMessageProcessingRepository) UpdateState(ctx context.Context, id uuid.UUID, state string) error {
+	if f.UpdateStateFunc != nil {
+		return f.UpdateStateFunc(ctx, id, state)
+	}
+	return nil
 }

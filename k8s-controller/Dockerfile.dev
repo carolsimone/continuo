@@ -33,6 +33,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY pkg/ ./pkg/
 COPY k8s-controller/ ./k8s-controller/
 
+# k8s-controller/test/testutil.go loads db/migration/k8s/V*.sql at test
+# runtime via pkg/testmigrations.Apply, so the migrations must be present
+# in the image. Mirrors state/Dockerfile.dev and executor-controller/Dockerfile.dev.
+COPY db/migration/k8s/ ./db/migration/k8s/
+
 WORKDIR /app/k8s-controller
 
 # Pre-compile the binary for faster startup in K8s.

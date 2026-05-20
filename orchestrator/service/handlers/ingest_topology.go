@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
@@ -16,6 +15,8 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -46,7 +47,7 @@ func NewIngestTopologyHandler(
 }
 
 // Handle processes the topology-ingestion input.
-func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainModel.IngestTopologyInput, messageID string) error {
+func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainModel.IngestTopologyInput, messageID string, outboxEntryID *uuid.UUID) error {
 	h.logger.Info("Processing topology ingestion",
 		"message_id", messageID,
 		"node_count", len(cmd.Nodes),
@@ -89,7 +90,7 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainModel.Inge
 	defer h.uow.Rollback() //nolint:errcheck
 
 	// Check for duplicate message.
-	msgProcessingID, shouldSkip, err := h.handleTopologyDedup(ctx, messageID, payload)
+	msgProcessingID, shouldSkip, err := h.handleTopologyDedup(ctx, messageID, payload, outboxEntryID)
 	if err != nil {
 		return fmt.Errorf("message deduplication failed: %w", err)
 	}
@@ -163,14 +164,14 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainModel.Inge
 		return fmt.Errorf("failed to marshal outbox payload: %w", err)
 	}
 
-	outboxEntry := &domain.OutboxEntry{
+	outboxEntry := &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         uuid.New(),
 		EventType:           "topology_ingested",
 		Payload:             outboxPayload,
-		StreamName:          "schedules.loaded:v1",
+		StreamName:          streams.SchedulesLoadedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}
@@ -197,46 +198,22 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainModel.Inge
 	return nil
 }
 
-// handleTopologyDedup checks if message was already processed.
-// Returns (messageProcessingID, shouldSkip, error).
+// handleTopologyDedup checks if message was already processed. manifest.loaded:v1
+// originates from manifest-controller (Python; not pkg/outbox), so the
+// outboxEntryID parameter is normally nil and the dedup falls back to the
+// (message_id, stream_name) primary key. Wired through anyway so the
+// signature stays consistent with other handlers and future producers can
+// opt in.
 func (h *IngestTopologyHandler) handleTopologyDedup(
 	ctx context.Context,
 	messageID string,
 	messagePayload []byte,
+	outboxEntryID *uuid.UUID,
 ) (uuid.UUID, bool, error) {
-	msgProc := &messageprocessing.MessageProcessing{
-		MessageID:  messageID,
-		StreamName: "manifest.loaded:v1",
-		State:      "processing",
-		Payload:    messagePayload,
-	}
-
-	id, inserted, err := h.uow.MessageProcessingRepo().InsertIfNotExists(ctx, msgProc)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("failed to insert message processing: %w", err)
-	}
-
-	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "manifest.loaded:v1")
-		if err != nil {
-			return uuid.Nil, false, fmt.Errorf("failed to get existing message: %w", err)
-		}
-
-		if existing.State == "completed" || existing.State == "acked" {
-			h.logger.Info("Message already processed, skipping",
-				"message_id", messageID,
-				"state", existing.State,
-			)
-			return existing.ID, true, nil
-		}
-
-		h.logger.Warn("Message being processed by another instance",
-			"message_id", messageID,
-		)
-		return existing.ID, true, nil
-	}
-
-	return id, false, nil
+	return messageprocessing.DedupWithOutboxEntryID(
+		ctx, h.uow.MessageProcessingRepo(), h.logger,
+		messageID, "manifest.loaded:v1", messagePayload, outboxEntryID,
+	)
 }
 
 // maxOffendersInError caps the number of offending node triples shown in

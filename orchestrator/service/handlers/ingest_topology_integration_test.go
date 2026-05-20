@@ -170,7 +170,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 		},
 	}
 
-	require.NoError(t, handler.Handle(ctx, initialLoad, "manifest-msg-initial-"+scheduleName))
+	require.NoError(t, handler.Handle(ctx, initialLoad, "manifest-msg-initial-"+scheduleName, nil))
 
 	graph, err := queryRepo.GetScheduleGraph(ctx, scheduleName)
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 		},
 	}
 
-	require.NoError(t, handler.Handle(ctx, updatedLoad, "manifest-msg-updated-"+scheduleName))
+	require.NoError(t, handler.Handle(ctx, updatedLoad, "manifest-msg-updated-"+scheduleName, nil))
 
 	graph, err = queryRepo.GetScheduleGraph(ctx, scheduleName)
 	require.NoError(t, err)

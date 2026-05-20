@@ -9,6 +9,8 @@ import (
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
@@ -45,7 +47,7 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, snapshotSvc SnapshotService
 //  7. Emit query.model:v1 with NodeReadyForExecution payload.
 //  8. Mark dedup state="completed".
 //  9. Commit.
-func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel.SingleNodeRunInput, messageID string) error {
+func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel.SingleNodeRunInput, messageID string, outboxEntryID *uuid.UUID) error {
 	h.logger.Info("Processing single-node run",
 		"message_id", messageID,
 		"run_id", cmd.RunID,
@@ -63,7 +65,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	msgProcessingID, shouldSkip, err := h.dedup(ctx, messageID, cmdPayload)
+	msgProcessingID, shouldSkip, err := h.dedup(ctx, messageID, cmdPayload, outboxEntryID)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
 	}
@@ -150,14 +152,14 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 	if err != nil {
 		return fmt.Errorf("marshal run.entries.dispatched: %w", err)
 	}
-	if err := h.uow.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+	if err := h.uow.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
 		EventType:           "run_entries_dispatched",
 		Payload:             dispatchedPayload,
-		StreamName:          "run.entries.dispatched:v1",
+		StreamName:          streams.RunEntriesDispatchedV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}); err != nil {
@@ -185,14 +187,14 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 	if err != nil {
 		return fmt.Errorf("marshal query.model: %w", err)
 	}
-	if err := h.uow.OutboxRepo().Create(ctx, &domain.OutboxEntry{
+	if err := h.uow.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
 		EventType:           "node_ready_for_execution",
 		Payload:             queryPayload,
-		StreamName:          "query.model:v1",
+		StreamName:          streams.QueryModelV1,
 		Status:              "pending",
 		MaxRetries:          3,
 	}); err != nil {
@@ -216,43 +218,18 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 	return nil
 }
 
-// dedup checks for duplicate delivery. Returns (msgProcessingID, shouldSkip, err).
+// dedup checks for duplicate delivery. Delegates to
+// pkg/messageprocessing.DedupWithOutboxEntryID so producer-side
+// Processor-crash redeliveries (same outbox row republished with a fresh
+// Redis msg_id) are caught by the outbox_entry_id secondary uniqueness key.
 func (h *HandleSingleNodeRunHandler) dedup(
 	ctx context.Context,
 	messageID string,
 	payload []byte,
+	outboxEntryID *uuid.UUID,
 ) (uuid.UUID, bool, error) {
-	msgProc := &messageprocessing.MessageProcessing{
-		MessageID:  messageID,
-		StreamName: "trigger.single_node_run:v1",
-		State:      "processing",
-		Payload:    payload,
-	}
-
-	id, inserted, err := h.uow.MessageProcessingRepo().InsertIfNotExists(ctx, msgProc)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("insert message processing: %w", err)
-	}
-
-	if !inserted {
-		existing, err := h.uow.MessageProcessingRepo().GetByMessageIDAndStream(ctx, messageID, "trigger.single_node_run:v1")
-		if err != nil {
-			return uuid.Nil, false, fmt.Errorf("get existing message: %w", err)
-		}
-
-		if existing.State == "completed" || existing.State == "acked" {
-			h.logger.Info("Message already processed, skipping",
-				"message_id", messageID,
-				"state", existing.State,
-			)
-			return existing.ID, true, nil
-		}
-
-		h.logger.Warn("Message being processed by another instance",
-			"message_id", messageID,
-		)
-		return existing.ID, true, nil
-	}
-
-	return id, false, nil
+	return messageprocessing.DedupWithOutboxEntryID(
+		ctx, h.uow.MessageProcessingRepo(), h.logger,
+		messageID, "trigger.single_node_run:v1", payload, outboxEntryID,
+	)
 }

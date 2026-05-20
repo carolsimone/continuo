@@ -12,6 +12,7 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -20,7 +21,7 @@ import (
 // current tx (or the autocommit DB if no tx is active), mirroring
 // state/service/uow's pattern.
 type UnitOfWork interface {
-	OutboxRepo() postgres.OutboxRepository
+	OutboxRepo() pkgoutbox.Repository
 	CancelledSchedulesRepo() postgres.CancelledSchedulesRepository
 	MessageProcessingRepo() messageprocessing.Repository
 
@@ -47,11 +48,11 @@ func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) *PostgresUnitOfWork
 	return &PostgresUnitOfWork{db: db, logger: logger}
 }
 
-func (u *PostgresUnitOfWork) OutboxRepo() postgres.OutboxRepository {
+func (u *PostgresUnitOfWork) OutboxRepo() pkgoutbox.Repository {
 	if u.tx != nil {
-		return postgres.NewOutboxRepository(u.tx, u.logger)
+		return pkgoutbox.NewPostgresRepository(u.tx, "executor_outbox", u.logger)
 	}
-	return postgres.NewOutboxRepository(u.db, u.logger)
+	return pkgoutbox.NewPostgresRepository(u.db, "executor_outbox", u.logger)
 }
 
 func (u *PostgresUnitOfWork) CancelledSchedulesRepo() postgres.CancelledSchedulesRepository {
