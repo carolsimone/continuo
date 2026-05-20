@@ -40,3 +40,32 @@ func (e JobDeployed) ToMap() map[string]interface{} {
 		"max_retries":      e.MaxRetries,
 	}
 }
+
+// NodeUpdated is the payload of an executor_outbox row whose event_type is
+// "node_updated". The dispatcher writes it (status FAILED) when a deploy
+// exhausts its retry budget, so orchestrator's HandleNodeCompleted advances
+// the schedule. Stream: node.updated:v1.
+type NodeUpdated struct {
+	TaskID       string `json:"task_id"`
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+	ServiceName  string `json:"service_name"`
+	SchemaName   string `json:"schema_name"`
+	TableName    string `json:"table_name"`
+	Status       string `json:"status"`
+}
+
+func (NodeUpdated) isEvent() {}
+
+// ToMap converts NodeUpdated to a flat map for Redis stream publishing.
+func (e NodeUpdated) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"task_id":       e.TaskID,
+		"schedule_id":   e.ScheduleID,
+		"schedule_name": e.ScheduleName,
+		"service_name":  e.ServiceName,
+		"schema_name":   e.SchemaName,
+		"table_name":    e.TableName,
+		"status":        e.Status,
+	}
+}
