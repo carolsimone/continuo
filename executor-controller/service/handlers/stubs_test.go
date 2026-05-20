@@ -3,30 +3,29 @@ package handlers_test
 import (
 	"context"
 	"sync"
+	"time"
 
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/google/uuid"
 )
 
-// stubOutboxRepo captures creates for assertion without a real DB.
-type stubOutboxRepo struct {
-	mu      sync.Mutex
-	entries []*pkgoutbox.Entry
+// stubDeploymentsRepo captures Create calls for assertion without a real DB.
+type stubDeploymentsRepo struct {
+	mu   sync.Mutex
+	rows []*deployer.Deployment
 }
 
-func (r *stubOutboxRepo) Create(_ context.Context, entry *pkgoutbox.Entry) error {
+func (r *stubDeploymentsRepo) Create(_ context.Context, d *deployer.Deployment) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.entries = append(r.entries, entry)
+	r.rows = append(r.rows, d)
 	return nil
 }
-
-func (r *stubOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*pkgoutbox.Entry, error) {
+func (r *stubDeploymentsRepo) GetDueBatch(_ context.Context, _ int) ([]*deployer.Deployment, error) {
 	return nil, nil
 }
-
-func (r *stubOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
-func (r *stubOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
+func (r *stubDeploymentsRepo) MarkDeployed(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *stubDeploymentsRepo) Reschedule(_ context.Context, _ uuid.UUID, _ time.Time, _ string) error {
 	return nil
 }
-func (r *stubOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *stubDeploymentsRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error { return nil }

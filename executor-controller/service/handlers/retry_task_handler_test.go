@@ -8,8 +8,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
+	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
@@ -19,9 +19,9 @@ import (
 
 func TestRetryTaskHandler_PropagatesRetryFields(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	stub := &stubOutboxRepo{}
+	depl := &stubDeploymentsRepo{}
 	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{}}
-	u := newFakeUoW(stub, cancelled)
+	u := newFakeUoW(depl, cancelled)
 
 	evt := events.RetryTask{
 		QueryModel: events.QueryModel{
@@ -35,21 +35,20 @@ func TestRetryTaskHandler_PropagatesRetryFields(t *testing.T) {
 	}
 
 	h := handlers.NewRetryTaskHandler(logger)
-	err := h.Handle(context.Background(), u, evt, uuid.New())
-	require.NoError(t, err)
-	require.Len(t, stub.entries, 1)
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+	require.Len(t, depl.rows, 1)
 
-	var d event.DeployTask
-	require.NoError(t, json.Unmarshal(stub.entries[0].Payload, &d))
-	assert.Equal(t, 3, d.TaskRetryCount)
-	assert.Equal(t, 7, d.TaskMaxRetries)
+	var job deployer.DeployJob
+	require.NoError(t, json.Unmarshal(depl.rows[0].JobParams, &job))
+	assert.Equal(t, 3, job.TaskRetryCount)
+	assert.Equal(t, 7, job.TaskMaxRetries)
 }
 
 func TestRetryTaskHandler_DefaultsMaxRetriesWhenZero(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	stub := &stubOutboxRepo{}
+	depl := &stubDeploymentsRepo{}
 	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{}}
-	u := newFakeUoW(stub, cancelled)
+	u := newFakeUoW(depl, cancelled)
 
 	evt := events.RetryTask{
 		QueryModel: events.QueryModel{
@@ -62,21 +61,20 @@ func TestRetryTaskHandler_DefaultsMaxRetriesWhenZero(t *testing.T) {
 	}
 
 	h := handlers.NewRetryTaskHandler(logger)
-	err := h.Handle(context.Background(), u, evt, uuid.New())
-	require.NoError(t, err)
-	require.Len(t, stub.entries, 1)
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+	require.Len(t, depl.rows, 1)
 
-	var d event.DeployTask
-	require.NoError(t, json.Unmarshal(stub.entries[0].Payload, &d))
-	assert.Equal(t, 2, d.TaskMaxRetries, "max_retries=0 on the wire falls back to service default 2")
+	var job deployer.DeployJob
+	require.NoError(t, json.Unmarshal(depl.rows[0].JobParams, &job))
+	assert.Equal(t, 2, job.TaskMaxRetries, "max_retries=0 on the wire falls back to service default 2")
 }
 
 func TestRetryTaskHandler_DropsWhenScheduleCancelled(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	stub := &stubOutboxRepo{}
+	depl := &stubDeploymentsRepo{}
 	scheduleID := uuid.New()
 	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{scheduleID: true}}
-	u := newFakeUoW(stub, cancelled)
+	u := newFakeUoW(depl, cancelled)
 
 	evt := events.RetryTask{
 		QueryModel: events.QueryModel{
@@ -89,7 +87,6 @@ func TestRetryTaskHandler_DropsWhenScheduleCancelled(t *testing.T) {
 	}
 
 	h := handlers.NewRetryTaskHandler(logger)
-	err := h.Handle(context.Background(), u, evt, uuid.New())
-	require.NoError(t, err)
-	assert.Empty(t, stub.entries)
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+	assert.Empty(t, depl.rows)
 }
