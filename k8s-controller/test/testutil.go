@@ -104,10 +104,10 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 
 	// Apply the real db/migration/k8s/V*.sql migrations in version order.
 	// Mirrors state/test and executor-controller/test, and keeps the
-	// testcontainer schema (k8s_outbox, message_processing, processed_events,
-	// and any later columns like message_processing.outbox_entry_id) in
-	// lock-step with production. Hand-rolled inline DDL drifts the first
-	// time a new migration adds a column; this can't.
+	// testcontainer schema (k8s_outbox, message_processing, and any later
+	// columns like message_processing.outbox_entry_id) in lock-step with
+	// production. Hand-rolled inline DDL drifts the first time a new
+	// migration adds a column; this can't.
 	dir, err := k8sMigrationDir()
 	require.NoError(t, err, "resolve k8s migration dir")
 	require.NoError(t, testmigrations.Apply(db.DB, dir), "apply k8s migrations")

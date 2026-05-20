@@ -16,11 +16,10 @@ func cleanupTestData(t *testing.T, ctx context.Context, clients *testClients, sc
 	// Clean Neo4j
 	cleanupNeo4j(t, ctx, clients, scheduleName)
 
-	// Clean Redis streams before Postgres dedup tables: deleting consumer-side
-	// dedup state (message_processing, processed_events) while the k8s consumer
-	// still has pending node.deployed:v1 / check.k8s:v1 messages re-enables
-	// those messages and can trigger replays that recreate k8s_outbox rows
-	// before the streams are gone.
+	// Clean Redis streams before Postgres dedup tables: deleting message_processing
+	// while the k8s consumer still has pending node.deployed:v1 / check.k8s:v1
+	// messages re-enables those messages and can trigger replays that recreate
+	// k8s_outbox rows before the streams are gone.
 	cleanupRedis(t, ctx, clients)
 
 	// Clean PostgreSQL databases
@@ -81,10 +80,6 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	// to retry them forever, drowning Redis in noise that destabilises
 	// manifest-controller's consumer group across subsequent tests.
 	_, _ = clients.executorDB.Exec("DELETE FROM executor_outbox")
-
-	// Clean processed_events on k8s (vestigial pre-pkg/messageprocessing dedup;
-	// executor's processed_events table was dropped in executor V9).
-	_, _ = clients.k8sDB.Exec("DELETE FROM processed_events")
 
 	// Clean per-service message_processing (canonical consumer-side dedup
 	// from #57). Must clear so re-runs aren't false-positive-deduped by
