@@ -3,13 +3,11 @@ package handlers_test
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"testing"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
-	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
@@ -36,12 +34,11 @@ func TestRetryTaskHandler_PropagatesRetryFields(t *testing.T) {
 
 	h := handlers.NewRetryTaskHandler(logger)
 	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
-	require.Len(t, depl.rows, 1)
+	require.Len(t, depl.added, 1)
 
-	var job deployer.DeployJob
-	require.NoError(t, json.Unmarshal(depl.rows[0].JobParams, &job))
-	assert.Equal(t, 3, job.TaskRetryCount)
-	assert.Equal(t, 7, job.TaskMaxRetries)
+	cmd := depl.added[0].Command()
+	assert.Equal(t, 3, cmd.TaskRetryCount)
+	assert.Equal(t, 7, cmd.TaskMaxRetries)
 }
 
 func TestRetryTaskHandler_DefaultsMaxRetriesWhenZero(t *testing.T) {
@@ -62,11 +59,10 @@ func TestRetryTaskHandler_DefaultsMaxRetriesWhenZero(t *testing.T) {
 
 	h := handlers.NewRetryTaskHandler(logger)
 	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
-	require.Len(t, depl.rows, 1)
+	require.Len(t, depl.added, 1)
 
-	var job deployer.DeployJob
-	require.NoError(t, json.Unmarshal(depl.rows[0].JobParams, &job))
-	assert.Equal(t, 2, job.TaskMaxRetries, "max_retries=0 on the wire falls back to service default 2")
+	cmd := depl.added[0].Command()
+	assert.Equal(t, 2, cmd.TaskMaxRetries, "max_retries=0 on the wire falls back to service default 2")
 }
 
 func TestRetryTaskHandler_DropsWhenScheduleCancelled(t *testing.T) {
@@ -88,5 +84,5 @@ func TestRetryTaskHandler_DropsWhenScheduleCancelled(t *testing.T) {
 
 	h := handlers.NewRetryTaskHandler(logger)
 	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
-	assert.Empty(t, depl.rows)
+	assert.Empty(t, depl.added)
 }

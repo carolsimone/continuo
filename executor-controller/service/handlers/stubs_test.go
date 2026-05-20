@@ -3,29 +3,23 @@ package handlers_test
 import (
 	"context"
 	"sync"
-	"time"
 
-	"github.com/carolsimone/continuo/executor-controller/service/deployer"
-	"github.com/google/uuid"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
 )
 
-// stubDeploymentsRepo captures Create calls for assertion without a real DB.
+// stubDeploymentsRepo captures Add calls for assertion without a real DB.
 type stubDeploymentsRepo struct {
-	mu   sync.Mutex
-	rows []*deployer.Deployment
+	mu    sync.Mutex
+	added []*model.Deployment
 }
 
-func (r *stubDeploymentsRepo) Create(_ context.Context, d *deployer.Deployment) error {
+func (r *stubDeploymentsRepo) Add(_ context.Context, d *model.Deployment) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.rows = append(r.rows, d)
+	r.added = append(r.added, d)
 	return nil
 }
-func (r *stubDeploymentsRepo) GetDueBatch(_ context.Context, _ int) ([]*deployer.Deployment, error) {
+func (r *stubDeploymentsRepo) GetDueBatch(_ context.Context, _ int) ([]*model.Deployment, error) {
 	return nil, nil
 }
-func (r *stubDeploymentsRepo) MarkDeployed(_ context.Context, _ uuid.UUID) error { return nil }
-func (r *stubDeploymentsRepo) Reschedule(_ context.Context, _ uuid.UUID, _ time.Time, _ string) error {
-	return nil
-}
-func (r *stubDeploymentsRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (r *stubDeploymentsRepo) Save(_ context.Context, _ *model.Deployment) error { return nil }

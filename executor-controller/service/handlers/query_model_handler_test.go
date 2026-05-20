@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"testing"
@@ -10,7 +9,8 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
-	"github.com/carolsimone/continuo/executor-controller/service/deployer"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -32,11 +32,11 @@ func (r *stubCancelledRepo) DeleteExpired(_ context.Context, _ time.Duration) (i
 	return 0, nil
 }
 
-func newFakeUoW(depl deployer.Repository, cancelled postgres.CancelledSchedulesRepository) *uow.FakeUnitOfWork {
+func newFakeUoW(depl repository.DeploymentRepository, cancelled postgres.CancelledSchedulesRepository) *uow.FakeUnitOfWork {
 	return &uow.FakeUnitOfWork{Deployments: depl, Cancelled: cancelled}
 }
 
-func TestQueryModelHandler_WritesDeploymentRow(t *testing.T) {
+func TestQueryModelHandler_EnqueuesDeployment(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	depl := &stubDeploymentsRepo{}
 	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{}}
@@ -52,19 +52,18 @@ func TestQueryModelHandler_WritesDeploymentRow(t *testing.T) {
 
 	h := handlers.NewQueryModelHandler(logger)
 	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
-	require.Len(t, depl.rows, 1)
+	require.Len(t, depl.added, 1)
 
-	row := depl.rows[0]
-	assert.Equal(t, taskID, row.TaskID)
-	assert.Equal(t, scheduleID, row.ScheduleID)
-	assert.Equal(t, "pending", row.Status)
+	dep := depl.added[0]
+	assert.Equal(t, model.StatusPending, dep.Status())
 
-	var job deployer.DeployJob
-	require.NoError(t, json.Unmarshal(row.JobParams, &job))
-	assert.Equal(t, taskID.String(), job.TaskID)
-	assert.Equal(t, "dbt-public-orders", job.JobName)
-	assert.Equal(t, 0, job.TaskRetryCount)
-	assert.Equal(t, 2, job.TaskMaxRetries, "default task max retries off the retry stream")
+	cmd := dep.Command()
+	assert.Equal(t, taskID.String(), cmd.TaskID)
+	assert.Equal(t, scheduleID.String(), cmd.ScheduleID)
+	assert.Equal(t, "dbt-public-orders", cmd.JobName)
+	assert.Equal(t, 0, cmd.TaskRetryCount)
+	assert.Equal(t, 2, cmd.TaskMaxRetries, "default task max retries off the retry stream")
+	assert.True(t, dep.IsDeployable())
 }
 
 func TestQueryModelHandler_DropsWhenScheduleCancelled(t *testing.T) {
@@ -80,10 +79,10 @@ func TestQueryModelHandler_DropsWhenScheduleCancelled(t *testing.T) {
 	// Cancelled-schedule path returns nil so the binding commits and ACKs the
 	// message rather than leaving it pending for endless redelivery.
 	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
-	assert.Empty(t, depl.rows, "no deployment row when schedule is cancelled")
+	assert.Empty(t, depl.added, "no deployment enqueued when schedule is cancelled")
 }
 
-func TestQueryModelHandler_PropagatesMsgProcIDToDeploymentRow(t *testing.T) {
+func TestQueryModelHandler_PropagatesMsgProcIDToDeployment(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	depl := &stubDeploymentsRepo{}
 	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{}}
@@ -97,11 +96,11 @@ func TestQueryModelHandler_PropagatesMsgProcIDToDeploymentRow(t *testing.T) {
 
 	h := handlers.NewQueryModelHandler(logger)
 	require.NoError(t, h.Handle(context.Background(), u, evt, msgProcID))
-	require.Len(t, depl.rows, 1)
+	require.Len(t, depl.added, 1)
 
-	row := depl.rows[0]
-	require.NotNil(t, row.MessageProcessingID)
-	assert.Equal(t, msgProcID, *row.MessageProcessingID)
-	assert.NotEqual(t, evt.OutboxEntryID, *row.MessageProcessingID,
+	dep := depl.added[0]
+	require.NotNil(t, dep.MessageProcessingID())
+	assert.Equal(t, msgProcID, *dep.MessageProcessingID())
+	assert.NotEqual(t, evt.OutboxEntryID, *dep.MessageProcessingID(),
 		"orchestrator's OutboxEntryID must never be used as the executor's message_processing FK")
 }

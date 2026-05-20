@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
-	"github.com/carolsimone/continuo/executor-controller/service/deployer"
+	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -53,16 +53,16 @@ func buildRetryBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMess
 	return executorredis.NewRetryTaskBinding(uowFactory, handler, logger), logger
 }
 
-// readDeployJobParams scans the JSONB job_params from the single executor_deployments row
-// and unmarshals it into a DeployJob for field assertions.
-func readDeployJobParams(t *testing.T, db *sqlx.DB) deployer.DeployJob {
+// readDeployCommand scans the JSONB job_params from the single executor_deployments
+// row and unmarshals it into a DeployTask command for field assertions.
+func readDeployCommand(t *testing.T, db *sqlx.DB) command.DeployTask {
 	t.Helper()
 	var raw []byte
 	require.NoError(t, db.QueryRowContext(context.Background(),
 		`SELECT job_params FROM executor_deployments LIMIT 1`).Scan(&raw))
-	var d deployer.DeployJob
-	require.NoError(t, json.Unmarshal(raw, &d))
-	return d
+	var c command.DeployTask
+	require.NoError(t, json.Unmarshal(raw, &c))
+	return c
 }
 
 func TestRetryTaskBinding_SingleMessageHappyPath(t *testing.T) {
@@ -79,9 +79,9 @@ func TestRetryTaskBinding_SingleMessageHappyPath(t *testing.T) {
 		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.RetryTaskV1))
 
 	// Verify the retry fields are stored faithfully inside the JSONB job_params.
-	d := readDeployJobParams(t, db)
-	assert.Equal(t, 2, d.TaskRetryCount)
-	assert.Equal(t, 5, d.TaskMaxRetries)
+	c := readDeployCommand(t, db)
+	assert.Equal(t, 2, c.TaskRetryCount)
+	assert.Equal(t, 5, c.TaskMaxRetries)
 }
 
 func TestRetryTaskBinding_ConcurrentDedup(t *testing.T) {

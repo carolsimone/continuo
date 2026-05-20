@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/executor-controller/domain/command"
+	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -20,36 +22,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestDispatcher builds a Dispatcher whose deployments-repo factory is the
-// real Postgres adapter bound to the per-batch tx.
-func newTestDispatcher(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int) *deployer.Dispatcher {
-	return deployer.NewDispatcher(
-		db, fk,
-		func(exec outbox.Executor) deployer.Repository {
-			return postgres.NewDeploymentsRepository(exec, testLogger())
-		},
-		"default", maxConcurrent, testLogger(), deployer.DispatcherConfig{},
-	)
-}
-
+// fakeDeployer implements domain/deploy.Deployer.
 type fakeDeployer struct {
-	createErr   error
-	createCalls int
+	deployErr   error
+	deployCalls int
 	active      int
 }
 
-func (f *fakeDeployer) CreateQueryJob(_ context.Context, _ k8s.JobParams) error {
-	f.createCalls++
-	return f.createErr
+func (f *fakeDeployer) Deploy(_ context.Context, _ deploy.JobSpec) error {
+	f.deployCalls++
+	return f.deployErr
 }
-func (f *fakeDeployer) CountActiveJobs(_ context.Context, _, _ string) (int, error) {
-	return f.active, nil
+func (f *fakeDeployer) CountActive(_ context.Context) (int, error) { return f.active, nil }
+
+// newTestDispatcher builds a Dispatcher whose repo factory is the real Postgres
+// adapter bound to the per-batch tx, with a fake Deployer.
+func newTestDispatcher(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int) *deployer.Dispatcher {
+	return deployer.NewDispatcher(
+		db, fk,
+		func(exec outbox.Executor) repository.DeploymentRepository {
+			return postgres.NewDeploymentsRepository(exec, testLogger())
+		},
+		maxConcurrent, testLogger(), deployer.DispatcherConfig{},
+	)
 }
 
+// seedJob inserts a deployable pending row (valid command in job_params) with a
+// chosen deploy-attempt budget, due one minute ago.
 func seedJob(t *testing.T, db *sqlx.DB, maxRetries, retryCount int) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	payload, err := json.Marshal(deployer.DeployJob{
+	payload, err := json.Marshal(command.DeployTask{
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
@@ -77,10 +80,9 @@ func TestDispatcher_SuccessWritesRunningAndDeployed(t *testing.T) {
 	id := seedJob(t, db, 3, 0)
 	fk := &fakeDeployer{active: 0}
 
-	disp := newTestDispatcher(db, fk, 50)
-	require.NoError(t, disp.ProcessBatch(context.Background()))
+	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
-	assert.Equal(t, 1, fk.createCalls)
+	assert.Equal(t, 1, fk.deployCalls)
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "deployed", status)
@@ -93,10 +95,9 @@ func TestDispatcher_TransientErrorReschedules(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	id := seedJob(t, db, 3, 0)
-	fk := &fakeDeployer{createErr: errors.New("apiserver down")}
+	fk := &fakeDeployer{deployErr: errors.New("apiserver down")}
 
-	disp := newTestDispatcher(db, fk, 50)
-	require.NoError(t, disp.ProcessBatch(context.Background()))
+	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
 	var status string
 	var rc int
@@ -112,10 +113,9 @@ func TestDispatcher_BudgetExhaustedWritesFailed(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	id := seedJob(t, db, 3, 2)
-	fk := &fakeDeployer{createErr: errors.New("apiserver down")}
+	fk := &fakeDeployer{deployErr: errors.New("apiserver down")}
 
-	disp := newTestDispatcher(db, fk, 50)
-	require.NoError(t, disp.ProcessBatch(context.Background()))
+	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
@@ -129,10 +129,9 @@ func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	id := seedJob(t, db, 3, 0)
-	fk := &fakeDeployer{createErr: errors.Join(errors.New("bad"), pkgevents.ErrPermanent)}
+	fk := &fakeDeployer{deployErr: errors.Join(errors.New("bad"), pkgevents.ErrPermanent)}
 
-	disp := newTestDispatcher(db, fk, 50)
-	require.NoError(t, disp.ProcessBatch(context.Background()))
+	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
@@ -145,10 +144,9 @@ func TestDispatcher_CapZeroHeadroomDeploysNothing(t *testing.T) {
 	id := seedJob(t, db, 3, 0)
 	fk := &fakeDeployer{active: 5}
 
-	disp := newTestDispatcher(db, fk, 5)
-	require.NoError(t, disp.ProcessBatch(context.Background()))
+	require.NoError(t, newTestDispatcher(db, fk, 5).ProcessBatch(context.Background()))
 
-	assert.Equal(t, 0, fk.createCalls, "no deploys when cap reached")
+	assert.Equal(t, 0, fk.deployCalls, "no deploys when cap reached")
 	var status string
 	var rc int
 	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM executor_deployments WHERE id=$1`, id).Scan(&status, &rc))
@@ -164,10 +162,9 @@ func TestDispatcher_HeadroomLimitsBatch(t *testing.T) {
 	}
 	fk := &fakeDeployer{active: 3}
 
-	disp := newTestDispatcher(db, fk, 5)
-	require.NoError(t, disp.ProcessBatch(context.Background()))
+	require.NoError(t, newTestDispatcher(db, fk, 5).ProcessBatch(context.Background()))
 
-	assert.Equal(t, 2, fk.createCalls, "only headroom (cap-active) rows deployed")
+	assert.Equal(t, 2, fk.deployCalls, "only headroom (cap-active) rows deployed")
 	var deployed int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM executor_deployments WHERE status='deployed'`).Scan(&deployed))
 	assert.Equal(t, 2, deployed)
@@ -177,30 +174,30 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	id := uuid.New()
 	taskID := uuid.New()
 	scheduleID := uuid.New()
-	// Valid JSONB, but a JSON string — cannot unmarshal into DeployJob struct.
+	// Valid JSONB, but a JSON string — cannot unmarshal into DeployTask.
 	_, err := db.Exec(
 		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
 		 VALUES ($1, $2, $3, '"corrupt"'::jsonb, 3, 0, NOW() - interval '1 minute')`,
-		id, taskID, scheduleID)
+		uuid.New(), taskID, scheduleID)
 	require.NoError(t, err)
 
 	fk := &fakeDeployer{active: 0}
-	disp := newTestDispatcher(db, fk, 50)
-	require.NoError(t, disp.ProcessBatch(context.Background()))
+	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
-	assert.Equal(t, 0, fk.createCalls, "deploy never attempted when payload is corrupt")
+	assert.Equal(t, 0, fk.deployCalls, "deploy never attempted when payload is corrupt")
 
 	var status string
-	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
+	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`,
+		// the row id differs from taskID; look it up by task_id
+		mustDeploymentID(t, db, taskID)).Scan(&status))
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
 	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
 	assert.Equal(t, 0, outboxCountByType(t, db, "node_deployed"))
 
-	// The FAILED announcement must carry the row's task_id (row-identity fallback).
+	// The FAILED announcement must carry the row's task_id (identity fallback).
 	var payload []byte
 	require.NoError(t, db.QueryRow(
 		`SELECT payload FROM executor_outbox WHERE event_type='task_status_updated' LIMIT 1`).Scan(&payload))
@@ -213,4 +210,11 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	assert.Equal(t, taskID.String(), got.TaskID, "FAILED announcement uses the row's task_id")
 	assert.Equal(t, scheduleID.String(), got.ScheduleID)
 	assert.Equal(t, "FAILED", got.Status)
+}
+
+func mustDeploymentID(t *testing.T, db *sqlx.DB, taskID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	require.NoError(t, db.QueryRow(`SELECT id FROM executor_deployments WHERE task_id=$1`, taskID).Scan(&id))
+	return id
 }

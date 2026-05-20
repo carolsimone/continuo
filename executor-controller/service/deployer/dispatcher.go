@@ -1,3 +1,7 @@
+// Package deployer holds the application service that drains the
+// executor_deployments command queue: it deploys K8s Jobs (capped by a live
+// in-flight count) and, once a deploy resolves, writes the canonical
+// announcement rows to executor_outbox. It depends only on domain ports.
 package deployer
 
 import (
@@ -8,21 +12,21 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
+	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
-const dbtJobLabelSelector = "app=dbt-job"
-
-// K8sDeployer is the slice of the K8s client the dispatcher needs.
-type K8sDeployer interface {
-	CreateQueryJob(ctx context.Context, params k8s.JobParams) error
-	CountActiveJobs(ctx context.Context, namespace, labelSelector string) (int, error)
-}
+// RepoFactory builds a DeploymentRepository bound to a specific executor (the
+// *sqlx.Tx the dispatcher opens per batch). Injecting it keeps the concrete
+// Postgres adapter out of this package.
+type RepoFactory func(exec outbox.Executor) repository.DeploymentRepository
 
 // DispatcherConfig groups the optional knobs.
 type DispatcherConfig struct {
@@ -32,34 +36,25 @@ type DispatcherConfig struct {
 	BackoffCap  time.Duration // max retry delay; default 2m
 }
 
-// Dispatcher drains executor_deployments: it deploys K8s Jobs (capped by
-// maxConcurrent live Jobs) and writes the canonical announcement rows to
-// executor_outbox. The K8s deploy is a command effect kept off the outbox so
-// every outbox Publisher stays a uniform marshal-and-XADD.
-// DeploymentsRepoFactory builds a Repository bound to a specific executor
-// (a *sqlx.Tx the dispatcher opens per batch). Injecting it keeps the concrete
-// Postgres adapter out of this package — the dispatcher depends only on the
-// Repository port.
-type DeploymentsRepoFactory func(exec outbox.Executor) Repository
-
+// Dispatcher drains executor_deployments under a concurrency cap. The K8s
+// deploy is a command effect kept off the outbox so every outbox Publisher
+// stays a uniform marshal-and-XADD.
 type Dispatcher struct {
 	db            *sqlx.DB
-	k8s           K8sDeployer
-	newDeplRepo   DeploymentsRepoFactory
-	namespace     string
+	deployer      deploy.Deployer
+	newRepo       RepoFactory
 	maxConcurrent int
 	logger        *slog.Logger
 	tick          time.Duration
 	batchSize     int
-	backoffBase   time.Duration
-	backoffCap    time.Duration
+	backoff       model.BackoffPolicy
+	now           func() time.Time
 }
 
 func NewDispatcher(
 	db *sqlx.DB,
-	k8sDeployer K8sDeployer,
-	newDeplRepo DeploymentsRepoFactory,
-	namespace string,
+	deployer deploy.Deployer,
+	newRepo RepoFactory,
 	maxConcurrent int,
 	logger *slog.Logger,
 	cfg DispatcherConfig,
@@ -77,10 +72,15 @@ func NewDispatcher(
 		cfg.BackoffCap = 2 * time.Minute
 	}
 	return &Dispatcher{
-		db: db, k8s: k8sDeployer, newDeplRepo: newDeplRepo,
-		namespace: namespace, maxConcurrent: maxConcurrent,
-		logger: logger, tick: cfg.Tick, batchSize: cfg.BatchSize,
-		backoffBase: cfg.BackoffBase, backoffCap: cfg.BackoffCap,
+		db:            db,
+		deployer:      deployer,
+		newRepo:       newRepo,
+		maxConcurrent: maxConcurrent,
+		logger:        logger,
+		tick:          cfg.Tick,
+		batchSize:     cfg.BatchSize,
+		backoff:       model.BackoffPolicy{Base: cfg.BackoffBase, Cap: cfg.BackoffCap},
+		now:           time.Now,
 	}
 }
 
@@ -103,9 +103,9 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 
 // ProcessBatch runs one cycle. Exported for tests.
 func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
-	active, err := d.k8s.CountActiveJobs(ctx, d.namespace, dbtJobLabelSelector)
+	active, err := d.deployer.CountActive(ctx)
 	if err != nil {
-		return fmt.Errorf("count active jobs: %w", err)
+		return fmt.Errorf("count active deploys: %w", err)
 	}
 	headroom := d.maxConcurrent - active
 	if headroom <= 0 {
@@ -127,20 +127,20 @@ func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
 		}
 	}()
 
-	deplRepo := d.newDeplRepo(tx)
+	repo := d.newRepo(tx)
 	outboxRepo := outbox.NewPostgresRepository(tx, "executor_outbox", d.logger)
 
-	rows, err := deplRepo.GetDueBatch(ctx, headroom)
+	deployments, err := repo.GetDueBatch(ctx, headroom)
 	if err != nil {
 		return fmt.Errorf("get due batch: %w", err)
 	}
-	if len(rows) == 0 {
+	if len(deployments) == 0 {
 		return tx.Commit()
 	}
 
-	for _, row := range rows {
-		if err := d.dispatchRow(ctx, deplRepo, outboxRepo, row); err != nil {
-			return fmt.Errorf("dispatch row %s: %w", row.ID, err)
+	for _, dep := range deployments {
+		if err := d.dispatchOne(ctx, repo, outboxRepo, dep); err != nil {
+			return fmt.Errorf("dispatch deployment %s: %w", dep.ID(), err)
 		}
 	}
 
@@ -152,134 +152,90 @@ func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
 	return nil
 }
 
-func (d *Dispatcher) dispatchRow(ctx context.Context, deplRepo Repository, outboxRepo outbox.Repository, row *Deployment) error {
-	var job DeployJob
-	if err := json.Unmarshal(row.JobParams, &job); err != nil {
-		// job_params is written from a valid DeployJob, so a failure here is
-		// corruption. Populate identity from the row's typed columns so the
-		// FAILED announcements still route correctly downstream.
-		job.TaskID = row.TaskID.String()
-		job.ScheduleID = row.ScheduleID.String()
-		return d.writeFailed(ctx, deplRepo, outboxRepo, row, job, fmt.Sprintf("unmarshal job_params: %v", err))
+func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, dep *model.Deployment) error {
+	now := d.now()
+
+	// A row whose job_params could not be deserialized is unrunnable; fail it
+	// permanently with a routable announcement built from its recovered identity.
+	if !dep.IsDeployable() {
+		dep.RegisterFailure(now, true, "deployment job_params not deployable", d.backoff)
+		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+			return err
+		}
+		return repo.Save(ctx, dep)
 	}
 
-	params, err := job.ToJobParams(d.namespace)
-	if err != nil {
-		return d.writeFailed(ctx, deplRepo, outboxRepo, row, job, fmt.Sprintf("invalid job_params: %v", err))
-	}
-
-	deployErr := d.k8s.CreateQueryJob(ctx, params)
+	deployErr := d.deployer.Deploy(ctx, dep.Command().ToJobSpec())
 	if deployErr == nil {
-		return d.writeDeployed(ctx, deplRepo, outboxRepo, row, job)
+		if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
+			return err
+		}
+		if err := dep.MarkDeployed(now); err != nil {
+			return err
+		}
+		return repo.Save(ctx, dep)
 	}
 
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
-	if !permanent && row.RetryCount+1 < row.MaxRetries {
-		next := time.Now().Add(d.backoff(row.RetryCount))
+	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) {
+		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "cause", deployErr)
+		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+			return err
+		}
+	} else {
 		d.logger.Warn("Deploy transient failure — rescheduling",
-			"deployment_id", row.ID, "retry_count", row.RetryCount, "next_attempt_at", next, "error", deployErr)
-		return deplRepo.Reschedule(ctx, row.ID, next, deployErr.Error())
+			"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
 	}
-	return d.writeFailed(ctx, deplRepo, outboxRepo, row, job, deployErr.Error())
+	return repo.Save(ctx, dep)
 }
 
-func (d *Dispatcher) writeDeployed(ctx context.Context, deplRepo Repository, outboxRepo outbox.Repository, row *Deployment, job DeployJob) error {
-	running := pkgevents.TaskStatusUpdated{
-		TaskID: job.TaskID, ScheduleID: job.ScheduleID, Status: "RUNNING",
-		RetryCount: int32(job.TaskRetryCount),
-	}
-	runningPayload, err := json.Marshal(running)
-	if err != nil {
-		return fmt.Errorf("marshal RUNNING: %w", err)
-	}
-	if err := outboxRepo.Create(ctx, &outbox.Entry{
-		MessageProcessingID: row.MessageProcessingID,
-		AggregateType:       "task",
-		AggregateID:         row.TaskID,
-		EventType:           "task_status_updated",
-		Payload:             runningPayload,
-		StreamName:          streams.TaskStatusUpdatedV1,
-		MaxRetries:          3,
-	}); err != nil {
+func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
+	cmd := dep.Command()
+	if err := d.createOutbox(ctx, outboxRepo, dep, "task_status_updated", streams.TaskStatusUpdatedV1,
+		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "RUNNING", RetryCount: int32(cmd.TaskRetryCount)}); err != nil {
 		return fmt.Errorf("write RUNNING announcement: %w", err)
 	}
-
 	deployed := event.JobDeployed{
-		TaskID: job.TaskID, ScheduleID: job.ScheduleID, ScheduleName: job.ScheduleName,
-		ServiceName: job.ServiceName, SchemaName: job.SchemaName, TableName: job.TableName,
-		JobName: job.JobName, NodeType: job.NodeType, ImageTag: job.ImageTag,
-		TaskRetryCount: job.TaskRetryCount, MaxRetries: job.TaskMaxRetries,
+		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
+		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName,
+		JobName: cmd.JobName, NodeType: cmd.NodeType, ImageTag: cmd.ImageTag,
+		TaskRetryCount: cmd.TaskRetryCount, MaxRetries: cmd.TaskMaxRetries,
 	}
-	deployedPayload, err := json.Marshal(deployed)
-	if err != nil {
-		return fmt.Errorf("marshal node_deployed: %w", err)
-	}
-	if err := outboxRepo.Create(ctx, &outbox.Entry{
-		MessageProcessingID: row.MessageProcessingID,
-		AggregateType:       "task",
-		AggregateID:         row.TaskID,
-		EventType:           "node_deployed",
-		Payload:             deployedPayload,
-		StreamName:          streams.NodeDeployedV1,
-		MaxRetries:          3,
-	}); err != nil {
+	if err := d.createOutbox(ctx, outboxRepo, dep, "node_deployed", streams.NodeDeployedV1, deployed); err != nil {
 		return fmt.Errorf("write node_deployed announcement: %w", err)
 	}
-
-	return deplRepo.MarkDeployed(ctx, row.ID)
+	return nil
 }
 
-func (d *Dispatcher) writeFailed(ctx context.Context, deplRepo Repository, outboxRepo outbox.Repository, row *Deployment, job DeployJob, cause string) error {
-	failed := pkgevents.TaskStatusUpdated{
-		TaskID: job.TaskID, ScheduleID: job.ScheduleID, Status: "FAILED",
-		RetryCount: int32(job.TaskRetryCount),
-	}
-	failedPayload, err := json.Marshal(failed)
-	if err != nil {
-		return fmt.Errorf("marshal FAILED status: %w", err)
-	}
-	if err := outboxRepo.Create(ctx, &outbox.Entry{
-		MessageProcessingID: row.MessageProcessingID,
-		AggregateType:       "task",
-		AggregateID:         row.TaskID,
-		EventType:           "task_status_updated",
-		Payload:             failedPayload,
-		StreamName:          streams.TaskStatusUpdatedV1,
-		MaxRetries:          3,
-	}); err != nil {
+func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
+	cmd := dep.Command()
+	if err := d.createOutbox(ctx, outboxRepo, dep, "task_status_updated", streams.TaskStatusUpdatedV1,
+		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "FAILED", RetryCount: int32(cmd.TaskRetryCount)}); err != nil {
 		return fmt.Errorf("write FAILED task_status announcement: %w", err)
 	}
-
 	nodeFailed := event.NodeUpdated{
-		TaskID: job.TaskID, ScheduleID: job.ScheduleID, ScheduleName: job.ScheduleName,
-		ServiceName: job.ServiceName, SchemaName: job.SchemaName, TableName: job.TableName,
-		Status: "FAILED",
+		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
+		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName, Status: "FAILED",
 	}
-	nodeFailedPayload, err := json.Marshal(nodeFailed)
-	if err != nil {
-		return fmt.Errorf("marshal FAILED node_updated: %w", err)
-	}
-	if err := outboxRepo.Create(ctx, &outbox.Entry{
-		MessageProcessingID: row.MessageProcessingID,
-		AggregateType:       "task",
-		AggregateID:         row.TaskID,
-		EventType:           "node_updated",
-		Payload:             nodeFailedPayload,
-		StreamName:          streams.NodeUpdatedV1,
-		MaxRetries:          3,
-	}); err != nil {
+	if err := d.createOutbox(ctx, outboxRepo, dep, "node_updated", streams.NodeUpdatedV1, nodeFailed); err != nil {
 		return fmt.Errorf("write FAILED node_updated announcement: %w", err)
 	}
-
-	d.logger.Error("Deploy terminal failure", "deployment_id", row.ID, "task_id", job.TaskID, "cause", cause)
-	return deplRepo.MarkFailed(ctx, row.ID, cause)
+	return nil
 }
 
-// backoff returns base * 2^retryCount capped at backoffCap.
-func (d *Dispatcher) backoff(retryCount int) time.Duration {
-	delay := d.backoffBase << retryCount
-	if delay > d.backoffCap || delay <= 0 { // <=0 guards shift overflow
-		return d.backoffCap
+func (d *Dispatcher) createOutbox(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment, eventType, stream string, payload interface{}) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal %s payload: %w", eventType, err)
 	}
-	return delay
+	aggregateID, _ := uuid.Parse(dep.Command().TaskID)
+	return outboxRepo.Create(ctx, &outbox.Entry{
+		MessageProcessingID: dep.MessageProcessingID(),
+		AggregateType:       "task",
+		AggregateID:         aggregateID,
+		EventType:           eventType,
+		Payload:             body,
+		StreamName:          stream,
+		MaxRetries:          3,
+	})
 }

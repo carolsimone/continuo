@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
-	"github.com/carolsimone/continuo/executor-controller/service/deployer"
+	"github.com/carolsimone/continuo/executor-controller/domain/command"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	executortest "github.com/carolsimone/continuo/executor-controller/test"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -65,7 +66,17 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-func newPending(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUID {
+func validCmd() command.DeployTask {
+	return command.DeployTask{
+		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		JobName: "dbt-public-orders", NodeType: "dbt-model", ImageTag: "sha-abc",
+		TaskRetryCount: 0, TaskMaxRetries: 2,
+	}
+}
+
+// seedDue inserts a raw pending row (empty job_params) with a chosen due time.
+func seedDue(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(
@@ -76,119 +87,143 @@ func newPending(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUID {
 	return id
 }
 
+func TestRepo_Add_PersistsPendingAggregate(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	now := time.Now()
+	cmd := validCmd()
+	dep := model.NewDeployment(cmd, nil, now)
+	require.NoError(t, repo.Add(context.Background(), dep))
+
+	var (
+		status     string
+		maxRetries int
+		taskID     uuid.UUID
+		jobParams  []byte
+		nextAt     time.Time
+	)
+	require.NoError(t, db.QueryRow(
+		`SELECT status, max_retries, task_id, job_params, next_attempt_at FROM executor_deployments WHERE id=$1`, dep.ID(),
+	).Scan(&status, &maxRetries, &taskID, &jobParams, &nextAt))
+	assert.Equal(t, "pending", status)
+	assert.Equal(t, 3, maxRetries)
+	assert.Equal(t, cmd.TaskID, taskID.String(), "task_id column populated from the command identity")
+	assert.Contains(t, string(jobParams), "dbt-public-orders", "command serialized into job_params")
+	assert.False(t, nextAt.IsZero())
+}
+
 func TestRepo_GetDueBatch_OnlyDueRowsOldestFirst(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	past1 := newPending(t, db, time.Now().Add(-2*time.Minute))
-	past2 := newPending(t, db, time.Now().Add(-1*time.Minute))
-	_ = newPending(t, db, time.Now().Add(10*time.Minute)) // future: must be excluded
+	past1 := seedDue(t, db, time.Now().Add(-2*time.Minute))
+	past2 := seedDue(t, db, time.Now().Add(-1*time.Minute))
+	_ = seedDue(t, db, time.Now().Add(10*time.Minute)) // future: excluded
 
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	txRepo := postgres.NewDeploymentsRepository(tx, testLogger())
+	repo := postgres.NewDeploymentsRepository(tx, testLogger())
 
-	rows, err := txRepo.GetDueBatch(context.Background(), 10)
+	deployments, err := repo.GetDueBatch(context.Background(), 10)
 	require.NoError(t, err)
-	require.Len(t, rows, 2, "future-dated row excluded")
-	assert.Equal(t, past1, rows[0].ID, "oldest next_attempt_at first")
-	assert.Equal(t, past2, rows[1].ID)
+	require.Len(t, deployments, 2, "future-dated row excluded")
+	assert.Equal(t, past1, deployments[0].ID(), "oldest next_attempt_at first")
+	assert.Equal(t, past2, deployments[1].ID())
 }
 
-func TestRepo_MarkDeployed(t *testing.T) {
+func TestRepo_Save_MarkDeployed(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	repo := postgres.NewDeploymentsRepository(db, testLogger())
-	id := newPending(t, db, time.Now())
 
-	require.NoError(t, repo.MarkDeployed(context.Background(), id))
+	now := time.Now()
+	dep := model.NewDeployment(validCmd(), nil, now)
+	require.NoError(t, repo.Add(context.Background(), dep))
+
+	require.NoError(t, dep.MarkDeployed(now))
+	require.NoError(t, repo.Save(context.Background(), dep))
 
 	var status string
 	var deployedAt *time.Time
-	require.NoError(t, db.QueryRow(`SELECT status, deployed_at FROM executor_deployments WHERE id=$1`, id).Scan(&status, &deployedAt))
+	require.NoError(t, db.QueryRow(`SELECT status, deployed_at FROM executor_deployments WHERE id=$1`, dep.ID()).Scan(&status, &deployedAt))
 	assert.Equal(t, "deployed", status)
 	assert.NotNil(t, deployedAt)
 }
 
-func TestRepo_RescheduleBumpsRetryAndDelays(t *testing.T) {
+func TestRepo_Save_RescheduleAndFail(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	repo := postgres.NewDeploymentsRepository(db, testLogger())
-	id := newPending(t, db, time.Now())
+	backoff := model.BackoffPolicy{Base: 20 * time.Second, Cap: 2 * time.Minute}
 
-	next := time.Now().Add(20 * time.Second).UTC()
-	require.NoError(t, repo.Reschedule(context.Background(), id, next, "boom"))
+	now := time.Now()
+	dep := model.NewDeployment(validCmd(), nil, now) // maxRetries 3
+	require.NoError(t, repo.Add(context.Background(), dep))
+
+	// Transient failure → reschedule (stays pending, retry_count 1).
+	require.False(t, dep.RegisterFailure(now, false, "boom", backoff))
+	require.NoError(t, repo.Save(context.Background(), dep))
 
 	var status, errMsg string
 	var rc int
-	var na time.Time
+	var nextAt time.Time
 	require.NoError(t, db.QueryRow(
-		`SELECT status, retry_count, error_message, next_attempt_at FROM executor_deployments WHERE id=$1`, id).
-		Scan(&status, &rc, &errMsg, &na))
+		`SELECT status, retry_count, error_message, next_attempt_at FROM executor_deployments WHERE id=$1`, dep.ID()).
+		Scan(&status, &rc, &errMsg, &nextAt))
 	assert.Equal(t, "pending", status)
 	assert.Equal(t, 1, rc)
 	assert.Equal(t, "boom", errMsg)
-	assert.WithinDuration(t, next, na, time.Second)
-}
+	assert.True(t, nextAt.After(now))
 
-func TestRepo_MarkFailed(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-	repo := postgres.NewDeploymentsRepository(db, testLogger())
-	id := newPending(t, db, time.Now())
-
-	require.NoError(t, repo.MarkFailed(context.Background(), id, "exhausted"))
-
-	var status, errMsg string
-	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM executor_deployments WHERE id=$1`, id).Scan(&status, &errMsg))
+	// Permanent failure → terminal.
+	require.True(t, dep.RegisterFailure(now, true, "fatal", backoff))
+	require.NoError(t, repo.Save(context.Background(), dep))
+	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM executor_deployments WHERE id=$1`, dep.ID()).Scan(&status, &errMsg))
 	assert.Equal(t, "failed", status)
-	assert.Equal(t, "exhausted", errMsg)
+	assert.Equal(t, "fatal", errMsg)
 }
 
-func TestRepo_Create_SetsDefaults(t *testing.T) {
+func TestRepo_GetDueBatch_CorruptJobParamsRecoversIdentity(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
-	repo := postgres.NewDeploymentsRepository(db, testLogger())
 
-	d := &deployer.Deployment{
-		TaskID:     uuid.New(),
-		ScheduleID: uuid.New(),
-		JobParams:  []byte(`{}`),
-	}
-	require.NoError(t, repo.Create(context.Background(), d))
+	taskID := uuid.New()
+	scheduleID := uuid.New()
+	// Valid JSONB but a JSON string — cannot unmarshal into DeployTask.
+	_, err := db.Exec(
+		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, next_attempt_at)
+		 VALUES ($1, $2, $3, '"corrupt"'::jsonb, NOW() - interval '1 minute')`,
+		uuid.New(), taskID, scheduleID)
+	require.NoError(t, err)
 
-	// Create must populate the in-memory struct with generated defaults.
-	assert.NotEqual(t, uuid.Nil, d.ID, "ID must be generated")
+	tx, err := db.BeginTxx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	repo := postgres.NewDeploymentsRepository(tx, testLogger())
 
-	// Read the persisted row and verify server-side defaults.
-	var (
-		status     string
-		maxRetries int
-		nextAt     time.Time
-	)
-	require.NoError(t, db.QueryRow(
-		`SELECT status, max_retries, next_attempt_at FROM executor_deployments WHERE id = $1`, d.ID,
-	).Scan(&status, &maxRetries, &nextAt))
-	assert.Equal(t, "pending", status)
-	assert.Equal(t, 3, maxRetries)
-	assert.False(t, nextAt.IsZero(), "next_attempt_at must be set")
+	deployments, err := repo.GetDueBatch(context.Background(), 10)
+	require.NoError(t, err)
+	require.Len(t, deployments, 1)
+
+	dep := deployments[0]
+	assert.False(t, dep.IsDeployable(), "corrupt payload yields an undeployable aggregate")
+	assert.Equal(t, taskID.String(), dep.Command().TaskID, "identity recovered from the task_id column")
+	assert.Equal(t, scheduleID.String(), dep.Command().ScheduleID)
 }
 
 func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	for i := 0; i < 10; i++ {
-		newPending(t, db, time.Now().Add(-time.Minute))
+		seedDue(t, db, time.Now().Add(-time.Minute))
 	}
 
 	const workers = 5
 	seen := make([][]uuid.UUID, workers)
 
-	// Each goroutine opens a transaction, issues its SELECT (locking rows), signals
-	// it has selected, then waits for all others to select before committing.
-	// This guarantees all transactions are concurrently open during the SELECT phase,
-	// which is the condition FOR UPDATE SKIP LOCKED is designed for.
 	var (
 		selectedWg sync.WaitGroup
 		commitWg   sync.WaitGroup
@@ -214,14 +249,12 @@ func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
 				commitWg.Done()
 				return
 			}
-
 			startWg.Wait()
-
 			repo := postgres.NewDeploymentsRepository(tx, testLogger())
-			rows, err := repo.GetDueBatch(context.Background(), 2)
+			deployments, err := repo.GetDueBatch(context.Background(), 2)
 			results[wCopy].err = err
-			for _, r := range rows {
-				results[wCopy].ids = append(results[wCopy].ids, r.ID)
+			for _, d := range deployments {
+				results[wCopy].ids = append(results[wCopy].ids, d.ID())
 			}
 			selectedWg.Done()
 			selectedWg.Wait()

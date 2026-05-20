@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/config"
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/internal/lifecycle"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
@@ -165,12 +166,13 @@ func main() {
 		}
 	}()
 
+	k8sDeployer := k8s.NewDeployer(k8sClient, cfg.K8sNamespace)
 	deployDispatcher := deployer.NewDispatcher(
-		pgDB, k8sClient,
-		func(exec pkgoutbox.Executor) deployer.Repository {
+		pgDB, k8sDeployer,
+		func(exec pkgoutbox.Executor) repository.DeploymentRepository {
 			return postgres.NewDeploymentsRepository(exec, logger)
 		},
-		cfg.K8sNamespace, cfg.MaxConcurrentJobs, logger,
+		cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
 	)
 
