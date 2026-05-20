@@ -2,17 +2,15 @@ package uow
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPostgresTransactionRunner_WithinTransaction_CommitsOnSuccess(t *testing.T) {
+func TestPostgresUnitOfWork_CommitsOnSuccess(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
@@ -21,17 +19,15 @@ func TestPostgresTransactionRunner_WithinTransaction_CommitsOnSuccess(t *testing
 	mock.ExpectBegin()
 	mock.ExpectCommit()
 
-	runner := NewPostgresTransactionRunner(sqlxDB, slog.Default())
-	err = runner.WithinTransaction(context.Background(), func(tx Transaction) error {
-		require.NotNil(t, tx.OutboxRepo())
-		require.NotNil(t, tx.MessageProcessingRepo())
-		return nil
-	})
-	require.NoError(t, err)
+	u := NewPostgresUnitOfWork(sqlxDB, slog.Default())
+	require.NoError(t, u.Begin(context.Background()))
+	require.NotNil(t, u.OutboxRepo())
+	require.NotNil(t, u.MessageProcessingRepo())
+	require.NoError(t, u.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresTransactionRunner_WithinTransaction_RollsBackOnCallbackError(t *testing.T) {
+func TestPostgresUnitOfWork_RollsBack(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
@@ -40,33 +36,46 @@ func TestPostgresTransactionRunner_WithinTransaction_RollsBackOnCallbackError(t 
 	mock.ExpectBegin()
 	mock.ExpectRollback()
 
-	runner := NewPostgresTransactionRunner(sqlxDB, slog.Default())
-	err = runner.WithinTransaction(context.Background(), func(Transaction) error {
-		return errors.New("boom")
-	})
-	require.EqualError(t, err, "boom")
+	u := NewPostgresUnitOfWork(sqlxDB, slog.Default())
+	require.NoError(t, u.Begin(context.Background()))
+	require.NoError(t, u.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresTransactionRunner_WithinTransaction_RollsBackAndRepanicsOnCallbackPanic(t *testing.T) {
+func TestPostgresUnitOfWork_BeginTwiceFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
 
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
 	mock.ExpectBegin()
-	mock.ExpectRollback()
 
-	runner := NewPostgresTransactionRunner(sqlxDB, slog.Default())
-	require.PanicsWithValue(t, "boom", func() {
-		_ = runner.WithinTransaction(context.Background(), func(Transaction) error {
-			panic("boom")
-		})
-	})
-	require.NoError(t, mock.ExpectationsWereMet())
+	u := NewPostgresUnitOfWork(sqlxDB, slog.Default())
+	require.NoError(t, u.Begin(context.Background()))
+	require.Error(t, u.Begin(context.Background()))
 }
 
-func TestPostgresTransactionRunner_WithinTransaction_AllowsConcurrentTransactions(t *testing.T) {
+func TestPostgresUnitOfWork_CommitWithoutBeginFails(t *testing.T) {
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	u := NewPostgresUnitOfWork(sqlxDB, slog.Default())
+	require.Error(t, u.Commit())
+}
+
+func TestPostgresUnitOfWork_RollbackWithoutBeginIsNoop(t *testing.T) {
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	u := NewPostgresUnitOfWork(sqlxDB, slog.Default())
+	require.NoError(t, u.Rollback())
+}
+
+func TestPostgresUnitOfWork_AllowsConcurrentUnits(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
@@ -79,49 +88,18 @@ func TestPostgresTransactionRunner_WithinTransaction_AllowsConcurrentTransaction
 	mock.ExpectCommit()
 	mock.ExpectCommit()
 
-	runner := NewPostgresTransactionRunner(sqlxDB, slog.Default())
-	scopes := make(chan *sqlx.Tx, 2)
-	release := make(chan struct{})
 	errs := make(chan error, 2)
-
-	start := func() {
+	for i := 0; i < 2; i++ {
 		go func() {
-			errs <- runner.WithinTransaction(context.Background(), func(tx Transaction) error {
-				scope, ok := tx.(*postgresTransaction)
-				if !ok {
-					return errors.New("unexpected transaction implementation")
-				}
-				scopes <- scope.tx
-				<-release
-				return nil
-			})
+			u := NewPostgresUnitOfWork(sqlxDB, slog.Default())
+			if err := u.Begin(context.Background()); err != nil {
+				errs <- err
+				return
+			}
+			errs <- u.Commit()
 		}()
 	}
-
-	start()
-	start()
-
-	first := receiveTransactionScope(t, scopes, errs)
-	second := receiveTransactionScope(t, scopes, errs)
-	require.NotSame(t, first, second)
-
-	close(release)
 	require.NoError(t, <-errs)
 	require.NoError(t, <-errs)
 	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func receiveTransactionScope(t *testing.T, scopes <-chan *sqlx.Tx, errs <-chan error) *sqlx.Tx {
-	t.Helper()
-
-	select {
-	case scope := <-scopes:
-		return scope
-	case err := <-errs:
-		require.NoError(t, err)
-		return nil
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for concurrent transaction scope")
-		return nil
-	}
 }

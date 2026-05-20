@@ -146,42 +146,22 @@ func (r *fakeMessageProcessingRepo) UpdateState(_ context.Context, _ uuid.UUID, 
 
 var _ messageprocessing.Repository = (*fakeMessageProcessingRepo)(nil)
 
-type fakeTransaction struct {
-	outboxRepo            pkgoutbox.Repository
-	msgProcessingRepo     messageprocessing.Repository
+type fakeUnitOfWork struct {
+	outboxRepo pkgoutbox.Repository
+	mpRepo     messageprocessing.Repository
 }
 
-func (tx *fakeTransaction) OutboxRepo() pkgoutbox.Repository { return tx.outboxRepo }
-func (tx *fakeTransaction) MessageProcessingRepo() messageprocessing.Repository {
-	return tx.msgProcessingRepo
-}
+func (u *fakeUnitOfWork) OutboxRepo() pkgoutbox.Repository                    { return u.outboxRepo }
+func (u *fakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository { return u.mpRepo }
+func (u *fakeUnitOfWork) Begin(_ context.Context) error                       { return nil }
+func (u *fakeUnitOfWork) Commit() error                                       { return nil }
+func (u *fakeUnitOfWork) Rollback() error                                     { return nil }
 
-type fakeTransactionRunner struct {
-	newTx func() uow.Transaction
-}
+var _ uow.UnitOfWork = (*fakeUnitOfWork)(nil)
 
-func (r *fakeTransactionRunner) WithinTransaction(_ context.Context, fn func(uow.Transaction) error) error {
-	return fn(r.newTx())
+func newFakeUoW(outbox pkgoutbox.Repository) *fakeUnitOfWork {
+	return &fakeUnitOfWork{outboxRepo: outbox, mpRepo: &fakeMessageProcessingRepo{}}
 }
-
-type fakeRunnerFixture struct {
-	outboxRepo *fakeOutboxRepo
-}
-
-func newFakeRunnerFixture() (*fakeRunnerFixture, uow.TransactionRunner) {
-	fixture := &fakeRunnerFixture{outboxRepo: &fakeOutboxRepo{}}
-	return fixture, &fakeTransactionRunner{
-		newTx: func() uow.Transaction {
-			return &fakeTransaction{
-				outboxRepo:        fixture.outboxRepo,
-				msgProcessingRepo: &fakeMessageProcessingRepo{},
-			}
-		},
-	}
-}
-
-var _ uow.Transaction = (*fakeTransaction)(nil)
-var _ uow.TransactionRunner = (*fakeTransactionRunner)(nil)
 
 // --- helpers ---
 
@@ -196,7 +176,7 @@ func failedResult() *model.K8sPodResult {
 	}
 }
 
-func newHandler(k8s handlers.K8sStatusChecker, txRunner uow.TransactionRunner, cancelledSchedules postgresadapter.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
+func newHandler(k8s handlers.K8sStatusChecker, cancelledSchedules postgresadapter.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
 	cfg := &handlers.HandlerConfig{
 		K8sNamespace:          "default",
 		CheckDelaySeconds:     30,
@@ -204,7 +184,7 @@ func newHandler(k8s handlers.K8sStatusChecker, txRunner uow.TransactionRunner, c
 		LogTailLines:          50,
 		DefaultTaskMaxRetries: defaultMaxRetries,
 	}
-	return handlers.NewCheckStatusHandler(k8s, txRunner, &fakeLogUploader{}, cfg, cancelledSchedules, slog.Default())
+	return handlers.NewCheckStatusHandler(k8s, &fakeLogUploader{}, cfg, cancelledSchedules, slog.Default())
 }
 
 // eventTypeOf returns the event_type of the i-th outbox entry.
@@ -230,8 +210,8 @@ func findEntryByEventType(entries []*pkgoutbox.Entry, eventType string) *pkgoutb
 // TestHandleFailedWithRetry verifies that a failed job whose retryCount < maxRetries
 // produces 3 canonical outbox rows: task_status_updated, task_execution_recorded, task_retry.
 func TestHandleFailedWithRetry(t *testing.T) {
-	fw, runner := newFakeRunnerFixture()
-	handler := newHandler(&fakeK8sClient{status: failedResult()}, runner, noopCancelledRepo(), 3)
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -241,11 +221,11 @@ func TestHandleFailedWithRetry(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), cmd); err != nil {
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := fw.outboxRepo.entries
+	entries := outbox.entries
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 outbox entries (task_status_updated + task_execution_recorded + task_retry), got %d", len(entries))
 	}
@@ -277,15 +257,7 @@ func TestHandleFailedWithRetry(t *testing.T) {
 
 func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 	repo := &threadSafeFakeOutboxRepo{}
-	runner := &fakeTransactionRunner{
-		newTx: func() uow.Transaction {
-			return &fakeTransaction{
-				outboxRepo:        repo,
-				msgProcessingRepo: &fakeMessageProcessingRepo{},
-			}
-		},
-	}
-	handler := newHandler(&fakeK8sClient{status: failedResult()}, runner, noopCancelledRepo(), 3)
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
@@ -293,24 +265,23 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- handler.Handle(context.Background(), command.CheckJobStatus{
+			u := &fakeUnitOfWork{outboxRepo: repo, mpRepo: &fakeMessageProcessingRepo{}}
+			errs <- handler.Handle(context.Background(), u, command.CheckJobStatus{
 				TaskID:     uuid.New(),
 				ScheduleID: uuid.New(),
 				JobName:    "job-abc",
 				RetryCount: 0,
 				MaxRetries: 3,
-			})
+			}, uuid.Nil)
 		}()
 	}
 	wg.Wait()
 	close(errs)
-
 	for err := range errs {
 		if err != nil {
 			t.Fatalf("Handle: %v", err)
 		}
 	}
-	// 2 concurrent calls × 3 rows each = 6 total
 	if got := len(repo.entriesSnapshot()); got != 6 {
 		t.Fatalf("expected 6 outbox entries (2 calls × 3 rows), got %d", got)
 	}
@@ -319,8 +290,8 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 // TestHandleFailedPermanent verifies that a permanently failed job produces
 // 3 canonical outbox rows: task_status_updated, task_execution_recorded, node_status_updated.
 func TestHandleFailedPermanent(t *testing.T) {
-	fw, runner := newFakeRunnerFixture()
-	handler := newHandler(&fakeK8sClient{status: failedResult()}, runner, noopCancelledRepo(), 3)
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -330,11 +301,11 @@ func TestHandleFailedPermanent(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), cmd); err != nil {
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := fw.outboxRepo.entries
+	entries := outbox.entries
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 outbox entries (task_status_updated + task_execution_recorded + node_status_updated), got %d", len(entries))
 	}
@@ -353,10 +324,10 @@ func TestHandleFailedPermanent(t *testing.T) {
 // TestHandleRunningCarriesRetryInfo verifies that a running job's check_delayed entry
 // carries RetryCount and MaxRetries forward in its payload.
 func TestHandleRunningCarriesRetryInfo(t *testing.T) {
-	fw, runner := newFakeRunnerFixture()
+	outbox := &fakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}},
-		runner, noopCancelledRepo(), 3,
+		noopCancelledRepo(), 3,
 	)
 
 	cmd := command.CheckJobStatus{
@@ -367,11 +338,11 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 		MaxRetries: 5,
 	}
 
-	if err := handler.Handle(context.Background(), cmd); err != nil {
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := fw.outboxRepo.entries
+	entries := outbox.entries
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 outbox entry (check_delayed), got %d", len(entries))
 	}
@@ -397,8 +368,8 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 // (old executor-controller message with no max_retries field), the handler falls back to
 // config.DefaultTaskMaxRetries.  With RetryCount=0 and default=3 the job should be retried.
 func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
-	fw, runner := newFakeRunnerFixture()
-	handler := newHandler(&fakeK8sClient{status: failedResult()}, runner, noopCancelledRepo(), 3)
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -408,11 +379,11 @@ func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 		MaxRetries: 0, // absent from message
 	}
 
-	if err := handler.Handle(context.Background(), cmd); err != nil {
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := fw.outboxRepo.entries
+	entries := outbox.entries
 	if len(entries) == 0 {
 		t.Fatal("expected outbox entries, got none")
 	}
@@ -426,8 +397,8 @@ func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 // TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts documents the invariant:
 // retryCount=2 (3rd attempt) with maxRetries=2 must produce a permanent failure.
 func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
-	fw, runner := newFakeRunnerFixture()
-	handler := newHandler(&fakeK8sClient{status: failedResult()}, runner, noopCancelledRepo(), 2)
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 2)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -437,11 +408,11 @@ func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
 		MaxRetries: 2,
 	}
 
-	if err := handler.Handle(context.Background(), cmd); err != nil {
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := fw.outboxRepo.entries
+	entries := outbox.entries
 	if len(entries) == 0 {
 		t.Fatal("expected outbox entries, got none")
 	}
@@ -460,11 +431,10 @@ func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
 func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 	scheduleID := uuid.New()
 	cancelledRepo := &fakeCancelledSchedulesRepo{ids: map[uuid.UUID]bool{scheduleID: true}}
-	fw, runner := newFakeRunnerFixture()
+	outbox := &fakeOutboxRepo{}
 
 	handler := newHandler(
 		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusSucceeded}},
-		runner,
 		cancelledRepo,
 		3,
 	)
@@ -476,12 +446,12 @@ func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	err := handler.Handle(context.Background(), cmd)
+	err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil)
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if len(fw.outboxRepo.entries) != 0 {
-		t.Errorf("expected no outbox entries for cancelled schedule, got %d", len(fw.outboxRepo.entries))
+	if len(outbox.entries) != 0 {
+		t.Errorf("expected no outbox entries for cancelled schedule, got %d", len(outbox.entries))
 	}
 }
 
@@ -494,8 +464,8 @@ func TestNotFoundRetry(t *testing.T) {
 		TerminationMsg: "Job not found in Kubernetes",
 	}
 
-	fw, runner := newFakeRunnerFixture()
-	handler := newHandler(&fakeK8sClient{status: notFoundResult}, runner, noopCancelledRepo(), 3)
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: notFoundResult}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -505,11 +475,11 @@ func TestNotFoundRetry(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), cmd); err != nil {
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := fw.outboxRepo.entries
+	entries := outbox.entries
 	if len(entries) == 0 {
 		t.Fatal("expected outbox entries, got none")
 	}
@@ -529,8 +499,8 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 		TerminationMsg: "Job not found in Kubernetes",
 	}
 
-	fw, runner := newFakeRunnerFixture()
-	handler := newHandler(&fakeK8sClient{status: notFoundResult}, runner, noopCancelledRepo(), 3)
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: notFoundResult}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -540,11 +510,11 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), cmd); err != nil {
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := fw.outboxRepo.entries
+	entries := outbox.entries
 	if len(entries) < 2 {
 		t.Fatalf("expected at least 2 outbox entries, got %d", len(entries))
 	}
@@ -582,8 +552,8 @@ func TestHandleSucceeded(t *testing.T) {
 		ExecutionSeconds: 5.0,
 	}
 
-	fw, runner := newFakeRunnerFixture()
-	handler := newHandler(&fakeK8sClient{status: succeededResult}, runner, noopCancelledRepo(), 3)
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: succeededResult}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
@@ -593,11 +563,11 @@ func TestHandleSucceeded(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), cmd); err != nil {
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := fw.outboxRepo.entries
+	entries := outbox.entries
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 outbox entries for succeeded job, got %d", len(entries))
 	}
