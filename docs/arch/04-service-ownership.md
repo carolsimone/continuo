@@ -64,8 +64,8 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
   `manifest.loaded:v1` batch carrying an empty `image_tag`. Rejections are
   durable (`rejected_topology_messages` Postgres table) and ACKed in Redis
   to keep the pending list clean. The validator runs before any side
-  effect; on rejection the consumer (`adapters/redis/consumer.go`)
-  recognises `events.ErrPermanent` via `errors.Is` and ACKs.
+  effect; on rejection the stream binding recognises `events.ErrPermanent`
+  via `errors.Is` and ACKs.
 - **Dispatch watchdog.** Periodic loop terminates `is_running=true`
   schedules that have no task in `RUNNING` and no task progress within
   `ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES` (default 30m), via the

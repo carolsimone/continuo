@@ -39,9 +39,9 @@ CI fails if `go generate` would produce a diff that isn't committed.
   reference constants directly: `streams.NodeUpdatedV1`,
   `streams.OrchestratorNodeUpdated`.
 - **Python (manifest-controller)**: `from streams_contract import UPDATE_GRAPH_V1, MANIFEST_UPDATE_GRAPH`.
-- Service `Config` structs do not carry stream or group fields. Adapters
-  (`*/adapters/redis/consumer.go`) accept stream and group as parameters; the
-  constant only appears at the wiring site in `main.go`.
+- Service `Config` structs do not carry stream or group fields. Stream and
+  group names are passed to `pkg/redis.NewStreamConsumer` at the wiring site in
+  `main.go`, so the constant only appears there.
 
 ## Out of scope
 
