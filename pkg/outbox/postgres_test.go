@@ -162,6 +162,45 @@ func TestPostgresRepository_IncrementRetryDoesNotChangeStatus(t *testing.T) {
 	assert.Equal(t, 1, rc)
 }
 
+func TestPostgresRepository_PerAggregateOrdering(t *testing.T) {
+	db := dbForTest(t)
+	writer := outbox.NewPostgresRepository(db, testOutboxTable, newTestLogger())
+	agg := uuid.New()
+
+	// Two rows for the SAME aggregate, created in order, plus one for a different aggregate.
+	first := &outbox.Entry{AggregateType: "task", AggregateID: agg, EventType: "running", Payload: []byte(`{}`), StreamName: "a:v1"}
+	require.NoError(t, writer.Create(context.Background(), first))
+	second := &outbox.Entry{AggregateType: "task", AggregateID: agg, EventType: "deployed", Payload: []byte(`{}`), StreamName: "b:v1"}
+	require.NoError(t, writer.Create(context.Background(), second))
+	other := &outbox.Entry{AggregateType: "task", AggregateID: uuid.New(), EventType: "x", Payload: []byte(`{}`), StreamName: "c:v1"}
+	require.NoError(t, writer.Create(context.Background(), other))
+
+	getBatch := func() map[uuid.UUID]bool {
+		tx, err := db.Beginx()
+		require.NoError(t, err)
+		defer tx.Rollback()
+		batch, err := outbox.NewPostgresRepository(tx, testOutboxTable, newTestLogger(), outbox.WithPerAggregateOrdering()).
+			GetPendingBatch(context.Background(), 10)
+		require.NoError(t, err)
+		ids := map[uuid.UUID]bool{}
+		for _, e := range batch {
+			ids[e.ID] = true
+		}
+		return ids
+	}
+
+	// Batch 1: head-of-line row for the shared aggregate + the other aggregate's row; the later sibling is withheld.
+	b1 := getBatch()
+	assert.True(t, b1[first.ID], "head-of-line row returned")
+	assert.False(t, b1[second.ID], "later same-aggregate row withheld until head is processed")
+	assert.True(t, b1[other.ID], "different aggregate is not blocked")
+
+	// After the head is processed, the second row becomes eligible.
+	require.NoError(t, writer.MarkProcessed(context.Background(), first.ID))
+	b2 := getBatch()
+	assert.True(t, b2[second.ID], "second row eligible once the head is processed")
+}
+
 func TestPostgresRepository_SkipLockedIsolatesConcurrentBatches(t *testing.T) {
 	db := dbForTest(t)
 	repo := outbox.NewPostgresRepository(db, testOutboxTable, newTestLogger())

@@ -157,7 +157,9 @@ func main() {
 		outboxPub,
 		nil, // terminal failures are ordinary outbox rows written by the dispatcher
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: 5 * time.Second, BatchSize: 100},
+		// PerAggregateFIFO so a task's RUNNING announcement publishes before its
+		// node_deployed row, since they share the task aggregate_id.
+		pkgoutbox.ProcessorConfig{Tick: 5 * time.Second, BatchSize: 100, PerAggregateFIFO: true},
 	)
 
 	go func() {
