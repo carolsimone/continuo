@@ -158,3 +158,45 @@ func TestDispatcher_HeadroomLimitsBatch(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM executor_deployments WHERE status='deployed'`).Scan(&deployed))
 	assert.Equal(t, 2, deployed)
 }
+
+func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	id := uuid.New()
+	taskID := uuid.New()
+	scheduleID := uuid.New()
+	// Valid JSONB, but a JSON string — cannot unmarshal into DeployJob struct.
+	_, err := db.Exec(
+		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		 VALUES ($1, $2, $3, '"corrupt"'::jsonb, 3, 0, NOW() - interval '1 minute')`,
+		id, taskID, scheduleID)
+	require.NoError(t, err)
+
+	fk := &fakeDeployer{active: 0}
+	disp := deployer.NewDispatcher(db, fk, "default", 50, testLogger(), deployer.DispatcherConfig{})
+	require.NoError(t, disp.ProcessBatch(context.Background()))
+
+	assert.Equal(t, 0, fk.createCalls, "deploy never attempted when payload is corrupt")
+
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
+	assert.Equal(t, "failed", status)
+	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
+	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
+	assert.Equal(t, 0, outboxCountByType(t, db, "node_deployed"))
+
+	// The FAILED announcement must carry the row's task_id (row-identity fallback).
+	var payload []byte
+	require.NoError(t, db.QueryRow(
+		`SELECT payload FROM executor_outbox WHERE event_type='task_status_updated' LIMIT 1`).Scan(&payload))
+	var got struct {
+		TaskID     string `json:"task_id"`
+		ScheduleID string `json:"schedule_id"`
+		Status     string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &got))
+	assert.Equal(t, taskID.String(), got.TaskID, "FAILED announcement uses the row's task_id")
+	assert.Equal(t, scheduleID.String(), got.ScheduleID)
+	assert.Equal(t, "FAILED", got.Status)
+}

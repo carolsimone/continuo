@@ -146,6 +146,11 @@ func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
 func (d *Dispatcher) dispatchRow(ctx context.Context, deplRepo Repository, outboxRepo outbox.Repository, row *Deployment) error {
 	var job DeployJob
 	if err := json.Unmarshal(row.JobParams, &job); err != nil {
+		// job_params is written from a valid DeployJob, so a failure here is
+		// corruption. Populate identity from the row's typed columns so the
+		// FAILED announcements still route correctly downstream.
+		job.TaskID = row.TaskID.String()
+		job.ScheduleID = row.ScheduleID.String()
 		return d.writeFailed(ctx, deplRepo, outboxRepo, row, job, fmt.Sprintf("unmarshal job_params: %v", err))
 	}
 
@@ -187,7 +192,7 @@ func (d *Dispatcher) writeDeployed(ctx context.Context, deplRepo Repository, out
 		StreamName:          streams.TaskStatusUpdatedV1,
 		MaxRetries:          3,
 	}); err != nil {
-		return err
+		return fmt.Errorf("write RUNNING announcement: %w", err)
 	}
 
 	deployed := event.JobDeployed{
@@ -209,7 +214,7 @@ func (d *Dispatcher) writeDeployed(ctx context.Context, deplRepo Repository, out
 		StreamName:          streams.NodeDeployedV1,
 		MaxRetries:          3,
 	}); err != nil {
-		return err
+		return fmt.Errorf("write node_deployed announcement: %w", err)
 	}
 
 	return deplRepo.MarkDeployed(ctx, row.ID)
@@ -233,7 +238,7 @@ func (d *Dispatcher) writeFailed(ctx context.Context, deplRepo Repository, outbo
 		StreamName:          streams.TaskStatusUpdatedV1,
 		MaxRetries:          3,
 	}); err != nil {
-		return err
+		return fmt.Errorf("write FAILED task_status announcement: %w", err)
 	}
 
 	nodeFailed := event.NodeUpdated{
@@ -254,7 +259,7 @@ func (d *Dispatcher) writeFailed(ctx context.Context, deplRepo Repository, outbo
 		StreamName:          streams.NodeUpdatedV1,
 		MaxRetries:          3,
 	}); err != nil {
-		return err
+		return fmt.Errorf("write FAILED node_updated announcement: %w", err)
 	}
 
 	d.logger.Error("Deploy terminal failure", "deployment_id", row.ID, "task_id", job.TaskID, "cause", cause)
