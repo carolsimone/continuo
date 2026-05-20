@@ -1,4 +1,3 @@
-// executor-controller/service/handlers/deploy_outbox.go
 package handlers
 
 import (
