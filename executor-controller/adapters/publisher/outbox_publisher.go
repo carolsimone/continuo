@@ -90,9 +90,17 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 		return err
 	}
 
-	// Step 3: announce node.deployed:v1 for k8s-controller (ToDeployedMap
-	// already embeds outbox_entry_id into the JobDeployed payload).
-	if err := p.xadd(ctx, streams.NodeDeployedV1, d.ToDeployedMap(entry.ID.String())); err != nil {
+	// Step 3: announce node.deployed:v1 for k8s-controller. The typed event
+	// travels in the JSON payload field; outbox_entry_id stays a flat sibling
+	// for consumer-side DedupWithOutboxEntryID.
+	deployedPayload, err := json.Marshal(d.ToNodeDeployedEvent())
+	if err != nil {
+		return fmt.Errorf("marshal node.deployed payload: %w", err)
+	}
+	if err := p.xadd(ctx, streams.NodeDeployedV1, map[string]interface{}{
+		"payload":         string(deployedPayload),
+		"outbox_entry_id": entry.ID.String(),
+	}); err != nil {
 		return err
 	}
 

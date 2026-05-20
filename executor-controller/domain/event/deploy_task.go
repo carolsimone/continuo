@@ -3,6 +3,7 @@ package event
 import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 )
 
 // DeployTask is the payload of an executor_outbox row whose event_type
@@ -45,12 +46,10 @@ func (d DeployTask) ToJobParams(namespace string) (k8s.JobParams, error) {
 	}, nil
 }
 
-// ToDeployedMap produces the field map for streams.NodeDeployedV1.
-// Matches the existing executor handler's "job deployed" event shape exactly
-// so downstream consumers (k8s-controller) see no wire change.
-func (d DeployTask) ToDeployedMap(outboxEntryID string) map[string]interface{} {
-	return JobDeployed{
-		OutboxEntryID:  outboxEntryID,
+// ToNodeDeployedEvent produces the typed node.deployed:v1 payload that the
+// Publisher marshals into the message's JSON `payload` field for k8s-controller.
+func (d DeployTask) ToNodeDeployedEvent() pkgevents.NodeDeployed {
+	return pkgevents.NodeDeployed{
 		TaskID:         d.TaskID,
 		ScheduleID:     d.ScheduleID,
 		ScheduleName:   d.ScheduleName,
@@ -58,9 +57,9 @@ func (d DeployTask) ToDeployedMap(outboxEntryID string) map[string]interface{} {
 		SchemaName:     d.SchemaName,
 		TableName:      d.TableName,
 		JobName:        d.JobName,
-		ImageTag:       d.ImageTag,
 		NodeType:       d.NodeType,
-		TaskRetryCount: d.TaskRetryCount,
-		MaxRetries:     d.TaskMaxRetries,
-	}.ToMap()
+		ImageTag:       d.ImageTag,
+		TaskRetryCount: int32(d.TaskRetryCount),
+		MaxRetries:     int32(d.TaskMaxRetries),
+	}
 }
