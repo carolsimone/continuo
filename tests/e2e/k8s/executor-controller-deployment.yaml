@@ -73,6 +73,8 @@ spec:
               value: "continuo"
             - name: K8S_NAMESPACE
               value: "default"
+            - name: MAX_CONCURRENT_JOBS
+              value: "50"
             - name: HTTP_PORT
               value: "8084"
             - name: ENV

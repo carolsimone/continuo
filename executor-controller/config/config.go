@@ -18,6 +18,8 @@ type Config struct {
 
 	// K8s
 	K8sNamespace string
+	// Max concurrent K8s Jobs the deploy dispatcher keeps in flight.
+	MaxConcurrentJobs int
 }
 
 // Load reads configuration from environment variables.
@@ -30,8 +32,9 @@ func Load(v *pkgconfig.Validator) Config {
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
 
-		HTTPPort:     envInt("HTTP_PORT", 8084),
-		K8sNamespace: v.Require("K8S_NAMESPACE"),
+		HTTPPort:          envInt("HTTP_PORT", 8084),
+		K8sNamespace:      v.Require("K8S_NAMESPACE"),
+		MaxConcurrentJobs: envInt("MAX_CONCURRENT_JOBS", 50),
 	}
 }
 
