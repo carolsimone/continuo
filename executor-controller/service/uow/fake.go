@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/jmoiron/sqlx"
@@ -16,6 +17,7 @@ import (
 // pkgoutbox.Repository and messageprocessing.* interfaces. Tx() returns nil.
 type FakeUnitOfWork struct {
 	Outbox            pkgoutbox.Repository
+	Deployments       deployer.Repository
 	Cancelled         postgres.CancelledSchedulesRepository
 	MessageProcessing messageprocessing.Repository
 
@@ -27,6 +29,7 @@ type FakeUnitOfWork struct {
 }
 
 func (f *FakeUnitOfWork) OutboxRepo() pkgoutbox.Repository { return f.Outbox }
+func (f *FakeUnitOfWork) DeploymentsRepo() deployer.Repository  { return f.Deployments }
 func (f *FakeUnitOfWork) CancelledSchedulesRepo() postgres.CancelledSchedulesRepository {
 	return f.Cancelled
 }
