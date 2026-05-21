@@ -356,8 +356,9 @@ func (r *Run) AcceptDispatch(
 	return nil, nil
 }
 
-// Cancel marks r as cancelled, bulk-cancels its child tasks, and records a
-// RunCancelled event. Returns ErrAlreadyTerminal when r is already terminal.
+// Cancel marks r as cancelled (a terminal transition), bulk-cancels its child
+// tasks, and records RunCancelled (work-suppression guard) plus RunFinalized
+// (terminal projection). Returns ErrAlreadyTerminal when r is already terminal.
 func (r *Run) Cancel(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -370,6 +371,10 @@ func (r *Run) Cancel(
 	r.status = SchedulerStatusCancelled
 	cancelledAt := now
 	r.cancelledAt = &cancelledAt
+	// Cancellation is a terminal transition: stamp completed_at so the run is
+	// "finalized" everywhere a succeeded/failed run is. See design doc §6.1.
+	completedAt := now
+	r.completedAt = &completedAt
 	if by != "" {
 		b := by
 		r.cancelledBy = &b
@@ -385,9 +390,10 @@ func (r *Run) Cancel(
 		return nil, fmt.Errorf("bulk cancel tasks: %w", err)
 	}
 
-	evt := RunCancelled{ID: r.scheduleID, Name: r.scheduleName, By: by, CancellationReason: reason}
-	r.events = append(r.events, evt)
-	return []DomainEvent{evt}, nil
+	cancelledEvt := RunCancelled{ID: r.scheduleID, Name: r.scheduleName, By: by, CancellationReason: reason}
+	finalizedEvt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: SchedulerStatusCancelled}
+	r.events = append(r.events, cancelledEvt, finalizedEvt)
+	return []DomainEvent{cancelledEvt, finalizedEvt}, nil
 }
 
 // RecordTaskStatus is the hot-path mutator driven by task.status.updated:v1.
