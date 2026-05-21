@@ -20,6 +20,14 @@ type TaskCollection interface {
 	// for genuine I/O failures.
 	GetStatus(ctx context.Context, taskID uuid.UUID) (status TaskStatus, exists bool, err error)
 
+	// GetStatusAndAttempt returns the current status and stored retry_count
+	// (the attempt number) of a single task. The attempt is the discriminator
+	// the aggregate uses to tell a genuine retry's RUNNING (a strictly newer
+	// attempt) apart from a stale RUNNING re-delivered for the attempt that
+	// already reached a terminal status. The third return is false when the
+	// row does not exist; err is non-nil only for genuine I/O failures.
+	GetStatusAndAttempt(ctx context.Context, taskID uuid.UUID) (status TaskStatus, retryCount int32, exists bool, err error)
+
 	// Exists checks whether a task_tracker row with the given id is present.
 	Exists(ctx context.Context, taskID uuid.UUID) (bool, error)
 

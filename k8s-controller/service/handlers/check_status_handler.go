@@ -112,8 +112,11 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 	repo := u.OutboxRepo()
 	executionID := uuid.New()
 
-	// Row 1: task_status_updated
-	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "SUCCEEDED", 0); err != nil {
+	// Row 1: task_status_updated. Stamp the attempt that ran (cmd.RetryCount)
+	// so the SUCCEEDED carries the same retry_count as that attempt's RUNNING;
+	// state's attempt-monotonic guard relies on RUNNING and its terminal
+	// sharing one attempt number.
+	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "SUCCEEDED", cmd.RetryCount); err != nil {
 		return fmt.Errorf("task_status_updated: %w", err)
 	}
 
@@ -246,8 +249,13 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	}
 	newJobName := retryJobName(cmd.JobName, newRetryCount)
 
-	// Row 1: task_status_updated (FAILED, with new retry count)
-	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", newRetryCount); err != nil {
+	// Row 1: task_status_updated (FAILED). Stamp the attempt that just ran
+	// (retryCount), not the next attempt — this terminal must carry the same
+	// retry_count as that attempt's RUNNING so state's attempt-monotonic guard
+	// treats the upcoming retry's RUNNING (newRetryCount = retryCount+1) as a
+	// strictly newer attempt and un-fills the slot. The retry itself is
+	// dispatched at newRetryCount via the task_retry row below.
+	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", retryCount); err != nil {
 		return fmt.Errorf("task_status_updated: %w", err)
 	}
 

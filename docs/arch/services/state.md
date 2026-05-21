@@ -258,10 +258,12 @@ All finalization logic is owned by the `run.Run` aggregate. `TaskStatusUpdatedHa
 
 `Run.RecordTaskStatus` performs the following in-memory:
 
-1. Update the task's status in the aggregate's task map.
-2. If the new status is terminal (SUCCEEDED or FAILED): increment `terminal_task_count`.
-3. Check the finalization condition: `terminal_task_count == total_task_count && init_status == 'completed' && scheduler_status == 'running'`.
-4. If the condition holds: transition the scheduler to the appropriate terminal status (`SUCCEEDED` if every task is `SUCCEEDED`, `FAILED` otherwise) and mark the aggregate as needing a `run.finalized:v1` outbox entry.
+1. Read the task's prior status and stored attempt (`retry_count`).
+2. Attempt-monotonic guard: a non-terminal status (RUNNING) arriving after a terminal status is honored only when its `retry_count` is strictly greater than the recorded terminal's — a genuine retry, which un-fills the slot (`terminal_task_count--`). A RUNNING whose `retry_count` is ≤ the terminal's is a stale duplicate of the already-terminated attempt and is ignored without touching the row. See `docs/arch/state-machine-transition.md` for the producer invariant this relies on.
+3. Otherwise update the task's status (and attempt) in the aggregate's task map.
+4. If the new status is terminal (SUCCEEDED or FAILED): increment `terminal_task_count`.
+5. Check the finalization condition: `terminal_task_count == total_task_count && init_status == 'completed' && scheduler_status == 'running'`.
+6. If the condition holds: transition the scheduler to the appropriate terminal status (`SUCCEEDED` if every task is `SUCCEEDED`, `FAILED` otherwise) and mark the aggregate as needing a `run.finalized:v1` outbox entry.
 
 `postgres.RunRepository.Save` writes the updated `scheduler_tracker` row and, when the aggregate emits a finalization event, appends the `run.finalized:v1` row to `state_outbox` — all within the same Postgres transaction opened by the binding's `UnitOfWork`.
 

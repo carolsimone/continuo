@@ -97,6 +97,9 @@ func (f *fakeDispatchedTaskCollection) BulkCreate(_ context.Context, tasks []run
 func (f *fakeDispatchedTaskCollection) GetStatus(_ context.Context, _ uuid.UUID) (run.TaskStatus, bool, error) {
 	return "", false, nil
 }
+func (f *fakeDispatchedTaskCollection) GetStatusAndAttempt(_ context.Context, _ uuid.UUID) (run.TaskStatus, int32, bool, error) {
+	return "", 0, false, nil
+}
 func (f *fakeDispatchedTaskCollection) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
 	return false, nil
 }

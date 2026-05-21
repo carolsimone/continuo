@@ -81,9 +81,10 @@ func (f *fakeTaskStatusOutboxPub) Append(_ context.Context, _ *sqlx.Tx, evts []r
 // unit tests. It controls the responses of every method called by
 // Run.RecordTaskStatus; unused methods panic on accidental use.
 type fakeTaskStatusTaskCollection struct {
-	// GetStatus response
-	prevStatus run.TaskStatus
-	prevExists bool
+	// GetStatus / GetStatusAndAttempt response
+	prevStatus   run.TaskStatus
+	prevAttempt  int32
+	prevExists   bool
 	getStatusErr error
 
 	// Exists response
@@ -105,6 +106,10 @@ type fakeTaskStatusTaskCollection struct {
 
 func (f *fakeTaskStatusTaskCollection) GetStatus(_ context.Context, _ uuid.UUID) (run.TaskStatus, bool, error) {
 	return f.prevStatus, f.prevExists, f.getStatusErr
+}
+
+func (f *fakeTaskStatusTaskCollection) GetStatusAndAttempt(_ context.Context, _ uuid.UUID) (run.TaskStatus, int32, bool, error) {
+	return f.prevStatus, f.prevAttempt, f.prevExists, f.getStatusErr
 }
 
 func (f *fakeTaskStatusTaskCollection) Exists(_ context.Context, _ uuid.UUID) (bool, error) {

@@ -37,6 +37,21 @@ func (a *TaskCollectionAdapter) GetStatus(ctx context.Context, taskID uuid.UUID)
 	return parsed, true, nil
 }
 
+func (a *TaskCollectionAdapter) GetStatusAndAttempt(ctx context.Context, taskID uuid.UUID) (run.TaskStatus, int32, bool, error) {
+	s, retryCount, err := a.repo.GetStatusAndAttemptTx(ctx, a.tx, taskID)
+	if err != nil {
+		return "", 0, false, err
+	}
+	if s == "" {
+		return "", 0, false, nil
+	}
+	parsed, err := run.ParseTaskStatus(s)
+	if err != nil {
+		return "", retryCount, true, err
+	}
+	return parsed, retryCount, true, nil
+}
+
 func (a *TaskCollectionAdapter) Exists(ctx context.Context, taskID uuid.UUID) (bool, error) {
 	return a.repo.ExistsTx(ctx, a.tx, taskID)
 }

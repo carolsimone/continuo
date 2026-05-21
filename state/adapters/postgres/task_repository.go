@@ -41,6 +41,11 @@ type TaskTrackerRepository interface {
 	// task.status.updated:v1 handler to detect FAILED→RUNNING transitions and
 	// decrement terminal_task_count accordingly.
 	GetStatusTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (string, error)
+	// GetStatusAndAttemptTx returns the current status (empty string if the row
+	// does not exist) and the stored retry_count of the task_tracker row. The
+	// retry_count is the attempt discriminator the Run aggregate uses to ignore
+	// a stale RUNNING re-delivered for an attempt that already reached terminal.
+	GetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (status string, retryCount int32, err error)
 	// HasFailedTaskTx reports whether any task for the given schedule has status = 'failed'.
 	HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
 	// HasRetryableFailedTaskTx reports whether any task for the given schedule has
@@ -424,6 +429,28 @@ func (r *taskTrackerRepository) GetStatusTx(ctx context.Context, tx *sqlx.Tx, ta
 		return "", fmt.Errorf("get task status for task_id %s: %w", taskID, err)
 	}
 	return status, nil
+}
+
+// GetStatusAndAttemptTx returns the current status and retry_count of the
+// task_tracker row for the given task_id. A missing row yields ("", 0, nil),
+// mirroring GetStatusTx's lenient missing-row handling so the aggregate can
+// disambiguate replay vs. not-yet-projected via its Exists fallback.
+func (r *taskTrackerRepository) GetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (string, int32, error) {
+	var (
+		status     string
+		retryCount int32
+	)
+	err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(status, ''), COALESCE(retry_count, 0) FROM task_tracker WHERE task_id = $1`,
+		taskID,
+	).Scan(&status, &retryCount)
+	if err == sql.ErrNoRows {
+		return "", 0, nil
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("get task status and attempt for task_id %s: %w", taskID, err)
+	}
+	return status, retryCount, nil
 }
 
 // ExistsTx reports whether a task_tracker row exists for the given task_id.

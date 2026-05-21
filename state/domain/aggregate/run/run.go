@@ -394,12 +394,22 @@ func (r *Run) Cancel(
 // Returns no events when:
 //   - the run is already terminal (stale event)
 //   - the task row exists but the status did not change (replay)
+//   - the incoming RUNNING is a stale duplicate of an attempt that already
+//     reached terminal (see the attempt-monotonic guard below)
 //   - the new status is non-terminal (running) — handler ACKs, no finalize
 //   - the new status is terminal but terminal_task_count != total_task_count
 //     or retryable-failed remains, so finalize is deferred
 //
 // Returns ErrTaskRowNotProjected when the task row is not yet present; the
 // adapter binding treats this as a transient error and the consumer redelivers.
+//
+// task.status.updated:v1 has two producers — executor-controller emits RUNNING,
+// k8s-controller emits the terminal status — so the two messages for one task
+// can be processed out of order. retry_count carries the attempt number and is
+// stamped identically on a RUNNING and the terminal of the same attempt; a
+// genuine retry is a strictly newer attempt. The aggregate uses that to honor a
+// real retry's un-fill while ignoring a stale RUNNING re-delivered after its own
+// terminal.
 func (r *Run) RecordTaskStatus(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -410,12 +420,13 @@ func (r *Run) RecordTaskStatus(
 	if r.IsTerminal() {
 		return nil, nil
 	}
-	prev, exists, err := tasks.GetStatus(ctx, taskID)
+	prev, prevAttempt, exists, err := tasks.GetStatusAndAttempt(ctx, taskID)
 	if err != nil {
 		// Mirror the legacy lenient behaviour: treat read failure as
 		// "no previous status" and let the update-if-changed branch below
 		// disambiguate replay vs. missing-row.
 		prev = ""
+		prevAttempt = 0
 		exists = false
 	}
 
@@ -429,7 +440,20 @@ func (r *Run) RecordTaskStatus(
 		if !present {
 			return nil, ErrTaskRowNotProjected
 		}
-		// Row exists (GetStatus may have errored); proceed with empty prev.
+		// Row exists (GetStatusAndAttempt may have errored); proceed with empty prev.
+	}
+
+	isTerminal := newStatus.IsTerminal()
+	prevWasTerminal := prev != "" && prev.IsTerminal()
+
+	// Attempt-monotonic guard: a non-terminal status whose attempt is not
+	// strictly newer than the recorded terminal is a stale duplicate from the
+	// attempt that already terminated (cross-producer reordering). Ignore it
+	// before touching the row — UpdateStatusIfChanged would otherwise regress
+	// the status to RUNNING and overwrite the stored attempt with the stale,
+	// lower value, corrupting terminal_task_count.
+	if !isTerminal && prevWasTerminal && retryCount <= prevAttempt {
+		return nil, nil
 	}
 
 	affected, err := tasks.UpdateStatusIfChanged(ctx, taskID, newStatus, retryCount)
@@ -441,12 +465,10 @@ func (r *Run) RecordTaskStatus(
 		return nil, nil
 	}
 
-	isTerminal := newStatus.IsTerminal()
-	prevWasTerminal := prev != "" && prev.IsTerminal()
-
 	if !isTerminal {
 		if prevWasTerminal {
-			// FAILED→RUNNING (k8s retry) — un-fill the slot.
+			// Genuine retry (attempt strictly newer than the recorded
+			// terminal) — un-fill the slot.
 			r.terminalTaskCount--
 			if r.terminalTaskCount < 0 {
 				r.terminalTaskCount = 0

@@ -59,6 +59,23 @@ Each transition is exclusively owned by one service. An attempt by the wrong cal
 
 - `cancelled` has no entries in the transition table. Cancellation is handled via a dedicated `CancelTask` path.
 
+### Attempt-monotonic status updates
+
+`task.status.updated:v1` has two producers — **executor-controller** emits `running`, **k8s-controller** emits the terminal `succeeded` / `failed`. The two messages for one task ride the same stream but originate from different services, so `state` can process them out of order: a `running` from the original attempt may arrive *after* that attempt's terminal status.
+
+`retry_count` is the **attempt number** and disambiguates this. Producers stamp it so that a `running` and the terminal of the *same* attempt carry the *same* `retry_count`, and a retry is a strictly newer attempt:
+
+- executor-controller stamps the attempt it is starting on `running`.
+- k8s-controller stamps the attempt that ran on the terminal `succeeded` / `failed`.
+- on a retryable failure, k8s-controller records `failed` at the attempt that ran and dispatches the retry at `attempt + 1`; the retry then runs as `running` with that higher number.
+
+The `Run` aggregate (`RecordTaskStatus`) uses this to keep `terminal_task_count` correct:
+
+- a `running` whose `retry_count` is **strictly greater** than the recorded terminal is a genuine retry → it un-fills the slot (`terminal_task_count--`).
+- a `running` whose `retry_count` is **≤** the recorded terminal is a stale duplicate of the already-terminated attempt → it is ignored (no status regression, no un-fill, the stored attempt is preserved).
+
+This closes the race regardless of delivery order; the decision lives in the aggregate, with the repository only supplying the prior status and stored attempt.
+
 ---
 
 ## SchedulerTracker

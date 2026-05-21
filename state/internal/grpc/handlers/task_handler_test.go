@@ -99,6 +99,9 @@ func (s *stubTaskRepo) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (boo
 func (s *stubTaskRepo) GetStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (string, error) {
 	return "", nil
 }
+func (s *stubTaskRepo) GetStatusAndAttemptTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (string, int32, error) {
+	return "", 0, nil
+}
 func (s *stubTaskRepo) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
 }
@@ -182,6 +185,10 @@ func newResetFakeTaskCollection() *resetFakeTaskCollection {
 func (f *resetFakeTaskCollection) GetStatus(_ context.Context, taskID uuid.UUID) (run.TaskStatus, bool, error) {
 	s, ok := f.statuses[taskID]
 	return s, ok, nil
+}
+func (f *resetFakeTaskCollection) GetStatusAndAttempt(_ context.Context, taskID uuid.UUID) (run.TaskStatus, int32, bool, error) {
+	s, ok := f.statuses[taskID]
+	return s, 0, ok, nil
 }
 func (f *resetFakeTaskCollection) Update(_ context.Context, t run.Task) error {
 	if f.updateErr != nil {

@@ -98,8 +98,8 @@ sequenceDiagram
   KC->>KC: GetJobStatus -> FAILED
   KC->>ST: GetTask(task_id)
   alt retries remain
-    KC->>KC: write k8s_outbox(task_retry)
-    KC->>ST: UpdateTask(status=failed, retry_count+1)
+    KC->>KC: write k8s_outbox(task_retry at retry_count+1)
+    KC->>ST: UpdateTask(status=failed, retry_count of the attempt that ran)
     KC->>ST: CreateTaskExecution(...)
     KC->>S3: upload pod logs
     KC->>R: publish retry.task:v1
