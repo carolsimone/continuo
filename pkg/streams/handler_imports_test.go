@@ -16,6 +16,7 @@ var handlerDirs = []string{
 	"k8s-controller/service/handlers",
 	"orchestrator/service/handlers",
 	"state/service/handlers",
+	"executor-controller/service/handlers",
 }
 
 // TestServiceHandlersDoNotImportAdapters parses every .go file under each
