@@ -120,7 +120,7 @@ func TestMain(m *testing.M) {
 	outboxPub := postgres.NewOutboxPublisher(logger)
 	clk := ports.SystemClock{}
 	integrationUoWFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, taskRepo, execRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
 	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)

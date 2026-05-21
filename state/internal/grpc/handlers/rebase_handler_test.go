@@ -43,7 +43,7 @@ func setupRebaseFixture(t *testing.T) *rebaseFixture {
 	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, taskRepo, taskExecutionRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
 	useCase := svchandlers.NewTriggerRebaseHandler(logger)
 	handler := NewRebaseHandler(useCase, factory, logger)

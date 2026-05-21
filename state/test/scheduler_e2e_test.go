@@ -126,7 +126,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	domainOutboxPub := postgres.NewOutboxPublisher(logger)
 	clk := ports.SystemClock{}
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, runRepoPort, catalogRepoPort, domainOutboxPub, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, taskRepo, execRepo, runRepoPort, catalogRepoPort, domainOutboxPub, clk, logger)
 	}
 
 	// Initialize activation handler

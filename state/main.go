@@ -122,7 +122,7 @@ func main() {
 	// returns a fresh PostgresUnitOfWork over the same repos and *sqlx.DB
 	// so concurrent message handlers do not share transaction state.
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, runRepoPort, catalogRepoPort, domainOutboxPub, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, taskRepo, taskExecutionRepo, runRepoPort, catalogRepoPort, domainOutboxPub, clk, logger)
 	}
 
 	// Schedule catalog consumer (consumes schedules.loaded:v1). The

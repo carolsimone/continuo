@@ -72,7 +72,7 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, taskRepo, taskExecutionRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
 	}
 	useCase := svchandlers.NewTriggerSingleNodeRunHandler(logger)
 	handler := NewSingleNodeRunHandler(useCase, factory, logger)
