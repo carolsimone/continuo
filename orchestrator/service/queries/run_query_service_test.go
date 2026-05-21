@@ -172,8 +172,8 @@ func TestRunQueryService_ListActiveRunDrifts_OnePerSchedule(t *testing.T) {
 }
 
 func TestRunQueryService_ListActiveRunDrifts_DuplicateScheduleDedupsAndWarns(t *testing.T) {
-	// ListActiveRuns returns rows ordered newest-first within a schedule;
-	// run-a1 is the head (newest) row and must be the one surfaced.
+	// ListActiveRuns returns newest-first per schedule, so run-a1 (slice head)
+	// is the newest; TopologyGeneration values are unrelated to recency here.
 	rr := &fakeRunReader{
 		activeRuns: []*domain.ActiveRun{
 			{ScheduleName: "sched-a", RunID: "run-a1", TopologyGeneration: 5},
