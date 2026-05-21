@@ -3,9 +3,13 @@ package fakes
 import (
 	"context"
 	"fmt"
+
+	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 )
 
-// FakeLogUploader is a fake implementation of s3.LogUploader for testing
+var _ ports.LogUploader = (*FakeLogUploader)(nil)
+
+// FakeLogUploader is a fake implementation of ports.LogUploader for testing
 type FakeLogUploader struct {
 	UploadLogFunc   func(ctx context.Context, key, content string) error
 	UploadCallCount int

@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"time"
 
-	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
+	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -37,7 +37,7 @@ type HandlerConfig struct {
 // CheckStatusHandler handles CheckJobStatus commands
 type CheckStatusHandler struct {
 	k8sClient          K8sStatusChecker
-	logUploader        s3adapter.LogUploader
+	logUploader        ports.LogUploader
 	config             *HandlerConfig
 	cancelledSchedules repository.CancelledSchedulesRepository
 	logger             *slog.Logger
@@ -46,7 +46,7 @@ type CheckStatusHandler struct {
 // NewCheckStatusHandler creates a new CheckStatusHandler
 func NewCheckStatusHandler(
 	k8sClient K8sStatusChecker,
-	logUploader s3adapter.LogUploader,
+	logUploader ports.LogUploader,
 	config *HandlerConfig,
 	cancelledSchedules repository.CancelledSchedulesRepository,
 	logger *slog.Logger,

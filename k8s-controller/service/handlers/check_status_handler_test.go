@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
+	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -609,5 +609,5 @@ func TestHandleSucceeded(t *testing.T) {
 }
 
 // Compile-time interface checks.
-var _ s3adapter.LogUploader = (*fakeLogUploader)(nil)
+var _ ports.LogUploader = (*fakeLogUploader)(nil)
 var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)

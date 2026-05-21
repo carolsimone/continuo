@@ -8,14 +8,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 )
 
-// LogUploader uploads log content to object storage.
-type LogUploader interface {
-	UploadLog(ctx context.Context, key, content string) error
-}
-
-// S3Client implements LogUploader backed by AWS S3 / LocalStack.
+// S3Client implements ports.LogUploader backed by AWS S3 / LocalStack.
 type S3Client struct {
 	client *s3.Client
 	bucket string
@@ -25,7 +21,7 @@ type S3Client struct {
 // endpointURL: e.g. "http://localstack:4566" (empty string → AWS default)
 func NewS3Client(endpointURL, bucket, region, accessKeyID, secretKey string) *S3Client {
 	cfg := aws.Config{
-		Region: region,
+		Region:      region,
 		Credentials: credentials.NewStaticCredentialsProvider(accessKeyID, secretKey, ""),
 	}
 
@@ -43,6 +39,8 @@ func NewS3Client(endpointURL, bucket, region, accessKeyID, secretKey string) *S3
 		bucket: bucket,
 	}
 }
+
+var _ ports.LogUploader = (*S3Client)(nil)
 
 // UploadLog puts content at key in the configured bucket.
 func (c *S3Client) UploadLog(ctx context.Context, key, content string) error {
