@@ -309,7 +309,6 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 	outboxEntryID := uuid.New()
 
 	checkPayload, err := json.Marshal(event.JobCheckRequest{
-		OutboxEntryID: outboxEntryID.String(),
 		TaskID:        cmd.TaskID.String(),
 		ScheduleID:    cmd.ScheduleID.String(),
 		ScheduleName:  cmd.ScheduleName,

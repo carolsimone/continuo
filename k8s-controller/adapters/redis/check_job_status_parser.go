@@ -1,77 +1,117 @@
 package redis
 
 import (
+	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParseNodeDeployed parses a node.deployed:v1 message into a CheckJobStatus.
-// node.deployed:v1 (from executor-controller) carries the current retry count
-// in the "task_retry_count" field.
+// ParseNodeDeployed decodes a node.deployed:v1 message into a CheckJobStatus.
+// The typed event travels in the JSON `payload` field; its task-level retry
+// count is named task_retry_count.
 func ParseNodeDeployed(msg goredis.XMessage, defaultMaxRetries int) (command.CheckJobStatus, error) {
-	return parseCheckJobStatus(msg, "task_retry_count", defaultMaxRetries)
+	var wire pkgevents.NodeDeployed
+	if err := decodePayload(msg, &wire); err != nil {
+		return command.CheckJobStatus{}, err
+	}
+	return buildCheckJobStatus(checkJobFields{
+		taskID:       wire.TaskID,
+		scheduleID:   wire.ScheduleID,
+		scheduleName: wire.ScheduleName,
+		serviceName:  wire.ServiceName,
+		schemaName:   wire.SchemaName,
+		tableName:    wire.TableName,
+		jobName:      wire.JobName,
+		nodeType:     wire.NodeType,
+		imageTag:     wire.ImageTag,
+		retryCount:   wire.TaskRetryCount,
+		maxRetries:   wire.MaxRetries,
+	}, defaultMaxRetries)
 }
 
-// ParseCheckK8s parses a check.k8s:v1 message into a CheckJobStatus.
-// check.k8s:v1 (self-looped re-check tickets) carries the current retry count
-// in the "retry_count" field.
+// ParseCheckK8s decodes a check.k8s:v1 message into a CheckJobStatus. The typed
+// event travels in the JSON `payload` field; its task-level retry count is named
+// retry_count.
 func ParseCheckK8s(msg goredis.XMessage, defaultMaxRetries int) (command.CheckJobStatus, error) {
-	return parseCheckJobStatus(msg, "retry_count", defaultMaxRetries)
+	var wire pkgevents.CheckK8s
+	if err := decodePayload(msg, &wire); err != nil {
+		return command.CheckJobStatus{}, err
+	}
+	return buildCheckJobStatus(checkJobFields{
+		taskID:       wire.TaskID,
+		scheduleID:   wire.ScheduleID,
+		scheduleName: wire.ScheduleName,
+		serviceName:  wire.ServiceName,
+		schemaName:   wire.SchemaName,
+		tableName:    wire.TableName,
+		jobName:      wire.JobName,
+		nodeType:     wire.NodeType,
+		imageTag:     wire.ImageTag,
+		retryCount:   wire.RetryCount,
+		maxRetries:   wire.MaxRetries,
+	}, defaultMaxRetries)
 }
 
-// parseCheckJobStatus extracts the shared flat fields of both streams. The two
-// streams differ only in which field holds the current retry count, named by
-// retryCountField. max_retries falls back to defaultMaxRetries when absent.
-func parseCheckJobStatus(msg goredis.XMessage, retryCountField string, defaultMaxRetries int) (command.CheckJobStatus, error) {
-	taskIDStr, _ := msg.Values["task_id"].(string)
-	taskID, err := uuid.Parse(taskIDStr)
+// decodePayload reads the `payload` field and unmarshals it into dst.
+func decodePayload(msg goredis.XMessage, dst interface{}) error {
+	payloadStr, _ := msg.Values["payload"].(string)
+	if payloadStr == "" {
+		return fmt.Errorf("missing payload field")
+	}
+	if err := json.Unmarshal([]byte(payloadStr), dst); err != nil {
+		return fmt.Errorf("invalid payload JSON: %w", err)
+	}
+	return nil
+}
+
+// checkJobFields holds the common fields both streams decode into a command.
+type checkJobFields struct {
+	taskID       string
+	scheduleID   string
+	scheduleName string
+	serviceName  string
+	schemaName   string
+	tableName    string
+	jobName      string
+	nodeType     string
+	imageTag     string
+	retryCount   int32
+	maxRetries   int32
+}
+
+// buildCheckJobStatus validates the decoded fields and assembles the command.
+// A non-positive max_retries is treated as absent; it falls back to
+// defaultMaxRetries.
+func buildCheckJobStatus(f checkJobFields, defaultMaxRetries int) (command.CheckJobStatus, error) {
+	taskID, err := uuid.Parse(f.taskID)
 	if err != nil {
 		return command.CheckJobStatus{}, fmt.Errorf("invalid task_id: %w", err)
 	}
-	scheduleIDStr, _ := msg.Values["schedule_id"].(string)
-	scheduleID, err := uuid.Parse(scheduleIDStr)
+	scheduleID, err := uuid.Parse(f.scheduleID)
 	if err != nil {
 		return command.CheckJobStatus{}, fmt.Errorf("invalid schedule_id: %w", err)
 	}
 
-	scheduleName, _ := msg.Values["schedule_name"].(string)
-	serviceName, _ := msg.Values["service_name"].(string)
-	schema, _ := msg.Values["schema_name"].(string)
-	tableName, _ := msg.Values["table_name"].(string)
-	jobName, _ := msg.Values["job_name"].(string)
-	nodeType, _ := msg.Values["node_type"].(string)
-	imageTag, _ := msg.Values["image_tag"].(string)
-
-	retryCount := int32(0)
-	if s, _ := msg.Values[retryCountField].(string); s != "" {
-		if n, convErr := strconv.ParseInt(s, 10, 32); convErr == nil {
-			retryCount = int32(n)
-		}
-	}
-
-	// A non-positive max_retries is treated as absent; fall back to the default.
-	maxRetries := int32(defaultMaxRetries)
-	if s, _ := msg.Values["max_retries"].(string); s != "" {
-		if n, convErr := strconv.ParseInt(s, 10, 32); convErr == nil && n > 0 {
-			maxRetries = int32(n)
-		}
+	maxRetries := f.maxRetries
+	if maxRetries <= 0 {
+		maxRetries = int32(defaultMaxRetries)
 	}
 
 	return command.CheckJobStatus{
 		TaskID:       taskID,
 		ScheduleID:   scheduleID,
-		ScheduleName: scheduleName,
-		ServiceName:  serviceName,
-		SchemaName:   schema,
-		TableName:    tableName,
-		JobName:      jobName,
-		NodeType:     nodeType,
-		ImageTag:     imageTag,
-		RetryCount:   retryCount,
+		ScheduleName: f.scheduleName,
+		ServiceName:  f.serviceName,
+		SchemaName:   f.schemaName,
+		TableName:    f.tableName,
+		JobName:      f.jobName,
+		NodeType:     f.nodeType,
+		ImageTag:     f.imageTag,
+		RetryCount:   f.retryCount,
 		MaxRetries:   maxRetries,
 	}, nil
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
@@ -91,10 +92,10 @@ func TestNodeDeployedBinding_DuplicateSkipsHandler(t *testing.T) {
 	u := &dupUoW{}
 	binding := NewNodeDeployedBinding(func() uow.UnitOfWork { return u }, handler, slog.Default())
 
-	err := binding(context.Background(), msgWith(map[string]interface{}{
-		"task_id":     uuid.New().String(),
-		"schedule_id": uuid.New().String(),
-		"job_name":    "job-x",
+	err := binding(context.Background(), payloadMsg(t, pkgevents.NodeDeployed{
+		TaskID:     uuid.New().String(),
+		ScheduleID: uuid.New().String(),
+		JobName:    "job-x",
 	}))
 	if err != nil {
 		t.Fatalf("binding returned error on duplicate: %v", err)

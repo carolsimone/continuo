@@ -63,6 +63,7 @@ func TestPublisher_NodeDeployed(t *testing.T) {
 
 	payload, err := json.Marshal(event.JobDeployed{
 		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskRetryCount: 2, MaxRetries: 5,
 	})
 	require.NoError(t, err)
 
@@ -72,8 +73,19 @@ func TestPublisher_NodeDeployed(t *testing.T) {
 	}))
 
 	v := lastEntryFields(t, r, streams.NodeDeployedV1)
-	assert.Equal(t, "j", v["job_name"])
-	assert.Equal(t, id.String(), v["outbox_entry_id"], "generic injection overrides empty struct value")
+	// node.deployed:v1 carries a typed JSON payload; outbox_entry_id is a flat sibling.
+	assert.Equal(t, id.String(), v["outbox_entry_id"])
+	_, hasFlatJobName := v["job_name"]
+	assert.False(t, hasFlatJobName, "business fields move into the typed payload, not flat keys")
+
+	payloadStr, ok := v["payload"].(string)
+	require.True(t, ok, "expected a string payload field")
+	var nd pkgevents.NodeDeployed
+	require.NoError(t, json.Unmarshal([]byte(payloadStr), &nd))
+	assert.Equal(t, pkgevents.NodeDeployed{
+		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskRetryCount: 2, MaxRetries: 5,
+	}, nd)
 }
 
 func TestPublisher_NodeUpdatedFailed(t *testing.T) {

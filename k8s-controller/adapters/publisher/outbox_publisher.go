@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -85,7 +86,29 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("unmarshal check_delayed: %w", err)
 		}
-		return e.ToMap(), nil
+		// The typed event travels in the JSON payload; check_after stays a flat
+		// field so the binding's delay gate can read it without decoding the
+		// payload, and so re-circulated copies preserve the schedule.
+		payload, err := json.Marshal(pkgevents.CheckK8s{
+			TaskID:       e.TaskID,
+			ScheduleID:   e.ScheduleID,
+			ScheduleName: e.ScheduleName,
+			ServiceName:  e.ServiceName,
+			SchemaName:   e.SchemaName,
+			TableName:    e.TableName,
+			JobName:      e.JobName,
+			NodeType:     e.NodeType,
+			ImageTag:     e.ImageTag,
+			RetryCount:   int32(e.RetryCount),
+			MaxRetries:   int32(e.MaxRetries),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshal check.k8s payload: %w", err)
+		}
+		return map[string]interface{}{
+			"payload":     string(payload),
+			"check_after": strconv.FormatInt(e.CheckAfter, 10),
+		}, nil
 
 	case "node_status_updated":
 		var e event.NodeStatusUpdated

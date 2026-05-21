@@ -79,11 +79,11 @@ On terminal failure (permanent error or retry-budget exhaustion), the dispatcher
 - `service_name`, `schema_name`, `table_name`
 - `status` — `RUNNING` on success, `FAILED` on terminal failure
 
-`node.deployed:v1` payload fields:
-- `outbox_entry_id`
+`node.deployed:v1` is emitted as a typed JSON `payload` field (`pkg/events.NodeDeployed`), with `outbox_entry_id` as a flat sibling field for consumer-side dedup. Payload fields:
 - `task_id`, `schedule_id`, `schedule_name`
 - `service_name`, `schema_name`, `table_name`, `job_name`
-- `node_type`
+- `node_type`, `image_tag`
+- `task_retry_count`, `max_retries`
 
 ### Kubernetes API
 

@@ -48,7 +48,7 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 }
 
 // toValues routes entry.EventType to the matching typed struct, unmarshals
-// entry.Payload, and returns the flat field map for XADD.
+// entry.Payload, and returns the field map for XADD.
 func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{}, error) {
 	switch entry.EventType {
 	case "task_status_updated":
@@ -63,7 +63,25 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("unmarshal node_deployed: %w", err)
 		}
-		return e.ToMap(), nil
+		// node.deployed:v1 carries a typed JSON payload (pkg/events.NodeDeployed);
+		// outbox_entry_id is added as a flat sibling by Publish for dedup.
+		payload, err := json.Marshal(pkgevents.NodeDeployed{
+			TaskID:         e.TaskID,
+			ScheduleID:     e.ScheduleID,
+			ScheduleName:   e.ScheduleName,
+			ServiceName:    e.ServiceName,
+			SchemaName:     e.SchemaName,
+			TableName:      e.TableName,
+			JobName:        e.JobName,
+			NodeType:       e.NodeType,
+			ImageTag:       e.ImageTag,
+			TaskRetryCount: int32(e.TaskRetryCount),
+			MaxRetries:     int32(e.MaxRetries),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshal node.deployed payload: %w", err)
+		}
+		return map[string]interface{}{"payload": string(payload)}, nil
 
 	case "node_updated":
 		var e event.NodeUpdated

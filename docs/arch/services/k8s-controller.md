@@ -34,7 +34,7 @@ All three streams are consumed via `pkg/redis.StreamConsumer` with per-stream pa
 | `check.k8s:v1` | `K8sCheckStatus` | Full (same as above); binding also gates on `check_after`: if the timestamp is in the future, re-circulates a fresh copy via XADD and ACKs without processing |
 | `schedule.cancelled:v1` | `K8sScheduleCancelled` | Lightweight: parse `schedule_id` → insert into `cancelled_schedules` guard table (idempotent); no dedup, no outbox |
 
-`node.deployed:v1` and `check.k8s:v1` carry: `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type` (plus `check_after` on `check.k8s:v1`). The Redis message ID (`msg.ID`) and stream name are used as the dedup key — no application-level `outbox_entry_id` field is required.
+`node.deployed:v1` and `check.k8s:v1` carry their event as a typed JSON `payload` field, decoded by the per-stream parsers into `pkg/events.NodeDeployed` and `pkg/events.CheckK8s` (`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `image_tag`, plus retry/max-retries). The task-level retry count is named `task_retry_count` on `node.deployed:v1` and `retry_count` on `check.k8s:v1`; both parsers map it onto `command.CheckJobStatus.RetryCount`. Transport metadata travels as flat sibling fields: `outbox_entry_id` (consumed by `DedupWithOutboxEntryID` for dedup) and, on `check.k8s:v1`, `check_after` (the binding's delay gate reads it before the payload is decoded, so re-circulated copies preserve the schedule).
 
 ### HTTP (port 8085)
 

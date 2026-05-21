@@ -5,9 +5,10 @@ type Event interface {
 	isEvent()
 }
 
-// JobCheckRequest represents an event for delayed job status re-check
+// JobCheckRequest is the payload of a check_delayed outbox row. The Publisher
+// reads it to build the check.k8s:v1 typed event; check_after gates the
+// consumer-side re-delivery delay.
 type JobCheckRequest struct {
-	OutboxEntryID string `json:"outbox_entry_id"`
 	TaskID        string `json:"task_id"`
 	ScheduleID    string `json:"schedule_id"`
 	ScheduleName  string `json:"schedule_name"`
@@ -23,25 +24,6 @@ type JobCheckRequest struct {
 }
 
 func (JobCheckRequest) isEvent() {}
-
-// ToMap converts JobCheckRequest event to a map for Redis publishing
-func (e JobCheckRequest) ToMap() map[string]interface{} {
-	return map[string]interface{}{
-		"outbox_entry_id": e.OutboxEntryID,
-		"task_id":         e.TaskID,
-		"schedule_id":     e.ScheduleID,
-		"schedule_name":   e.ScheduleName,
-		"service_name":    e.ServiceName,
-		"schema_name":     e.SchemaName,
-		"table_name":      e.TableName,
-		"job_name":        e.JobName,
-		"check_after":     e.CheckAfter,
-		"node_type":       e.NodeType,
-		"image_tag":       e.ImageTag,
-		"retry_count":     e.RetryCount,
-		"max_retries":     e.MaxRetries,
-	}
-}
 
 // TaskFailed represents an event that a task has permanently failed
 type TaskFailed struct {
