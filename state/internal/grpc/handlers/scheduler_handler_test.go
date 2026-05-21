@@ -13,7 +13,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
@@ -40,7 +40,7 @@ func noopUoWFactory() func() uow.UnitOfWork {
 // ---- stubs for schedule catalog ----
 
 // stubCatalogRepo satisfies both postgres.ScheduleCatalogRepository and
-// ports.ScheduleCatalogRepository for handler unit tests.
+// repository.ScheduleCatalogRepository for handler unit tests.
 type stubCatalogRepo struct {
 	existsActive map[string]bool
 }
@@ -153,7 +153,7 @@ func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID,
 
 // ---- fake run repo for activation tests ----
 
-// activateFakeRunRepo satisfies ports.RunRepository for ActivateSchedule /
+// activateFakeRunRepo satisfies repository.RunRepository for ActivateSchedule /
 // TriggerSchedule handler tests. HasActiveSchedule drives the policy check;
 // SaveRun records the run so tests can inspect it.
 type activateFakeRunRepo struct {
@@ -181,13 +181,13 @@ func (f *activateFakeRunRepo) HasActiveSchedule(_ context.Context, _ string) (bo
 func (f *activateFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
 	panic("GetActiveScheduler not used in activate tests")
 }
-func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]ports.LastRunSummary, error) {
+func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in activate tests")
 }
 
 // ---- fake outbox for activation tests ----
 
-// activateFakeOutbox satisfies ports.OutboxPublisher for activation tests.
+// activateFakeOutbox satisfies the OutboxPublisher port for activation tests.
 type activateFakeOutbox struct {
 	appended  []run.DomainEvent
 	appendErr error
@@ -435,7 +435,7 @@ func (f *cancelFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*ru
 	return f.stored, nil
 }
 
-func (f *cancelFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]ports.LastRunSummary, error) {
+func (f *cancelFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in cancel tests")
 }
 

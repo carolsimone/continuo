@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/carolsimone/continuo/state/domain/events"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -15,6 +18,7 @@ import (
 type TaskExecutionRepository interface {
 	Create(ctx context.Context, execution *TaskExecution) error
 	CreateTx(ctx context.Context, tx *sqlx.Tx, execution *TaskExecution) error
+	CreateRecordTx(ctx context.Context, tx *sqlx.Tx, evt events.TaskExecutionRecorded) error
 	GetByID(ctx context.Context, id uuid.UUID) (*TaskExecution, error)
 	ListByScheduleID(ctx context.Context, scheduleID string, pageSize, pageOffset int) ([]*TaskExecution, int, error)
 }
@@ -111,6 +115,30 @@ func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, exe
 	)
 	return nil
 }
+
+// rowFromEvent maps a recorded-execution domain event to its storage row.
+// ExecutorID is intentionally left nil: the event carries no executor id.
+func rowFromEvent(evt events.TaskExecutionRecorded) *TaskExecution {
+	return &TaskExecution{
+		ID:                   evt.ExecutionID,
+		TaskID:               evt.TaskID,
+		CreatedAt:            time.Now(),
+		StartedAt:            evt.StartedAt,
+		CompletedAt:          evt.CompletedAt,
+		ExecutionTimeSeconds: evt.ExecutionTimeSeconds,
+		K8sJobName:           evt.JobName,
+		ErrorMessage:         evt.ErrorMessage,
+		LogS3Key:             evt.LogS3Key,
+	}
+}
+
+// CreateRecordTx maps a recorded-execution domain event to the storage row
+// and inserts it inside tx.
+func (r *taskExecutionRepository) CreateRecordTx(ctx context.Context, tx *sqlx.Tx, evt events.TaskExecutionRecorded) error {
+	return r.CreateTx(ctx, tx, rowFromEvent(evt))
+}
+
+var _ repository.TaskExecutionWriter = (*taskExecutionRepository)(nil)
 
 // GetByID retrieves a task_execution by id
 func (r *taskExecutionRepository) GetByID(ctx context.Context, id uuid.UUID) (*TaskExecution, error) {

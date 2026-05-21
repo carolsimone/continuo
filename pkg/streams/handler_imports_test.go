@@ -12,11 +12,10 @@ import (
 // handlerDirs lists application-layer handler packages (relative to repo root)
 // that must not import any adapters/* package. The dependency arrow runs
 // adapter → port, never application → adapter.
-//
-// state/service/handlers is added once its remaining adapter import is removed.
 var handlerDirs = []string{
 	"k8s-controller/service/handlers",
 	"orchestrator/service/handlers",
+	"state/service/handlers",
 }
 
 // TestServiceHandlersDoNotImportAdapters parses every .go file under each

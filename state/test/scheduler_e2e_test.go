@@ -18,7 +18,7 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
-	"github.com/carolsimone/continuo/state/ports"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"

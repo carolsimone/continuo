@@ -12,7 +12,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
@@ -58,7 +58,7 @@ func (f *fakeDispatchFailedRunRepo) HasActiveSchedule(_ context.Context, _ strin
 func (f *fakeDispatchFailedRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
 	panic("GetActiveScheduler not implemented in fake")
 }
-func (f *fakeDispatchFailedRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]ports.LastRunSummary, error) {
+func (f *fakeDispatchFailedRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not implemented in fake")
 }
 

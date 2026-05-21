@@ -5,7 +5,7 @@
 // to look up or mutate child task state without loading the full collection.
 //
 // All invariants over a scheduler run live here. The application layer in
-// state/service/handlers loads a Run via ports.RunRepository.LoadRunForUpdate,
-// invokes one method, then calls ports.RunRepository.SaveRun and
+// state/service/handlers loads a Run via repository.RunRepository.LoadRunForUpdate,
+// invokes one method, then calls repository.RunRepository.SaveRun and
 // ports.OutboxPublisher.Append. The aggregate never imports infrastructure.
 package run

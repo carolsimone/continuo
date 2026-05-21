@@ -8,12 +8,12 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
-// RunRepositoryAdapter implements ports.RunRepository by composing the
+// RunRepositoryAdapter implements repository.RunRepository by composing the
 // existing tuned SchedulerTrackerRepository methods. SaveRun consults
 // run.Run.Changes() to dispatch column-by-column.
 type RunRepositoryAdapter struct {
@@ -135,14 +135,14 @@ func (r *RunRepositoryAdapter) GetActiveScheduler(ctx context.Context, name stri
 }
 
 // GetLastRunPerSchedule returns the most recent Run summary per schedule name.
-func (r *RunRepositoryAdapter) GetLastRunPerSchedule(ctx context.Context) (map[string]ports.LastRunSummary, error) {
+func (r *RunRepositoryAdapter) GetLastRunPerSchedule(ctx context.Context) (map[string]repository.LastRunSummary, error) {
 	raw, err := r.schedRepo.GetLastRunPerSchedule(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]ports.LastRunSummary, len(raw))
+	out := make(map[string]repository.LastRunSummary, len(raw))
 	for name, d := range raw {
-		out[name] = ports.LastRunSummary{
+		out[name] = repository.LastRunSummary{
 			ScheduleName: d.ScheduleName,
 			ScheduleID:   d.ScheduleID,
 			Status:       d.Status,
@@ -198,4 +198,4 @@ func dehydrateRun(r *run.Run) *SchedulerTracker {
 }
 
 // Compile-time interface assertion.
-var _ ports.RunRepository = (*RunRepositoryAdapter)(nil)
+var _ repository.RunRepository = (*RunRepositoryAdapter)(nil)

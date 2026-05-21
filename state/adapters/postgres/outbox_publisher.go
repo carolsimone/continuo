@@ -10,7 +10,7 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )

@@ -15,13 +15,13 @@ import (
 type SchedulePolicy struct{}
 
 // RunRepo is the narrow contract SchedulePolicy needs from the run repository.
-// The same interface is satisfied by ports.RunRepository in production code.
+// The same interface is satisfied by repository.RunRepository in production code.
 type RunRepo interface {
 	HasActiveSchedule(ctx context.Context, name string) (bool, error)
 }
 
 // CatalogRepo is the narrow contract SchedulePolicy needs from the catalog
-// repository. Satisfied by ports.ScheduleCatalogRepository in production.
+// repository. Satisfied by repository.ScheduleCatalogRepository in production.
 type CatalogRepo interface {
 	ExistsActive(ctx context.Context, name string) (bool, error)
 }

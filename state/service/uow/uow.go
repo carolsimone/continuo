@@ -10,7 +10,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -34,11 +35,12 @@ type UnitOfWork interface {
 	MessageProcessingRepo() messageprocessing.Repository
 
 	// Aggregate-level accessors used by handler bodies.
-	Run() ports.RunRepository
-	Catalog() ports.ScheduleCatalogRepository
+	Run() repository.RunRepository
+	Catalog() repository.ScheduleCatalogRepository
 	Outbox() ports.OutboxPublisher
 	TaskCollection() run.TaskCollection
 	Clock() ports.Clock
+	TaskExecutions() repository.TaskExecutionWriter
 
 	// Tx returns the underlying *sqlx.Tx during a transaction, or nil otherwise.
 	Tx() *sqlx.Tx
@@ -56,8 +58,8 @@ type PostgresUnitOfWork struct {
 	taskRepo          postgres.TaskTrackerRepository
 	taskExecutionRepo postgres.TaskExecutionRepository
 	catalogRepo       postgres.ScheduleCatalogRepository
-	runRepoPort       ports.RunRepository
-	catalogRepoPort   ports.ScheduleCatalogRepository
+	runRepoPort       repository.RunRepository
+	catalogRepoPort   repository.ScheduleCatalogRepository
 	outboxPub         ports.OutboxPublisher
 	clock             ports.Clock
 	logger            *slog.Logger
@@ -77,8 +79,8 @@ func NewPostgresUnitOfWork(
 	taskRepo postgres.TaskTrackerRepository,
 	taskExecutionRepo postgres.TaskExecutionRepository,
 	catalogRepo postgres.ScheduleCatalogRepository,
-	runRepoPort ports.RunRepository,
-	catalogRepoPort ports.ScheduleCatalogRepository,
+	runRepoPort repository.RunRepository,
+	catalogRepoPort repository.ScheduleCatalogRepository,
 	outboxPub ports.OutboxPublisher,
 	clock ports.Clock,
 	logger *slog.Logger,
@@ -150,10 +152,15 @@ func (u *PostgresUnitOfWork) Rollback() error {
 	return err
 }
 
-func (u *PostgresUnitOfWork) Run() ports.RunRepository                 { return u.runRepoPort }
-func (u *PostgresUnitOfWork) Catalog() ports.ScheduleCatalogRepository { return u.catalogRepoPort }
-func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher            { return u.outboxPub }
-func (u *PostgresUnitOfWork) Clock() ports.Clock                       { return u.clock }
+func (u *PostgresUnitOfWork) Run() repository.RunRepository { return u.runRepoPort }
+func (u *PostgresUnitOfWork) Catalog() repository.ScheduleCatalogRepository {
+	return u.catalogRepoPort
+}
+func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher { return u.outboxPub }
+func (u *PostgresUnitOfWork) Clock() ports.Clock           { return u.clock }
+func (u *PostgresUnitOfWork) TaskExecutions() repository.TaskExecutionWriter {
+	return u.taskExecutionRepo
+}
 
 // TaskCollection returns a TaskCollectionAdapter bound to the current
 // transaction (or nil tx if no transaction is in progress). Each call

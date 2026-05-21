@@ -18,7 +18,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
-	"github.com/carolsimone/continuo/state/ports"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"

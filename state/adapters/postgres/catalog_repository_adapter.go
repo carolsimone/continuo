@@ -6,11 +6,11 @@ import (
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/jmoiron/sqlx"
 )
 
-// CatalogRepositoryAdapter implements ports.ScheduleCatalogRepository by
+// CatalogRepositoryAdapter implements repository.ScheduleCatalogRepository by
 // wrapping the lower-level ScheduleCatalogRepository. SaveCatalog runs
 // UpsertAllTx and SoftDeleteAbsentTx inside the caller's transaction so the
 // catalog write is atomic with any surrounding domain logic.
@@ -115,4 +115,4 @@ func hydrateCatalog(rows []ScheduleCatalogRow) *catalog.ScheduleCatalog {
 	return catalog.Hydrate(entries)
 }
 
-var _ ports.ScheduleCatalogRepository = (*CatalogRepositoryAdapter)(nil)
+var _ repository.ScheduleCatalogRepository = (*CatalogRepositoryAdapter)(nil)

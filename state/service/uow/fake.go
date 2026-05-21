@@ -7,7 +7,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -32,11 +33,15 @@ type FakeUnitOfWork struct {
 
 	inTx bool
 
-	runRepo     ports.RunRepository
-	catalogRepo ports.ScheduleCatalogRepository
+	runRepo     repository.RunRepository
+	catalogRepo repository.ScheduleCatalogRepository
 	outboxPub   ports.OutboxPublisher
 	taskColl    run.TaskCollection
 	clock       ports.Clock
+
+	// TaskExecutionWriter backs TaskExecutions(); set it to capture or assert
+	// recorded-execution writes in handler tests.
+	TaskExecutionWriter repository.TaskExecutionWriter
 }
 
 func (f *FakeUnitOfWork) SchedulerRepo() postgres.SchedulerTrackerRepository {
@@ -81,12 +86,16 @@ func (f *FakeUnitOfWork) Rollback() error {
 
 // Aggregate-level accessors. Return whatever was set via the setter methods.
 
-func (f *FakeUnitOfWork) Run() ports.RunRepository                 { return f.runRepo }
-func (f *FakeUnitOfWork) Outbox() ports.OutboxPublisher            { return f.outboxPub }
-func (f *FakeUnitOfWork) TaskCollection() run.TaskCollection       { return f.taskColl }
+func (f *FakeUnitOfWork) Run() repository.RunRepository      { return f.runRepo }
+func (f *FakeUnitOfWork) Outbox() ports.OutboxPublisher      { return f.outboxPub }
+func (f *FakeUnitOfWork) TaskCollection() run.TaskCollection { return f.taskColl }
 
-// Catalog returns the aggregate-level ports.ScheduleCatalogRepository set via SetCatalogRepo.
-func (f *FakeUnitOfWork) Catalog() ports.ScheduleCatalogRepository { return f.catalogRepo }
+// TaskExecutions returns the aggregate-level repository.TaskExecutionWriter set
+// via the TaskExecutionWriter field.
+func (f *FakeUnitOfWork) TaskExecutions() repository.TaskExecutionWriter { return f.TaskExecutionWriter }
+
+// Catalog returns the aggregate-level repository.ScheduleCatalogRepository set via SetCatalogRepo.
+func (f *FakeUnitOfWork) Catalog() repository.ScheduleCatalogRepository { return f.catalogRepo }
 
 // Clock returns the configured clock, falling back to ports.SystemClock{} when
 // no override has been set.
@@ -99,8 +108,8 @@ func (f *FakeUnitOfWork) Clock() ports.Clock {
 
 // Setters allow individual tests to inject aggregate-level fakes without
 // affecting tests that only need the low-level tracker repos.
-func (f *FakeUnitOfWork) SetRunRepo(r ports.RunRepository)                 { f.runRepo = r }
-func (f *FakeUnitOfWork) SetCatalogRepo(r ports.ScheduleCatalogRepository) { f.catalogRepo = r }
+func (f *FakeUnitOfWork) SetRunRepo(r repository.RunRepository)                 { f.runRepo = r }
+func (f *FakeUnitOfWork) SetCatalogRepo(r repository.ScheduleCatalogRepository) { f.catalogRepo = r }
 func (f *FakeUnitOfWork) SetOutboxPublisher(p ports.OutboxPublisher)       { f.outboxPub = p }
 func (f *FakeUnitOfWork) SetTaskCollection(tc run.TaskCollection)          { f.taskColl = tc }
 func (f *FakeUnitOfWork) SetClock(c ports.Clock)                           { f.clock = c }

@@ -8,7 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
@@ -137,7 +137,7 @@ func makeTask(repo *stubTaskRepo, taskStatus run.TaskStatus, retryCount int) *po
 
 // ---- fakes for ResetTask aggregate path ----
 
-// resetFakeRunRepo satisfies ports.RunRepository for ResetTask tests.
+// resetFakeRunRepo satisfies repository.RunRepository for ResetTask tests.
 // LoadRunForUpdate returns the pre-built run stored in the fake; other
 // methods panic because ResetTask does not call them.
 type resetFakeRunRepo struct {
@@ -163,7 +163,7 @@ func (f *resetFakeRunRepo) HasActiveSchedule(_ context.Context, _ string) (bool,
 func (f *resetFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
 	panic("GetActiveScheduler not used in reset tests")
 }
-func (f *resetFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]ports.LastRunSummary, error) {
+func (f *resetFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in reset tests")
 }
 

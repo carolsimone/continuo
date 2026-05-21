@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
-	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
@@ -37,21 +35,7 @@ func (h *TaskExecutionRecordedHandler) Handle(
 	evt events.TaskExecutionRecorded,
 	_ uuid.UUID,
 ) error {
-	execution := &postgres.TaskExecution{
-		ID:                   evt.ExecutionID,
-		TaskID:               evt.TaskID,
-		CreatedAt:            time.Now(),
-		StartedAt:            evt.StartedAt,
-		CompletedAt:          evt.CompletedAt,
-		ExecutionTimeSeconds: evt.ExecutionTimeSeconds,
-		K8sJobName:           evt.JobName,
-		ErrorMessage:         evt.ErrorMessage,
-		LogS3Key:             evt.LogS3Key,
-		// ExecutorID is intentionally not set: events.TaskExecutionRecorded
-		// does not carry an executor identifier. If a future event version
-		// adds this field, add it to the events struct and map it here.
-	}
-	if err := u.TaskExecutionRepo().CreateTx(ctx, u.Tx(), execution); err != nil {
+	if err := u.TaskExecutions().CreateRecordTx(ctx, u.Tx(), evt); err != nil {
 		return fmt.Errorf("create task_execution: %w", err)
 	}
 	h.logger.Info("task.execution.recorded: processed",
