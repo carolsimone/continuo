@@ -8,6 +8,19 @@ This sheet is the fastest way to answer three questions for each service:
 
 Use this before diving into the full service dossiers.
 
+## Port Ownership Convention
+
+All Go services follow the same layering rule for ports and adapters:
+
+| What | Where |
+|---|---|
+| Domain repository ports (collection-like aggregate abstractions, e.g. `RunRepository`, `CancelledSchedulesRepository`) | `<service>/domain/repository` |
+| Technical / application ports (non-domain collaborators, e.g. `LogUploader`, `OutboxPublisher`, `Clock`) | `<service>/service/ports` |
+| `UnitOfWork` interface | `<service>/service/uow` |
+| Concrete implementations — including every `*UnitOfWork` | `<service>/adapters/*` |
+
+The dependency arrow always runs adapter → port. Code under `<service>/service/handlers` imports no `adapters/*` package; every collaborator is reached through a port interface. The AST guard `TestServiceHandlersDoNotImportAdapters` in `pkg/streams/handler_imports_test.go` enforces this at CI time.
+
 ## Startup Environment Validation
 
 All Go services use `pkg/config.Validator` to validate required environment variables before accepting any traffic or opening connections.

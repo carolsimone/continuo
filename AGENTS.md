@@ -16,6 +16,16 @@ Handlers should be thin and delegate to application/use-case services. Use repos
 Apply SOLID, clean code, repository, service-layer, and design-pattern practices pragmatically. Prefer clear, testable, explicit code over abstraction for its own sake.
 Shared cross-service logic belongs in `pkg`; service-specific logic belongs inside the owning service.
 
+## Port ownership
+A port is owned by the innermost layer whose vocabulary it speaks, and adapters only *implement* ports — they never declare them. Place ports as follows, and have the `adapters/*` package implement them (with a `var _ Port = (*impl)(nil)` assertion):
+- **Domain repository ports** — collection-like abstractions over an aggregate (e.g. `RunRepository`, `CancelledSchedulesRepository`) live in `<service>/domain/repository`.
+- **Technical / application ports** — collaborators that are not domain concepts (e.g. `LogUploader`, `OutboxPublisher`, `Clock`) live in `<service>/service/ports`. The `UnitOfWork` interface stays in `<service>/service/uow`.
+- **Concrete implementations** — including every `*UnitOfWork` — live in `<service>/adapters/*`.
+
+Rules:
+- The dependency arrow always runs adapter → port, never application → adapter. Code under `<service>/service/handlers` must import no `adapters/*` package; reach every collaborator through a port owned by the application/domain layer. This is enforced by the AST guard `TestServiceHandlersDoNotImportAdapters` in `pkg/streams/handler_imports_test.go` — add new services to its `handlerDirs`.
+- An interface declared in an adapter package and consumed *only by other adapters* (e.g. a gRPC/Neo4j client seam) is adapter-internal and may stay there; the rule targets application→adapter inversion, not adapter-to-adapter wiring.
+
 # Stream and consumer-group names
 Every Redis stream and consumer group is declared in `pkg/streams/contract.yaml`. A Go generator emits `pkg/streams/streams.gen.go` (`streams.QueryModelV1`, `streams.RetryTaskV1`, `streams.ExecutorRetry`, etc.) and `manifest-controller/streams_contract.py` for Python.
 

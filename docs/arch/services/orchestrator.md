@@ -129,7 +129,7 @@ All ports the service layer depends on for adapter-replaceable storage live in `
 | `TopologyStateRepository` | Postgres |
 | `TopologyRepository` | Neo4j |
 
-Two narrow exceptions are allowed to import adapter packages directly: `service/uow/uow.go` (composition root for transactional repositories) and `service/handlers/ingest_topology_integration_test.go` (integration test wiring the real Postgres adapter against a live database). Production handlers and unit-test fakes hold only `repository.*` types.
+One narrow exception is allowed to import adapter packages directly: `service/handlers/ingest_topology_integration_test.go` wires the real Postgres and Neo4j adapters against a live database. Production handlers and unit-test fakes hold only `repository.*` types. The `UnitOfWork` interface is declared in `service/uow/uow.go`; its concrete implementation (`PostgresUnitOfWork`) lives in `adapters/postgres/unit_of_work.go`.
 
 Read-side ports specific to the CQRS query path (`RunReader`, `TopologyStateReader`) are defined where they are consumed — `service/queries/run_query_service.go` — and intentionally not promoted into `domain/repository/`.
 
