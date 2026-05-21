@@ -277,7 +277,7 @@ func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*do
         RETURN r.schedule_name AS schedule_name,
                r.run_id        AS run_id,
                COALESCE(r.topology_generation, 0) AS topology_generation
-        ORDER BY r.schedule_name
+        ORDER BY r.schedule_name, r.created_at DESC
     `
 	result, err := session.Run(ctx, query, nil)
 	if err != nil {

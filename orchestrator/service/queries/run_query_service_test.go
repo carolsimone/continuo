@@ -171,7 +171,9 @@ func TestRunQueryService_ListActiveRunDrifts_OnePerSchedule(t *testing.T) {
 	assert.Equal(t, int64(5), view.ActiveRuns[0].TopologyGeneration)
 }
 
-func TestRunQueryService_ListActiveRunDrifts_DuplicateScheduleLogsWarning(t *testing.T) {
+func TestRunQueryService_ListActiveRunDrifts_DuplicateScheduleDedupsAndWarns(t *testing.T) {
+	// ListActiveRuns returns rows ordered newest-first within a schedule;
+	// run-a1 is the head (newest) row and must be the one surfaced.
 	rr := &fakeRunReader{
 		activeRuns: []*domain.ActiveRun{
 			{ScheduleName: "sched-a", RunID: "run-a1", TopologyGeneration: 5},
@@ -184,9 +186,10 @@ func TestRunQueryService_ListActiveRunDrifts_DuplicateScheduleLogsWarning(t *tes
 
 	view, err := svc.ListActiveRunDrifts(context.Background())
 	require.NoError(t, err)
-	require.Len(t, view.ActiveRuns, 2) // both surfaced
-	assert.True(t, strings.Contains(buf.String(), "multiple active runs"),
-		"expected warning log; got: %s", buf.String())
+	require.Len(t, view.ActiveRuns, 1) // deduped to the head (newest) row per schedule
+	assert.Equal(t, "run-a1", view.ActiveRuns[0].RunID)
+	assert.True(t, strings.Contains(buf.String(), "extra active run"),
+		"expected drop warning; got: %s", buf.String())
 }
 
 func TestRunQueryService_ListActiveRunDrifts_RunReaderError(t *testing.T) {
