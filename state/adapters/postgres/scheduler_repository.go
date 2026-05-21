@@ -307,11 +307,14 @@ func (r *schedulerTrackerRepository) Cancel(ctx context.Context, scheduleID uuid
 }
 
 // CancelTx cancels a scheduler within an existing transaction.
+// Cancellation is terminal, so both cancelled_at and completed_at are stamped
+// with the same timestamp.
 func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string) error {
 	result, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
 		SET status              = $1,
 		    cancelled_at        = $2,
+		    completed_at        = $2,
 		    cancelled_by        = $3,
 		    cancellation_reason = $4
 		WHERE schedule_id = $5

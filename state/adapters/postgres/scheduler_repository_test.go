@@ -255,6 +255,7 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	assert.NotNil(t, got.CancelledAt)
 	assert.Equal(t, "test-user", *got.CancelledBy)
 	assert.Equal(t, "test reason", *got.CancellationReason)
+	assert.NotNil(t, got.CompletedAt, "CancelTx must stamp completed_at (cancellation is terminal)")
 
 	// Second cancel on already-cancelled row must return ErrNotCancellable.
 	tx2, err := db.BeginTxx(ctx, nil)
