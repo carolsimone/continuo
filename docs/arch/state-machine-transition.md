@@ -69,12 +69,13 @@ Each transition is exclusively owned by one service. An attempt by the wrong cal
 - k8s-controller stamps the attempt that ran on the terminal `succeeded` / `failed`.
 - on a retryable failure, k8s-controller records `failed` at the attempt that ran and dispatches the retry at `attempt + 1`; the retry then runs as `running` with that higher number.
 
-The `Run` aggregate (`RecordTaskStatus`) uses this to keep `terminal_task_count` correct:
+The `Run` aggregate (`RecordTaskStatus`) orders **every** update by attempt, so the projection is independent of processing order:
 
-- a `running` whose `retry_count` is **strictly greater** than the recorded terminal is a genuine retry → it un-fills the slot (`terminal_task_count--`).
-- a `running` whose `retry_count` is **≤** the recorded terminal is a stale duplicate of the already-terminated attempt → it is ignored (no status regression, no un-fill, the stored attempt is preserved).
+- an update for an **older** attempt (lower `retry_count`) is superseded and ignored — whether it is a stale `running` or a stale terminal;
+- for the **same** attempt, the first terminal fills the slot (`terminal_task_count++`); a `running` re-delivered after that attempt's terminal is ignored (no un-fill, no status regression);
+- for a **newer** attempt, a `running` after a terminal is a genuine retry and un-fills the slot (`terminal_task_count--`), while a terminal after an older terminal advances the stored attempt **without** double-counting and re-checks finalization (a retryable failure followed by a permanent one must finalize).
 
-This closes the race regardless of delivery order; the decision lives in the aggregate, with the repository only supplying the prior status and stored attempt.
+The decision lives entirely in the aggregate; the repository supplies the prior status and stored attempt (under a `FOR UPDATE` lock so concurrent deliveries for one task serialize) and persists what the aggregate decides. This closes the cross-producer race regardless of delivery order. The structural follow-up — consolidating to a single producer so the reordering cannot arise — is tracked separately.
 
 ---
 

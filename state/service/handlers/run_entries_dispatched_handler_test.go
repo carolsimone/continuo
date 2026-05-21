@@ -97,7 +97,7 @@ func (f *fakeDispatchedTaskCollection) BulkCreate(_ context.Context, tasks []run
 func (f *fakeDispatchedTaskCollection) GetStatus(_ context.Context, _ uuid.UUID) (run.TaskStatus, bool, error) {
 	return "", false, nil
 }
-func (f *fakeDispatchedTaskCollection) GetStatusAndAttempt(_ context.Context, _ uuid.UUID) (run.TaskStatus, int32, bool, error) {
+func (f *fakeDispatchedTaskCollection) LoadStatusAndAttempt(_ context.Context, _ uuid.UUID) (run.TaskStatus, int32, bool, error) {
 	return "", 0, false, nil
 }
 func (f *fakeDispatchedTaskCollection) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
@@ -115,8 +115,8 @@ func (f *fakeDispatchedTaskCollection) HasNonSucceeded(_ context.Context, _ uuid
 func (f *fakeDispatchedTaskCollection) GetByNode(_ context.Context, _ uuid.UUID, _ run.NodeID) (run.Task, error) {
 	panic("GetByNode not implemented in fake")
 }
-func (f *fakeDispatchedTaskCollection) UpdateStatusIfChanged(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
-	panic("UpdateStatusIfChanged not implemented in fake")
+func (f *fakeDispatchedTaskCollection) SetStatusAndAttempt(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
+	panic("SetStatusAndAttempt not implemented in fake")
 }
 func (f *fakeDispatchedTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string) (int, error) {
 	panic("BulkCancel not implemented in fake")

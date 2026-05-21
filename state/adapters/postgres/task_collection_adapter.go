@@ -37,8 +37,8 @@ func (a *TaskCollectionAdapter) GetStatus(ctx context.Context, taskID uuid.UUID)
 	return parsed, true, nil
 }
 
-func (a *TaskCollectionAdapter) GetStatusAndAttempt(ctx context.Context, taskID uuid.UUID) (run.TaskStatus, int32, bool, error) {
-	s, retryCount, err := a.repo.GetStatusAndAttemptTx(ctx, a.tx, taskID)
+func (a *TaskCollectionAdapter) LoadStatusAndAttempt(ctx context.Context, taskID uuid.UUID) (run.TaskStatus, int32, bool, error) {
+	s, retryCount, err := a.repo.LoadStatusAndAttemptTx(ctx, a.tx, taskID)
 	if err != nil {
 		return "", 0, false, err
 	}
@@ -95,8 +95,8 @@ func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, 
 	}, nil
 }
 
-func (a *TaskCollectionAdapter) UpdateStatusIfChanged(ctx context.Context, taskID uuid.UUID, status run.TaskStatus, retryCount int32) (int, error) {
-	n, err := a.repo.UpdateStatusIfChangedTx(ctx, a.tx, taskID, string(status), retryCount)
+func (a *TaskCollectionAdapter) SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status run.TaskStatus, retryCount int32) (int, error) {
+	n, err := a.repo.SetStatusAndAttemptTx(ctx, a.tx, taskID, string(status), retryCount)
 	return int(n), err
 }
 

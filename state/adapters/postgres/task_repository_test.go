@@ -307,7 +307,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 	assert.Nil(t, gotReal.InheritedFromTaskID, "real-execution row should round-trip InheritedFromTaskID as nil")
 }
 
-func TestTaskRepository_UpdateStatusIfChangedTx_DoesNotReviveCancelledTask(t *testing.T) {
+func TestTaskRepository_SetStatusAndAttemptTx_DoesNotReviveCancelledTask(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	scheduler := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
@@ -329,7 +329,7 @@ func TestTaskRepository_UpdateStatusIfChangedTx_DoesNotReviveCancelledTask(t *te
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	affected, err := taskRepo.UpdateStatusIfChangedTx(context.Background(), tx, task.TaskID, "succeeded", 0)
+	affected, err := taskRepo.SetStatusAndAttemptTx(context.Background(), tx, task.TaskID, "succeeded", 0)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
@@ -338,4 +338,45 @@ func TestTaskRepository_UpdateStatusIfChangedTx_DoesNotReviveCancelledTask(t *te
 	got, err := taskRepo.GetByID(context.Background(), task.TaskID)
 	require.NoError(t, err)
 	assert.Equal(t, run.TaskStatusCancelled, got.Status, "status must remain cancelled")
+}
+
+// TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus guards the
+// SQL-layer fix: a newer attempt's terminal carrying the same status (failed→failed
+// at a higher retry_count) must still advance retry_count. The previous status-only
+// gate dropped this write, leaving the stored attempt stale and corrupting the
+// attempt-monotonic comparison in the Run aggregate.
+func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *testing.T) {
+	db := newTestDB(t)
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	scheduler := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
+	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduler.ScheduleID)
+
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	task := createTask(t, taskRepo, scheduler.ScheduleID)
+	defer db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
+
+	ctx := context.Background()
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	_, err = taskRepo.SetStatusAndAttemptTx(ctx, tx, task.TaskID, "failed", 1)
+	require.NoError(t, err)
+	affected, err := taskRepo.SetStatusAndAttemptTx(ctx, tx, task.TaskID, "failed", 2)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	assert.Equal(t, int32(1), affected, "same-status write must still affect the row")
+
+	status, retryCount, err := func() (string, int32, error) {
+		tx2, err := db.BeginTxx(ctx, nil)
+		if err != nil {
+			return "", 0, err
+		}
+		defer tx2.Rollback()
+		return taskRepo.LoadStatusAndAttemptTx(ctx, tx2, task.TaskID)
+	}()
+	require.NoError(t, err)
+	assert.Equal(t, "failed", status)
+	assert.Equal(t, int32(2), retryCount, "retry_count must advance to the newer attempt")
 }

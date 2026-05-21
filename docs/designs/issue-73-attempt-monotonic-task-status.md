@@ -188,3 +188,18 @@ The fake `TaskCollection` gains `GetStatusAndAttempt` returning a configurable `
 - `k8s-controller/service/handlers/check_status_handler.go` — `handleSucceeded` (`:116`) and `handleFailedWithRetry` (`:250`) `retry_count` stamping.
 - Tests in `state/domain/aggregate/run/` and `k8s-controller/service/handlers/`.
 - `docs/arch/*` — reconcile the task-status / retry semantics (state-machine + sequence flows) once implemented, per the repo's architecture-documentation working agreement.
+
+## 10. Addendum — multi-attempt ordering (post-review)
+
+The §5.2 guard only suppressed stale **non-terminal** updates. Review found it incomplete for a **multi-attempt** reorder: because the write path gated on status-difference only (`UpdateStatusIfChangedTx`), a terminal→terminal step that changes only the attempt (`FAILED(k)` → `FAILED(k+1)`) was swallowed as a replay, leaving the stored attempt at `k`. The delayed `RUNNING(k+1)` then passed `retry_count > prevAttempt` and wrongly un-filled the slot; the mirror case (`FAILED(k)` → `SUCCEEDED(k+1)`) double-counted.
+
+The fix replaces the guard with a complete, order-independent attempt state machine in `RecordTaskStatus` (older attempt → ignore; same attempt → first-terminal fills / post-terminal RUNNING ignored; newer attempt → fill / un-fill / terminal-after-terminal advances without double-count and re-checks finalization). The repository is reduced to a dumb writer:
+
+- `LoadStatusAndAttempt` / `LoadStatusAndAttemptTx` — replaces `GetStatusAndAttempt`; reads under `SELECT … FOR UPDATE` (write path) so concurrent same-task deliveries serialize.
+- `SetStatusAndAttempt` / `SetStatusAndAttemptTx` — replaces `UpdateStatusIfChanged`; writes status + retry_count unconditionally except for cancelled rows. The aggregate, not the SQL, decides when to write.
+
+Finalization is factored into `finalizeIfComplete` and re-checked on every terminal-resulting transition (so a retryable failure followed by a permanent one finalizes even though the slot count is unchanged).
+
+The §3.1 producer reconciliation is unchanged and still required: it keeps a RUNNING and its terminal on one attempt number and makes a retry strictly newer. Tests added for the reorder cases (`run_test.go`) and the SQL advance-on-same-status (`task_repository_test.go`).
+
+**Structural follow-up:** the three-producer nature of `task.status.updated:v1` (executor RUNNING, k8s terminal, orchestrator `cascade_task_skipped` with hardcoded `retry_count: 0`) makes the attempt invariant an implicit cross-service contract. Consolidating to a single producer is tracked in issue #76.

@@ -420,11 +420,11 @@ func (r *Run) RecordTaskStatus(
 	if r.IsTerminal() {
 		return nil, nil
 	}
-	prev, prevAttempt, exists, err := tasks.GetStatusAndAttempt(ctx, taskID)
+	prev, prevAttempt, exists, err := tasks.LoadStatusAndAttempt(ctx, taskID)
 	if err != nil {
 		// Mirror the legacy lenient behaviour: treat read failure as
-		// "no previous status" and let the update-if-changed branch below
-		// disambiguate replay vs. missing-row.
+		// "no previous status" and let the branches below disambiguate
+		// replay vs. missing-row.
 		prev = ""
 		prevAttempt = 0
 		exists = false
@@ -443,45 +443,103 @@ func (r *Run) RecordTaskStatus(
 		// Row exists (GetStatusAndAttempt may have errored); proceed with empty prev.
 	}
 
+	prevKnown := prev != ""
 	isTerminal := newStatus.IsTerminal()
-	prevWasTerminal := prev != "" && prev.IsTerminal()
+	prevWasTerminal := prevKnown && prev.IsTerminal()
 
-	// Attempt-monotonic guard: a non-terminal status whose attempt is not
-	// strictly newer than the recorded terminal is a stale duplicate from the
-	// attempt that already terminated (cross-producer reordering). Ignore it
-	// before touching the row — UpdateStatusIfChanged would otherwise regress
-	// the status to RUNNING and overwrite the stored attempt with the stale,
-	// lower value, corrupting terminal_task_count.
-	if !isTerminal && prevWasTerminal && retryCount <= prevAttempt {
+	// Order the update by attempt (retry_count). The two/three producers of
+	// task.status.updated:v1 act independently, so messages for one task can be
+	// processed in any order; the attempt number makes the projection
+	// order-independent.
+
+	// Older attempt — superseded. Covers both a stale RUNNING and a stale
+	// terminal left over from an attempt newer state has already moved past.
+	if prevKnown && retryCount < prevAttempt {
 		return nil, nil
 	}
 
-	affected, err := tasks.UpdateStatusIfChanged(ctx, taskID, newStatus, retryCount)
+	// Same attempt as the stored row.
+	if prevKnown && retryCount == prevAttempt {
+		if prevWasTerminal {
+			// Terminal already recorded for this attempt: a replayed terminal,
+			// or a RUNNING re-delivered after its own terminal. No-op — do not
+			// regress status or un-fill the slot.
+			return nil, nil
+		}
+		if !isTerminal {
+			// Non-terminal progress within the attempt (e.g. PENDING→RUNNING).
+			// Persist the status change; the slot is unaffected.
+			if newStatus == prev {
+				return nil, nil
+			}
+			if _, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount); err != nil {
+				return nil, fmt.Errorf("set task status: %w", err)
+			}
+			return nil, nil
+		}
+		// First terminal for this attempt — fill the slot.
+		affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
+		if err != nil {
+			return nil, fmt.Errorf("set task status: %w", err)
+		}
+		if affected == 0 {
+			return nil, nil // cancelled or vanished — leave counters untouched.
+		}
+		r.fillSlot()
+		return r.finalizeIfComplete(ctx, tasks)
+	}
+
+	// Newer attempt (retryCount > prevAttempt) or no prior status — adopt it.
+	affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
 	if err != nil {
-		return nil, fmt.Errorf("update task status: %w", err)
+		return nil, fmt.Errorf("set task status: %w", err)
 	}
 	if affected == 0 {
-		// Status unchanged — replay, no-op.
+		return nil, nil // cancelled or vanished — leave counters untouched.
+	}
+	switch {
+	case prevWasTerminal && !isTerminal:
+		// Genuine retry running again — un-fill the slot.
+		r.unfillSlot()
+		return nil, nil
+	case !prevWasTerminal && isTerminal:
+		// Terminal of a running/new attempt — fill the slot.
+		r.fillSlot()
+		return r.finalizeIfComplete(ctx, tasks)
+	case prevWasTerminal && isTerminal:
+		// A newer attempt's terminal arriving after an older attempt's terminal
+		// (e.g. the retry also failed, or it succeeded). The slot stays filled —
+		// no count change — but the task's retryability may have flipped, so
+		// re-check finalization with the now-current attempt persisted.
+		return r.finalizeIfComplete(ctx, tasks)
+	default:
+		// Non-terminal after non-terminal (newer attempt already running) — the
+		// slot was empty and stays empty.
 		return nil, nil
 	}
+}
 
-	if !isTerminal {
-		if prevWasTerminal {
-			// Genuine retry (attempt strictly newer than the recorded
-			// terminal) — un-fill the slot.
-			r.terminalTaskCount--
-			if r.terminalTaskCount < 0 {
-				r.terminalTaskCount = 0
-			}
-			r.changes.terminalTaskCountDirty = true
-		}
-		return nil, nil
-	}
-
-	// Terminal transition — increment the counter.
+// fillSlot marks one more task as terminal in the run's bookkeeping.
+func (r *Run) fillSlot() {
 	r.terminalTaskCount++
 	r.changes.terminalTaskCountDirty = true
+}
 
+// unfillSlot reverses fillSlot when a terminal task starts a new attempt,
+// clamping at zero defensively.
+func (r *Run) unfillSlot() {
+	r.terminalTaskCount--
+	if r.terminalTaskCount < 0 {
+		r.terminalTaskCount = 0
+	}
+	r.changes.terminalTaskCountDirty = true
+}
+
+// finalizeIfComplete finalizes the scheduler when every task is terminal, the
+// graph has finished loading, the run is still RUNNING, and no failed task is
+// still retryable. Returns the RunFinalized event(s), or nil when finalization
+// is deferred.
+func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection) ([]DomainEvent, error) {
 	if !r.totalTaskCount.Valid || r.terminalTaskCount != r.totalTaskCount.Int32 {
 		return nil, nil
 	}

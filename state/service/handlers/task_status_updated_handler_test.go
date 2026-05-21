@@ -81,7 +81,7 @@ func (f *fakeTaskStatusOutboxPub) Append(_ context.Context, _ *sqlx.Tx, evts []r
 // unit tests. It controls the responses of every method called by
 // Run.RecordTaskStatus; unused methods panic on accidental use.
 type fakeTaskStatusTaskCollection struct {
-	// GetStatus / GetStatusAndAttempt response
+	// GetStatus / LoadStatusAndAttempt response
 	prevStatus   run.TaskStatus
 	prevAttempt  int32
 	prevExists   bool
@@ -91,7 +91,7 @@ type fakeTaskStatusTaskCollection struct {
 	existsValue bool
 	existsErr   error
 
-	// UpdateStatusIfChanged response
+	// SetStatusAndAttempt response (rowsAffected)
 	updateAffected int
 	updateErr      error
 
@@ -108,7 +108,7 @@ func (f *fakeTaskStatusTaskCollection) GetStatus(_ context.Context, _ uuid.UUID)
 	return f.prevStatus, f.prevExists, f.getStatusErr
 }
 
-func (f *fakeTaskStatusTaskCollection) GetStatusAndAttempt(_ context.Context, _ uuid.UUID) (run.TaskStatus, int32, bool, error) {
+func (f *fakeTaskStatusTaskCollection) LoadStatusAndAttempt(_ context.Context, _ uuid.UUID) (run.TaskStatus, int32, bool, error) {
 	return f.prevStatus, f.prevAttempt, f.prevExists, f.getStatusErr
 }
 
@@ -116,7 +116,7 @@ func (f *fakeTaskStatusTaskCollection) Exists(_ context.Context, _ uuid.UUID) (b
 	return f.existsValue, f.existsErr
 }
 
-func (f *fakeTaskStatusTaskCollection) UpdateStatusIfChanged(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
+func (f *fakeTaskStatusTaskCollection) SetStatusAndAttempt(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
 	return f.updateAffected, f.updateErr
 }
 
