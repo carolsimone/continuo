@@ -24,7 +24,6 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	snapshotsvc "github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
-	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -143,13 +142,13 @@ func main() {
 	// and the message is never ACKed, getting stuck in the PEL forever.
 	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
 	rejectedTopologyRepo := postgres.NewRejectedTopologyRepository(pgDB)
-	ingestTopologyHandler := handlers.NewIngestTopologyHandler(uow.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, rejectedTopologyRepo, logger)
-	initializeRunHandler := handlers.NewInitializeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
-	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), runAggRepo, cancelledSchedulesRepo, logger)
-	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(uow.NewPostgresUnitOfWork(pgDB, logger), queryRepo, snapshotService, logger)
-	handleRerunHandler := handlers.NewHandleRerunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
-	handleRebaseHandler := handlers.NewHandleRebaseHandler(uow.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
-	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(uow.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
+	ingestTopologyHandler := handlers.NewIngestTopologyHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, rejectedTopologyRepo, logger)
+	initializeRunHandler := handlers.NewInitializeRunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
+	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), runAggRepo, cancelledSchedulesRepo, logger)
+	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), queryRepo, snapshotService, logger)
+	handleRerunHandler := handlers.NewHandleRerunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
+	handleRebaseHandler := handlers.NewHandleRebaseHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
+	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR

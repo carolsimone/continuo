@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"time"
 
-	postgresadapter "github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
-	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
+	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
+	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -37,18 +37,18 @@ type HandlerConfig struct {
 // CheckStatusHandler handles CheckJobStatus commands
 type CheckStatusHandler struct {
 	k8sClient          K8sStatusChecker
-	logUploader        s3adapter.LogUploader
+	logUploader        ports.LogUploader
 	config             *HandlerConfig
-	cancelledSchedules postgresadapter.CancelledSchedulesRepository
+	cancelledSchedules repository.CancelledSchedulesRepository
 	logger             *slog.Logger
 }
 
 // NewCheckStatusHandler creates a new CheckStatusHandler
 func NewCheckStatusHandler(
 	k8sClient K8sStatusChecker,
-	logUploader s3adapter.LogUploader,
+	logUploader ports.LogUploader,
 	config *HandlerConfig,
-	cancelledSchedules postgresadapter.CancelledSchedulesRepository,
+	cancelledSchedules repository.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) *CheckStatusHandler {
 	return &CheckStatusHandler{
@@ -317,18 +317,18 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 	outboxEntryID := uuid.New()
 
 	checkPayload, err := json.Marshal(event.JobCheckRequest{
-		TaskID:        cmd.TaskID.String(),
-		ScheduleID:    cmd.ScheduleID.String(),
-		ScheduleName:  cmd.ScheduleName,
-		ServiceName:   cmd.ServiceName,
-		SchemaName:    cmd.SchemaName,
-		TableName:     cmd.TableName,
-		JobName:       cmd.JobName,
-		CheckAfter:    checkAfter.Unix(),
-		NodeType:      cmd.NodeType,
-		ImageTag:      cmd.ImageTag,
-		RetryCount:    int(cmd.RetryCount),
-		MaxRetries:    int(maxRetries),
+		TaskID:       cmd.TaskID.String(),
+		ScheduleID:   cmd.ScheduleID.String(),
+		ScheduleName: cmd.ScheduleName,
+		ServiceName:  cmd.ServiceName,
+		SchemaName:   cmd.SchemaName,
+		TableName:    cmd.TableName,
+		JobName:      cmd.JobName,
+		CheckAfter:   checkAfter.Unix(),
+		NodeType:     cmd.NodeType,
+		ImageTag:     cmd.ImageTag,
+		RetryCount:   int(cmd.RetryCount),
+		MaxRetries:   int(maxRetries),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal check_delayed: %w", err)

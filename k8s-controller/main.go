@@ -113,7 +113,7 @@ func main() {
 	// UnitOfWork factory — a fresh transaction-scoped UoW per message. Creating
 	// it per message keeps concurrent handler invocations isolated.
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(pgDB, logger)
+		return postgres.NewPostgresUnitOfWork(pgDB, logger)
 	}
 
 	checkStatusHandler := handlers.NewCheckStatusHandler(k8sClient, s3Client, handlerConfig, cancelledSchedulesRepo, logger)

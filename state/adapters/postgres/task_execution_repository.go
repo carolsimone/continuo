@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/carolsimone/continuo/state/domain/events"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -111,6 +114,46 @@ func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, exe
 	)
 	return nil
 }
+
+// rowFromEvent maps a recorded-execution domain event to its storage row.
+// ExecutorID is intentionally left nil: the event carries no executor id.
+func rowFromEvent(evt events.TaskExecutionRecorded) *TaskExecution {
+	return &TaskExecution{
+		ID:                   evt.ExecutionID,
+		TaskID:               evt.TaskID,
+		CreatedAt:            time.Now(),
+		StartedAt:            evt.StartedAt,
+		CompletedAt:          evt.CompletedAt,
+		ExecutionTimeSeconds: evt.ExecutionTimeSeconds,
+		K8sJobName:           evt.JobName,
+		ErrorMessage:         evt.ErrorMessage,
+		LogS3Key:             evt.LogS3Key,
+	}
+}
+
+// TaskExecutionWriterAdapter binds a TaskExecutionRepository to a transaction
+// and satisfies repository.TaskExecutionWriter. The UnitOfWork constructs one
+// per call so CreateRecord always writes inside the active transaction.
+type TaskExecutionWriterAdapter struct {
+	repo TaskExecutionRepository
+	tx   *sqlx.Tx
+}
+
+// NewTaskExecutionWriter binds repo to tx for recorded-execution writes.
+func NewTaskExecutionWriter(repo TaskExecutionRepository, tx *sqlx.Tx) *TaskExecutionWriterAdapter {
+	return &TaskExecutionWriterAdapter{repo: repo, tx: tx}
+}
+
+// CreateRecord maps a recorded-execution domain event to the storage row and
+// inserts it inside the bound transaction.
+func (w *TaskExecutionWriterAdapter) CreateRecord(ctx context.Context, evt events.TaskExecutionRecorded) error {
+	if w.tx == nil {
+		return fmt.Errorf("CreateRecord requires an active transaction")
+	}
+	return w.repo.CreateTx(ctx, w.tx, rowFromEvent(evt))
+}
+
+var _ repository.TaskExecutionWriter = (*TaskExecutionWriterAdapter)(nil)
 
 // GetByID retrieves a task_execution by id
 func (r *taskExecutionRepository) GetByID(ctx context.Context, id uuid.UUID) (*TaskExecution, error) {

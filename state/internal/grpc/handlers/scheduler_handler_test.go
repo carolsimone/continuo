@@ -13,7 +13,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
@@ -40,7 +40,7 @@ func noopUoWFactory() func() uow.UnitOfWork {
 // ---- stubs for schedule catalog ----
 
 // stubCatalogRepo satisfies both postgres.ScheduleCatalogRepository and
-// ports.ScheduleCatalogRepository for handler unit tests.
+// repository.ScheduleCatalogRepository for handler unit tests.
 type stubCatalogRepo struct {
 	existsActive map[string]bool
 }
@@ -76,10 +76,10 @@ func (s *stubCatalogRepo) ListAll(_ context.Context) ([]postgres.ScheduleCatalog
 func (s *stubCatalogRepo) GetCatalog(_ context.Context) (*catalog.ScheduleCatalog, error) {
 	return nil, nil
 }
-func (s *stubCatalogRepo) LoadCatalogForUpdate(_ context.Context, _ *sqlx.Tx) (*catalog.ScheduleCatalog, error) {
+func (s *stubCatalogRepo) LoadCatalogForUpdate(_ context.Context) (*catalog.ScheduleCatalog, error) {
 	return nil, nil
 }
-func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *sqlx.Tx, _ *catalog.ScheduleCatalog) error {
+func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *catalog.ScheduleCatalog) error {
 	return nil
 }
 
@@ -153,7 +153,7 @@ func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID,
 
 // ---- fake run repo for activation tests ----
 
-// activateFakeRunRepo satisfies ports.RunRepository for ActivateSchedule /
+// activateFakeRunRepo satisfies repository.RunRepository for ActivateSchedule /
 // TriggerSchedule handler tests. HasActiveSchedule drives the policy check;
 // SaveRun records the run so tests can inspect it.
 type activateFakeRunRepo struct {
@@ -165,10 +165,10 @@ type activateFakeRunRepo struct {
 func (f *activateFakeRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	panic("GetRun not used in activate tests")
 }
-func (f *activateFakeRunRepo) LoadRunForUpdate(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*run.Run, error) {
+func (f *activateFakeRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	panic("LoadRunForUpdate not used in activate tests")
 }
-func (f *activateFakeRunRepo) SaveRun(_ context.Context, _ *sqlx.Tx, r *run.Run) error {
+func (f *activateFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	if f.saveErr != nil {
 		return f.saveErr
 	}
@@ -181,19 +181,19 @@ func (f *activateFakeRunRepo) HasActiveSchedule(_ context.Context, _ string) (bo
 func (f *activateFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
 	panic("GetActiveScheduler not used in activate tests")
 }
-func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]ports.LastRunSummary, error) {
+func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in activate tests")
 }
 
 // ---- fake outbox for activation tests ----
 
-// activateFakeOutbox satisfies ports.OutboxPublisher for activation tests.
+// activateFakeOutbox satisfies the OutboxPublisher port for activation tests.
 type activateFakeOutbox struct {
 	appended  []run.DomainEvent
 	appendErr error
 }
 
-func (f *activateFakeOutbox) Append(_ context.Context, _ *sqlx.Tx, evts []run.DomainEvent, _ uuid.UUID) error {
+func (f *activateFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _ uuid.UUID) error {
 	if f.appendErr != nil {
 		return f.appendErr
 	}
@@ -408,14 +408,14 @@ func (f *cancelFakeRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, er
 	panic("GetRun not used in cancel tests")
 }
 
-func (f *cancelFakeRunRepo) LoadRunForUpdate(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*run.Run, error) {
+func (f *cancelFakeRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
 	return f.stored, nil
 }
 
-func (f *cancelFakeRunRepo) SaveRun(_ context.Context, _ *sqlx.Tx, r *run.Run) error {
+func (f *cancelFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	f.saveCalled = true
 	if f.saveErr != nil {
 		return f.saveErr
@@ -435,7 +435,7 @@ func (f *cancelFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*ru
 	return f.stored, nil
 }
 
-func (f *cancelFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]ports.LastRunSummary, error) {
+func (f *cancelFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in cancel tests")
 }
 
@@ -445,7 +445,7 @@ type cancelFakeOutbox struct {
 	appendErr error
 }
 
-func (f *cancelFakeOutbox) Append(_ context.Context, _ *sqlx.Tx, evts []run.DomainEvent, _ uuid.UUID) error {
+func (f *cancelFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _ uuid.UUID) error {
 	if f.appendErr != nil {
 		return f.appendErr
 	}

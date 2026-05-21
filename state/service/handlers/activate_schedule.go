@@ -78,10 +78,10 @@ func (h *ActivateScheduleHandler) Handle(
 	if err != nil {
 		return uuid.Nil, 0, err
 	}
-	if err := u.Run().SaveRun(ctx, u.Tx(), newRun); err != nil {
+	if err := u.Run().SaveRun(ctx, newRun); err != nil {
 		return uuid.Nil, 0, fmt.Errorf("save: %w", err)
 	}
-	if err := u.Outbox().Append(ctx, u.Tx(), []run.DomainEvent{evt}, uuid.Nil); err != nil {
+	if err := u.Outbox().Append(ctx, []run.DomainEvent{evt}, uuid.Nil); err != nil {
 		return uuid.Nil, 0, fmt.Errorf("outbox: %w", err)
 	}
 	if err := u.Commit(); err != nil {

@@ -18,7 +18,7 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
-	"github.com/carolsimone/continuo/state/ports"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -121,12 +121,9 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NoError(t, err, "Failed to seed schedule_catalog")
 
 	// Wire the UoW factory. Each cron tick gets a fresh UoW.
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
-	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
-	domainOutboxPub := postgres.NewOutboxPublisher(logger)
 	clk := ports.SystemClock{}
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, runRepoPort, catalogRepoPort, domainOutboxPub, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, clk, logger)
 	}
 
 	// Initialize activation handler

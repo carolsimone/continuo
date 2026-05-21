@@ -2,27 +2,31 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/jmoiron/sqlx"
 )
 
-// CatalogRepositoryAdapter implements ports.ScheduleCatalogRepository by
+// CatalogRepositoryAdapter implements repository.ScheduleCatalogRepository by
 // wrapping the lower-level ScheduleCatalogRepository. SaveCatalog runs
 // UpsertAllTx and SoftDeleteAbsentTx inside the caller's transaction so the
 // catalog write is atomic with any surrounding domain logic.
 type CatalogRepositoryAdapter struct {
 	db     *sqlx.DB
+	tx     *sqlx.Tx
 	repo   ScheduleCatalogRepository
 	logger *slog.Logger
 }
 
-// NewCatalogRepositoryAdapter constructs a CatalogRepositoryAdapter.
-func NewCatalogRepositoryAdapter(db *sqlx.DB, repo ScheduleCatalogRepository, logger *slog.Logger) *CatalogRepositoryAdapter {
-	return &CatalogRepositoryAdapter{db: db, repo: repo, logger: logger}
+// NewCatalogRepositoryAdapter constructs a CatalogRepositoryAdapter bound to
+// tx. Reads use db; SaveCatalog runs inside tx (which may be nil outside a
+// transaction, in which case SaveCatalog returns an error).
+func NewCatalogRepositoryAdapter(db *sqlx.DB, tx *sqlx.Tx, repo ScheduleCatalogRepository, logger *slog.Logger) *CatalogRepositoryAdapter {
+	return &CatalogRepositoryAdapter{db: db, tx: tx, repo: repo, logger: logger}
 }
 
 // GetCatalog loads the full schedule_catalog (active and removed rows) into a
@@ -39,7 +43,7 @@ func (a *CatalogRepositoryAdapter) GetCatalog(ctx context.Context) (*catalog.Sch
 // schedule_catalog reconciliation is driven by a single consumer of
 // schedules.loaded:v1, so a plain ListAll suffices. If contention increases,
 // add a ListAllForUpdate (SELECT … FOR UPDATE) to the underlying repository.
-func (a *CatalogRepositoryAdapter) LoadCatalogForUpdate(ctx context.Context, _ *sqlx.Tx) (*catalog.ScheduleCatalog, error) {
+func (a *CatalogRepositoryAdapter) LoadCatalogForUpdate(ctx context.Context) (*catalog.ScheduleCatalog, error) {
 	return a.GetCatalog(ctx)
 }
 
@@ -47,7 +51,10 @@ func (a *CatalogRepositoryAdapter) LoadCatalogForUpdate(ctx context.Context, _ *
 // transaction: active entries are upserted with per-schedule service metadata,
 // and entries that are no longer active are soft-deleted. ResetChanges is
 // called after a successful write.
-func (a *CatalogRepositoryAdapter) SaveCatalog(ctx context.Context, tx *sqlx.Tx, c *catalog.ScheduleCatalog) error {
+func (a *CatalogRepositoryAdapter) SaveCatalog(ctx context.Context, c *catalog.ScheduleCatalog) error {
+	if a.tx == nil {
+		return fmt.Errorf("SaveCatalog requires an active transaction")
+	}
 	var present []string
 	perScheduleMeta := make(map[string]map[string]run.ServiceMetadata)
 
@@ -63,10 +70,10 @@ func (a *CatalogRepositoryAdapter) SaveCatalog(ctx context.Context, tx *sqlx.Tx,
 		}
 	}
 
-	if err := a.repo.UpsertAllTx(ctx, tx, present, perScheduleMeta); err != nil {
+	if err := a.repo.UpsertAllTx(ctx, a.tx, present, perScheduleMeta); err != nil {
 		return err
 	}
-	if err := a.repo.SoftDeleteAbsentTx(ctx, tx, present); err != nil {
+	if err := a.repo.SoftDeleteAbsentTx(ctx, a.tx, present); err != nil {
 		return err
 	}
 	c.ResetChanges()
@@ -115,4 +122,4 @@ func hydrateCatalog(rows []ScheduleCatalogRow) *catalog.ScheduleCatalog {
 	return catalog.Hydrate(entries)
 }
 
-var _ ports.ScheduleCatalogRepository = (*CatalogRepositoryAdapter)(nil)
+var _ repository.ScheduleCatalogRepository = (*CatalogRepositoryAdapter)(nil)

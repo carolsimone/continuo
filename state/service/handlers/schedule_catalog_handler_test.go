@@ -14,7 +14,6 @@ import (
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,14 +29,14 @@ type fakeCatalogPortRepo struct {
 	loadErr  error
 }
 
-func (f *fakeCatalogPortRepo) LoadCatalogForUpdate(_ context.Context, _ *sqlx.Tx) (*catalog.ScheduleCatalog, error) {
+func (f *fakeCatalogPortRepo) LoadCatalogForUpdate(_ context.Context) (*catalog.ScheduleCatalog, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
 	return catalog.Hydrate(f.initial), nil
 }
 
-func (f *fakeCatalogPortRepo) SaveCatalog(_ context.Context, _ *sqlx.Tx, c *catalog.ScheduleCatalog) error {
+func (f *fakeCatalogPortRepo) SaveCatalog(_ context.Context, c *catalog.ScheduleCatalog) error {
 	if f.saveErr != nil {
 		return f.saveErr
 	}

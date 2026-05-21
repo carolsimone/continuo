@@ -12,11 +12,10 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,14 +32,14 @@ type fakeDispatchedRunRepo struct {
 	saveCalled bool
 }
 
-func (f *fakeDispatchedRunRepo) LoadRunForUpdate(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*run.Run, error) {
+func (f *fakeDispatchedRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
 	return f.stored, nil
 }
 
-func (f *fakeDispatchedRunRepo) SaveRun(_ context.Context, _ *sqlx.Tx, r *run.Run) error {
+func (f *fakeDispatchedRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	f.saveCalled = true
 	if f.saveErr != nil {
 		return f.saveErr
@@ -58,7 +57,7 @@ func (f *fakeDispatchedRunRepo) HasActiveSchedule(_ context.Context, _ string) (
 func (f *fakeDispatchedRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
 	panic("GetActiveScheduler not implemented in fake")
 }
-func (f *fakeDispatchedRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]ports.LastRunSummary, error) {
+func (f *fakeDispatchedRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not implemented in fake")
 }
 
@@ -70,7 +69,7 @@ type fakeDispatchedOutboxPub struct {
 	err       error
 }
 
-func (f *fakeDispatchedOutboxPub) Append(_ context.Context, _ *sqlx.Tx, evts []run.DomainEvent, msgProcID uuid.UUID) error {
+func (f *fakeDispatchedOutboxPub) Append(_ context.Context, evts []run.DomainEvent, msgProcID uuid.UUID) error {
 	if f.err != nil {
 		return f.err
 	}

@@ -8,7 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
@@ -140,7 +140,7 @@ func makeTask(repo *stubTaskRepo, taskStatus run.TaskStatus, retryCount int) *po
 
 // ---- fakes for ResetTask aggregate path ----
 
-// resetFakeRunRepo satisfies ports.RunRepository for ResetTask tests.
+// resetFakeRunRepo satisfies repository.RunRepository for ResetTask tests.
 // LoadRunForUpdate returns the pre-built run stored in the fake; other
 // methods panic because ResetTask does not call them.
 type resetFakeRunRepo struct {
@@ -151,13 +151,13 @@ type resetFakeRunRepo struct {
 func (f *resetFakeRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	panic("GetRun not used in reset tests")
 }
-func (f *resetFakeRunRepo) LoadRunForUpdate(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*run.Run, error) {
+func (f *resetFakeRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
 	return f.stored, nil
 }
-func (f *resetFakeRunRepo) SaveRun(_ context.Context, _ *sqlx.Tx, _ *run.Run) error {
+func (f *resetFakeRunRepo) SaveRun(_ context.Context, _ *run.Run) error {
 	panic("SaveRun not used in reset tests")
 }
 func (f *resetFakeRunRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
@@ -166,7 +166,7 @@ func (f *resetFakeRunRepo) HasActiveSchedule(_ context.Context, _ string) (bool,
 func (f *resetFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
 	panic("GetActiveScheduler not used in reset tests")
 }
-func (f *resetFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]ports.LastRunSummary, error) {
+func (f *resetFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in reset tests")
 }
 

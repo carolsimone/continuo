@@ -19,8 +19,9 @@ import (
 	"testing"
 	"time"
 
-	postgresadapter "github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
+	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
@@ -102,7 +103,7 @@ func (f *fakeCancelledSchedulesRepoFanout) DeleteExpired(_ context.Context, _ ti
 	return 0, nil
 }
 
-var _ postgresadapter.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepoFanout)(nil)
+var _ repository.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepoFanout)(nil)
 
 // newSucceededHandler builds a CheckStatusHandler wired to a K8s stub that
 // always returns JobStatusSucceeded.
@@ -208,7 +209,7 @@ func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 	handler := newSucceededHandler(logger)
 
 	taskID := uuid.New()
-	u := uow.NewPostgresUnitOfWork(db, logger)
+	u := postgres.NewPostgresUnitOfWork(db, logger)
 	if err := runInUoW(context.Background(), u, handler, newSucceededCmd(taskID)); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestK8sFanout_HandleSucceeded_AtomicRollback(t *testing.T) {
 	// every Create within the single transaction.
 	counting := &countingOutboxRepo{failOnN: 3}
 	u := &injectingUnitOfWork{
-		real: uow.NewPostgresUnitOfWork(db, logger),
+		real: postgres.NewPostgresUnitOfWork(db, logger),
 		wrapOutbox: func(repo pkgoutbox.Repository) pkgoutbox.Repository {
 			counting.real = repo
 			return counting

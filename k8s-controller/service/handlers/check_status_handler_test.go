@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
-	postgresadapter "github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
+	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
+	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -104,7 +104,7 @@ func (f *fakeCancelledSchedulesRepo) DeleteExpired(_ context.Context, _ time.Dur
 	return 0, nil
 }
 
-var _ postgresadapter.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepo)(nil)
+var _ repository.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepo)(nil)
 
 func noopCancelledRepo() *fakeCancelledSchedulesRepo {
 	return &fakeCancelledSchedulesRepo{ids: map[uuid.UUID]bool{}}
@@ -176,7 +176,7 @@ func failedResult() *model.K8sPodResult {
 	}
 }
 
-func newHandler(k8s handlers.K8sStatusChecker, cancelledSchedules postgresadapter.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
+func newHandler(k8s handlers.K8sStatusChecker, cancelledSchedules repository.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
 	cfg := &handlers.HandlerConfig{
 		K8sNamespace:          "default",
 		CheckDelaySeconds:     30,
@@ -666,5 +666,5 @@ func TestHandleSucceeded(t *testing.T) {
 }
 
 // Compile-time interface checks.
-var _ s3adapter.LogUploader = (*fakeLogUploader)(nil)
+var _ ports.LogUploader = (*fakeLogUploader)(nil)
 var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)

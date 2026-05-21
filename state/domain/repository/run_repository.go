@@ -1,4 +1,7 @@
-package ports
+// Package repository declares state's domain repository ports: the
+// collection-like abstractions over Run and ScheduleCatalog aggregates.
+// Implementations live in state/adapters/postgres.
+package repository
 
 import (
 	"context"
@@ -6,7 +9,6 @@ import (
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 )
 
 // RunRepository is the port the application layer uses to load/save Run
@@ -20,16 +22,16 @@ type RunRepository interface {
 	// application boundary.
 	GetRun(ctx context.Context, id uuid.UUID) (*run.Run, error)
 
-	// LoadRunForUpdate loads a Run inside an existing transaction with
-	// SELECT ... FOR UPDATE. The aggregate is intended to be mutated; call
+	// LoadRunForUpdate loads a Run inside the repository's bound transaction
+	// with SELECT ... FOR UPDATE. The aggregate is intended to be mutated; call
 	// SaveRun before tx commit.
-	LoadRunForUpdate(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*run.Run, error)
+	LoadRunForUpdate(ctx context.Context, id uuid.UUID) (*run.Run, error)
 
 	// SaveRun persists every dirty field of r. The adapter consults
 	// r.Changes() to dispatch to the existing tuned SQL methods. After a
 	// successful save the adapter calls r.ResetChanges() so the aggregate
 	// can be saved again within the same tx if necessary.
-	SaveRun(ctx context.Context, tx *sqlx.Tx, r *run.Run) error
+	SaveRun(ctx context.Context, r *run.Run) error
 
 	// HasActiveSchedule returns true when a PENDING or RUNNING Run exists
 	// for `name`. Cross-aggregate query used by SchedulePolicy.

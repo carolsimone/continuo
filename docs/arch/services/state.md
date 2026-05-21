@@ -26,7 +26,7 @@ State mutates these records in two ways: via gRPC for UI-facing reads and user-i
 
 Two domain aggregates own the write-side logic for these tables:
 
-- **`run.Run`** (`state/domain/aggregate/run`) — owns `scheduler_tracker` and its associated `task_tracker` rows. All scheduler and task status transitions, the finalization condition check, and `terminal_task_count`/`total_task_count` bookkeeping are encapsulated in `Run.RecordTaskStatus` and related methods. Infrastructure adapters load and persist `Run` through `postgres.RunRepository`.
+- **`run.Run`** (`state/domain/aggregate/run`) — owns `scheduler_tracker` and its associated `task_tracker` rows. All scheduler and task status transitions, the finalization condition check, and `terminal_task_count`/`total_task_count` bookkeeping are encapsulated in `Run.RecordTaskStatus` and related methods. The application layer loads and persists `Run` through the `repository.RunRepository` port (`state/domain/repository`), implemented by `postgres.RunRepositoryAdapter`.
 - **`catalog.ScheduleCatalog`** (`state/domain/aggregate/catalog`) — owns `schedule_catalog`. Reconciliation (upsert active, soft-delete absent) is encapsulated in `ScheduleCatalog.Reconcile`, which rejects an empty `scheduleNames` list as a safety guard against inadvertently wiping all catalog entries.
 
 Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecution`) live in `state/adapters/postgres` — they are infrastructure types used for scanning database rows, not domain objects.
@@ -174,7 +174,7 @@ Every consumed stream follows the same three-layer path:
 
 1. **Adapter** (`state/adapters/redis/`): a `pkg/redis.StreamConsumer` reads the stream and delegates each `goredis.XMessage` to a per-stream binding (`*_binding.go`). The binding calls a per-stream parser (`*_parser.go`) to turn the raw `XMessage` into a typed `events.<Event>` struct from `state/domain/events`. Parser failures (malformed payload, missing required field, bad UUID, unknown enum value) are wrapped with `pkg/events.ErrPermanent`; `pkg/redis.StreamConsumer` ACKs and drops `ErrPermanent`-wrapped errors so they leave the pending list immediately. Plain handler errors are retried inline by the consumer (~2.6s bounded backoff); if every attempt still fails the message stays in the PEL and the periodic reclaim sweep picks it up.
 2. **Dedup + transaction** (in the binding): the binding obtains a `state/service/uow.UnitOfWork`, calls `Begin`, then runs `pkg/messageprocessing.Dedup` against state's `message_processing` table keyed on `(message_id, stream_name)`. A duplicate commits the empty txn and returns nil (consumer ACKs). A miss inserts a `processing` row and continues into the handler under the same tx.
-3. **Handler** (`state/service/handlers/`): pure orchestration over `uow.UnitOfWork` — no `sqlx`, no `goredis`, no JSON parsing. The handler reads/writes through the repos exposed by the UnitOfWork (`SchedulerRepo`, `TaskRepo`, `TaskExecutionRepo`, `ScheduleCatalogRepo`, `OutboxRepo`). On success the binding marks the `message_processing` row `completed`, the outbox-and-state writes commit together, and the consumer ACKs.
+3. **Handler** (`state/service/handlers/`): pure orchestration over `uow.UnitOfWork` — no `sqlx`, no `goredis`, no JSON parsing, and no `state/adapters/*` import. The handler reads/writes through the aggregate-level ports exposed by the UnitOfWork (`Run() repository.RunRepository`, `Catalog() repository.ScheduleCatalogRepository`, `Outbox() ports.OutboxPublisher`, `Clock() ports.Clock`, `TaskExecutions() repository.TaskExecutionWriter`). These ports live in `state/domain/repository` (collection-like aggregate ports) and `state/service/ports` (`Clock`, `OutboxPublisher`); concrete implementations live in `state/adapters/postgres`. On success the binding marks the `message_processing` row `completed`, the outbox-and-state writes commit together, and the consumer ACKs.
 
 | Stream | Consumer group | Handler |
 |---|---|---|
@@ -254,7 +254,7 @@ Effect: signals downstream consumers that the run is complete.
 
 ## Finalization State Machine
 
-All finalization logic is owned by the `run.Run` aggregate. `TaskStatusUpdatedHandler` loads the `Run` from `postgres.RunRepository`, calls `Run.RecordTaskStatus(taskID, newStatus, caller)`, and persists the result.
+All finalization logic is owned by the `run.Run` aggregate. `TaskStatusUpdatedHandler` loads the `Run` through the `repository.RunRepository` port (`LoadRunForUpdate`), calls `Run.RecordTaskStatus(taskID, newStatus, caller)`, and persists the result via `SaveRun`.
 
 `Run.RecordTaskStatus` orders updates by attempt (`retry_count`), making the projection independent of the order in which the producers' messages are processed (see `docs/arch/state-machine-transition.md` for the producer invariant). It loads the prior status and stored attempt under a `FOR UPDATE` row lock, then:
 
@@ -269,7 +269,7 @@ All finalization logic is owned by the `run.Run` aggregate. `TaskStatusUpdatedHa
 
 A cancelled task is never overwritten (the write is a no-op and leaves the counters untouched).
 
-`postgres.RunRepository.Save` writes the updated `scheduler_tracker` row and, when the aggregate emits a finalization event, appends the `run.finalized:v1` row to `state_outbox` — all within the same Postgres transaction opened by the binding's `UnitOfWork`.
+`repository.RunRepository.SaveRun` (implemented by `postgres.RunRepositoryAdapter`) writes the updated `scheduler_tracker` row; the handler then appends any emitted finalization event to `state_outbox` through `ports.OutboxPublisher.Append` — all within the same Postgres transaction opened by the binding's `UnitOfWork`.
 
 ### Auto-rollup at dispatch time
 

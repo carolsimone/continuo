@@ -8,30 +8,35 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
-// RunRepositoryAdapter implements ports.RunRepository by composing the
+// RunRepositoryAdapter implements repository.RunRepository by composing the
 // existing tuned SchedulerTrackerRepository methods. SaveRun consults
 // run.Run.Changes() to dispatch column-by-column.
 type RunRepositoryAdapter struct {
 	db        *sqlx.DB
+	tx        *sqlx.Tx
 	schedRepo SchedulerTrackerRepository
 	taskRepo  TaskTrackerRepository
 	logger    *slog.Logger
 }
 
-// NewRunRepository constructs the adapter.
+// NewRunRepository constructs the adapter bound to tx. Read methods use db;
+// LoadRunForUpdate/SaveRun run inside tx (which may be nil outside a
+// transaction, in which case those write methods return an error).
 func NewRunRepository(
 	db *sqlx.DB,
+	tx *sqlx.Tx,
 	schedRepo SchedulerTrackerRepository,
 	taskRepo TaskTrackerRepository,
 	logger *slog.Logger,
 ) *RunRepositoryAdapter {
 	return &RunRepositoryAdapter{
 		db:        db,
+		tx:        tx,
 		schedRepo: schedRepo,
 		taskRepo:  taskRepo,
 		logger:    logger,
@@ -47,9 +52,12 @@ func (r *RunRepositoryAdapter) GetRun(ctx context.Context, id uuid.UUID) (*run.R
 	return hydrateRun(tr), nil
 }
 
-// LoadRunForUpdate loads a Run inside an existing transaction with SELECT … FOR UPDATE.
-func (r *RunRepositoryAdapter) LoadRunForUpdate(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*run.Run, error) {
-	tr, err := r.schedRepo.GetByIDForUpdateTx(ctx, tx, id)
+// LoadRunForUpdate loads a Run inside the bound transaction with SELECT … FOR UPDATE.
+func (r *RunRepositoryAdapter) LoadRunForUpdate(ctx context.Context, id uuid.UUID) (*run.Run, error) {
+	if r.tx == nil {
+		return nil, fmt.Errorf("LoadRunForUpdate requires an active transaction")
+	}
+	tr, err := r.schedRepo.GetByIDForUpdateTx(ctx, r.tx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -58,12 +66,15 @@ func (r *RunRepositoryAdapter) LoadRunForUpdate(ctx context.Context, tx *sqlx.Tx
 
 // SaveRun persists every dirty field of rn. It consults rn.Changes() to
 // dispatch to the correct tuned SQL method, then calls rn.ResetChanges().
-func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, tx *sqlx.Tx, rn *run.Run) error {
+func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
+	if r.tx == nil {
+		return fmt.Errorf("SaveRun requires an active transaction")
+	}
 	ch := rn.Changes()
 
 	if ch.IsCreated() {
 		tr := dehydrateRun(rn)
-		if err := r.schedRepo.CreateTx(ctx, tx, tr); err != nil {
+		if err := r.schedRepo.CreateTx(ctx, r.tx, tr); err != nil {
 			return fmt.Errorf("create scheduler_tracker: %w", err)
 		}
 		rn.ResetChanges()
@@ -71,20 +82,20 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, tx *sqlx.Tx, rn *run
 	}
 
 	if ch.IsInitStatusDirty() {
-		if err := r.schedRepo.UpdateInitializationStatusTx(ctx, tx, rn.ScheduleID(), string(rn.InitializationStatus())); err != nil {
+		if err := r.schedRepo.UpdateInitializationStatusTx(ctx, r.tx, rn.ScheduleID(), string(rn.InitializationStatus())); err != nil {
 			return fmt.Errorf("update init_status: %w", err)
 		}
 	}
 	if ch.IsTotalTaskCountDirty() {
 		total := rn.TotalTaskCount()
 		if total.Valid {
-			if err := r.schedRepo.SetTotalTaskCountTx(ctx, tx, rn.ScheduleID(), total.Int32); err != nil {
+			if err := r.schedRepo.SetTotalTaskCountTx(ctx, r.tx, rn.ScheduleID(), total.Int32); err != nil {
 				return fmt.Errorf("set total: %w", err)
 			}
 		}
 	}
 	if ch.IsTerminalTaskCountDirty() {
-		if err := r.schedRepo.SetTerminalTaskCountTx(ctx, tx, rn.ScheduleID(), rn.TerminalTaskCount()); err != nil {
+		if err := r.schedRepo.SetTerminalTaskCountTx(ctx, r.tx, rn.ScheduleID(), rn.TerminalTaskCount()); err != nil {
 			return fmt.Errorf("set terminal: %w", err)
 		}
 	}
@@ -97,18 +108,18 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, tx *sqlx.Tx, rn *run
 		if rn.CancellationReason() != nil {
 			reason = *rn.CancellationReason()
 		}
-		if err := r.schedRepo.CancelTx(ctx, tx, rn.ScheduleID(), by, reason); err != nil {
+		if err := r.schedRepo.CancelTx(ctx, r.tx, rn.ScheduleID(), by, reason); err != nil {
 			if errors.Is(err, ErrNotCancellable) {
 				return run.ErrAlreadyTerminal
 			}
 			return fmt.Errorf("cancel: %w", err)
 		}
 	} else if ch.IsCompletedDirty() {
-		if err := r.schedRepo.FinalizeRunTx(ctx, tx, rn.ScheduleID(), string(rn.Status())); err != nil {
+		if err := r.schedRepo.FinalizeRunTx(ctx, r.tx, rn.ScheduleID(), string(rn.Status())); err != nil {
 			return fmt.Errorf("finalize: %w", err)
 		}
 	} else if ch.IsStatusDirty() {
-		if err := r.schedRepo.UpdateStatusTx(ctx, tx, rn.ScheduleID(), string(rn.Status())); err != nil {
+		if err := r.schedRepo.UpdateStatusTx(ctx, r.tx, rn.ScheduleID(), string(rn.Status())); err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
 	}
@@ -135,14 +146,14 @@ func (r *RunRepositoryAdapter) GetActiveScheduler(ctx context.Context, name stri
 }
 
 // GetLastRunPerSchedule returns the most recent Run summary per schedule name.
-func (r *RunRepositoryAdapter) GetLastRunPerSchedule(ctx context.Context) (map[string]ports.LastRunSummary, error) {
+func (r *RunRepositoryAdapter) GetLastRunPerSchedule(ctx context.Context) (map[string]repository.LastRunSummary, error) {
 	raw, err := r.schedRepo.GetLastRunPerSchedule(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]ports.LastRunSummary, len(raw))
+	out := make(map[string]repository.LastRunSummary, len(raw))
 	for name, d := range raw {
-		out[name] = ports.LastRunSummary{
+		out[name] = repository.LastRunSummary{
 			ScheduleName: d.ScheduleName,
 			ScheduleID:   d.ScheduleID,
 			Status:       d.Status,
@@ -198,4 +209,4 @@ func dehydrateRun(r *run.Run) *SchedulerTracker {
 }
 
 // Compile-time interface assertion.
-var _ ports.RunRepository = (*RunRepositoryAdapter)(nil)
+var _ repository.RunRepository = (*RunRepositoryAdapter)(nil)

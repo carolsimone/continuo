@@ -144,7 +144,7 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 		}
 	}()
 
-	r, err := u.Run().LoadRunForUpdate(ctx, u.Tx(), scheduleID)
+	r, err := u.Run().LoadRunForUpdate(ctx, scheduleID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "scheduler not found")
@@ -158,10 +158,10 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 		}
 		return nil, status.Errorf(codes.Internal, "cancel: %v", err)
 	}
-	if err := u.Run().SaveRun(ctx, u.Tx(), r); err != nil {
+	if err := u.Run().SaveRun(ctx, r); err != nil {
 		return nil, status.Errorf(codes.Internal, "save: %v", err)
 	}
-	if err := u.Outbox().Append(ctx, u.Tx(), domainEvents, uuid.Nil); err != nil {
+	if err := u.Outbox().Append(ctx, domainEvents, uuid.Nil); err != nil {
 		return nil, status.Errorf(codes.Internal, "outbox: %v", err)
 	}
 	if err := u.Commit(); err != nil {
@@ -205,7 +205,7 @@ func (h *SchedulerHandler) CancelSchedule(
 		}
 	}()
 
-	r, err := u.Run().LoadRunForUpdate(ctx, u.Tx(), active.ScheduleID())
+	r, err := u.Run().LoadRunForUpdate(ctx, active.ScheduleID())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load: %v", err)
 	}
@@ -216,10 +216,10 @@ func (h *SchedulerHandler) CancelSchedule(
 		}
 		return nil, status.Errorf(codes.Internal, "cancel: %v", err)
 	}
-	if err := u.Run().SaveRun(ctx, u.Tx(), r); err != nil {
+	if err := u.Run().SaveRun(ctx, r); err != nil {
 		return nil, status.Errorf(codes.Internal, "save: %v", err)
 	}
-	if err := u.Outbox().Append(ctx, u.Tx(), domainEvents, uuid.Nil); err != nil {
+	if err := u.Outbox().Append(ctx, domainEvents, uuid.Nil); err != nil {
 		return nil, status.Errorf(codes.Internal, "outbox: %v", err)
 	}
 	if err := u.Commit(); err != nil {

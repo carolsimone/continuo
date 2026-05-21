@@ -8,7 +8,7 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/ports"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
@@ -35,14 +35,11 @@ func setupRerunFixture(t *testing.T) *rerunFixture {
 	logger := newTestLogger()
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
-	outboxPub := postgres.NewOutboxPublisher(logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
-	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
 	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, runRepoPort, catalogRepoPort, outboxPub, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
 	useCase := svchandlers.NewTriggerRerunHandler(logger)
 	handler := NewRerunHandler(useCase, factory, logger)

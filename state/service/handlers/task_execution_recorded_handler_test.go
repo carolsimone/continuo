@@ -8,42 +8,29 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeTaskExecutionRepo satisfies postgres.TaskExecutionRepository for handler
-// unit tests. Only CreateTx is exercised by the handler; the other methods
-// are stubbed to return zero values.
-type fakeTaskExecutionRepo struct {
-	created   []*postgres.TaskExecution
+// fakeTaskExecutionWriter satisfies repository.TaskExecutionWriter for handler
+// unit tests. It captures the recorded-execution events the handler forwards
+// so tests can assert the execution was persisted. The event-to-row mapping
+// itself lives in the postgres adapter and is exercised there.
+type fakeTaskExecutionWriter struct {
+	recorded  []events.TaskExecutionRecorded
 	createErr error
 }
 
-func (f *fakeTaskExecutionRepo) Create(_ context.Context, _ *postgres.TaskExecution) error {
-	return nil
-}
-
-func (f *fakeTaskExecutionRepo) CreateTx(_ context.Context, _ *sqlx.Tx, e *postgres.TaskExecution) error {
+func (f *fakeTaskExecutionWriter) CreateRecord(_ context.Context, evt events.TaskExecutionRecorded) error {
 	if f.createErr != nil {
 		return f.createErr
 	}
-	f.created = append(f.created, e)
+	f.recorded = append(f.recorded, evt)
 	return nil
-}
-
-func (f *fakeTaskExecutionRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.TaskExecution, error) {
-	return nil, nil
-}
-
-func (f *fakeTaskExecutionRepo) ListByScheduleID(_ context.Context, _ string, _, _ int) ([]*postgres.TaskExecution, int, error) {
-	return nil, 0, nil
 }
 
 func testLoggerExec() *slog.Logger {
@@ -51,8 +38,8 @@ func testLoggerExec() *slog.Logger {
 }
 
 func TestTaskExecutionRecordedHandler_HappyPath(t *testing.T) {
-	repo := &fakeTaskExecutionRepo{}
-	u := &uow.FakeUnitOfWork{TaskExecution: repo}
+	writer := &fakeTaskExecutionWriter{}
+	u := &uow.FakeUnitOfWork{TaskExecutionWriter: writer}
 	require.NoError(t, u.Begin(context.Background()))
 
 	h := handlers.NewTaskExecutionRecordedHandler(testLoggerExec())
@@ -74,9 +61,9 @@ func TestTaskExecutionRecordedHandler_HappyPath(t *testing.T) {
 	}, uuid.New())
 	require.NoError(t, err)
 
-	require.Len(t, repo.created, 1)
-	got := repo.created[0]
-	assert.Equal(t, execID, got.ID)
+	require.Len(t, writer.recorded, 1)
+	got := writer.recorded[0]
+	assert.Equal(t, execID, got.ExecutionID)
 	assert.Equal(t, taskID, got.TaskID)
 	require.NotNil(t, got.StartedAt)
 	assert.True(t, got.StartedAt.Equal(startedAt))
@@ -84,20 +71,19 @@ func TestTaskExecutionRecordedHandler_HappyPath(t *testing.T) {
 	assert.True(t, got.CompletedAt.Equal(completedAt))
 	require.NotNil(t, got.ExecutionTimeSeconds)
 	assert.InDelta(t, secs, *got.ExecutionTimeSeconds, 0.001)
-	require.NotNil(t, got.K8sJobName)
-	assert.Equal(t, jobName, *got.K8sJobName)
+	require.NotNil(t, got.JobName)
+	assert.Equal(t, jobName, *got.JobName)
 	require.NotNil(t, got.LogS3Key)
 	assert.Equal(t, logKey, *got.LogS3Key)
 	assert.Nil(t, got.ErrorMessage)
-	assert.Nil(t, got.ExecutorID)
 }
 
 // TestTaskExecutionRecordedHandler_OptionalFieldsNilWhenAbsent verifies the
-// handler maps absent (nil) event pointers straight through to nil model
-// fields without materializing empty strings.
+// handler forwards absent (nil) event pointers straight through to the writer
+// without materializing empty values.
 func TestTaskExecutionRecordedHandler_OptionalFieldsNilWhenAbsent(t *testing.T) {
-	repo := &fakeTaskExecutionRepo{}
-	u := &uow.FakeUnitOfWork{TaskExecution: repo}
+	writer := &fakeTaskExecutionWriter{}
+	u := &uow.FakeUnitOfWork{TaskExecutionWriter: writer}
 	require.NoError(t, u.Begin(context.Background()))
 
 	h := handlers.NewTaskExecutionRecordedHandler(testLoggerExec())
@@ -109,22 +95,21 @@ func TestTaskExecutionRecordedHandler_OptionalFieldsNilWhenAbsent(t *testing.T) 
 	}, uuid.New())
 	require.NoError(t, err)
 
-	require.Len(t, repo.created, 1)
-	got := repo.created[0]
-	assert.Equal(t, execID, got.ID)
+	require.Len(t, writer.recorded, 1)
+	got := writer.recorded[0]
+	assert.Equal(t, execID, got.ExecutionID)
 	assert.Equal(t, taskID, got.TaskID)
 	assert.Nil(t, got.StartedAt)
 	assert.Nil(t, got.CompletedAt)
 	assert.Nil(t, got.ExecutionTimeSeconds)
-	assert.Nil(t, got.K8sJobName)
+	assert.Nil(t, got.JobName)
 	assert.Nil(t, got.ErrorMessage)
 	assert.Nil(t, got.LogS3Key)
-	assert.Nil(t, got.ExecutorID)
 }
 
 func TestTaskExecutionRecordedHandler_RepoErrorPropagates(t *testing.T) {
-	repo := &fakeTaskExecutionRepo{createErr: errors.New("db down")}
-	u := &uow.FakeUnitOfWork{TaskExecution: repo}
+	writer := &fakeTaskExecutionWriter{createErr: errors.New("db down")}
+	u := &uow.FakeUnitOfWork{TaskExecutionWriter: writer}
 	require.NoError(t, u.Begin(context.Background()))
 
 	h := handlers.NewTaskExecutionRecordedHandler(testLoggerExec())

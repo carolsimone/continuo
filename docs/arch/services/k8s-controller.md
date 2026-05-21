@@ -13,6 +13,20 @@ It is responsible for:
 - uploading full pod logs to S3
 - publishing terminal status updates to `orchestrator` (via `node.updated:v1`)
 
+## Package Structure
+
+Port ownership follows the repo-wide convention:
+
+| Layer | Package | Contents |
+|---|---|---|
+| Domain repository port | `k8s-controller/domain/repository` | `CancelledSchedulesRepository` — records/queries cancelled schedule IDs |
+| Application / technical ports | `k8s-controller/service/ports` | `LogUploader` — uploads log content to object storage |
+| UnitOfWork interface | `k8s-controller/service/uow` | `UnitOfWork` — tx lifecycle + `OutboxRepo` + `MessageProcessingRepo` |
+| Concrete implementations | `k8s-controller/adapters/postgres` | `PostgresUnitOfWork`, `CancelledSchedulesRepository` adapter |
+| Concrete implementations | `k8s-controller/adapters/s3` | `LogUploader` adapter |
+
+`service/handlers` imports no `adapters/*` package; every collaborator is reached through a port. This is enforced by `TestServiceHandlersDoNotImportAdapters` in `pkg/streams/handler_imports_test.go`.
+
 ## Owned Storage (Postgres: `continuo_k8s`)
 
 | Table | Purpose |

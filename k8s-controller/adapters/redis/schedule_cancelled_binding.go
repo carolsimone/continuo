@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/google/uuid"
@@ -18,7 +18,7 @@ import (
 // insert is idempotent, so no dedup or outbox transaction is needed. An invalid
 // schedule_id is a permanent error (ACK + drop).
 func NewScheduleCancelledBinding(
-	repo postgres.CancelledSchedulesRepository,
+	repo repository.CancelledSchedulesRepository,
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
