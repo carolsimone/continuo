@@ -13,44 +13,40 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// PostgresUnitOfWork implements uow.UnitOfWork against a *sqlx.DB.
+// PostgresUnitOfWork implements uow.UnitOfWork against a *sqlx.DB. It holds the
+// low-level repositories the aggregate accessors compose; each accessor builds
+// a fresh adapter bound to the current transaction so write methods run inside
+// the active tx while reads use the autocommit db.
 type PostgresUnitOfWork struct {
 	db                *sqlx.DB
 	tx                *sqlx.Tx
+	schedulerRepo     SchedulerTrackerRepository
 	taskRepo          TaskTrackerRepository
 	taskExecutionRepo TaskExecutionRepository
-	runRepoPort       repository.RunRepository
-	catalogRepoPort   repository.ScheduleCatalogRepository
-	outboxPub         ports.OutboxPublisher
+	catalogRepo       ScheduleCatalogRepository
 	clock             ports.Clock
 	logger            *slog.Logger
 }
 
-// NewPostgresUnitOfWork constructs a PostgresUnitOfWork. The passed-in repos
-// are the autocommit (*sqlx.DB-bound) instances; tx-bound calls happen via
-// the *Tx repo methods that take Tx() explicitly.
-//
-// The aggregate-level ports (runRepoPort, catalogRepoPort, outboxPub, clock)
-// power the Run(), Catalog(), Outbox(), and Clock() accessors used by
-// aggregate-aware handlers. TaskCollection() is constructed fresh per call
-// from taskRepo and the current transaction.
+// NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db
+// and the low-level repositories its aggregate accessors compose. The
+// Run(), Catalog(), Outbox(), TaskExecutions(), and TaskCollection() accessors
+// each return an adapter bound to the current transaction.
 func NewPostgresUnitOfWork(
 	db *sqlx.DB,
+	schedulerRepo SchedulerTrackerRepository,
 	taskRepo TaskTrackerRepository,
 	taskExecutionRepo TaskExecutionRepository,
-	runRepoPort repository.RunRepository,
-	catalogRepoPort repository.ScheduleCatalogRepository,
-	outboxPub ports.OutboxPublisher,
+	catalogRepo ScheduleCatalogRepository,
 	clock ports.Clock,
 	logger *slog.Logger,
 ) *PostgresUnitOfWork {
 	return &PostgresUnitOfWork{
 		db:                db,
+		schedulerRepo:     schedulerRepo,
 		taskRepo:          taskRepo,
 		taskExecutionRepo: taskExecutionRepo,
-		runRepoPort:       runRepoPort,
-		catalogRepoPort:   catalogRepoPort,
-		outboxPub:         outboxPub,
+		catalogRepo:       catalogRepo,
 		clock:             clock,
 		logger:            logger,
 	}
@@ -62,8 +58,6 @@ func (u *PostgresUnitOfWork) MessageProcessingRepo() messageprocessing.Repositor
 	}
 	return messageprocessing.NewPostgresRepository(u.db, u.logger)
 }
-
-func (u *PostgresUnitOfWork) Tx() *sqlx.Tx { return u.tx }
 
 func (u *PostgresUnitOfWork) Begin(ctx context.Context) error {
 	if u.tx != nil {
@@ -98,14 +92,27 @@ func (u *PostgresUnitOfWork) Rollback() error {
 	return err
 }
 
-func (u *PostgresUnitOfWork) Run() repository.RunRepository { return u.runRepoPort }
-func (u *PostgresUnitOfWork) Catalog() repository.ScheduleCatalogRepository {
-	return u.catalogRepoPort
+// Run returns a RunRepository bound to the current transaction. Read methods
+// use the autocommit db; LoadRunForUpdate/SaveRun run inside u.tx.
+func (u *PostgresUnitOfWork) Run() repository.RunRepository {
+	return NewRunRepository(u.db, u.tx, u.schedulerRepo, u.taskRepo, u.logger)
 }
-func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher { return u.outboxPub }
-func (u *PostgresUnitOfWork) Clock() ports.Clock            { return u.clock }
+
+// Catalog returns a ScheduleCatalogRepository bound to the current transaction.
+func (u *PostgresUnitOfWork) Catalog() repository.ScheduleCatalogRepository {
+	return NewCatalogRepositoryAdapter(u.db, u.tx, u.catalogRepo, u.logger)
+}
+
+// Outbox returns an OutboxPublisher bound to the current transaction.
+func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher {
+	return NewOutboxPublisher(u.tx, u.logger)
+}
+
+func (u *PostgresUnitOfWork) Clock() ports.Clock { return u.clock }
+
+// TaskExecutions returns a TaskExecutionWriter bound to the current transaction.
 func (u *PostgresUnitOfWork) TaskExecutions() repository.TaskExecutionWriter {
-	return u.taskExecutionRepo
+	return NewTaskExecutionWriter(u.taskExecutionRepo, u.tx)
 }
 
 // TaskCollection returns a TaskCollectionAdapter bound to the current

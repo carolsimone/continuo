@@ -121,12 +121,9 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NoError(t, err, "Failed to seed schedule_catalog")
 
 	// Wire the UoW factory. Each cron tick gets a fresh UoW.
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
-	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
-	domainOutboxPub := postgres.NewOutboxPublisher(logger)
 	clk := ports.SystemClock{}
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, taskRepo, execRepo, runRepoPort, catalogRepoPort, domainOutboxPub, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, clk, logger)
 	}
 
 	// Initialize activation handler

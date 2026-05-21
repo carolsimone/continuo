@@ -148,13 +148,13 @@ type resetFakeRunRepo struct {
 func (f *resetFakeRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	panic("GetRun not used in reset tests")
 }
-func (f *resetFakeRunRepo) LoadRunForUpdate(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*run.Run, error) {
+func (f *resetFakeRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
 	return f.stored, nil
 }
-func (f *resetFakeRunRepo) SaveRun(_ context.Context, _ *sqlx.Tx, _ *run.Run) error {
+func (f *resetFakeRunRepo) SaveRun(_ context.Context, _ *run.Run) error {
 	panic("SaveRun not used in reset tests")
 }
 func (f *resetFakeRunRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {

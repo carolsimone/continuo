@@ -16,7 +16,6 @@ import (
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,14 +32,14 @@ type fakeDispatchedRunRepo struct {
 	saveCalled bool
 }
 
-func (f *fakeDispatchedRunRepo) LoadRunForUpdate(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*run.Run, error) {
+func (f *fakeDispatchedRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
 	return f.stored, nil
 }
 
-func (f *fakeDispatchedRunRepo) SaveRun(_ context.Context, _ *sqlx.Tx, r *run.Run) error {
+func (f *fakeDispatchedRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	f.saveCalled = true
 	if f.saveErr != nil {
 		return f.saveErr
@@ -70,7 +69,7 @@ type fakeDispatchedOutboxPub struct {
 	err       error
 }
 
-func (f *fakeDispatchedOutboxPub) Append(_ context.Context, _ *sqlx.Tx, evts []run.DomainEvent, msgProcID uuid.UUID) error {
+func (f *fakeDispatchedOutboxPub) Append(_ context.Context, evts []run.DomainEvent, msgProcID uuid.UUID) error {
 	if f.err != nil {
 		return f.err
 	}

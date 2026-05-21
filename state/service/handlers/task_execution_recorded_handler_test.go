@@ -12,7 +12,6 @@ import (
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +25,7 @@ type fakeTaskExecutionWriter struct {
 	createErr error
 }
 
-func (f *fakeTaskExecutionWriter) CreateRecordTx(_ context.Context, _ *sqlx.Tx, evt events.TaskExecutionRecorded) error {
+func (f *fakeTaskExecutionWriter) CreateRecord(_ context.Context, evt events.TaskExecutionRecorded) error {
 	if f.createErr != nil {
 		return f.createErr
 	}

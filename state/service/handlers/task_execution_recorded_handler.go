@@ -35,7 +35,7 @@ func (h *TaskExecutionRecordedHandler) Handle(
 	evt events.TaskExecutionRecorded,
 	_ uuid.UUID,
 ) error {
-	if err := u.TaskExecutions().CreateRecordTx(ctx, u.Tx(), evt); err != nil {
+	if err := u.TaskExecutions().CreateRecord(ctx, evt); err != nil {
 		return fmt.Errorf("create task_execution: %w", err)
 	}
 	h.logger.Info("task.execution.recorded: processed",

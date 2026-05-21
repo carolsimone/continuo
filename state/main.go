@@ -111,18 +111,15 @@ func main() {
 		}
 	}()
 
-	// Aggregate-level port adapters wired into the UoW so handlers that
-	// operate on domain aggregates (Run, ScheduleCatalog) have typed access.
-	runRepoPort := postgres.NewRunRepository(db, schedulerRepo, taskRepo, logger)
-	catalogRepoPort := postgres.NewCatalogRepositoryAdapter(db, catalogRepo, logger)
-	domainOutboxPub := postgres.NewOutboxPublisher(logger)
 	clk := ports.SystemClock{}
 
 	// UoW factory shared by every stream binding below. Each invocation
-	// returns a fresh PostgresUnitOfWork over the same repos and *sqlx.DB
-	// so concurrent message handlers do not share transaction state.
+	// returns a fresh PostgresUnitOfWork over the same low-level repos and
+	// *sqlx.DB so concurrent message handlers do not share transaction state.
+	// The UoW builds tx-bound aggregate adapters (Run, Catalog, Outbox,
+	// TaskExecutions) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, taskRepo, taskExecutionRepo, runRepoPort, catalogRepoPort, domainOutboxPub, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
 
 	// Schedule catalog consumer (consumes schedules.loaded:v1). The

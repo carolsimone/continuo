@@ -76,10 +76,10 @@ func (s *stubCatalogRepo) ListAll(_ context.Context) ([]postgres.ScheduleCatalog
 func (s *stubCatalogRepo) GetCatalog(_ context.Context) (*catalog.ScheduleCatalog, error) {
 	return nil, nil
 }
-func (s *stubCatalogRepo) LoadCatalogForUpdate(_ context.Context, _ *sqlx.Tx) (*catalog.ScheduleCatalog, error) {
+func (s *stubCatalogRepo) LoadCatalogForUpdate(_ context.Context) (*catalog.ScheduleCatalog, error) {
 	return nil, nil
 }
-func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *sqlx.Tx, _ *catalog.ScheduleCatalog) error {
+func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *catalog.ScheduleCatalog) error {
 	return nil
 }
 
@@ -165,10 +165,10 @@ type activateFakeRunRepo struct {
 func (f *activateFakeRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	panic("GetRun not used in activate tests")
 }
-func (f *activateFakeRunRepo) LoadRunForUpdate(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*run.Run, error) {
+func (f *activateFakeRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	panic("LoadRunForUpdate not used in activate tests")
 }
-func (f *activateFakeRunRepo) SaveRun(_ context.Context, _ *sqlx.Tx, r *run.Run) error {
+func (f *activateFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	if f.saveErr != nil {
 		return f.saveErr
 	}
@@ -193,7 +193,7 @@ type activateFakeOutbox struct {
 	appendErr error
 }
 
-func (f *activateFakeOutbox) Append(_ context.Context, _ *sqlx.Tx, evts []run.DomainEvent, _ uuid.UUID) error {
+func (f *activateFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _ uuid.UUID) error {
 	if f.appendErr != nil {
 		return f.appendErr
 	}
@@ -408,14 +408,14 @@ func (f *cancelFakeRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, er
 	panic("GetRun not used in cancel tests")
 }
 
-func (f *cancelFakeRunRepo) LoadRunForUpdate(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*run.Run, error) {
+func (f *cancelFakeRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
 	return f.stored, nil
 }
 
-func (f *cancelFakeRunRepo) SaveRun(_ context.Context, _ *sqlx.Tx, r *run.Run) error {
+func (f *cancelFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	f.saveCalled = true
 	if f.saveErr != nil {
 		return f.saveErr
@@ -445,7 +445,7 @@ type cancelFakeOutbox struct {
 	appendErr error
 }
 
-func (f *cancelFakeOutbox) Append(_ context.Context, _ *sqlx.Tx, evts []run.DomainEvent, _ uuid.UUID) error {
+func (f *cancelFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _ uuid.UUID) error {
 	if f.appendErr != nil {
 		return f.appendErr
 	}

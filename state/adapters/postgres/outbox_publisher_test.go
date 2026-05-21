@@ -17,17 +17,17 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 
-	pub := postgres.NewOutboxPublisher(discardLogger())
-
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
+
+	pub := postgres.NewOutboxPublisher(tx, discardLogger())
 
 	scheduleID := uuid.New()
 	// Use uuid.Nil so MessageProcessingID is set to nil in the entry.
 	// Passing a random UUID would trigger a FK constraint violation against
 	// message_processing unless a matching row is seeded first.
-	err = pub.Append(ctx, tx, []run.DomainEvent{
+	err = pub.Append(ctx, []run.DomainEvent{
 		run.RunFinalized{ID: scheduleID, Name: "daily", Outcome: run.SchedulerStatusSucceeded},
 	}, uuid.Nil)
 	require.NoError(t, err)
@@ -68,8 +68,6 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-
-	pub := postgres.NewOutboxPublisher(discardLogger())
 
 	scheduleID := uuid.New()
 	sourceID := uuid.New()
@@ -170,7 +168,8 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			tx, err := db.BeginTxx(ctx, nil)
 			require.NoError(t, err)
 
-			err = pub.Append(ctx, tx, []run.DomainEvent{event}, uuid.Nil)
+			pub := postgres.NewOutboxPublisher(tx, discardLogger())
+			err = pub.Append(ctx, []run.DomainEvent{event}, uuid.Nil)
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit())
 

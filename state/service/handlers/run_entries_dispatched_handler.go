@@ -40,7 +40,7 @@ func (h *RunEntriesDispatchedHandler) Handle(
 	evt events.RunEntriesDispatched,
 	msgProcID uuid.UUID,
 ) error {
-	r, err := u.Run().LoadRunForUpdate(ctx, u.Tx(), evt.ScheduleID)
+	r, err := u.Run().LoadRunForUpdate(ctx, evt.ScheduleID)
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
@@ -52,10 +52,10 @@ func (h *RunEntriesDispatchedHandler) Handle(
 		}
 		return fmt.Errorf("accept dispatch: %w", err)
 	}
-	if err := u.Run().SaveRun(ctx, u.Tx(), r); err != nil {
+	if err := u.Run().SaveRun(ctx, r); err != nil {
 		return fmt.Errorf("save run: %w", err)
 	}
-	if err := u.Outbox().Append(ctx, u.Tx(), domainEvents, msgProcID); err != nil {
+	if err := u.Outbox().Append(ctx, domainEvents, msgProcID); err != nil {
 		return fmt.Errorf("append outbox: %w", err)
 	}
 	h.logger.Info("run.entries.dispatched: processed",

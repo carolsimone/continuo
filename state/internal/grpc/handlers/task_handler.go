@@ -280,7 +280,7 @@ func (h *TaskHandler) ResetTask(ctx context.Context, req *statev1.ResetTaskReque
 		}
 	}()
 
-	r, err := u.Run().LoadRunForUpdate(ctx, u.Tx(), t.ScheduleID)
+	r, err := u.Run().LoadRunForUpdate(ctx, t.ScheduleID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load run: %v", err)
 	}

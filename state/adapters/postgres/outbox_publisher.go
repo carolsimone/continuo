@@ -16,23 +16,28 @@ import (
 )
 
 // OutboxPublisher translates run.DomainEvent values to pkg/outbox.Entry rows
-// and writes them inside the caller's transaction.
+// and writes them inside the bound transaction.
 // RunDispatchFailed events are informational and produce no outbox row.
 type OutboxPublisher struct {
+	tx     *sqlx.Tx
 	logger *slog.Logger
 }
 
-// NewOutboxPublisher constructs the publisher.
-func NewOutboxPublisher(logger *slog.Logger) *OutboxPublisher {
-	return &OutboxPublisher{logger: logger}
+// NewOutboxPublisher constructs the publisher bound to tx. Append writes inside
+// tx (which may be nil outside a transaction, in which case Append errors).
+func NewOutboxPublisher(tx *sqlx.Tx, logger *slog.Logger) *OutboxPublisher {
+	return &OutboxPublisher{tx: tx, logger: logger}
 }
 
-// Append writes one outbox entry per event into the caller's transaction.
+// Append writes one outbox entry per event into the bound transaction.
 // The per-event mapping (stream_name, event_type, aggregate_type, retry budget,
 // payload shape) is defined in translateRunEvent. RunDispatchFailed is skipped
 // (no outbox row). An unknown event type returns an error.
-func (p *OutboxPublisher) Append(ctx context.Context, tx *sqlx.Tx, events []run.DomainEvent, msgProcID uuid.UUID) error {
-	repo := pkgoutbox.NewPostgresRepository(tx, "state_outbox", p.logger)
+func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, msgProcID uuid.UUID) error {
+	if p.tx == nil {
+		return fmt.Errorf("Append requires an active transaction")
+	}
+	repo := pkgoutbox.NewPostgresRepository(p.tx, "state_outbox", p.logger)
 	for _, evt := range events {
 		entry, skip, err := translateRunEvent(evt, msgProcID)
 		if err != nil {

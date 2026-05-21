@@ -18,7 +18,6 @@ import (
 type TaskExecutionRepository interface {
 	Create(ctx context.Context, execution *TaskExecution) error
 	CreateTx(ctx context.Context, tx *sqlx.Tx, execution *TaskExecution) error
-	CreateRecordTx(ctx context.Context, tx *sqlx.Tx, evt events.TaskExecutionRecorded) error
 	GetByID(ctx context.Context, id uuid.UUID) (*TaskExecution, error)
 	ListByScheduleID(ctx context.Context, scheduleID string, pageSize, pageOffset int) ([]*TaskExecution, int, error)
 }
@@ -132,13 +131,29 @@ func rowFromEvent(evt events.TaskExecutionRecorded) *TaskExecution {
 	}
 }
 
-// CreateRecordTx maps a recorded-execution domain event to the storage row
-// and inserts it inside tx.
-func (r *taskExecutionRepository) CreateRecordTx(ctx context.Context, tx *sqlx.Tx, evt events.TaskExecutionRecorded) error {
-	return r.CreateTx(ctx, tx, rowFromEvent(evt))
+// TaskExecutionWriterAdapter binds a TaskExecutionRepository to a transaction
+// and satisfies repository.TaskExecutionWriter. The UnitOfWork constructs one
+// per call so CreateRecord always writes inside the active transaction.
+type TaskExecutionWriterAdapter struct {
+	repo TaskExecutionRepository
+	tx   *sqlx.Tx
 }
 
-var _ repository.TaskExecutionWriter = (*taskExecutionRepository)(nil)
+// NewTaskExecutionWriter binds repo to tx for recorded-execution writes.
+func NewTaskExecutionWriter(repo TaskExecutionRepository, tx *sqlx.Tx) *TaskExecutionWriterAdapter {
+	return &TaskExecutionWriterAdapter{repo: repo, tx: tx}
+}
+
+// CreateRecord maps a recorded-execution domain event to the storage row and
+// inserts it inside the bound transaction.
+func (w *TaskExecutionWriterAdapter) CreateRecord(ctx context.Context, evt events.TaskExecutionRecorded) error {
+	if w.tx == nil {
+		return fmt.Errorf("CreateRecord requires an active transaction")
+	}
+	return w.repo.CreateTx(ctx, w.tx, rowFromEvent(evt))
+}
+
+var _ repository.TaskExecutionWriter = (*TaskExecutionWriterAdapter)(nil)
 
 // GetByID retrieves a task_execution by id
 func (r *taskExecutionRepository) GetByID(ctx context.Context, id uuid.UUID) (*TaskExecution, error) {

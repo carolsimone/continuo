@@ -1,5 +1,6 @@
 // Package uow provides a Unit-of-Work abstraction over state's Postgres
-// repositories so handlers can orchestrate over repos without seeing sqlx.
+// repositories so handlers can orchestrate over repos without seeing the
+// underlying database driver or transaction type.
 package uow
 
 import (
@@ -9,14 +10,12 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	ports "github.com/carolsimone/continuo/state/service/ports"
-	"github.com/jmoiron/sqlx"
 )
 
 // UnitOfWork exposes the repos state's handlers need plus tx lifecycle.
-// Concrete implementations return the same repo instance regardless of tx
-// state; the tx-aware behavior lives in repo methods that take a *sqlx.Tx
-// parameter explicitly (the *Tx family). Handlers obtain the current tx via
-// Tx() and pass it to those methods.
+// Each accessor returns a repository bound to the UoW's active transaction:
+// the repo's write/FOR-UPDATE methods run inside that tx, while read/query
+// methods use the autocommit DB. Handlers never touch the transaction directly.
 //
 // MessageProcessingRepo returns a fresh repo bound to the current tx (or
 // the autocommit DB if no tx is active), mirroring orchestrator's pattern.
@@ -33,9 +32,6 @@ type UnitOfWork interface {
 	TaskCollection() run.TaskCollection
 	Clock() ports.Clock
 	TaskExecutions() repository.TaskExecutionWriter
-
-	// Tx returns the underlying *sqlx.Tx during a transaction, or nil otherwise.
-	Tx() *sqlx.Tx
 
 	Begin(ctx context.Context) error
 	Commit() error

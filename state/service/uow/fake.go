@@ -8,12 +8,9 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	ports "github.com/carolsimone/continuo/state/service/ports"
-	"github.com/jmoiron/sqlx"
 )
 
 // FakeUnitOfWork is an in-memory UnitOfWork for handler unit tests.
-// Tx() returns nil — handler-test repo fakes must accept and ignore the nil
-// *sqlx.Tx parameter on *Tx methods without dereferencing it.
 //
 // The aggregate-level accessors (Run, Catalog, Outbox, TaskCollection, Clock)
 // default to nil and can be set via the corresponding setter methods.
@@ -41,8 +38,6 @@ type FakeUnitOfWork struct {
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
 	return f.MessageProcessing
 }
-func (f *FakeUnitOfWork) Tx() *sqlx.Tx { return nil }
-
 func (f *FakeUnitOfWork) Begin(_ context.Context) error {
 	if f.inTx {
 		return errors.New("transaction already in progress")

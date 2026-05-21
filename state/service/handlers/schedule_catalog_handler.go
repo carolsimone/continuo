@@ -41,7 +41,7 @@ func (h *ScheduleCatalogHandler) Handle(
 	evt events.ScheduleCatalogLoaded,
 	_ uuid.UUID, // msgProcID — catalog events do not propagate provenance today
 ) error {
-	c, err := u.Catalog().LoadCatalogForUpdate(ctx, u.Tx())
+	c, err := u.Catalog().LoadCatalogForUpdate(ctx)
 	if err != nil {
 		return fmt.Errorf("load catalog: %w", err)
 	}
@@ -52,7 +52,7 @@ func (h *ScheduleCatalogHandler) Handle(
 		}
 		return fmt.Errorf("reconcile: %w", err)
 	}
-	if err := u.Catalog().SaveCatalog(ctx, u.Tx(), c); err != nil {
+	if err := u.Catalog().SaveCatalog(ctx, c); err != nil {
 		return fmt.Errorf("save: %w", err)
 	}
 	h.logger.Info("Schedule catalog reconciled",
