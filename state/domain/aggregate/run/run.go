@@ -371,8 +371,10 @@ func (r *Run) Cancel(
 	r.status = SchedulerStatusCancelled
 	cancelledAt := now
 	r.cancelledAt = &cancelledAt
-	// Cancellation is a terminal transition: stamp completed_at so the run is
-	// "finalized" everywhere a succeeded/failed run is. See design doc §6.1.
+	// Cancellation is terminal, so stamp completed_at just as SUCCEEDED/FAILED do.
+	// The cancel path persists through cancelDirty -> CancelTx (which writes
+	// cancelled_at and completed_at together), not completedDirty/FinalizeRunTx;
+	// this in-memory value keeps CompletedAt() consistent and feeds RunFinalized.
 	completedAt := now
 	r.completedAt = &completedAt
 	if by != "" {

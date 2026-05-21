@@ -774,6 +774,10 @@ func TestRun_Cancel_FinalizesAndEmitsBothEvents(t *testing.T) {
 		switch ev := e.(type) {
 		case run.RunCancelled:
 			sawCancelled = true
+			if ev.By != "tester" || ev.CancellationReason != "drift" {
+				t.Fatalf("RunCancelled fields: By=%q CancellationReason=%q, want By=%q CancellationReason=%q",
+					ev.By, ev.CancellationReason, "tester", "drift")
+			}
 		case run.RunFinalized:
 			sawFinalized = true
 			if ev.Outcome != run.SchedulerStatusCancelled {
@@ -786,6 +790,9 @@ func TestRun_Cancel_FinalizesAndEmitsBothEvents(t *testing.T) {
 	}
 	if r.CompletedAt() == nil {
 		t.Fatal("CompletedAt must be set on cancel (cancel is terminal)")
+	}
+	if !r.CompletedAt().Equal(now) {
+		t.Fatalf("CompletedAt = %v, want %v", *r.CompletedAt(), now)
 	}
 	if r.CancelledAt() == nil {
 		t.Fatal("CancelledAt must remain set on cancel")
