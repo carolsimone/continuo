@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -63,6 +64,59 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 	assert.Equal(t, scheduleID.String(), payload["schedule_id"])
 	assert.Equal(t, "daily", payload["schedule_name"])
 	assert.Equal(t, "succeeded", payload["status"])
+}
+
+// TestOutboxPublisher_RunCancelledPair verifies that appending the
+// [RunCancelled, RunFinalized] pair (as produced by Run.Cancel) writes exactly
+// two outbox rows on their respective streams, and that the run.finalized:v1
+// row carries status "cancelled".
+func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	pub := postgres.NewOutboxPublisher(tx, discardLogger())
+
+	id := uuid.New()
+	err = pub.Append(ctx, []run.DomainEvent{
+		run.RunCancelled{ID: id, Name: "e2e-schedule", By: "tester", CancellationReason: "drift"},
+		run.RunFinalized{ID: id, Name: "e2e-schedule", Outcome: run.SchedulerStatusCancelled},
+	}, uuid.Nil)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id)
+
+	type outboxRow struct {
+		StreamName string `db:"stream_name"`
+		Payload    []byte `db:"payload"`
+	}
+	var rows []outboxRow
+	err = db.SelectContext(ctx, &rows,
+		`SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1 ORDER BY id`,
+		id,
+	)
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "expected exactly 2 outbox rows for the cancel pair")
+
+	// Collect stream names for assertion regardless of order.
+	streamNames := make(map[string][]byte, 2)
+	for _, r := range rows {
+		streamNames[r.StreamName] = r.Payload
+	}
+
+	assert.Contains(t, streamNames, streams.ScheduleCancelledV1, "missing schedule.cancelled:v1 row")
+	assert.Contains(t, streamNames, streams.RunFinalizedV1, "missing run.finalized:v1 row")
+
+	// Verify the finalized row carries status "cancelled".
+	finalizedPayload, ok := streamNames[streams.RunFinalizedV1]
+	require.True(t, ok, "run.finalized:v1 row must be present")
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(finalizedPayload, &payload))
+	assert.Equal(t, "cancelled", payload["status"], "run.finalized:v1 status must be 'cancelled'")
 }
 
 func TestOutboxPublisher_AllEventTypes(t *testing.T) {
