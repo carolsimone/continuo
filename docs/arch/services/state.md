@@ -243,14 +243,14 @@ Effect: `orchestrator` snapshots the single node and dispatches it for execution
 
 #### `run.finalized:v1`
 
-Emitted on: finalization state machine trigger (see below)
+Emitted on: every terminal outcome — succeeded, failed, or cancelled (see Finalization State Machine below and Cancellation below)
 
 Payload fields:
 - `schedule_id`
 - `schedule_name`
-- `status` — `SUCCEEDED` or `FAILED`
+- `status` — one of `succeeded | failed | cancelled`
 
-Effect: signals downstream consumers that the run is complete.
+Effect: signals downstream consumers that the run is complete; the orchestrator projects the outcome onto `:Run.terminal_status` and `:Run.completed_at`.
 
 ## Finalization State Machine
 
@@ -276,6 +276,25 @@ A cancelled task is never overwritten (the write is a no-op and leaves the count
 `RunEntriesDispatchedHandler` honours per-task `Status` in the dispatched payload. When the orchestrator's projection contains tasks that are already terminal at dispatch time (typically `SUCCEEDED` inherits in a rebase or rerun snapshot), `task_tracker` rows are inserted at that terminal status — the executor pipeline never touches them.
 
 If **every** dispatched task is in a terminal state (i.e. there is nothing to execute), the handler short-circuits the normal `status='running'` transition and instead transitions the `scheduler_tracker` directly to a terminal status (`SUCCEEDED` if every projected task is `SUCCEEDED`, `FAILED` otherwise) with `completed_at` set. `init_status='completed'` is still set, and `run.finalized:v1` is emitted via the outbox in the same transaction. This avoids a transient `status=running` flicker on no-op rebases (e.g. a rebase whose projection contains only inherited rows — rejected upstream by `TriggerRebase` precondition checks, but the auto-rollup is the last line of defence).
+
+### Cancellation as a finalizing terminal transition
+
+`Run.Cancel()` is a terminal transition with the same finalization side-effects as SUCCEEDED and FAILED. When a run is cancelled it:
+
+1. Sets `cancelled_at`, `cancelled_by`, and `cancellation_reason` — the cancellation-specific metadata.
+2. Calls the shared `finalize(SchedulerStatusCancelled, now)` routine, which sets `completed_at` (alongside `cancelled_at`) and emits `RunFinalized{Outcome: cancelled}`.
+3. Emits `RunCancelled` — the work-suppression guard event.
+
+`SaveRun` persists both `cancelled_at` and `completed_at` in the same `CancelTx` SQL statement, so state's `scheduler_tracker.completed_at` is always non-NULL for a cancelled run.
+
+`Run.Cancel()` therefore produces two domain events published to two separate streams in one outbox transaction:
+
+| Event | Stream | Consumer effect |
+|---|---|---|
+| `RunCancelled` | `schedule.cancelled:v1` | Orchestrator, executor, and k8s-controller record the cancelled schedule ID and suppress further work on that run |
+| `RunFinalized{Outcome: cancelled}` | `run.finalized:v1` | Orchestrator projects `terminal_status='cancelled'` and `completed_at` onto the `:Run` node, removing the run from the active set |
+
+The two events are independent and commutative: the guard path keys on `schedule.cancelled:v1`; the projection path keys on `run.finalized:v1`. Both writes commit atomically with the `scheduler_tracker` mutation; neither can partially appear. A re-cancel returns `ErrAlreadyTerminal` and emits nothing.
 
 ## What It Reads
 
