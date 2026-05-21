@@ -282,7 +282,7 @@ If **every** dispatched task is in a terminal state (i.e. there is nothing to ex
 `Run.Cancel()` is a terminal transition with the same finalization side-effects as SUCCEEDED and FAILED. When a run is cancelled it:
 
 1. Sets `cancelled_at`, `cancelled_by`, and `cancellation_reason` — the cancellation-specific metadata.
-2. Calls the shared `finalize(SchedulerStatusCancelled, now)` routine, which sets `completed_at` (alongside `cancelled_at`) and emits `RunFinalized{Outcome: cancelled}`.
+2. Sets `completed_at` (alongside `cancelled_at`) and emits `RunFinalized{Outcome: cancelled}` — the same finalization side-effects SUCCEEDED and FAILED produce. The cancel path persists through `cancelDirty`/`CancelTx`, so it stamps these directly rather than through the `completedDirty`/`FinalizeRunTx` path the SUCCEEDED/FAILED rollup uses.
 3. Emits `RunCancelled` — the work-suppression guard event.
 
 `SaveRun` persists both `cancelled_at` and `completed_at` in the same `CancelTx` SQL statement, so state's `scheduler_tracker.completed_at` is always non-NULL for a cancelled run.
