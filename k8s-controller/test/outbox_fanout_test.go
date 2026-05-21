@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	postgresadapter "github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
+	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
@@ -102,7 +102,7 @@ func (f *fakeCancelledSchedulesRepoFanout) DeleteExpired(_ context.Context, _ ti
 	return 0, nil
 }
 
-var _ postgresadapter.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepoFanout)(nil)
+var _ repository.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepoFanout)(nil)
 
 // newSucceededHandler builds a CheckStatusHandler wired to a K8s stub that
 // always returns JobStatusSucceeded.

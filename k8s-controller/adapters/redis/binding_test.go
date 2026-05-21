@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
+	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -78,7 +78,7 @@ func (noopCancelledRepoBinding) DeleteExpired(context.Context, time.Duration) (i
 	return 0, nil
 }
 
-var _ postgres.CancelledSchedulesRepository = (*noopCancelledRepoBinding)(nil)
+var _ repository.CancelledSchedulesRepository = (*noopCancelledRepoBinding)(nil)
 
 // TestNodeDeployedBinding_DuplicateSkipsHandler proves a duplicate message is
 // ACKed (binding returns nil) without invoking the K8s client: dedup short-
