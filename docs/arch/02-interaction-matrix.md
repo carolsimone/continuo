@@ -41,7 +41,7 @@ Legend:
 | `check.k8s:v1` | `k8s-controller` | `k8s-controller` | Delayed re-check queue |
 | `retry.task:v1` | `k8s-controller` | `executor-controller` | Re-dispatch retry deployment |
 | `task.failed:v1` | `k8s-controller` | not consumed | Terminal failure event (external observability) |
-| `task.status.updated:v1` | `executor-controller` (RUNNING **and FAILED on permanent dispatch error or retry-exhaustion**), `k8s-controller` (SUCCEEDED/FAILED) | `state` | Task status update; drives finalization state machine in state |
+| `task.status.updated:v1` | `executor-controller` (RUNNING **and FAILED on permanent dispatch error or retry-exhaustion**), `k8s-controller` (SUCCEEDED/FAILED), `orchestrator` (SKIPPED on cascade-skip) | `state` | Task status update; drives finalization state machine in state. All producers serialize via the shared `pkg/events.TaskStatusUpdated.ToMap`. |
 | `task.execution.recorded:v1` | `k8s-controller` | `state` | Persist task execution record with timing and S3 log key |
 | `node.updated:v1` | `k8s-controller` (**also `executor-controller` on permanent dispatch error or retry-exhaustion**) | `orchestrator` | Node terminal status projection; orchestrator unlocks downstream nodes |
 | `run.finalized:v1` | `state` | `orchestrator` | Run completed; emitted when all tasks reach terminal state. Orchestrator projects the outcome onto Neo4j `:Run.terminal_status` / `:Run.completed_at`. |

@@ -87,7 +87,9 @@ func TestOutboxPublisher_CascadeTaskSkipped(t *testing.T) {
 	assert.Equal(t, "task-x", vals["task_id"])
 	assert.Equal(t, "sched-2", vals["schedule_id"])
 	assert.Equal(t, "skipped", vals["status"])
-	assert.Equal(t, "0", vals["retry_count"])
+	// retry_count comes from the shared TaskStatusUpdated.ToMap as int32; Redis
+	// serializes it to "0" on the wire, identical to the executor/k8s producers.
+	assert.Equal(t, int32(0), vals["retry_count"])
 }
 
 func TestOutboxPublisher_GenericPayloadCases(t *testing.T) {

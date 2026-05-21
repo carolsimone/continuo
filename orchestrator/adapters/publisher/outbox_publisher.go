@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -78,13 +79,18 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
 			return nil, fmt.Errorf("unmarshal cascade_task_skipped: %w", err)
 		}
-		return map[string]interface{}{
-			"outbox_entry_id": entry.ID.String(),
-			"task_id":         evt.TaskID,
-			"schedule_id":     evt.ScheduleID,
-			"status":          "skipped",
-			"retry_count":     "0",
-		}, nil
+		// A cascade-skipped node is reported on task.status.updated:v1 as a
+		// terminal "skipped" task status. Serialize through the shared
+		// TaskStatusUpdated.ToMap so every producer of this stream emits an
+		// identical wire shape.
+		values := pkgevents.TaskStatusUpdated{
+			TaskID:     evt.TaskID,
+			ScheduleID: evt.ScheduleID,
+			Status:     "skipped",
+			RetryCount: 0,
+		}.ToMap()
+		values["outbox_entry_id"] = entry.ID.String()
+		return values, nil
 
 	case "topology_ingested", "run_initialized", "rerun_ready",
 		"run_entries_dispatched", "run_entries_dispatch_failed":
