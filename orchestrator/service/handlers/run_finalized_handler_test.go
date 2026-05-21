@@ -48,3 +48,17 @@ func TestRunFinalizedHandler_FinalizerErrorPropagates(t *testing.T) {
 	err := h.Handle(context.Background(), domain.RunFinalized{ScheduleID: "sched-1", Status: "success"})
 	require.Error(t, err)
 }
+
+// A cancelled run is finalized through the same channel as success/failure:
+// state emits run.finalized:v1 with status "cancelled" and the handler projects
+// it onto the :Run node verbatim. This locks in that the cancelled outcome is
+// not filtered out anywhere in the projection path.
+func TestRunFinalizedHandler_ProjectsCancelled(t *testing.T) {
+	f := &fakeRunFinalizer{}
+	h := handlers.NewRunFinalizedHandler(f, testLogger())
+	err := h.Handle(context.Background(), domain.RunFinalized{ScheduleID: "sched-1", Status: "cancelled"})
+	require.NoError(t, err)
+	require.Len(t, f.calls, 1)
+	assert.Equal(t, "sched-1", f.calls[0].runID)
+	assert.Equal(t, "cancelled", f.calls[0].status)
+}
