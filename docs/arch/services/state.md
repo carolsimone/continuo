@@ -256,12 +256,18 @@ Effect: signals downstream consumers that the run is complete.
 
 All finalization logic is owned by the `run.Run` aggregate. `TaskStatusUpdatedHandler` loads the `Run` from `postgres.RunRepository`, calls `Run.RecordTaskStatus(taskID, newStatus, caller)`, and persists the result.
 
-`Run.RecordTaskStatus` performs the following in-memory:
+`Run.RecordTaskStatus` orders updates by attempt (`retry_count`), making the projection independent of the order in which the producers' messages are processed (see `docs/arch/state-machine-transition.md` for the producer invariant). It loads the prior status and stored attempt under a `FOR UPDATE` row lock, then:
 
-1. Update the task's status in the aggregate's task map.
-2. If the new status is terminal (SUCCEEDED or FAILED): increment `terminal_task_count`.
-3. Check the finalization condition: `terminal_task_count == total_task_count && init_status == 'completed' && scheduler_status == 'running'`.
-4. If the condition holds: transition the scheduler to the appropriate terminal status (`SUCCEEDED` if every task is `SUCCEEDED`, `FAILED` otherwise) and mark the aggregate as needing a `run.finalized:v1` outbox entry.
+1. **Older attempt** (`retry_count < ` stored): superseded — ignored. Covers both a stale RUNNING and a stale terminal from an attempt the projection has already moved past.
+2. **Same attempt** (`retry_count == ` stored):
+   - prior already terminal → no-op (replayed terminal, or a RUNNING re-delivered after its own terminal — no un-fill, no status regression);
+   - prior non-terminal, new non-terminal → persist the status change (e.g. PENDING→RUNNING); slot unaffected;
+   - prior non-terminal, new terminal → persist and **fill** the slot (`terminal_task_count++`).
+3. **Newer attempt** (`retry_count > ` stored, or no prior status): persist, then adjust the slot by the fill-state transition — terminal→non-terminal **un-fills** (genuine retry running), non-terminal→terminal **fills**, and terminal→terminal (a newer attempt's terminal after an older one) leaves the count unchanged (no double-count).
+4. Whenever the task is terminal after the update, re-check finalization: `terminal_task_count == total_task_count && init_status == 'completed' && scheduler_status == 'running'` and no failed task still retryable. (Re-checking on a terminal→terminal step matters because the newer attempt may flip a deferred run to finalizable — e.g. a retryable failure followed by a permanent one.)
+5. If finalization holds: transition the scheduler to the terminal status (`SUCCEEDED` if every task is `SUCCEEDED`, `FAILED` otherwise) and mark the aggregate as needing a `run.finalized:v1` outbox entry.
+
+A cancelled task is never overwritten (the write is a no-op and leaves the counters untouched).
 
 `postgres.RunRepository.Save` writes the updated `scheduler_tracker` row and, when the aggregate emits a finalization event, appends the `run.finalized:v1` row to `state_outbox` — all within the same Postgres transaction opened by the binding's `UnitOfWork`.
 

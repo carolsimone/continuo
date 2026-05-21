@@ -31,16 +31,20 @@ type TaskTrackerRepository interface {
 	// ResetTasksTx sets the given tasks to PENDING and returns the number of rows actually
 	// modified (already-PENDING rows are excluded from the count).
 	ResetTasksTx(ctx context.Context, tx *sqlx.Tx, ids []uuid.UUID) (int32, error)
-	// UpdateStatusIfChangedTx updates status and retry_count for the given task only when
-	// either field differs from the stored value. Returns the number of rows actually modified.
-	UpdateStatusIfChangedTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error)
+	// SetStatusAndAttemptTx writes status and retry_count for the given task,
+	// leaving a cancelled row untouched. Returns rows affected.
+	SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error)
 	// ExistsTx reports whether a task_tracker row with the given task_id exists.
 	ExistsTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (bool, error)
 	// GetStatusTx returns the current status of the task_tracker row, or
-	// empty string if the row does not exist. Used by the
-	// task.status.updated:v1 handler to detect FAILED→RUNNING transitions and
-	// decrement terminal_task_count accordingly.
+	// empty string if the row does not exist. Read-only; used by the
+	// ResetTask path to validate the caller-authorized transition.
 	GetStatusTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (string, error)
+	// LoadStatusAndAttemptTx returns the current status (empty string if the row
+	// does not exist) and stored retry_count, locking the row FOR UPDATE so
+	// concurrent task.status.updated deliveries for the same task serialize.
+	// retry_count is the attempt discriminator the Run aggregate orders updates by.
+	LoadStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (status string, retryCount int32, err error)
 	// HasFailedTaskTx reports whether any task for the given schedule has status = 'failed'.
 	HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
 	// HasRetryableFailedTaskTx reports whether any task for the given schedule has
@@ -383,22 +387,20 @@ func (r *taskTrackerRepository) ListAllByScheduleID(ctx context.Context, schedul
 	return tasks, nil
 }
 
-// UpdateStatusIfChangedTx updates status and retry_count only when the status differs
-// from the stored value. Returns 1 if the row was updated, 0 if status was already equal
-// (use ExistsTx to distinguish 0-rows-updated from row-not-found).
-// Gating solely on status change (not retry_count) prevents double-incrementing
-// terminal_task_count when two messages with the same terminal status but different
-// retry_count arrive for the same task.
-func (r *taskTrackerRepository) UpdateStatusIfChangedTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error) {
+// SetStatusAndAttemptTx writes status and retry_count for the given task,
+// leaving a cancelled row untouched. Returns rows affected (0 if the task is
+// cancelled or the row is missing; use ExistsTx to distinguish). It applies no
+// attempt logic — the Run aggregate decides when a write is warranted under the
+// row lock taken by LoadStatusAndAttemptTx.
+func (r *taskTrackerRepository) SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error) {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE task_tracker
 		SET status = $2, retry_count = $3
 		WHERE task_id = $1
-		  AND status != $2
 		  AND status != 'cancelled'
 	`, taskID, status, retryCount)
 	if err != nil {
-		return 0, fmt.Errorf("update task status if changed: %w", err)
+		return 0, fmt.Errorf("set task status and attempt: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
@@ -424,6 +426,30 @@ func (r *taskTrackerRepository) GetStatusTx(ctx context.Context, tx *sqlx.Tx, ta
 		return "", fmt.Errorf("get task status for task_id %s: %w", taskID, err)
 	}
 	return status, nil
+}
+
+// LoadStatusAndAttemptTx returns the current status and retry_count of the
+// task_tracker row for the given task_id, taking a FOR UPDATE row lock so
+// concurrent task.status.updated deliveries for the same task serialize within
+// their transactions. A missing row yields ("", 0, nil), mirroring GetStatusTx's
+// lenient missing-row handling so the aggregate can disambiguate replay vs.
+// not-yet-projected via its Exists fallback.
+func (r *taskTrackerRepository) LoadStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (string, int32, error) {
+	var (
+		status     string
+		retryCount int32
+	)
+	err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(status, ''), COALESCE(retry_count, 0) FROM task_tracker WHERE task_id = $1 FOR UPDATE`,
+		taskID,
+	).Scan(&status, &retryCount)
+	if err == sql.ErrNoRows {
+		return "", 0, nil
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("load task status and attempt for task_id %s: %w", taskID, err)
+	}
+	return status, retryCount, nil
 }
 
 // ExistsTx reports whether a task_tracker row exists for the given task_id.

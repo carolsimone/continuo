@@ -65,6 +65,7 @@ type fakeTaskCollection struct {
 	bulkCreated   []run.Task
 	bulkCancelled map[uuid.UUID]string
 	statuses      map[uuid.UUID]run.TaskStatus
+	attempts      map[uuid.UUID]int32
 	hasFailed     bool
 	hasRetryable  bool
 	hasNonSucc    bool
@@ -76,6 +77,7 @@ func newFakeTaskCollection() *fakeTaskCollection {
 	return &fakeTaskCollection{
 		bulkCancelled: map[uuid.UUID]string{},
 		statuses:      map[uuid.UUID]run.TaskStatus{},
+		attempts:      map[uuid.UUID]int32{},
 		byNode:        map[run.NodeID]run.Task{},
 		updateApplied: map[uuid.UUID]int{},
 	}
@@ -84,6 +86,10 @@ func newFakeTaskCollection() *fakeTaskCollection {
 func (f *fakeTaskCollection) GetStatus(_ context.Context, id uuid.UUID) (run.TaskStatus, bool, error) {
 	s, ok := f.statuses[id]
 	return s, ok, nil
+}
+func (f *fakeTaskCollection) LoadStatusAndAttempt(_ context.Context, id uuid.UUID) (run.TaskStatus, int32, bool, error) {
+	s, ok := f.statuses[id]
+	return s, f.attempts[id], ok, nil
 }
 func (f *fakeTaskCollection) Exists(_ context.Context, id uuid.UUID) (bool, error) {
 	_, ok := f.statuses[id]
@@ -105,13 +111,12 @@ func (f *fakeTaskCollection) GetByNode(_ context.Context, _ uuid.UUID, n run.Nod
 	}
 	return t, nil
 }
-func (f *fakeTaskCollection) UpdateStatusIfChanged(_ context.Context, id uuid.UUID, s run.TaskStatus, _ int32) (int, error) {
-	prev := f.statuses[id]
-	if prev == s {
-		f.updateApplied[id] = 0
+func (f *fakeTaskCollection) SetStatusAndAttempt(_ context.Context, id uuid.UUID, s run.TaskStatus, retryCount int32) (int, error) {
+	if f.statuses[id] == run.TaskStatusCancelled {
 		return 0, nil
 	}
 	f.statuses[id] = s
+	f.attempts[id] = retryCount
 	f.updateApplied[id] = 1
 	return 1, nil
 }
@@ -119,6 +124,7 @@ func (f *fakeTaskCollection) BulkCreate(_ context.Context, tasks []run.Task) err
 	f.bulkCreated = append(f.bulkCreated, tasks...)
 	for _, t := range tasks {
 		f.statuses[t.TaskID] = t.Status
+		f.attempts[t.TaskID] = int32(t.RetryCount)
 	}
 	return nil
 }
@@ -366,6 +372,258 @@ func TestRecordTaskStatus_DecrementsOnRetry(t *testing.T) {
 	}
 	if r.TerminalTaskCount() != 0 {
 		t.Fatalf("post-retry terminal: got %d want 0", r.TerminalTaskCount())
+	}
+}
+
+// TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded covers the cross-producer
+// reorder where the original attempt's RUNNING (executor) is processed after that
+// attempt's SUCCEEDED (k8s-controller). Both carry the same attempt number, so the
+// late RUNNING must be a no-op: no un-fill, no status regression, no finalize.
+func TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1, id2 := uuid.New(), uuid.New()
+	r := runningRunWithProjection(t, tc, id1, id2)
+
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0); err != nil {
+		t.Fatalf("succeeded: %v", err)
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("after SUCCEEDED terminal: got %d want 1", r.TerminalTaskCount())
+	}
+
+	// Stale RUNNING for the same attempt (retry_count 0 <= terminal attempt 0).
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0)
+	if err != nil {
+		t.Fatalf("stale running: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("stale RUNNING must emit no events, got %d", len(events))
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("terminal must stay filled: got %d want 1", r.TerminalTaskCount())
+	}
+	if r.IsTerminal() {
+		t.Fatalf("run must not finalize on a stale RUNNING")
+	}
+	if got := tc.statuses[id1]; got != run.TaskStatusSucceeded {
+		t.Fatalf("status must not regress: got %s want succeeded", got)
+	}
+}
+
+// TestRecordTaskStatus_IgnoresStaleRunningAfterFailed is the FAILED counterpart:
+// a RUNNING re-delivered for the attempt that already FAILED (same attempt number)
+// must not un-fill the slot.
+func TestRecordTaskStatus_IgnoresStaleRunningAfterFailed(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1, id2 := uuid.New(), uuid.New()
+	r := runningRunWithProjection(t, tc, id1, id2)
+
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+		t.Fatalf("failed: %v", err)
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("after FAILED terminal: got %d want 1", r.TerminalTaskCount())
+	}
+
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0)
+	if err != nil {
+		t.Fatalf("stale running: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("stale RUNNING must emit no events, got %d", len(events))
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("terminal must stay filled: got %d want 1", r.TerminalTaskCount())
+	}
+	if got := tc.statuses[id1]; got != run.TaskStatusFailed {
+		t.Fatalf("status must not regress: got %s want failed", got)
+	}
+}
+
+// TestRecordTaskStatus_HonorsGenuineRetryRunning asserts a RUNNING whose attempt
+// is strictly newer than the recorded terminal (a real k8s retry) un-fills the
+// slot, as before.
+func TestRecordTaskStatus_HonorsGenuineRetryRunning(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1 := uuid.New()
+	r := runningRunWithProjection(t, tc, id1, uuid.New())
+
+	// Attempt 0 fails (terminal carries the attempt that ran).
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+		t.Fatalf("failed: %v", err)
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("after FAILED terminal: got %d want 1", r.TerminalTaskCount())
+	}
+
+	// Genuine retry deploys as attempt 1 → strictly newer → un-fill.
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1); err != nil {
+		t.Fatalf("retry running: %v", err)
+	}
+	if r.TerminalTaskCount() != 0 {
+		t.Fatalf("genuine retry must un-fill: got %d want 0", r.TerminalTaskCount())
+	}
+	if got := tc.statuses[id1]; got != run.TaskStatusRunning {
+		t.Fatalf("status must advance to running: got %s", got)
+	}
+	if got := tc.attempts[id1]; got != 1 {
+		t.Fatalf("stored attempt must advance to 1: got %d", got)
+	}
+}
+
+// TestRecordTaskStatus_ReorderedDoubleTerminalThenLateRunning is the P1 multi-attempt
+// reorder. state processes the original attempt's terminal FAILED(k), then the retry
+// attempt's terminal FAILED(k+1), then the retry's delayed RUNNING(k+1). The newer
+// terminal must advance the stored attempt without double-filling, so the late
+// RUNNING(k+1) is recognized as the already-terminated attempt and ignored — the slot
+// stays filled.
+func TestRecordTaskStatus_ReorderedDoubleTerminalThenLateRunning(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1, id2 := uuid.New(), uuid.New()
+	r := runningRunWithProjection(t, tc, id1, id2)
+
+	// Original attempt fails (carries the attempt that ran = 0).
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+		t.Fatalf("failed(0): %v", err)
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("after FAILED(0): got %d want 1", r.TerminalTaskCount())
+	}
+
+	// Retry attempt's terminal arrives before its RUNNING. Newer terminal:
+	// advance attempt to 1, no double-count.
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 1); err != nil {
+		t.Fatalf("failed(1): %v", err)
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("newer terminal must not double-count: got %d want 1", r.TerminalTaskCount())
+	}
+	if got := tc.attempts[id1]; got != 1 {
+		t.Fatalf("stored attempt must advance to 1: got %d", got)
+	}
+
+	// The retry's delayed RUNNING for the now-terminated attempt — must be ignored.
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1); err != nil {
+		t.Fatalf("late running(1): %v", err)
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("late RUNNING(1) must not un-fill: got %d want 1", r.TerminalTaskCount())
+	}
+	if got := tc.statuses[id1]; got != run.TaskStatusFailed {
+		t.Fatalf("status must stay failed: got %s", got)
+	}
+}
+
+// TestRecordTaskStatus_IgnoresStaleOlderTerminal covers a terminal from a superseded
+// attempt arriving after a newer attempt is already RUNNING: FAILED(k) must not mark
+// the task terminal or regress the attempt while RUNNING(k+1) is the current state.
+func TestRecordTaskStatus_IgnoresStaleOlderTerminal(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1, id2 := uuid.New(), uuid.New()
+	r := runningRunWithProjection(t, tc, id1, id2)
+
+	// Original attempt fails, retry starts running (attempt 1).
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+		t.Fatalf("failed(0): %v", err)
+	}
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1); err != nil {
+		t.Fatalf("running(1): %v", err)
+	}
+	if r.TerminalTaskCount() != 0 {
+		t.Fatalf("after retry running: got %d want 0", r.TerminalTaskCount())
+	}
+
+	// A stale terminal from the original attempt arrives late — ignore it.
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+		t.Fatalf("stale failed(0): %v", err)
+	}
+	if r.TerminalTaskCount() != 0 {
+		t.Fatalf("stale older terminal must not fill: got %d want 0", r.TerminalTaskCount())
+	}
+	if got := tc.statuses[id1]; got != run.TaskStatusRunning {
+		t.Fatalf("status must stay running: got %s", got)
+	}
+	if got := tc.attempts[id1]; got != 1 {
+		t.Fatalf("attempt must stay 1: got %d", got)
+	}
+}
+
+// TestRecordTaskStatus_NewerPermanentTerminalFinalizes verifies that when an earlier
+// retryable FAILED deferred finalization, the newer attempt's permanent FAILED — which
+// does not change terminal_task_count — still re-checks and finalizes the run.
+func TestRecordTaskStatus_NewerPermanentTerminalFinalizes(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1 := uuid.New()
+	r := runningRunWithProjection(t, tc, id1)
+
+	// Attempt 0 fails but is retryable → finalize deferred.
+	tc.hasFailed = true
+	tc.hasRetryable = true
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0)
+	if err != nil {
+		t.Fatalf("failed(0): %v", err)
+	}
+	if len(events) != 0 || r.IsTerminal() {
+		t.Fatalf("retryable failure must defer finalize: events=%d terminal=%v", len(events), r.IsTerminal())
+	}
+
+	// Retry (attempt 1) fails permanently — no more retries. Slot count is
+	// unchanged, but the run must now finalize as FAILED.
+	tc.hasRetryable = false
+	events, err = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 1)
+	if err != nil {
+		t.Fatalf("failed(1): %v", err)
+	}
+	if !r.IsTerminal() || r.Status() != run.SchedulerStatusFailed {
+		t.Fatalf("permanent failure of last attempt must finalize FAILED, got %s", r.Status())
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected one RunFinalized, got %d", len(events))
+	}
+}
+
+// TestRecordTaskStatus_RetrySucceedsAfterFailReorder covers FAILED(k) then a reordered
+// SUCCEEDED(k+1) (retry succeeded): the slot stays filled exactly once and the run
+// finalizes SUCCEEDED.
+func TestRecordTaskStatus_RetrySucceedsAfterFailReorder(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1 := uuid.New()
+	r := runningRunWithProjection(t, tc, id1)
+
+	// Attempt 0 fails but is retryable → finalize deferred.
+	tc.hasFailed = true
+	tc.hasRetryable = true
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+		t.Fatalf("failed(0): %v", err)
+	}
+	if r.TerminalTaskCount() != 1 || r.IsTerminal() {
+		t.Fatalf("after retryable FAILED(0): count=%d terminal=%v want 1/false", r.TerminalTaskCount(), r.IsTerminal())
+	}
+
+	// Retry succeeds. Newer terminal, same slot — no double-count — and the
+	// task is no longer failed, so the run finalizes SUCCEEDED.
+	tc.hasFailed = false
+	tc.hasRetryable = false
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 1)
+	if err != nil {
+		t.Fatalf("succeeded(1): %v", err)
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("retry success must not double-count: got %d want 1", r.TerminalTaskCount())
+	}
+	if !r.IsTerminal() || r.Status() != run.SchedulerStatusSucceeded {
+		t.Fatalf("expected SUCCEEDED finalize, got %s", r.Status())
+	}
+	fin, ok := events[0].(run.RunFinalized)
+	if !ok || fin.Outcome != run.SchedulerStatusSucceeded {
+		t.Fatalf("expected RunFinalized succeeded, got %+v", events[0])
 	}
 }
 

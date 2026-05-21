@@ -20,6 +20,16 @@ type TaskCollection interface {
 	// for genuine I/O failures.
 	GetStatus(ctx context.Context, taskID uuid.UUID) (status TaskStatus, exists bool, err error)
 
+	// LoadStatusAndAttempt returns the current status and stored retry_count
+	// (the attempt number) of a single task, locking the row FOR UPDATE so
+	// concurrent task.status.updated deliveries for the same task serialize.
+	// The attempt is the discriminator the aggregate uses to order updates:
+	// a strictly newer attempt supersedes, an older one is stale, and the same
+	// attempt distinguishes a first terminal from a replay/late duplicate. The
+	// third return is false when the row does not exist; err is non-nil only
+	// for genuine I/O failures.
+	LoadStatusAndAttempt(ctx context.Context, taskID uuid.UUID) (status TaskStatus, retryCount int32, exists bool, err error)
+
 	// Exists checks whether a task_tracker row with the given id is present.
 	Exists(ctx context.Context, taskID uuid.UUID) (bool, error)
 
@@ -39,10 +49,11 @@ type TaskCollection interface {
 	// the given run. Returns ErrTaskNotFound if no row matches.
 	GetByNode(ctx context.Context, runID uuid.UUID, node NodeID) (Task, error)
 
-	// UpdateStatusIfChanged updates the status (and retry_count) of one task
-	// when the new values differ from current. Returns the number of rows
-	// affected (0 if unchanged or missing).
-	UpdateStatusIfChanged(ctx context.Context, taskID uuid.UUID, status TaskStatus, retryCount int32) (rowsAffected int, err error)
+	// SetStatusAndAttempt writes status and retry_count for one task. It does
+	// not overwrite a cancelled task. Returns rowsAffected (0 if the task is
+	// cancelled or the row is missing). It applies no attempt logic — the Run
+	// aggregate decides when a write is warranted; this just persists it.
+	SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status TaskStatus, retryCount int32) (rowsAffected int, err error)
 
 	// BulkCreate inserts every task in one statement.
 	BulkCreate(ctx context.Context, tasks []Task) error

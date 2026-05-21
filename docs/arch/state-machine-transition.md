@@ -59,6 +59,24 @@ Each transition is exclusively owned by one service. An attempt by the wrong cal
 
 - `cancelled` has no entries in the transition table. Cancellation is handled via a dedicated `CancelTask` path.
 
+### Attempt-monotonic status updates
+
+`task.status.updated:v1` has two producers — **executor-controller** emits `running`, **k8s-controller** emits the terminal `succeeded` / `failed`. The two messages for one task ride the same stream but originate from different services, so `state` can process them out of order: a `running` from the original attempt may arrive *after* that attempt's terminal status.
+
+`retry_count` is the **attempt number** and disambiguates this. Producers stamp it so that a `running` and the terminal of the *same* attempt carry the *same* `retry_count`, and a retry is a strictly newer attempt:
+
+- executor-controller stamps the attempt it is starting on `running`.
+- k8s-controller stamps the attempt that ran on the terminal `succeeded` / `failed`.
+- on a retryable failure, k8s-controller records `failed` at the attempt that ran and dispatches the retry at `attempt + 1`; the retry then runs as `running` with that higher number.
+
+The `Run` aggregate (`RecordTaskStatus`) orders **every** update by attempt, so the projection is independent of processing order:
+
+- an update for an **older** attempt (lower `retry_count`) is superseded and ignored — whether it is a stale `running` or a stale terminal;
+- for the **same** attempt, the first terminal fills the slot (`terminal_task_count++`); a `running` re-delivered after that attempt's terminal is ignored (no un-fill, no status regression);
+- for a **newer** attempt, a `running` after a terminal is a genuine retry and un-fills the slot (`terminal_task_count--`), while a terminal after an older terminal advances the stored attempt **without** double-counting and re-checks finalization (a retryable failure followed by a permanent one must finalize).
+
+The decision lives entirely in the aggregate; the repository supplies the prior status and stored attempt (under a `FOR UPDATE` lock so concurrent deliveries for one task serialize) and persists what the aggregate decides. This closes the cross-producer race regardless of delivery order. The structural follow-up — consolidating to a single producer so the reordering cannot arise — is tracked separately.
+
 ---
 
 ## SchedulerTracker

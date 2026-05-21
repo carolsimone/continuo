@@ -253,6 +253,63 @@ func TestHandleFailedWithRetry(t *testing.T) {
 	if statusPayload.Status != "FAILED" {
 		t.Errorf("task_status_updated status: expected FAILED, got %q", statusPayload.Status)
 	}
+	// Attempt-consistency invariant (state's attempt-monotonic guard depends on
+	// it): the FAILED terminal carries the attempt that just ran (cmd.RetryCount),
+	// while the retry is dispatched at the next attempt (cmd.RetryCount+1). The
+	// two must differ so the retry's RUNNING is strictly newer than this terminal.
+	if statusPayload.RetryCount != cmd.RetryCount {
+		t.Errorf("FAILED retry_count: expected %d (attempt that ran), got %d", cmd.RetryCount, statusPayload.RetryCount)
+	}
+	retryEntry := findEntryByEventType(entries, "task_retry")
+	if retryEntry == nil {
+		t.Fatal("missing task_retry entry")
+	}
+	var retryPayload map[string]interface{}
+	if err := json.Unmarshal(retryEntry.Payload, &retryPayload); err != nil {
+		t.Fatalf("unmarshal task_retry: %v", err)
+	}
+	if got := int32(retryPayload["retry_count"].(float64)); got != cmd.RetryCount+1 {
+		t.Errorf("task_retry retry_count: expected %d (next attempt), got %d", cmd.RetryCount+1, got)
+	}
+}
+
+// TestHandleSucceededStampsAttemptRetryCount guards against regressing the
+// SUCCEEDED row to a hardcoded retry_count: it must carry the attempt that ran
+// (cmd.RetryCount) so a late stale RUNNING for the same attempt is recognized as
+// not-newer by state's attempt-monotonic guard and ignored.
+func TestHandleSucceededStampsAttemptRetryCount(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusSucceeded}},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-ok",
+		RetryCount: 2, // succeeded on the 3rd attempt
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	statusEntry := findEntryByEventType(outbox.entries, "task_status_updated")
+	if statusEntry == nil {
+		t.Fatal("missing task_status_updated entry")
+	}
+	var statusPayload pkgevents.TaskStatusUpdated
+	if err := json.Unmarshal(statusEntry.Payload, &statusPayload); err != nil {
+		t.Fatalf("unmarshal task_status_updated: %v", err)
+	}
+	if statusPayload.Status != "SUCCEEDED" {
+		t.Errorf("status: expected SUCCEEDED, got %q", statusPayload.Status)
+	}
+	if statusPayload.RetryCount != cmd.RetryCount {
+		t.Errorf("SUCCEEDED retry_count: expected %d (attempt that ran), got %d", cmd.RetryCount, statusPayload.RetryCount)
+	}
 }
 
 func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {

@@ -90,7 +90,7 @@ func (s *stubTaskRepo) ListAllByScheduleID(_ context.Context, _ uuid.UUID) ([]*p
 func (s *stubTaskRepo) ResetTasksTx(_ context.Context, _ *sqlx.Tx, _ []uuid.UUID) (int32, error) {
 	return 0, nil
 }
-func (s *stubTaskRepo) UpdateStatusIfChangedTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string, _ int32) (int32, error) {
+func (s *stubTaskRepo) SetStatusAndAttemptTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string, _ int32) (int32, error) {
 	return 0, nil
 }
 func (s *stubTaskRepo) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
@@ -98,6 +98,9 @@ func (s *stubTaskRepo) ExistsTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (boo
 }
 func (s *stubTaskRepo) GetStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (string, error) {
 	return "", nil
+}
+func (s *stubTaskRepo) LoadStatusAndAttemptTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (string, int32, error) {
+	return "", 0, nil
 }
 func (s *stubTaskRepo) HasFailedTaskTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (bool, error) {
 	return false, nil
@@ -183,6 +186,10 @@ func (f *resetFakeTaskCollection) GetStatus(_ context.Context, taskID uuid.UUID)
 	s, ok := f.statuses[taskID]
 	return s, ok, nil
 }
+func (f *resetFakeTaskCollection) LoadStatusAndAttempt(_ context.Context, taskID uuid.UUID) (run.TaskStatus, int32, bool, error) {
+	s, ok := f.statuses[taskID]
+	return s, 0, ok, nil
+}
 func (f *resetFakeTaskCollection) Update(_ context.Context, t run.Task) error {
 	if f.updateErr != nil {
 		return f.updateErr
@@ -202,8 +209,8 @@ func (f *resetFakeTaskCollection) GetByNode(_ context.Context, _ uuid.UUID, _ ru
 func (f *resetFakeTaskCollection) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
 	panic("Exists not used in reset tests")
 }
-func (f *resetFakeTaskCollection) UpdateStatusIfChanged(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
-	panic("UpdateStatusIfChanged not used in reset tests")
+func (f *resetFakeTaskCollection) SetStatusAndAttempt(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
+	panic("SetStatusAndAttempt not used in reset tests")
 }
 func (f *resetFakeTaskCollection) HasRetryableFailed(_ context.Context, _ uuid.UUID) (bool, error) {
 	panic("HasRetryableFailed not used in reset tests")
