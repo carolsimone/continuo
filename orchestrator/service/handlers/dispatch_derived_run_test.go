@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,7 +51,7 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 	entries := uow.outboxRepo.CreatedEntries
 	require.Len(t, entries, 2, "1 dispatched + 1 query.model (only the PENDING row)")
 
-	require.Equal(t, "run.entries.dispatched:v1", entries[0].StreamName)
+	require.Equal(t, streams.RunEntriesDispatchedV1, entries[0].StreamName)
 	var dispatched pkgEvents.RunEntriesDispatched
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &dispatched))
 	require.Equal(t, int32(2), dispatched.TotalTaskCount)
@@ -63,7 +64,7 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 	assert.Equal(t, "succeeded", byTable["ok"].Status)
 	assert.Equal(t, inheritedRoot.String(), byTable["ok"].InheritedFromTaskID)
 
-	require.Equal(t, "query.model:v1", entries[1].StreamName)
+	require.Equal(t, streams.QueryModelV1, entries[1].StreamName)
 	var qevt domain.NodeReadyForExecution
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
 	assert.Equal(t, "tgt", qevt.TableName)
@@ -146,7 +147,7 @@ func TestDispatchDerivedRun_OnlyDispatchesReadyFrontier(t *testing.T) {
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &dispatched))
 	require.Equal(t, int32(2), dispatched.TotalTaskCount)
 
-	require.Equal(t, "query.model:v1", entries[1].StreamName)
+	require.Equal(t, streams.QueryModelV1, entries[1].StreamName)
 	var qevt domain.NodeReadyForExecution
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
 	assert.Equal(t, "e", qevt.TableName, "only the frontier node dispatches; f waits")
