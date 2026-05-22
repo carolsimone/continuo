@@ -30,6 +30,7 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 	projection := []snapshot.TaskProjection{
 		{TaskID: pendingID, ServiceName: "svc", SchemaName: "s", TableName: "tgt",
 			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "PENDING",
+			ReadyToDispatch: true,
 			ImageTag: "v1", ManifestVersion: "m1", MaxRetries: pkgEvents.DefaultTaskMaxRetries},
 		{TaskID: inheritedID, ServiceName: "svc", SchemaName: "s", TableName: "ok",
 			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "SUCCEEDED",
@@ -106,6 +107,49 @@ func TestDispatchDerivedRun_PreservesTerminalInherits(t *testing.T) {
 				"%s must round-trip verbatim, not coerce to pending", tc.initial)
 		})
 	}
+}
+
+// A blocked rebased node (PENDING with a still-pending upstream) must NOT get a
+// query.model dispatch — only the rebase frontier dispatches up front; the run
+// aggregate unblocks/cascade-skips the rest as upstreams complete. Guards the
+// regression where the whole rebase subtree was dispatched at once.
+func TestDispatchDerivedRun_OnlyDispatchesReadyFrontier(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+
+	frontier := uuid.New()
+	blocked := uuid.New()
+	projection := []snapshot.TaskProjection{
+		{TaskID: frontier, ServiceName: "svc", SchemaName: "s", TableName: "e",
+			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "PENDING",
+			ReadyToDispatch: true, MaxRetries: pkgEvents.DefaultTaskMaxRetries},
+		{TaskID: blocked, ServiceName: "svc", SchemaName: "s", TableName: "f",
+			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "PENDING",
+			ReadyToDispatch: false, MaxRetries: pkgEvents.DefaultTaskMaxRetries},
+	}
+
+	err := handlers.DispatchDerivedRun(ctx, uow, newTestLogger(), handlers.DerivedRunDispatch{
+		RunID:               "00000000-0000-0000-0000-000000000001",
+		ScheduleName:        "daily",
+		Kind:                "rerun",
+		MessageProcessingID: uuid.New(),
+		Projection:          projection,
+	})
+	require.NoError(t, err)
+
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 2, "1 dispatched (both tasks) + 1 query.model (frontier only)")
+
+	// run.entries.dispatched still covers BOTH pending tasks so state creates
+	// both task_tracker rows (run finalize counts them).
+	var dispatched pkgEvents.RunEntriesDispatched
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &dispatched))
+	require.Equal(t, int32(2), dispatched.TotalTaskCount)
+
+	require.Equal(t, "query.model:v1", entries[1].StreamName)
+	var qevt domain.NodeReadyForExecution
+	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
+	assert.Equal(t, "e", qevt.TableName, "only the frontier node dispatches; f waits")
 }
 
 // sanity: returns a meaningful error if RunID is invalid.

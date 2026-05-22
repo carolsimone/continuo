@@ -52,11 +52,14 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 	}
 
 	// Pass 2: add descendants WITHIN the source's pinned :EXECUTES set.
-	// Snapshot the keys first so the iteration is stable.
+	// Snapshot the keys first so the iteration is stable. blockedFQNs collects
+	// every rebased node that has a rebased ancestor — i.e. a still-pending
+	// upstream — so it can be excluded from the dispatch frontier below.
 	seeds := make([]FQN, 0, len(rebaseFQNs))
 	for f := range rebaseFQNs {
 		seeds = append(seeds, f)
 	}
+	blockedFQNs := map[FQN]struct{}{}
 	for _, seed := range seeds {
 		descendants, err := r.DescendantsInSourceRun(ctx, p.SourceRunID.String(), seed)
 		if err != nil {
@@ -65,6 +68,7 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		for _, d := range descendants {
 			if _, ok := source[d]; ok {
 				rebaseFQNs[d] = struct{}{}
+				blockedFQNs[d] = struct{}{}
 			}
 		}
 	}
@@ -73,6 +77,7 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 	var projection []TaskProjection
 	for f, st := range source {
 		if _, isRebased := rebaseFQNs[f]; isRebased {
+			_, blocked := blockedFQNs[f]
 			projection = append(projection, TaskProjection{
 				TaskID:          uuid.New(),
 				ServiceName:     f.Service,
@@ -84,6 +89,7 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				ImageTag:        st.ImageTag,
 				ManifestVersion: st.ManifestVersion,
 				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				ReadyToDispatch: !blocked,
 			})
 			continue
 		}

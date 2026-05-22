@@ -53,10 +53,28 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 			rebaseFQNs[f] = struct{}{}
 		}
 	}
+	// Pass 3b: compute the dispatch frontier. A rebased node is blocked (left to
+	// the run aggregate's NodeUnblocked/cascade-skip) when any other rebased node
+	// is its upstream — equivalently, when it is a latest-topology descendant of
+	// another rebased node. Walking every rebased node (not just the Pass-1
+	// seeds) also catches chains made purely of new arrivals.
+	blockedFQNs := map[FQN]struct{}{}
+	for f := range rebaseFQNs {
+		descendants, err := r.DescendantsInLatestTopology(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range descendants {
+			if _, isRebased := rebaseFQNs[d]; isRebased {
+				blockedFQNs[d] = struct{}{}
+			}
+		}
+	}
 	// Pass 4: emit projection — iterate latest (drop_set excluded by construction).
 	var projection []TaskProjection
 	for f, lt := range latest {
 		if _, isRebased := rebaseFQNs[f]; isRebased {
+			_, blocked := blockedFQNs[f]
 			projection = append(projection, TaskProjection{
 				TaskID:          uuid.New(),
 				ServiceName:     f.Service,
@@ -68,6 +86,7 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				ImageTag:        lt.ImageTag,
 				ManifestVersion: lt.ManifestVersion,
 				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				ReadyToDispatch: !blocked,
 			})
 			continue
 		}

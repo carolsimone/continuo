@@ -32,7 +32,13 @@ type DerivedRunDispatch struct {
 // DispatchDerivedRun writes ONE run.entries.dispatched:v1 outbox entry covering
 // the full projection (per-task Status drives state.task_tracker.status:
 // "pending" for rebased, terminal states preserved verbatim for inherited
-// rows) plus N × query.model:v1 entries for the PENDING (rebased) rows only.
+// rows) plus N × query.model:v1 entries for the rebased rows on the dispatch
+// frontier only (PENDING and ReadyToDispatch). A blocked rebased node — one
+// whose upstream is itself rebased/PENDING — is intentionally not dispatched
+// here: once its upstreams complete, the run aggregate emits NodeUnblocked for
+// it, or cascade-skips it if an upstream fails. Dispatching the whole rebase
+// subtree up front would run downstream nodes that should wait (and be skipped
+// when an upstream re-fails).
 // Inherited terminal rows MUST round-trip verbatim — coercing them to
 // "pending" creates task_tracker rows the executor never runs, blocking
 // run finalize.
@@ -61,7 +67,7 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 			Status:              projectionStatusLower(t.InitialStatus),
 			InheritedFromTaskID: inheritedStr,
 		})
-		if t.InitialStatus == "PENDING" {
+		if t.InitialStatus == "PENDING" && t.ReadyToDispatch {
 			queryModelTasks = append(queryModelTasks, t)
 		}
 	}

@@ -117,6 +117,58 @@ func TestSourcePinnedDAG_SucceededDescendantOfFailedRoot_IsRebased(t *testing.T)
 	}
 }
 
+// On rerun the failed subtree is re-pended, but only the frontier — the
+// rebased nodes whose upstreams all SUCCEEDED — may dispatch immediately. A
+// re-pended SKIPPED node (f, h) sits behind its still-pending upstream (e, g)
+// and must NOT be dispatched until that upstream succeeds; if the upstream
+// re-fails, the run aggregate cascade-skips it again. This guards the
+// regression where the whole rebase subtree was dispatched at once and the
+// downstream nodes ran when they should have stayed skipped.
+func TestSourcePinnedDAG_OnlyRebaseFrontierIsDispatchable(t *testing.T) {
+	srcID := uuid.New()
+	e := snapshot.FQN{Service: "svc", Schema: "sch", Table: "e", ScheduleName: "x"}
+	f := snapshot.FQN{Service: "svc", Schema: "sch", Table: "f", ScheduleName: "x"}
+	g := snapshot.FQN{Service: "svc", Schema: "sch", Table: "g", ScheduleName: "x"}
+	h := snapshot.FQN{Service: "svc", Schema: "sch", Table: "h", ScheduleName: "x"}
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+
+	r := &fakeTopologyReader{
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {
+				a: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"},
+				e: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
+				f: {TaskID: uuid.New(), Status: "SKIPPED", ScheduleName: "x", NodeType: "dbt-model"},
+				g: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
+				h: {TaskID: uuid.New(), Status: "SKIPPED", ScheduleName: "x", NodeType: "dbt-model"},
+			},
+		},
+		DescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{
+			srcID.String(): {e: {f}, g: {h}, f: nil, h: nil},
+		},
+	}
+	got, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := indexByFQN(got)
+
+	// Re-pended skipped nodes are PENDING but blocked behind their pending upstream.
+	if by[f].InitialStatus != "PENDING" || by[h].InitialStatus != "PENDING" {
+		t.Fatalf("skipped nodes must re-pend: f=%+v h=%+v", by[f], by[h])
+	}
+	// Frontier: e and g (upstream a succeeded) dispatch now; f and h wait.
+	if !by[e].ReadyToDispatch || !by[g].ReadyToDispatch {
+		t.Errorf("frontier roots e,g must be dispatchable: e=%v g=%v", by[e].ReadyToDispatch, by[g].ReadyToDispatch)
+	}
+	if by[f].ReadyToDispatch || by[h].ReadyToDispatch {
+		t.Errorf("downstream f,h must NOT be dispatchable while upstream pending: f=%v h=%v", by[f].ReadyToDispatch, by[h].ReadyToDispatch)
+	}
+	// Inherited rows are never dispatched.
+	if by[a].ReadyToDispatch {
+		t.Errorf("inherited node a must not be dispatchable")
+	}
+}
+
 func TestSourcePinnedDAG_AllSucceeded_ReturnsErrEmptyProjection(t *testing.T) {
 	srcID := uuid.New()
 	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
