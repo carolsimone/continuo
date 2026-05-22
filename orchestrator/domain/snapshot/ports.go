@@ -27,6 +27,20 @@ type TopologyReader interface {
 	// source's pinned topology even if latest has drifted. Used by SourcePinnedDAG.
 	DescendantsInSourceRun(ctx context.Context, sourceRunID string, start FQN) ([]FQN, error)
 
+	// ImmediateDescendantsInLatestTopology returns the one-hop DEPENDS_ON
+	// dependents of start (nodes that directly depend on start) among active
+	// :Table nodes. Used to compute the rebase dispatch frontier: blocking must
+	// follow only immediate edges, because the run aggregate unblocks/cascades
+	// along immediate in-run edges — a node blocked via a transitive-only path
+	// would never be reached. Mirrors DescendantsInLatestTopology but one hop.
+	ImmediateDescendantsInLatestTopology(ctx context.Context, start FQN) ([]FQN, error)
+
+	// ImmediateDescendantsInSourceRun returns the one-hop DEPENDS_ON dependents
+	// of start restricted to the source run's :EXECUTES set. The source-run
+	// counterpart of ImmediateDescendantsInLatestTopology, used by
+	// SourcePinnedDAG to compute the dispatch frontier.
+	ImmediateDescendantsInSourceRun(ctx context.Context, sourceRunID string, start FQN) ([]FQN, error)
+
 	// LoadSingleLatestTable returns the latest :Table row for one FQN. The bool
 	// is false (with no error) when the table doesn't exist or is inactive.
 	LoadSingleLatestTable(ctx context.Context, fqn FQN) (LatestTableRow, bool, error)

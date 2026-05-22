@@ -51,15 +51,13 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		return nil, ErrEmptyProjection
 	}
 
-	// Pass 2: add descendants WITHIN the source's pinned :EXECUTES set.
-	// Snapshot the keys first so the iteration is stable. blockedFQNs collects
-	// every rebased node that has a rebased ancestor — i.e. a still-pending
-	// upstream — so it can be excluded from the dispatch frontier below.
+	// Pass 2: grow the rebase set with all transitive descendants WITHIN the
+	// source's pinned :EXECUTES set. Snapshot the keys first so the iteration is
+	// stable.
 	seeds := make([]FQN, 0, len(rebaseFQNs))
 	for f := range rebaseFQNs {
 		seeds = append(seeds, f)
 	}
-	blockedFQNs := map[FQN]struct{}{}
 	for _, seed := range seeds {
 		descendants, err := r.DescendantsInSourceRun(ctx, p.SourceRunID.String(), seed)
 		if err != nil {
@@ -68,6 +66,24 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		for _, d := range descendants {
 			if _, ok := source[d]; ok {
 				rebaseFQNs[d] = struct{}{}
+			}
+		}
+	}
+
+	// Pass 2b: compute the dispatch frontier. A rebased node is blocked only when
+	// it has an IMMEDIATE rebased upstream (it is a one-hop dependent of another
+	// rebased node). Blocking must use immediate, not transitive, edges: the run
+	// aggregate only unblocks/cascade-skips along immediate in-run edges, so a
+	// node blocked via a transitive-only path (its connecting node absent from
+	// the run) would never be reached and would stay PENDING forever.
+	blockedFQNs := map[FQN]struct{}{}
+	for f := range rebaseFQNs {
+		deps, err := r.ImmediateDescendantsInSourceRun(ctx, p.SourceRunID.String(), f)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range deps {
+			if _, isRebased := rebaseFQNs[d]; isRebased {
 				blockedFQNs[d] = struct{}{}
 			}
 		}

@@ -54,17 +54,21 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		}
 	}
 	// Pass 3b: compute the dispatch frontier. A rebased node is blocked (left to
-	// the run aggregate's NodeUnblocked/cascade-skip) when any other rebased node
-	// is its upstream — equivalently, when it is a latest-topology descendant of
-	// another rebased node. Walking every rebased node (not just the Pass-1
-	// seeds) also catches chains made purely of new arrivals.
+	// the run aggregate's NodeUnblocked/cascade-skip) only when it has an
+	// IMMEDIATE rebased upstream — i.e. it is a one-hop dependent of another
+	// rebased node. Blocking must use immediate, not transitive, edges: the run
+	// aggregate only unblocks/cascade-skips along immediate in-run edges, so a
+	// node blocked via a transitive-only path (its connecting node absent from
+	// the run) would never be reached and would stay PENDING forever. Walking
+	// every rebased node (not just the Pass-1 seeds) also catches chains made
+	// purely of new arrivals.
 	blockedFQNs := map[FQN]struct{}{}
 	for f := range rebaseFQNs {
-		descendants, err := r.DescendantsInLatestTopology(ctx, f)
+		deps, err := r.ImmediateDescendantsInLatestTopology(ctx, f)
 		if err != nil {
 			return nil, err
 		}
-		for _, d := range descendants {
+		for _, d := range deps {
 			if _, isRebased := rebaseFQNs[d]; isRebased {
 				blockedFQNs[d] = struct{}{}
 			}

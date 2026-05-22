@@ -14,6 +14,8 @@ type fakeTopologyReader struct {
 	SourceTasks             map[string]map[snapshot.FQN]snapshot.SourceTaskRow
 	DescendantsLatest       map[snapshot.FQN][]snapshot.FQN
 	DescendantsSource       map[string]map[snapshot.FQN][]snapshot.FQN
+	ImmDescendantsLatest    map[snapshot.FQN][]snapshot.FQN
+	ImmDescendantsSource    map[string]map[snapshot.FQN][]snapshot.FQN
 	SingleLatest            map[snapshot.FQN]snapshot.LatestTableRow
 	SingleFromSourceRun     map[string]map[snapshot.FQN]snapshot.LatestTableRow
 
@@ -45,6 +47,17 @@ func (f *fakeTopologyReader) DescendantsInLatestTopology(ctx context.Context, st
 func (f *fakeTopologyReader) DescendantsInSourceRun(ctx context.Context, sourceRunID string, start snapshot.FQN) ([]snapshot.FQN, error) {
 	if f.DescendantsSourceErr != nil { return nil, f.DescendantsSourceErr }
 	if m, ok := f.DescendantsSource[sourceRunID]; ok { return m[start], nil }
+	return nil, nil
+}
+
+func (f *fakeTopologyReader) ImmediateDescendantsInLatestTopology(ctx context.Context, start snapshot.FQN) ([]snapshot.FQN, error) {
+	if f.DescendantsLatestErr != nil { return nil, f.DescendantsLatestErr }
+	return f.ImmDescendantsLatest[start], nil
+}
+
+func (f *fakeTopologyReader) ImmediateDescendantsInSourceRun(ctx context.Context, sourceRunID string, start snapshot.FQN) ([]snapshot.FQN, error) {
+	if f.DescendantsSourceErr != nil { return nil, f.DescendantsSourceErr }
+	if m, ok := f.ImmDescendantsSource[sourceRunID]; ok { return m[start], nil }
 	return nil, nil
 }
 

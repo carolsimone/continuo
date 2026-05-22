@@ -145,6 +145,9 @@ func TestSourcePinnedDAG_OnlyRebaseFrontierIsDispatchable(t *testing.T) {
 		DescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{
 			srcID.String(): {e: {f}, g: {h}, f: nil, h: nil},
 		},
+		ImmDescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{
+			srcID.String(): {e: {f}, g: {h}, f: nil, h: nil},
+		},
 	}
 	got, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
 	if err != nil {
@@ -166,6 +169,50 @@ func TestSourcePinnedDAG_OnlyRebaseFrontierIsDispatchable(t *testing.T) {
 	// Inherited rows are never dispatched.
 	if by[a].ReadyToDispatch {
 		t.Errorf("inherited node a must not be dispatchable")
+	}
+}
+
+// Gappy projection: a (FAILED) and c are in the run, but c depends on a only
+// transitively through b, which is NOT in the run. c is a transitive descendant
+// of a, so it is re-pended — but its only IMMEDIATE upstream (b) is outside the
+// run. If blocking used transitive descendants, c would be marked blocked yet
+// never unblocked (the aggregate follows immediate in-run edges only), leaving
+// it PENDING forever. With immediate-edge blocking, c is on the frontier and
+// dispatches. Guards that regression.
+func TestSourcePinnedDAG_TransitiveOnlyDescendant_NotOrphaned(t *testing.T) {
+	srcID := uuid.New()
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+	c := snapshot.FQN{Service: "svc", Schema: "sch", Table: "c", ScheduleName: "x"}
+
+	r := &fakeTopologyReader{
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {
+				a: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
+				c: {TaskID: uuid.New(), Status: "SKIPPED", ScheduleName: "x", NodeType: "dbt-model"},
+			},
+		},
+		// c is a transitive descendant of a (via b, absent from the run)…
+		DescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{
+			srcID.String(): {a: {c}, c: nil},
+		},
+		// …but a has NO immediate in-run dependent (b is not in the run).
+		ImmDescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{
+			srcID.String(): {a: nil, c: nil},
+		},
+	}
+	got, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := indexByFQN(got)
+	if by[c].InitialStatus != "PENDING" {
+		t.Fatalf("c must re-pend, got %+v", by[c])
+	}
+	if !by[a].ReadyToDispatch {
+		t.Errorf("a (failed root) must be on the frontier")
+	}
+	if !by[c].ReadyToDispatch {
+		t.Errorf("c must be on the frontier (its only immediate upstream is outside the run), else it is orphaned PENDING forever")
 	}
 }
 
