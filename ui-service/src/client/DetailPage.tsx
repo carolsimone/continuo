@@ -466,12 +466,12 @@ export default function DetailPage() {
         {name && (
           <button
             type="button"
-            className={`trigger-run-btn${triggerState === 'loading' ? ' loading' : ''}`}
-            disabled={liveRunExists || triggerState === 'loading'}
+            className={`trigger-run-btn${triggerState === 'loading' ? ' loading' : ''}${triggerState === 'success' ? ' success' : ''}`}
+            disabled={liveRunExists || triggerState === 'loading' || triggerState === 'success'}
             onClick={handleTriggerRun}
             title={liveRunExists ? 'A run is already active' : 'Trigger a full DAG run'}
           >
-            {triggerState === 'loading' ? 'Triggering…' : '▶ Trigger run'}
+            {triggerState === 'loading' ? 'Triggering…' : triggerState === 'success' ? '✓ Triggered' : '▶ Trigger run'}
           </button>
         )}
         {triggerState === 'error' && triggerError && (

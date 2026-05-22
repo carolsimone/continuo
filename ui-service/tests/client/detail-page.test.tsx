@@ -339,3 +339,21 @@ describe('DetailPage — Open node detail link', () => {
     expect(screen.queryByRole('link', { name: /open node detail/i })).toBeNull();
   });
 });
+
+describe('DetailPage — Trigger run success cue', () => {
+  it('turns the Trigger run button green and relabels on success', async () => {
+    const fetchMock = mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/schedules/${SCHED}/trigger`]: async () => ({ ok: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const triggerBtn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    fireEvent.click(triggerBtn);
+
+    const success = await screen.findByRole('button', { name: /^✓ Triggered$/ });
+    expect(success.className).toContain('success');
+  });
+});
