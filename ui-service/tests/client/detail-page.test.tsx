@@ -192,6 +192,22 @@ describe('DetailPage — run-level Rerun button', () => {
     expect(wrapper).toBeTruthy();
     expect(wrapper).toHaveTextContent(/source 3 gen behind latest/);
   });
+
+  it('turns the same Rerun button green and relabels on success', async () => {
+    const fetchMock = mockFetchSequence({
+      ...failedRoutes(),
+      [`/api/schedulers/${RUN_ID}/rerun`]: async () => ({ ok: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const rerunBtn = await screen.findByRole('button', { name: /^↺ Rerun failed \(this snapshot\)$/ });
+    fireEvent.click(rerunBtn);
+
+    const success = await screen.findByRole('button', { name: /^✓ Rerun triggered$/ });
+    expect(success.className).toContain('success');
+  });
 });
 
 describe('DetailPage — run-level Rebase button', () => {
