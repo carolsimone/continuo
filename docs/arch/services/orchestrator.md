@@ -86,8 +86,9 @@ The snapshot pipeline follows a strict layered model:
 - `SnapshotTxRunner` implemented in `snapshot_tx_runner.go` — opens one Neo4j session/write tx, instantiates the paired reader+writer, and runs the caller's function.
 
 **Application service** (`orchestrator/service/snapshotsvc/Service`):
-- `Snapshot(ctx, Params)` — calls `p.Selector.SelectTasks(ctx, reader, p)` then `writer.WriteRunAndExecutesEdges(ctx, p, projection)` inside a single `TxRunner.Run` call. Returns the full projection so handlers can build outbox events without re-reading Neo4j.
-- Constructed via `snapshotsvc.NewService(snapshotTxRunner, logger)` in `main.go`.
+- `Snapshot(ctx, Params)` — calls `p.Selector.SelectTasks(ctx, reader, p)`, checks the `cancelled_schedules` guard for the run's schedule, then `writer.WriteRunAndExecutesEdges(ctx, p, projection)` inside a single `TxRunner.Run` call. Returns the full projection so handlers can build outbox events without re-reading Neo4j.
+- When the schedule is already cancelled at snapshot time, `Params.Cancelled` is set and the writer's `MERGE … ON CREATE` stamps `terminal_status='cancelled'` + `completed_at` on the new `:Run`. This closes the cancel-before-snapshot race: a run cancelled before its `:Run` exists (so the `run.finalized:v1` projection found nothing to finalize) is created already-terminal and never enters the active set.
+- Constructed via `snapshotsvc.NewService(snapshotTxRunner, cancelledSchedulesRepo, logger)` in `main.go`.
 
 **Handler interface** (`orchestrator/service/handlers/deps.go`):
 - `handlers.SnapshotService` is a narrow handler-local interface `{ Snapshot(ctx, snapshot.Params) ([]snapshot.TaskProjection, error) }`, satisfied by `*snapshotsvc.Service`. Defined here so handler tests can substitute a fake.
@@ -132,6 +133,13 @@ All ports the service layer depends on for adapter-replaceable storage live in `
 One narrow exception is allowed to import adapter packages directly: `service/handlers/ingest_topology_integration_test.go` wires the real Postgres and Neo4j adapters against a live database. Production handlers and unit-test fakes hold only `repository.*` types. The `UnitOfWork` interface is declared in `service/uow/uow.go`; its concrete implementation (`PostgresUnitOfWork`) lives in `adapters/postgres/unit_of_work.go`.
 
 Read-side ports specific to the CQRS query path (`RunReader`, `TopologyStateReader`) are defined where they are consumed — `service/queries/run_query_service.go` — and intentionally not promoted into `domain/repository/`.
+
+## Background loops
+
+Three goroutines started in `main.go` run for the process lifetime:
+- **Run sweeper** (`internal/sweeper`) — deletes `:Run` nodes older than the retention window.
+- **Dispatch watchdog** (`service/watchdog`) — cancels schedules stuck without task progress via state's `CancelSchedule`.
+- **Reconciler** (`internal/reconciler`, every `ORCHESTRATOR_RECONCILER_INTERVAL_SECONDS`, default 60) — converges the `:Run` projection to state's authoritative status: it lists active `:Run`s (`completed_at IS NULL`), reads each run's status from state through the orchestrator-owned `ports.RunStatusReader` (implemented by `adapters/grpc.RunStatusReader` over the state gRPC client's `GetScheduler`), and `FinalizeRun`s any that state already reports terminal. It acts only on runs that exist in Neo4j and are terminal in state, so retention-deleted or never-snapshotted runs are never touched. This is the ordering-independent backstop for finalizations missed or raced ahead of a run's snapshot.
 
 ## Inbound Interfaces
 

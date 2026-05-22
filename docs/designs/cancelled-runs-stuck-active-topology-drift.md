@@ -160,7 +160,10 @@ Change `ListActiveRuns` ordering to `ORDER BY r.schedule_name, r.created_at DESC
 
 **Layer placement (strict):** the Cypher `ORDER BY` change is an adapter detail (`orchestrator/adapters/neo4j`), behind the `RunReader` port already owned by `orchestrator/service/queries`. The "one drift row per schedule, newest wins" policy is application vocabulary and is **owned by** `RunQueryService.ListActiveRunDrifts` (the query/application layer), reached through `RunReader` — consistent with that service already owning the "warn on >1 active run" rule. Doing the dedup in Cypher is a permissible adapter-side optimization of that application-owned contract, but the contract's owner remains the query service; the adapter must not become the place that *decides* the policy.
 
-### 6.4 Reconciliation sweep (optional backstop)
+### 6.4 Reconciliation sweep (implemented backstop)
+
+**Implemented:** `orchestrator/internal/reconciler` ticks every `ORCHESTRATOR_RECONCILER_INTERVAL_SECONDS` (default 60), lists active `:Run`s (`ListActiveRuns`), reads each run's status from state via the orchestrator-owned `ports.RunStatusReader` (adapter `adapters/grpc.RunStatusReader` over the existing state gRPC client, mapping `GetScheduler` → succeeded/failed/cancelled), and calls `FinalizeRun` for any that are terminal. No cross-service DB read.
+
 
 A periodic orchestrator sweep (alongside the existing `cancelled_schedules` sweeper / dispatch watchdog in `main.go`) that finalizes any `:Run` with `completed_at IS NULL` whose run state owns reports as terminal. Source of truth for "is this run over" is state; Neo4j must converge to it.
 
@@ -168,9 +171,14 @@ A periodic orchestrator sweep (alongside the existing `cancelled_schedules` swee
 
 Because Option 1 fixes emission at the source, this sweep is a **pure backstop**, not the primary mechanism: `run.finalized:v1` consumer-group redelivery already covers transient projection misses, and the one-off backfill (§6.6) clears the existing six zombies. Recommendation: ship Option 1 + §6.6 first; add the sweep only if operational experience shows residual drift, and only via the gRPC port above — never a direct DB read.
 
-### 6.5 Cancel-before-snapshot race — not a concern
+### 6.5 Cancel-before-snapshot race — real, handled by snapshot guard + reconciliation
 
-A run can only be cancelled once it exists (it must be an active, initialized schedule), so the `:Run` node is already present when cancellation is projected — confirmed by the Apr-29 zombies, which *have* `:Run` nodes (gen 0 stamped at snapshot) despite `0/N` tasks. No snapshot-time guard layer is needed.
+A run exists in **state** the moment it is triggered, but its Neo4j `:Run` is created **asynchronously** by the orchestrator's snapshot (on `scheduler.started:v1`). A cancel issued immediately after trigger emits `run.finalized:v1{cancelled}`, which can be consumed *before* the snapshot has created the `:Run`. `RunAggregateRepository.FinalizeRun` does `MATCH (run:Run {run_id})`, matches nothing, returns nil (ACK); the later snapshot then MERGEs a non-terminal `:Run` with nothing to re-finalize it — a stuck active run.
+
+Broadening `FinalizeRun` to "retry on `MATCH=0`" is **not** a safe fix: a `:Run` can be legitimately absent (retention-deleted by `DeleteExpiredRuns`, never-snapshotted, stale redelivery), so an unbounded retry would poison-loop. The race is closed by two bounded mechanisms instead:
+
+- **Snapshot stamps terminal on create.** `snapshotsvc.Service` checks the `cancelled_schedules` guard (`CancelledSchedulesRepository.Exists`) before writing; when set, `snapshot.Params.Cancelled` flows to the writer, whose `MERGE … ON CREATE` stamps `completed_at` + `terminal_status='cancelled'`. Deterministic, no retry, covers every snapshot entry point (cron/trigger/rerun/rebase/single-node). `FinalizeRun` deliberately stays a no-op on a missing `:Run`.
+- **Reconciliation sweep (§6.4).** Catches the residual sub-race (snapshot commits before the guard insert) and any other missed projection.
 
 ### 6.6 Backfill of the six existing zombies
 
