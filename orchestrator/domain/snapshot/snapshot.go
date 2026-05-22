@@ -51,4 +51,11 @@ type TaskProjection struct {
 	ManifestVersion     string
 	InheritedFromTaskID *uuid.UUID // non-nil iff InitialStatus == "SUCCEEDED" via inherit; root pointer
 	MaxRetries          int32
+	// ReadyToDispatch marks a PENDING node as part of the run's initial dispatch
+	// frontier: every one of its upstreams is satisfied (inherited-SUCCEEDED or
+	// outside the run), so it can run immediately. Blocked PENDING nodes (an
+	// upstream is itself rebased/PENDING) are left to the run aggregate, which
+	// dispatches them via NodeUnblocked or cascade-skips them when an upstream
+	// fails. Always false for inherited (non-PENDING) rows.
+	ReadyToDispatch bool
 }

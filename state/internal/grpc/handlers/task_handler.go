@@ -360,6 +360,8 @@ func protoToDomainTaskStatus(s statev1.TaskStatus) run.TaskStatus {
 		return run.TaskStatusFailed
 	case statev1.TaskStatus_TASK_STATUS_CANCELLED:
 		return run.TaskStatusCancelled
+	case statev1.TaskStatus_TASK_STATUS_SKIPPED:
+		return run.TaskStatusSkipped
 	default:
 		return run.TaskStatusPending
 	}
@@ -378,6 +380,8 @@ func domainToProtoTaskStatus(s run.TaskStatus) statev1.TaskStatus {
 		return statev1.TaskStatus_TASK_STATUS_FAILED
 	case run.TaskStatusCancelled:
 		return statev1.TaskStatus_TASK_STATUS_CANCELLED
+	case run.TaskStatusSkipped:
+		return statev1.TaskStatus_TASK_STATUS_SKIPPED
 	default:
 		return statev1.TaskStatus_TASK_STATUS_UNSPECIFIED
 	}

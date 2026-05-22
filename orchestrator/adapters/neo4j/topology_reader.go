@@ -204,6 +204,62 @@ func (r *topologyReader) DescendantsInSourceRun(ctx context.Context, sourceRunID
 	return out, nil
 }
 
+func (r *topologyReader) ImmediateDescendantsInLatestTopology(ctx context.Context, start snapshot.FQN) ([]snapshot.FQN, error) {
+	// One DEPENDS_ON hop (no `*1..`): direct dependents only.
+	const q = `
+		MATCH (start:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
+		WHERE ($sched = '' OR start.schedule_name = $sched) AND COALESCE(start.active, true)
+		MATCH (d:Table)-[:DEPENDS_ON]->(start)
+		WHERE COALESCE(d.active, true)
+		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl,
+		                d.schedule_name AS schedule_name
+	`
+	return r.queryFQNs(ctx, "ImmediateDescendantsInLatestTopology", q, map[string]interface{}{
+		"svc": start.Service, "schema": start.Schema, "tbl": start.Table,
+		"sched": start.ScheduleName,
+	})
+}
+
+func (r *topologyReader) ImmediateDescendantsInSourceRun(ctx context.Context, sourceRunID string, start snapshot.FQN) ([]snapshot.FQN, error) {
+	// One DEPENDS_ON hop restricted to the source run's :EXECUTES set.
+	const q = `
+		MATCH (start:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
+		WHERE ($sched = '' OR start.schedule_name = $sched)
+		MATCH (d:Table)-[:DEPENDS_ON]->(start)
+		MATCH (sr:Run {run_id: $source_run_id})-[:EXECUTES]->(d)
+		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl,
+		                d.schedule_name AS schedule_name
+	`
+	return r.queryFQNs(ctx, "ImmediateDescendantsInSourceRun", q, map[string]interface{}{
+		"source_run_id": sourceRunID,
+		"svc":           start.Service, "schema": start.Schema, "tbl": start.Table,
+		"sched":         start.ScheduleName,
+	})
+}
+
+// queryFQNs runs a Cypher query whose rows expose svc/schema/tbl/schedule_name
+// and collects them into FQNs. Shared by the descendant/immediate readers.
+func (r *topologyReader) queryFQNs(ctx context.Context, label, q string, params map[string]interface{}) ([]snapshot.FQN, error) {
+	result, err := r.tx.Run(ctx, q, params)
+	if err != nil {
+		return nil, fmt.Errorf("topology_reader: %s: %w", label, err)
+	}
+	var out []snapshot.FQN
+	for result.Next(ctx) {
+		rec := result.Record()
+		out = append(out, snapshot.FQN{
+			Service:      stringField(rec, "svc"),
+			Schema:       stringField(rec, "schema"),
+			Table:        stringField(rec, "tbl"),
+			ScheduleName: stringField(rec, "schedule_name"),
+		})
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("topology_reader: %s result: %w", label, err)
+	}
+	return out, nil
+}
+
 func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot.FQN) (snapshot.LatestTableRow, bool, error) {
 	// Empty ScheduleName means "any schedule" (SingleNode doesn't know it).
 	const q = `

@@ -53,10 +53,32 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 			rebaseFQNs[f] = struct{}{}
 		}
 	}
+	// Pass 3b: compute the dispatch frontier. A rebased node is blocked (left to
+	// the run aggregate's NodeUnblocked/cascade-skip) only when it has an
+	// IMMEDIATE rebased upstream — i.e. it is a one-hop dependent of another
+	// rebased node. Blocking must use immediate, not transitive, edges: the run
+	// aggregate only unblocks/cascade-skips along immediate in-run edges, so a
+	// node blocked via a transitive-only path (its connecting node absent from
+	// the run) would never be reached and would stay PENDING forever. Walking
+	// every rebased node (not just the Pass-1 seeds) also catches chains made
+	// purely of new arrivals.
+	blockedFQNs := map[FQN]struct{}{}
+	for f := range rebaseFQNs {
+		deps, err := r.ImmediateDescendantsInLatestTopology(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range deps {
+			if _, isRebased := rebaseFQNs[d]; isRebased {
+				blockedFQNs[d] = struct{}{}
+			}
+		}
+	}
 	// Pass 4: emit projection — iterate latest (drop_set excluded by construction).
 	var projection []TaskProjection
 	for f, lt := range latest {
 		if _, isRebased := rebaseFQNs[f]; isRebased {
+			_, blocked := blockedFQNs[f]
 			projection = append(projection, TaskProjection{
 				TaskID:          uuid.New(),
 				ServiceName:     f.Service,
@@ -68,6 +90,7 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				ImageTag:        lt.ImageTag,
 				ManifestVersion: lt.ManifestVersion,
 				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				ReadyToDispatch: !blocked,
 			})
 			continue
 		}

@@ -29,7 +29,8 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 			b: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
 			c: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
 		},
-		DescendantsLatest: map[snapshot.FQN][]snapshot.FQN{a: {b}},
+		DescendantsLatest:    map[snapshot.FQN][]snapshot.FQN{a: {b}},
+		ImmDescendantsLatest: map[snapshot.FQN][]snapshot.FQN{a: {b}},
 	}
 	got, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, ScheduleName: "x"})
 	if err != nil { t.Fatal(err) }
@@ -45,6 +46,10 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 	}
 	// Rebased rows pinned to LATEST metadata.
 	if by[a].ImageTag != "v2" { t.Errorf("a should pin to latest, got %q", by[a].ImageTag) }
+	// Dispatch frontier: a (its upstreams inherited) dispatches now; b waits
+	// behind its immediate rebased upstream a.
+	if !by[a].ReadyToDispatch { t.Errorf("a must be on the dispatch frontier") }
+	if by[b].ReadyToDispatch { t.Errorf("b must be blocked behind immediate rebased upstream a") }
 }
 
 func TestRebasePartition_NewArrivals_AreRebased(t *testing.T) {

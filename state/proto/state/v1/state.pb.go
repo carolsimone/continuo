@@ -89,6 +89,7 @@ const (
 	TaskStatus_TASK_STATUS_SUCCEEDED   TaskStatus = 3
 	TaskStatus_TASK_STATUS_FAILED      TaskStatus = 4
 	TaskStatus_TASK_STATUS_CANCELLED   TaskStatus = 5
+	TaskStatus_TASK_STATUS_SKIPPED     TaskStatus = 6
 )
 
 // Enum value maps for TaskStatus.
@@ -100,6 +101,7 @@ var (
 		3: "TASK_STATUS_SUCCEEDED",
 		4: "TASK_STATUS_FAILED",
 		5: "TASK_STATUS_CANCELLED",
+		6: "TASK_STATUS_SKIPPED",
 	}
 	TaskStatus_value = map[string]int32{
 		"TASK_STATUS_UNSPECIFIED": 0,
@@ -108,6 +110,7 @@ var (
 		"TASK_STATUS_SUCCEEDED":   3,
 		"TASK_STATUS_FAILED":      4,
 		"TASK_STATUS_CANCELLED":   5,
+		"TASK_STATUS_SKIPPED":     6,
 	}
 )
 
@@ -2808,7 +2811,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x18SCHEDULER_STATUS_RUNNING\x10\x02\x12\x1e\n" +
 	"\x1aSCHEDULER_STATUS_SUCCEEDED\x10\x03\x12\x1b\n" +
 	"\x17SCHEDULER_STATUS_FAILED\x10\x04\x12\x1e\n" +
-	"\x1aSCHEDULER_STATUS_CANCELLED\x10\x05*\xa9\x01\n" +
+	"\x1aSCHEDULER_STATUS_CANCELLED\x10\x05*\xc2\x01\n" +
 	"\n" +
 	"TaskStatus\x12\x1b\n" +
 	"\x17TASK_STATUS_UNSPECIFIED\x10\x00\x12\x17\n" +
@@ -2816,7 +2819,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x13TASK_STATUS_RUNNING\x10\x02\x12\x19\n" +
 	"\x15TASK_STATUS_SUCCEEDED\x10\x03\x12\x16\n" +
 	"\x12TASK_STATUS_FAILED\x10\x04\x12\x19\n" +
-	"\x15TASK_STATUS_CANCELLED\x10\x052\x8d\r\n" +
+	"\x15TASK_STATUS_CANCELLED\x10\x05\x12\x17\n" +
+	"\x13TASK_STATUS_SKIPPED\x10\x062\x8d\r\n" +
 	"\fStateService\x12P\n" +
 	"\x0fCreateScheduler\x12 .state.v1.CreateSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12J\n" +
 	"\fGetScheduler\x12\x1d.state.v1.GetSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12P\n" +

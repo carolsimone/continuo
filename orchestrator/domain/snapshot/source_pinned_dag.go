@@ -51,8 +51,9 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		return nil, ErrEmptyProjection
 	}
 
-	// Pass 2: add descendants WITHIN the source's pinned :EXECUTES set.
-	// Snapshot the keys first so the iteration is stable.
+	// Pass 2: grow the rebase set with all transitive descendants WITHIN the
+	// source's pinned :EXECUTES set. Snapshot the keys first so the iteration is
+	// stable.
 	seeds := make([]FQN, 0, len(rebaseFQNs))
 	for f := range rebaseFQNs {
 		seeds = append(seeds, f)
@@ -69,10 +70,30 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		}
 	}
 
+	// Pass 2b: compute the dispatch frontier. A rebased node is blocked only when
+	// it has an IMMEDIATE rebased upstream (it is a one-hop dependent of another
+	// rebased node). Blocking must use immediate, not transitive, edges: the run
+	// aggregate only unblocks/cascade-skips along immediate in-run edges, so a
+	// node blocked via a transitive-only path (its connecting node absent from
+	// the run) would never be reached and would stay PENDING forever.
+	blockedFQNs := map[FQN]struct{}{}
+	for f := range rebaseFQNs {
+		deps, err := r.ImmediateDescendantsInSourceRun(ctx, p.SourceRunID.String(), f)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range deps {
+			if _, isRebased := rebaseFQNs[d]; isRebased {
+				blockedFQNs[d] = struct{}{}
+			}
+		}
+	}
+
 	// Pass 3: emit projection.
 	var projection []TaskProjection
 	for f, st := range source {
 		if _, isRebased := rebaseFQNs[f]; isRebased {
+			_, blocked := blockedFQNs[f]
 			projection = append(projection, TaskProjection{
 				TaskID:          uuid.New(),
 				ServiceName:     f.Service,
@@ -84,6 +105,7 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				ImageTag:        st.ImageTag,
 				ManifestVersion: st.ManifestVersion,
 				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				ReadyToDispatch: !blocked,
 			})
 			continue
 		}
