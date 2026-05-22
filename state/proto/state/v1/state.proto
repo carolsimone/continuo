@@ -99,6 +99,7 @@ enum TaskStatus {
   TASK_STATUS_SUCCEEDED = 3;
   TASK_STATUS_FAILED = 4;
   TASK_STATUS_CANCELLED = 5;
+  TASK_STATUS_SKIPPED = 6;
 }
 
 // ============================================================================
