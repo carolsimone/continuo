@@ -466,12 +466,12 @@ export default function DetailPage() {
         {name && (
           <button
             type="button"
-            className={`trigger-run-btn${triggerState === 'loading' ? ' loading' : ''}`}
-            disabled={liveRunExists || triggerState === 'loading'}
+            className={`trigger-run-btn${triggerState === 'loading' ? ' loading' : ''}${triggerState === 'success' ? ' success' : ''}`}
+            disabled={liveRunExists || triggerState === 'loading' || triggerState === 'success'}
             onClick={handleTriggerRun}
             title={liveRunExists ? 'A run is already active' : 'Trigger a full DAG run'}
           >
-            {triggerState === 'loading' ? 'Triggering…' : '▶ Trigger run'}
+            {triggerState === 'loading' ? 'Triggering…' : triggerState === 'success' ? '✓ Triggered' : '▶ Trigger run'}
           </button>
         )}
         {triggerState === 'error' && triggerError && (
@@ -480,37 +480,29 @@ export default function DetailPage() {
         {isTerminalStatus(scheduler?.status) && !isSuccessStatus(scheduler?.status) && lastRunId && (
           <div className="rerun-control">
             <div className="rerun-this-snapshot-group">
-              {rerunState === 'success' ? (
-                <span className="rerun-feedback rerun-feedback--success">✓ Rerun triggered</span>
-              ) : (
-                <button
-                  type="button"
-                  className="rerun-btn rerun-btn--this-snapshot"
-                  disabled={rerunState === 'loading'}
-                  onClick={handleRerunRun}
-                  title="Re-execute non-succeeded tasks against this run's pinned snapshot"
-                >
-                  {rerunState === 'loading' ? 'Triggering…' : '↺ Rerun failed (this snapshot)'}
-                </button>
-              )}
+              <button
+                type="button"
+                className={`rerun-btn rerun-btn--this-snapshot${rerunState === 'loading' ? ' loading' : ''}${rerunState === 'success' ? ' success' : ''}`}
+                disabled={rerunState === 'loading' || rerunState === 'success'}
+                onClick={handleRerunRun}
+                title="Re-execute non-succeeded tasks against this run's pinned snapshot"
+              >
+                {rerunState === 'loading' ? 'Triggering…' : rerunState === 'success' ? '✓ Rerun triggered' : '↺ Rerun failed (this snapshot)'}
+              </button>
               <RerunBadge runGraph={liveRunGraph} />
               {rerunState === 'error' && rerunError && (
                 <span className="rerun-feedback rerun-feedback--error">{rerunError}</span>
               )}
             </div>
-            {rebaseState === 'success' ? (
-              <span className="rerun-feedback rerun-feedback--success">✓ Rebase triggered</span>
-            ) : (
-              <button
-                type="button"
-                className="rerun-btn rerun-btn--rebase"
-                disabled={rebaseState === 'loading'}
-                onClick={handleRebaseRun}
-                title="Re-execute non-succeeded tasks against the latest topology"
-              >
-                {rebaseState === 'loading' ? 'Triggering…' : '↪ Rerun failed (latest snapshot)'}
-              </button>
-            )}
+            <button
+              type="button"
+              className={`rerun-btn rerun-btn--rebase${rebaseState === 'loading' ? ' loading' : ''}${rebaseState === 'success' ? ' success' : ''}`}
+              disabled={rebaseState === 'loading' || rebaseState === 'success'}
+              onClick={handleRebaseRun}
+              title="Re-execute non-succeeded tasks against the latest topology"
+            >
+              {rebaseState === 'loading' ? 'Triggering…' : rebaseState === 'success' ? '✓ Rebase triggered' : '↪ Rerun failed (latest snapshot)'}
+            </button>
             {rebaseState === 'error' && rebaseError && (
               <span className="rerun-feedback rerun-feedback--error">{rebaseError}</span>
             )}

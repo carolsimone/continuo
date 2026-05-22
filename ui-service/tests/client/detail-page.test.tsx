@@ -192,6 +192,22 @@ describe('DetailPage — run-level Rerun button', () => {
     expect(wrapper).toBeTruthy();
     expect(wrapper).toHaveTextContent(/source 3 gen behind latest/);
   });
+
+  it('turns the same Rerun button green and relabels on success', async () => {
+    const fetchMock = mockFetchSequence({
+      ...failedRoutes(),
+      [`/api/schedulers/${RUN_ID}/rerun`]: async () => ({ ok: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const rerunBtn = await screen.findByRole('button', { name: /^↺ Rerun failed \(this snapshot\)$/ });
+    fireEvent.click(rerunBtn);
+
+    const success = await screen.findByRole('button', { name: /^✓ Rerun triggered$/ });
+    expect(success.className).toContain('success');
+  });
 });
 
 describe('DetailPage — run-level Rebase button', () => {
@@ -252,6 +268,22 @@ describe('DetailPage — run-level Rebase button', () => {
       expect(rebaseCall).toBeDefined();
       expect(rebaseCall![1]).toMatchObject({ method: 'POST' });
     });
+  });
+
+  it('turns the same Rebase button green and relabels on success', async () => {
+    const fetchMock = mockFetchSequence({
+      ...failedRoutes(),
+      [`/api/schedulers/${RUN_ID}/rebase`]: async () => ({ ok: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const rebaseBtn = await screen.findByRole('button', { name: /^↪ Rerun failed \(latest snapshot\)$/ });
+    fireEvent.click(rebaseBtn);
+
+    const success = await screen.findByRole('button', { name: /^✓ Rebase triggered$/ });
+    expect(success.className).toContain('success');
   });
 });
 
@@ -337,5 +369,23 @@ describe('DetailPage — Open node detail link', () => {
       expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}/graph`))).toBe(true);
     });
     expect(screen.queryByRole('link', { name: /open node detail/i })).toBeNull();
+  });
+});
+
+describe('DetailPage — Trigger run success cue', () => {
+  it('turns the Trigger run button green and relabels on success', async () => {
+    const fetchMock = mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/schedules/${SCHED}/trigger`]: async () => ({ ok: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const triggerBtn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    fireEvent.click(triggerBtn);
+
+    const success = await screen.findByRole('button', { name: /^✓ Triggered$/ });
+    expect(success.className).toContain('success');
   });
 });

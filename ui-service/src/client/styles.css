@@ -870,3 +870,33 @@ body {
   align-items: center;
   gap: 8px;
 }
+
+/* ---- Rerun / Rebase buttons (parity with .trigger-run-btn) ---- */
+.rerun-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rerun-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rerun-btn:hover:not(:disabled) { background: #f3f4f6; border-color: #9ca3af; }
+.rerun-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.rerun-btn.loading { opacity: 0.6; }
+
+.rerun-feedback { font-size: 12px; }
+.rerun-feedback--error { color: #dc2626; }
+.rerun-feedback--success { color: #16a34a; }
+
+/* ---- Success states for trigger/rerun buttons ---- */
+.rerun-btn.success { color: #16a34a; border-color: #86efac; }
+.trigger-run-btn.success { color: #16a34a; border-color: #86efac; }
