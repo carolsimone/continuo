@@ -20,6 +20,7 @@ import (
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/internal/lifecycle"
+	"github.com/carolsimone/continuo/orchestrator/internal/reconciler"
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
@@ -128,8 +129,8 @@ func main() {
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
 	runAggRepo := neo4jinfra.NewRunAggregateRepository(neo4jClient, logger)
 	snapshotTxRunner := neo4jinfra.NewSnapshotTxRunner(neo4jClient)
-	snapshotService := snapshotsvc.NewService(snapshotTxRunner, logger)
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
+	snapshotService := snapshotsvc.NewService(snapshotTxRunner, cancelledSchedulesRepo, logger)
 
 	// ========================================================================
 	// INITIALIZE UNIT OF WORK & COMMAND HANDLERS
@@ -218,6 +219,14 @@ func main() {
 			logger.Error("Watchdog Run exited with error", "error", err)
 		}
 	}()
+
+	// ========================================================================
+	// START RECONCILER — converge active :Run projections to state's status
+	// ========================================================================
+
+	runStatusReader := grpcinfra.NewRunStatusReader(stateGRPCClient)
+	reconcilerInstance := reconciler.New(queryRepo, runStatusReader, runAggRepo, cfg.ReconcilerIntervalSecs, logger)
+	go reconcilerInstance.Start(ctx)
 
 	// ========================================================================
 	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER

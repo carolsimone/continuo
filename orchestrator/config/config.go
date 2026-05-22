@@ -27,6 +27,9 @@ type Config struct {
 	RunHistoryRetentionDays   int
 	RunSweeperIntervalMinutes int
 
+	// Reconciler — converges active :Run projections to state's terminal status.
+	ReconcilerIntervalSecs int
+
 	// Cancelled schedules consumer
 	CancelledSchedulesTTLHours         int
 	CancelledSchedulesSweepIntervalMin int
@@ -62,6 +65,8 @@ func Load(v *pkgconfig.Validator) Config {
 
 		RunHistoryRetentionDays:   envInt("RUN_HISTORY_RETENTION_DAYS", 7),
 		RunSweeperIntervalMinutes: envInt("RUN_SWEEPER_INTERVAL_MINUTES", 60),
+
+		ReconcilerIntervalSecs: envInt("ORCHESTRATOR_RECONCILER_INTERVAL_SECONDS", 60),
 
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
