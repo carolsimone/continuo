@@ -269,6 +269,22 @@ describe('DetailPage — run-level Rebase button', () => {
       expect(rebaseCall![1]).toMatchObject({ method: 'POST' });
     });
   });
+
+  it('turns the same Rebase button green and relabels on success', async () => {
+    const fetchMock = mockFetchSequence({
+      ...failedRoutes(),
+      [`/api/schedulers/${RUN_ID}/rebase`]: async () => ({ ok: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const rebaseBtn = await screen.findByRole('button', { name: /^↪ Rerun failed \(latest snapshot\)$/ });
+    fireEvent.click(rebaseBtn);
+
+    const success = await screen.findByRole('button', { name: /^✓ Rebase triggered$/ });
+    expect(success.className).toContain('success');
+  });
 });
 
 describe('DetailPage — Trigger run topbar button', () => {

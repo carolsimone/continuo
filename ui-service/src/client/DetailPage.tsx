@@ -494,19 +494,15 @@ export default function DetailPage() {
                 <span className="rerun-feedback rerun-feedback--error">{rerunError}</span>
               )}
             </div>
-            {rebaseState === 'success' ? (
-              <span className="rerun-feedback rerun-feedback--success">✓ Rebase triggered</span>
-            ) : (
-              <button
-                type="button"
-                className="rerun-btn rerun-btn--rebase"
-                disabled={rebaseState === 'loading'}
-                onClick={handleRebaseRun}
-                title="Re-execute non-succeeded tasks against the latest topology"
-              >
-                {rebaseState === 'loading' ? 'Triggering…' : '↪ Rerun failed (latest snapshot)'}
-              </button>
-            )}
+            <button
+              type="button"
+              className={`rerun-btn rerun-btn--rebase${rebaseState === 'loading' ? ' loading' : ''}${rebaseState === 'success' ? ' success' : ''}`}
+              disabled={rebaseState === 'loading' || rebaseState === 'success'}
+              onClick={handleRebaseRun}
+              title="Re-execute non-succeeded tasks against the latest topology"
+            >
+              {rebaseState === 'loading' ? 'Triggering…' : rebaseState === 'success' ? '✓ Rebase triggered' : '↪ Rerun failed (latest snapshot)'}
+            </button>
             {rebaseState === 'error' && rebaseError && (
               <span className="rerun-feedback rerun-feedback--error">{rebaseError}</span>
             )}
