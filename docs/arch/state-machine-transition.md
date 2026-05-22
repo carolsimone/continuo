@@ -21,6 +21,7 @@ pending → running → succeeded
 | `succeeded` | Task completed successfully (terminal) |
 | `failed` | Task execution failed; eligible for retry (quasi-terminal) |
 | `cancelled` | Task was cancelled (terminal; handled outside the transition table) |
+| `skipped` | Task was cascade-skipped because an upstream node failed (terminal; set by `orchestrator` via `task.status.updated:v1`, never executed) |
 
 ### Allowed Transitions
 
@@ -31,6 +32,7 @@ pending → running → succeeded
 | `failed` | `running` | `executor-controller` | Direct re-run of a failed task (skips reset-to-pending) |
 | `running` | `succeeded` | `k8s-controller` | Kubernetes job completes successfully |
 | `running` | `failed` | `k8s-controller` | Kubernetes job errors or times out |
+| `pending` | `skipped` | `orchestrator` | Upstream node failed; the run aggregate cascade-skips the still-pending downstream and emits `task.status.updated:v1` (`"skipped"`) |
 
 ### Service Ownership
 
@@ -58,6 +60,7 @@ Each transition is exclusively owned by one service. An attempt by the wrong cal
 ### Notes
 
 - `cancelled` has no entries in the transition table. Cancellation is handled via a dedicated `CancelTask` path.
+- `skipped` is set only by the `orchestrator` cascade (`task.status.updated:v1`), never by the executor pipeline. The gRPC `TaskStatus` enum includes `TASK_STATUS_SKIPPED`, and the read handlers map the domain `skipped` status to it, so task-read APIs (e.g. the run NODES panel) report skipped nodes as `SKIPPED` rather than `UNSPECIFIED`.
 
 ### Attempt-monotonic status updates
 
