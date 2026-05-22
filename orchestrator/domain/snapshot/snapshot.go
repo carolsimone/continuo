@@ -34,6 +34,7 @@ type Params struct {
 	Kind         string     // "cron" | "trigger" | "rerun" | "single_node_run" | "rebase"
 	SourceRunID  *uuid.UUID // nil for cron/trigger and latest-mode single-node-run
 	Selector     Selector
+	Cancelled    bool // schedule was already cancelled at snapshot time → writer stamps the :Run terminal on create
 }
 
 // TaskProjection is one task's place in a run's projection. Each entry becomes
@@ -45,7 +46,7 @@ type TaskProjection struct {
 	TableName           string
 	ScheduleName        string // schedule_name on the :Table node we MATCH against
 	NodeType            string
-	InitialStatus       string     // "PENDING" | "SUCCEEDED"
+	InitialStatus       string // "PENDING" | "SUCCEEDED"
 	ImageTag            string
 	ManifestVersion     string
 	InheritedFromTaskID *uuid.UUID // non-nil iff InitialStatus == "SUCCEEDED" via inherit; root pointer

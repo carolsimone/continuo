@@ -28,7 +28,7 @@ const (
 	TriggerRebaseV1 = "trigger.rebase:v1"
 	// TriggerSingleNodeRunV1 — User-initiated single-node run trigger.
 	TriggerSingleNodeRunV1 = "trigger.single_node_run:v1"
-	// RunFinalizedV1 — Run finalization (success or failure) emitted by state; consumed for projections.
+	// RunFinalizedV1 — Run finalization (success, failure, or cancellation) emitted by state; consumed for projections.
 	RunFinalizedV1 = "run.finalized:v1"
 	// RunInitializedV1 — Run graph snapshot emitted by orchestrator after initializing a new run.
 	RunInitializedV1 = "run.initialized:v1"

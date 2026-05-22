@@ -260,13 +260,12 @@ func (r *OrchestratorQueryRepository) GetRunTopologyGeneration(ctx context.Conte
 	return 0, nil
 }
 
-// ListActiveRuns returns every :Run with completed_at IS NULL — the canonical
-// "in-flight" filter, matching DeleteExpiredRuns at run_repository.go:807-810.
-//
-// In practice at most one row per schedule_name (state.TriggerSchedule rejects
-// concurrent triggers with FAILED_PRECONDITION), but the read returns all rows
-// without dedup so an upstream invariant violation is observable rather than
-// silently masked.
+// ListActiveRuns returns ALL in-flight :Run nodes (completed_at IS NULL),
+// ordered by schedule_name then newest-first (created_at DESC). The query
+// does not deduplicate: multiple rows for the same schedule_name can appear
+// when a concurrent-trigger invariant is violated, making the anomaly
+// observable to the caller. Deduplication to the newest run per schedule is
+// the responsibility of the caller (RunQueryService).
 func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
@@ -277,7 +276,7 @@ func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*do
         RETURN r.schedule_name AS schedule_name,
                r.run_id        AS run_id,
                COALESCE(r.topology_generation, 0) AS topology_generation
-        ORDER BY r.schedule_name
+        ORDER BY r.schedule_name, r.created_at DESC
     `
 	result, err := session.Run(ctx, query, nil)
 	if err != nil {

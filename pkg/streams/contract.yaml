@@ -122,7 +122,7 @@ streams:
 
   - name: run.finalized:v1
     const: RunFinalizedV1
-    description: Run finalization (success or failure) emitted by state; consumed for projections.
+    description: Run finalization (success, failure, or cancellation) emitted by state; consumed for projections.
     producers: [state]
     consumers:
       - service: orchestrator

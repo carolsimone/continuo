@@ -154,3 +154,60 @@ func TestOrchestratorQueryRepository_ListActiveRuns_ZeroForUnsetGeneration(t *te
 	require.NotNil(t, found)
 	assert.Equal(t, int64(0), found.TopologyGeneration)
 }
+
+// TestOrchestratorQueryRepository_ListActiveRuns_NewestFirst verifies that
+// ListActiveRuns returns in-flight runs for the same schedule ordered
+// newest-first (created_at DESC), and excludes finalized runs regardless of
+// created_at. The ordering contract is required by RunQueryService.ListActiveRunDrifts
+// so that keeping the head row per schedule always yields the newest run.
+func TestOrchestratorQueryRepository_ListActiveRuns_NewestFirst(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := session.Run(ctx, `
+        CREATE (r1:Run {
+            run_id: 'order-older', schedule_name: 'sched-order',
+            topology_generation: 1,
+            created_at: datetime('2026-05-01T00:00:00Z'),
+            test_marker: $m
+        })
+        CREATE (r2:Run {
+            run_id: 'order-newer', schedule_name: 'sched-order',
+            topology_generation: 2,
+            created_at: datetime('2026-05-02T00:00:00Z'),
+            test_marker: $m
+        })
+        CREATE (r3:Run {
+            run_id: 'order-finalized', schedule_name: 'sched-order',
+            topology_generation: 3,
+            created_at: datetime('2026-05-03T00:00:00Z'),
+            completed_at: datetime(), terminal_status: 'SUCCEEDED',
+            test_marker: $m
+        })
+    `, map[string]any{"m": t.Name()})
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	runs, err := repo.ListActiveRuns(ctx)
+	require.NoError(t, err)
+
+	// Filter to runs created by this test.
+	var filtered []*domain.ActiveRun
+	for _, r := range runs {
+		if r.RunID == "order-older" || r.RunID == "order-newer" || r.RunID == "order-finalized" {
+			filtered = append(filtered, r)
+		}
+	}
+
+	// Finalized run must be excluded; only the two in-flight runs appear.
+	require.Len(t, filtered, 2, "expected 2 in-flight runs, finalized excluded")
+
+	// Newest (2026-05-02) must precede older (2026-05-01) within the schedule.
+	assert.Equal(t, "order-newer", filtered[0].RunID, "head row must be the newest in-flight run")
+	assert.Equal(t, "order-older", filtered[1].RunID, "second row must be the older in-flight run")
+}

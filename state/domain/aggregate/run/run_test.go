@@ -757,3 +757,60 @@ func TestAcceptDispatch_InvalidTaskNameReturnsErrInvalidDispatchedTask(t *testin
 		t.Fatalf("error must wrap run.ErrInvalidDispatchedTask, got: %v", err)
 	}
 }
+
+func TestRun_Cancel_FinalizesAndEmitsBothEvents(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	now := time.Now()
+
+	events, err := r.Cancel(ctx, tc, "tester", "drift", now)
+	if err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	var sawCancelled, sawFinalized bool
+	for _, e := range events {
+		switch ev := e.(type) {
+		case run.RunCancelled:
+			sawCancelled = true
+			if ev.By != "tester" || ev.CancellationReason != "drift" {
+				t.Fatalf("RunCancelled fields: By=%q CancellationReason=%q, want By=%q CancellationReason=%q",
+					ev.By, ev.CancellationReason, "tester", "drift")
+			}
+		case run.RunFinalized:
+			sawFinalized = true
+			if ev.Outcome != run.SchedulerStatusCancelled {
+				t.Fatalf("RunFinalized.Outcome = %q, want %q", ev.Outcome, run.SchedulerStatusCancelled)
+			}
+		}
+	}
+	if !sawCancelled || !sawFinalized {
+		t.Fatalf("want both RunCancelled and RunFinalized; cancelled=%v finalized=%v", sawCancelled, sawFinalized)
+	}
+	if r.CompletedAt() == nil {
+		t.Fatal("CompletedAt must be set on cancel (cancel is terminal)")
+	}
+	if !r.CompletedAt().Equal(now) {
+		t.Fatalf("CompletedAt = %v, want %v", *r.CompletedAt(), now)
+	}
+	if r.CancelledAt() == nil {
+		t.Fatal("CancelledAt must remain set on cancel")
+	}
+}
+
+func TestRun_Cancel_AlreadyTerminal_NoEvents(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	if _, err := r.Cancel(ctx, tc, "tester", "drift", time.Now()); err != nil {
+		t.Fatalf("first Cancel: %v", err)
+	}
+	events, err := r.Cancel(ctx, tc, "tester", "again", time.Now())
+	if err != run.ErrAlreadyTerminal {
+		t.Fatalf("second Cancel err = %v, want ErrAlreadyTerminal", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("want no events on re-cancel, got %d", len(events))
+	}
+}

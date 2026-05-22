@@ -6,7 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
 	"github.com/google/uuid"
@@ -47,8 +49,28 @@ func (s stubSelector) SelectTasks(ctx context.Context, _ snapshot.TopologyReader
 	return s.projection, s.err
 }
 
+// fakeCancelledRepo is a test double for repository.CancelledSchedulesRepository.
+type fakeCancelledRepo struct {
+	cancelled bool
+	err       error
+}
+
+var _ repository.CancelledSchedulesRepository = (*fakeCancelledRepo)(nil)
+
+func (f *fakeCancelledRepo) Insert(context.Context, uuid.UUID) error { return nil }
+func (f *fakeCancelledRepo) Exists(context.Context, uuid.UUID) (bool, error) {
+	return f.cancelled, f.err
+}
+func (f *fakeCancelledRepo) DeleteExpired(context.Context, time.Duration) (int64, error) {
+	return 0, nil
+}
+
 func newSvc(reader snapshot.TopologyReader, writer snapshot.SnapshotWriter) *snapshotsvc.Service {
-	return snapshotsvc.NewService(&fakeTxRunner{reader: reader, writer: writer}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return newSvcCancel(reader, writer, &fakeCancelledRepo{})
+}
+
+func newSvcCancel(reader snapshot.TopologyReader, writer snapshot.SnapshotWriter, cancelledRepo repository.CancelledSchedulesRepository) *snapshotsvc.Service {
+	return snapshotsvc.NewService(&fakeTxRunner{reader: reader, writer: writer}, cancelledRepo, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func TestService_HappyPath_WriterCalledWithProjection(t *testing.T) {
@@ -56,7 +78,7 @@ func TestService_HappyPath_WriterCalledWithProjection(t *testing.T) {
 	want := []snapshot.TaskProjection{{TaskID: uuid.New(), ServiceName: "s", SchemaName: "c", TableName: "t", InitialStatus: "PENDING"}}
 	svc := newSvc(nil, w)
 	got, err := svc.Snapshot(context.Background(), snapshot.Params{
-		RunID: "r1", ScheduleName: "x", Kind: "cron",
+		RunID: uuid.New().String(), ScheduleName: "x", Kind: "cron",
 		Selector: stubSelector{projection: want},
 	})
 	if err != nil { t.Fatal(err) }
@@ -96,7 +118,43 @@ func TestService_WriterError_Propagates(t *testing.T) {
 	w := &fakeWriter{err: want}
 	svc := newSvc(nil, w)
 	_, err := svc.Snapshot(context.Background(), snapshot.Params{
+		RunID:    uuid.New().String(),
 		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
 	})
 	if !errors.Is(err, want) { t.Fatalf("got %v", err) }
+}
+
+func TestService_CancelledSchedule_StampsCancelledOnParams(t *testing.T) {
+	w := &fakeWriter{}
+	svc := newSvcCancel(nil, w, &fakeCancelledRepo{cancelled: true})
+	_, err := svc.Snapshot(context.Background(), snapshot.Params{
+		RunID:    uuid.New().String(),
+		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
+	})
+	if err != nil { t.Fatal(err) }
+	if !w.called { t.Fatal("writer not called") }
+	if !w.gotParams.Cancelled { t.Error("expected Params.Cancelled=true for a cancelled schedule") }
+}
+
+func TestService_NotCancelled_LeavesCancelledFalse(t *testing.T) {
+	w := &fakeWriter{}
+	svc := newSvcCancel(nil, w, &fakeCancelledRepo{cancelled: false})
+	_, err := svc.Snapshot(context.Background(), snapshot.Params{
+		RunID:    uuid.New().String(),
+		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
+	})
+	if err != nil { t.Fatal(err) }
+	if w.gotParams.Cancelled { t.Error("expected Params.Cancelled=false for a non-cancelled schedule") }
+}
+
+func TestService_CancelledRepoError_Propagates_WriterNotCalled(t *testing.T) {
+	want := errors.New("guard read failed")
+	w := &fakeWriter{}
+	svc := newSvcCancel(nil, w, &fakeCancelledRepo{err: want})
+	_, err := svc.Snapshot(context.Background(), snapshot.Params{
+		RunID:    uuid.New().String(),
+		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
+	})
+	if !errors.Is(err, want) { t.Fatalf("got %v", err) }
+	if w.called { t.Error("writer must not be called when the cancelled-guard read fails") }
 }

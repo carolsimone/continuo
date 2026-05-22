@@ -191,3 +191,66 @@ func TestSnapshotWriter_EmptyProjectionReturnsErr(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "empty projection"), "expected empty projection error, got %v", err)
 }
+
+// TestSnapshotWriter_CancelledStampsTerminalOnCreate covers the cancel-before-snapshot
+// race: when the schedule was already cancelled at snapshot time, the :Run must be
+// created already-terminal (completed_at + terminal_status='cancelled') so it never
+// enters the active set, even if the run.finalized:v1 projection raced ahead and missed.
+func TestSnapshotWriter_CancelledStampsTerminalOnCreate(t *testing.T) {
+	driver := newDriver(t)
+	scheduleName := "test-mat-" + uuid.New().String()[:8]
+
+	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1", "v1")
+
+	runID := uuid.New().String()
+	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })
+
+	projection := []snapshot.TaskProjection{
+		{
+			TaskID:          uuid.New(),
+			ServiceName:     "svc",
+			SchemaName:      "s",
+			TableName:       "a",
+			ScheduleName:    scheduleName,
+			NodeType:        "dbt-model",
+			InitialStatus:   "PENDING",
+			ImageTag:        "img:1",
+			ManifestVersion: "v1",
+			MaxRetries:      2,
+		},
+	}
+	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "trigger", Cancelled: true}
+
+	session := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(context.Background())
+	_, err := session.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return nil, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(context.Background(), params, projection)
+	})
+	require.NoError(t, err)
+
+	read := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer read.Close(context.Background())
+	rec, err := read.ExecuteRead(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(context.Background(), `
+			MATCH (run:Run {run_id: $run_id})
+			RETURN run.terminal_status AS terminal_status, run.completed_at AS completed_at`,
+			map[string]interface{}{"run_id": runID})
+		if err != nil {
+			return nil, err
+		}
+		if !r.Next(context.Background()) {
+			return nil, nil
+		}
+		m := map[string]interface{}{}
+		for _, k := range r.Record().Keys {
+			v, _ := r.Record().Get(k)
+			m[k] = v
+		}
+		return m, nil
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rec, "expected the :Run to be created")
+	runRec := rec.(map[string]interface{})
+	require.Equal(t, "cancelled", runRec["terminal_status"], "cancelled snapshot must stamp terminal_status")
+	require.NotNil(t, runRec["completed_at"], "cancelled snapshot must stamp completed_at so the run leaves the active set")
+}

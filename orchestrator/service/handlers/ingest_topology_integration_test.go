@@ -141,7 +141,7 @@ func TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot(t *testing
 		newTestLogger(),
 	)
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(client, newTestLogger())
-	snapSvc := snapshotsvc.NewService(neo4jinfra.NewSnapshotTxRunner(client), newTestLogger())
+	snapSvc := snapshotsvc.NewService(neo4jinfra.NewSnapshotTxRunner(client), pginfra.NewCancelledSchedulesRepository(pgDB), newTestLogger())
 
 	initialLoad := domainModel.IngestTopologyInput{
 		Nodes: []domainEvent.ManifestLoadedNode{

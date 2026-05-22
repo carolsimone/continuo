@@ -23,6 +23,9 @@ import (
 type RunReader interface {
 	GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error)
 	GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error)
+	// ListActiveRuns returns in-flight runs (completed_at IS NULL) ordered by
+	// schedule_name, then newest-first (created_at DESC), so callers can keep
+	// the head row per schedule as the current run.
 	ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error)
 }
 
@@ -94,11 +97,11 @@ func (s *RunQueryService) GetRunGraph(ctx context.Context, runID string) (*RunGr
 	}, nil
 }
 
-// ListActiveRunDrifts returns every in-flight run plus the latest topology
-// generation, so consumers (ui-service /api/schedules) can render per-schedule
-// drift badges. At most one active run per schedule_name in practice; if the
-// upstream invariant is ever violated, all rows are surfaced and a warning is
-// logged.
+// ListActiveRunDrifts returns one in-flight run per schedule (the newest) plus
+// the latest topology generation, so consumers (ui-service /api/schedules) can
+// render per-schedule drift badges. ListActiveRuns returns rows ordered by
+// schedule_name then newest-first (created_at DESC); this method keeps the head
+// row per schedule and drops any extras with a warning.
 func (s *RunQueryService) ListActiveRunDrifts(ctx context.Context) (*ActiveRunDriftView, error) {
 	runs, err := s.runReader.ListActiveRuns(ctx)
 	if err != nil {
@@ -109,19 +112,25 @@ func (s *RunQueryService) ListActiveRunDrifts(ctx context.Context) (*ActiveRunDr
 		return nil, fmt.Errorf("RunQueryService.ListActiveRunDrifts latest_generation: %w", err)
 	}
 
-	seen := make(map[string]int)
+	// Keep one drift row per schedule — the newest in-flight run. ListActiveRuns
+	// returns rows ordered by schedule_name then newest-first (created_at DESC),
+	// so the first row seen for a schedule is the one to surface. Extra rows
+	// (only possible for legacy un-finalized runs) are dropped and logged rather
+	// than surfaced ambiguously.
+	deduped := make([]*domain.ActiveRun, 0, len(runs))
+	kept := make(map[string]bool, len(runs))
 	for _, r := range runs {
-		seen[r.ScheduleName]++
-	}
-	for name, n := range seen {
-		if n > 1 {
-			s.logger.Warn("multiple active runs for one schedule — invariant violation",
-				"schedule_name", name, "count", n)
+		if kept[r.ScheduleName] {
+			s.logger.Warn("extra active run for schedule — dropping older row",
+				"schedule_name", r.ScheduleName, "run_id", r.RunID)
+			continue
 		}
+		kept[r.ScheduleName] = true
+		deduped = append(deduped, r)
 	}
 
 	return &ActiveRunDriftView{
-		ActiveRuns:               runs,
+		ActiveRuns:               deduped,
 		LatestTopologyGeneration: latestGen,
 	}, nil
 }

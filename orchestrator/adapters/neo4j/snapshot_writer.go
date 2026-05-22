@@ -22,10 +22,13 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 // projection entry. Idempotent on rerun.
 //
 // :Run properties: run_id, schedule_name, kind, created_at, source_run_id?,
-//                  topology_generation, service_metadata, total_nodes, terminal_count,
-//                  version
+//
+//	topology_generation, service_metadata, total_nodes, terminal_count,
+//	version
+//
 // :EXECUTES edge:  task_id, status, image_tag, manifest_version,
-//                  inherited_from_task_id?
+//
+//	inherited_from_task_id?
 //
 // topology_generation + service_metadata are stamped on CREATE from the source
 // :Run if source_run_id is set, otherwise from :TopologyRoot. Falls back to
@@ -80,7 +83,9 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              run.total_nodes         = $total_nodes,
 		              run.terminal_count      = 0,
 		              run.failed_count        = 0,
-		              run.version             = 0
+		              run.version             = 0,
+		              run.terminal_status     = CASE WHEN $cancelled THEN 'cancelled' ELSE null END,
+		              run.completed_at        = CASE WHEN $cancelled THEN datetime() ELSE null END
 		ON MATCH SET  run.kind = COALESCE(run.kind, $kind)
 		FOREACH (_ IN CASE WHEN $source_run_id IS NULL THEN [] ELSE [1] END |
 		    SET run.source_run_id = $source_run_id
@@ -108,6 +113,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		"source_run_id": sourceRunIDParam,
 		"tasks":         tasks,
 		"total_nodes":   len(projection),
+		"cancelled":     p.Cancelled,
 	})
 	if err != nil {
 		return fmt.Errorf("snapshot_writer: query failed: %w", err)

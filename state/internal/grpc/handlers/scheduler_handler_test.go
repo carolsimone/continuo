@@ -453,6 +453,27 @@ func (f *cancelFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _ u
 	return nil
 }
 
+// assertCancelEvents verifies a cancel emits exactly two domain events:
+// RunCancelled (the work-suppression guard, → schedule.cancelled:v1) and
+// RunFinalized{cancelled} (the terminal projection, → run.finalized:v1).
+func assertCancelEvents(t *testing.T, evts []run.DomainEvent, by string) {
+	t.Helper()
+	require.Len(t, evts, 2, "cancel appends RunCancelled + RunFinalized")
+	var sawCancelled, sawFinalized bool
+	for _, e := range evts {
+		switch ev := e.(type) {
+		case run.RunCancelled:
+			sawCancelled = true
+			assert.Equal(t, by, ev.By)
+		case run.RunFinalized:
+			sawFinalized = true
+			assert.Equal(t, run.SchedulerStatusCancelled, ev.Outcome)
+		}
+	}
+	assert.True(t, sawCancelled, "RunCancelled must be appended")
+	assert.True(t, sawFinalized, "RunFinalized must be appended")
+}
+
 // cancelFakeTaskCollection is an in-memory TaskCollection for cancel handler tests.
 // BulkCancel is the only method called during Run.Cancel.
 type cancelFakeTaskCollection struct {
@@ -607,7 +628,7 @@ func TestCancelScheduler_Success(t *testing.T) {
 	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED, resp.Scheduler.Status)
 	assert.True(t, runRepo.saveCalled, "SaveRun must be called")
 	assert.True(t, tasks.bulkCancelCalled, "BulkCancel must be called")
-	require.Len(t, outbox.appended, 1, "one domain event must be appended")
+	assertCancelEvents(t, outbox.appended, "ops-user")
 }
 
 func TestCancelScheduler_SaveError(t *testing.T) {
@@ -681,7 +702,7 @@ func TestCancelSchedule_Success(t *testing.T) {
 	assert.Equal(t, id.String(), resp.ScheduleId)
 	assert.True(t, runRepo.saveCalled, "SaveRun must be called")
 	assert.True(t, tasks.bulkCancelCalled, "BulkCancel must be called")
-	require.Len(t, outbox.appended, 1, "one domain event must be appended")
+	assertCancelEvents(t, outbox.appended, "ops-user")
 }
 
 func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
