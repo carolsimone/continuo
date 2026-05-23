@@ -45,12 +45,12 @@ function installFetch(map: FetchMap = {}) {
     }
     return Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response);
   });
-  (globalThis as any).fetch = handler;
+  vi.stubGlobal('fetch', handler);
   return handler;
 }
 
 beforeEach(() => { installFetch(); });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('SchedulerCard — trigger button uses .btn', () => {
   it('Trigger run button has .btn.btn--secondary, no legacy class', () => {
@@ -101,10 +101,10 @@ describe('SchedulerCard — drift strip', () => {
   });
 
   it('does NOT render the strip when drift is fresh', async () => {
-    installFetch({ graph: { run_topology_generation: 7, latest_topology_generation: 7 } });
+    const handler = installFetch({ graph: { run_topology_generation: 7, latest_topology_generation: 7 } });
     renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
     await waitFor(() => {
-      expect((globalThis as any).fetch).toHaveBeenCalled();
+      expect(handler).toHaveBeenCalled();
     });
     expect(screen.queryByText(/gen behind latest/i)).toBeNull();
     expect(screen.queryByText(/topology version unknown/i)).toBeNull();

@@ -36,14 +36,15 @@ export default function SchedulerCard({ schedule }: Props) {
 
   useEffect(() => {
     if (neverRun) return;
+    let cancelled = false;
     const fetch_ = () =>
       fetch(`/api/schedulers/${schedule.last_run_id}/tasks`)
         .then(r => r.json())
-        .then(data => setTasks(data.tasks || []))
+        .then(data => { if (!cancelled) setTasks(data.tasks || []); })
         .catch(() => {});
     fetch_();
     const id = setInterval(fetch_, 5000);
-    return () => clearInterval(id);
+    return () => { cancelled = true; clearInterval(id); };
   }, [schedule.last_run_id]);
 
   useEffect(() => {
@@ -51,17 +52,21 @@ export default function SchedulerCard({ schedule }: Props) {
       setDrift(null);
       return;
     }
+    let cancelled = false;
     const fetch_ = () =>
       fetch(`/api/runs/${schedule.last_run_id}/graph`)
         .then(r => r.json())
-        .then(data => setDrift({
-          run: Number(data.run_topology_generation ?? 0),
-          latest: Number(data.latest_topology_generation ?? 0),
-        }))
+        .then(data => {
+          if (cancelled) return;
+          setDrift({
+            run: Number(data.run_topology_generation ?? 0),
+            latest: Number(data.latest_topology_generation ?? 0),
+          });
+        })
         .catch(() => {});
     fetch_();
     const id = setInterval(fetch_, 5000);
-    return () => clearInterval(id);
+    return () => { cancelled = true; clearInterval(id); };
   }, [schedule.last_run_id]);
 
   useEffect(() => {
