@@ -989,4 +989,24 @@ body {
 .info-strip--warning { background: #fef3c7; border-color: #fde68a; color: #92400e; }
 .info-strip--error   { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
 .info-strip--info    { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
+
+/* ---- Rerun-failed modal radio options ---- */
+.rerun-mode-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.rerun-mode-option:hover { background: #f8fafc; }
+.rerun-mode-option > input[type="radio"] {
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+.rerun-mode-option__title { font-size: 13px; font-weight: 600; color: #0f172a; }
+.rerun-mode-option__desc  { font-size: 12px; color: #475569; }
 .info-strip--neutral { background: #f3f4f6; border-color: #e5e7eb; color: #374151; }
