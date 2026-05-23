@@ -11,7 +11,7 @@ beforeEach(() => {
   fetchMock.mockReset();
   fetchMock.mockResolvedValue({
     ok: true,
-    json: async () => ({ schedules: [], latest_topology_generation: 0 }),
+    json: async () => ({ schedules: [] }),
   });
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -56,7 +56,7 @@ describe('DashboardPage — shell + Update Graph button', () => {
       }
       return Promise.resolve({
         ok: true,
-        json: async () => ({ schedules: [], latest_topology_generation: 0 }),
+        json: async () => ({ schedules: [] }),
       });
     });
 
@@ -82,7 +82,7 @@ describe('DashboardPage — shell + Update Graph button', () => {
       }
       return Promise.resolve({
         ok: true,
-        json: async () => ({ schedules: [], latest_topology_generation: 0 }),
+        json: async () => ({ schedules: [] }),
       });
     });
     const user = userEvent.setup();

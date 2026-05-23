@@ -7,17 +7,10 @@ export interface ScheduleSummary {
   last_run_at: string | null;
   last_run_status: string;  // "succeeded"/"failed"/"cancelled"/""
   last_run_id: string | null;  // null means never run
-  // Drift fields populated by orchestrator.ListActiveRunDrifts via
-  // ui-service /api/schedules. Both null when the schedule has no in-flight run.
-  active_run_topology_generation: number | null;
-  active_run_id: string | null;
 }
 
-// Top-level shape of the /api/schedules response. The route returns
-// `latest_topology_generation` alongside the schedules array; capture both.
 export interface SchedulesResponse {
   schedules: ScheduleSummary[];
-  latest_topology_generation: number;
 }
 
 export interface Scheduler {

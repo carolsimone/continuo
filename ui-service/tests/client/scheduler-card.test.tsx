@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import SchedulerCard from '../../src/client/SchedulerCard';
 import { ScheduleSummary } from '../../src/client/types';
@@ -15,23 +15,46 @@ function baseSchedule(overrides: Partial<ScheduleSummary> = {}): ScheduleSummary
     last_run_at: null,
     last_run_status: 'PENDING',
     last_run_id: 'run-1',
-    active_run_topology_generation: null,
-    active_run_id: null,
     ...overrides,
   };
 }
 
-function renderCard(schedule: ScheduleSummary, latestGen: number) {
+function renderCard(schedule: ScheduleSummary) {
   return render(
     <MemoryRouter>
-      <SchedulerCard schedule={schedule} latestTopologyGeneration={latestGen} />
+      <SchedulerCard schedule={schedule} />
     </MemoryRouter>,
   );
 }
 
+// Per-test fetch mock keyed by URL substring. Any unmatched URL resolves to an
+// empty body so unrelated polls (e.g. /api/schedulers/:id/tasks) don't blow up.
+type FetchMap = { graph?: any; tasks?: any };
+
+function installFetch(map: FetchMap = {}) {
+  const handler = vi.fn((input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/graph') && map.graph !== undefined) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(map.graph) } as Response);
+    }
+    if (url.includes('/tasks')) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(map.tasks ?? { tasks: [] }),
+      } as Response);
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response);
+  });
+  vi.stubGlobal('fetch', handler);
+  return handler;
+}
+
+beforeEach(() => { installFetch(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
 describe('SchedulerCard — trigger button uses .btn', () => {
   it('Trigger run button has .btn.btn--secondary, no legacy class', () => {
-    renderCard(baseSchedule({ is_running: false, last_run_id: 'r1' }), 0);
+    renderCard(baseSchedule({ is_running: false, last_run_id: 'r1' }));
     const btn = screen.getByTitle('Trigger a full DAG run');
     expect(btn.className).toMatch(/\bbtn\b/);
     expect(btn.className).toMatch(/\bbtn--secondary\b/);
@@ -42,7 +65,7 @@ describe('SchedulerCard — trigger button uses .btn', () => {
 
 describe('SchedulerCard — cancel button uses .btn', () => {
   it('Cancel button has .btn.btn--danger, no legacy class', () => {
-    renderCard(baseSchedule({ is_running: true, last_run_id: 'r1' }), 0);
+    renderCard(baseSchedule({ is_running: true, last_run_id: 'r1' }));
     const btn = screen.getByTitle('Cancel the active run');
     expect(btn.className).toMatch(/\bbtn\b/);
     expect(btn.className).toMatch(/\bbtn--danger\b/);
@@ -50,42 +73,51 @@ describe('SchedulerCard — cancel button uses .btn', () => {
   });
 });
 
-describe('SchedulerCard — stale strip', () => {
-  it('renders the stale strip with gen N/M when active run drift is stale', () => {
-    renderCard(
-      baseSchedule({ active_run_id: 'run-1', active_run_topology_generation: 5 }),
-      7,
-    );
-    const strip = screen.getByText(/source 2 gen behind latest/);
-    expect(strip).toBeInTheDocument();
+describe('SchedulerCard — drift strip', () => {
+  it('renders the stale strip when /api/runs/:id/graph reports stale (in-flight run)', async () => {
+    installFetch({ graph: { run_topology_generation: 5, latest_topology_generation: 7 } });
+    renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
+    const strip = await screen.findByText(/source 2 gen behind latest/);
     expect(strip.closest('.info-strip')).toBeInTheDocument();
     expect(strip.closest('.info-strip--warning')).toBeInTheDocument();
   });
 
-  it('renders the unknown variant of the strip when run gen is 0', () => {
-    renderCard(
-      baseSchedule({ active_run_id: 'run-1', active_run_topology_generation: 0 }),
-      7,
-    );
-    const strip = screen.getByText('topology version unknown');
-    expect(strip).toBeInTheDocument();
+  it('renders the stale strip when the last finalised run is stale', async () => {
+    installFetch({ graph: { run_topology_generation: 3, latest_topology_generation: 10 } });
+    renderCard(baseSchedule({
+      is_running: false,
+      last_run_status: 'SUCCEEDED',
+      last_run_id: 'run-final',
+    }));
+    const strip = await screen.findByText(/source 7 gen behind latest/);
+    expect(strip.closest('.info-strip--warning')).toBeInTheDocument();
+  });
+
+  it('renders the neutral unknown strip when run_topology_generation is 0', async () => {
+    installFetch({ graph: { run_topology_generation: 0, latest_topology_generation: 7 } });
+    renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
+    const strip = await screen.findByText('topology version unknown');
     expect(strip.closest('.info-strip--neutral')).toBeInTheDocument();
   });
 
-  it('does NOT render the strip when active_run_id is null (run finalised)', () => {
-    renderCard(
-      baseSchedule({ active_run_id: null, active_run_topology_generation: null }),
-      7,
-    );
+  it('does NOT render the strip when drift is fresh', async () => {
+    const handler = installFetch({ graph: { run_topology_generation: 7, latest_topology_generation: 7 } });
+    renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
+    await waitFor(() => {
+      expect(handler).toHaveBeenCalled();
+    });
     expect(screen.queryByText(/gen behind latest/i)).toBeNull();
     expect(screen.queryByText(/topology version unknown/i)).toBeNull();
   });
 
-  it('does NOT render the strip when drift is fresh', () => {
-    renderCard(
-      baseSchedule({ active_run_id: 'run-1', active_run_topology_generation: 7 }),
-      7,
+  it('does NOT fetch graph or render strip for a never-run schedule', async () => {
+    const handler = installFetch({ graph: { run_topology_generation: 1, latest_topology_generation: 9 } });
+    renderCard(baseSchedule({ is_running: false, last_run_id: null, last_run_status: '' }));
+    await Promise.resolve();
+    const calledGraph = handler.mock.calls.some(([input]) =>
+      String(input).includes('/graph')
     );
+    expect(calledGraph).toBe(false);
     expect(screen.queryByText(/gen behind latest/i)).toBeNull();
     expect(screen.queryByText(/topology version unknown/i)).toBeNull();
   });

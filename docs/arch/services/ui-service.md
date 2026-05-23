@@ -31,7 +31,7 @@ None.
 
 | Route | Method | Backend |
 |---|---|---|
-| `/api/schedules` | GET | `ListAllSchedules` → state gRPC, `ListActiveRunDrifts` → orchestrator gRPC (fan-out: each schedule row carries `active_run_id` + `active_run_topology_generation`; response also carries top-level `latest_topology_generation`) |
+| `/api/schedules` | GET | `ListAllSchedules` → state gRPC. Returns the schedule catalog (name, cron, status, last run summary). |
 | `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → orchestrator gRPC |
 | `/api/schedules/:name/runs` | GET | `ListRuns` → orchestrator gRPC |
 | `/api/schedules/:name/trigger` | POST | `TriggerSchedule` → state gRPC |
@@ -41,7 +41,7 @@ None.
 
 | Route | Method | Backend |
 |---|---|---|
-| `/api/runs/:run_id/graph` | GET | `GetRunGraph` → orchestrator gRPC (response includes `run_topology_generation` + `latest_topology_generation` for drift detection) |
+| `/api/runs/:run_id/graph` | GET | `GetRunGraph` → orchestrator gRPC. Returns the run's nodes/edges plus `run_topology_generation` + `latest_topology_generation`. Powers drift display on both the schedules dashboard cards and the schedule detail header. |
 | `/api/schedulers/:id` | GET | `GetScheduler` → state gRPC |
 | `/api/schedulers/:id/tasks` | GET | `ListTasks` → state gRPC (page_size=200) |
 | `/api/schedulers/:id/executions` | GET | `ListTaskExecutions` → state gRPC (page_size=500) |
@@ -87,8 +87,7 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 |---|---|
 | `GetScheduleGraph` | `GET /api/schedules/:name/graph` |
 | `ListRuns` | `GET /api/schedules/:name/runs` |
-| `GetRunGraph` | `GET /api/runs/:run_id/graph` |
-| `ListActiveRunDrifts` | `GET /api/schedules` (fan-out alongside `state.ListAllSchedules`) |
+| `GetRunGraph` | `GET /api/runs/:run_id/graph` (used both directly and by per-card drift polling on the dashboard) |
 
 ### S3
 
@@ -116,7 +115,6 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 | Schedule topology (all nodes + edges) | `orchestrator.GetScheduleGraph` |
 | Run list (historical) | `orchestrator.ListRuns` |
 | Per-run graph with node statuses + per-run/latest topology generation | `orchestrator.GetRunGraph` |
-| Active-run drift summary (per-schedule `run_topology_generation` + global `latest_topology_generation`) | `orchestrator.ListActiveRunDrifts` |
 | Pod logs | S3 (via `log_s3_key` from task execution records) |
 
 ## What It Writes
@@ -145,7 +143,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 - React SPA (TypeScript + Vite)
 - `DashboardPage`: polls `/api/schedules` every 5 seconds; shows schedule cards
-- `SchedulerCard`: displays schedule name, running status, cron expression, last run time and progress; includes a "Trigger run" button to start a full DAG run (disabled while a run is active)
+- `SchedulerCard`: displays schedule name, running status, cron expression, last run time and progress; polls `/api/schedulers/:last_run_id/tasks` for task progress and `/api/runs/:last_run_id/graph` for topology-drift information (both every 5 s); shows a warning strip when the last run's `run_topology_generation` is older than the orchestrator's `latest_topology_generation`, matching the drift logic used on the schedule detail page; includes a "Trigger run" button to start a full DAG run (disabled while a run is active) and a "Cancel" button while a run is in flight
 - `DetailPage`: shows DAG panel, nodes panel, past runs panel for a selected run; includes Rerun and Rebase buttons for terminal runs with drift badge when topology generation differs
 - `DAGPanel`: renders graph topology using run graph or schedule graph
 - `PastRunsPanel`: lists historical runs from `orchestrator.ListRuns`

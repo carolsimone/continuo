@@ -164,7 +164,7 @@ Three goroutines started in `main.go` run for the process lifetime:
 | `GetScheduleGraph` | Returns all Table nodes and DEPENDS_ON edges for a schedule |
 | `ListRuns` | Returns Run nodes for a schedule, newest first |
 | `GetRunGraph` | Returns nodes and EXECUTES edges for a specific run, with per-node status. Also returns `run_topology_generation` (stamped on the `:Run` node at `Snapshot` time; `0` means "drift unknown" — not "no drift") and `latest_topology_generation` (current `topology_state.topology_generation` Postgres singleton). |
-| `ListActiveRunDrifts` | Returns one `ActiveRunDrift` row per schedule that has an in-flight run (`schedule_name`, `run_id`, `run_topology_generation`) plus the orchestrator's current `latest_topology_generation`. "In-flight" means `completed_at IS NULL` on the `:Run` node — a property stamped by the `run.finalized:v1` projection for all terminal outcomes (succeeded, failed, cancelled). The underlying `ListActiveRuns` query orders results by `schedule_name`, then `created_at DESC`; `RunQueryService.ListActiveRunDrifts` keeps the single newest in-flight run per schedule, so each schedule contributes at most one drift row to the response. Drives the dashboard's per-schedule active-run drift indicator without forcing the UI to call `GetRunGraph` for every active schedule. |
+| `ListActiveRunDrifts` | Returns one `ActiveRunDrift` row per schedule that has an in-flight run (`schedule_name`, `run_id`, `run_topology_generation`) plus the orchestrator's current `latest_topology_generation`. "In-flight" means `completed_at IS NULL` on the `:Run` node — a property stamped by the `run.finalized:v1` projection for all terminal outcomes (succeeded, failed, cancelled). The underlying `ListActiveRuns` query orders results by `schedule_name`, then `created_at DESC`; `RunQueryService.ListActiveRunDrifts` keeps the single newest in-flight run per schedule, so each schedule contributes at most one drift row to the response. Consumed by e2e tests as an active-run state probe. |
 
 ### HTTP (port 8087)
 
@@ -305,7 +305,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
+| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
 | `continuo CLI` | `GetScheduleGraph` |
 
 Orchestrator calls no external gRPC services.
@@ -324,7 +324,7 @@ Postgres on the read path:
   `:Run.topology_generation` and the latest
   `topology_state.topology_generation` from Postgres. Backs the rerun
   confirmation modal in ui-service.
-- `ListActiveRunDrifts()` — surfaces the single newest in-flight run per schedule plus the latest `topology_state.topology_generation`. "In-flight" means `completed_at IS NULL`; `run.finalized:v1` stamps `completed_at` for all terminal outcomes (succeeded, failed, cancelled), so a cancelled run leaves the active set once the projection arrives. The underlying `ListActiveRuns` query (Neo4j adapter) orders by `schedule_name`, then `created_at DESC`; `RunQueryService` keeps the head row per schedule. Backs the dashboard schedule list in ui-service.
+- `ListActiveRunDrifts()` — surfaces the single newest in-flight run per schedule plus the latest `topology_state.topology_generation`. "In-flight" means `completed_at IS NULL`; `run.finalized:v1` stamps `completed_at` for all terminal outcomes (succeeded, failed, cancelled), so a cancelled run leaves the active set once the projection arrives. The underlying `ListActiveRuns` query (Neo4j adapter) orders by `schedule_name`, then `created_at DESC`; `RunQueryService` keeps the head row per schedule. Used by e2e tests as a probe for orchestrator-side active-run state.
 
 `topology_state` (Postgres) is now read by both:
 - the **write path** — `IngestTopologyHandler.IncrementGeneration` allocates

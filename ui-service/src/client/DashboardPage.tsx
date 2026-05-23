@@ -4,7 +4,6 @@ import SchedulerCard from './SchedulerCard';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
-  const [latestTopologyGeneration, setLatestTopologyGeneration] = useState<number>(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
@@ -17,7 +16,6 @@ export default function DashboardPage() {
         .then(r => r.json())
         .then((data: SchedulesResponse) => {
           setSchedules(data.schedules || []);
-          setLatestTopologyGeneration(Number(data.latest_topology_generation ?? 0));
           setLastUpdated(new Date());
           setError(null);
         })
@@ -94,11 +92,7 @@ export default function DashboardPage() {
           <p className="empty">No schedules found.</p>
         )}
         {schedules.map(s => (
-          <SchedulerCard
-            key={s.schedule_name}
-            schedule={s}
-            latestTopologyGeneration={latestTopologyGeneration}
-          />
+          <SchedulerCard key={s.schedule_name} schedule={s} />
         ))}
       </main>
     </div>

@@ -30,7 +30,7 @@ function grpcToHttpStatus(code: number): number {
 export function createSchedulesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
-  // GET /api/schedules — list all known schedules with active-run drift info
+  // GET /api/schedules — list all known schedules from state service
   router.get('/', async (_req, res) => {
     try {
       const stateResp = await new Promise<any>((resolve, reject) => {
@@ -38,36 +38,19 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
           err ? reject(err) : resolve(response)
         );
       });
-      const driftResp = await new Promise<any>((resolve, reject) => {
-        graphClient.listActiveRunDrifts({}, (err: any, response: any) =>
-          err ? reject(err) : resolve(response)
-        );
-      });
 
-      const driftByName = new Map<string, any>(
-        (driftResp.active_runs || []).map((d: any) => [d.schedule_name, d])
-      );
+      const schedules = (stateResp.schedules || []).map((s: any) => ({
+        schedule_name: s.schedule_name,
+        cron_expression: s.cron_expression,
+        description: s.description,
+        timezone: s.timezone,
+        is_running: s.is_running,
+        last_run_at: toISO(s.last_run_at),
+        last_run_status: s.last_run_status,
+        last_run_id: s.last_run_id || null,
+      }));
 
-      const schedules = (stateResp.schedules || []).map((s: any) => {
-        const d = driftByName.get(s.schedule_name);
-        return {
-          schedule_name: s.schedule_name,
-          cron_expression: s.cron_expression,
-          description: s.description,
-          timezone: s.timezone,
-          is_running: s.is_running,
-          last_run_at: toISO(s.last_run_at),
-          last_run_status: s.last_run_status,
-          last_run_id: s.last_run_id || null,
-          active_run_topology_generation: d ? Number(d.run_topology_generation) : null,
-          active_run_id: d ? d.run_id : null,
-        };
-      });
-
-      res.json({
-        schedules,
-        latest_topology_generation: Number(driftResp.latest_topology_generation ?? 0),
-      });
+      res.json({ schedules });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
