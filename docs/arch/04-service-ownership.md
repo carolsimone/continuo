@@ -140,4 +140,4 @@ The dedicated Flyway image artifact sequentially applies the SQL files under `db
 | gRPC server methods owned | none |
 | Redis consumes | none |
 | Redis produces | `update.graph:v1` |
-| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
+| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |

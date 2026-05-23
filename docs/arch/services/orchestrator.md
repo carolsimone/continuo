@@ -305,7 +305,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
+| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
 | `continuo CLI` | `GetScheduleGraph` |
 
 Orchestrator calls no external gRPC services.
