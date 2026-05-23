@@ -15,6 +15,7 @@ import { getDriftState, getDriftBadge } from './drift-helpers';
 import DAGPanel from './DAGPanel';
 import NodesPanel from './NodesPanel';
 import PastRunsPanel from './PastRunsPanel';
+import RerunFailedModal, { RerunFailedMode } from './RerunFailedModal';
 
 function initialLastRunId(locationState: unknown): string | null | undefined {
   if (locationState == null) return undefined;
@@ -82,18 +83,6 @@ function isSuccessStatus(status: string | null | undefined): boolean {
   return status.toLowerCase().includes('succeed');
 }
 
-function RerunBadge({ runGraph }: { runGraph: RunGraph | null }) {
-  if (!runGraph) return null;
-  const state = getDriftState(runGraph.run_topology_generation, runGraph.latest_topology_generation);
-  if (state === 'fresh') return null;
-  const label = getDriftBadge(
-    state,
-    Number(runGraph.run_topology_generation ?? 0),
-    Number(runGraph.latest_topology_generation ?? 0),
-  );
-  return <span className={`drift-badge drift-badge--${state}`}>{label}</span>;
-}
-
 export default function DetailPage() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
@@ -117,6 +106,7 @@ export default function DetailPage() {
   const [rebaseError, setRebaseError] = useState<string | null>(null);
   const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [rerunModalOpen, setRerunModalOpen] = useState(false);
 
   useEffect(() => {
     resolvedRef.current = false;
@@ -453,9 +443,58 @@ export default function DetailPage() {
     setSelectedNodeId(null);
   };
 
+  const driftLabel: string | null = (() => {
+    if (!liveRunGraph) return null;
+    const state = getDriftState(liveRunGraph.run_topology_generation, liveRunGraph.latest_topology_generation);
+    if (state === 'fresh') return null;
+    return getDriftBadge(
+      state,
+      Number(liveRunGraph.run_topology_generation ?? 0),
+      Number(liveRunGraph.latest_topology_generation ?? 0),
+    );
+  })();
+
+  const showRerunFailed =
+    isTerminalStatus(scheduler?.status) &&
+    !isSuccessStatus(scheduler?.status) &&
+    Boolean(lastRunId);
+
+  const handleRerunFailedSubmit = async (mode: RerunFailedMode) => {
+    setRerunModalOpen(false);
+    if (mode === 'this') {
+      await handleRerunRun();
+    } else {
+      await handleRebaseRun();
+    }
+  };
+
+  const triggerBtnClass = [
+    'btn', 'btn--secondary',
+    triggerState === 'loading' ? 'is-loading' : '',
+    triggerState === 'success' ? 'is-success' : '',
+  ].filter(Boolean).join(' ');
+
+  const rerunFailedBtnClass = [
+    'btn', 'btn--secondary',
+    (rerunState === 'loading' || rebaseState === 'loading') ? 'is-loading' : '',
+    (rerunState === 'success' || rebaseState === 'success') ? 'is-success' : '',
+  ].filter(Boolean).join(' ');
+
+  const triggerLabel =
+    triggerState === 'loading' ? 'Triggering…' :
+    triggerState === 'success' ? 'Triggered' :
+    '▶ Trigger run';
+
+  const rerunFailedLabel =
+    (rerunState === 'loading' || rebaseState === 'loading') ? 'Triggering…' :
+    (rerunState === 'success' || rebaseState === 'success') ? 'Reran' :
+    '↺ Rerun failed';
+
+  const submittingRerun = rerunState === 'loading' || rebaseState === 'loading';
+
   return (
-    <div className="detail-page">
-      <div className="detail-topbar">
+    <div className="page">
+      <header className="page-header">
         <button className="detail-back-link" onClick={() => navigate('/')}>
           ← Back
         </button>
@@ -463,60 +502,72 @@ export default function DetailPage() {
         <span className={`pill ${pillClass(selectedRun ? selectedRun.terminal_status : schedulerStatus)}`}>
           {selectedRun ? formatStatusLabel(selectedRun.terminal_status) : formatStatusLabel(schedulerStatus)}
         </span>
-        {name && (
-          <button
-            type="button"
-            className={`trigger-run-btn${triggerState === 'loading' ? ' loading' : ''}${triggerState === 'success' ? ' success' : ''}`}
-            disabled={liveRunExists || triggerState === 'loading' || triggerState === 'success'}
-            onClick={handleTriggerRun}
-            title={liveRunExists ? 'A run is already active' : 'Trigger a full DAG run'}
-          >
-            {triggerState === 'loading' ? 'Triggering…' : triggerState === 'success' ? '✓ Triggered' : '▶ Trigger run'}
-          </button>
+        {driftLabel && (
+          <span className="info-strip info-strip--warning info-strip--inline">
+            <span className="info-strip__icon">⚠</span>
+            {driftLabel}
+          </span>
         )}
-        {triggerState === 'error' && triggerError && (
-          <span className="rerun-feedback rerun-feedback--error">{triggerError}</span>
-        )}
-        {isTerminalStatus(scheduler?.status) && !isSuccessStatus(scheduler?.status) && lastRunId && (
-          <div className="rerun-control">
-            <div className="rerun-this-snapshot-group">
-              <button
-                type="button"
-                className={`rerun-btn rerun-btn--this-snapshot${rerunState === 'loading' ? ' loading' : ''}${rerunState === 'success' ? ' success' : ''}`}
-                disabled={rerunState === 'loading' || rerunState === 'success'}
-                onClick={handleRerunRun}
-                title="Re-execute non-succeeded tasks against this run's pinned snapshot"
-              >
-                {rerunState === 'loading' ? 'Triggering…' : rerunState === 'success' ? '✓ Rerun triggered' : '↺ Rerun failed (this snapshot)'}
-              </button>
-              <RerunBadge runGraph={liveRunGraph} />
-              {rerunState === 'error' && rerunError && (
-                <span className="rerun-feedback rerun-feedback--error">{rerunError}</span>
-              )}
-            </div>
+      </header>
+
+      {(name || showRerunFailed) && (
+        <div className="page-action-row">
+          {name && (
             <button
               type="button"
-              className={`rerun-btn rerun-btn--rebase${rebaseState === 'loading' ? ' loading' : ''}${rebaseState === 'success' ? ' success' : ''}`}
-              disabled={rebaseState === 'loading' || rebaseState === 'success'}
-              onClick={handleRebaseRun}
-              title="Re-execute non-succeeded tasks against the latest topology"
+              className={triggerBtnClass}
+              disabled={liveRunExists || triggerState === 'loading' || triggerState === 'success'}
+              onClick={handleTriggerRun}
+              title={liveRunExists ? 'A run is already active' : 'Trigger a full DAG run'}
             >
-              {rebaseState === 'loading' ? 'Triggering…' : rebaseState === 'success' ? '✓ Rebase triggered' : '↪ Rerun failed (latest snapshot)'}
+              {triggerLabel}
             </button>
-            {rebaseState === 'error' && rebaseError && (
-              <span className="rerun-feedback rerun-feedback--error">{rebaseError}</span>
-            )}
-          </div>
-        )}
-      </div>
+          )}
+          {showRerunFailed && (
+            <button
+              type="button"
+              className={rerunFailedBtnClass}
+              disabled={submittingRerun || rerunState === 'success' || rebaseState === 'success'}
+              onClick={() => setRerunModalOpen(true)}
+              title="Re-execute non-succeeded tasks"
+            >
+              {rerunFailedLabel}
+            </button>
+          )}
+        </div>
+      )}
+
+      {triggerState === 'error' && triggerError && (
+        <div className="info-strip info-strip--error">{triggerError}</div>
+      )}
+      {rerunState === 'error' && rerunError && (
+        <div className="info-strip info-strip--error">{rerunError}</div>
+      )}
+      {rebaseState === 'error' && rebaseError && (
+        <div className="info-strip info-strip--error">{rebaseError}</div>
+      )}
+
+      {rerunModalOpen && (
+        <RerunFailedModal
+          driftLabel={driftLabel}
+          submitting={submittingRerun}
+          onClose={() => setRerunModalOpen(false)}
+          onSubmit={handleRerunFailedSubmit}
+        />
+      )}
 
       {snapshotRun && (
-        <div className="detail-snapshot-banner">
+        <div className="info-strip info-strip--warning">
+          <span className="info-strip__icon">⚠</span>
           <span>
             Viewing snapshot from {formatDate(snapshotRun.completed_at ?? snapshotRun.created_at)}.
           </span>
           <span>Status: {formatStatusLabel(snapshotRun.terminal_status)}</span>
-          <button type="button" onClick={() => handleSelectRun(null)}>
+          <button
+            type="button"
+            className="btn btn--secondary info-strip__action"
+            onClick={() => handleSelectRun(null)}
+          >
             {liveRunExists ? 'Return to live run' : 'Back to latest run'}
           </button>
         </div>

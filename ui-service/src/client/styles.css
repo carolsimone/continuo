@@ -1010,3 +1010,4 @@ body {
 .rerun-mode-option__title { font-size: 13px; font-weight: 600; color: #0f172a; }
 .rerun-mode-option__desc  { font-size: 12px; color: #475569; }
 .info-strip--neutral { background: #f3f4f6; border-color: #e5e7eb; color: #374151; }
+.info-strip--inline { padding: 2px 8px; font-size: 11px; }

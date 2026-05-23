@@ -117,16 +117,16 @@ function failedRoutes() {
 }
 
 describe('DetailPage — run-level Rerun button', () => {
-  it('shows Rerun button when latest run is FAILED', async () => {
+  it('shows Rerun failed button when latest run is FAILED', async () => {
     const fetchMock = mockFetchSequence(failedRoutes());
     vi.stubGlobal('fetch', fetchMock);
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    expect(await screen.findByRole('button', { name: /^↺ Rerun failed \(this snapshot\)$/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /rerun failed/i })).toBeInTheDocument();
   });
 
-  it('hides Rerun button when latest run is SUCCEEDED', async () => {
+  it('hides Rerun failed button when latest run is SUCCEEDED', async () => {
     const routes = {
       ...freshRoutes(),
       [`/api/schedulers/${RUN_ID}`]: async () => ({
@@ -152,17 +152,33 @@ describe('DetailPage — run-level Rerun button', () => {
       const calls = fetchMock.mock.calls.map(c => String(c[0]));
       expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
     });
-    expect(screen.queryByRole('button', { name: /^↺ Rerun failed \(this snapshot\)$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /rerun failed/i })).toBeNull();
   });
 
-  it('posts empty body to /api/schedulers/:id/rerun on click', async () => {
+  it('opens the modal when Rerun failed button is clicked', async () => {
     const fetchMock = mockFetchSequence(failedRoutes());
     vi.stubGlobal('fetch', fetchMock);
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    const rerunBtn = await screen.findByRole('button', { name: /^↺ Rerun failed \(this snapshot\)$/ });
+    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
     fireEvent.click(rerunBtn);
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('posts empty body to /api/schedulers/:id/rerun when modal submits with "this snapshot"', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
+    fireEvent.click(rerunBtn);
+
+    // Modal opens; default is "this snapshot" — click Rerun
+    const submitBtn = await screen.findByRole('button', { name: /^Rerun$/ });
+    fireEvent.click(submitBtn);
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
@@ -172,28 +188,7 @@ describe('DetailPage — run-level Rerun button', () => {
     });
   });
 
-  it('shows drift badge when stale', async () => {
-    const routes = {
-      ...failedRoutes(),
-      [`/api/runs/${RUN_ID}/graph`]: async () => ({
-        nodes: [],
-        edges: [],
-        run_topology_generation: 5,
-        latest_topology_generation: 8,
-      }),
-    };
-    const fetchMock = mockFetchSequence(routes);
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    const thisBtn = await screen.findByRole('button', { name: /^↺ Rerun failed \(this snapshot\)$/ });
-    const wrapper = thisBtn.closest('.rerun-this-snapshot-group');
-    expect(wrapper).toBeTruthy();
-    expect(wrapper).toHaveTextContent(/source 3 gen behind latest/);
-  });
-
-  it('turns the same Rerun button green and relabels on success', async () => {
+  it('turns the Rerun failed button green and relabels on success', async () => {
     const fetchMock = mockFetchSequence({
       ...failedRoutes(),
       [`/api/schedulers/${RUN_ID}/rerun`]: async () => ({ ok: true }),
@@ -202,27 +197,32 @@ describe('DetailPage — run-level Rerun button', () => {
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    const rerunBtn = await screen.findByRole('button', { name: /^↺ Rerun failed \(this snapshot\)$/ });
+    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
     fireEvent.click(rerunBtn);
 
-    const success = await screen.findByRole('button', { name: /^✓ Rerun triggered$/ });
-    expect(success.className).toContain('success');
+    const submitBtn = await screen.findByRole('button', { name: /^Rerun$/ });
+    fireEvent.click(submitBtn);
+
+    const success = await screen.findByRole('button', { name: /Reran/i });
+    expect(success.className).toContain('is-success');
   });
 });
 
-describe('DetailPage — run-level Rebase button', () => {
-  it('shows Rebase button when latest run is FAILED', async () => {
+describe('DetailPage — run-level Rebase button (via modal)', () => {
+  it('shows the modal with both "This snapshot" and "Latest snapshot" radio options', async () => {
     const fetchMock = mockFetchSequence(failedRoutes());
     vi.stubGlobal('fetch', fetchMock);
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    expect(
-      await screen.findByRole('button', { name: /^↪ Rerun failed \(latest snapshot\)$/ }),
-    ).toBeInTheDocument();
+    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
+    fireEvent.click(rerunBtn);
+
+    expect(await screen.findByLabelText(/this snapshot/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/latest snapshot/i)).toBeInTheDocument();
   });
 
-  it('hides Rebase button when latest run is SUCCEEDED', async () => {
+  it('hides Rerun failed button when latest run is SUCCEEDED', async () => {
     const routes = {
       ...freshRoutes(),
       [`/api/schedulers/${RUN_ID}`]: async () => ({
@@ -247,10 +247,10 @@ describe('DetailPage — run-level Rebase button', () => {
       const calls = fetchMock.mock.calls.map(c => String(c[0]));
       expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
     });
-    expect(screen.queryByRole('button', { name: /^↪ Rerun failed \(latest snapshot\)$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /rerun failed/i })).toBeNull();
   });
 
-  it('POSTs /api/schedulers/:id/rebase on click', async () => {
+  it('POSTs /api/schedulers/:id/rebase when "Latest snapshot" is selected and submitted', async () => {
     const fetchMock = mockFetchSequence({
       ...failedRoutes(),
       [`/api/schedulers/${RUN_ID}/rebase`]: async () => ({ ok: true }),
@@ -259,8 +259,15 @@ describe('DetailPage — run-level Rebase button', () => {
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    const rebaseBtn = await screen.findByRole('button', { name: /^↪ Rerun failed \(latest snapshot\)$/ });
-    fireEvent.click(rebaseBtn);
+    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
+    fireEvent.click(rerunBtn);
+
+    // Switch to "latest snapshot" radio
+    const latestRadio = await screen.findByLabelText(/latest snapshot/i);
+    fireEvent.click(latestRadio);
+
+    const submitBtn = screen.getByRole('button', { name: /^Rerun$/ });
+    fireEvent.click(submitBtn);
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
@@ -270,7 +277,7 @@ describe('DetailPage — run-level Rebase button', () => {
     });
   });
 
-  it('turns the same Rebase button green and relabels on success', async () => {
+  it('turns the Rerun failed button green and relabels on rebase success', async () => {
     const fetchMock = mockFetchSequence({
       ...failedRoutes(),
       [`/api/schedulers/${RUN_ID}/rebase`]: async () => ({ ok: true }),
@@ -279,11 +286,17 @@ describe('DetailPage — run-level Rebase button', () => {
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    const rebaseBtn = await screen.findByRole('button', { name: /^↪ Rerun failed \(latest snapshot\)$/ });
-    fireEvent.click(rebaseBtn);
+    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
+    fireEvent.click(rerunBtn);
 
-    const success = await screen.findByRole('button', { name: /^✓ Rebase triggered$/ });
-    expect(success.className).toContain('success');
+    const latestRadio = await screen.findByLabelText(/latest snapshot/i);
+    fireEvent.click(latestRadio);
+
+    const submitBtn = screen.getByRole('button', { name: /^Rerun$/ });
+    fireEvent.click(submitBtn);
+
+    const success = await screen.findByRole('button', { name: /Reran/i });
+    expect(success.className).toContain('is-success');
   });
 });
 
@@ -338,6 +351,18 @@ describe('DetailPage — Trigger run topbar button', () => {
     const btn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
     expect(btn).toBeDisabled();
   });
+
+  it('uses .btn .btn--secondary classes (no .trigger-run-btn)', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const btn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+    expect(btn.className).toContain('btn');
+    expect(btn.className).toContain('btn--secondary');
+    expect(btn.className).not.toContain('trigger-run-btn');
+  });
 });
 
 describe('DetailPage — Open node detail link', () => {
@@ -385,7 +410,127 @@ describe('DetailPage — Trigger run success cue', () => {
     const triggerBtn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
     fireEvent.click(triggerBtn);
 
-    const success = await screen.findByRole('button', { name: /^✓ Triggered$/ });
-    expect(success.className).toContain('success');
+    const success = await screen.findByRole('button', { name: /^Triggered$/ });
+    expect(success.className).toContain('is-success');
+  });
+});
+
+describe('DetailPage — page structure (Task 5 migration)', () => {
+  it('wraps in .page and .page-header; .detail-page and .detail-topbar are gone', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(withRouter({ last_run_id: RUN_ID }));
+
+    // Wait for initial render
+    await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+
+    expect(container.querySelector('.page')).toBeTruthy();
+    expect(container.querySelector('.page-header')).toBeTruthy();
+    expect(container.querySelector('.detail-page')).toBeNull();
+    expect(container.querySelector('.detail-topbar')).toBeNull();
+  });
+
+  it('renders exactly ONE Rerun failed button when status is terminal-failed', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    // Wait for page to settle
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map(c => String(c[0]));
+      expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
+    });
+
+    const rerunBtns = screen.getAllByRole('button', { name: /rerun failed/i });
+    expect(rerunBtns).toHaveLength(1);
+  });
+
+  it('does not show buttons for "this snapshot" or "latest snapshot" in the topbar', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map(c => String(c[0]));
+      expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
+    });
+
+    expect(screen.queryByRole('button', { name: /this snapshot/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /latest snapshot/i })).toBeNull();
+  });
+
+  it('clicking the Rerun failed button opens a dialog', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const btn = await screen.findByRole('button', { name: /rerun failed/i });
+    fireEvent.click(btn);
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    // Modal contains both radio choices
+    expect(screen.getByLabelText(/this snapshot/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/latest snapshot/i)).toBeInTheDocument();
+  });
+
+  it('submitting "this snapshot" (default) POSTs to the rerun endpoint', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /rerun failed/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Rerun$/ }));
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
+      const hit = calls.find(c => String(c[0]).includes(`/api/schedulers/${RUN_ID}/rerun`));
+      expect(hit).toBeDefined();
+      expect(hit![1]).toMatchObject({ method: 'POST', body: '{}' });
+    });
+  });
+
+  it('switching to "latest snapshot" then submitting POSTs to the rebase endpoint', async () => {
+    const fetchMock = mockFetchSequence({
+      ...failedRoutes(),
+      [`/api/schedulers/${RUN_ID}/rebase`]: async () => ({ ok: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /rerun failed/i }));
+    fireEvent.click(await screen.findByLabelText(/latest snapshot/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Rerun$/ }));
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
+      const hit = calls.find(c => String(c[0]).includes(`/api/schedulers/${RUN_ID}/rebase`));
+      expect(hit).toBeDefined();
+      expect(hit![1]).toMatchObject({ method: 'POST' });
+    });
+  });
+
+  it('trigger error renders as .info-strip--error, not as an inline sibling of the button', async () => {
+    const fetchMock = mockFetchSequence({
+      ...failedRoutes(),
+      [`/api/schedules/${SCHED}/trigger`]: async () => {
+        throw new Error('network failure');
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    const errorEl = await screen.findByText(/Request failed — please try again/);
+    expect(errorEl.closest('.info-strip--error')).toBeTruthy();
+    // Confirm it is NOT a sibling inside .page-action-row
+    expect(errorEl.closest('.page-action-row')).toBeNull();
   });
 });
