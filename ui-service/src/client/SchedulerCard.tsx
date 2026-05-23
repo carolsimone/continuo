@@ -22,13 +22,13 @@ function cardBorderClass(status: string): string {
 
 interface Props {
   schedule: ScheduleSummary;
-  latestTopologyGeneration: number;
 }
 
-export default function SchedulerCard({ schedule, latestTopologyGeneration }: Props) {
+export default function SchedulerCard({ schedule }: Props) {
   const navigate = useNavigate();
   const neverRun = !schedule.last_run_id;
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [drift, setDrift] = useState<{ run: number; latest: number } | null>(null);
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [triggerStatus, setTriggerStatus] = useState<'idle' | 'success'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
@@ -40,6 +40,24 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
       fetch(`/api/schedulers/${schedule.last_run_id}/tasks`)
         .then(r => r.json())
         .then(data => setTasks(data.tasks || []))
+        .catch(() => {});
+    fetch_();
+    const id = setInterval(fetch_, 5000);
+    return () => clearInterval(id);
+  }, [schedule.last_run_id]);
+
+  useEffect(() => {
+    if (!schedule.last_run_id) {
+      setDrift(null);
+      return;
+    }
+    const fetch_ = () =>
+      fetch(`/api/runs/${schedule.last_run_id}/graph`)
+        .then(r => r.json())
+        .then(data => setDrift({
+          run: Number(data.run_topology_generation ?? 0),
+          latest: Number(data.latest_topology_generation ?? 0),
+        }))
         .catch(() => {});
     fetch_();
     const id = setInterval(fetch_, 5000);
@@ -63,19 +81,10 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
   const running = tasks.filter(t => t.status === 'running').length;
   const pct = getScheduleProgressPercent(tasks);
 
-  // Drift only matters while a run is in flight. Once finalised
-  // (active_run_id === null) the strip disappears even if there's drift.
-  const driftState =
-    schedule.active_run_id !== null
-      ? getDriftState(schedule.active_run_topology_generation, latestTopologyGeneration)
-      : 'fresh';
+  const driftState = drift ? getDriftState(drift.run, drift.latest) : 'fresh';
   const showDriftStrip = driftState !== 'fresh';
-  const driftBadge = showDriftStrip
-    ? getDriftBadge(
-        driftState,
-        Number(schedule.active_run_topology_generation ?? 0),
-        latestTopologyGeneration,
-      )
+  const driftBadge = showDriftStrip && drift
+    ? getDriftBadge(driftState as 'stale' | 'unknown', drift.run, drift.latest)
     : null;
 
   const handleClick = () =>
