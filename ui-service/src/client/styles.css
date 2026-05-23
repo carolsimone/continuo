@@ -8,39 +8,9 @@ body {
   font-size: 14px;
 }
 
-.app {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px 16px;
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 24px;
-  border-bottom: 1px solid #e0e0e0;
-  padding-bottom: 16px;
-}
-
-.app-header h1 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-}
-
 .live-badge {
   font-size: 12px;
   color: #22c55e;
-}
-
-.error-banner {
-  background: #fef2f2;
-  color: #dc2626;
-  padding: 8px 12px;
-  border-radius: 6px;
-  margin-bottom: 16px;
-  font-size: 13px;
 }
 
 .empty {
@@ -189,42 +159,6 @@ body {
   color: #6b7280;
 }
 
-/* Stale topology strip — drift signal on the schedule card. */
-.scheduler-card-stale-strip {
-  margin-top: 8px;
-  padding: 6px 10px;
-  border-radius: 4px;
-  background: #fef3c7;
-  color: #92400e;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.scheduler-card-stale-strip--unknown {
-  background: #f3f4f6;
-  color: #374151;
-}
-
-/* ===================== DETAIL PAGE ===================== */
-.detail-page {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
-  background: #f1f5f9;
-  padding: 16px 20px 20px;
-  gap: 0;
-}
-
-.detail-topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding-bottom: 14px;
-  flex-shrink: 0;
-}
-
 .detail-back-link {
   font-size: 13px;
   color: #6366f1;
@@ -333,32 +267,6 @@ body {
 .detail-runs-card {
   flex-shrink: 0;
 }
-
-/* ---- Historical snapshot banner ---- */
-.detail-snapshot-banner {
-  background: #fef9c3;
-  border: 1px solid #fde68a;
-  border-radius: 6px;
-  padding: 7px 14px;
-  font-size: 12px;
-  color: #92400e;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-  margin-bottom: 10px;
-}
-.detail-snapshot-banner button {
-  margin-left: auto;
-  background: none;
-  border: 1px solid #d97706;
-  border-radius: 4px;
-  color: #92400e;
-  font-size: 11px;
-  padding: 2px 8px;
-  cursor: pointer;
-}
-.detail-snapshot-banner button:hover { background: #fef3c7; }
 
 /* ---- Graph search strip ---- */
 .dag-search-strip {
@@ -496,46 +404,6 @@ body {
 .dag-focus-dot--child    { background: #86efac; }
 .dag-focus-dot--dim      { background: #e5e7eb; }
 
-/* ---- Rerun button inside focus legend ---- */
-.dag-rerun-divider {
-  border: none;
-  border-top: 1px solid #f1f5f9;
-  margin: 8px 0;
-}
-
-.dag-rerun-btn {
-  width: 100%;
-  padding: 5px 0;
-  background: #4f46e5;
-  color: #fff;
-  border: none;
-  border-radius: 5px;
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: inherit;
-}
-.dag-rerun-btn:hover:not(:disabled) { background: #4338ca; }
-.dag-rerun-btn:disabled { background: #a5b4fc; cursor: not-allowed; }
-
-.dag-rerun-feedback {
-  padding: 4px 8px;
-  border-radius: 5px;
-  font-size: 10px;
-  text-align: center;
-}
-.dag-rerun-feedback--success {
-  background: #f0fdf4;
-  border: 1px solid #86efac;
-  color: #16a34a;
-}
-.dag-rerun-feedback--error {
-  background: #fef2f2;
-  border: 1px solid #fca5a5;
-  color: #dc2626;
-  margin-bottom: 6px;
-}
-
 /* ---- Nodes table ---- */
 .nodes-table-scroll {
   overflow-y: auto;
@@ -660,69 +528,6 @@ body {
 .run-date { font-size: 12.5px; color: #1e293b; font-weight: 500; }
 .run-duration { font-size: 11px; color: #94a3b8; margin-top: 1px; }
 
-/* ---- Trigger run button ---- */
-.trigger-run-btn {
-  margin-left: auto;
-  padding: 3px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  background: #fff;
-  color: #374151;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.trigger-run-btn:hover:not(:disabled) { background: #f3f4f6; border-color: #9ca3af; }
-.trigger-run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.trigger-run-btn.loading { opacity: 0.6; }
-
-.trigger-error {
-  font-size: 11px;
-  color: #dc2626;
-  margin-top: 4px;
-  padding: 0 16px 8px;
-}
-
-/* Header actions container */
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
-}
-
-/* Update Graph button */
-.update-graph-btn {
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  background: #fff;
-  color: #374151;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.update-graph-btn:hover:not(:disabled) { background: #f3f4f6; border-color: #9ca3af; }
-.update-graph-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.update-graph-btn.loading { opacity: 0.6; }
-.update-graph-btn.success { color: #16a34a; border-color: #86efac; }
-
-/* ---- Cancel button on scheduler card ---- */
-.cancel-run-btn {
-  padding: 3px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  border: 1px solid #fca5a5;
-  border-radius: 4px;
-  background: #fff;
-  color: #dc2626;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.cancel-run-btn:hover { background: #fef2f2; border-color: #ef4444; }
-
 /* ---- Cancel dialog ---- */
 .dialog-overlay {
   position: fixed;
@@ -788,30 +593,6 @@ body {
   margin-top: 4px;
 }
 
-.dialog-btn {
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 6px;
-  cursor: pointer;
-  border: 1px solid transparent;
-  font-family: inherit;
-}
-
-.dialog-btn--secondary {
-  background: #fff;
-  border-color: #d1d5db;
-  color: #374151;
-}
-.dialog-btn--secondary:hover { background: #f9fafb; }
-
-.dialog-btn--danger {
-  background: #dc2626;
-  color: #fff;
-}
-.dialog-btn--danger:hover:not(:disabled) { background: #b91c1c; }
-.dialog-btn--danger:disabled { opacity: 0.4; cursor: not-allowed; }
-
 /* Rerun confirmation dialog (drift warning). */
 .rerun-confirm-dialog { max-width: 480px; }
 .rerun-confirm-title { display: flex; align-items: center; gap: 8px; }
@@ -839,64 +620,122 @@ body {
   gap: 12px;
 }
 .rerun-confirm-paragraph { margin: 0; }
-.dialog-btn--primary {
-  background: #4338ca;
-  color: #fff;
-  border: 1px solid #4338ca;
-}
-.dialog-btn--primary:hover:not(:disabled) { background: #3730a3; }
-.dialog-btn--primary:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.dialog-loading,
-.dialog-config-error,
-.dialog-submit-error {
+.dialog-loading {
   margin: 0;
   font-size: 12px;
   padding: 8px 12px;
   border-radius: 6px;
+  color: #64748b;
+  background: #f8fafc;
 }
 
-.dialog-loading { color: #64748b; background: #f8fafc; }
-
-.dialog-config-error,
-.dialog-submit-error {
-  color: #dc2626;
-  background: #fef2f2;
-  border: 1px solid #fca5a5;
+/* ===================== FOUNDATIONS ===================== */
+.page {
+  min-height: 100vh;
+  background: #f8f9fa;
+  padding: 20px 24px;
 }
 
-.rerun-this-snapshot-group {
-  display: inline-flex;
+.page-header {
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
-/* ---- Rerun / Rebase buttons (parity with .trigger-run-btn) ---- */
-.rerun-control {
+.page-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.page-content {}
+.page-content--readable {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.page-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
 
-.rerun-btn {
-  padding: 3px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  border: 1px solid #d1d5db;
+.page-action-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* ---- Button ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font: 500 12px/1.4 inherit;
   border-radius: 4px;
+  border: 1px solid transparent;
   background: #fff;
   color: #374151;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  font-family: inherit;
 }
-.rerun-btn:hover:not(:disabled) { background: #f3f4f6; border-color: #9ca3af; }
-.rerun-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.rerun-btn.loading { opacity: 0.6; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.rerun-feedback { font-size: 12px; }
-.rerun-feedback--error { color: #dc2626; }
-.rerun-feedback--success { color: #16a34a; }
+.btn--secondary { border-color: #d1d5db; color: #374151; background: #fff; }
+.btn--secondary:hover:not(:disabled) { background: #f3f4f6; border-color: #9ca3af; }
 
-/* ---- Success states for trigger/rerun buttons ---- */
-.rerun-btn.success { color: #16a34a; border-color: #86efac; }
-.trigger-run-btn.success { color: #16a34a; border-color: #86efac; }
+.btn--primary { background: #4338ca; border-color: #4338ca; color: #fff; }
+.btn--primary:hover:not(:disabled) { background: #3730a3; }
+
+.btn--danger { border-color: #fca5a5; color: #dc2626; background: #fff; }
+.btn--danger:hover:not(:disabled) { background: #fef2f2; border-color: #ef4444; }
+
+.btn.is-loading { opacity: 0.6; cursor: progress; }
+.btn.is-success { color: #16a34a; border-color: #86efac; background: #fff; }
+
+/* ---- Info-strip ---- */
+.info-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+.info-strip__icon { flex-shrink: 0; font-size: 13px; }
+.info-strip__action { margin-left: auto; }
+
+.info-strip--warning { background: #fef3c7; border-color: #fde68a; color: #92400e; }
+.info-strip--error   { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
+.info-strip--info    { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
+
+/* ---- Rerun-failed modal radio options ---- */
+.rerun-mode-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.rerun-mode-option:hover { background: #f8fafc; }
+.rerun-mode-option > input[type="radio"] {
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+.rerun-mode-option__title { font-size: 13px; font-weight: 600; color: #0f172a; }
+.rerun-mode-option__desc  { font-size: 12px; color: #475569; }
+.info-strip--neutral { background: #f3f4f6; border-color: #e5e7eb; color: #374151; }
+.info-strip--inline { padding: 2px 8px; font-size: 11px; }

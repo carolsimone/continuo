@@ -30,6 +30,7 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
   const neverRun = !schedule.last_run_id;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [triggerLoading, setTriggerLoading] = useState(false);
+  const [triggerStatus, setTriggerStatus] = useState<'idle' | 'success'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
 
@@ -92,6 +93,8 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
           const body = await r.json().catch(() => ({}));
           throw new Error(body.error || `HTTP ${r.status}`);
         }
+        setTriggerStatus('success');
+        setTimeout(() => setTriggerStatus('idle'), 3000);
       })
       .catch(err => setTriggerError(err.message))
       .finally(() => setTriggerLoading(false));
@@ -130,17 +133,22 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
           )}
           <button
             type="button"
-            className={`trigger-run-btn${triggerLoading ? ' loading' : ''}`}
-            disabled={schedule.is_running || triggerLoading}
+            className={[
+              'btn',
+              'btn--secondary',
+              triggerLoading ? 'is-loading' : '',
+              triggerStatus === 'success' ? 'is-success' : '',
+            ].filter(Boolean).join(' ')}
+            disabled={schedule.is_running || triggerLoading || triggerStatus === 'success'}
             onClick={handleTrigger}
             title={schedule.is_running ? 'A run is already active' : 'Trigger a full DAG run'}
           >
-            {triggerLoading ? 'Triggering…' : 'Trigger run'}
+            {triggerLoading ? 'Triggering…' : triggerStatus === 'success' ? 'Triggered' : 'Trigger run'}
           </button>
           {schedule.is_running && (
             <button
               type="button"
-              className="cancel-run-btn"
+              className="btn btn--danger"
               onClick={handleCancelClick}
               title="Cancel the active run"
             >
@@ -150,14 +158,14 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
         </div>
         {showDriftStrip && driftBadge && (
           <div
-            className={`scheduler-card-stale-strip${driftState === 'unknown' ? ' scheduler-card-stale-strip--unknown' : ''}`}
+            className={`info-strip ${driftState === 'unknown' ? 'info-strip--neutral' : 'info-strip--warning'}`}
             onClick={e => e.stopPropagation()}
           >
             <span aria-hidden="true">{driftState === 'unknown' ? '?' : '⚠'}</span>
             <span>{driftBadge}</span>
           </div>
         )}
-        {triggerError && <div className="trigger-error">{triggerError}</div>}
+        {triggerError && <div className="info-strip info-strip--error">{triggerError}</div>}
         {!neverRun && total > 0 && (
           <div className="scheduler-card-body">
             <div className="progress-row">

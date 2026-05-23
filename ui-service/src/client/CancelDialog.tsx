@@ -78,7 +78,7 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
       >
         <h2 className="dialog-title" id={`cancel-dialog-title-${scheduleName}`}>Cancel run</h2>
         {configError ? (
-          <p className="dialog-config-error">Could not load configuration.</p>
+          <p className="info-strip info-strip--error">Could not load configuration.</p>
         ) : !config ? (
           <p className="dialog-loading">Loading…</p>
         ) : (
@@ -122,18 +122,18 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
                 />
               </label>
             )}
-            {submitError && <p className="dialog-submit-error">{submitError}</p>}
+            {submitError && <p className="info-strip info-strip--error">{submitError}</p>}
             <div className="dialog-actions">
               <button
                 type="button"
-                className="dialog-btn dialog-btn--secondary"
+                className="btn btn--secondary"
                 onClick={onClose}
               >
                 Close
               </button>
               <button
                 type="button"
-                className="dialog-btn dialog-btn--danger"
+                className="btn btn--danger"
                 disabled={!canSubmit}
                 onClick={handleSubmit}
               >

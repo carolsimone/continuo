@@ -57,21 +57,28 @@ export default function DashboardPage() {
   };
 
   const graphBtnLabel = graphLoading
-    ? 'Updating...'
+    ? 'Updating…'
     : graphStatus === 'success'
     ? 'Updated'
     : 'Update Graph';
 
+  const graphBtnClass = [
+    'btn',
+    'btn--secondary',
+    graphLoading ? 'is-loading' : '',
+    graphStatus === 'success' ? 'is-success' : '',
+  ].filter(Boolean).join(' ');
+
   return (
-    <div className="app">
-      <header className="app-header">
+    <div className="page">
+      <header className="page-header">
         <h1>Continuo</h1>
-        <div className="header-actions">
+        <div className="page-actions">
           <span className="live-badge">
             ● live{lastUpdated ? ` · ${lastUpdated.toLocaleTimeString()}` : ''}
           </span>
           <button
-            className={`update-graph-btn${graphLoading ? ' loading' : ''}${graphStatus === 'success' ? ' success' : ''}`}
+            className={graphBtnClass}
             disabled={graphLoading}
             onClick={handleUpdateGraph}
             title="Reload graph from S3 manifests"
@@ -80,9 +87,9 @@ export default function DashboardPage() {
           </button>
         </div>
       </header>
-      {graphError && <div className="error-banner">{graphError}</div>}
-      {error && <div className="error-banner">{error}</div>}
-      <main>
+      {graphError && <div className="info-strip info-strip--error">{graphError}</div>}
+      {error && <div className="info-strip info-strip--error">{error}</div>}
+      <main className="page-content page-content--readable">
         {schedules.length === 0 && !error && (
           <p className="empty">No schedules found.</p>
         )}

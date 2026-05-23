@@ -56,3 +56,13 @@ describe('RunSourcePickerDialog', () => {
     expect(screen.getByText(/no past runs available/i)).toBeInTheDocument();
   });
 });
+
+describe('RunSourcePickerDialog — buttons use .btn foundation', () => {
+  it('Cancel button uses .btn.btn--secondary, no legacy class', () => {
+    render(<RunSourcePickerDialog runs={[]} onPick={vi.fn()} onClose={vi.fn()} />);
+    const cancel = screen.getByRole('button', { name: /cancel/i });
+    expect(cancel.className).toMatch(/\bbtn\b/);
+    expect(cancel.className).toMatch(/\bbtn--secondary\b/);
+    expect(cancel.className).not.toMatch(/\bdialog-btn\b/);
+  });
+});

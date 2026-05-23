@@ -67,7 +67,7 @@ export default function RunSourcePickerDialog({ runs, onPick, onClose }: Props) 
           </ul>
         )}
         <div className="dialog-actions">
-          <button type="button" className="dialog-btn dialog-btn--secondary" onClick={onClose}>
+          <button type="button" className="btn btn--secondary" onClick={onClose}>
             Cancel
           </button>
         </div>
