@@ -18,6 +18,51 @@ function durationSec(r: NodeRun): number | null {
   return Math.round(ms / 1000);
 }
 
+function NodeRunRow({ run: r }: { run: NodeRun }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <tr key={r.task_id}>
+      <td>{formatTime(r.created_at)}</td>
+      <td>{kindLabel(r.kind)}</td>
+      <td>
+        <span className={`pill-sm pill-sm--${r.task_status}`}>{r.task_status || '—'}</span>
+        {r.error_message && (
+          <div className="nodes-error-text">
+            <span
+              className={['nodes-error-short', expanded ? 'nodes-error-short--hidden' : ''].filter(Boolean).join(' ')}
+              title={r.error_message}
+            >
+              {r.error_message}
+            </span>
+            <span className={['nodes-error-full', expanded ? 'nodes-error-full--visible' : ''].filter(Boolean).join(' ')}>
+              {r.error_message}
+            </span>
+            <button
+              type="button"
+              className="nodes-error-toggle"
+              onClick={() => setExpanded(e => !e)}
+            >
+              {expanded ? 'less' : 'more'}
+            </button>
+          </div>
+        )}
+      </td>
+      <td>{r.retry_count + 1}</td>
+      <td>{formatDuration(durationSec(r))}</td>
+      <td><code>{r.image_tag || '—'}</code></td>
+      <td><code>{r.manifest_version || '—'}</code></td>
+      <td>
+        {r.log_s3_key
+          ? <a className="nodes-log-link"
+               href={`/api/task-execution/${r.task_id}/logs?key=${encodeURIComponent(r.log_s3_key)}`}
+               target="_blank" rel="noopener noreferrer">logs</a>
+          : <span className="nodes-dash">—</span>}
+      </td>
+    </tr>
+  );
+}
+
 export default function NodeDetailPage() {
   const { name, fqn } = useParams<{ name: string; fqn: string }>();
   const navigate = useNavigate();
@@ -72,8 +117,10 @@ export default function NodeDetailPage() {
 
   const stats = computeNodeStats(runs);
 
+  const runLatestClass = ['btn', 'btn--secondary', runState === 'loading' ? 'is-loading' : '', runState === 'success' ? 'is-success' : ''].filter(Boolean).join(' ');
+
   return (
-    <div className="node-detail-page">
+    <div className="page">
       {pickerOpen && createPortal(
         <RunSourcePickerDialog
           runs={runs}
@@ -83,94 +130,77 @@ export default function NodeDetailPage() {
         document.body,
       )}
 
-      <div className="detail-topbar">
+      <header className="page-header">
         <button className="detail-back-link" onClick={() => navigate(`/schedule/${name}`)}>
           ← Back to {name}
         </button>
         <div className="detail-scheduler-name">{fqn}</div>
-        <div className="node-detail-actions">
-          <button
-            type="button"
-            className="rerun-btn rerun-btn--latest"
-            disabled={runState === 'loading'}
-            onClick={handleRunLatest}
-            title="Run only this node against the latest topology"
-          >
-            {runState === 'loading' ? 'Triggering…' : '▶ Run this node (latest)'}
-          </button>
-          <button
-            type="button"
-            className="rerun-btn rerun-btn--stale"
-            disabled={runState === 'loading'}
-            onClick={() => setPickerOpen(true)}
-            title="Run this node with the (image_tag, manifest_version) pair from a past run"
-          >
-            ⏱ Run with old snapshot…
-          </button>
-        </div>
-        {runState === 'success' && (
-          <span className="rerun-feedback rerun-feedback--success">✓ Run triggered</span>
-        )}
-        {runState === 'error' && runError && (
-          <span className="rerun-feedback rerun-feedback--error">{runError}</span>
-        )}
+      </header>
+
+      <div className="page-action-row">
+        <button
+          type="button"
+          className={runLatestClass}
+          disabled={runState === 'loading' || runState === 'success'}
+          onClick={handleRunLatest}
+          title="Run only this node against the latest topology"
+        >
+          {runState === 'loading' ? 'Triggering…' : runState === 'success' ? 'Triggered' : '▶ Run this node'}
+        </button>
+        <button
+          type="button"
+          className="btn btn--secondary"
+          disabled={runState === 'loading'}
+          onClick={() => setPickerOpen(true)}
+          title="Run this node with the (image_tag, manifest_version) pair from a past run"
+        >
+          ⏱ Run with old snapshot…
+        </button>
       </div>
 
-      <section className="detail-card">
-        <div className="detail-card-header">
-          Node history
-          <span className="node-stats-summary">
-            {stats.successRatePct !== null
-              ? `${stats.successRatePct}% succeeded`
-              : 'no terminal runs'}
-            {' · '}
-            avg {formatDuration(stats.avgDurationSec)}
-            {' · '}
-            last {stats.total} runs
-          </span>
-        </div>
-        {runs.length === 0 ? (
-          <p className="empty">No runs yet on this node.</p>
-        ) : (
-          <table className="nodes-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Kind</th>
-                <th>Status</th>
-                <th>Attempt</th>
-                <th>Duration</th>
-                <th>Image tag</th>
-                <th>Manifest</th>
-                <th>Logs</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map(r => (
-                <tr key={r.task_id}>
-                  <td>{formatTime(r.created_at)}</td>
-                  <td>{kindLabel(r.kind)}</td>
-                  <td>
-                    <span className={`pill-sm pill-sm--${r.task_status}`}>{r.task_status || '—'}</span>
-                    {r.error_message && <div className="nodes-error-text">{r.error_message}</div>}
-                  </td>
-                  <td>{r.retry_count + 1}</td>
-                  <td>{formatDuration(durationSec(r))}</td>
-                  <td><code>{r.image_tag || '—'}</code></td>
-                  <td><code>{r.manifest_version || '—'}</code></td>
-                  <td>
-                    {r.log_s3_key
-                      ? <a className="nodes-log-link"
-                           href={`/api/task-execution/${r.task_id}/logs?key=${encodeURIComponent(r.log_s3_key)}`}
-                           target="_blank" rel="noopener noreferrer">logs</a>
-                      : <span className="nodes-dash">—</span>}
-                  </td>
+      {runState === 'error' && runError && (
+        <div className="info-strip info-strip--error">{runError}</div>
+      )}
+
+      <main className="page-content">
+        <section className="detail-card">
+          <div className="detail-card-header">
+            Node history
+            <span className="node-stats-summary">
+              {stats.successRatePct !== null
+                ? `${stats.successRatePct}% succeeded`
+                : 'no terminal runs'}
+              {' · '}
+              avg {formatDuration(stats.avgDurationSec)}
+              {' · '}
+              last {stats.total} runs
+            </span>
+          </div>
+          {runs.length === 0 ? (
+            <p className="empty">No runs yet on this node.</p>
+          ) : (
+            <table className="nodes-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Kind</th>
+                  <th>Status</th>
+                  <th>Attempt</th>
+                  <th>Duration</th>
+                  <th>Image tag</th>
+                  <th>Manifest</th>
+                  <th>Logs</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+              </thead>
+              <tbody>
+                {runs.map(r => (
+                  <NodeRunRow key={r.task_id} run={r} />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      </main>
     </div>
   );
 }
