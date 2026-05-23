@@ -900,3 +900,93 @@ body {
 /* ---- Success states for trigger/rerun buttons ---- */
 .rerun-btn.success { color: #16a34a; border-color: #86efac; }
 .trigger-run-btn.success { color: #16a34a; border-color: #86efac; }
+
+/* ===================== FOUNDATIONS ===================== */
+.page {
+  min-height: 100vh;
+  background: #f8f9fa;
+  padding: 20px 24px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.page-content {}
+.page-content--readable {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.page-action-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* ---- Button ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font: 500 12px/1.4 inherit;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  font-family: inherit;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn--secondary { border-color: #d1d5db; color: #374151; background: #fff; }
+.btn--secondary:hover:not(:disabled) { background: #f3f4f6; border-color: #9ca3af; }
+
+.btn--primary { background: #4338ca; border-color: #4338ca; color: #fff; }
+.btn--primary:hover:not(:disabled) { background: #3730a3; }
+
+.btn--danger { border-color: #fca5a5; color: #dc2626; background: #fff; }
+.btn--danger:hover:not(:disabled) { background: #fef2f2; border-color: #ef4444; }
+
+.btn.is-loading { opacity: 0.6; cursor: progress; }
+.btn.is-success { color: #16a34a; border-color: #86efac; background: #fff; }
+
+/* ---- Info-strip ---- */
+.info-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+.info-strip__icon { flex-shrink: 0; font-size: 13px; }
+.info-strip__action { margin-left: auto; }
+
+.info-strip--warning { background: #fef3c7; border-color: #fde68a; color: #92400e; }
+.info-strip--error   { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
+.info-strip--info    { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
+.info-strip--neutral { background: #f3f4f6; border-color: #e5e7eb; color: #374151; }
