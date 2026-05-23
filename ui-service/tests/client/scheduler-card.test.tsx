@@ -29,14 +29,24 @@ function renderCard(schedule: ScheduleSummary, latestGen: number) {
   );
 }
 
-describe('SchedulerCard — trigger button', () => {
-  it('renders the Trigger run button with the renamed label', () => {
-    renderCard(
-      baseSchedule({ is_running: false, last_run_id: 'r1' }),
-      0,
-    );
-    const button = screen.getByTitle('Trigger a full DAG run');
-    expect(button).toHaveTextContent('Trigger run');
+describe('SchedulerCard — trigger button uses .btn', () => {
+  it('Trigger run button has .btn.btn--secondary, no legacy class', () => {
+    renderCard(baseSchedule({ is_running: false, last_run_id: 'r1' }), 0);
+    const btn = screen.getByTitle('Trigger a full DAG run');
+    expect(btn.className).toMatch(/\bbtn\b/);
+    expect(btn.className).toMatch(/\bbtn--secondary\b/);
+    expect(btn.className).not.toMatch(/\btrigger-run-btn\b/);
+    expect(btn).toHaveTextContent('Trigger run');
+  });
+});
+
+describe('SchedulerCard — cancel button uses .btn', () => {
+  it('Cancel button has .btn.btn--danger, no legacy class', () => {
+    renderCard(baseSchedule({ is_running: true, last_run_id: 'r1' }), 0);
+    const btn = screen.getByTitle('Cancel the active run');
+    expect(btn.className).toMatch(/\bbtn\b/);
+    expect(btn.className).toMatch(/\bbtn--danger\b/);
+    expect(btn.className).not.toMatch(/\bcancel-run-btn\b/);
   });
 });
 
@@ -48,8 +58,8 @@ describe('SchedulerCard — stale strip', () => {
     );
     const strip = screen.getByText(/source 2 gen behind latest/);
     expect(strip).toBeInTheDocument();
-    expect(strip.closest('.scheduler-card-stale-strip')).toBeInTheDocument();
-    expect(strip.closest('.scheduler-card-stale-strip--unknown')).toBeNull();
+    expect(strip.closest('.info-strip')).toBeInTheDocument();
+    expect(strip.closest('.info-strip--warning')).toBeInTheDocument();
   });
 
   it('renders the unknown variant of the strip when run gen is 0', () => {
@@ -58,7 +68,8 @@ describe('SchedulerCard — stale strip', () => {
       7,
     );
     const strip = screen.getByText('topology version unknown');
-    expect(strip.closest('.scheduler-card-stale-strip--unknown')).toBeInTheDocument();
+    expect(strip).toBeInTheDocument();
+    expect(strip.closest('.info-strip--neutral')).toBeInTheDocument();
   });
 
   it('does NOT render the strip when active_run_id is null (run finalised)', () => {
