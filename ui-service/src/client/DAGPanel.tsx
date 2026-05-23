@@ -207,15 +207,27 @@ export default function DAGPanel({
     if (lastAutoFocusKeyRef.current === autoFocusKey) return;
     lastAutoFocusKeyRef.current = autoFocusKey;
     fitView({
-      padding: 0.18,
+      padding: 0.1,
       nodes: layout.nodes,
-      maxZoom: 1,
+      maxZoom: 1.5,
       duration: 300,
     });
   }, [fitView, layout.nodes, searchQuery, selectedNodeId]);
 
   useEffect(() => {
     focusFullGraph();
+  }, [focusFullGraph]);
+
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      lastAutoFocusKeyRef.current = null;
+      focusFullGraph();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [focusFullGraph]);
 
   useEffect(() => {
@@ -265,7 +277,7 @@ export default function DAGPanel({
         />
       </div>
 
-      <div className="dag-viewport">
+      <div className="dag-viewport" ref={viewportRef}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -273,7 +285,8 @@ export default function DAGPanel({
           onEdgesChange={onEdgesChange}
           onNodeClick={handleNodeClick}
           onMove={() => setZoomLevel(Math.round(getViewport().zoom * 100))}
-          fitView
+          minZoom={0.2}
+          maxZoom={2}
           proOptions={{ hideAttribution: true }}
         >
           <Background color="#e2e8f0" gap={24} />
