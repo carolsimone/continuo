@@ -7,7 +7,6 @@ import { createSchedulesRouter } from '../../src/server/routes/schedules';
 const mockTriggerSchedule = vi.fn();
 const mockListAllSchedules = vi.fn();
 const mockCancelSchedule = vi.fn();
-const mockListActiveRunDrifts = vi.fn();
 
 const mockStateClient = {
   triggerSchedule: mockTriggerSchedule,
@@ -15,9 +14,9 @@ const mockStateClient = {
   cancelSchedule: mockCancelSchedule,
 };
 
-const mockGraphClient = {
-  listActiveRunDrifts: mockListActiveRunDrifts,
-} as any;
+// graph client is still needed by the constructor for `/:name/graph` and
+// `/:name/runs`; the `GET /` route no longer uses it.
+const mockGraphClient = {} as any;
 
 const app = express();
 app.use(express.json());
@@ -26,7 +25,7 @@ app.use('/api/schedules', createSchedulesRouter(mockStateClient as any, mockGrap
 describe('GET /api/schedules', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('merges state schedules with orchestrator drift info', async () => {
+  it('returns the state schedule catalog without drift fields', async () => {
     mockListAllSchedules.mockImplementation((_req: any, cb: any) =>
       cb(null, {
         schedules: [
@@ -37,53 +36,35 @@ describe('GET /api/schedules', () => {
         ],
       })
     );
-    mockListActiveRunDrifts.mockImplementation((_req: any, cb: any) =>
-      cb(null, {
-        latest_topology_generation: '7',
-        active_runs: [
-          { schedule_name: 'daily', run_id: 'run-1', run_topology_generation: '5' },
-        ],
-      })
-    );
 
     const res = await request(app).get('/api/schedules');
 
     expect(res.status).toBe(200);
-    expect(res.body.latest_topology_generation).toBe(7);
     expect(res.body.schedules).toHaveLength(2);
+
     const daily = res.body.schedules.find((s: any) => s.schedule_name === 'daily');
-    expect(daily.active_run_topology_generation).toBe(5);
-    expect(daily.active_run_id).toBe('run-1');
-    const hourly = res.body.schedules.find((s: any) => s.schedule_name === 'hourly');
-    expect(hourly.active_run_topology_generation).toBeNull();
-    expect(hourly.active_run_id).toBeNull();
-  });
+    expect(daily).toMatchObject({
+      schedule_name: 'daily',
+      cron_expression: '0 0 * * *',
+      is_running: true,
+      last_run_id: 'run-1',
+      last_run_status: 'PENDING',
+    });
+    expect(daily).not.toHaveProperty('active_run_topology_generation');
+    expect(daily).not.toHaveProperty('active_run_id');
 
-  it('returns 500 if orchestrator drift call fails', async () => {
-    mockListAllSchedules.mockImplementation((_req: any, cb: any) =>
-      cb(null, { schedules: [] })
-    );
-    mockListActiveRunDrifts.mockImplementation((_req: any, cb: any) =>
-      cb(new Error('orchestrator down'))
-    );
-
-    const res = await request(app).get('/api/schedules');
-
-    expect(res.status).toBe(500);
-    expect(res.body.error).toMatch(/orchestrator down/);
+    expect(res.body).not.toHaveProperty('latest_topology_generation');
   });
 
   it('returns 500 if state call fails', async () => {
     mockListAllSchedules.mockImplementation((_req: any, cb: any) =>
       cb(new Error('state down'))
     );
-    mockListActiveRunDrifts.mockImplementation((_req: any, cb: any) =>
-      cb(null, { latest_topology_generation: '7', active_runs: [] })
-    );
 
     const res = await request(app).get('/api/schedules');
 
     expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/state down/);
   });
 });
 
