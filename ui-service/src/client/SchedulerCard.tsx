@@ -165,7 +165,7 @@ export default function SchedulerCard({ schedule, latestTopologyGeneration }: Pr
             <span>{driftBadge}</span>
           </div>
         )}
-        {triggerError && <div className="trigger-error">{triggerError}</div>}
+        {triggerError && <div className="info-strip info-strip--error">{triggerError}</div>}
         {!neverRun && total > 0 && (
           <div className="scheduler-card-body">
             <div className="progress-row">
