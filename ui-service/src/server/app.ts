@@ -9,6 +9,7 @@ import { createExecutionsRouter } from './routes/executions';
 import { createTaskExecutionRouter } from './routes/task-execution';
 import { createGraphRouter, createDashboardGraphRouter } from './routes/graph';
 import { createConfigRouter } from './routes/config';
+import { createTopologyRouter } from './routes/topology';
 
 export function createApp(
   client: GrpcClient,
@@ -26,6 +27,7 @@ export function createApp(
   app.use('/api/task-execution', createTaskExecutionRouter());
   app.use('/api/graph', createGraphRouter(redisClient));
   app.use('/api/dashboard', createDashboardGraphRouter(redisClient));
+  app.use('/api/topology', createTopologyRouter(graphClient));
   app.use('/api/config', createConfigRouter(configFilePath));
   return app;
 }
