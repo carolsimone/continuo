@@ -69,7 +69,8 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
         from_node_id: e.from_node_id,
         to_node_id: e.to_node_id,
       }));
-      res.json({ nodes, edges });
+      const topology_generation = Number(graphResp.topology_generation ?? 0);
+      res.json({ nodes, edges, topology_generation });
     });
   });
 
