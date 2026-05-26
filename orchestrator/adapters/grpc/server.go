@@ -87,6 +87,11 @@ func (s *Server) ListActiveRunDrifts(ctx context.Context, req *orchestratorv1.Li
 	return s.queryHandler.ListActiveRunDrifts(ctx, req)
 }
 
+// ListScheduleTopologies delegates to the query handler.
+func (s *Server) ListScheduleTopologies(ctx context.Context, req *orchestratorv1.ListScheduleTopologiesRequest) (*orchestratorv1.ListScheduleTopologiesResponse, error) {
+	return s.queryHandler.ListScheduleTopologies(ctx, req)
+}
+
 // ============================================================================
 // INTERCEPTORS
 // ============================================================================

@@ -47,6 +47,9 @@ func (fakeScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domai
 func (fakeScheduleAndRunLists) ListRuns(context.Context, string) ([]*domain.RunSummary, error) {
 	return nil, nil
 }
+func (fakeScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
+	return nil, nil
+}
 
 func newHandler(rq *fakeDriftAwareRuns) *grpcadapter.QueryHandler {
 	return grpcadapter.NewQueryHandler(fakeScheduleAndRunLists{}, rq, slog.New(slog.NewTextHandler(os.Stderr, nil)))

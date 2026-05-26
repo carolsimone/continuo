@@ -19,6 +19,7 @@ import (
 type ScheduleAndRunListReader interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
 	ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error)
+	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
 }
 
 // DriftAwareRunReader returns view-shaped run data composed from Neo4j
@@ -56,6 +57,7 @@ func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1
 		Nodes: make([]*orchestratorv1.TableNode, 0, len(graph.Nodes)),
 		Edges: make([]*orchestratorv1.GraphEdge, 0, len(graph.Edges)),
 	}
+	resp.TopologyGeneration = graph.TopologyGeneration
 	for _, n := range graph.Nodes {
 		resp.Nodes = append(resp.Nodes, domainToProtoNode(n))
 	}
@@ -133,6 +135,28 @@ func (h *QueryHandler) ListActiveRunDrifts(ctx context.Context, req *orchestrato
 			RunId:                 r.RunID,
 			RunTopologyGeneration: r.TopologyGeneration,
 		})
+	}
+	return resp, nil
+}
+
+func (h *QueryHandler) ListScheduleTopologies(ctx context.Context, _ *orchestratorv1.ListScheduleTopologiesRequest) (*orchestratorv1.ListScheduleTopologiesResponse, error) {
+	summaries, err := h.scheduleAndRunLists.ListScheduleTopologies(ctx)
+	if err != nil {
+		h.logger.Error("ListScheduleTopologies failed", "error", err)
+		return nil, status.Errorf(codes.Internal, "ListScheduleTopologies: %v", err)
+	}
+	resp := &orchestratorv1.ListScheduleTopologiesResponse{
+		Schedules: make([]*orchestratorv1.ScheduleTopologySummary, 0, len(summaries)),
+	}
+	for _, s := range summaries {
+		item := &orchestratorv1.ScheduleTopologySummary{
+			ScheduleName: s.ScheduleName,
+			NodeCount:    int32(s.NodeCount),
+		}
+		if !s.LastUpdatedAt.IsZero() {
+			item.LastUpdatedAt = timestamppb.New(s.LastUpdatedAt)
+		}
+		resp.Schedules = append(resp.Schedules, item)
 	}
 	return resp, nil
 }

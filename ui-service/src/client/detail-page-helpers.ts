@@ -24,6 +24,7 @@ export function resolveNodeStatus(node: GraphNode, tasks: Task[]): string {
 }
 
 interface ResolveActiveGraphArgs {
+  mode?: 'run' | 'latest';
   scheduleGraph: ScheduleGraph | null;
   liveRunGraph: RunGraph | null;
   selectedRunGraph: RunGraph | null;
@@ -31,11 +32,13 @@ interface ResolveActiveGraphArgs {
 }
 
 export function resolveActiveGraph({
+  mode,
   scheduleGraph,
   liveRunGraph,
   selectedRunGraph,
   selectedRunId,
 }: ResolveActiveGraphArgs): ScheduleGraph | null {
+  if (mode === 'latest') return scheduleGraph;
   if (selectedRunId) {
     return toScheduleGraph(selectedRunGraph);
   }

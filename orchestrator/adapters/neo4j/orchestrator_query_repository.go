@@ -29,28 +29,32 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 	defer session.Close(ctx)
 
 	query := `
-		MATCH (n:Table {schedule_name: $schedule_name})
-		WHERE COALESCE(n.active, true)
-		OPTIONAL MATCH (n)-[:DEPENDS_ON]->(u:Table)
-		  WHERE COALESCE(u.active, true)
-		    AND (u.schedule_name <> $schedule_name OR u.schedule_name IS NULL)
-		WITH collect(DISTINCT n) AS scheduleNodes,
-		     collect(DISTINCT u) AS externalNodes,
-		     collect(DISTINCT CASE WHEN u IS NOT NULL THEN {
-		       from_id: n.service_name + '.' + n.schema_name + '.' + n.table_name,
-		       to_id:   u.service_name + '.' + u.schema_name + '.' + u.table_name
-		     } END) AS crossEdges
-		UNWIND scheduleNodes AS n
-		OPTIONAL MATCH (n)-[:DEPENDS_ON]->(m:Table {schedule_name: $schedule_name})
-		  WHERE COALESCE(m.active, true)
-		WITH scheduleNodes, externalNodes, crossEdges,
-		     collect(DISTINCT CASE WHEN m IS NOT NULL THEN {
-		       from_id: n.service_name + '.' + n.schema_name + '.' + n.table_name,
-		       to_id:   m.service_name + '.' + m.schema_name + '.' + m.table_name
-		     } END) AS internalEdges
-		RETURN scheduleNodes + externalNodes AS allNodes,
-		       crossEdges + internalEdges AS allEdges
-	`
+        OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
+        WITH COALESCE(root.topology_generation, 0) AS topology_generation
+        OPTIONAL MATCH (n:Table {schedule_name: $schedule_name})
+        WHERE COALESCE(n.active, true)
+        OPTIONAL MATCH (n)-[:DEPENDS_ON]->(u:Table)
+          WHERE COALESCE(u.active, true)
+            AND (u.schedule_name <> $schedule_name OR u.schedule_name IS NULL)
+        WITH topology_generation,
+             collect(DISTINCT n) AS scheduleNodes,
+             collect(DISTINCT u) AS externalNodes,
+             collect(DISTINCT CASE WHEN u IS NOT NULL THEN {
+               from_id: n.service_name + '.' + n.schema_name + '.' + n.table_name,
+               to_id:   u.service_name + '.' + u.schema_name + '.' + u.table_name
+             } END) AS crossEdges
+        UNWIND (CASE WHEN size(scheduleNodes)=0 THEN [null] ELSE scheduleNodes END) AS n
+        OPTIONAL MATCH (n)-[:DEPENDS_ON]->(m:Table {schedule_name: $schedule_name})
+          WHERE COALESCE(m.active, true)
+        WITH topology_generation, scheduleNodes, externalNodes, crossEdges,
+             collect(DISTINCT CASE WHEN m IS NOT NULL THEN {
+               from_id: n.service_name + '.' + n.schema_name + '.' + n.table_name,
+               to_id:   m.service_name + '.' + m.schema_name + '.' + m.table_name
+             } END) AS internalEdges
+        RETURN topology_generation,
+               scheduleNodes + externalNodes AS allNodes,
+               crossEdges + internalEdges    AS allEdges
+    `
 
 	result, err := session.Run(ctx, query, map[string]interface{}{
 		"schedule_name": scheduleName,
@@ -67,6 +71,11 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 	}
 
 	record := result.Record()
+
+	var topologyGen int64
+	if v, ok := recordValue(record, "topology_generation").(int64); ok {
+		topologyGen = v
+	}
 
 	rawNodes, _ := record.Get("allNodes")
 	rawEdges, _ := record.Get("allEdges")
@@ -124,7 +133,7 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 	}
 
 	r.logger.Debug("GetScheduleGraph", "schedule", scheduleName, "nodes", len(nodes), "edges", len(edges))
-	return &domain.ScheduleGraph{Nodes: nodes, Edges: edges}, nil
+	return &domain.ScheduleGraph{Nodes: nodes, Edges: edges, TopologyGeneration: topologyGen}, nil
 }
 
 // ListRuns returns completed runs for a schedule ordered by creation date descending.
@@ -443,6 +452,54 @@ func (r *OrchestratorQueryRepository) getAllNodesInRun(ctx context.Context, tx n
 		return nil, fmt.Errorf("failed to query all nodes in run: %w", err)
 	}
 	return collectNodes(ctx, result)
+}
+
+// ListScheduleTopologies returns one row per schedule_name that has at least
+// one active :Table, with node_count and the most recent last_updated_at
+// across that schedule's nodes. Schedules with zero active nodes are omitted.
+// Null schedule_name rows are defensively excluded.
+func (r *OrchestratorQueryRepository) ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	query := `
+        MATCH (t:Table)
+        WHERE COALESCE(t.active, true) AND t.schedule_name IS NOT NULL
+        RETURN t.schedule_name        AS schedule_name,
+               count(t)               AS node_count,
+               max(t.last_updated_at) AS last_updated_at
+        ORDER BY t.schedule_name
+    `
+	result, err := session.Run(ctx, query, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListScheduleTopologies: %w", err)
+	}
+	out := make([]*domain.ScheduleTopologySummary, 0)
+	for result.Next(ctx) {
+		record := result.Record()
+		summary := &domain.ScheduleTopologySummary{
+			ScheduleName: safeString(recordValue(record, "schedule_name")),
+		}
+		if v, ok := recordValue(record, "node_count").(int64); ok {
+			summary.NodeCount = int(v)
+		}
+		// :Table.last_updated_at is written by TopologyRepository with Cypher
+		// `datetime()` (zoned), which the Go driver returns as time.Time.
+		// Test fixtures may use `localdatetime()` which arrives as
+		// neo4j.LocalDateTime. Handle both so the gRPC field is populated in
+		// production and tests.
+		switch v := recordValue(record, "last_updated_at").(type) {
+		case time.Time:
+			summary.LastUpdatedAt = v
+		case neo4j.LocalDateTime:
+			summary.LastUpdatedAt = v.Time()
+		}
+		out = append(out, summary)
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("ListScheduleTopologies iterate: %w", err)
+	}
+	return out, nil
 }
 
 // parseNeo4jTimestamp parses a Neo4j datetime string into a time.Time.

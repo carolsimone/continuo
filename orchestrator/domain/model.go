@@ -57,8 +57,9 @@ type TableNode struct {
 }
 
 type ScheduleGraph struct {
-	Nodes []*TableNode
-	Edges []*GraphEdge
+	Nodes              []*TableNode
+	Edges              []*GraphEdge
+	TopologyGeneration int64 // :TopologyRoot.topology_generation at query time; 0 when unknown.
 }
 
 // CascadeTaskSkipped is the event payload written to task.status.updated:v1 outbox entries

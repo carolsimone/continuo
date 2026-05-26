@@ -8,6 +8,8 @@ service OrchestratorQuery {
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc GetRunGraph(GetRunGraphRequest) returns (GetRunGraphResponse);
   rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
+  rpc ListScheduleTopologies(ListScheduleTopologiesRequest)
+      returns (ListScheduleTopologiesResponse);
 }
 
 message TableNode {
@@ -37,8 +39,12 @@ message GraphEdge {
 
 message GetScheduleGraphRequest { string schedule_name = 1; }
 message GetScheduleGraphResponse {
-  repeated TableNode nodes = 1;
-  repeated GraphEdge edges = 2;
+  repeated TableNode nodes              = 1;
+  repeated GraphEdge edges              = 2;
+  // topology_generation is :TopologyRoot.topology_generation at query time.
+  // Returns 0 when the singleton is missing or the property is unset; consumers
+  // MUST treat 0 as "generation unknown", not "generation zero".
+  int64 topology_generation             = 3;
 }
 
 message ListRunsRequest { string schedule_name = 1; }
@@ -75,4 +81,16 @@ message ActiveRunDrift {
   string schedule_name = 1;
   string run_id = 2;
   int64 run_topology_generation = 3;
+}
+
+message ListScheduleTopologiesRequest {}
+
+message ListScheduleTopologiesResponse {
+  repeated ScheduleTopologySummary schedules = 1;
+}
+
+message ScheduleTopologySummary {
+  string schedule_name                       = 1;
+  int32  node_count                          = 2;
+  google.protobuf.Timestamp last_updated_at  = 3;
 }

@@ -32,10 +32,16 @@ None.
 | Route | Method | Backend |
 |---|---|---|
 | `/api/schedules` | GET | `ListAllSchedules` → state gRPC. Returns the schedule catalog (name, cron, status, last run summary). |
-| `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → orchestrator gRPC |
+| `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → orchestrator gRPC. Response includes `topology_generation` (current `:TopologyRoot.topology_generation`; `0` = unknown). |
 | `/api/schedules/:name/runs` | GET | `ListRuns` → orchestrator gRPC |
 | `/api/schedules/:name/trigger` | POST | `TriggerSchedule` → state gRPC |
 | `/api/graph/update` | POST | Publishes `update.graph:v1` → Redis |
+
+#### Topology API
+
+| Route | Method | Backend |
+|---|---|---|
+| `/api/topology/schedules` | GET | `ListScheduleTopologies` → orchestrator gRPC. Returns one entry per schedule with at least one active `:Table`: `{schedule_name, node_count, last_updated_at}`. Backs the homepage "DAG Latest Snapshot" tile row. |
 
 #### Run / scheduler API
 
@@ -88,6 +94,7 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 | `GetScheduleGraph` | `GET /api/schedules/:name/graph` |
 | `ListRuns` | `GET /api/schedules/:name/runs` |
 | `GetRunGraph` | `GET /api/runs/:run_id/graph` (used both directly and by per-card drift polling on the dashboard) |
+| `ListScheduleTopologies` | `GET /api/topology/schedules` |
 
 ### S3
 
@@ -145,11 +152,12 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 - **Primary**: `/api/runs/:run_id/graph` — uses the run snapshot created by `orchestrator`; includes per-node `EXECUTES.status` from the live execution projection.
 - **Fallback**: `/api/schedules/:name/graph` — topology view without run status; used when no run snapshot exists yet.
 - When a run snapshot includes node statuses, the DAG renderer uses those directly and only falls back to `state` task rows for the same node when both are present.
+- **Latest mode** (`/schedule/:name/latest`): `DetailPage` is rendered with `mode="latest"`; `resolveActiveGraph` short-circuits to the topology graph (`/api/schedules/:name/graph`, polled every 5s). A `topology v<N>` chip is rendered in the page header using `:TopologyRoot.topology_generation`. Triggers from this route still work; the orchestrator pins the generation at snapshot-write time.
 
 ## Frontend Architecture
 
 - React SPA (TypeScript + Vite)
-- `DashboardPage`: polls `/api/schedules` every 5 seconds; shows schedule cards
+- `DashboardPage`: polls `/api/schedules` every 5 seconds for the schedule cards (top of page); polls `/api/topology/schedules` every 5 seconds for the "DAG Latest Snapshot" tile row (bottom of page). Each tile navigates to `/schedule/:name/latest`.
 - `SchedulerCard`: displays schedule name, running status, cron expression, last run time and progress; polls `/api/schedulers/:last_run_id/tasks` for task progress and `/api/runs/:last_run_id/graph` for topology-drift information (both every 5 s); shows a warning strip when the last run's `run_topology_generation` is older than the orchestrator's `latest_topology_generation`, matching the drift logic used on the schedule detail page; includes a "Trigger run" button to start a full DAG run (disabled while a run is active) and a "Cancel" button while a run is in flight
 - `DetailPage`: shows DAG panel, nodes panel, past runs panel for a selected run; includes Rerun and Rebase buttons for terminal runs with drift badge when topology generation differs
 - `DAGPanel`: renders graph topology using run graph or schedule graph

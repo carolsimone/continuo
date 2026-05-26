@@ -67,6 +67,10 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 			_, err := client.ListActiveRunDrifts(ctx, &orchestratorv1.ListActiveRunDriftsRequest{})
 			return err
 		}},
+		{"ListScheduleTopologies", func() error {
+			_, err := client.ListScheduleTopologies(ctx, &orchestratorv1.ListScheduleTopologiesRequest{})
+			return err
+		}},
 	}
 
 	for _, c := range cases {
@@ -90,6 +94,9 @@ func (stubScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domai
 	return &domain.ScheduleGraph{}, nil
 }
 func (stubScheduleAndRunLists) ListRuns(context.Context, string) ([]*domain.RunSummary, error) {
+	return nil, nil
+}
+func (stubScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
 

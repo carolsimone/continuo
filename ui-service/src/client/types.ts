@@ -51,6 +51,7 @@ export interface GraphEdge {
 export interface ScheduleGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  topology_generation?: number;
 }
 
 export interface RunSummary {
@@ -106,4 +107,14 @@ export interface NodeRun {
 
 export interface NodeRunsResponse {
   runs: NodeRun[];
+}
+
+export interface ScheduleTopologySummary {
+  schedule_name: string;
+  node_count: number;
+  last_updated_at: string | null;
+}
+
+export interface TopologyListResponse {
+  schedules: ScheduleTopologySummary[];
 }

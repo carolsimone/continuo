@@ -211,3 +211,109 @@ func TestOrchestratorQueryRepository_ListActiveRuns_NewestFirst(t *testing.T) {
 	assert.Equal(t, "order-newer", filtered[0].RunID, "head row must be the newest in-flight run")
 	assert.Equal(t, "order-older", filtered[1].RunID, "second row must be the older in-flight run")
 }
+
+func TestListScheduleTopologies(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	marker := t.Name()
+
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := session.Run(ctx, `
+        CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'a',
+                        schedule_name:'sched-x', active:true,
+                        last_updated_at: datetime('2026-05-26T10:00:00Z'),
+                        test_marker:$m})
+        CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'b',
+                        schedule_name:'sched-x', active:true,
+                        last_updated_at: datetime('2026-05-26T11:00:00Z'),
+                        test_marker:$m})
+        CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'c',
+                        schedule_name:'sched-y', active:true,
+                        last_updated_at: datetime('2026-05-26T09:00:00Z'),
+                        test_marker:$m})
+        CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'d',
+                        schedule_name:'sched-x', active:false,
+                        last_updated_at: datetime('2026-05-26T12:00:00Z'),
+                        test_marker:$m})
+        CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'e',
+                        schedule_name:null, active:true,
+                        last_updated_at: datetime('2026-05-26T08:00:00Z'),
+                        test_marker:$m})
+    `, map[string]any{"m": marker})
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	t.Cleanup(func() {
+		s := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer s.Close(ctx)
+		_, _ = s.Run(ctx, "MATCH (t:Table {test_marker:$m}) DETACH DELETE t",
+			map[string]any{"m": marker})
+	})
+
+	got, err := repo.ListScheduleTopologies(ctx)
+	require.NoError(t, err)
+
+	bySchedule := map[string]*domain.ScheduleTopologySummary{}
+	for _, s := range got {
+		if s.ScheduleName == "sched-x" || s.ScheduleName == "sched-y" {
+			bySchedule[s.ScheduleName] = s
+		}
+	}
+	require.Contains(t, bySchedule, "sched-x")
+	require.Contains(t, bySchedule, "sched-y")
+	assert.Equal(t, 2, bySchedule["sched-x"].NodeCount, "active rows only")
+	assert.Equal(t, 1, bySchedule["sched-y"].NodeCount)
+	assert.Equal(t, "2026-05-26T11:00:00",
+		bySchedule["sched-x"].LastUpdatedAt.Format("2006-01-02T15:04:05"),
+		"max(last_updated_at) of active rows")
+}
+
+func TestListScheduleTopologies_EmptyReturnsEmptySlice(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, _, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	got, err := repo.ListScheduleTopologies(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, got, "must return [] not nil")
+}
+
+func TestGetScheduleGraph_PopulatesTopologyGeneration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	marker := t.Name()
+
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := s.Run(ctx, `
+        MERGE (root:TopologyRoot {id:'singleton'})
+        SET   root.topology_generation = 42
+        CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'a',
+                        schedule_name:'gen-test', active:true,
+                        last_updated_at: datetime('2026-05-26T10:00:00Z'),
+                        test_marker:$m})
+    `, map[string]any{"m": marker})
+	require.NoError(t, err)
+	s.Close(ctx)
+	t.Cleanup(func() {
+		s := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer s.Close(ctx)
+		_, _ = s.Run(ctx, "MATCH (t:Table {test_marker:$m}) DETACH DELETE t",
+			map[string]any{"m": marker})
+		_, _ = s.Run(ctx, "MATCH (r:TopologyRoot {id:'singleton'}) REMOVE r.topology_generation",
+			nil)
+	})
+
+	g, err := repo.GetScheduleGraph(ctx, "gen-test")
+	require.NoError(t, err)
+	assert.Equal(t, int64(42), g.TopologyGeneration)
+	assert.Len(t, g.Nodes, 1, "schedule graph must return the seeded node")
+}
