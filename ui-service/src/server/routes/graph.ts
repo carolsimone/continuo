@@ -8,6 +8,11 @@ export const UPDATE_GRAPH_STREAM = 'update.graph:v1';
 
 const VALID_SOURCES = ['s3', 'local'];
 
+async function publishGraphUpdate(redis: Redis, source: string, requestId: string): Promise<void> {
+  await redis.xadd(UPDATE_GRAPH_STREAM, '*', 'source', source);
+  console.log(`graph.update published source=${source}${requestId ? ` request_id=${requestId}` : ''}`);
+}
+
 export function createGraphRouter(redisClient: Redis | null) {
   const router = Router();
 
@@ -38,8 +43,45 @@ export function createGraphRouter(redisClient: Redis | null) {
     const requestId = req.header('x-request-id') || '';
 
     try {
-      await redisClient.xadd(UPDATE_GRAPH_STREAM, '*', 'source', source);
-      console.log(`graph.update published source=${source}${requestId ? ` request_id=${requestId}` : ''}`);
+      await publishGraphUpdate(redisClient, source, requestId);
+      res.json({ ok: true, source });
+    } catch (err: any) {
+      console.error('Failed to publish graph update:', err.message);
+      res.status(500).json({ error: 'failed to publish graph update' });
+    }
+  });
+
+  return router;
+}
+
+export function createDashboardGraphRouter(redisClient: Redis | null) {
+  const router = Router();
+
+  // POST /api/dashboard/graph-update — same-origin browser route for the
+  // dashboard's manual rebuild button. Gated by Sec-Fetch-Site instead of
+  // a bearer, because the React frontend cannot safely carry the
+  // server-only GRAPH_UPDATE_TOKEN. Reaches the same Redis stream as the
+  // bearer-gated CI route.
+  router.post('/graph-update', async (req, res) => {
+    const fetchSite = req.header('sec-fetch-site');
+    if (fetchSite !== 'same-origin') {
+      return res.status(403).json({ error: 'same-origin only; use /api/graph/update with bearer token for non-browser callers' });
+    }
+
+    if (!redisClient) {
+      return res.status(503).json({ error: 'Redis not configured (REDIS_URL not set)' });
+    }
+
+    const source = req.body?.source || 's3';
+
+    if (!VALID_SOURCES.includes(source)) {
+      return res.status(400).json({ error: 'source must be "s3" or "local"' });
+    }
+
+    const requestId = req.header('x-request-id') || '';
+
+    try {
+      await publishGraphUpdate(redisClient, source, requestId);
       res.json({ ok: true, source });
     } catch (err: any) {
       console.error('Failed to publish graph update:', err.message);
