@@ -419,18 +419,27 @@ jobs:
             --target hetzner \
             --services-dir services
 
-      - name: Publish update.graph:v1 to Hetzner Redis (via SSH tunnel)
+      - name: Publish graph rebuild request to ui-service (via SSH tunnel)
         uses: appleboy/ssh-action@v1
+        env:
+          GRAPH_TOKEN: ${{ secrets.CONTINUO_GRAPH_TOKEN }}
+          DEPLOY_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: root
           key: ${{ secrets.HETZNER_SSH_KEY }}
-          command_timeout: 1m
+          command_timeout: 2m
+          envs: GRAPH_TOKEN,DEPLOY_SHA
           script: |
             set -euo pipefail
             export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-            REDIS_PWD=$(kubectl -n continuo get secret continuo-infra-redis \
-              -o jsonpath='{.data.redis-password}' | base64 -d)
-            kubectl -n continuo exec continuo-infra-redis-master-0 -- \
-              redis-cli -a "${REDIS_PWD}" --no-auth-warning \
-              XADD update.graph:v1 '*' source s3 trigger 'deploy:${{ github.sha }}'
+            kubectl -n continuo run "graph-trigger-${DEPLOY_SHA}" \
+              --rm -i --restart=Never \
+              --image=curlimages/curl:8.10.1 \
+              --command -- \
+              curl --fail-with-body --silent --show-error \
+                -X POST "http://ui-service:8090/api/graph/update" \
+                -H "Authorization: Bearer ${GRAPH_TOKEN}" \
+                -H "X-Request-Id: deploy-${DEPLOY_SHA}" \
+                -H "Content-Type: application/json" \
+                -d '{"source":"s3"}'
