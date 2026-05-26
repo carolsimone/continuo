@@ -9,6 +9,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/schedule/:name" element={<DetailPage />} />
+        <Route path="/schedule/:name/latest" element={<DetailPage mode="latest" />} />
         <Route path="/schedule/:name/node/:fqn" element={<NodeDetailPage />} />
       </Routes>
     </BrowserRouter>
