@@ -30,7 +30,7 @@ export default function DashboardPage() {
     setGraphLoading(true);
     setGraphStatus('idle');
     setGraphError(null);
-    fetch('/api/graph/update', {
+    fetch('/api/dashboard/graph-update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source: 's3' }),

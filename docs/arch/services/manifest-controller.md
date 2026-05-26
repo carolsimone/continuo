@@ -118,4 +118,4 @@ None -- manifest-controller is not called via gRPC by any service.
 
 - No local outbox -- if the Redis publish of `manifest.loaded:v1` fails, the message is not ACKed and the entire load is replayed.
 - Per-node failures in pass 3 are logged and counted but do not abort the load — other nodes continue. The failed node will not appear in the graph.
-- `update.graph:v1` producer is external to the repo in production (typically a CI/deploy pipeline or e2e test trigger).
+- `update.graph:v1` is published by `ui-service` via `POST /api/graph/update`. In production the deploy CI workflow triggers this endpoint through a one-shot `kubectl run` curl pod inside the `continuo` namespace. In local development it is reached via `dbt/update-graph.sh`.

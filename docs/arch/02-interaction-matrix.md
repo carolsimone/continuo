@@ -27,7 +27,7 @@ Legend:
 
 | Stream | Producer(s) | Consumer(s) | Purpose |
 |---|---|---|---|
-| `update.graph:v1` | `ui-service` (manual UI button) **AND `deploy.yml` `publish-dbt-manifests` job (auto, end of every deploy)** | `manifest-controller` | Trigger manifest reload from `local` or `s3` source. **ACK on permanent**: validation failure (empty `image_tag`) → ERROR log `event=manifest_publish_rejected` + skip publish + ACK (S3 hasn't changed, redelivery cannot help). |
+| `update.graph:v1` | `ui-service` (via `POST /api/graph/update`; called by the deploy CI workflow through a one-shot `kubectl run` curl pod, or directly by `dbt/update-graph.sh` in local development) | `manifest-controller` | Trigger manifest reload from `local` or `s3` source. **ACK on permanent**: validation failure (empty `image_tag`) → ERROR log `event=manifest_publish_rejected` + skip publish + ACK (S3 hasn't changed, redelivery cannot help). |
 | `manifest.loaded:v1` | `manifest-controller` | `orchestrator` | Topology payload for graph ingestion; each node carries image_tag per-service. **ACK on permanent**: handler returns `events.ErrPermanent`-wrapped error → consumer logs ERROR, writes forensics row to `rejected_topology_messages`, ACKs (no XCLAIM loop). |
 | `schedules.loaded:v1` | `orchestrator` | `state` | Reconcile `schedule_catalog` |
 | `scheduler.started:v1` | `state` | `orchestrator` | Start schedule initialization; orchestrator creates run snapshot and emits `run.entries.dispatched:v1` |

@@ -369,6 +369,7 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
       - REDIS_URL=redis://:continuo@redis:6379
+      - GRAPH_UPDATE_TOKEN=${GRAPH_UPDATE_TOKEN:-}
     ports:
       - "8090:8090"
     volumes:

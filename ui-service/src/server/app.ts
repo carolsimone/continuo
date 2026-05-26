@@ -7,7 +7,7 @@ import { createNodesRouter } from './routes/nodes';
 import { createSchedulesRouter, createRunsRouter } from './routes/schedules';
 import { createExecutionsRouter } from './routes/executions';
 import { createTaskExecutionRouter } from './routes/task-execution';
-import { createGraphRouter } from './routes/graph';
+import { createGraphRouter, createDashboardGraphRouter } from './routes/graph';
 import { createConfigRouter } from './routes/config';
 
 export function createApp(
@@ -25,6 +25,7 @@ export function createApp(
   app.use('/api/schedulers', createExecutionsRouter(client));
   app.use('/api/task-execution', createTaskExecutionRouter());
   app.use('/api/graph', createGraphRouter(redisClient));
+  app.use('/api/dashboard', createDashboardGraphRouter(redisClient));
   app.use('/api/config', createConfigRouter(configFilePath));
   return app;
 }

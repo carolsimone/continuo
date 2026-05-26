@@ -32,6 +32,11 @@ global:
     accessKeyId: ""
     secretKey: ""
 
+  graphUpdate:
+    # Shared bearer token expected on ui-service's POST /api/graph/update.
+    # Leave empty to keep the endpoint open (not recommended for production).
+    token: ""
+
 services:
   - name: state
     enabled: true
@@ -157,6 +162,8 @@ services:
         secretKey: AWS_SECRET_ACCESS_KEY
       - name: REDIS_PASSWORD
         secretKey: REDIS_PASSWORD
+      - name: GRAPH_UPDATE_TOKEN
+        secretKey: GRAPH_UPDATE_TOKEN
     ingress:
       enabled: true
       host: dev.yourdomain.com
