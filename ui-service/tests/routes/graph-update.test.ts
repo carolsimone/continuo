@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
-import { createGraphRouter } from '../../src/server/routes/graph';
+import { createGraphRouter, UPDATE_GRAPH_STREAM } from '../../src/server/routes/graph';
 
 function makeRedisStub() {
   return { xadd: vi.fn().mockResolvedValue('1-0') };
@@ -39,7 +39,7 @@ describe('POST /api/graph/update', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, source: 's3' });
-    expect(redis.xadd).toHaveBeenCalledWith('update.graph:v1', '*', 'source', 's3');
+    expect(redis.xadd).toHaveBeenCalledWith(UPDATE_GRAPH_STREAM, '*', 'source', 's3');
   });
 
   it('rejects non-s3/local source values', async () => {

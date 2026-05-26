@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import Redis from 'ioredis';
 
+// Until a TS generator exists for pkg/streams/contract.yaml, this is the
+// single source of truth in ui-service for the update.graph:v1 stream
+// name. Keep it aligned with the Go/Python generated constants.
+export const UPDATE_GRAPH_STREAM = 'update.graph:v1';
+
 const VALID_SOURCES = ['s3', 'local'];
 
 export function createGraphRouter(redisClient: Redis | null) {
@@ -33,12 +38,8 @@ export function createGraphRouter(redisClient: Redis | null) {
     const requestId = req.header('x-request-id') || '';
 
     try {
-      await redisClient.xadd('update.graph:v1', '*', 'source', source);
-      if (requestId) {
-        console.log(`graph.update published source=${source} request_id=${requestId}`);
-      } else {
-        console.log(`graph.update published source=${source}`);
-      }
+      await redisClient.xadd(UPDATE_GRAPH_STREAM, '*', 'source', source);
+      console.log(`graph.update published source=${source}${requestId ? ` request_id=${requestId}` : ''}`);
       res.json({ ok: true, source });
     } catch (err: any) {
       console.error('Failed to publish graph update:', err.message);
