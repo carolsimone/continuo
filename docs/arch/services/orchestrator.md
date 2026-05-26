@@ -58,7 +58,7 @@ Domain events live in `orchestrator/domain/run/events.go`:
 Ports (`orchestrator/domain/run/ports.go`):
 
 - `AggregateRepository` (write-side) — `Rehydrate(ctx, runID, scope) (*Run, error)` reconstitutes an operation-scoped subgraph; `Save(ctx, *Run) error` persists node statuses, `total_nodes`/`terminal_count`/`failed_count`/`version`, and `:Run.terminal_status`/`completed_at` when finalised. `Save` checks `Version` against the loaded value (with `COALESCE(run.version, 0)` to admit legacy in-flight runs) and returns `ErrVersionConflict` on mismatch; the handler retries from `Rehydrate`. `terminal_status`/`completed_at` are first-writer-wins so state's authoritative `run.finalized:v1` projection cannot be overwritten by a later aggregate save.
-- `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`.
+- `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`, `ListScheduleTopologies`.
 
 `Scope` is a sealed interface with two variants that the adapter uses to scope the Cypher read:
 
@@ -161,10 +161,11 @@ Three goroutines started in `main.go` run for the process lifetime:
 
 | Method | Description |
 |---|---|
-| `GetScheduleGraph` | Returns all Table nodes and DEPENDS_ON edges for a schedule |
+| `GetScheduleGraph` | Returns all Table nodes and DEPENDS_ON edges for a schedule, plus `topology_generation` (current `:TopologyRoot.topology_generation`; `0` means "generation unknown", same contract as `GetRunGraphResponse.latest_topology_generation`). |
 | `ListRuns` | Returns Run nodes for a schedule, newest first |
 | `GetRunGraph` | Returns nodes and EXECUTES edges for a specific run, with per-node status. Also returns `run_topology_generation` (stamped on the `:Run` node at `Snapshot` time; `0` means "drift unknown" — not "no drift") and `latest_topology_generation` (current `topology_state.topology_generation` Postgres singleton). |
 | `ListActiveRunDrifts` | Returns one `ActiveRunDrift` row per schedule that has an in-flight run (`schedule_name`, `run_id`, `run_topology_generation`) plus the orchestrator's current `latest_topology_generation`. "In-flight" means `completed_at IS NULL` on the `:Run` node — a property stamped by the `run.finalized:v1` projection for all terminal outcomes (succeeded, failed, cancelled). The underlying `ListActiveRuns` query orders results by `schedule_name`, then `created_at DESC`; `RunQueryService.ListActiveRunDrifts` keeps the single newest in-flight run per schedule, so each schedule contributes at most one drift row to the response. Consumed by e2e tests as an active-run state probe. |
+| `ListScheduleTopologies` | Returns one entry per schedule with at least one active `:Table`: `schedule_name`, `node_count`, `last_updated_at = max(:Table.last_updated_at)`. Backs the ui-service homepage "DAG Latest Snapshot" tile row. |
 
 ### HTTP (port 8087)
 
@@ -305,7 +306,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
+| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListScheduleTopologies` |
 | `continuo CLI` | `GetScheduleGraph` |
 
 Orchestrator calls no external gRPC services.
