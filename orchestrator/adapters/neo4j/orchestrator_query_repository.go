@@ -483,7 +483,15 @@ func (r *OrchestratorQueryRepository) ListScheduleTopologies(ctx context.Context
 		if v, ok := recordValue(record, "node_count").(int64); ok {
 			summary.NodeCount = int(v)
 		}
-		if v, ok := recordValue(record, "last_updated_at").(neo4j.LocalDateTime); ok {
+		// :Table.last_updated_at is written by TopologyRepository with Cypher
+		// `datetime()` (zoned), which the Go driver returns as time.Time.
+		// Test fixtures may use `localdatetime()` which arrives as
+		// neo4j.LocalDateTime. Handle both so the gRPC field is populated in
+		// production and tests.
+		switch v := recordValue(record, "last_updated_at").(type) {
+		case time.Time:
+			summary.LastUpdatedAt = v
+		case neo4j.LocalDateTime:
 			summary.LastUpdatedAt = v.Time()
 		}
 		out = append(out, summary)

@@ -225,23 +225,23 @@ func TestListScheduleTopologies(t *testing.T) {
 	_, err := session.Run(ctx, `
         CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'a',
                         schedule_name:'sched-x', active:true,
-                        last_updated_at: localdatetime('2026-05-26T10:00:00'),
+                        last_updated_at: datetime('2026-05-26T10:00:00Z'),
                         test_marker:$m})
         CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'b',
                         schedule_name:'sched-x', active:true,
-                        last_updated_at: localdatetime('2026-05-26T11:00:00'),
+                        last_updated_at: datetime('2026-05-26T11:00:00Z'),
                         test_marker:$m})
         CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'c',
                         schedule_name:'sched-y', active:true,
-                        last_updated_at: localdatetime('2026-05-26T09:00:00'),
+                        last_updated_at: datetime('2026-05-26T09:00:00Z'),
                         test_marker:$m})
         CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'d',
                         schedule_name:'sched-x', active:false,
-                        last_updated_at: localdatetime('2026-05-26T12:00:00'),
+                        last_updated_at: datetime('2026-05-26T12:00:00Z'),
                         test_marker:$m})
         CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'e',
                         schedule_name:null, active:true,
-                        last_updated_at: localdatetime('2026-05-26T08:00:00'),
+                        last_updated_at: datetime('2026-05-26T08:00:00Z'),
                         test_marker:$m})
     `, map[string]any{"m": marker})
 	require.NoError(t, err)
@@ -298,7 +298,7 @@ func TestGetScheduleGraph_PopulatesTopologyGeneration(t *testing.T) {
         SET   root.topology_generation = 42
         CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'a',
                         schedule_name:'gen-test', active:true,
-                        last_updated_at: localdatetime('2026-05-26T10:00:00'),
+                        last_updated_at: datetime('2026-05-26T10:00:00Z'),
                         test_marker:$m})
     `, map[string]any{"m": marker})
 	require.NoError(t, err)
