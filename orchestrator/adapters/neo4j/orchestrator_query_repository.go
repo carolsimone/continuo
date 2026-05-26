@@ -445,6 +445,46 @@ func (r *OrchestratorQueryRepository) getAllNodesInRun(ctx context.Context, tx n
 	return collectNodes(ctx, result)
 }
 
+// ListScheduleTopologies returns one row per schedule_name that has at least
+// one active :Table, with node_count and the most recent last_updated_at
+// across that schedule's nodes. Schedules with zero active nodes are omitted.
+// Null schedule_name rows are defensively excluded.
+func (r *OrchestratorQueryRepository) ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	query := `
+        MATCH (t:Table)
+        WHERE COALESCE(t.active, true) AND t.schedule_name IS NOT NULL
+        RETURN t.schedule_name        AS schedule_name,
+               count(t)               AS node_count,
+               max(t.last_updated_at) AS last_updated_at
+        ORDER BY t.schedule_name
+    `
+	result, err := session.Run(ctx, query, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListScheduleTopologies: %w", err)
+	}
+	out := make([]*domain.ScheduleTopologySummary, 0)
+	for result.Next(ctx) {
+		record := result.Record()
+		summary := &domain.ScheduleTopologySummary{
+			ScheduleName: safeString(recordValue(record, "schedule_name")),
+		}
+		if v, ok := recordValue(record, "node_count").(int64); ok {
+			summary.NodeCount = int(v)
+		}
+		if v, ok := recordValue(record, "last_updated_at").(neo4j.LocalDateTime); ok {
+			summary.LastUpdatedAt = v.Time()
+		}
+		out = append(out, summary)
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("ListScheduleTopologies iterate: %w", err)
+	}
+	return out, nil
+}
+
 // parseNeo4jTimestamp parses a Neo4j datetime string into a time.Time.
 func parseNeo4jTimestamp(value string) time.Time {
 	if value == "" {
