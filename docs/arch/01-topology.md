@@ -136,7 +136,7 @@ flowchart TD
 - The controller services use local Postgres outbox and dedup tables to make cross-service messaging reliable.
 - The `deploy/infra` Helm chart provisions the shared infrastructure stack (`Postgres`, `Redis`, `Neo4j`) as cluster-internal defaults and initializes the service databases in one Postgres instance. Local docker-compose uses `POSTGRES_PASSWORD=continuo` (superuser) and `REDIS_PASSWORD=continuo`.
 - `manifest-controller` is topology ingest, not execution orchestration.
-- `ui-service` is primarily read-only; its only write is publishing `update.graph:v1` commands to Redis.
+- `ui-service` is primarily read-only; its only write is publishing `update.graph:v1` commands to Redis via `POST /api/graph/update`. The deploy CI workflow triggers this endpoint through a one-shot `kubectl run` curl pod; local development uses `dbt/update-graph.sh`.
 - `schedule.cancelled:v1` is published by `state` via the outbox processor and consumed independently by `orchestrator`, `executor-controller`, and `k8s-controller` (each with its own consumer group). Each consumer maintains a local `cancelled_schedules` Postgres table populated from this stream and uses it as a hot-path guard to suppress further processing for cancelled runs. Rows are swept after a configurable TTL (default 24h).
 
 ## Topology Versioning

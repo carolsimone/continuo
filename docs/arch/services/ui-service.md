@@ -35,7 +35,7 @@ None.
 | `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → orchestrator gRPC |
 | `/api/schedules/:name/runs` | GET | `ListRuns` → orchestrator gRPC |
 | `/api/schedules/:name/trigger` | POST | `TriggerSchedule` → state gRPC |
-| `/api/graph/update` | POST | `XADD update.graph:v1` → Redis |
+| `/api/graph/update` | POST | Publishes `update.graph:v1` → Redis |
 
 #### Run / scheduler API
 
@@ -101,7 +101,14 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 | Operation | Route | Description |
 |---|---|---|
-| `XADD update.graph:v1` | `POST /api/graph/update` | Publishes graph reload command with `source` field (`s3` or `local`) |
+| `update.graph:v1` | `POST /api/graph/update` | Publishes graph reload command with `source` field (`s3` or `local`); endpoint requires `Authorization: Bearer $GRAPH_UPDATE_TOKEN` when `GRAPH_UPDATE_TOKEN` is set |
+
+#### Graph Update Callers
+
+`POST /api/graph/update` is called in two contexts:
+
+- **Production deploys**: the CI deploy workflow SSHes into the cluster host and runs a one-shot `kubectl run` curl pod inside the `continuo` namespace. The pod sends the HTTP POST with `Authorization: Bearer $GRAPH_UPDATE_TOKEN` and exits.
+- **Local development**: `dbt/update-graph.sh` calls the endpoint directly.
 
 ## What It Reads
 
