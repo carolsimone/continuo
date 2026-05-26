@@ -51,7 +51,7 @@ describe('DashboardPage — shell + Update Graph button', () => {
 
   it('shows past-tense "Updated" with .is-success after a successful click', async () => {
     fetchMock.mockImplementation((url: string) => {
-      if (url === '/api/graph/update') {
+      if (url === '/api/dashboard/graph-update') {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
       return Promise.resolve({
@@ -74,7 +74,7 @@ describe('DashboardPage — shell + Update Graph button', () => {
 
   it('renders graph error as .info-strip--error (not .error-banner)', async () => {
     fetchMock.mockImplementation((url: string) => {
-      if (url === '/api/graph/update') {
+      if (url === '/api/dashboard/graph-update') {
         return Promise.resolve({
           ok: false,
           json: async () => ({ error: 'boom' }),
