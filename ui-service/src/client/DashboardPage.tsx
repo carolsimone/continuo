@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ScheduleSummary, SchedulesResponse } from './types';
+import { ScheduleSummary, SchedulesResponse, ScheduleTopologySummary, TopologyListResponse } from './types';
 import SchedulerCard from './SchedulerCard';
+import SnapshotTile from './SnapshotTile';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -9,6 +10,8 @@ export default function DashboardPage() {
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphStatus, setGraphStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [graphError, setGraphError] = useState<string | null>(null);
+  const [topologies, setTopologies] = useState<ScheduleTopologySummary[]>([]);
+  const [topologiesError, setTopologiesError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetch_ = () =>
@@ -20,6 +23,21 @@ export default function DashboardPage() {
           setError(null);
         })
         .catch(e => setError(e.message));
+
+    fetch_();
+    const id = setInterval(fetch_, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const fetch_ = () =>
+      fetch('/api/topology/schedules')
+        .then(r => r.json())
+        .then((data: TopologyListResponse) => {
+          setTopologies(data.schedules || []);
+          setTopologiesError(null);
+        })
+        .catch(e => setTopologiesError(e.message));
 
     fetch_();
     const id = setInterval(fetch_, 5000);
@@ -94,6 +112,25 @@ export default function DashboardPage() {
         {schedules.map(s => (
           <SchedulerCard key={s.schedule_name} schedule={s} />
         ))}
+        <h2 className="snapshot-section-title">DAG Latest Snapshot</h2>
+        {topologiesError && (
+          <div className="info-strip info-strip--error">
+            <span className="info-strip__icon">⚠</span> {topologiesError}
+          </div>
+        )}
+        {!topologiesError && topologies.length === 0 && (
+          <div className="info-strip info-strip--neutral">
+            <span className="info-strip__icon">ⓘ</span>
+            No topology loaded yet — push a dbt manifest to populate.
+          </div>
+        )}
+        {!topologiesError && topologies.length > 0 && (
+          <div className="snapshot-tile-grid">
+            {topologies.map((s) => (
+              <SnapshotTile key={s.schedule_name} summary={s} />
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );
