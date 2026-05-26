@@ -83,7 +83,11 @@ function isSuccessStatus(status: string | null | undefined): boolean {
   return status.toLowerCase().includes('succeed');
 }
 
-export default function DetailPage() {
+interface DetailPageProps {
+  mode?: 'run' | 'latest';
+}
+
+export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -93,6 +97,7 @@ export default function DetailPage() {
   const [scheduler, setScheduler] = useState<Scheduler | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [graph, setGraph] = useState<ScheduleGraph | null>(null);
+  const [topologyGeneration, setTopologyGeneration] = useState<number>(0);
   const [executions, setExecutions] = useState<TaskExecution[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -147,25 +152,29 @@ export default function DetailPage() {
     if (!name) return;
     let cancelled = false;
 
-    fetch(`/api/schedules/${name}/graph`)
-      .then((response) => response.json())
-      .then((data: ScheduleGraph) => {
-        if (!cancelled) {
+    const fetchGraph = () => {
+      fetch(`/api/schedules/${name}/graph`)
+        .then((response) => response.json())
+        .then((data: ScheduleGraph) => {
+          if (cancelled) return;
           setGraph(data);
           setGraphState(data.nodes.length > 0 ? 'ready' : 'empty');
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
+          setTopologyGeneration(Number(data.topology_generation ?? 0));
+        })
+        .catch(() => {
+          if (cancelled) return;
           setGraph(null);
           setGraphState('error');
-        }
-      });
-
-    return () => {
-      cancelled = true;
+        });
     };
-  }, [name]);
+
+    fetchGraph();
+    if (mode === 'latest') {
+      const id = setInterval(fetchGraph, 5000);
+      return () => { cancelled = true; clearInterval(id); };
+    }
+    return () => { cancelled = true; };
+  }, [name, mode]);
 
   useEffect(() => {
     if (!name) return;
@@ -382,10 +391,7 @@ export default function DetailPage() {
 
   const selectedRun = runs.find((run) => run.run_id === selectedRunId) ?? null;
   const activeGraph: ScheduleGraph | null = resolveActiveGraph({
-    scheduleGraph: graph,
-    liveRunGraph,
-    selectedRunGraph: runGraph,
-    selectedRunId,
+    mode, scheduleGraph: graph, liveRunGraph, selectedRunGraph: runGraph, selectedRunId,
   });
   const activeTasks = selectedRunId ? deriveHistoricalTasks(runGraph) : tasks;
   const liveSchedulerStatus =
@@ -459,9 +465,9 @@ export default function DetailPage() {
     !isSuccessStatus(scheduler?.status) &&
     Boolean(lastRunId);
 
-  const handleRerunFailedSubmit = async (mode: RerunFailedMode) => {
+  const handleRerunFailedSubmit = async (rerunMode: RerunFailedMode) => {
     setRerunModalOpen(false);
-    if (mode === 'this') {
+    if (rerunMode === 'this') {
       await handleRerunRun();
     } else {
       await handleRebaseRun();
@@ -506,6 +512,12 @@ export default function DetailPage() {
           <span className="info-strip info-strip--warning info-strip--inline">
             <span className="info-strip__icon">⚠</span>
             {driftLabel}
+          </span>
+        )}
+        {mode === 'latest' && topologyGeneration > 0 && (
+          <span className="info-strip info-strip--info info-strip--inline" aria-label="topology generation">
+            <span className="info-strip__icon">ⓘ</span>
+            topology v{topologyGeneration}
           </span>
         )}
       </header>
