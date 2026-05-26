@@ -282,3 +282,38 @@ func TestListScheduleTopologies_EmptyReturnsEmptySlice(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got, "must return [] not nil")
 }
+
+func TestGetScheduleGraph_PopulatesTopologyGeneration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	marker := t.Name()
+
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := s.Run(ctx, `
+        MERGE (root:TopologyRoot {id:'singleton'})
+        SET   root.topology_generation = 42
+        CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'a',
+                        schedule_name:'gen-test', active:true,
+                        last_updated_at: localdatetime('2026-05-26T10:00:00'),
+                        test_marker:$m})
+    `, map[string]any{"m": marker})
+	require.NoError(t, err)
+	s.Close(ctx)
+	t.Cleanup(func() {
+		s := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer s.Close(ctx)
+		_, _ = s.Run(ctx, "MATCH (t:Table {test_marker:$m}) DETACH DELETE t",
+			map[string]any{"m": marker})
+		_, _ = s.Run(ctx, "MATCH (r:TopologyRoot {id:'singleton'}) REMOVE r.topology_generation",
+			nil)
+	})
+
+	g, err := repo.GetScheduleGraph(ctx, "gen-test")
+	require.NoError(t, err)
+	assert.Equal(t, int64(42), g.TopologyGeneration)
+	assert.Len(t, g.Nodes, 1, "schedule graph must return the seeded node")
+}
