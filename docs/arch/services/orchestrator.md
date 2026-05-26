@@ -58,7 +58,8 @@ Domain events live in `orchestrator/domain/run/events.go`:
 Ports (`orchestrator/domain/run/ports.go`):
 
 - `AggregateRepository` (write-side) — `Rehydrate(ctx, runID, scope) (*Run, error)` reconstitutes an operation-scoped subgraph; `Save(ctx, *Run) error` persists node statuses, `total_nodes`/`terminal_count`/`failed_count`/`version`, and `:Run.terminal_status`/`completed_at` when finalised. `Save` checks `Version` against the loaded value (with `COALESCE(run.version, 0)` to admit legacy in-flight runs) and returns `ErrVersionConflict` on mismatch; the handler retries from `Rehydrate`. `terminal_status`/`completed_at` are first-writer-wins so state's authoritative `run.finalized:v1` projection cannot be overwritten by a later aggregate save.
-- `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`, `ListScheduleTopologies`.
+- `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`.
+- `ListScheduleTopologies` is wired through the adapter-internal `ScheduleAndRunListReader` seam in `orchestrator/adapters/grpc/handlers.go`, satisfied by the same `OrchestratorQueryRepository`. It is not part of the domain port surface because no application/handler code consumes it — only the gRPC adapter.
 
 `Scope` is a sealed interface with two variants that the adapter uses to scope the Cypher read:
 
