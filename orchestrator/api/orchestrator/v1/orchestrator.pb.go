@@ -287,11 +287,15 @@ func (x *GetScheduleGraphRequest) GetScheduleName() string {
 }
 
 type GetScheduleGraphResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Nodes         []*TableNode           `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	Edges         []*GraphEdge           `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Nodes []*TableNode           `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Edges []*GraphEdge           `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
+	// topology_generation is :TopologyRoot.topology_generation at query time.
+	// Returns 0 when the singleton is missing or the property is unset; consumers
+	// MUST treat 0 as "generation unknown", not "generation zero".
+	TopologyGeneration int64 `protobuf:"varint,3,opt,name=topology_generation,json=topologyGeneration,proto3" json:"topology_generation,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *GetScheduleGraphResponse) Reset() {
@@ -336,6 +340,13 @@ func (x *GetScheduleGraphResponse) GetEdges() []*GraphEdge {
 		return x.Edges
 	}
 	return nil
+}
+
+func (x *GetScheduleGraphResponse) GetTopologyGeneration() int64 {
+	if x != nil {
+		return x.TopologyGeneration
+	}
+	return 0
 }
 
 type ListRunsRequest struct {
@@ -769,6 +780,146 @@ func (x *ActiveRunDrift) GetRunTopologyGeneration() int64 {
 	return 0
 }
 
+type ListScheduleTopologiesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListScheduleTopologiesRequest) Reset() {
+	*x = ListScheduleTopologiesRequest{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListScheduleTopologiesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListScheduleTopologiesRequest) ProtoMessage() {}
+
+func (x *ListScheduleTopologiesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListScheduleTopologiesRequest.ProtoReflect.Descriptor instead.
+func (*ListScheduleTopologiesRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{12}
+}
+
+type ListScheduleTopologiesResponse struct {
+	state         protoimpl.MessageState     `protogen:"open.v1"`
+	Schedules     []*ScheduleTopologySummary `protobuf:"bytes,1,rep,name=schedules,proto3" json:"schedules,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListScheduleTopologiesResponse) Reset() {
+	*x = ListScheduleTopologiesResponse{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListScheduleTopologiesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListScheduleTopologiesResponse) ProtoMessage() {}
+
+func (x *ListScheduleTopologiesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListScheduleTopologiesResponse.ProtoReflect.Descriptor instead.
+func (*ListScheduleTopologiesResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ListScheduleTopologiesResponse) GetSchedules() []*ScheduleTopologySummary {
+	if x != nil {
+		return x.Schedules
+	}
+	return nil
+}
+
+type ScheduleTopologySummary struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleName  string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
+	NodeCount     int32                  `protobuf:"varint,2,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`
+	LastUpdatedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_updated_at,json=lastUpdatedAt,proto3" json:"last_updated_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScheduleTopologySummary) Reset() {
+	*x = ScheduleTopologySummary{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScheduleTopologySummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScheduleTopologySummary) ProtoMessage() {}
+
+func (x *ScheduleTopologySummary) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScheduleTopologySummary.ProtoReflect.Descriptor instead.
+func (*ScheduleTopologySummary) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ScheduleTopologySummary) GetScheduleName() string {
+	if x != nil {
+		return x.ScheduleName
+	}
+	return ""
+}
+
+func (x *ScheduleTopologySummary) GetNodeCount() int32 {
+	if x != nil {
+		return x.NodeCount
+	}
+	return 0
+}
+
+func (x *ScheduleTopologySummary) GetLastUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastUpdatedAt
+	}
+	return nil
+}
+
 var File_proto_orchestrator_v1_orchestrator_proto protoreflect.FileDescriptor
 
 const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
@@ -795,10 +946,11 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\n" +
 	"to_node_id\x18\x02 \x01(\tR\btoNodeId\">\n" +
 	"\x17GetScheduleGraphRequest\x12#\n" +
-	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\"~\n" +
+	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\"\xaf\x01\n" +
 	"\x18GetScheduleGraphResponse\x120\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x1a.orchestrator.v1.TableNodeR\x05nodes\x120\n" +
-	"\x05edges\x18\x02 \x03(\v2\x1a.orchestrator.v1.GraphEdgeR\x05edges\"6\n" +
+	"\x05edges\x18\x02 \x03(\v2\x1a.orchestrator.v1.GraphEdgeR\x05edges\x12/\n" +
+	"\x13topology_generation\x18\x03 \x01(\x03R\x12topologyGeneration\"6\n" +
 	"\x0fListRunsRequest\x12#\n" +
 	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\"C\n" +
 	"\x10ListRunsResponse\x12/\n" +
@@ -826,17 +978,26 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\x0eActiveRunDrift\x12#\n" +
 	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x126\n" +
-	"\x17run_topology_generation\x18\x03 \x01(\x03R\x15runTopologyGeneration*w\n" +
+	"\x17run_topology_generation\x18\x03 \x01(\x03R\x15runTopologyGeneration\"\x1f\n" +
+	"\x1dListScheduleTopologiesRequest\"h\n" +
+	"\x1eListScheduleTopologiesResponse\x12F\n" +
+	"\tschedules\x18\x01 \x03(\v2(.orchestrator.v1.ScheduleTopologySummaryR\tschedules\"\xa1\x01\n" +
+	"\x17ScheduleTopologySummary\x12#\n" +
+	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x1d\n" +
+	"\n" +
+	"node_count\x18\x02 \x01(\x05R\tnodeCount\x12B\n" +
+	"\x0flast_updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\rlastUpdatedAt*w\n" +
 	"\vCriticality\x12\x1b\n" +
 	"\x17CRITICALITY_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16CRITICALITY_REGULATORY\x10\x01\x12\x14\n" +
 	"\x10CRITICALITY_CORE\x10\x02\x12\x19\n" +
-	"\x15CRITICALITY_SECONDARY\x10\x032\x99\x03\n" +
+	"\x15CRITICALITY_SECONDARY\x10\x032\x94\x04\n" +
 	"\x11OrchestratorQuery\x12g\n" +
 	"\x10GetScheduleGraph\x12(.orchestrator.v1.GetScheduleGraphRequest\x1a).orchestrator.v1.GetScheduleGraphResponse\x12O\n" +
 	"\bListRuns\x12 .orchestrator.v1.ListRunsRequest\x1a!.orchestrator.v1.ListRunsResponse\x12X\n" +
 	"\vGetRunGraph\x12#.orchestrator.v1.GetRunGraphRequest\x1a$.orchestrator.v1.GetRunGraphResponse\x12p\n" +
-	"\x13ListActiveRunDrifts\x12+.orchestrator.v1.ListActiveRunDriftsRequest\x1a,.orchestrator.v1.ListActiveRunDriftsResponseBQZOgithub.com/carolsimone/continuo/orchestrator/api/orchestrator/v1;orchestratorv1b\x06proto3"
+	"\x13ListActiveRunDrifts\x12+.orchestrator.v1.ListActiveRunDriftsRequest\x1a,.orchestrator.v1.ListActiveRunDriftsResponse\x12y\n" +
+	"\x16ListScheduleTopologies\x12..orchestrator.v1.ListScheduleTopologiesRequest\x1a/.orchestrator.v1.ListScheduleTopologiesResponseBQZOgithub.com/carolsimone/continuo/orchestrator/api/orchestrator/v1;orchestratorv1b\x06proto3"
 
 var (
 	file_proto_orchestrator_v1_orchestrator_proto_rawDescOnce sync.Once
@@ -851,46 +1012,53 @@ func file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_orchestrator_v1_orchestrator_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_proto_orchestrator_v1_orchestrator_proto_goTypes = []any{
-	(Criticality)(0),                    // 0: orchestrator.v1.Criticality
-	(*TableNode)(nil),                   // 1: orchestrator.v1.TableNode
-	(*GraphEdge)(nil),                   // 2: orchestrator.v1.GraphEdge
-	(*GetScheduleGraphRequest)(nil),     // 3: orchestrator.v1.GetScheduleGraphRequest
-	(*GetScheduleGraphResponse)(nil),    // 4: orchestrator.v1.GetScheduleGraphResponse
-	(*ListRunsRequest)(nil),             // 5: orchestrator.v1.ListRunsRequest
-	(*ListRunsResponse)(nil),            // 6: orchestrator.v1.ListRunsResponse
-	(*RunSummary)(nil),                  // 7: orchestrator.v1.RunSummary
-	(*GetRunGraphRequest)(nil),          // 8: orchestrator.v1.GetRunGraphRequest
-	(*GetRunGraphResponse)(nil),         // 9: orchestrator.v1.GetRunGraphResponse
-	(*ListActiveRunDriftsRequest)(nil),  // 10: orchestrator.v1.ListActiveRunDriftsRequest
-	(*ListActiveRunDriftsResponse)(nil), // 11: orchestrator.v1.ListActiveRunDriftsResponse
-	(*ActiveRunDrift)(nil),              // 12: orchestrator.v1.ActiveRunDrift
-	(*timestamppb.Timestamp)(nil),       // 13: google.protobuf.Timestamp
+	(Criticality)(0),                       // 0: orchestrator.v1.Criticality
+	(*TableNode)(nil),                      // 1: orchestrator.v1.TableNode
+	(*GraphEdge)(nil),                      // 2: orchestrator.v1.GraphEdge
+	(*GetScheduleGraphRequest)(nil),        // 3: orchestrator.v1.GetScheduleGraphRequest
+	(*GetScheduleGraphResponse)(nil),       // 4: orchestrator.v1.GetScheduleGraphResponse
+	(*ListRunsRequest)(nil),                // 5: orchestrator.v1.ListRunsRequest
+	(*ListRunsResponse)(nil),               // 6: orchestrator.v1.ListRunsResponse
+	(*RunSummary)(nil),                     // 7: orchestrator.v1.RunSummary
+	(*GetRunGraphRequest)(nil),             // 8: orchestrator.v1.GetRunGraphRequest
+	(*GetRunGraphResponse)(nil),            // 9: orchestrator.v1.GetRunGraphResponse
+	(*ListActiveRunDriftsRequest)(nil),     // 10: orchestrator.v1.ListActiveRunDriftsRequest
+	(*ListActiveRunDriftsResponse)(nil),    // 11: orchestrator.v1.ListActiveRunDriftsResponse
+	(*ActiveRunDrift)(nil),                 // 12: orchestrator.v1.ActiveRunDrift
+	(*ListScheduleTopologiesRequest)(nil),  // 13: orchestrator.v1.ListScheduleTopologiesRequest
+	(*ListScheduleTopologiesResponse)(nil), // 14: orchestrator.v1.ListScheduleTopologiesResponse
+	(*ScheduleTopologySummary)(nil),        // 15: orchestrator.v1.ScheduleTopologySummary
+	(*timestamppb.Timestamp)(nil),          // 16: google.protobuf.Timestamp
 }
 var file_proto_orchestrator_v1_orchestrator_proto_depIdxs = []int32{
 	0,  // 0: orchestrator.v1.TableNode.criticality:type_name -> orchestrator.v1.Criticality
-	13, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
-	13, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
+	16, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
+	16, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: orchestrator.v1.GetScheduleGraphResponse.nodes:type_name -> orchestrator.v1.TableNode
 	2,  // 4: orchestrator.v1.GetScheduleGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
 	7,  // 5: orchestrator.v1.ListRunsResponse.runs:type_name -> orchestrator.v1.RunSummary
 	1,  // 6: orchestrator.v1.GetRunGraphResponse.nodes:type_name -> orchestrator.v1.TableNode
 	2,  // 7: orchestrator.v1.GetRunGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
 	12, // 8: orchestrator.v1.ListActiveRunDriftsResponse.active_runs:type_name -> orchestrator.v1.ActiveRunDrift
-	3,  // 9: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
-	5,  // 10: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
-	8,  // 11: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
-	10, // 12: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:input_type -> orchestrator.v1.ListActiveRunDriftsRequest
-	4,  // 13: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
-	6,  // 14: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
-	9,  // 15: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
-	11, // 16: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:output_type -> orchestrator.v1.ListActiveRunDriftsResponse
-	13, // [13:17] is the sub-list for method output_type
-	9,  // [9:13] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	15, // 9: orchestrator.v1.ListScheduleTopologiesResponse.schedules:type_name -> orchestrator.v1.ScheduleTopologySummary
+	16, // 10: orchestrator.v1.ScheduleTopologySummary.last_updated_at:type_name -> google.protobuf.Timestamp
+	3,  // 11: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
+	5,  // 12: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
+	8,  // 13: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
+	10, // 14: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:input_type -> orchestrator.v1.ListActiveRunDriftsRequest
+	13, // 15: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:input_type -> orchestrator.v1.ListScheduleTopologiesRequest
+	4,  // 16: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
+	6,  // 17: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
+	9,  // 18: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
+	11, // 19: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:output_type -> orchestrator.v1.ListActiveRunDriftsResponse
+	14, // 20: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:output_type -> orchestrator.v1.ListScheduleTopologiesResponse
+	16, // [16:21] is the sub-list for method output_type
+	11, // [11:16] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_proto_orchestrator_v1_orchestrator_proto_init() }
@@ -904,7 +1072,7 @@ func file_proto_orchestrator_v1_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_orchestrator_v1_orchestrator_proto_rawDesc), len(file_proto_orchestrator_v1_orchestrator_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   12,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
