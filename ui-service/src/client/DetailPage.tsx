@@ -640,7 +640,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
                         href={`/schedule/${encodeURIComponent(name)}/node/${encodeURIComponent(selectedNodeId)}`}
                         onClick={e => {
                           e.preventDefault();
-                          navigate(`/schedule/${encodeURIComponent(name)}/node/${encodeURIComponent(selectedNodeId)}`);
+                          navigate(
+                            `/schedule/${encodeURIComponent(name)}/node/${encodeURIComponent(selectedNodeId)}`,
+                            { state: { from_mode: mode === 'latest' ? 'latest' : 'run' } },
+                          );
                         }}
                       >
                         Open node detail →
