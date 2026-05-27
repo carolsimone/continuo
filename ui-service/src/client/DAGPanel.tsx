@@ -105,6 +105,7 @@ function buildLayout(
   graphEdges: GraphEdge[],
   tasks: Task[],
   selectedNodeId: string | null,
+  colorByStatus: boolean,
 ): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
@@ -124,8 +125,8 @@ function buildLayout(
   const nodes: Node[] = graphNodes.map((n) => {
     const pos = g.node(n.node_id);
     const task = tasks.find((candidate) => taskNodeId(candidate) === n.node_id);
-    const status = resolveNodeStatus(n, tasks);
-    const isExternal = !task && !n.status;
+    const status = colorByStatus ? resolveNodeStatus(n, tasks) : 'pending';
+    const isExternal = colorByStatus ? !task && !n.status : false;
 
     let role: FocusRole = null;
     if (selectedNodeId) {
@@ -170,6 +171,7 @@ interface Props {
   tasks: Task[];
   selectedNodeId: string | null;
   onNodeClick: (nodeId: string | null) => void;
+  colorByStatus?: boolean;
 }
 
 export default function DAGPanel({
@@ -178,10 +180,11 @@ export default function DAGPanel({
   tasks,
   selectedNodeId,
   onNodeClick,
+  colorByStatus = true,
 }: Props) {
   const layout = useMemo(
-    () => buildLayout(graphNodes, graphEdges, tasks, selectedNodeId),
-    [graphEdges, graphNodes, selectedNodeId, tasks],
+    () => buildLayout(graphNodes, graphEdges, tasks, selectedNodeId, colorByStatus),
+    [graphEdges, graphNodes, selectedNodeId, tasks, colorByStatus],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
