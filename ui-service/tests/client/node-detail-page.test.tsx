@@ -160,13 +160,12 @@ describe('NodeDetailPage — section-header alignment', () => {
     });
   });
 
-  it('does not render the orphan classes anywhere', async () => {
+  it('does not render the truly orphan classes anywhere', async () => {
     mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
     const { container } = renderPage();
     await waitFor(() => {
       expect(container.querySelector('.node-stats-summary')).toBeNull();
       expect(container.querySelector('.nodes-log-link')).toBeNull();
-      expect(container.querySelector('.nodes-dash')).toBeNull();
     });
   });
 });

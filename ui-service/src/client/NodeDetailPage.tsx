@@ -57,7 +57,7 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
           ? <a
                href={`/api/task-execution/${r.task_id}/logs?key=${encodeURIComponent(r.log_s3_key)}`}
                target="_blank" rel="noopener noreferrer">logs</a>
-          : <span>—</span>}
+          : <span className="nodes-dash">—</span>}
       </td>
     </tr>
   );
