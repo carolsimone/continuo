@@ -259,15 +259,6 @@ body {
   min-height: 0;
 }
 
-.detail-nodes-card {
-  flex: 1;
-  min-height: 0;
-}
-
-.detail-runs-card {
-  flex-shrink: 0;
-}
-
 /* ---- Graph search strip ---- */
 .dag-search-strip {
   padding: 8px 12px;
