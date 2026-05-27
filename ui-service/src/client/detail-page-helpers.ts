@@ -46,6 +46,16 @@ export function resolveActiveGraph({
   return toScheduleGraph(liveRunGraph) ?? scheduleGraph;
 }
 
+interface HeaderDriftLabelArgs {
+  mode?: 'run' | 'latest';
+  driftLabel: string | null;
+}
+
+export function headerDriftLabel({ mode, driftLabel }: HeaderDriftLabelArgs): string | null {
+  if (mode === 'latest') return null;
+  return driftLabel;
+}
+
 export function parseNodeId(nodeId: string): {
   service_name: string;
   schema_name: string;
