@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ScheduleSummary, SchedulesResponse, ScheduleTopologySummary, TopologyListResponse } from './types';
 import SchedulerCard from './SchedulerCard';
 import SnapshotTile from './SnapshotTile';
+import Tabs, { useActiveTab } from './Tabs';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -85,6 +86,8 @@ export default function DashboardPage() {
     graphStatus === 'success' ? 'is-success' : '',
   ].filter(Boolean).join(' ');
 
+  const activeTab = useActiveTab('tab', 'runs', ['runs', 'topology']);
+
   return (
     <div className="page">
       <header className="page-header">
@@ -104,32 +107,47 @@ export default function DashboardPage() {
         </div>
       </header>
       {graphError && <div className="info-strip info-strip--error">{graphError}</div>}
-      {error && <div className="info-strip info-strip--error">{error}</div>}
       <main className="page-content page-content--readable">
-        {schedules.length === 0 && !error && (
-          <p className="empty">No schedules found.</p>
-        )}
-        {schedules.map(s => (
-          <SchedulerCard key={s.schedule_name} schedule={s} />
-        ))}
-        <h2 className="snapshot-section-title">DAG Latest Snapshot</h2>
-        {topologiesError && (
-          <div className="info-strip info-strip--error">
-            <span className="info-strip__icon">⚠</span> {topologiesError}
-          </div>
-        )}
-        {!topologiesError && topologies.length === 0 && (
-          <div className="info-strip info-strip--neutral">
-            <span className="info-strip__icon">ⓘ</span>
-            No topology loaded yet — push a dbt manifest to populate.
-          </div>
-        )}
-        {!topologiesError && topologies.length > 0 && (
-          <div className="snapshot-tile-grid">
-            {topologies.map((s) => (
-              <SnapshotTile key={s.schedule_name} summary={s} />
+        <Tabs
+          param="tab"
+          defaultSlug="runs"
+          tabs={[
+            { slug: 'runs', label: 'Runs', count: schedules.length },
+            { slug: 'topology', label: 'Topology', count: topologies.length },
+          ]}
+        />
+        {activeTab === 'runs' && (
+          <>
+            {error && <div className="info-strip info-strip--error">{error}</div>}
+            {schedules.length === 0 && !error && (
+              <p className="empty">No schedules found.</p>
+            )}
+            {schedules.map(s => (
+              <SchedulerCard key={s.schedule_name} schedule={s} />
             ))}
-          </div>
+          </>
+        )}
+        {activeTab === 'topology' && (
+          <>
+            {topologiesError && (
+              <div className="info-strip info-strip--error">
+                <span className="info-strip__icon">⚠</span> {topologiesError}
+              </div>
+            )}
+            {!topologiesError && topologies.length === 0 && (
+              <div className="info-strip info-strip--neutral">
+                <span className="info-strip__icon">ⓘ</span>
+                No topology loaded yet — push a dbt manifest to populate.
+              </div>
+            )}
+            {!topologiesError && topologies.length > 0 && (
+              <div className="snapshot-tile-grid">
+                {topologies.map((s) => (
+                  <SnapshotTile key={s.schedule_name} summary={s} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>
