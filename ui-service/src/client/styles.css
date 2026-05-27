@@ -779,12 +779,6 @@ body {
   color: #6b7280;
 }
 
-.snapshot-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #374151;
-  margin: 24px 0 0;
-}
 
 /* ---- Tabs (page-level and panel-level) ---- */
 .tabs {

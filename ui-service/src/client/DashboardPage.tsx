@@ -86,7 +86,11 @@ export default function DashboardPage() {
     graphStatus === 'success' ? 'is-success' : '',
   ].filter(Boolean).join(' ');
 
-  const activeTab = useActiveTab('tab', 'runs', ['runs', 'topology']);
+  const tabSpecs = [
+    { slug: 'runs', label: 'Runs', count: schedules.length },
+    { slug: 'topology', label: 'Topology', count: topologies.length },
+  ];
+  const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
 
   return (
     <div className="page">
@@ -108,14 +112,7 @@ export default function DashboardPage() {
       </header>
       {graphError && <div className="info-strip info-strip--error">{graphError}</div>}
       <main className="page-content page-content--readable">
-        <Tabs
-          param="tab"
-          defaultSlug="runs"
-          tabs={[
-            { slug: 'runs', label: 'Runs', count: schedules.length },
-            { slug: 'topology', label: 'Topology', count: topologies.length },
-          ]}
-        />
+        <Tabs param="tab" defaultSlug="runs" tabs={tabSpecs} />
         {activeTab === 'runs' && (
           <>
             {error && <div className="info-strip info-strip--error">{error}</div>}

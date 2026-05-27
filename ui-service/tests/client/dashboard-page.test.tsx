@@ -165,6 +165,7 @@ describe('DashboardPage — tabs', () => {
     renderAt(['/?tab=topology']);
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: /topology/i })).toHaveClass('tabs__tab--active');
+      expect(document.querySelector('.snapshot-tile-grid')).toBeInTheDocument();
     });
   });
 
