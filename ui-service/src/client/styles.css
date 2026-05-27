@@ -233,8 +233,13 @@ body {
   display: flex;
   gap: 16px;
   flex: 1;
-  min-height: 0;
+  min-height: calc(100vh - 160px);
   align-items: stretch;
+}
+
+.detail-right-col > .detail-card {
+  flex: 1;
+  min-height: 0;
 }
 
 .detail-graph-card {
@@ -812,7 +817,6 @@ body {
 }
 
 .tabs--panel {
-  margin: 0 -16px 0;
   padding: 0 16px;
   border-bottom-color: #f1f5f9;
 }

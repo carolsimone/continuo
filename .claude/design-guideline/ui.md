@@ -221,7 +221,7 @@ section header on cards that host multiple peer panels.
                          padding: 1px 7px; border-radius: 999px; font-weight: 500; }
 .tabs__tab--active .tabs__count { background: #111827; color: #fff; }
 
-.tabs--panel           { margin: 0 -16px 0; padding: 0 16px; border-bottom-color: #f1f5f9; }
+.tabs--panel           { padding: 0 16px; border-bottom-color: #f1f5f9; }
 .tabs--panel .tabs__tab { padding: 10px 0; font-size: 12px; }
 ```
 
