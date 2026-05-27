@@ -58,6 +58,32 @@ describe('Tabs', () => {
     expect(screen.getByTestId('location').textContent).toBe('/');
   });
 
+  it('preserves unrelated query params when switching tabs', async () => {
+    const user = userEvent.setup();
+    render(<Harness entries={['/?filter=foo']} param="tab" defaultSlug="runs" />);
+    await user.click(screen.getByRole('tab', { name: /topology/i }));
+    expect(screen.getByTestId('location').textContent).toBe('/?filter=foo&tab=topology');
+  });
+
+  it('renders the count pill when count is 0 (not just truthy)', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Tabs
+          param="tab"
+          defaultSlug="runs"
+          tabs={[
+            { slug: 'runs', label: 'Runs', count: 0 },
+            { slug: 'topology', label: 'Topology', count: 5 },
+          ]}
+        />
+      </MemoryRouter>,
+    );
+    const counts = document.querySelectorAll('.tabs__count');
+    expect(counts).toHaveLength(2);
+    expect(counts[0].textContent).toBe('0');
+    expect(counts[1].textContent).toBe('5');
+  });
+
   it('renders count pills next to each label', () => {
     render(<Harness entries={['/']} param="tab" defaultSlug="runs" />);
     const counts = document.querySelectorAll('.tabs__count');
