@@ -119,6 +119,58 @@ describe('NodeDetailPage', () => {
   });
 });
 
+describe('NodeDetailPage — section-header alignment', () => {
+  it('renders the section title in .section-header__title', async () => {
+    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    renderPage();
+    await waitFor(() => {
+      const title = document.querySelector('.section-header__title');
+      expect(title).not.toBeNull();
+      expect(title?.textContent?.trim()).toBe('Node history');
+    });
+  });
+
+  it('renders the run count in .section-header__count', async () => {
+    mockFetch.mockImplementation(() => jsonResp({
+      runs: [
+        mkRun({ run_id: 'r1', task_id: 't1' }),
+        mkRun({ run_id: 'r2', task_id: 't2' }),
+      ],
+    }));
+    renderPage();
+    await waitFor(() => {
+      const count = document.querySelector('.section-header__count');
+      expect(count).not.toBeNull();
+      expect(count?.textContent?.trim()).toBe('2');
+    });
+  });
+
+  it('renders the metadata summary in .section-header__sub', async () => {
+    mockFetch.mockImplementation(() => jsonResp({
+      runs: [
+        mkRun({ run_id: 'r1', task_id: 't1', task_status: 'succeeded' }),
+      ],
+    }));
+    renderPage();
+    await waitFor(() => {
+      const sub = document.querySelector('.section-header__sub');
+      expect(sub).not.toBeNull();
+      expect(sub?.textContent).toMatch(/succeeded|no terminal runs/);
+      expect(sub?.textContent).toMatch(/avg/);
+    });
+  });
+
+  it('does not render the orphan classes anywhere', async () => {
+    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    const { container } = renderPage();
+    await waitFor(() => {
+      expect(container.querySelector('.node-stats-summary')).toBeNull();
+      expect(container.querySelector('.nodes-log-link')).toBeNull();
+      expect(container.querySelector('.nodes-dash')).toBeNull();
+    });
+  });
+});
+
 describe('NodeDetailPage — foundations', () => {
   it('wraps in .page + .page-header (legacy .node-detail-page is gone)', async () => {
     mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
