@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { NodeRun, NodeRunsResponse } from './types';
 import { kindLabel, computeNodeStats, formatDuration } from './node-helpers';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
@@ -66,6 +66,11 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
 export default function NodeDetailPage() {
   const { name, fqn } = useParams<{ name: string; fqn: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const fromMode: 'run' | 'latest' = (location.state as { from_mode?: 'run' | 'latest' } | null)?.from_mode === 'latest'
+    ? 'latest'
+    : 'run';
+  const backPath = fromMode === 'latest' ? `/schedule/${name}/latest` : `/schedule/${name}`;
   const [runs, setRuns] = useState<NodeRun[]>([]);
   const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [runError, setRunError] = useState<string | null>(null);
@@ -131,7 +136,7 @@ export default function NodeDetailPage() {
       )}
 
       <header className="page-header">
-        <button className="detail-back-link" onClick={() => navigate(`/schedule/${name}`)}>
+        <button className="detail-back-link" onClick={() => navigate(backPath)}>
           ← Back to {name}
         </button>
         <div className="detail-scheduler-name">{fqn}</div>

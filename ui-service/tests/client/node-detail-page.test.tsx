@@ -15,10 +15,14 @@ function jsonResp(body: unknown, status = 200) {
   return Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body } as Response);
 }
 
-function renderPage() {
+function renderPage(state?: { from_mode?: 'run' | 'latest' }) {
   return render(
-    <MemoryRouter initialEntries={['/schedule/daily/node/svc.schema.tbl']}>
+    <MemoryRouter
+      initialEntries={[{ pathname: '/schedule/daily/node/svc.schema.tbl', state: state ?? null }]}
+    >
       <Routes>
+        <Route path="/schedule/:name" element={<div>RUN MODE</div>} />
+        <Route path="/schedule/:name/latest" element={<div>LATEST MODE</div>} />
         <Route path="/schedule/:name/node/:fqn" element={<NodeDetailPage />} />
       </Routes>
     </MemoryRouter>,
@@ -246,5 +250,43 @@ describe('NodeDetailPage — foundations', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^more$/i })).toBeInTheDocument();
     });
+  });
+});
+
+describe('NodeDetailPage back link', () => {
+  it('returns to /schedule/:name when location.state.from_mode is "run"', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/runs')) return jsonResp({ runs: [] });
+      return jsonResp({});
+    });
+    renderPage({ from_mode: 'run' });
+    const back = await screen.findByRole('button', { name: /back to daily/i });
+    fireEvent.click(back);
+    await waitFor(() => expect(screen.getByText('RUN MODE')).toBeInTheDocument());
+  });
+
+  it('returns to /schedule/:name/latest when location.state.from_mode is "latest"', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/runs')) return jsonResp({ runs: [] });
+      return jsonResp({});
+    });
+    renderPage({ from_mode: 'latest' });
+    const back = await screen.findByRole('button', { name: /back to daily/i });
+    fireEvent.click(back);
+    await waitFor(() => expect(screen.getByText('LATEST MODE')).toBeInTheDocument());
+  });
+
+  it('defaults to /schedule/:name when location.state is null (deep link)', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/runs')) return jsonResp({ runs: [] });
+      return jsonResp({});
+    });
+    renderPage();
+    const back = await screen.findByRole('button', { name: /back to daily/i });
+    fireEvent.click(back);
+    await waitFor(() => expect(screen.getByText('RUN MODE')).toBeInTheDocument());
   });
 });

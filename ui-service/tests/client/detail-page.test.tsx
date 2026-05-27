@@ -572,11 +572,11 @@ describe('DetailPage — right-column panel tabs', () => {
     });
   });
 
-  it('renders the tabbed panel inside /schedule/:name/latest too', async () => {
-    render(withRouterAt(`/schedule/${SCHED}/latest`));
+  it('does not render panel tabs on /schedule/:name/latest (latest mode shows section header instead)', async () => {
+    const { container } = render(withRouterAt(`/schedule/${SCHED}/latest`));
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /nodes/i })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: /past runs/i })).toBeInTheDocument();
+      expect(container.querySelector('.tabs--panel')).toBeNull();
+      expect(screen.queryByRole('tab', { name: /nodes/i })).toBeNull();
     });
   });
 
@@ -586,5 +586,125 @@ describe('DetailPage — right-column panel tabs', () => {
       expect(container.querySelectorAll('.detail-nodes-card')).toHaveLength(0);
       expect(container.querySelectorAll('.detail-runs-card')).toHaveLength(0);
     });
+  });
+});
+
+const LATEST_SCHED = 'topology-only';
+const LATEST_RUN_ID = 'past-run-1';
+
+function withLatestRouter() {
+  return (
+    <MemoryRouter initialEntries={[`/schedule/${LATEST_SCHED}/latest`]}>
+      <Routes>
+        <Route path="/schedule/:name/latest" element={<DetailPage mode="latest" />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+function latestRoutes() {
+  return {
+    [`/api/schedules/${LATEST_SCHED}/graph`]: async () => ({
+      nodes: [
+        { node_id: 'svc.sch.a', node_type: 'dbt-model', schedule_name: LATEST_SCHED },
+      ],
+      edges: [],
+      topology_generation: 5,
+    }),
+    [`/api/schedules/${LATEST_SCHED}/runs`]: async () => ({
+      runs: [
+        {
+          run_id: LATEST_RUN_ID,
+          schedule_name: LATEST_SCHED,
+          terminal_status: 'succeeded',
+          created_at: '2026-05-26T11:39:00Z',
+          completed_at: '2026-05-26T11:40:00Z',
+        },
+      ],
+    }),
+    '/api/schedules': async () => ({
+      schedules: [{ schedule_name: LATEST_SCHED, last_run_id: LATEST_RUN_ID }],
+    }),
+    [`/api/runs/${LATEST_RUN_ID}/graph`]: async () => ({
+      nodes: [
+        { node_id: 'svc.sch.a', node_type: 'dbt-model', schedule_name: LATEST_SCHED, status: 'succeeded' },
+      ],
+      edges: [],
+      run_topology_generation: 4,
+      latest_topology_generation: 5,
+    }),
+    [`/api/schedulers/${LATEST_RUN_ID}`]: async () => ({
+      scheduler: {
+        schedule_id: LATEST_RUN_ID,
+        schedule_name: LATEST_SCHED,
+        status: 'scheduler_status_succeeded',
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+        cancelled_at: null,
+        cancelled_by: '',
+      },
+    }),
+    [`/api/schedulers/${LATEST_RUN_ID}/tasks`]: async () => ({
+      tasks: [
+        {
+          task_id: 't1',
+          service_name: 'svc',
+          schema_name: 'sch',
+          table_name: 'a',
+          job_name: '',
+          status: 'succeeded',
+          retry_count: 0,
+          max_retries: 0,
+          created_at: null,
+        },
+      ],
+    }),
+    [`/api/schedulers/${LATEST_RUN_ID}/executions`]: async () => ({ executions: [] }),
+  };
+}
+
+describe('DetailPage in latest mode', () => {
+  it('renders a Past Runs section header and no panel tab strip', async () => {
+    const fetchMock = mockFetchSequence(latestRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { container } = render(withLatestRouter());
+      await waitFor(() => {
+        const titles = container.querySelectorAll('.section-header__title');
+        expect(Array.from(titles).some(el => el.textContent === 'Past Runs')).toBe(true);
+      });
+      expect(container.querySelector('.tabs--panel')).toBeNull();
+      expect(screen.queryByRole('tab', { name: /nodes/i })).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('shows the catalog badge regardless of past runs', async () => {
+    const fetchMock = mockFetchSequence(latestRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(withLatestRouter());
+      await waitFor(() => {
+        expect(screen.getByText('catalog')).toBeInTheDocument();
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not poll /tasks or /executions in latest mode', async () => {
+    const fetchMock = mockFetchSequence(latestRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(withLatestRouter());
+      await waitFor(() => screen.getByText('catalog'));
+      const urls = fetchMock.mock.calls.map(c => String(c[0]));
+      expect(urls.some(u => /\/api\/schedulers\/[^/]+\/tasks$/.test(u))).toBe(false);
+      expect(urls.some(u => /\/api\/schedulers\/[^/]+\/executions$/.test(u))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
