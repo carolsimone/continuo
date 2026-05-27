@@ -41,7 +41,7 @@ None.
 
 | Route | Method | Backend |
 |---|---|---|
-| `/api/topology/schedules` | GET | `ListScheduleTopologies` → orchestrator gRPC. Returns one entry per schedule with at least one active `:Table`: `{schedule_name, node_count, last_updated_at}`. Backs the homepage "DAG Latest Snapshot" tile row. |
+| `/api/topology/schedules` | GET | `ListScheduleTopologies` → orchestrator gRPC. Returns one entry per schedule with at least one active `:Table`: `{schedule_name, node_count, last_updated_at}`. Backs the homepage `Topology` tab tile grid. |
 
 #### Run / scheduler API
 
@@ -157,9 +157,9 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 ## Frontend Architecture
 
 - React SPA (TypeScript + Vite)
-- `DashboardPage`: polls `/api/schedules` every 5 seconds for the schedule cards (top of page); polls `/api/topology/schedules` every 5 seconds for the "DAG Latest Snapshot" tile row (bottom of page). Each tile navigates to `/schedule/:name/latest`.
+- `DashboardPage`: two URL-routed tabs under the page header — `Runs` (default, `/`) shows the `SchedulerCard` list, and `Topology` (`/?tab=topology`) shows the `SnapshotTile` grid. Both data sources poll every 5 seconds regardless of active tab: `/api/schedules` feeds the `Runs` tab and the `Runs` count pill; `/api/topology/schedules` feeds the `Topology` tab and its count pill. Each snapshot tile navigates to `/schedule/:name/latest`.
 - `SchedulerCard`: displays schedule name, running status, cron expression, last run time and progress; polls `/api/schedulers/:last_run_id/tasks` for task progress and `/api/runs/:last_run_id/graph` for topology-drift information (both every 5 s); shows a warning strip when the last run's `run_topology_generation` is older than the orchestrator's `latest_topology_generation`, matching the drift logic used on the schedule detail page; includes a "Trigger run" button to start a full DAG run (disabled while a run is active) and a "Cancel" button while a run is in flight
-- `DetailPage`: shows DAG panel, nodes panel, past runs panel for a selected run; includes Rerun and Rebase buttons for terminal runs with drift badge when topology generation differs
+- `DetailPage`: two-column layout — left column shows the `Dependency Graph` (`DAGPanel`); right column is a single `.detail-card` whose header is a panel-level tab bar with two URL-routed tabs (`Nodes` default, `Past Runs` via `?panel=runs`). Both modes (`/schedule/:name` and `/schedule/:name/latest`) inherit the structure. Includes Rerun and Rebase buttons for terminal runs with drift badge when topology generation differs.
 - `DAGPanel`: renders graph topology using run graph or schedule graph
 - `PastRunsPanel`: lists historical runs from `orchestrator.ListRuns`
 - `NodeDetailPage`: per-node detail page; fetches recent run history via `GET /api/nodes/:service/:schema/:table/runs`; provides a "Trigger run" control that opens `RunSourcePickerDialog` to select between latest metadata and a pinned source run
