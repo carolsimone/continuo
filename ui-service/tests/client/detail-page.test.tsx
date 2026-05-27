@@ -534,3 +534,57 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
     expect(errorEl.closest('.page-action-row')).toBeNull();
   });
 });
+
+function withRouterAt(initialPath: string) {
+  return (
+    <MemoryRouter initialEntries={[initialPath]}>
+      <Routes>
+        <Route path="/schedule/:name" element={<DetailPage />} />
+        <Route path="/schedule/:name/latest" element={<DetailPage mode="latest" />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+describe('DetailPage — right-column panel tabs', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', mockFetchSequence(freshRoutes())); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('defaults to the Nodes panel on /schedule/:name', async () => {
+    render(withRouterAt(`/schedule/${SCHED}`));
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /nodes/i })).toHaveClass('tabs__tab--active');
+    });
+    expect(screen.getByRole('tab', { name: /past runs/i })).not.toHaveClass('tabs__tab--active');
+  });
+
+  it('selects the Past Runs panel when ?panel=runs is in the URL', async () => {
+    render(withRouterAt(`/schedule/${SCHED}?panel=runs`));
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /past runs/i })).toHaveClass('tabs__tab--active');
+    });
+  });
+
+  it('falls back to Nodes when ?panel is unknown', async () => {
+    render(withRouterAt(`/schedule/${SCHED}?panel=garbage`));
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /nodes/i })).toHaveClass('tabs__tab--active');
+    });
+  });
+
+  it('renders the tabbed panel inside /schedule/:name/latest too', async () => {
+    render(withRouterAt(`/schedule/${SCHED}/latest`));
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /nodes/i })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /past runs/i })).toBeInTheDocument();
+    });
+  });
+
+  it('does not render two separate detail-nodes-card and detail-runs-card sections anymore', async () => {
+    const { container } = render(withRouterAt(`/schedule/${SCHED}`));
+    await waitFor(() => {
+      expect(container.querySelectorAll('.detail-nodes-card')).toHaveLength(0);
+      expect(container.querySelectorAll('.detail-runs-card')).toHaveLength(0);
+    });
+  });
+});

@@ -16,6 +16,7 @@ import DAGPanel from './DAGPanel';
 import NodesPanel from './NodesPanel';
 import PastRunsPanel from './PastRunsPanel';
 import RerunFailedModal, { RerunFailedMode } from './RerunFailedModal';
+import Tabs, { useActiveTab } from './Tabs';
 
 function initialLastRunId(locationState: unknown): string | null | undefined {
   if (locationState == null) return undefined;
@@ -498,6 +499,12 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
   const submittingRerun = rerunState === 'loading' || rebaseState === 'loading';
 
+  const panelSpecs = [
+    { slug: 'nodes', label: 'Nodes', count: activeTasks.length },
+    { slug: 'runs', label: 'Past Runs', count: runs.length },
+  ];
+  const activePanel = useActiveTab('panel', 'nodes', panelSpecs.map(t => t.slug));
+
   return (
     <div className="page">
       <header className="page-header">
@@ -657,36 +664,33 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
         </section>
 
         <div className="detail-right-col">
-          <section className="detail-card detail-nodes-card">
-            <div className="detail-card-header">
-              Nodes
-              <span className={`pill-sm ${pillClass(schedulerStatus)}`}>{formatStatusLabel(schedulerStatus)}</span>
-            </div>
-            <div className="nodes-table-scroll">
-              {selectedRunId && !runGraph ? (
-                <p className="empty">Loading node snapshot…</p>
-              ) : lastRunId === null && runs.length === 0 && activeTasks.length === 0 ? (
-                <p className="empty">No runs yet.</p>
-              ) : (
-                <NodesPanel
-                  tasks={activeTasks}
-                  executions={selectedRunId ? [] : latestExecutions}
-                  selectedNodeId={selectedNodeId}
-                  onNodeSelect={setSelectedNodeId}
-                />
-              )}
-            </div>
-          </section>
-
-          <section className="detail-card detail-runs-card">
-            <div className="detail-card-header">Past Runs</div>
-            <PastRunsPanel
-              runs={runs}
-              liveRunId={liveRunExists ? lastRunId : null}
-              liveStatus={liveRunExists ? formatStatusLabel(liveSchedulerStatus) : null}
-              selectedRunId={selectedRunId}
-              onSelectRun={handleSelectRun}
-            />
+          <section className="detail-card">
+            <Tabs variant="panel" param="panel" defaultSlug="nodes" tabs={panelSpecs} />
+            {activePanel === 'nodes' && (
+              <div className="nodes-table-scroll">
+                {selectedRunId && !runGraph ? (
+                  <p className="empty">Loading node snapshot…</p>
+                ) : lastRunId === null && runs.length === 0 && activeTasks.length === 0 ? (
+                  <p className="empty">No runs yet.</p>
+                ) : (
+                  <NodesPanel
+                    tasks={activeTasks}
+                    executions={selectedRunId ? [] : latestExecutions}
+                    selectedNodeId={selectedNodeId}
+                    onNodeSelect={setSelectedNodeId}
+                  />
+                )}
+              </div>
+            )}
+            {activePanel === 'runs' && (
+              <PastRunsPanel
+                runs={runs}
+                liveRunId={liveRunExists ? lastRunId : null}
+                liveStatus={liveRunExists ? formatStatusLabel(liveSchedulerStatus) : null}
+                selectedRunId={selectedRunId}
+                onSelectRun={handleSelectRun}
+              />
+            )}
           </section>
         </div>
       </div>

@@ -35,6 +35,33 @@ Rules:
 - The header bar separator (`border-bottom`) is always present; it
   anchors the page visually.
 
+### Full-viewport surfaces
+
+When a page's primary surface is spatial — a dependency graph, a map, a
+canvas, a long timeline — it must fill the viewport height regardless
+of the size of any secondary panel beside it. Empty secondary panels
+must not shrink the primary surface.
+
+Concretely: any multi-column layout container that hosts a spatial
+primary surface anchors itself to the viewport instead of sizing to
+content, and every column inside it stretches to that height.
+
+```css
+.detail-layout {
+  display: flex;
+  gap: 16px;
+  min-height: calc(100vh - 160px); /* viewport minus page chrome */
+  align-items: stretch;
+}
+
+.detail-right-col > .detail-card { flex: 1; min-height: 0; }
+```
+
+The `160px` chrome budget is the page padding + `.page-header` +
+`.page-action-row` on DetailPage. Pages with different chrome should
+keep the same pattern (viewport-anchored container + stretched
+children) and adjust the offset.
+
 ## Buttons
 
 One class for the shape, three variants, two orthogonal states.
@@ -155,6 +182,90 @@ Row 2: actions                                  [Action]  [Action]  [Action]
 - The confirming verb is the action the modal performs (`Rerun`,
   `Cancel run`, `Trigger`). Not "OK" or "Submit".
 
+## Section headers
+
+Used as the leading row of any `.detail-card` or any content section
+inside `.page-content`. One markup pattern for every page.
+
+```jsx
+<div className="section-header">
+  <div className="section-header__main">
+    <span className="section-header__title">Nodes</span>
+    <span className="section-header__count">13</span>
+  </div>
+  <div className="section-header__sub">75% succeeded · avg 8s</div>
+</div>
+```
+
+```css
+.section-header              { padding: 10px 16px; border-bottom: 1px solid #f1f5f9; }
+.section-header__main        { display: flex; align-items: center; gap: 8px; }
+.section-header__title       { font-size: 11px; font-weight: 700; color: #94a3b8;
+                               text-transform: uppercase; letter-spacing: 0.7px; }
+.section-header__count       { background: #f1f3f5; color: #555; font-size: 11px;
+                               padding: 1px 7px; border-radius: 999px; font-weight: 500; }
+.section-header__sub         { font-size: 12px; color: #6b7280; margin-top: 2px; }
+```
+
+Rules:
+
+- Count pill is optional. Use it whenever the section contains a
+  countable collection (cards, rows, runs). Omit when the content is
+  a single artifact (one graph, one form).
+- Sub-line is optional. Use for one short metadata string. Never put
+  actions in the sub-line — actions go in their own right-aligned
+  slot containing only `.btn` elements.
+- The existing `.detail-card-header` class is a back-compat alias for
+  the title styling and is still allowed on card headers that have
+  no count or sub-line.
+
+## Tabs
+
+Two scales: **page-level** tabs live directly under `.page-header`;
+**panel-level** tabs live inside a `.detail-card` and replace the
+section header on cards that host multiple peer panels.
+
+```jsx
+<nav className="tabs" role="tablist">
+  <a className="tabs__tab tabs__tab--active" role="tab" aria-selected="true">
+    Runs <span className="tabs__count">3</span>
+  </a>
+  <a className="tabs__tab" role="tab" aria-selected="false">
+    Topology <span className="tabs__count">3</span>
+  </a>
+</nav>
+```
+
+```css
+.tabs                  { display: flex; gap: 24px; border-bottom: 1px solid #e2e8f0;
+                         margin-bottom: 16px; }
+.tabs__tab             { padding: 10px 0; font-size: 13px; color: #6b7280;
+                         border-bottom: 2px solid transparent; cursor: pointer;
+                         display: inline-flex; align-items: center; gap: 8px;
+                         text-decoration: none; }
+.tabs__tab--active     { color: #111827; border-bottom-color: #111827; font-weight: 500; }
+.tabs__count           { background: #f1f3f5; color: #555; font-size: 11px;
+                         padding: 1px 7px; border-radius: 999px; font-weight: 500; }
+.tabs__tab--active .tabs__count { background: #111827; color: #fff; }
+
+.tabs--panel           { padding: 0 16px; border-bottom-color: #f1f5f9; }
+.tabs--panel .tabs__tab { padding: 10px 0; font-size: 12px; }
+```
+
+Rules:
+
+- Active state is the inverted-pill + dark underline + 500-weight
+  label. Inactive tabs are gray with a transparent underline.
+- Labels are short nouns (`Runs`, `Topology`, `Nodes`, `Past Runs`).
+  No verbs, no icons, no truncation.
+- Active tab is encoded in the URL. Use `?tab=<slug>` for page-level
+  tabs and `?panel=<slug>` for panel-level tabs. The default tab
+  emits no query string. Unknown values fall back to the default.
+- Maximum four tabs per row at either scale. Above four, the surface
+  needs a different pattern — propose it in this file first.
+- Always paired with `.tabs__count` when the tabs index a countable
+  collection. Same rule as `.section-header__count`.
+
 ## Tables
 
 - Reuse `.nodes-table` shape. Header row is uppercase 10.5px gray.
@@ -167,7 +278,7 @@ Row 2: actions                                  [Action]  [Action]  [Action]
 
 ## Snapshot tiles
 
-Used on the homepage "DAG Latest Snapshot" row. One tile per schedule
+Used inside the homepage `Topology` tab. One tile per schedule
 with at least one active topology node. Clicking the tile navigates;
 the whole tile IS the click target.
 

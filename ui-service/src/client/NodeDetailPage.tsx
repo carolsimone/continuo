@@ -54,7 +54,7 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
       <td><code>{r.manifest_version || '—'}</code></td>
       <td>
         {r.log_s3_key
-          ? <a className="nodes-log-link"
+          ? <a
                href={`/api/task-execution/${r.task_id}/logs?key=${encodeURIComponent(r.log_s3_key)}`}
                target="_blank" rel="noopener noreferrer">logs</a>
           : <span className="nodes-dash">—</span>}
@@ -164,17 +164,18 @@ export default function NodeDetailPage() {
 
       <main className="page-content">
         <section className="detail-card">
-          <div className="detail-card-header">
-            Node history
-            <span className="node-stats-summary">
+          <div className="section-header">
+            <div className="section-header__main">
+              <span className="section-header__title">Node history</span>
+              <span className="section-header__count">{stats.total}</span>
+            </div>
+            <div className="section-header__sub">
               {stats.successRatePct !== null
                 ? `${stats.successRatePct}% succeeded`
                 : 'no terminal runs'}
               {' · '}
               avg {formatDuration(stats.avgDurationSec)}
-              {' · '}
-              last {stats.total} runs
-            </span>
+            </div>
           </div>
           {runs.length === 0 ? (
             <p className="empty">No runs yet on this node.</p>
