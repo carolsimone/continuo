@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  headerDriftLabel,
   parseNodeId,
   resolveActiveGraph,
   resolveNodeStatus,
@@ -138,5 +139,19 @@ describe('detail page graph helpers', () => {
       schema_name: '',
       table_name: '',
     });
+  });
+
+  it('hides the header drift chip in latest mode regardless of drift', () => {
+    expect(headerDriftLabel({ mode: 'latest', driftLabel: 'source 1 gen behind latest' })).toBeNull();
+  });
+
+  it('shows the header drift chip in run mode', () => {
+    expect(headerDriftLabel({ mode: 'run', driftLabel: 'source 1 gen behind latest' }))
+      .toBe('source 1 gen behind latest');
+  });
+
+  it('returns null when there is no drift to display', () => {
+    expect(headerDriftLabel({ mode: 'run', driftLabel: null })).toBeNull();
+    expect(headerDriftLabel({ mode: 'latest', driftLabel: null })).toBeNull();
   });
 });

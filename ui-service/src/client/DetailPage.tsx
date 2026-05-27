@@ -10,7 +10,7 @@ import {
   Task,
   TaskExecution,
 } from './types';
-import { resolveActiveGraph } from './detail-page-helpers';
+import { resolveActiveGraph, headerDriftLabel } from './detail-page-helpers';
 import { getDriftState, getDriftBadge } from './drift-helpers';
 import DAGPanel from './DAGPanel';
 import NodesPanel from './NodesPanel';
@@ -508,7 +508,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
         <span className={`pill ${pillClass(selectedRun ? selectedRun.terminal_status : schedulerStatus)}`}>
           {selectedRun ? formatStatusLabel(selectedRun.terminal_status) : formatStatusLabel(schedulerStatus)}
         </span>
-        {driftLabel && (
+        {headerDriftLabel({ mode, driftLabel }) && (
           <span className="info-strip info-strip--warning info-strip--inline">
             <span className="info-strip__icon">⚠</span>
             {driftLabel}

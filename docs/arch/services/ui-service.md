@@ -152,7 +152,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 - **Primary**: `/api/runs/:run_id/graph` — uses the run snapshot created by `orchestrator`; includes per-node `EXECUTES.status` from the live execution projection.
 - **Fallback**: `/api/schedules/:name/graph` — topology view without run status; used when no run snapshot exists yet.
 - When a run snapshot includes node statuses, the DAG renderer uses those directly and only falls back to `state` task rows for the same node when both are present.
-- **Latest mode** (`/schedule/:name/latest`): `DetailPage` is rendered with `mode="latest"`; `resolveActiveGraph` short-circuits to the topology graph (`/api/schedules/:name/graph`, polled every 5s). A `topology v<N>` chip is rendered in the page header using `:TopologyRoot.topology_generation`. Triggers from this route still work; the orchestrator pins the generation at snapshot-write time.
+- **Latest mode** (`/schedule/:name/latest`): `DetailPage` is rendered with `mode="latest"`; `resolveActiveGraph` short-circuits to the topology graph (`/api/schedules/:name/graph`, polled every 5s). A `topology v<N>` chip is rendered in the page header using `:TopologyRoot.topology_generation`. The run-centric drift chip (`source N gen behind latest`) is suppressed in this mode — it compares a selected run's source generation to the latest topology, which is meaningless when the canvas already shows the latest topology. The chip remains active inside `RerunFailedModal`, where the user is acting on a specific run. Triggers from this route still work; the orchestrator pins the generation at snapshot-write time.
 
 ## Frontend Architecture
 
