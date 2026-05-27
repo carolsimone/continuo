@@ -35,6 +35,33 @@ Rules:
 - The header bar separator (`border-bottom`) is always present; it
   anchors the page visually.
 
+### Full-viewport surfaces
+
+When a page's primary surface is spatial — a dependency graph, a map, a
+canvas, a long timeline — it must fill the viewport height regardless
+of the size of any secondary panel beside it. Empty secondary panels
+must not shrink the primary surface.
+
+Concretely: any multi-column layout container that hosts a spatial
+primary surface anchors itself to the viewport instead of sizing to
+content, and every column inside it stretches to that height.
+
+```css
+.detail-layout {
+  display: flex;
+  gap: 16px;
+  min-height: calc(100vh - 160px); /* viewport minus page chrome */
+  align-items: stretch;
+}
+
+.detail-right-col > .detail-card { flex: 1; min-height: 0; }
+```
+
+The `160px` chrome budget is the page padding + `.page-header` +
+`.page-action-row` on DetailPage. Pages with different chrome should
+keep the same pattern (viewport-anchored container + stretched
+children) and adjust the offset.
+
 ## Buttons
 
 One class for the shape, three variants, two orthogonal states.
