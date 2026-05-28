@@ -109,3 +109,23 @@ func (u *UnitOfWork) Rollback() error {
 	}
 	return nil
 }
+
+// releaseQueueAdvisoryLockKey is the integer key passed to
+// pg_advisory_xact_lock to serialise AdvanceQueue invocations across all
+// release-controller callers. The value is arbitrary; only stability matters.
+// Generated once for this service; do not change.
+const releaseQueueAdvisoryLockKey int64 = 7142026052800
+
+// LockReleaseQueue acquires a tx-scoped advisory lock on the release queue.
+// Concurrent transactions calling this method block until the holder commits
+// or rolls back, providing serial access to the queue-advance critical
+// section. Must be called inside an active transaction.
+func (u *UnitOfWork) LockReleaseQueue(ctx context.Context) error {
+	if !u.inTx || u.tx == nil {
+		return fmt.Errorf("LockReleaseQueue: no tx in progress")
+	}
+	if _, err := u.tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", releaseQueueAdvisoryLockKey); err != nil {
+		return fmt.Errorf("acquire release-queue advisory lock: %w", err)
+	}
+	return nil
+}

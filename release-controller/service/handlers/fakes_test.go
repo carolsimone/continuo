@@ -239,6 +239,11 @@ func (f *fakeUoW) Begin(_ context.Context) error                       { return 
 func (f *fakeUoW) Commit() error                                       { return nil }
 func (f *fakeUoW) Rollback() error                                     { return nil }
 
+// LockReleaseQueue is a no-op in the fake: unit tests execute sequentially,
+// so the tx-scoped advisory lock semantics are validated end-to-end against
+// real Postgres in integration_test/concurrent_advance_no_duplicate_test.go.
+func (f *fakeUoW) LockReleaseQueue(_ context.Context) error { return nil }
+
 var _ uow.UnitOfWork = (*fakeUoW)(nil)
 
 // --- helpers ---

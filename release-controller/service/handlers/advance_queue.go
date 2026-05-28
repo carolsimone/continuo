@@ -21,6 +21,14 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	}
 	defer u.Rollback() //nolint:errcheck
 
+	// Serialise across all callers (HTTP POST path + stream-consumer paths)
+	// before reading active/next state. Without this lock two concurrent
+	// AdvanceQueue calls both observe "no active release", both promote the
+	// same queued row, and both write release.requested:v1 outbox entries.
+	if err := u.LockReleaseQueue(ctx); err != nil {
+		return fmt.Errorf("lock release queue: %w", err)
+	}
+
 	active, err := u.ReleaseRepo().ActiveRelease(ctx)
 	if err != nil {
 		return fmt.Errorf("active release: %w", err)
