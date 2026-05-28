@@ -19,6 +19,7 @@ var servicesWithMainGo = []string{
 	"orchestrator/main.go",
 	"executor-controller/main.go",
 	"k8s-controller/main.go",
+	"release-controller/main.go",
 }
 
 // streamLiteralRe matches versioned stream literals (e.g. "node.updated:v1").
