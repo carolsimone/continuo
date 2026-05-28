@@ -85,6 +85,71 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 	assert.Equal(t, streams.ReleaseRejectedV1, second.StreamName)
 }
 
+// TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields asserts
+// the validation.requested:v1 payload carries a `nodes` array of full per-node
+// objects (unique_id, service_name, schema_name, table_name, image_tag) in
+// topological order. executor-controller needs these to build candidate dbt
+// jobs without re-deriving fields from the unique_id string.
+func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", []string{"a"}, map[string]string{
+		"svc-a": "sha-a",
+		"svc-b": "sha-b",
+	})
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", SchemaName: "schema_a", TableName: "table_a"},
+		{UniqueID: "b", ServiceName: "svc-b", SchemaName: "schema_b", TableName: "table_b", UpstreamUniqueIDs: []string{"a"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	}))
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 2)
+	require.Equal(t, streams.ValidationRequestedV1, entries[1].StreamName)
+
+	var payload struct {
+		ReleaseID       string   `json:"release_id"`
+		Mode            string   `json:"mode"`
+		NodeIDsInOrder  []string `json:"node_ids_in_order"`
+		Nodes           []struct {
+			UniqueID    string `json:"unique_id"`
+			ServiceName string `json:"service_name"`
+			SchemaName  string `json:"schema_name"`
+			TableName   string `json:"table_name"`
+			ImageTag    string `json:"image_tag"`
+		} `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal(entries[1].Payload, &payload))
+
+	assert.Equal(t, "rA", payload.ReleaseID)
+	assert.Equal(t, "validation", payload.Mode)
+	require.Len(t, payload.Nodes, 2, "nodes array carries one entry per validation node")
+
+	// The order must match node_ids_in_order (topo sort: a before b).
+	assert.Equal(t, payload.NodeIDsInOrder[0], payload.Nodes[0].UniqueID)
+	assert.Equal(t, payload.NodeIDsInOrder[1], payload.Nodes[1].UniqueID)
+
+	byID := map[string]int{}
+	for i, n := range payload.Nodes {
+		byID[n.UniqueID] = i
+	}
+	a := payload.Nodes[byID["a"]]
+	b := payload.Nodes[byID["b"]]
+
+	assert.Equal(t, "svc-a", a.ServiceName)
+	assert.Equal(t, "schema_a", a.SchemaName)
+	assert.Equal(t, "table_a", a.TableName)
+	assert.Equal(t, "sha-a", a.ImageTag, "image_tag was joined from Release.ImageTags before publishing")
+
+	assert.Equal(t, "svc-b", b.ServiceName)
+	assert.Equal(t, "schema_b", b.SchemaName)
+	assert.Equal(t, "table_b", b.TableName)
+	assert.Equal(t, "sha-b", b.ImageTag)
+}
+
 func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	imageTags := map[string]string{
 		"svc-a": "tag-alpha",
