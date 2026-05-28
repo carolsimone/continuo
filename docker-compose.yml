@@ -52,6 +52,15 @@ services:
       - postgres
     tty: true
 
+  flyway-release:
+    image: flyway/flyway
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_release -user=continuo_svc -password=continuo -connectRetries=30
+    volumes:
+      - ./db/migration/release:/flyway/sql
+    depends_on:
+      - postgres
+    tty: true
+
   redis:
     image: redis:7.2-alpine
     ports:
