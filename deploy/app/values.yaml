@@ -207,3 +207,19 @@ services:
         memory: 256Mi
     # The local compose setup mounts dbt manifests into /manifests. In-cluster this
     # needs a follow-up source such as a PVC, baked-in artifacts, or S3-backed sync.
+
+  - name: release-controller
+    enabled: true
+    replicas: 1
+    httpPort: 8088
+    probePath: /healthz
+    secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
+      - name: REDIS_PASSWORD
+        secretKey: REDIS_PASSWORD
+    env:
+      POSTGRES_DB: continuo_release
+      HTTP_PORT: "8088"
