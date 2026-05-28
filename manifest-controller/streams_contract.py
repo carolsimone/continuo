@@ -7,5 +7,14 @@ MANIFEST_LOADED_V1 = "manifest.loaded:v1"
 UPDATE_GRAPH_V1 = "update.graph:v1"
 """Manifest refresh trigger; manifest-controller reloads dbt artifacts."""
 
+RELEASE_REQUESTED_V1 = "release.requested:v1"
+"""Candidate release accepted by release-controller; manifest-controller pulls manifests and parses them."""
+
+MANIFEST_LOADED_CANDIDATE_V1 = "manifest.loaded.candidate:v1"
+"""Resolved candidate topology from manifest-controller back to release-controller."""
+
 MANIFEST_UPDATE_GRAPH = "manifest-controller-update-graph"
 """manifest-controller consumer group on update.graph:v1."""
+
+MANIFEST_CONTROLLER_RELEASE_REQUESTED = "manifest-controller-release-requested"
+"""manifest-controller consumer group on release.requested:v1."""

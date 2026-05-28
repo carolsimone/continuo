@@ -48,6 +48,18 @@ const (
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
 	// UpdateGraphV1 — Manifest refresh trigger; manifest-controller reloads dbt artifacts.
 	UpdateGraphV1 = "update.graph:v1"
+	// ReleaseRequestedV1 — Candidate release accepted by release-controller; manifest-controller pulls manifests and parses them.
+	ReleaseRequestedV1 = "release.requested:v1"
+	// ManifestLoadedCandidateV1 — Resolved candidate topology from manifest-controller back to release-controller.
+	ManifestLoadedCandidateV1 = "manifest.loaded.candidate:v1"
+	// ValidationRequestedV1 — dbt --empty validation run requested by release-controller; executor-controller dispatches per-node jobs.
+	ValidationRequestedV1 = "validation.requested:v1"
+	// ValidationCompletedV1 — Per-node validation results from executor-controller back to release-controller.
+	ValidationCompletedV1 = "validation.completed:v1"
+	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
+	ReleasePromotedV1 = "release.promoted:v1"
+	// ReleaseRejectedV1 — Release rejected (parse or validation failure); emitted for telemetry and UI surfaces. No service-side consumer in Phase 1.
+	ReleaseRejectedV1 = "release.rejected:v1"
 )
 
 // Consumer groups.
@@ -96,4 +108,14 @@ const (
 	K8sScheduleCancelled = "k8s-schedule-cancelled"
 	// ManifestUpdateGraph — manifest-controller consumer group on update.graph:v1.
 	ManifestUpdateGraph = "manifest-controller-update-graph"
+	// ManifestControllerReleaseRequested — manifest-controller consumer group on release.requested:v1.
+	ManifestControllerReleaseRequested = "manifest-controller-release-requested"
+	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v1.
+	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
+	// ExecutorControllerValidationRequested — executor-controller consumer group on validation.requested:v1.
+	ExecutorControllerValidationRequested = "executor-controller-validation-requested"
+	// ReleaseControllerValidationCompleted — release-controller consumer group on validation.completed:v1.
+	ReleaseControllerValidationCompleted = "release-controller-validation-completed"
+	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
+	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 )

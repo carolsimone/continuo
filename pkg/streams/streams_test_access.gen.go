@@ -29,6 +29,12 @@ func PkgConstantsForTest() map[string]string {
 		"TaskFailedV1": TaskFailedV1,
 		"ScheduleCancelledV1": ScheduleCancelledV1,
 		"UpdateGraphV1": UpdateGraphV1,
+		"ReleaseRequestedV1": ReleaseRequestedV1,
+		"ManifestLoadedCandidateV1": ManifestLoadedCandidateV1,
+		"ValidationRequestedV1": ValidationRequestedV1,
+		"ValidationCompletedV1": ValidationCompletedV1,
+		"ReleasePromotedV1": ReleasePromotedV1,
+		"ReleaseRejectedV1": ReleaseRejectedV1,
 		"OrchestratorSchedulerStarted": OrchestratorSchedulerStarted,
 		"StateScheduleCatalog": StateScheduleCatalog,
 		"StateRunEntriesDispatched": StateRunEntriesDispatched,
@@ -51,5 +57,10 @@ func PkgConstantsForTest() map[string]string {
 		"ExecutorScheduleCancelled": ExecutorScheduleCancelled,
 		"K8sScheduleCancelled": K8sScheduleCancelled,
 		"ManifestUpdateGraph": ManifestUpdateGraph,
+		"ManifestControllerReleaseRequested": ManifestControllerReleaseRequested,
+		"ReleaseControllerManifestLoadedCandidate": ReleaseControllerManifestLoadedCandidate,
+		"ExecutorControllerValidationRequested": ExecutorControllerValidationRequested,
+		"ReleaseControllerValidationCompleted": ReleaseControllerValidationCompleted,
+		"OrchestratorReleasePromoted": OrchestratorReleasePromoted,
 	}
 }
