@@ -185,8 +185,11 @@ func TestReleasePromoted_DedupHit_ShortCircuits(t *testing.T) {
 	assert.Empty(t, uow.outboxRepo.CreatedEntries, "no outbox on dedup hit")
 }
 
-// 4. Neo4j error from PromoteRelease propagates as retryable (not ErrPermanent)
-// and does NOT write a dedup row so the message can replay.
+// 4. Neo4j error from PromoteRelease propagates as retryable (not ErrPermanent).
+// The handler returns a non-nil error so the binding NACKs and the message
+// replays. In a real Postgres transaction the dedup INSERT is rolled back;
+// the fake UoW is not transaction-aware so we verify rollback was called and
+// no commit occurred, which is the observable contract for replay eligibility.
 func TestReleasePromoted_Neo4jError_PropagatesAsRetryable(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
@@ -203,10 +206,10 @@ func TestReleasePromoted_Neo4jError_PropagatesAsRetryable(t *testing.T) {
 	// Must NOT be a permanent error — the binding must NACK so the message replays.
 	assert.False(t, errors.Is(err, events.ErrPermanent), "neo4j error should be retryable, not permanent")
 
-	// No dedup row written → replay will be processed fresh.
-	mp, lookupErr := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-neo4j-err", streams.ReleasePromotedV1)
-	require.NoError(t, lookupErr)
-	assert.Nil(t, mp, "dedup row must NOT be written when PromoteRelease fails")
+	// Transaction must NOT be committed — in the real system the Postgres tx
+	// rolls back, discarding the dedup INSERT so the message can replay.
+	assert.False(t, uow.CommittedTx, "transaction must not be committed on PromoteRelease failure")
+	assert.True(t, uow.RolledBackTx, "rollback must be called on PromoteRelease failure")
 
 	// No outbox written.
 	assert.Empty(t, uow.outboxRepo.CreatedEntries)
