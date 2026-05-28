@@ -458,7 +458,7 @@ func main() {
 	// contention. The consumer is dormant until release-controller emits its
 	// first release.promoted:v1 event in production.
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
-	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, logger)
+	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, topologyRepo, topologyStateRepo, logger)
 	releasePromotedBinding := redis.NewReleasePromotedBinding(releasePromotedHandler, logger)
 	releasePromotedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
