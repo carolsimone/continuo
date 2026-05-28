@@ -6,6 +6,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -13,6 +14,10 @@ import (
 // NewReleasePromotedBinding wires ParseReleasePromoted into the
 // ReleasePromotedHandler. Parse failures are permanently ACKed (logged at
 // error level), matching orchestrator's existing convention.
+//
+// outbox_entry_id is extracted from the message fields and threaded to the
+// handler so the dedup layer can catch re-XADDs of the same upstream outbox
+// row that arrive under a fresh Redis message ID.
 func NewReleasePromotedBinding(
 	handler *handlers.ReleasePromotedHandler,
 	logger *slog.Logger,
@@ -29,6 +34,7 @@ func NewReleasePromotedBinding(
 			Topology:  evt.Topology,
 			ImageTags: evt.ImageTags,
 		}
-		return handler.Handle(ctx, msg.ID, in)
+		outboxEntryID := messageprocessing.ExtractOutboxEntryID(msg.Values)
+		return handler.Handle(ctx, msg.ID, outboxEntryID, in)
 	}
 }

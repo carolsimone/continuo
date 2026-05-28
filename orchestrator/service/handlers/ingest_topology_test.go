@@ -19,9 +19,17 @@ import (
 
 // ── fakes: repository.TopologyRepository ─────────────────────────────────────
 
+// setServiceMetadataCall records the arguments passed to SetServiceMetadata.
+type setServiceMetadataCall struct {
+	ServiceMetadata    map[string]map[string]string
+	TopologyGeneration int64
+}
+
 type fakeTopologyRepository struct {
-	applySnapshotFn    func(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error
-	applySnapshotCalls [][]*topology.TopologyNode
+	applySnapshotFn        func(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error
+	applySnapshotCalls     [][]*topology.TopologyNode
+	setServiceMetadataCalls []setServiceMetadataCall
+	setServiceMetadataErr  error
 }
 
 func (f *fakeTopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error {
@@ -33,8 +41,12 @@ func (f *fakeTopologyRepository) ApplySnapshot(ctx context.Context, nodes []*top
 	return nil
 }
 
-func (f *fakeTopologyRepository) SetServiceMetadata(ctx context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error {
-	return nil
+func (f *fakeTopologyRepository) SetServiceMetadata(_ context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error {
+	f.setServiceMetadataCalls = append(f.setServiceMetadataCalls, setServiceMetadataCall{
+		ServiceMetadata:    serviceMetadata,
+		TopologyGeneration: topologyGeneration,
+	})
+	return f.setServiceMetadataErr
 }
 
 func (f *fakeTopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName string) ([]*topology.Node, []*topology.UpstreamDependency, error) {
@@ -46,15 +58,27 @@ var _ repository.TopologyRepository = (*fakeTopologyRepository)(nil)
 // ── fakes: repository.TopologyStateRepository ─────────────────────────────────
 
 type fakeTopologyStateRepository struct {
-	generation int64
+	generation             int64
+	incrementGenerationErr error
+	getGenerationErr       error
+	incrementCalls         int
+	getCalls               int
 }
 
-func (f *fakeTopologyStateRepository) IncrementGeneration(ctx context.Context) (int64, error) {
+func (f *fakeTopologyStateRepository) IncrementGeneration(_ context.Context) (int64, error) {
+	f.incrementCalls++
+	if f.incrementGenerationErr != nil {
+		return 0, f.incrementGenerationErr
+	}
 	f.generation++
 	return f.generation, nil
 }
 
-func (f *fakeTopologyStateRepository) GetGeneration(ctx context.Context) (int64, error) {
+func (f *fakeTopologyStateRepository) GetGeneration(_ context.Context) (int64, error) {
+	f.getCalls++
+	if f.getGenerationErr != nil {
+		return 0, f.getGenerationErr
+	}
 	return f.generation, nil
 }
 
