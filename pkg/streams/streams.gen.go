@@ -48,7 +48,7 @@ const (
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
 	// UpdateGraphV1 — Manifest refresh trigger; manifest-controller reloads dbt artifacts.
 	UpdateGraphV1 = "update.graph:v1"
-	// ReleaseRequestedV1 — Candidate release accepted by release-controller; manifest-controller pulls manifests and parses them.
+	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
 	// ManifestLoadedCandidateV1 — Resolved candidate topology from manifest-controller back to release-controller.
 	ManifestLoadedCandidateV1 = "manifest.loaded.candidate:v1"
@@ -112,8 +112,8 @@ const (
 	ManifestControllerReleaseRequested = "manifest-controller-release-requested"
 	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v1.
 	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
-	// ExecutorControllerValidationRequested — executor-controller consumer group on validation.requested:v1.
-	ExecutorControllerValidationRequested = "executor-controller-validation-requested"
+	// ExecutorValidationRequested — executor-controller consumer group on validation.requested:v1.
+	ExecutorValidationRequested = "executor-validation-requested"
 	// ReleaseControllerValidationCompleted — release-controller consumer group on validation.completed:v1.
 	ReleaseControllerValidationCompleted = "release-controller-validation-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.

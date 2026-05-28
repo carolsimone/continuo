@@ -224,7 +224,7 @@ streams:
 
   - name: release.requested:v1
     const: ReleaseRequestedV1
-    description: Candidate release accepted by release-controller; manifest-controller pulls manifests and parses them.
+    description: Candidate release accepted by release-controller; triggers manifest load for validation.
     producers: [release-controller]
     consumers:
       - service: manifest-controller
@@ -246,8 +246,8 @@ streams:
     producers: [release-controller]
     consumers:
       - service: executor-controller
-        group: executor-controller-validation-requested
-        const: ExecutorControllerValidationRequested
+        group: executor-validation-requested
+        const: ExecutorValidationRequested
 
   - name: validation.completed:v1
     const: ValidationCompletedV1

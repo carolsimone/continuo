@@ -8,7 +8,7 @@ UPDATE_GRAPH_V1 = "update.graph:v1"
 """Manifest refresh trigger; manifest-controller reloads dbt artifacts."""
 
 RELEASE_REQUESTED_V1 = "release.requested:v1"
-"""Candidate release accepted by release-controller; manifest-controller pulls manifests and parses them."""
+"""Candidate release accepted by release-controller; triggers manifest load for validation."""
 
 MANIFEST_LOADED_CANDIDATE_V1 = "manifest.loaded.candidate:v1"
 """Resolved candidate topology from manifest-controller back to release-controller."""
