@@ -113,6 +113,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,
 		"mode":              "validation",
+		"nodes":             validationNodesInOrder(topo, validationIDs),
 		"node_ids_in_order": validationIDs,
 		"image_tags":        r.ImageTags(),
 		"candidate_schema":  candidateSchema,
@@ -155,6 +156,35 @@ func joinImageTags(topo release.Topology, imageTags map[string]string) release.T
 		result[i] = n
 	}
 	return result
+}
+
+// validationNodesInOrder returns one map per validation node in
+// topological order, carrying the per-node fields executor-controller needs
+// to build a candidate dbt job: unique_id, service_name, schema_name,
+// table_name, image_tag. The map shape is intentionally flat (no nested
+// upstreams) — executor-controller only needs what to run, not how the
+// candidate DAG is structured. The order follows validationIDs which is the
+// topo-sorted output of DescendantsClosure.
+func validationNodesInOrder(topo release.Topology, validationIDs []string) []map[string]any {
+	byID := make(map[string]release.Node, len(topo))
+	for _, n := range topo {
+		byID[n.UniqueID] = n
+	}
+	out := make([]map[string]any, 0, len(validationIDs))
+	for _, id := range validationIDs {
+		n, ok := byID[id]
+		if !ok {
+			continue
+		}
+		out = append(out, map[string]any{
+			"unique_id":    n.UniqueID,
+			"service_name": n.ServiceName,
+			"schema_name":  n.SchemaName,
+			"table_name":   n.TableName,
+			"image_tag":    n.ImageTag,
+		})
+	}
+	return out
 }
 
 var nonAlphanumUnderscore = regexp.MustCompile(`[^a-zA-Z0-9_]`)
