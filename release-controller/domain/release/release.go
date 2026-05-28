@@ -121,3 +121,39 @@ func (r *Release) TransitionToRejected(reason string, failingNodes []string, dbt
 	r.transitions = append(r.transitions, Transition{To: StatusRejected, At: now})
 	return nil
 }
+
+// RehydrateInput carries all persisted fields needed to reconstruct a Release
+// from storage without re-running state-machine validation.
+type RehydrateInput struct {
+	ID                string
+	Status            Status
+	ChangedNodeIDs    []string
+	ImageTags         map[string]string
+	ManifestsURI      string
+	CandidateTopology Topology
+	ValidationNodeIDs []string
+	RejectReason      string
+	FailingNodes      []string
+	DBTLogsURI        string
+	CreatedAt         time.Time
+	Transitions       []Transition
+}
+
+// Rehydrate reconstructs a Release from persistence. Bypasses state-machine
+// validation — only repositories should call it.
+func Rehydrate(in RehydrateInput) *Release {
+	return &Release{
+		id:                in.ID,
+		status:            in.Status,
+		changedNodeIDs:    in.ChangedNodeIDs,
+		imageTags:         in.ImageTags,
+		manifestsURI:      in.ManifestsURI,
+		candidateTopology: in.CandidateTopology,
+		validationNodeIDs: in.ValidationNodeIDs,
+		rejectReason:      in.RejectReason,
+		failingNodes:      in.FailingNodes,
+		dbtLogsURI:        in.DBTLogsURI,
+		createdAt:         in.CreatedAt,
+		transitions:       in.Transitions,
+	}
+}
