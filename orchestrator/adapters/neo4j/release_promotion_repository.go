@@ -165,13 +165,17 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 	}
 
 	// Step E — MERGE :Meta singleton and stamp new release_id + timestamp.
+	// Neo4j's Go driver serialises time.Time using its Location().String()
+	// as a timezone identifier; time.Local serialises to "Local", which
+	// Neo4j rejects ("Illegal zone identifier"). Convert to UTC so the
+	// identifier is a valid IANA zone regardless of the caller's locale.
 	metaRes, err := tx.Run(ctx, `
 		MERGE (m:Meta {key: 'current_release'})
 		SET m.release_id = $release_id,
 		    m.updated_at = $now
 	`, map[string]interface{}{
 		"release_id": releaseID,
-		"now":        now,
+		"now":        now.UTC(),
 	})
 	if err != nil {
 		return false, fmt.Errorf("merge :Meta singleton: %w", err)
