@@ -95,3 +95,62 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 	third := entries[2]
 	assert.Equal(t, streams.ReleaseRejectedV1, third.StreamName)
 }
+
+// TestHandleValidationResult_EmptyResults_Rejects ensures that a result with no
+// per_node_results does not promote a release whose validation nodes were never run.
+func TestHandleValidationResult_EmptyResults_Rejects(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rA",
+		PerNodeResults:  nil,
+		AggregateStatus: "ok",
+	})
+	require.NoError(t, err)
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "validation_failed", r.RejectReason())
+}
+
+// TestHandleValidationResult_MissingNodeInResults_Rejects ensures that a result
+// that omits one of the required validation node IDs does not promote the release.
+func TestHandleValidationResult_MissingNodeInResults_Rejects(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+
+	// Report only node "a"; node "b" is missing from the results.
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rA",
+		PerNodeResults:  []handlers.NodeResult{{NodeID: "a", Status: "ok"}},
+		AggregateStatus: "ok",
+	})
+	require.NoError(t, err)
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Contains(t, r.FailingNodes(), "b")
+}
+
+// TestHandleValidationResult_AggregateStatusFailed_Rejects ensures that a
+// non-"ok" aggregate_status rejects the release even when all per-node results
+// report ok status.
+func TestHandleValidationResult_AggregateStatusFailed_Rejects(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA",
+		PerNodeResults: []handlers.NodeResult{
+			{NodeID: "a", Status: "ok"},
+			{NodeID: "b", Status: "ok"},
+		},
+		AggregateStatus: "failed",
+	})
+	require.NoError(t, err)
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "validation_failed", r.RejectReason())
+}
