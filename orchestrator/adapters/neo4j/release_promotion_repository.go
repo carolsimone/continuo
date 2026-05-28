@@ -13,8 +13,9 @@ import (
 
 // ReleasePromotionRepository implements repository.ReleasePromotionRepository
 // against Neo4j. The swap runs in a single explicit transaction: read the
-// :Meta singleton, short-circuit on a release_id match, otherwise truncate
-// :Table + :DEPENDS_ON, recreate from the payload, and MERGE :Meta.
+// :Meta singleton, short-circuit on a release_id match, otherwise apply a
+// retire-then-orphan-cleanup pattern identical to IngestTopologyHandler, and
+// MERGE :Meta.
 type ReleasePromotionRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
@@ -29,19 +30,24 @@ func NewReleasePromotionRepository(client Neo4jClient, logger *slog.Logger) *Rel
 	return &ReleasePromotionRepository{client: client, logger: logger}
 }
 
-// PromoteRelease executes the atomic topology swap described in spec §6.4 as
-// a single explicit transaction:
+// PromoteRelease executes the atomic topology swap as a single explicit
+// transaction:
 //
 //  1. Read :Meta {key:'current_release'} — if release_id already matches,
 //     commit empty and return (false, nil) for idempotent redelivery.
-//  2. MATCH (n:Table) DETACH DELETE n — truncate all table nodes.
-//  3. UNWIND $topology — create :Table nodes keyed on unique_id.
-//  4. UNWIND upstream_unique_ids — create :DEPENDS_ON edges between :Table
-//     nodes present in the candidate set. References to unique_ids outside
-//     the set are silently skipped (MATCH finds no target and the UNWIND
-//     iteration produces no row), matching dbt's compile model where only
-//     intra-topology dependencies are resolved.
-//  5. MERGE :Meta singleton — set release_id and updated_at.
+//  2. Retire :Table nodes NOT in the new topology by setting active=false,
+//     retired_at — preserving :Run-[:EXECUTES]->:Table edges so run history
+//     is not destroyed.
+//  3. MERGE :Table nodes from the new topology by unique_id and refresh all
+//     properties, re-activating nodes that may have been previously retired.
+//  4. Clear outgoing :DEPENDS_ON edges on upserted nodes so they can be
+//     rebuilt from scratch.
+//  5. Rebuild :DEPENDS_ON edges between nodes in the new topology. References
+//     to unique_ids outside the set are silently skipped.
+//  6. Delete :Table nodes that are inactive AND have no incoming
+//     :Run-[:EXECUTES] reference (mirrors IngestTopologyHandler's orphan-
+//     cleanup step).
+//  7. MERGE :Meta singleton — set release_id and updated_at.
 func (r *ReleasePromotionRepository) PromoteRelease(
 	ctx context.Context,
 	releaseID string,
@@ -91,19 +97,11 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 		return false, nil
 	}
 
-	// Step B — Truncate: remove all :Table nodes and their relationships.
-	truncRes, err := tx.Run(ctx, `MATCH (n:Table) DETACH DELETE n`, nil)
-	if err != nil {
-		return false, fmt.Errorf("truncate :Table: %w", err)
-	}
-	if _, err := truncRes.Consume(ctx); err != nil {
-		return false, fmt.Errorf("consume truncate result: %w", err)
-	}
-
-	// Build the topology parameter list shared by steps C and D. The
+	// Build the topology parameter list shared by steps C–D. The
 	// upstream_unique_ids slice is included so that Step D can resolve edges
 	// without a second parameter binding.
 	payload := make([]map[string]interface{}, 0, len(nodes))
+	newUniqueIDs := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		upstreams := n.UpstreamUniqueIDs
 		if upstreams == nil {
@@ -118,36 +116,79 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 			"schedule":            n.Schedule,
 			"upstream_unique_ids": upstreams,
 		})
+		newUniqueIDs = append(newUniqueIDs, n.UniqueID)
 	}
 
-	// Step C — Create :Table nodes (skip if no nodes to avoid an empty UNWIND).
+	// Step B — Retire :Table nodes that are not in the new topology. Setting
+	// active=false and retired_at preserves the nodes (and their incoming
+	// :Run-[:EXECUTES] edges) so that run history is not destroyed, mirroring
+	// the behaviour of IngestTopologyHandler.retireMissingNodes.
+	retireRes, err := tx.Run(ctx, `
+		MATCH (t:Table)
+		WHERE NOT t.unique_id IN $new_unique_ids
+		SET t.active = false, t.retired_at = $now
+	`, map[string]interface{}{
+		"new_unique_ids": newUniqueIDs,
+		"now":            now.UTC(),
+	})
+	if err != nil {
+		return false, fmt.Errorf("retire stale :Table nodes: %w", err)
+	}
+	if _, err := retireRes.Consume(ctx); err != nil {
+		return false, fmt.Errorf("consume retire result: %w", err)
+	}
+
+	// Steps C, C.5, D — Only execute if the new topology is non-empty.
 	if len(nodes) > 0 {
-		createRes, err := tx.Run(ctx, `
+		// Step C — MERGE :Table nodes from the new topology, keyed on unique_id.
+		// Properties are set (not created) so that nodes surviving across releases
+		// are refreshed in place. active=true and retired_at=NULL re-activate any
+		// previously retired node that is back in the topology. The Neo4j property
+		// name is schedule_name (matching every existing reader query) while the
+		// Go wire DTO field stays schedule (matching release.promoted:v1's shape).
+		upsertRes, err := tx.Run(ctx, `
 			UNWIND $topology AS t
-			CREATE (:Table {
-				unique_id:    t.unique_id,
-				schema_name:  t.schema_name,
-				table_name:   t.table_name,
-				service_name: t.service_name,
-				image_tag:    t.image_tag,
-				schedule:     t.schedule,
-				release_id:   $release_id
-			})
+			MERGE (existing:Table {unique_id: t.unique_id})
+			SET existing.schema_name  = t.schema_name,
+			    existing.table_name   = t.table_name,
+			    existing.service_name = t.service_name,
+			    existing.image_tag    = t.image_tag,
+			    existing.schedule_name = t.schedule,
+			    existing.release_id   = $release_id,
+			    existing.active       = true,
+			    existing.retired_at   = null
 		`, map[string]interface{}{
 			"topology":   payload,
 			"release_id": releaseID,
 		})
 		if err != nil {
-			return false, fmt.Errorf("create :Table nodes: %w", err)
+			return false, fmt.Errorf("upsert :Table nodes: %w", err)
 		}
-		if _, err := createRes.Consume(ctx); err != nil {
-			return false, fmt.Errorf("consume :Table create result: %w", err)
+		if _, err := upsertRes.Consume(ctx); err != nil {
+			return false, fmt.Errorf("consume :Table upsert result: %w", err)
 		}
 
-		// Step D — Create :DEPENDS_ON edges between :Table nodes that are
-		// present in the candidate set. The MATCH silently skips upstream
-		// unique_ids that do not correspond to a :Table node created in Step C
-		// (e.g. cross-service dependencies outside this topology slice).
+		// Step C.5 — Clear existing :DEPENDS_ON edges on the upserted nodes so
+		// they can be rebuilt from scratch without leaving stale edges when a
+		// dependency is removed between releases.
+		clearEdgeRes, err := tx.Run(ctx, `
+			UNWIND $topology AS t
+			MATCH (a:Table {unique_id: t.unique_id})-[r:DEPENDS_ON]->()
+			DELETE r
+		`, map[string]interface{}{
+			"topology": payload,
+		})
+		if err != nil {
+			return false, fmt.Errorf("clear :DEPENDS_ON edges: %w", err)
+		}
+		if _, err := clearEdgeRes.Consume(ctx); err != nil {
+			return false, fmt.Errorf("consume clear edges result: %w", err)
+		}
+
+		// Step D — Rebuild :DEPENDS_ON edges between :Table nodes present in the
+		// new topology. The MATCH silently skips upstream unique_ids that do not
+		// correspond to a :Table node in the candidate set (e.g. cross-service
+		// dependencies outside this topology slice).
 		edgeRes, err := tx.Run(ctx, `
 			UNWIND $topology AS t
 			UNWIND t.upstream_unique_ids AS up
@@ -162,6 +203,23 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 		if _, err := edgeRes.Consume(ctx); err != nil {
 			return false, fmt.Errorf("consume :DEPENDS_ON edge result: %w", err)
 		}
+	}
+
+	// Step D.5 — Delete inactive :Table nodes that have no incoming
+	// :Run-[:EXECUTES] reference. Nodes that are still referenced by a Run
+	// remain in the graph (retired) so that run history stays intact,
+	// mirroring IngestTopologyHandler.deleteInactiveOrphans.
+	orphanRes, err := tx.Run(ctx, `
+		MATCH (t:Table)
+		WHERE COALESCE(t.active, true) = false
+		  AND NOT EXISTS { MATCH (:Run)-[:EXECUTES]->(t) }
+		DETACH DELETE t
+	`, nil)
+	if err != nil {
+		return false, fmt.Errorf("delete inactive orphan :Table nodes: %w", err)
+	}
+	if _, err := orphanRes.Consume(ctx); err != nil {
+		return false, fmt.Errorf("consume orphan delete result: %w", err)
 	}
 
 	// Step E — MERGE :Meta singleton and stamp new release_id + timestamp.
