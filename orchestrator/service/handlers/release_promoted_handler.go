@@ -22,6 +22,11 @@ import (
 // schedules.loaded:v1 emissions from the release-promoted path. UUID v5
 // ensures duplicate emissions for the same release_id resolve to the
 // same event_id, so state's ScheduleCatalogHandler dedups them as one.
+//
+// IMMUTABLE: changing this value re-keys every schedules.loaded:v1
+// event_id derived from a release_id and breaks consumer-side dedup for
+// any in-flight redeliveries. The integration test mirrors this literal;
+// keep them in sync.
 var releaseSchedulesNamespace = uuid.MustParse("f0d20655-ae9f-4dc9-a512-99f7ce3955c8")
 
 // ReleasePromotedHandler consumes release.promoted:v1 messages, atomically
