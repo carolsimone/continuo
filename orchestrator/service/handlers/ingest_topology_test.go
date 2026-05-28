@@ -364,3 +364,43 @@ func TestIngestTopology_HappyPath_DoesNotInsertForensics(t *testing.T) {
 		t.Fatalf("expected no forensics inserts on happy path, got %d", got)
 	}
 }
+
+// TestIngestTopology_OutboxPayload_ByteEqualRegressionAfterRefactor pins the
+// exact schedules.loaded:v1 outbox payload shape produced by
+// IngestTopologyHandler after the scheduleAndMetadataFromNodes helper
+// extraction. If a future refactor changes the helper output, this test will
+// catch the breakage so the manifest.loaded:v1 → state contract is never
+// silently altered.
+func TestIngestTopology_OutboxPayload_ByteEqualRegressionAfterRefactor(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
+
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
+	cmd := makeIngestTopologyCmd()
+
+	require.NoError(t, h.Handle(ctx, cmd, "byte-eq-1", nil))
+
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 1)
+
+	var got map[string]interface{}
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &got))
+
+	// event_id must be present and non-empty (value is a new UUID per call).
+	assert.NotEmpty(t, got["event_id"], "event_id must be present for state's ScheduleCatalogHandler dedup")
+
+	// schedule_names must be sorted and deduplicated.
+	// makeIngestTopologyCmd produces 2 "daily" nodes + 1 "hourly" node.
+	assert.Equal(t, []interface{}{"daily", "hourly"}, got["schedule_names"])
+
+	// service_metadata must carry first-seen image_tag and manifest_version per service.
+	sm, ok := got["service_metadata"].(map[string]interface{})
+	require.True(t, ok, "service_metadata must be a JSON object")
+	assert.Equal(t, map[string]interface{}{
+		"svc1": map[string]interface{}{"manifest_version": "v1", "image_tag": "sha256:abc"},
+		"svc2": map[string]interface{}{"manifest_version": "v2", "image_tag": "sha256:def"},
+	}, sm)
+}

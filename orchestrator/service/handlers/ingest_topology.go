@@ -101,35 +101,42 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainModel.Inge
 	// Apply the full manifest snapshot outside the Postgres transaction. The
 	// payload is authoritative for the current topology, so missing nodes must
 	// be retired as part of the same Neo4j write pass.
-	//
-	// Collect unique schedule names and service metadata while iterating.
-	scheduleNamesSet := make(map[string]struct{})
-	serviceMetadata := make(map[string]map[string]string)
-	topologyNodes := make([]*topology.TopologyNode, 0, len(cmd.Nodes))
 
+	// Warn when multiple nodes from the same service carry different image_tags
+	// so operators can detect misconfigured manifests. The first-seen image_tag
+	// wins in both this pre-pass and the helper below.
+	firstSeenTag := make(map[string]string)
 	for _, n := range cmd.Nodes {
-		node := toTopologyNode(n)
-		topologyNodes = append(topologyNodes, node)
-
-		if n.ScheduleName != "" {
-			scheduleNamesSet[n.ScheduleName] = struct{}{}
+		if n.ServiceName == "" || n.ManifestVersion == "" {
+			continue
 		}
-		if n.ServiceName != "" && n.ManifestVersion != "" {
-			if existing, seen := serviceMetadata[n.ServiceName]; seen {
-				if existing["image_tag"] != n.ImageTag {
-					h.logger.Warn("Multiple nodes from same service carry different image_tag — using first seen",
-						"service", n.ServiceName,
-						"first_tag", existing["image_tag"],
-						"conflict_tag", n.ImageTag,
-					)
-				}
-			} else {
-				serviceMetadata[n.ServiceName] = map[string]string{
-					"manifest_version": n.ManifestVersion,
-					"image_tag":        n.ImageTag,
-				}
+		if existing, seen := firstSeenTag[n.ServiceName]; seen {
+			if existing != n.ImageTag {
+				h.logger.Warn("Multiple nodes from same service carry different image_tag — using first seen",
+					"service", n.ServiceName,
+					"first_tag", existing,
+					"conflict_tag", n.ImageTag,
+				)
 			}
+		} else {
+			firstSeenTag[n.ServiceName] = n.ImageTag
 		}
+	}
+
+	// Derive sorted unique schedule names and per-service metadata via the
+	// shared helper so the schedules.loaded:v1 outbox payload shape is
+	// identical across the manifest.loaded:v1 and release.promoted:v1 paths.
+	scheduleNames, serviceMetadata := scheduleAndMetadataFromNodes(
+		cmd.Nodes,
+		func(n domainEvent.ManifestLoadedNode) (string, string, string, string) {
+			return n.ScheduleName, n.ServiceName, n.ImageTag, n.ManifestVersion
+		},
+	)
+
+	// Build the topology node slice for the snapshot writer.
+	topologyNodes := make([]*topology.TopologyNode, 0, len(cmd.Nodes))
+	for _, n := range cmd.Nodes {
+		topologyNodes = append(topologyNodes, toTopologyNode(n))
 	}
 
 	// Increment the monotonic topology_generation counter.
@@ -144,12 +151,6 @@ func (h *IngestTopologyHandler) Handle(ctx context.Context, cmd domainModel.Inge
 
 	if err := h.topologyRepo.SetServiceMetadata(ctx, serviceMetadata, topologyGeneration); err != nil {
 		return fmt.Errorf("failed to set service_metadata: %w", err)
-	}
-
-	// Build unique sorted schedule names slice.
-	scheduleNames := make([]string, 0, len(scheduleNamesSet))
-	for name := range scheduleNamesSet {
-		scheduleNames = append(scheduleNames, name)
 	}
 
 	// Build outbox payload.
