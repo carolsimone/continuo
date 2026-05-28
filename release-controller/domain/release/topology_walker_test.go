@@ -83,3 +83,14 @@ func TestTopologyWalker_TopologicalOrder(t *testing.T) {
 	assert.Less(t, pos["a"], pos["b"])
 	assert.Less(t, pos["b"], pos["c"])
 }
+
+func TestTopologyWalker_CycleDetected_Panics(t *testing.T) {
+	// a -> b -> a (cycle)
+	topo := release.Topology{
+		withUpstream(release.Node{UniqueID: "a"}, "b"),
+		withUpstream(release.Node{UniqueID: "b"}, "a"),
+	}
+	assert.Panics(t, func() {
+		release.DescendantsClosure(topo, []string{"a"})
+	}, "expected panic on cyclic topology")
+}

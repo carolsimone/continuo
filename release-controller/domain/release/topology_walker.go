@@ -1,9 +1,16 @@
 package release
 
+import (
+	"fmt"
+	"sort"
+)
+
 // DescendantsClosure returns the union of the seed nodes and all their
 // transitive downstream descendants, deduplicated and sorted topologically
 // (upstreams before downstreams). Nodes named in seeds but not present in
-// the topology are silently ignored.
+// the topology are silently ignored. Panics if the subgraph contains a cycle,
+// which is a data-integrity violation (dbt itself rejects cyclic graphs at
+// compile time).
 func DescendantsClosure(topo Topology, seeds []string) []string {
 	children := map[string][]string{}
 	known := map[string]bool{}
@@ -51,20 +58,27 @@ func DescendantsClosure(topo Topology, seeds []string) []string {
 			queue = append(queue, id)
 		}
 	}
+	sort.Strings(queue)
 	out := make([]string, 0, len(included))
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
 		out = append(out, cur)
+		var ready []string
 		for _, c := range children[cur] {
 			if !included[c] {
 				continue
 			}
 			indegree[c]--
 			if indegree[c] == 0 {
-				queue = append(queue, c)
+				ready = append(ready, c)
 			}
 		}
+		sort.Strings(ready)
+		queue = append(queue, ready...)
+	}
+	if len(out) != len(included) {
+		panic(fmt.Sprintf("topology_walker: cycle detected in topology; included=%d emitted=%d", len(included), len(out)))
 	}
 	return out
 }
