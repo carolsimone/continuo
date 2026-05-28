@@ -313,6 +313,30 @@ services:
       - kind
     tty: true
 
+  release-controller:
+    build:
+      context: .
+      dockerfile: release-controller/Dockerfile.dev
+    container_name: release-controller
+    depends_on:
+      - postgres
+      - redis
+      - flyway-release
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=continuo_svc
+      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_DB=continuo_release
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=continuo
+      - RELEASE_CONTROLLER_HTTP_PORT=8088
+    ports:
+      - "8088:8088"
+    networks:
+      - default
+
   e2e:
     build:
       context: .
