@@ -5,6 +5,7 @@ use (
 	./k8s-controller
 	./orchestrator
 	./pkg
+	./release-controller
 	./state
 	./tests/e2e
 )

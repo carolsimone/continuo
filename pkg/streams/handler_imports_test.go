@@ -17,6 +17,7 @@ var handlerDirs = []string{
 	"orchestrator/service/handlers",
 	"state/service/handlers",
 	"executor-controller/service/handlers",
+	"release-controller/service/handlers",
 }
 
 // TestServiceHandlersDoNotImportAdapters parses every .go file under each
