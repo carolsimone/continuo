@@ -8,7 +8,7 @@ set -eu
 FLYWAY_OPTS="-connectRetries=30 -baselineOnMigrate=true"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
-for db in state executor orchestrator k8s; do
+for db in state executor orchestrator k8s release; do
   echo "Running migrations for continuo_${db}..."
   flyway \
     -url="jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/continuo_${db}" \
