@@ -71,9 +71,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	aggregateOK := in.AggregateStatus == "ok"
 
 	if len(failing) > 0 || len(missing) > 0 || !aggregateOK {
-		rejected := append([]string{}, failing...)
-		rejected = append(rejected, missing...)
-		return handleValidationFailed(ctx, d, u, r, in, rejected, now)
+		return handleValidationFailed(ctx, d, u, r, in, failing, missing, now)
 	}
 	return handleValidationOK(ctx, d, u, r, in, now)
 }
@@ -125,8 +123,19 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 	return nil
 }
 
-func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing []string, now time.Time) error {
-	if err := r.TransitionToRejected("validation_failed", failing, "", now); err != nil {
+// handleValidationFailed records a validation rejection. failing carries
+// explicit per-node failures from PerNodeResults; missing carries nodes the
+// release expected but executor-controller never reported. Both are persisted
+// on the Release aggregate (as the combined failing_nodes audit set) and
+// surfaced separately in the outbox payload alongside the raw aggregate_status
+// so operators can distinguish why the release was rejected — including the
+// case where neither list has entries and only a non-ok aggregate_status
+// triggered the rejection.
+func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing, missing []string, now time.Time) error {
+	combined := append([]string{}, failing...)
+	combined = append(combined, missing...)
+
+	if err := r.TransitionToRejected("validation_failed", combined, "", now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
@@ -148,10 +157,12 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"release_id":    in.ReleaseID,
-		"reason":        "validation_failed",
-		"failing_nodes": failing,
-		"per_node":      perNode,
+		"release_id":       in.ReleaseID,
+		"reason":           "validation_failed",
+		"failing_nodes":    failing,
+		"missing_nodes":    missing,
+		"aggregate_status": in.AggregateStatus,
+		"per_node":         perNode,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -175,7 +186,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	}
 
 	okCount := len(in.PerNodeResults) - len(failing)
-	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, false, okCount, len(failing), 0)
-	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "validation_failed", failing)
+	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, false, okCount, len(combined), 0)
+	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "validation_failed", combined)
 	return nil
 }

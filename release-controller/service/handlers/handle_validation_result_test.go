@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -11,6 +12,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// rejectedPayload is the JSON shape released into release.rejected:v1.
+type rejectedPayload struct {
+	ReleaseID       string   `json:"release_id"`
+	Reason          string   `json:"reason"`
+	FailingNodes    []string `json:"failing_nodes"`
+	MissingNodes    []string `json:"missing_nodes"`
+	AggregateStatus string   `json:"aggregate_status"`
+}
 
 // seedToValidating advances a release from Received through Parsing to Validating.
 // It uses ReceiveCandidate → AdvanceQueue → HandleParsedManifest(ok) with a
@@ -115,7 +125,9 @@ func TestHandleValidationResult_EmptyResults_Rejects(t *testing.T) {
 }
 
 // TestHandleValidationResult_MissingNodeInResults_Rejects ensures that a result
-// that omits one of the required validation node IDs does not promote the release.
+// that omits one of the required validation node IDs does not promote the
+// release, and that the outbox payload surfaces missing_nodes distinctly from
+// failing_nodes so operators can tell the two failure modes apart.
 func TestHandleValidationResult_MissingNodeInResults_Rejects(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 
@@ -131,11 +143,22 @@ func TestHandleValidationResult_MissingNodeInResults_Rejects(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusRejected, r.Status())
 	assert.Contains(t, r.FailingNodes(), "b")
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 3)
+	var payload rejectedPayload
+	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
+	assert.Empty(t, payload.FailingNodes, "no explicitly-failed nodes in this scenario")
+	assert.Equal(t, []string{"b"}, payload.MissingNodes, "b was expected but never reported")
+	assert.Equal(t, "ok", payload.AggregateStatus, "aggregate_status passed through unchanged")
 }
 
-// TestHandleValidationResult_AggregateStatusFailed_Rejects ensures that a
-// non-"ok" aggregate_status rejects the release even when all per-node results
-// report ok status.
+// TestHandleValidationResult_AggregateStatusFailed_Rejects covers the edge case
+// where every reported node passed but the aggregate_status is not "ok".
+// Without the audit-trail fix the rejected event would carry an empty
+// failing_nodes slice and no signal about why the release was rejected;
+// this test guards that the outbox payload preserves aggregate_status so
+// operators can diagnose the rejection.
 func TestHandleValidationResult_AggregateStatusFailed_Rejects(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 
@@ -145,7 +168,7 @@ func TestHandleValidationResult_AggregateStatusFailed_Rejects(t *testing.T) {
 			{NodeID: "a", Status: "ok"},
 			{NodeID: "b", Status: "ok"},
 		},
-		AggregateStatus: "failed",
+		AggregateStatus: "partial_failed",
 	})
 	require.NoError(t, err)
 
@@ -153,4 +176,14 @@ func TestHandleValidationResult_AggregateStatusFailed_Rejects(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusRejected, r.Status())
 	assert.Equal(t, "validation_failed", r.RejectReason())
+	assert.Empty(t, r.FailingNodes(), "no explicitly-failed or missing nodes when only aggregate is bad")
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 3)
+	var payload rejectedPayload
+	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
+	assert.Empty(t, payload.FailingNodes)
+	assert.Empty(t, payload.MissingNodes)
+	assert.Equal(t, "partial_failed", payload.AggregateStatus,
+		"aggregate_status must be surfaced so operators can diagnose a rejection with no per-node signal")
 }
