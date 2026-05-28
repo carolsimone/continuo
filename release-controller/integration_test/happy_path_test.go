@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
+	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
@@ -34,7 +35,7 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 	_, err = db.Exec("TRUNCATE releases, current_prod, release_controller_outbox, message_processing RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
 	deps := &handlers.Deps{
-		UoW:       postgres.NewUnitOfWork(db, slog.Default()),
+		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, slog.Default()) },
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.Default(),
@@ -60,7 +61,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
 	// 2. Verify release is Parsing (AdvanceQueue ran on POST)
-	r, err := deps.UoW.ReleaseRepo().Get(context.Background(), "rA")
+	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusParsing, r.Status())
 
@@ -73,7 +74,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
 		},
 	}))
-	r, _ = deps.UoW.ReleaseRepo().Get(context.Background(), "rA")
+	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	assert.Equal(t, release.StatusValidating, r.Status())
 
 	// 4. Simulate validation result
@@ -84,7 +85,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 		},
 		AggregateStatus: "ok",
 	}))
-	r, _ = deps.UoW.ReleaseRepo().Get(context.Background(), "rA")
+	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	assert.Equal(t, release.StatusPromoted, r.Status())
 
 	// 5. GET /current-prod

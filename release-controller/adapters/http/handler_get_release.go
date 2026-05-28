@@ -7,9 +7,10 @@ import (
 
 func (s *Server) handleGetRelease(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	// ReleaseRepo() on the UoW uses the connection pool when no tx is active,
-	// making this a clean read-only path without an explicit transaction.
-	rel, err := s.deps.UoW.ReleaseRepo().Get(r.Context(), id)
+	// Each request gets its own UoW; no Begin is called — the repo uses the
+	// connection pool directly for this read-only path.
+	u := s.deps.NewUoW()
+	rel, err := u.ReleaseRepo().Get(r.Context(), id)
 	if err != nil || rel == nil {
 		http.Error(w, "release not found", http.StatusNotFound)
 		return

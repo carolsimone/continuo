@@ -14,14 +14,14 @@ import (
 )
 
 func TestAdvanceQueue_NoActive_PromotesNextReceivedToParsing(t *testing.T) {
-	deps, u := newDeps(time.Unix(200, 0).UTC())
+	deps, store := newDeps(time.Unix(200, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		ReleaseID: "rA", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	r, _ := u.ReleaseRepo().Get(context.Background(), "rA")
+	r, _ := store.GetRelease("rA")
 	assert.Equal(t, release.StatusParsing, r.Status())
-	entries := outboxEntries(u)
+	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
 	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName)
 	var payload map[string]any
@@ -31,7 +31,7 @@ func TestAdvanceQueue_NoActive_PromotesNextReceivedToParsing(t *testing.T) {
 }
 
 func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
-	deps, u := newDeps(time.Unix(200, 0).UTC())
+	deps, store := newDeps(time.Unix(200, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		ReleaseID: "rA", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
 	}))
@@ -40,19 +40,19 @@ func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
 		ReleaseID: "rB", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u2",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	rB, _ := u.ReleaseRepo().Get(context.Background(), "rB")
+	rB, _ := store.GetRelease("rB")
 	assert.Equal(t, release.StatusReceived, rB.Status())
-	assert.Len(t, outboxEntries(u), 1) // only rA emitted
+	assert.Len(t, outboxEntries(store), 1) // only rA emitted
 }
 
 func TestAdvanceQueue_NoQueued_DoesNothing(t *testing.T) {
-	deps, u := newDeps(time.Unix(200, 0).UTC())
+	deps, store := newDeps(time.Unix(200, 0).UTC())
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	assert.Empty(t, outboxEntries(u))
+	assert.Empty(t, outboxEntries(store))
 }
 
 func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
-	deps, u := newDeps(time.Unix(200, 0).UTC())
+	deps, store := newDeps(time.Unix(200, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		ReleaseID: "rOLD", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
 	}))
@@ -60,8 +60,8 @@ func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 		ReleaseID: "rNEW", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	rOLD, _ := u.ReleaseRepo().Get(context.Background(), "rOLD")
-	rNEW, _ := u.ReleaseRepo().Get(context.Background(), "rNEW")
+	rOLD, _ := store.GetRelease("rOLD")
+	rNEW, _ := store.GetRelease("rNEW")
 	assert.Equal(t, release.StatusParsing, rOLD.Status())
 	assert.Equal(t, release.StatusReceived, rNEW.Status())
 }

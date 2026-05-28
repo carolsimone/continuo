@@ -25,22 +25,68 @@ func (f *fakeClock) Now() time.Time { return f.t }
 
 var _ ports.Clock = (*fakeClock)(nil)
 
-// --- fakeReleaseRepo ---
+// --- fakeStore ---
 
-type fakeReleaseRepo struct {
+// fakeStore is the shared in-memory state backing every fakeUoW produced by
+// the NewUoW factory. All fakeUoW instances created from the same store read
+// and write through the same data, so handler tests can inspect accumulated
+// state after multiple handler calls — each of which obtains its own UoW.
+type fakeStore struct {
 	mu       sync.Mutex
 	releases map[string]*release.Release
 	order    []string // insertion order, oldest first; drives NextQueuedRelease FIFO
+	cp       *release.CurrentProd
+	entries  []*pkgoutbox.Entry
 }
 
-func newFakeReleaseRepo() *fakeReleaseRepo {
-	return &fakeReleaseRepo{releases: map[string]*release.Release{}}
+func newFakeStore() *fakeStore {
+	return &fakeStore{
+		releases: map[string]*release.Release{},
+	}
+}
+
+// GetRelease returns the stored release by ID, or an error if not found.
+// Convenience accessor for test assertions.
+func (s *fakeStore) GetRelease(id string) (*release.Release, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.releases[id]
+	if !ok {
+		return nil, fmt.Errorf("release %s not found", id)
+	}
+	return r, nil
+}
+
+// GetCurrentProd returns the stored current-prod record, or a fresh one if
+// none has been written yet.
+func (s *fakeStore) GetCurrentProd() *release.CurrentProd {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cp == nil {
+		return release.NewCurrentProd()
+	}
+	return s.cp
+}
+
+// OutboxEntries returns a snapshot of all outbox entries written so far.
+func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*pkgoutbox.Entry, len(s.entries))
+	copy(out, s.entries)
+	return out
+}
+
+// --- fakeReleaseRepo ---
+
+type fakeReleaseRepo struct {
+	store *fakeStore
 }
 
 func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*release.Release, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	r, ok := f.releases[id]
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	r, ok := f.store.releases[id]
 	if !ok {
 		return nil, fmt.Errorf("release %s not found", id)
 	}
@@ -48,22 +94,22 @@ func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*release.Release, e
 }
 
 func (f *fakeReleaseRepo) Save(_ context.Context, r *release.Release) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, exists := f.releases[r.ID()]; !exists {
-		f.order = append(f.order, r.ID())
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	if _, exists := f.store.releases[r.ID()]; !exists {
+		f.store.order = append(f.store.order, r.ID())
 	}
-	f.releases[r.ID()] = r
+	f.store.releases[r.ID()] = r
 	return nil
 }
 
 // NextQueuedRelease returns the oldest release in StatusReceived, or nil.
 func (f *fakeReleaseRepo) NextQueuedRelease(_ context.Context) (*release.Release, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, id := range f.order {
-		if f.releases[id].Status() == release.StatusReceived {
-			return f.releases[id], nil
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	for _, id := range f.store.order {
+		if f.store.releases[id].Status() == release.StatusReceived {
+			return f.store.releases[id], nil
 		}
 	}
 	return nil, nil
@@ -71,12 +117,12 @@ func (f *fakeReleaseRepo) NextQueuedRelease(_ context.Context) (*release.Release
 
 // ActiveRelease returns the single release in StatusParsing or StatusValidating, or nil.
 func (f *fakeReleaseRepo) ActiveRelease(_ context.Context) (*release.Release, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, id := range f.order {
-		s := f.releases[id].Status()
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	for _, id := range f.store.order {
+		s := f.store.releases[id].Status()
 		if s == release.StatusParsing || s == release.StatusValidating {
-			return f.releases[id], nil
+			return f.store.releases[id], nil
 		}
 	}
 	return nil, nil
@@ -87,23 +133,22 @@ var _ repository.ReleaseRepository = (*fakeReleaseRepo)(nil)
 // --- fakeCurrentProdRepo ---
 
 type fakeCurrentProdRepo struct {
-	mu sync.Mutex
-	cp *release.CurrentProd
+	store *fakeStore
 }
 
 func (f *fakeCurrentProdRepo) Get(_ context.Context) (*release.CurrentProd, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.cp == nil {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	if f.store.cp == nil {
 		return release.NewCurrentProd(), nil
 	}
-	return f.cp, nil
+	return f.store.cp, nil
 }
 
 func (f *fakeCurrentProdRepo) Upsert(_ context.Context, cp *release.CurrentProd) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.cp = cp
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	f.store.cp = cp
 	return nil
 }
 
@@ -112,18 +157,18 @@ var _ repository.CurrentProdRepository = (*fakeCurrentProdRepo)(nil)
 // --- fakeOutbox ---
 
 // fakeOutbox records every pkgoutbox.Entry written by handlers. Tests inspect
-// the recorded entries via outboxEntries(u). The consume-side methods
-// (GetPendingBatch, MarkProcessed, MarkFailed, IncrementRetry) are no-ops
-// because handler tests do not exercise the publisher path.
+// the recorded entries via the fakeStore.OutboxEntries() accessor. The
+// consume-side methods (GetPendingBatch, MarkProcessed, MarkFailed,
+// IncrementRetry) are no-ops because handler tests do not exercise the
+// publisher path.
 type fakeOutbox struct {
-	mu      sync.Mutex
-	entries []*pkgoutbox.Entry
+	store *fakeStore
 }
 
 func (f *fakeOutbox) Create(_ context.Context, entry *pkgoutbox.Entry) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.entries = append(f.entries, entry)
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	f.store.entries = append(f.store.entries, entry)
 	return nil
 }
 
@@ -166,10 +211,11 @@ var _ messageprocessing.Repository = (*fakeMessageProcessing)(nil)
 
 // --- fakeUoW ---
 
-// fakeUoW wraps the four fakes. Begin/Commit/Rollback are no-ops so handler
-// tests run without a database. The same instance is shared across all handler
-// calls in a test — state accumulates in the fake repos as it would in a real
-// Postgres transaction sequence.
+// fakeUoW wraps the four fakes backed by a shared fakeStore. Begin/Commit/Rollback
+// are no-ops so handler tests run without a database. Multiple fakeUoW instances
+// created from the same store accumulate state together, matching how real
+// handlers each obtain a fresh UoW from the factory while still seeing all
+// writes from prior calls.
 type fakeUoW struct {
 	releases *fakeReleaseRepo
 	cp       *fakeCurrentProdRepo
@@ -177,11 +223,11 @@ type fakeUoW struct {
 	msgProc  fakeMessageProcessing
 }
 
-func newFakeUoW() *fakeUoW {
+func newFakeUoW(store *fakeStore) *fakeUoW {
 	return &fakeUoW{
-		releases: newFakeReleaseRepo(),
-		cp:       &fakeCurrentProdRepo{},
-		outbox:   &fakeOutbox{},
+		releases: &fakeReleaseRepo{store: store},
+		cp:       &fakeCurrentProdRepo{store: store},
+		outbox:   &fakeOutbox{store: store},
 	}
 }
 
@@ -198,23 +244,21 @@ var _ uow.UnitOfWork = (*fakeUoW)(nil)
 // --- helpers ---
 
 // newDeps constructs a Deps with a fakeClock pinned to now and NoOpTelemetry.
-// Returns both the Deps and the fakeUoW so tests can inspect recorded state.
-func newDeps(now time.Time) (*handlers.Deps, *fakeUoW) {
-	u := newFakeUoW()
+// Returns both the Deps and the fakeStore so tests can inspect accumulated state.
+// Each call to Deps.NewUoW() returns a fresh fakeUoW backed by the same store,
+// mirroring how production code wraps a *sqlx.DB pool per handler invocation.
+func newDeps(now time.Time) (*handlers.Deps, *fakeStore) {
+	store := newFakeStore()
 	return &handlers.Deps{
-		UoW:       u,
+		NewUoW:    func() uow.UnitOfWork { return newFakeUoW(store) },
 		Clock:     &fakeClock{t: now},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.Default(),
-	}, u
+	}, store
 }
 
-// outboxEntries returns a copy of the pkgoutbox.Entry slice recorded by the
-// fake outbox. Use this in handler tests instead of accessing u.outbox directly.
-func outboxEntries(u *fakeUoW) []*pkgoutbox.Entry {
-	u.outbox.mu.Lock()
-	defer u.outbox.mu.Unlock()
-	out := make([]*pkgoutbox.Entry, len(u.outbox.entries))
-	copy(out, u.outbox.entries)
-	return out
+// outboxEntries returns a snapshot of the pkgoutbox.Entry slice recorded in the
+// store. Use this in handler tests to inspect outbox state after handler calls.
+func outboxEntries(store *fakeStore) []*pkgoutbox.Entry {
+	return store.OutboxEntries()
 }

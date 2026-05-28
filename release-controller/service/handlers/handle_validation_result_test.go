@@ -14,10 +14,10 @@ import (
 
 // seedToValidating advances a release from Received through Parsing to Validating.
 // It uses ReceiveCandidate → AdvanceQueue → HandleParsedManifest(ok) with a
-// two-node topology (a → b). Returns the shared deps and fakeUoW.
-func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeUoW) {
+// two-node topology (a → b). Returns the shared deps and fakeStore.
+func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
-	deps, u := newDeps(time.Unix(100, 0).UTC())
+	deps, store := newDeps(time.Unix(100, 0).UTC())
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		ReleaseID:      releaseID,
@@ -36,11 +36,11 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeUoW)
 		Status:    "ok",
 		Topology:  topo,
 	}))
-	return deps, u
+	return deps, store
 }
 
 func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
-	deps, u := seedToValidating(t, "rA")
+	deps, store := seedToValidating(t, "rA")
 
 	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
 		ReleaseID: "rA",
@@ -52,15 +52,14 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	r, err := u.ReleaseRepo().Get(context.Background(), "rA")
+	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusPromoted, r.Status())
 
-	cp, err := u.CurrentProdRepo().Get(context.Background())
-	require.NoError(t, err)
+	cp := store.GetCurrentProd()
 	assert.Equal(t, "rA", cp.ReleaseID())
 
-	entries := outboxEntries(u)
+	entries := outboxEntries(store)
 	require.Len(t, entries, 3) // ReleaseRequested + ValidationRequested + ReleasePromoted
 
 	third := entries[2]
@@ -68,7 +67,7 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 }
 
 func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
-	deps, u := seedToValidating(t, "rA")
+	deps, store := seedToValidating(t, "rA")
 
 	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
 		ReleaseID: "rA",
@@ -80,18 +79,17 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	r, err := u.ReleaseRepo().Get(context.Background(), "rA")
+	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusRejected, r.Status())
 	assert.Equal(t, "validation_failed", r.RejectReason())
 	assert.Equal(t, []string{"b"}, r.FailingNodes())
 
 	// CurrentProd must remain empty since validation failed.
-	cp, err := u.CurrentProdRepo().Get(context.Background())
-	require.NoError(t, err)
+	cp := store.GetCurrentProd()
 	assert.Equal(t, "", cp.ReleaseID())
 
-	entries := outboxEntries(u)
+	entries := outboxEntries(store)
 	require.Len(t, entries, 3) // ReleaseRequested + ValidationRequested + ReleaseRejected
 
 	third := entries[2]

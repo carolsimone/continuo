@@ -39,9 +39,9 @@ func TestIntegration_FailedValidationKeepsCurrentProdUnchanged(t *testing.T) {
 		AggregateStatus: "partial_failed",
 	}))
 
-	r, _ := deps.UoW.ReleaseRepo().Get(context.Background(), "rFAIL")
+	r, _ := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rFAIL")
 	assert.Equal(t, release.StatusRejected, r.Status())
 
-	cp, _ := deps.UoW.CurrentProdRepo().Get(context.Background())
+	cp, _ := deps.NewUoW().CurrentProdRepo().Get(context.Background())
 	assert.Empty(t, cp.ReleaseID(), "current_prod must remain unchanged on validation failure")
 }

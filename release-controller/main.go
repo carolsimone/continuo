@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/config"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
+	"github.com/carolsimone/continuo/release-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
@@ -63,7 +64,7 @@ func main() {
 	defer rc.Close()
 
 	deps := &handlers.Deps{
-		UoW:       postgres.NewUnitOfWork(db, logger),
+		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    logger,

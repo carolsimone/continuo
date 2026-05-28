@@ -40,21 +40,22 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	if err := in.validate(); err != nil {
 		return err
 	}
-	if err := d.UoW.Begin(ctx); err != nil {
+	u := d.NewUoW()
+	if err := u.Begin(ctx); err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer d.UoW.Rollback() //nolint:errcheck
+	defer u.Rollback() //nolint:errcheck
 
-	existing, _ := d.UoW.ReleaseRepo().Get(ctx, in.ReleaseID)
+	existing, _ := u.ReleaseRepo().Get(ctx, in.ReleaseID)
 	if existing != nil {
-		return d.UoW.Commit()
+		return u.Commit()
 	}
 
 	r := release.New(in.ReleaseID, in.ChangedNodeIDs, in.ImageTags, in.ManifestsURI, d.Clock.Now())
-	if err := d.UoW.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-	if err := d.UoW.Commit(); err != nil {
+	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseReceived(ctx, in.ReleaseID, len(in.ChangedNodeIDs))

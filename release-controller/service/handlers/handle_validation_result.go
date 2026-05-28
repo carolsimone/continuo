@@ -9,6 +9,7 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
 )
 
@@ -35,45 +36,62 @@ type HandleValidationResultInput struct {
 // and emits release.promoted:v1.
 // If any node failed: rejects the release and emits release.rejected:v1.
 func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationResultInput) error {
-	if err := d.UoW.Begin(ctx); err != nil {
+	u := d.NewUoW()
+	if err := u.Begin(ctx); err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer d.UoW.Rollback() //nolint:errcheck
+	defer u.Rollback() //nolint:errcheck
 
-	r, err := d.UoW.ReleaseRepo().Get(ctx, in.ReleaseID)
+	r, err := u.ReleaseRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
 
 	now := d.Clock.Now()
 
+	seen := map[string]string{}
+	for _, n := range in.PerNodeResults {
+		seen[n.NodeID] = n.Status
+	}
+
 	var failing []string
-	for _, nr := range in.PerNodeResults {
-		if nr.Status != "ok" {
-			failing = append(failing, nr.NodeID)
+	for _, n := range in.PerNodeResults {
+		if n.Status != "ok" {
+			failing = append(failing, n.NodeID)
 		}
 	}
 
-	if len(failing) == 0 {
-		return handleValidationOK(ctx, d, r, in, now)
+	var missing []string
+	for _, id := range r.ValidationNodeIDs() {
+		if _, ok := seen[id]; !ok {
+			missing = append(missing, id)
+		}
 	}
-	return handleValidationFailed(ctx, d, r, in, failing, now)
+
+	aggregateOK := in.AggregateStatus == "ok"
+
+	if len(failing) > 0 || len(missing) > 0 || !aggregateOK {
+		rejected := append([]string{}, failing...)
+		rejected = append(rejected, missing...)
+		return handleValidationFailed(ctx, d, u, r, in, rejected, now)
+	}
+	return handleValidationOK(ctx, d, u, r, in, now)
 }
 
-func handleValidationOK(ctx context.Context, d *Deps, r *release.Release, in HandleValidationResultInput, now time.Time) error {
-	cp, err := d.UoW.CurrentProdRepo().Get(ctx)
+func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, now time.Time) error {
+	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
 	cp.Update(in.ReleaseID, r.CandidateTopology(), now)
-	if err := d.UoW.CurrentProdRepo().Upsert(ctx, cp); err != nil {
+	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
 		return fmt.Errorf("upsert current prod: %w", err)
 	}
 
 	if err := r.TransitionToPromoted(now); err != nil {
 		return fmt.Errorf("transition to promoted: %w", err)
 	}
-	if err := d.UoW.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -85,7 +103,7 @@ func handleValidationOK(ctx context.Context, d *Deps, r *release.Release, in Han
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := d.UoW.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: "release-controller",
 		AggregateID:   AggregateIDForRelease(in.ReleaseID),
@@ -99,7 +117,7 @@ func handleValidationOK(ctx context.Context, d *Deps, r *release.Release, in Han
 		return fmt.Errorf("outbox insert: %w", err)
 	}
 
-	if err := d.UoW.Commit(); err != nil {
+	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(in.PerNodeResults), 0, 0)
@@ -107,11 +125,11 @@ func handleValidationOK(ctx context.Context, d *Deps, r *release.Release, in Han
 	return nil
 }
 
-func handleValidationFailed(ctx context.Context, d *Deps, r *release.Release, in HandleValidationResultInput, failing []string, now time.Time) error {
+func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing []string, now time.Time) error {
 	if err := r.TransitionToRejected("validation_failed", failing, "", now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
-	if err := d.UoW.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -138,7 +156,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, r *release.Release, in
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := d.UoW.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: "release-controller",
 		AggregateID:   AggregateIDForRelease(in.ReleaseID),
@@ -152,7 +170,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, r *release.Release, in
 		return fmt.Errorf("outbox insert: %w", err)
 	}
 
-	if err := d.UoW.Commit(); err != nil {
+	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 

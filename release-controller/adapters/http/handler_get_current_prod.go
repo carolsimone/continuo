@@ -6,7 +6,10 @@ import (
 )
 
 func (s *Server) handleGetCurrentProd(w http.ResponseWriter, r *http.Request) {
-	cp, err := s.deps.UoW.CurrentProdRepo().Get(r.Context())
+	// Each request gets its own UoW; no Begin is called — the repo uses the
+	// connection pool directly for this read-only path.
+	u := s.deps.NewUoW()
+	cp, err := u.CurrentProdRepo().Get(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

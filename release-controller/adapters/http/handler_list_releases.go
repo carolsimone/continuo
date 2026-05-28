@@ -8,8 +8,11 @@ import (
 // handleListReleases returns the active release (if any) and the oldest queued
 // release (if any). Full history and pagination are deferred until UI needs them.
 func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
-	active, _ := s.deps.UoW.ReleaseRepo().ActiveRelease(r.Context())
-	next, _ := s.deps.UoW.ReleaseRepo().NextQueuedRelease(r.Context())
+	// Each request gets its own UoW; no Begin is called — the repos use the
+	// connection pool directly for this read-only path.
+	u := s.deps.NewUoW()
+	active, _ := u.ReleaseRepo().ActiveRelease(r.Context())
+	next, _ := u.ReleaseRepo().NextQueuedRelease(r.Context())
 
 	out := map[string]any{"active": nil, "next_queued": nil}
 	if active != nil {

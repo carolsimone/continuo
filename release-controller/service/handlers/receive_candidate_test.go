@@ -12,7 +12,7 @@ import (
 )
 
 func TestReceiveCandidate_PersistsAsReceived(t *testing.T) {
-	deps, u := newDeps(time.Unix(100, 0).UTC())
+	deps, store := newDeps(time.Unix(100, 0).UTC())
 	input := handlers.ReceiveCandidateInput{
 		ReleaseID:      "sha-abc",
 		ChangedNodeIDs: []string{"svc1.t_a"},
@@ -20,13 +20,13 @@ func TestReceiveCandidate_PersistsAsReceived(t *testing.T) {
 		ManifestsURI:   "s3://b/releases/sha-abc/manifests/",
 	}
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
-	r, err := u.ReleaseRepo().Get(context.Background(), "sha-abc")
+	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusReceived, r.Status())
 }
 
 func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
-	deps, u := newDeps(time.Unix(100, 0).UTC())
+	deps, store := newDeps(time.Unix(100, 0).UTC())
 	input := handlers.ReceiveCandidateInput{
 		ReleaseID:      "sha-abc",
 		ChangedNodeIDs: []string{"n"},
@@ -35,7 +35,7 @@ func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
 	}
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
-	r, err := u.ReleaseRepo().Get(context.Background(), "sha-abc")
+	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusReceived, r.Status())
 }

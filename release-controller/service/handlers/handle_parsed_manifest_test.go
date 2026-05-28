@@ -14,10 +14,10 @@ import (
 )
 
 // seedToParsing advances a release from Received to Parsing via ReceiveCandidate + AdvanceQueue.
-// Returns the deps and UoW for further assertions or handler calls.
-func seedToParsing(t *testing.T, releaseID string, changedNodeIDs []string, imageTags map[string]string) (*handlers.Deps, *fakeUoW) {
+// Returns the deps and fakeStore for further assertions or handler calls.
+func seedToParsing(t *testing.T, releaseID string, changedNodeIDs []string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
-	deps, u := newDeps(time.Unix(100, 0).UTC())
+	deps, store := newDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		ReleaseID:      releaseID,
 		ChangedNodeIDs: changedNodeIDs,
@@ -25,11 +25,11 @@ func seedToParsing(t *testing.T, releaseID string, changedNodeIDs []string, imag
 		ManifestsURI:   "s3://continuo/releases/" + releaseID + "/manifests/",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	return deps, u
+	return deps, store
 }
 
 func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
-	deps, u := seedToParsing(t, "rA", []string{"a", "b"}, map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
+	deps, store := seedToParsing(t, "rA", []string{"a", "b"}, map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
@@ -42,7 +42,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	r, err := u.ReleaseRepo().Get(context.Background(), "rA")
+	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusValidating, r.Status())
 
@@ -50,7 +50,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 	assert.Contains(t, validIDs, "a")
 	assert.Contains(t, validIDs, "b")
 
-	entries := outboxEntries(u)
+	entries := outboxEntries(store)
 	require.Len(t, entries, 2) // ReleaseRequested + ValidationRequested
 
 	second := entries[1]
@@ -63,7 +63,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 }
 
 func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
-	deps, u := seedToParsing(t, "rA", []string{"a"}, map[string]string{"svc-a": "sha-a"})
+	deps, store := seedToParsing(t, "rA", []string{"a"}, map[string]string{"svc-a": "sha-a"})
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rA",
@@ -73,12 +73,12 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	r, err := u.ReleaseRepo().Get(context.Background(), "rA")
+	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusRejected, r.Status())
 	assert.Equal(t, "parse_failed", r.RejectReason())
 
-	entries := outboxEntries(u)
+	entries := outboxEntries(store)
 	require.Len(t, entries, 2) // ReleaseRequested + ReleaseRejected
 
 	second := entries[1]
@@ -90,7 +90,7 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 		"svc-a": "tag-alpha",
 		"svc-b": "tag-beta",
 	}
-	deps, u := seedToParsing(t, "rA", []string{"a", "b"}, imageTags)
+	deps, store := seedToParsing(t, "rA", []string{"a", "b"}, imageTags)
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
@@ -103,7 +103,7 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	r, err := u.ReleaseRepo().Get(context.Background(), "rA")
+	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 
 	stored := r.CandidateTopology()

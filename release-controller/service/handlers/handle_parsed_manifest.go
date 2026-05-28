@@ -10,6 +10,7 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
 )
 
@@ -29,12 +30,13 @@ type HandleParsedManifestInput struct {
 // On success: joins image tags into the topology, computes the validation closure,
 // transitions to Validating, and emits validation.requested:v1.
 func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestInput) error {
-	if err := d.UoW.Begin(ctx); err != nil {
+	u := d.NewUoW()
+	if err := u.Begin(ctx); err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer d.UoW.Rollback() //nolint:errcheck
+	defer u.Rollback() //nolint:errcheck
 
-	r, err := d.UoW.ReleaseRepo().Get(ctx, in.ReleaseID)
+	r, err := u.ReleaseRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
@@ -42,16 +44,16 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	now := d.Clock.Now()
 
 	if in.Status == "failed" {
-		return handleParseFailed(ctx, d, r, in, now)
+		return handleParseFailed(ctx, d, u, r, in, now)
 	}
-	return handleParseOK(ctx, d, r, in, now)
+	return handleParseOK(ctx, d, u, r, in, now)
 }
 
-func handleParseFailed(ctx context.Context, d *Deps, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
+func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
 	if err := r.TransitionToRejected("parse_failed", nil, "", now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
-	if err := d.UoW.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -64,7 +66,7 @@ func handleParseFailed(ctx context.Context, d *Deps, r *release.Release, in Hand
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := d.UoW.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: "release-controller",
 		AggregateID:   AggregateIDForRelease(in.ReleaseID),
@@ -78,7 +80,7 @@ func handleParseFailed(ctx context.Context, d *Deps, r *release.Release, in Hand
 		return fmt.Errorf("outbox insert: %w", err)
 	}
 
-	if err := d.UoW.Commit(); err != nil {
+	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, false, 0)
@@ -86,20 +88,20 @@ func handleParseFailed(ctx context.Context, d *Deps, r *release.Release, in Hand
 	return nil
 }
 
-func handleParseOK(ctx context.Context, d *Deps, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
+func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
 	topo := joinImageTags(in.Topology, r.ImageTags())
 	validationIDs := release.DescendantsClosure(topo, r.ChangedNodeIDs())
 
 	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to validating: %w", err)
 	}
-	if err := d.UoW.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
 	candidateSchema := "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID)
 
-	cp, err := d.UoW.CurrentProdRepo().Get(ctx)
+	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
@@ -109,18 +111,18 @@ func handleParseOK(ctx context.Context, d *Deps, r *release.Release, in HandlePa
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"release_id":         in.ReleaseID,
-		"mode":               "validation",
-		"node_ids_in_order":  validationIDs,
-		"image_tags":         r.ImageTags(),
-		"candidate_schema":   candidateSchema,
-		"defer_state_uri":    deferStateURI,
-		"dbt_flags":          []string{"--empty"},
+		"release_id":        in.ReleaseID,
+		"mode":              "validation",
+		"node_ids_in_order": validationIDs,
+		"image_tags":        r.ImageTags(),
+		"candidate_schema":  candidateSchema,
+		"defer_state_uri":   deferStateURI,
+		"dbt_flags":         []string{"--empty"},
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := d.UoW.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: "release-controller",
 		AggregateID:   AggregateIDForRelease(in.ReleaseID),
@@ -134,7 +136,7 @@ func handleParseOK(ctx context.Context, d *Deps, r *release.Release, in HandlePa
 		return fmt.Errorf("outbox insert: %w", err)
 	}
 
-	if err := d.UoW.Commit(); err != nil {
+	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
