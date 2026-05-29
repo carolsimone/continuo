@@ -35,30 +35,33 @@ class Consumer:
     def _process_message(self, msg_id: str, fields: dict) -> None:
         self._message_handler(fields)
 
+    def _consume_once(self) -> None:
+        messages = self._redis.xreadgroup(
+            self._group,
+            self._name,
+            {self._stream: ">"},
+            count=10,
+            block=1000,
+        )
+        if not messages:
+            return
+        for _stream, msgs in messages:
+            for msg_id, msg_fields in msgs:
+                try:
+                    self._process_message(msg_id, msg_fields)
+                    self._redis.xack(self._stream, self._group, msg_id)
+                    logger.info("Message ACKed", extra={"msg_id": msg_id})
+                except Exception as e:
+                    logger.error(
+                        "Failed to process message, not ACKing",
+                        extra={"msg_id": msg_id, "error": str(e)},
+                    )
+
     def start(self) -> None:
         logger.info("Consumer starting", extra={"consumer_name": self._name, "stream": self._stream})
         while True:
             try:
-                messages = self._redis.xreadgroup(
-                    self._group,
-                    self._name,
-                    {self._stream: ">"},
-                    count=10,
-                    block=1000,
-                )
-                if not messages:
-                    continue
-                for _stream, msgs in messages:
-                    for msg_id, msg_fields in msgs:
-                        try:
-                            self._process_message(msg_id, msg_fields)
-                            self._redis.xack(self._stream, self._group, msg_id)
-                            logger.info("Message ACKed", extra={"msg_id": msg_id})
-                        except Exception as e:
-                            logger.error(
-                                "Failed to process message, not ACKing",
-                                extra={"msg_id": msg_id, "error": str(e)},
-                            )
+                self._consume_once()
             except Exception as e:
                 logger.error("Consumer loop error", extra={"error": str(e)})
                 if "NOGROUP" in str(e):

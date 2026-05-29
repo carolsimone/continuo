@@ -100,6 +100,7 @@ def main() -> None:
             )
         bucket, prefix = parse_s3_uri(manifests_uri)
         source = S3Source(bucket=bucket, env=S3_ENV, s3_client=s3_client, prefix=prefix)
+        # Cleanup is owned by CandidateManifestHandler.handle() via its own finally block.
         CandidateManifestHandler(source=source, publisher=candidate_publisher).handle(
             release_id=release_id,
         )
@@ -125,6 +126,8 @@ def main() -> None:
     )
     legacy_thread.start()
     candidate_thread.start()
+    # Park the main thread on the two daemon consumer loops; on SIGTERM the
+    # process exits and the daemon threads are abandoned.
     legacy_thread.join()
     candidate_thread.join()
 

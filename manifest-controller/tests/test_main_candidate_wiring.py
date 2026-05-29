@@ -154,7 +154,7 @@ def test_main_candidate_handler_dispatches_with_release_id_and_uri(monkeypatch):
     assert src.kwargs["prefix"] == "releases/rel-77/manifests/"
 
 
-def test_main_candidate_handler_rejects_malformed_payload(monkeypatch):
+def test_main_candidate_handler_rejects_missing_payload(monkeypatch):
     _common_monkeypatches(monkeypatch)
     monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
     monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
@@ -163,5 +163,32 @@ def test_main_candidate_handler_rejects_malformed_payload(monkeypatch):
         c for c in _RecordingConsumer.instances if c.stream_name == "release.requested:v1"
     )
     import pytest
-    with pytest.raises(ValueError, match="missing|payload|release_id|manifests_uri"):
+    with pytest.raises(ValueError, match="missing payload"):
         candidate_consumer.message_handler({})
+
+
+def test_main_candidate_handler_rejects_invalid_json_payload(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    main.main()
+    candidate_consumer = next(
+        c for c in _RecordingConsumer.instances if c.stream_name == "release.requested:v1"
+    )
+    import pytest
+    with pytest.raises(ValueError, match="not valid JSON"):
+        candidate_consumer.message_handler({b"payload": b"not json {{{"})
+
+
+def test_main_candidate_handler_rejects_payload_missing_fields(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    main.main()
+    candidate_consumer = next(
+        c for c in _RecordingConsumer.instances if c.stream_name == "release.requested:v1"
+    )
+    import json as _json
+    import pytest
+    with pytest.raises(ValueError, match="missing release_id or manifests_uri"):
+        candidate_consumer.message_handler({b"payload": _json.dumps({"release_id": "x"}).encode()})
