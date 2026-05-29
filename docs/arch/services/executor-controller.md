@@ -35,7 +35,7 @@ It is responsible for:
 | `query.model:v1` | `executor-query-model` | Primary dispatch: new node ready for execution |
 | `retry.task:v1` | `executor-retry` | Retry dispatch: re-attempt a failed node |
 | `schedule.cancelled:v1` | `executor-schedule-cancelled` | Schedule cancellation: suppress future deployments for the schedule |
-| `validation.requested:v1` | `executor-controller-validation-requested` | Candidate-release validation request: enqueue one `mode=validation` deployment per node |
+| `validation.requested:v1` | `executor-validation-requested` | Candidate-release validation request: enqueue one `mode=validation` deployment per node |
 | `validation.node.completed:v1` | `executor-controller-validation-node-completed` | Per-node validation Job terminal status from k8s-controller; records the node outcome and runs the per-release aggregate-emit gate |
 
 `query.model:v1` and `retry.task:v1` carry the same fields:
@@ -45,7 +45,7 @@ It is responsible for:
 
 ### Inbound message processing
 
-executor-controller consumes the three streams above via `pkg/redis.StreamConsumer`. For each stream the wire path is:
+executor-controller consumes the streams above via `pkg/redis.StreamConsumer`. For each stream the wire path is:
 
 `pkg/redis.StreamConsumer` → `adapters/redis/<stream>_binding.go` → `service/handlers/<stream>_handler.go`
 
