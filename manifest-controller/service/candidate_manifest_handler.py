@@ -54,11 +54,16 @@ class CandidateManifestHandler:
         for mf in manifests:
             try:
                 all_nodes.extend(parse_manifest(mf.path, mf.version, mf.image_tag))
-            except json.JSONDecodeError as exc:
+            except (json.JSONDecodeError, KeyError, IndexError) as exc:
+                # Invalid JSON, a missing top-level `nodes` key, or a node with a
+                # malformed dbt shape (missing schema/fqn, empty fqn) are all
+                # permanent — re-delivery cannot fix them, so report failed and
+                # let the consumer ACK. Transient errors (e.g. a download/IO
+                # failure) are deliberately not caught here so they stay pending.
                 self._publisher.publish_failed(
                     release_id=release_id,
                     error_class="MalformedManifest",
-                    error_detail=f"{mf.path}: {exc}",
+                    error_detail=f"{mf.path}: {exc!r}",
                 )
                 return
 

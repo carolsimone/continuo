@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
@@ -89,6 +90,58 @@ def test_handle_publishes_failed_on_malformed_manifest(tmp_path):
 
     handler = CandidateManifestHandler(source=source, publisher=publisher)
     handler.handle(release_id="rel-malformed")  # must NOT raise
+
+    publisher.publish_failed.assert_called_once()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedManifest"
+    publisher.publish_ok.assert_not_called()
+
+
+def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
+    """Valid JSON but no top-level `nodes` key is a permanent malformed
+    manifest — publish failed and ACK, never treat as transient."""
+    bad = tmp_path / "no_nodes.json"
+    bad.write_text('{"metadata": {}}')
+
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(bad), version="v1", image_tag="")
+    ]
+    publisher = MagicMock()
+
+    handler = CandidateManifestHandler(source=source, publisher=publisher)
+    handler.handle(release_id="rel-no-nodes")  # must NOT raise
+
+    publisher.publish_failed.assert_called_once()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedManifest"
+    publisher.publish_ok.assert_not_called()
+
+
+def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
+    """A node whose dbt shape is invalid (empty `fqn`) raises IndexError in
+    parse_manifest; that is permanent, so publish failed rather than stranding
+    the release as a transient error."""
+    bad = tmp_path / "empty_fqn.json"
+    bad.write_text(json.dumps({
+        "nodes": {
+            "model.svc.t": {
+                "resource_type": "model",
+                "name": "t",
+                "schema": "s",
+                "fqn": [],
+                "config": {"meta": {"owner": "team"}},
+                "tags": ["daily"],
+            }
+        }
+    }))
+
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(bad), version="v1", image_tag="")
+    ]
+    publisher = MagicMock()
+
+    handler = CandidateManifestHandler(source=source, publisher=publisher)
+    handler.handle(release_id="rel-empty-fqn")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
     assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedManifest"
