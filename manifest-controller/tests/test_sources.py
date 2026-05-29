@@ -290,11 +290,9 @@ def test_s3_source_uses_explicit_prefix_when_provided():
         result = source.list_manifests()
         assert len(result) == 1
         assert result[0].version == "v1"
+        assert mock_s3.list_objects_v2.call_args.kwargs["Prefix"] == "releases/abc/manifests/"
     finally:
         source.cleanup()
-
-    call_args = mock_s3.list_objects_v2.call_args
-    assert call_args.kwargs["Prefix"] == "releases/abc/manifests/"
 
 
 def test_s3_source_defaults_to_env_derived_prefix():
