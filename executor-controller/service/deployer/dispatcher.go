@@ -223,10 +223,12 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	return repo.Save(ctx, dep)
 }
 
-// dispatchValidation handles a mode=validation row. The success path only marks
-// the row deployed: the per-node terminal outcome ("ok"/"failed") arrives later
-// via validation.node.completed:v1 and is attached by the outcome handler, which
-// then triggers the aggregate emit. A validation row that cannot be dispatched
+// dispatchValidation handles a mode=validation row. On success it marks the row
+// deployed and emits a node.deployed:v1 trigger so k8s-controller status-checks
+// the validation Job (it never polls); it skips the production-only
+// task_status_updated announcement. The per-node terminal outcome ("ok"/"failed")
+// arrives later via validation.node.completed:v1 and is attached by the outcome
+// handler, which then triggers the aggregate emit. A validation row that cannot be dispatched
 // (not deployable, or a permanent pre-deploy deployer error) is failed terminally
 // here via FailValidation — which sets a "failed" outcome from pending without
 // requiring StatusDeployed — and we attempt the aggregate emit so a release whose
@@ -247,6 +249,9 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 	deployErr := d.deployer.DeployValidation(ctx, dep.ValidationCommand().ToValidationJobSpec())
 	if deployErr == nil {
 		if err := dep.MarkDeployed(now); err != nil {
+			return err
+		}
+		if err := d.writeValidationDeployedTrigger(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
 		return repo.Save(ctx, dep)
@@ -292,6 +297,54 @@ func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo 
 	}
 	if err := d.createOutbox(ctx, outboxRepo, dep, "node_deployed", streams.NodeDeployedV1, deployed); err != nil {
 		return fmt.Errorf("write node_deployed announcement: %w", err)
+	}
+	return nil
+}
+
+// writeValidationDeployedTrigger emits the node.deployed:v1 trigger after a
+// validation Job is created. k8s-controller is event-driven and never polls, so
+// without this row the validation Job would never be status-checked and the
+// release would hang in "validating". This is NOT the production success path:
+// it writes only the node_deployed check trigger and skips the production-only
+// task_status_updated / RUNNING announcement (validation rows have no real
+// task/schedule, so there is no UI task status to advance). The per-node
+// terminal outcome still arrives later via validation.node.completed:v1.
+//
+// The trigger carries the deterministic synthetic task/schedule UUIDs derived
+// from (release_id, node_id). They are inert carriers for validation: the
+// k8s-controller routes the resulting check by the Job's mode=validation label,
+// not by these IDs — they only need to be valid UUIDs so ParseNodeDeployed
+// accepts the message, and to satisfy the outbox AggregateID.
+func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
+	vc := dep.ValidationCommand()
+	taskID, scheduleID := model.ValidationSyntheticIDs(dep.ReleaseID(), dep.NodeID())
+	deployed := event.JobDeployed{
+		TaskID:         taskID.String(),
+		ScheduleID:     scheduleID.String(),
+		ScheduleName:   "", // validation has no schedule
+		ServiceName:    vc.ServiceName,
+		SchemaName:     vc.SchemaName,
+		TableName:      vc.TableName,
+		JobName:        vc.JobName,
+		NodeType:       vc.NodeType,
+		ImageTag:       vc.ImageTag,
+		TaskRetryCount: 0,
+		MaxRetries:     0,
+	}
+	body, err := json.Marshal(deployed)
+	if err != nil {
+		return fmt.Errorf("marshal validation node_deployed payload: %w", err)
+	}
+	if err := outboxRepo.Create(ctx, &outbox.Entry{
+		MessageProcessingID: dep.MessageProcessingID(),
+		AggregateType:       "task",
+		AggregateID:         taskID,
+		EventType:           "node_deployed",
+		Payload:             body,
+		StreamName:          streams.NodeDeployedV1,
+		MaxRetries:          3,
+	}); err != nil {
+		return fmt.Errorf("write validation node_deployed trigger: %w", err)
 	}
 	return nil
 }

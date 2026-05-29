@@ -139,19 +139,46 @@ func TestDispatcher_DispatchOne_ValidationMode_CallsDeployValidation(t *testing.
 	assert.Equal(t, 0, fk.deployCalls, "production Deploy never invoked for a validation row")
 }
 
-func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesNothingToOutbox(t *testing.T) {
+func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesNodeDeployedTriggerOnly(t *testing.T) {
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
 	outboxRepo := &fakeOutboxRepo{}
-	dep := model.NewValidationDeployment(deployableValidation(), nil, time.Now())
+	vc := deployableValidation()
+	dep := model.NewValidationDeployment(vc, nil, time.Now())
 
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
 	require.Len(t, repo.saved, 1)
 	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
 	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — it arrives via validation.node.completed:v1")
-	assert.Empty(t, outboxRepo.created, "success writes no outbox row")
+
+	// Success writes EXACTLY ONE row: the node.deployed:v1 check trigger so
+	// k8s-controller status-checks the validation Job. No task_status_updated /
+	// RUNNING announcement (that is production-only).
+	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
+	e := outboxRepo.created[0]
+	assert.Equal(t, "node_deployed", e.EventType)
+	assert.Equal(t, streams.NodeDeployedV1, e.StreamName)
+	assert.Equal(t, "task", e.AggregateType)
+
+	// The trigger carries the validation job_name and the deterministic synthetic
+	// task/schedule UUIDs derived from (release_id, node_id).
+	wantTaskID, wantScheduleID := model.ValidationSyntheticIDs(vc.ReleaseID, vc.NodeID)
+	assert.Equal(t, wantTaskID, e.AggregateID, "outbox aggregate id is the synthetic task id")
+	var payload struct {
+		TaskID     string `json:"task_id"`
+		ScheduleID string `json:"schedule_id"`
+		JobName    string `json:"job_name"`
+		NodeType   string `json:"node_type"`
+		ImageTag   string `json:"image_tag"`
+	}
+	require.NoError(t, json.Unmarshal(e.Payload, &payload))
+	assert.Equal(t, wantTaskID.String(), payload.TaskID)
+	assert.Equal(t, wantScheduleID.String(), payload.ScheduleID)
+	assert.Equal(t, vc.JobName, payload.JobName)
+	assert.Equal(t, vc.NodeType, payload.NodeType)
+	assert.Equal(t, vc.ImageTag, payload.ImageTag)
 }
 
 func TestDispatcher_DispatchOne_ValidationMode_OnPermanentFailure_RecordsOutcomeFailedAndAggregates(t *testing.T) {

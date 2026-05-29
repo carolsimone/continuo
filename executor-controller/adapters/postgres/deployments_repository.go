@@ -52,22 +52,6 @@ type deploymentRow struct {
 	OutcomeAt           *time.Time `db:"outcome_at"`
 }
 
-// validationIDNamespace seeds the deterministic synthetic task_id/schedule_id
-// of validation rows. Validation deploys have no real task/schedule identity,
-// but those columns are NOT NULL, so we derive stable UUIDv5 values from the
-// (release_id, node_id) business key. This namespace is IMMUTABLE — changing it
-// would remap every existing validation row's synthetic task/schedule IDs.
-var validationIDNamespace = uuid.MustParse("8f8d2b7a-2f1e-4c6a-9d3b-6a7c1e0f4d22")
-
-// validationSyntheticIDs derives the deterministic synthetic task_id and
-// schedule_id for a validation row from its (release_id, node_id) identity. The
-// NUL separator keeps the two business keys unambiguous across boundaries.
-func validationSyntheticIDs(releaseID, nodeID string) (taskID, scheduleID uuid.UUID) {
-	taskID = uuid.NewSHA1(validationIDNamespace, []byte("task:"+releaseID+"\x00"+nodeID))
-	scheduleID = uuid.NewSHA1(validationIDNamespace, []byte("schedule:"+releaseID+"\x00"+nodeID))
-	return taskID, scheduleID
-}
-
 func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) error {
 	var (
 		jobParams          []byte
@@ -83,7 +67,7 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 		// task_id/schedule_id are NOT NULL but validation rows have no real
 		// task/schedule identity; derive stable synthetic UUIDs from (release_id,
 		// node_id) so re-adds map to the same row.
-		taskID, scheduleID = validationSyntheticIDs(vcmd.ReleaseID, vcmd.NodeID)
+		taskID, scheduleID = model.ValidationSyntheticIDs(vcmd.ReleaseID, vcmd.NodeID)
 		rid, nid := vcmd.ReleaseID, vcmd.NodeID
 		releaseID, nodeID = &rid, &nid
 	} else {

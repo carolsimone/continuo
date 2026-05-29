@@ -78,7 +78,7 @@ On terminal failure (permanent error or retry-budget exhaustion), the dispatcher
 | Stream | Description |
 |---|---|
 | `task.status.updated:v1` | Published after K8s job creation succeeds with `status=RUNNING`; also published with `status=FAILED` on terminal dispatch failure |
-| `node.deployed:v1` | Published after K8s job creation succeeds; triggers `k8s-controller` monitoring |
+| `node.deployed:v1` | Published after K8s job creation succeeds (both production and validation Jobs); triggers `k8s-controller` monitoring. For validation Jobs the `task_id`/`schedule_id` are the deterministic synthetic UUIDs derived from `(release_id, node_id)`; they are inert carriers because k8s-controller routes the validation Job's status by its `mode=validation` label, not by these IDs |
 | `node.updated:v1` | Published on terminal dispatch failure only; consumed by `orchestrator` to advance the schedule |
 | `validation.completed:v1` | Per-release validation aggregate; emitted exactly once when every `mode=validation` node for a release is terminal. Payload: `release_id`, `aggregate_status` (`ok` iff every node is `ok`, else `failed`), and `per_node_results[]` (`node_id`, `status`, optional `dbt_log_uri`) |
 
@@ -139,6 +139,8 @@ For each due row (inside one transaction for the batch):
      → permanent error (errors.Is ErrPermanent) OR retry budget exhausted:
        - writeFailed: write task_status_updated (FAILED) + node_updated (FAILED) outbox rows, MarkFailed
 ```
+
+A `mode=validation` due row branches to a separate path. On a successful K8s validation Job creation it `MarkDeployed`s the row and writes a single `node_deployed` → `node.deployed:v1` outbox row so k8s-controller status-checks the Job — it never polls, so without this trigger the release would hang in `validating`. It does NOT write the production-only `task_status_updated` (RUNNING) announcement: validation rows have no real task/schedule to surface in the UI. The per-node terminal outcome (`ok`/`failed`) arrives later via `validation.node.completed:v1`. A validation row that fails AT dispatch (not deployable, or a permanent pre-deploy error) is made terminal via `FailValidation`, records `outcome=failed`, emits no `node.deployed` trigger, and runs the aggregate gate.
 
 ### Per-release validation aggregate gate
 
