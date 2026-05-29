@@ -160,8 +160,8 @@ func joinImageTags(topo release.Topology, imageTags map[string]string) release.T
 
 // validationNodesInOrder returns one map per validation node in
 // topological order, carrying the per-node fields executor-controller needs
-// to build a candidate dbt job: unique_id, service_name, schema_name,
-// table_name, image_tag. The map shape is intentionally flat (no nested
+// to build a candidate dbt job: unique_id, service_name, node_type,
+// schema_name, table_name, image_tag. The map shape is intentionally flat (no nested
 // upstreams) — executor-controller only needs what to run, not how the
 // candidate DAG is structured. The order follows validationIDs which is the
 // topo-sorted output of DescendantsClosure.
@@ -179,6 +179,7 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string) []map
 		out = append(out, map[string]any{
 			"unique_id":    n.UniqueID,
 			"service_name": n.ServiceName,
+			"node_type":    n.NodeType,
 			"schema_name":  n.SchemaName,
 			"table_name":   n.TableName,
 			"image_tag":    n.ImageTag,

@@ -28,6 +28,7 @@ type Node struct {
 	SchemaName        string   `json:"schema_name"`
 	TableName         string   `json:"table_name"`
 	ServiceName       string   `json:"service_name"`
+	NodeType          string   `json:"node_type"`
 	ImageTag          string   `json:"image_tag"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Schedule          string   `json:"schedule"`

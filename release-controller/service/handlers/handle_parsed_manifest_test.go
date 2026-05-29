@@ -97,8 +97,8 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 	})
 
 	topo := release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a", SchemaName: "schema_a", TableName: "table_a"},
-		{UniqueID: "b", ServiceName: "svc-b", SchemaName: "schema_b", TableName: "table_b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", SchemaName: "schema_a", TableName: "table_a"},
+		{UniqueID: "b", ServiceName: "svc-b", NodeType: "dbt-seed", SchemaName: "schema_b", TableName: "table_b", UpstreamUniqueIDs: []string{"a"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
@@ -117,6 +117,7 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 		Nodes           []struct {
 			UniqueID    string `json:"unique_id"`
 			ServiceName string `json:"service_name"`
+			NodeType    string `json:"node_type"`
 			SchemaName  string `json:"schema_name"`
 			TableName   string `json:"table_name"`
 			ImageTag    string `json:"image_tag"`
@@ -140,11 +141,13 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 	b := payload.Nodes[byID["b"]]
 
 	assert.Equal(t, "svc-a", a.ServiceName)
+	assert.Equal(t, "dbt-model", a.NodeType, "node_type is forwarded from the candidate topology")
 	assert.Equal(t, "schema_a", a.SchemaName)
 	assert.Equal(t, "table_a", a.TableName)
 	assert.Equal(t, "sha-a", a.ImageTag, "image_tag was joined from Release.ImageTags before publishing")
 
 	assert.Equal(t, "svc-b", b.ServiceName)
+	assert.Equal(t, "dbt-seed", b.NodeType, "node_type is forwarded from the candidate topology")
 	assert.Equal(t, "schema_b", b.SchemaName)
 	assert.Equal(t, "table_b", b.TableName)
 	assert.Equal(t, "sha-b", b.ImageTag)
