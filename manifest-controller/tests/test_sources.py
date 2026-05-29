@@ -263,3 +263,45 @@ def test_local_source_image_tag_empty_when_sidecar_missing(tmp_path):
 
     assert len(result) == 1
     assert result[0].image_tag == ""
+
+
+def test_s3_source_uses_explicit_prefix_when_provided():
+    """When prefix= is set, S3Source ignores the env-derived prefix."""
+    mock_s3 = MagicMock()
+    mock_s3.list_objects_v2.return_value = {"Contents": [
+        {"Key": "releases/abc/manifests/service-1/manifest_v1.json"},
+    ]}
+    def fake_download(bucket, key, filename):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "w") as f:
+            f.write('{"nodes": {}}')
+    mock_s3.download_file.side_effect = fake_download
+    mock_s3.get_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "Not Found"}}, "GetObject"
+    )
+
+    source = S3Source(
+        bucket="continuo",
+        env="local",
+        s3_client=mock_s3,
+        prefix="releases/abc/manifests/",
+    )
+    try:
+        result = source.list_manifests()
+        assert len(result) == 1
+        assert result[0].version == "v1"
+        assert mock_s3.list_objects_v2.call_args.kwargs["Prefix"] == "releases/abc/manifests/"
+    finally:
+        source.cleanup()
+
+
+def test_s3_source_defaults_to_env_derived_prefix():
+    """Backward compat: omitting prefix= uses f'{env}/manifest/'."""
+    mock_s3 = MagicMock()
+    mock_s3.list_objects_v2.return_value = {"Contents": []}
+    source = S3Source(bucket="continuo", env="local", s3_client=mock_s3)
+    try:
+        source.list_manifests()
+    finally:
+        source.cleanup()
+    assert mock_s3.list_objects_v2.call_args.kwargs["Prefix"] == "local/manifest/"
