@@ -35,6 +35,8 @@ It is responsible for:
 | `query.model:v1` | `executor-query-model` | Primary dispatch: new node ready for execution |
 | `retry.task:v1` | `executor-retry` | Retry dispatch: re-attempt a failed node |
 | `schedule.cancelled:v1` | `executor-schedule-cancelled` | Schedule cancellation: suppress future deployments for the schedule |
+| `validation.requested:v1` | `executor-controller-validation-requested` | Candidate-release validation request: enqueue one `mode=validation` deployment per node |
+| `validation.node.completed:v1` | `executor-controller-validation-node-completed` | Per-node validation Job terminal status from k8s-controller; records the node outcome and runs the per-release aggregate-emit gate |
 
 `query.model:v1` and `retry.task:v1` carry the same fields:
 - `task_id`, `schedule_id`, `schedule_name`
@@ -50,6 +52,10 @@ executor-controller consumes the three streams above via `pkg/redis.StreamConsum
 The binding parses the XMessage into a typed `domain/events.<Event>`, runs `pkg/messageprocessing.Dedup` against the per-service `message_processing` table (keyed on `(message_id, stream_name)`), and invokes the handler inside a single Unit-of-Work transaction. `schedule.cancelled:v1` skips dedup because `cancelled_schedules.Insert` is `INSERT ... ON CONFLICT DO NOTHING` and is naturally idempotent.
 
 The cancelled-schedule guard runs inside `QueryModelHandler` and `RetryTaskHandler` via `uow.CancelledSchedulesRepo().Exists`; a cancelled match commits the dedup row (so the message is ACKed and never reprocessed) and returns without writing to `executor_deployments`.
+
+`validation.requested:v1` carries every node for a release in one message (flat JSON `payload` field). Its binding deduplicates per-release on a deterministic release-derived `outbox_entry_id` rather than the inbound `msg.ID`, so a redelivery with a fresh Redis ID still collides on the same key.
+
+`validation.node.completed:v1` carries one node's terminal result as a flat JSON `payload` field (`release_id`, `node_id`, `outcome` ∈ {`ok`,`failed`}, optional `dbt_log_uri`) with `outbox_entry_id` as a flat sibling. Its binding uses STANDARD `(message_id, stream_name)` dedup with an `outbox_entry_id` fallback, because it carries a normal upstream outbox row id from k8s-controller. The `ValidationNodeCompletedHandler` looks up the `(release_id, node_id)` validation deployment, attaches the outcome via `RecordOutcome`, saves, then runs the aggregate-emit gate. An unknown `(release_id, node_id)` (no matching row) is logged and ACKed; a redelivery whose deployment already carries an outcome is a no-op ACK (no double-record, no duplicate aggregate).
 
 ### HTTP (port 8084)
 
@@ -74,6 +80,7 @@ On terminal failure (permanent error or retry-budget exhaustion), the dispatcher
 | `task.status.updated:v1` | Published after K8s job creation succeeds with `status=RUNNING`; also published with `status=FAILED` on terminal dispatch failure |
 | `node.deployed:v1` | Published after K8s job creation succeeds; triggers `k8s-controller` monitoring |
 | `node.updated:v1` | Published on terminal dispatch failure only; consumed by `orchestrator` to advance the schedule |
+| `validation.completed:v1` | Per-release validation aggregate; emitted exactly once when every `mode=validation` node for a release is terminal. Payload: `release_id`, `aggregate_status` (`ok` iff every node is `ok`, else `failed`), and `per_node_results[]` (`node_id`, `status`, optional `dbt_log_uri`) |
 
 `task.status.updated:v1` payload fields:
 - `task_id`, `schedule_id`, `schedule_name`
@@ -133,6 +140,15 @@ For each due row (inside one transaction for the batch):
        - writeFailed: write task_status_updated (FAILED) + node_updated (FAILED) outbox rows, MarkFailed
 ```
 
+### Per-release validation aggregate gate
+
+The `validation.completed:v1` aggregate is gated by one shared, infrastructure-free helper (`service/validation.EmitValidationAggregateIfComplete`) invoked from two call sites that both run it inside their own transaction:
+
+- the deploy dispatcher, when a `mode=validation` node fails AT dispatch (not deployable, or a permanent pre-deploy deployer error) and `FailValidation` makes it terminal;
+- the `validation.node.completed:v1` handler, when a node terminates AFTER dispatch.
+
+The gate is a no-op while `PendingValidationCount(release_id) > 0`. Once every node is terminal it claims the `validation_aggregates` sentinel (`INSERT … ON CONFLICT DO NOTHING`); the single winner reads `ListValidationResults`, builds the per-node payload, and writes one `validation.completed:v1` outbox row whose `aggregate_id` is a deterministic UUIDv5 over an immutable namespace and `release:<release_id>`, so any re-emission deduplicates downstream. Losers return without emitting.
+
 ### Outbox processor (every 5 seconds, batch of 100)
 
 `pkg/outbox.Processor` polls `executor_outbox` and calls `OutboxPublisher.Publish` per entry. The publisher marshals the payload and performs a single Redis XADD. There is no `TerminalFailureHook` — terminal outcomes are written as ordinary outbox rows by the dispatcher.
@@ -152,7 +168,7 @@ On XADD failure:
 
 | Loop | Description |
 |---|---|
-| Redis consumers (three streams) | Reads `query.model:v1`, `retry.task:v1`, and `schedule.cancelled:v1` via `pkg/redis.StreamConsumer`; crash-recovery for pending messages on startup |
+| Redis consumers | Reads `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, and `validation.node.completed:v1` via `pkg/redis.StreamConsumer`; crash-recovery for pending messages on startup |
 | Deploy dispatcher (`deployer.Dispatcher`) | Polls `executor_deployments` every 5 seconds; creates K8s Jobs and writes outbox announcement rows, capped by `MAX_CONCURRENT_JOBS` |
 | Outbox processor (`pkg/outbox.Processor`) | Polls `executor_outbox` every 5 seconds; processes up to 100 entries per batch via `OutboxPublisher` (uniform marshal-and-XADD) |
 
