@@ -33,3 +33,19 @@ def test_validate_passes_when_all_required_set(monkeypatch):
 
     from config.config import validate
     validate()  # must not raise
+
+
+def test_release_requested_stream_constant_sourced_from_contract():
+    from streams_contract import (
+        RELEASE_REQUESTED_V1,
+        MANIFEST_CONTROLLER_RELEASE_REQUESTED,
+        MANIFEST_LOADED_CANDIDATE_V1,
+    )
+    from config.config import (
+        RELEASE_REQUESTED_STREAM,
+        RELEASE_REQUESTED_GROUP,
+        MANIFEST_LOADED_CANDIDATE_STREAM,
+    )
+    assert RELEASE_REQUESTED_STREAM == RELEASE_REQUESTED_V1
+    assert RELEASE_REQUESTED_GROUP == MANIFEST_CONTROLLER_RELEASE_REQUESTED
+    assert MANIFEST_LOADED_CANDIDATE_STREAM == MANIFEST_LOADED_CANDIDATE_V1
