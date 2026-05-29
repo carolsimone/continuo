@@ -1,11 +1,12 @@
 import json
 from unittest.mock import MagicMock
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
+from streams_contract import MANIFEST_LOADED_CANDIDATE_V1
 
 
 def _make():
     redis_mock = MagicMock()
-    pub = CandidateManifestPublisher(redis_mock, "manifest.loaded.candidate:v1")
+    pub = CandidateManifestPublisher(redis_mock, MANIFEST_LOADED_CANDIDATE_V1)
     return pub, redis_mock
 
 
@@ -25,7 +26,7 @@ def test_publish_ok_serialises_topology():
     pub.publish_ok(release_id="rel-1", topology=topology)
     redis_mock.xadd.assert_called_once()
     args, kwargs = redis_mock.xadd.call_args
-    assert args[0] == "manifest.loaded.candidate:v1"
+    assert args[0] == MANIFEST_LOADED_CANDIDATE_V1
     body = json.loads(args[1]["payload"])
     assert body["release_id"] == "rel-1"
     assert body["status"] == "ok"

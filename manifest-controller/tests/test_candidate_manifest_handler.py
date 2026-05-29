@@ -18,49 +18,30 @@ def _make_source(*entries):
     return source
 
 
-def test_handle_publishes_ok_with_resolved_topology():
+@pytest.fixture
+def resolved_topology():
     source = _make_source(
         ("manifest_service1.json", "v1"),
         ("manifest_service2.json", "v2"),
     )
     publisher = MagicMock()
-
-    handler = CandidateManifestHandler(source=source, publisher=publisher)
-    handler.handle(release_id="rel-1")
-
+    CandidateManifestHandler(source=source, publisher=publisher).handle(release_id="rel-1")
     publisher.publish_ok.assert_called_once()
     assert publisher.publish_ok.call_args.kwargs["release_id"] == "rel-1"
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
-    assert len(topology) == 2
+    return publisher.publish_ok.call_args.kwargs["topology"]
 
 
-def test_handle_publishes_ok_with_unique_id_synthesised_from_schema_and_table():
-    source = _make_source(
-        ("manifest_service1.json", "v1"),
-        ("manifest_service2.json", "v2"),
-    )
-    publisher = MagicMock()
+def test_handle_publishes_ok_with_resolved_topology(resolved_topology):
+    assert len(resolved_topology) == 2
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher)
-    handler.handle(release_id="rel-1")
 
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
-    for node in topology:
+def test_handle_publishes_ok_with_unique_id_synthesised_from_schema_and_table(resolved_topology):
+    for node in resolved_topology:
         assert node["unique_id"] == f"{node['schema_name']}.{node['table_name']}"
 
 
-def test_handle_publishes_ok_with_image_tag_empty_string():
-    source = _make_source(
-        ("manifest_service1.json", "v1"),
-        ("manifest_service2.json", "v2"),
-    )
-    publisher = MagicMock()
-
-    handler = CandidateManifestHandler(source=source, publisher=publisher)
-    handler.handle(release_id="rel-1")
-
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
-    for node in topology:
+def test_handle_publishes_ok_with_image_tag_empty_string(resolved_topology):
+    for node in resolved_topology:
         assert node["image_tag"] == ""
 
 

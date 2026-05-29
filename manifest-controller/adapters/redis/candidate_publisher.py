@@ -1,6 +1,8 @@
 import json
 import logging
 
+from adapters.redis.constants import STREAM_MAXLEN
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,7 +22,7 @@ class CandidateManifestPublisher:
 
     def publish_ok(self, release_id: str, topology: list[dict]) -> None:
         body = {"release_id": release_id, "status": "ok", "topology": topology}
-        self._redis.xadd(self._stream, {"payload": json.dumps(body)}, maxlen=10000)
+        self._redis.xadd(self._stream, {"payload": json.dumps(body)}, maxlen=STREAM_MAXLEN)
         logger.info(
             "Published manifest.loaded.candidate ok",
             extra={"release_id": release_id, "node_count": len(topology)},
@@ -33,7 +35,7 @@ class CandidateManifestPublisher:
             "error_class": error_class,
             "error_detail": error_detail,
         }
-        self._redis.xadd(self._stream, {"payload": json.dumps(body)}, maxlen=10000)
+        self._redis.xadd(self._stream, {"payload": json.dumps(body)}, maxlen=STREAM_MAXLEN)
         logger.error(
             "Published manifest.loaded.candidate failed",
             extra={"release_id": release_id, "error_class": error_class, "error_detail": error_detail},

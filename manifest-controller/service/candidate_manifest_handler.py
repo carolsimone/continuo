@@ -17,9 +17,8 @@ class CandidateManifestHandler:
     Differs from ManifestHandler in three places:
     - skips the publish-boundary image_tag validator (image_tag is empty
       by design on the candidate path; release-controller joins it in).
-    - skips registry CSV persistence (the candidate flow does not expose
-      a registry to any other code path; the registry is built in-memory
-      only for the resolver's lookup).
+    - does not persist the registry anywhere; it is built in-memory solely
+      for dependency resolution.
     - publishes the manifest.loaded.candidate:v1 envelope shape.
 
     On parse/resolve failures that re-delivery cannot fix, publishes
