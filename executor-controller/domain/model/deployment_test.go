@@ -195,6 +195,33 @@ func TestReconstituteValidation_RestoresOutcome(t *testing.T) {
 	assert.Equal(t, cmd, d.ValidationCommand())
 }
 
+func TestFailValidation_FromPendingSetsTerminalFailedOutcome(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now)
+
+	// Still pending (never dispatched) — RecordOutcome would reject this.
+	require.NoError(t, d.FailValidation("not deployable", now))
+	assert.Equal(t, model.StatusFailed, d.Status())
+	assert.Equal(t, "failed", d.Outcome())
+	require.NotNil(t, d.OutcomeAt())
+	assert.Equal(t, now, *d.OutcomeAt())
+	require.NotNil(t, d.ErrorMessage())
+	assert.Equal(t, "not deployable", *d.ErrorMessage())
+}
+
+func TestFailValidation_RejectsSecondRecording(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	require.NoError(t, d.FailValidation("first", now))
+	assert.Error(t, d.FailValidation("second", now.Add(time.Minute)), "outcome recorded once")
+	assert.Equal(t, "first", *d.ErrorMessage(), "first reason unchanged")
+}
+
+func TestFailValidation_RejectsOnProductionDeployment(t *testing.T) {
+	d := model.NewDeployment(deployableCmd(), nil, time.Now())
+	assert.Error(t, d.FailValidation("x", time.Now()), "FailValidation is validation-only")
+}
+
 func TestBackoff_CapAndOverflow(t *testing.T) {
 	now := time.Now()
 	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 30 * time.Second}

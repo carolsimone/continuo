@@ -227,6 +227,29 @@ func (d *Deployment) RecordOutcome(outcome, logURI string, now time.Time) error 
 	return nil
 }
 
+// FailValidation drives a validation deployment to a terminal failed state and
+// records outcome="failed" in one step. Unlike RecordOutcome it does not require
+// a prior StatusDeployed: a validation row that fails BEFORE it is dispatched
+// (not deployable, or a permanent pre-deploy deployer error) is still pending,
+// yet must reach a terminal "failed" outcome so the per-release aggregate can be
+// emitted. It is validation-only and idempotent-safe in that it rejects a second
+// recording once an outcome exists.
+func (d *Deployment) FailValidation(reason string, now time.Time) error {
+	if d.mode != ModeValidation {
+		return fmt.Errorf("FailValidation called on non-validation deployment %s", d.id)
+	}
+	if d.outcomeAt != nil {
+		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
+	}
+	msg := reason
+	d.errorMessage = &msg
+	d.status = StatusFailed
+	d.outcome = "failed"
+	ts := now
+	d.outcomeAt = &ts
+	return nil
+}
+
 // Accessors used by adapters (persistence) and the application service.
 func (d *Deployment) ID() uuid.UUID                   { return d.id }
 func (d *Deployment) MessageProcessingID() *uuid.UUID { return d.messageProcessingID }
@@ -245,7 +268,7 @@ func (d *Deployment) ReleaseID() string { return d.validationCmd.ReleaseID }
 
 // NodeID is meaningful only when Mode() == ModeValidation; for production
 // deployments it returns "".
-func (d *Deployment) NodeID() string { return d.validationCmd.NodeID }
+func (d *Deployment) NodeID() string           { return d.validationCmd.NodeID }
 func (d *Deployment) Status() Status           { return d.status }
 func (d *Deployment) RetryCount() int          { return d.retryCount }
 func (d *Deployment) MaxRetries() int          { return d.maxRetries }

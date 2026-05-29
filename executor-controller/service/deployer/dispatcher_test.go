@@ -49,6 +49,9 @@ func newTestDispatcher(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int) *deploy
 		func(exec outbox.Executor) repository.DeploymentRepository {
 			return postgres.NewDeploymentsRepository(exec, testLogger())
 		},
+		func(exec outbox.Executor) repository.ValidationAggregateRepository {
+			return postgres.NewValidationAggregateRepository(exec)
+		},
 		maxConcurrent, testLogger(), deployer.DispatcherConfig{},
 	)
 }
@@ -279,8 +282,11 @@ func TestDispatcher_PerRowTransaction_FailureDoesNotRollBackOthers(t *testing.T)
 			failAt:               2, // the second deployment's Save fails
 		}
 	}
+	aggFactory := func(exec outbox.Executor) repository.ValidationAggregateRepository {
+		return postgres.NewValidationAggregateRepository(exec)
+	}
 	fk := &fakeDeployer{active: 0}
-	disp := deployer.NewDispatcher(db, fk, factory, 50, testLogger(), deployer.DispatcherConfig{})
+	disp := deployer.NewDispatcher(db, fk, factory, aggFactory, 50, testLogger(), deployer.DispatcherConfig{})
 
 	require.Error(t, disp.ProcessBatch(context.Background()), "second row's Save error surfaces")
 

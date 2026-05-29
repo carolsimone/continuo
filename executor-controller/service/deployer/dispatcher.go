@@ -28,6 +28,20 @@ import (
 // Postgres adapter out of this package.
 type RepoFactory func(exec outbox.Executor) repository.DeploymentRepository
 
+// ValidationAggRepoFactory builds a ValidationAggregateRepository bound to the
+// per-batch executor, mirroring RepoFactory so the concrete Postgres sentinel
+// adapter stays out of this package.
+type ValidationAggRepoFactory func(exec outbox.Executor) repository.ValidationAggregateRepository
+
+// validationDedupNamespace seeds the deterministic aggregate_id for a release's
+// validation.completed:v1 outbox row so a re-emission (e.g. a retried batch that
+// re-wins the sentinel after a crash between INSERT and commit) deduplicates to
+// one published event in the consumer. IMMUTABLE: changing it would let an
+// already-published aggregate re-publish under a new id. The service layer owns
+// its own namespace rather than importing the adapters/redis one (that would
+// invert the adapter→service dependency the import guard forbids).
+var validationDedupNamespace = uuid.MustParse("e2a9c7d4-3f1b-4a8e-9c5d-1b6f0a2e8d7c")
+
 // DispatcherConfig groups the optional knobs.
 type DispatcherConfig struct {
 	Tick        time.Duration // poll interval; default 5s
@@ -43,6 +57,7 @@ type Dispatcher struct {
 	db            *sqlx.DB
 	deployer      deploy.Deployer
 	newRepo       RepoFactory
+	newAggRepo    ValidationAggRepoFactory
 	maxConcurrent int
 	logger        *slog.Logger
 	tick          time.Duration
@@ -55,6 +70,7 @@ func NewDispatcher(
 	db *sqlx.DB,
 	deployer deploy.Deployer,
 	newRepo RepoFactory,
+	newAggRepo ValidationAggRepoFactory,
 	maxConcurrent int,
 	logger *slog.Logger,
 	cfg DispatcherConfig,
@@ -75,6 +91,7 @@ func NewDispatcher(
 		db:            db,
 		deployer:      deployer,
 		newRepo:       newRepo,
+		newAggRepo:    newAggRepo,
 		maxConcurrent: maxConcurrent,
 		logger:        logger,
 		tick:          cfg.Tick,
@@ -147,6 +164,7 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 	}()
 
 	repo := d.newRepo(tx)
+	aggRepo := d.newAggRepo(tx)
 	outboxRepo := outbox.NewPostgresRepository(tx, "executor_outbox", d.logger)
 
 	due, err := repo.GetDueBatch(ctx, 1)
@@ -161,7 +179,7 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	if err := d.dispatchOne(ctx, repo, outboxRepo, due[0]); err != nil {
+	if err := d.dispatchOne(ctx, repo, outboxRepo, aggRepo, due[0]); err != nil {
 		return false, fmt.Errorf("dispatch deployment %s: %w", due[0].ID(), err)
 	}
 
@@ -172,7 +190,11 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, dep *model.Deployment) error {
+func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
+	if dep.Mode() == model.ModeValidation {
+		return d.dispatchValidation(ctx, repo, outboxRepo, aggRepo, dep)
+	}
+
 	now := d.now()
 
 	// A row whose job_params could not be deserialized is unrunnable; fail it
@@ -207,6 +229,115 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 			"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
 	}
 	return repo.Save(ctx, dep)
+}
+
+// dispatchValidation handles a mode=validation row. The success path only marks
+// the row deployed: the per-node terminal outcome ("ok"/"failed") arrives later
+// via validation.node.completed:v1 and is attached by the outcome handler, which
+// then triggers the aggregate emit. A validation row that cannot be dispatched
+// (not deployable, or a permanent pre-deploy deployer error) is failed terminally
+// here via FailValidation — which sets a "failed" outcome from pending without
+// requiring StatusDeployed — and we attempt the aggregate emit so a release whose
+// last outstanding node fails at dispatch still announces its (failed) result.
+func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
+	now := d.now()
+
+	if !dep.IsDeployable() {
+		if err := dep.FailValidation("validation deployment not deployable", now); err != nil {
+			return err
+		}
+		if err := d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now); err != nil {
+			return err
+		}
+		return repo.Save(ctx, dep)
+	}
+
+	deployErr := d.deployer.DeployValidation(ctx, dep.ValidationCommand().ToValidationJobSpec())
+	if deployErr == nil {
+		if err := dep.MarkDeployed(now); err != nil {
+			return err
+		}
+		return repo.Save(ctx, dep)
+	}
+
+	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
+	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) { // terminal
+		d.logger.Error("Validation deploy terminal failure",
+			"deployment_id", dep.ID(), "release_id", dep.ReleaseID(), "node_id", dep.NodeID(), "cause", deployErr)
+		if err := dep.FailValidation(deployErr.Error(), now); err != nil {
+			return err
+		}
+		if err := d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now); err != nil {
+			return err
+		}
+	} else {
+		d.logger.Warn("Validation deploy transient failure — rescheduling",
+			"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
+	}
+	return repo.Save(ctx, dep)
+}
+
+// maybeEmitValidationAggregate emits validation.completed:v1 for releaseID once
+// every mode=validation row for that release has reached a terminal outcome. It
+// is a no-op while any node is still pending. The sentinel ClaimEmission ensures
+// exactly one of the racing callers writes the outbox row; losers return without
+// emitting. The aggregate_status is "ok" iff every per-node outcome is "ok".
+func (d *Dispatcher) maybeEmitValidationAggregate(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, releaseID string, now time.Time) error {
+	pending, err := repo.PendingValidationCount(ctx, releaseID)
+	if err != nil {
+		return fmt.Errorf("pending validation count: %w", err)
+	}
+	if pending > 0 {
+		return nil
+	}
+
+	won, err := aggRepo.ClaimEmission(ctx, releaseID, now)
+	if err != nil {
+		return fmt.Errorf("claim validation aggregate emission: %w", err)
+	}
+	if !won {
+		return nil
+	}
+
+	results, err := repo.ListValidationResults(ctx, releaseID)
+	if err != nil {
+		return fmt.Errorf("list validation results: %w", err)
+	}
+
+	perNode := make([]map[string]any, 0, len(results))
+	aggregate := "ok"
+	for _, r := range results {
+		node := map[string]any{
+			"node_id": r.NodeID(),
+			"status":  r.Outcome(),
+		}
+		if uri := r.DBTLogURI(); uri != "" { // omitempty: absent when no log was produced
+			node["dbt_log_uri"] = uri
+		}
+		perNode = append(perNode, node)
+		if r.Outcome() != "ok" {
+			aggregate = "failed"
+		}
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"release_id":       releaseID,
+		"per_node_results": perNode,
+		"aggregate_status": aggregate,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal aggregate payload: %w", err)
+	}
+
+	aggID := uuid.NewSHA1(validationDedupNamespace, []byte("release:"+releaseID))
+	return outboxRepo.Create(ctx, &outbox.Entry{
+		AggregateType: "release",
+		AggregateID:   aggID,
+		EventType:     "validation_completed",
+		Payload:       payload,
+		StreamName:    streams.ValidationCompletedV1,
+		MaxRetries:    3,
+	})
 }
 
 func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {

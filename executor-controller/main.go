@@ -174,6 +174,9 @@ func main() {
 		func(exec pkgoutbox.Executor) repository.DeploymentRepository {
 			return postgres.NewDeploymentsRepository(exec, logger)
 		},
+		func(exec pkgoutbox.Executor) repository.ValidationAggregateRepository {
+			return postgres.NewValidationAggregateRepository(exec)
+		},
 		cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
 	)
