@@ -44,27 +44,68 @@ type deploymentRow struct {
 	CreatedAt           time.Time  `db:"created_at"`
 	DeployedAt          *time.Time `db:"deployed_at"`
 	ErrorMessage        *string    `db:"error_message"`
+	Mode                string     `db:"mode"`
+	ReleaseID           *string    `db:"release_id"`
+	NodeID              *string    `db:"node_id"`
+	Outcome             *string    `db:"outcome"`
+	DBTLogURI           *string    `db:"dbt_log_uri"`
+	OutcomeAt           *time.Time `db:"outcome_at"`
+}
+
+// validationIDNamespace seeds the deterministic synthetic task_id/schedule_id
+// of validation rows. Validation deploys have no real task/schedule identity,
+// but those columns are NOT NULL, so we derive stable UUIDv5 values from the
+// (release_id, node_id) business key. This namespace is IMMUTABLE — changing it
+// would remap every existing validation row's synthetic task/schedule IDs.
+var validationIDNamespace = uuid.MustParse("8f8d2b7a-2f1e-4c6a-9d3b-6a7c1e0f4d22")
+
+// validationSyntheticIDs derives the deterministic synthetic task_id and
+// schedule_id for a validation row from its (release_id, node_id) identity. The
+// NUL separator keeps the two business keys unambiguous across boundaries.
+func validationSyntheticIDs(releaseID, nodeID string) (taskID, scheduleID uuid.UUID) {
+	taskID = uuid.NewSHA1(validationIDNamespace, []byte("task:"+releaseID+"\x00"+nodeID))
+	scheduleID = uuid.NewSHA1(validationIDNamespace, []byte("schedule:"+releaseID+"\x00"+nodeID))
+	return taskID, scheduleID
 }
 
 func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) error {
-	cmd := d.Command()
-	jobParams, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("marshal deploy command: %w", err)
-	}
-	taskID, scheduleID, err := commandIDs(cmd)
-	if err != nil {
-		return err
+	var (
+		jobParams          []byte
+		taskID, scheduleID uuid.UUID
+		releaseID, nodeID  *string
+		err                error
+	)
+	if d.Mode() == model.ModeValidation {
+		vcmd := d.ValidationCommand()
+		if jobParams, err = json.Marshal(vcmd); err != nil {
+			return fmt.Errorf("marshal validation deploy command: %w", err)
+		}
+		// task_id/schedule_id are NOT NULL but validation rows have no real
+		// task/schedule identity; derive stable synthetic UUIDs from (release_id,
+		// node_id) so re-adds map to the same row.
+		taskID, scheduleID = validationSyntheticIDs(vcmd.ReleaseID, vcmd.NodeID)
+		rid, nid := vcmd.ReleaseID, vcmd.NodeID
+		releaseID, nodeID = &rid, &nid
+	} else {
+		cmd := d.Command()
+		if jobParams, err = json.Marshal(cmd); err != nil {
+			return fmt.Errorf("marshal deploy command: %w", err)
+		}
+		if taskID, scheduleID, err = commandIDs(cmd); err != nil {
+			return err
+		}
 	}
 
 	const query = `
 		INSERT INTO executor_deployments (
 			id, message_processing_id, task_id, schedule_id, job_params,
-			status, retry_count, max_retries, next_attempt_at, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+			status, retry_count, max_retries, next_attempt_at, created_at,
+			mode, release_id, node_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	if _, err := r.exec.ExecContext(ctx, query,
 		d.ID(), d.MessageProcessingID(), taskID, scheduleID, jobParams,
 		string(d.Status()), d.RetryCount(), d.MaxRetries(), d.NextAttemptAt(), d.CreatedAt(),
+		string(d.Mode()), releaseID, nodeID,
 	); err != nil {
 		return fmt.Errorf("insert executor_deployments row: %w", err)
 	}
@@ -75,7 +116,8 @@ func (r *deploymentsRepository) GetDueBatch(ctx context.Context, limit int) ([]*
 	const query = `
 		SELECT id, message_processing_id, task_id, schedule_id, job_params,
 		       status, retry_count, max_retries, next_attempt_at,
-		       created_at, deployed_at, error_message
+		       created_at, deployed_at, error_message,
+		       mode, release_id, node_id, outcome, dbt_log_uri, outcome_at
 		FROM executor_deployments
 		WHERE status = 'pending' AND next_attempt_at <= NOW()
 		ORDER BY next_attempt_at ASC
@@ -95,10 +137,12 @@ func (r *deploymentsRepository) GetDueBatch(ctx context.Context, limit int) ([]*
 func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) error {
 	const query = `
 		UPDATE executor_deployments
-		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6
+		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6,
+		    outcome = $7, dbt_log_uri = $8, outcome_at = $9
 		WHERE id = $1`
 	res, err := r.exec.ExecContext(ctx, query,
 		d.ID(), string(d.Status()), d.RetryCount(), d.NextAttemptAt(), d.DeployedAt(), d.ErrorMessage(),
+		nullableStr(d.Outcome()), nullableStr(d.DBTLogURI()), d.OutcomeAt(),
 	)
 	if err != nil {
 		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
@@ -109,12 +153,88 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 	return nil
 }
 
+// validationSelectColumns is the column list reconstituted into a Deployment by
+// the validation getters. Mirrors the order deploymentRow's db tags expect.
+const validationSelectColumns = `
+	id, message_processing_id, task_id, schedule_id, job_params,
+	status, retry_count, max_retries, next_attempt_at,
+	created_at, deployed_at, error_message,
+	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at`
+
+func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID, nodeID string) (*model.Deployment, error) {
+	const query = `
+		SELECT` + validationSelectColumns + `
+		FROM executor_deployments
+		WHERE mode = 'validation' AND release_id = $1 AND node_id = $2`
+	var row deploymentRow
+	if err := r.exec.QueryRowContext(ctx, query, releaseID, nodeID).Scan(
+		&row.ID, &row.MessageProcessingID, &row.TaskID, &row.ScheduleID, &row.JobParams,
+		&row.Status, &row.RetryCount, &row.MaxRetries, &row.NextAttemptAt,
+		&row.CreatedAt, &row.DeployedAt, &row.ErrorMessage,
+		&row.Mode, &row.ReleaseID, &row.NodeID, &row.Outcome, &row.DBTLogURI, &row.OutcomeAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows
+		}
+		return nil, fmt.Errorf("get validation deployment for release %s node %s: %w", releaseID, nodeID, err)
+	}
+	return r.toAggregate(&row), nil
+}
+
+func (r *deploymentsRepository) PendingValidationCount(ctx context.Context, releaseID string) (int, error) {
+	const query = `
+		SELECT COUNT(*)
+		FROM executor_deployments
+		WHERE mode = 'validation' AND release_id = $1
+		  AND status IN ('pending','deployed') AND outcome IS NULL`
+	var n int
+	if err := r.exec.QueryRowContext(ctx, query, releaseID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count pending validations for release %s: %w", releaseID, err)
+	}
+	return n, nil
+}
+
+func (r *deploymentsRepository) ListValidationResults(ctx context.Context, releaseID string) ([]*model.Deployment, error) {
+	const query = `
+		SELECT` + validationSelectColumns + `
+		FROM executor_deployments
+		WHERE mode = 'validation' AND release_id = $1 AND outcome IS NOT NULL
+		ORDER BY outcome_at ASC`
+	var rows []*deploymentRow
+	if err := r.exec.SelectContext(ctx, &rows, query, releaseID); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("list validation results for release %s: %w", releaseID, err)
+	}
+	out := make([]*model.Deployment, len(rows))
+	for i, row := range rows {
+		out[i] = r.toAggregate(row)
+	}
+	return out, nil
+}
+
 // toAggregate reconstitutes a Deployment from a row. If job_params cannot be
 // deserialized (data corruption — it is written from a valid command) the
 // task/schedule identity is recovered from the dedicated columns so the
 // dispatcher can still fail the deployment with a routable announcement; the
 // aggregate's IsDeployable() will report false.
 func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deployment {
+	if row.Mode == string(model.ModeValidation) {
+		var vcmd command.ValidationDeployTask
+		if err := json.Unmarshal(row.JobParams, &vcmd); err != nil {
+			r.logger.Error("validation deployment job_params unparseable — recovering identity from columns",
+				"deployment_id", row.ID, "error", err)
+			vcmd = command.ValidationDeployTask{
+				ReleaseID: derefStr(row.ReleaseID),
+				NodeID:    derefStr(row.NodeID),
+			}
+		}
+		return model.ReconstituteValidation(
+			row.ID, row.MessageProcessingID, vcmd, model.Status(row.Status),
+			row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
+			row.DeployedAt, row.ErrorMessage,
+			derefStr(row.Outcome), derefStr(row.DBTLogURI), row.OutcomeAt,
+		)
+	}
+
 	var cmd command.DeployTask
 	if err := json.Unmarshal(row.JobParams, &cmd); err != nil {
 		r.logger.Error("deployment job_params unparseable — recovering identity from columns",
@@ -126,6 +246,23 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 		row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 		row.DeployedAt, row.ErrorMessage,
 	)
+}
+
+// nullableStr maps an empty string to NULL so columns guarded by an
+// IN (...) OR IS NULL check accept the "not yet set" state.
+func nullableStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// derefStr returns the pointed-to string, or "" when the pointer is nil.
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // commandIDs parses the command's task/schedule identity into the UUID column

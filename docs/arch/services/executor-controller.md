@@ -16,12 +16,13 @@ It is responsible for:
 
 | Table | Purpose |
 |---|---|
-| `executor_deployments` | K8s-deploy command queue. Handlers write a `pending` row here inside their Unit-of-Work transaction (pure Postgres write, no Kubernetes I/O). `deployer.Dispatcher` drains due rows, calls `CreateQueryJob`, and on success writes canonical announcement rows to `executor_outbox`. |
+| `executor_deployments` | K8s-deploy command queue. Handlers write a `pending` row here inside their Unit-of-Work transaction (pure Postgres write, no Kubernetes I/O). `deployer.Dispatcher` drains due rows, calls `CreateQueryJob`, and on success writes canonical announcement rows to `executor_outbox`. A `mode` column distinguishes `production` rows (the default query.model path) from `validation` rows (candidate-release dbt `--empty` checks, which carry `release_id`/`node_id` and a per-node terminal `outcome`). |
 | `executor_outbox` | Canonical transactional outbox — one row per pending Redis announcement (`task_status_updated` RUNNING/FAILED and `node_deployed`/`node_updated`); `pkg/outbox.Processor` polls and performs the Redis XADD per row. |
 | `message_processing` | Inbound dedup: keyed on `(message_id, stream_name)`; prevents double-processing of duplicate Redis messages |
 | `cancelled_schedules` | Records schedule cancellations; consulted by deploy handlers before writing to `executor_deployments` |
+| `validation_aggregates` | Per-release sentinel (`release_id` PK). `ClaimEmission` does an `INSERT … ON CONFLICT DO NOTHING` so exactly one caller wins the right to emit the aggregate validation-completed announcement when the final per-node outcomes land concurrently. |
 
-`executor_deployments` schema: `id`, `message_processing_id` (nullable FK), `task_id`, `schedule_id`, `job_params` (JSONB), `status` (`pending` / `deployed` / `failed`), `retry_count`, `max_retries`, `next_attempt_at`, `created_at`, `deployed_at`, `error_message`.
+`executor_deployments` schema: `id`, `message_processing_id` (nullable FK), `task_id`, `schedule_id`, `job_params` (JSONB), `status` (`pending` / `deployed` / `failed`), `retry_count`, `max_retries`, `next_attempt_at`, `created_at`, `deployed_at`, `error_message`, plus the validation-mode columns `mode` (`production` / `validation`), `release_id`, `node_id`, `outcome` (`ok` / `failed`), `dbt_log_uri`, `outcome_at`. Production rows leave the validation columns NULL. Validation rows have no real task/schedule identity, so the `NOT NULL` `task_id`/`schedule_id` columns are filled with deterministic UUIDv5 values derived from an immutable namespace over `(release_id, node_id)`; a partial unique index on `(release_id, node_id) WHERE mode='validation'` enforces one validation row per node.
 
 `executor_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`.
 

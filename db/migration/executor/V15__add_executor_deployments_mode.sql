@@ -34,3 +34,10 @@ CREATE TABLE validation_aggregates (
 
 COMMENT ON TABLE validation_aggregates IS
     'Per-release sentinel preventing duplicate emission of validation.completed:v1 when the last two per-node results arrive concurrently.';
+
+-- Belt-and-braces: a candidate release validates each node at most once, so
+-- (release_id, node_id) is unique among validation rows. Production rows leave
+-- both columns NULL and are excluded by the partial predicate.
+CREATE UNIQUE INDEX uq_executor_deployments_validation_release_node
+    ON executor_deployments (release_id, node_id)
+    WHERE mode = 'validation';
