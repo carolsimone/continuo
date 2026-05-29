@@ -49,7 +49,7 @@ None (no HTTP interface; runs as `tail -f /dev/null` in dev; started manually or
 
 `manifest.loaded:v1` is a single Redis field `payload` containing JSON: a list of topology node objects with their resolved upstream dependencies. The `orchestrator` consumes this and upserts `Table` nodes and `DEPENDS_ON` edges in Neo4j, then publishes `schedules.loaded:v1` to `state` with the schedule names list.
 
-`manifest.loaded.candidate:v1` is a single Redis field `payload` containing JSON. On success: `{release_id, status: "ok", topology}` where `topology` is a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `image_tag`, `upstream_unique_ids`, `schedule`). `image_tag` is left empty — `release-controller` joins in the per-service image tags it received from CI. On failure: `{release_id, status: "failed", error_class, error_detail}`. `release-controller` uses this to transition a release from parsing to validating, or to mark it failed.
+`manifest.loaded.candidate:v1` is a single Redis field `payload` containing JSON. On success: `{release_id, status: "ok", topology}` where `topology` is a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `image_tag`, `upstream_unique_ids`, `schedule`). `node_type` is the dbt resource type (`dbt-model`, `dbt-seed`, or `dbt-snapshot`). `image_tag` is left empty — `release-controller` joins in the per-service image tags it received from CI. On failure: `{release_id, status: "failed", error_class, error_detail}`. `release-controller` uses this to transition a release from parsing to validating, or to mark it failed.
 
 Calls no gRPC services.
 
@@ -109,7 +109,7 @@ Pass 2 — Build registry (in memory only; no CSV persisted)
 Pass 3 — Resolve deps and shape candidate topology
   For each node: resolve_upstream_deps(node, lookup) (same sqlglot rules as the graph-update flow)
     UnqualifiedTableReferenceError → publish status=failed (error_class=UnqualifiedTableReference), ACK
-  Shape each node as {unique_id, schema_name, table_name, service_name, image_tag, upstream_unique_ids, schedule}
+  Shape each node as {unique_id, schema_name, table_name, service_name, node_type, image_tag, upstream_unique_ids, schedule}
 
 Publish manifest.loaded.candidate:v1 status=ok with the topology, ACK
 ```

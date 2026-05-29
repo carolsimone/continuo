@@ -95,6 +95,7 @@ class CandidateManifestHandler:
                 "schema_name":         node.schema_name,
                 "table_name":          node.table_name,
                 "service_name":        node.service_name,
+                "node_type":           node.node_type,
                 "image_tag":           node.image_tag,
                 "upstream_unique_ids": [
                     f"{dep.schema_name}.{dep.table_name}" for dep in node.upstream_deps

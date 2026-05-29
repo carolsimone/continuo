@@ -46,6 +46,14 @@ def test_handle_publishes_ok_with_image_tag_empty_string(resolved_topology):
         assert node["image_tag"] == ""
 
 
+def test_handle_publishes_ok_with_node_type_on_each_node(resolved_topology):
+    valid = {"dbt-model", "dbt-seed", "dbt-snapshot"}
+    for node in resolved_topology:
+        assert node["node_type"] in valid
+    # Both fixtures declare resource_type "model", so both resolve to dbt-model.
+    assert {node["node_type"] for node in resolved_topology} == {"dbt-model"}
+
+
 def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     source = create_autospec(ManifestSource)
     source.list_manifests.return_value = []
