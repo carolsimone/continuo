@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -29,7 +30,11 @@ var validationLabelNamespace = uuid.MustParse("a4f1c2e6-8b3d-4f7a-9c1e-2d6b5a0f3
 type K8sStatusChecker interface {
 	GetJobStatus(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error)
 	GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (fullLog, tail string, err error)
-	GetJobLabels(ctx context.Context, namespace, jobName string) (map[string]string, error)
+	// GetJobMeta returns the Job's labels and annotations. The `mode` label routes
+	// validation vs production; the raw release/node identity for a validation Job
+	// is read from the annotations (labels are sanitized and would desync the
+	// executor's outcome lookup).
+	GetJobMeta(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error)
 }
 
 // HandlerConfig contains handler configuration
@@ -95,12 +100,21 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 		return nil
 	}
 
-	labels, err := h.k8sClient.GetJobLabels(ctx, h.config.K8sNamespace, cmd.JobName)
+	labels, annotations, err := h.k8sClient.GetJobMeta(ctx, h.config.K8sNamespace, cmd.JobName)
 	if err != nil {
-		return fmt.Errorf("fetch job labels: %w", err)
+		return fmt.Errorf("fetch job meta: %w", err)
 	}
+
+	// A still-running Job is mode-agnostic: re-poll it by writing a check.k8s:v1
+	// ticket. On the next check the Job's mode is re-read and routing recurs, so a
+	// validation Job (always Running on the first node.deployed-triggered check) is
+	// polled until terminal instead of being checked once and dropped.
+	if result.Status == model.JobStatusRunning {
+		return h.handleRunning(ctx, u, cmd)
+	}
+
 	if labels["mode"] == "validation" {
-		return h.handleValidationTerminal(ctx, u, cmd, result, labels)
+		return h.handleValidationTerminal(ctx, u, cmd, result, annotations)
 	}
 
 	switch result.Status {
@@ -111,8 +125,6 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 			return h.handleFailedPermanent(ctx, u, cmd, result, retryCount)
 		}
 		return h.handleFailedWithRetry(ctx, u, cmd, result, retryCount, maxRetries)
-	case model.JobStatusRunning:
-		return h.handleRunning(ctx, u, cmd)
 	default:
 		return h.handleUnknown(ctx, u, cmd, result)
 	}
@@ -157,19 +169,21 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 // handleValidationTerminal emits the per-node validation result for a Job carrying
 // the mode=validation label. It writes a single validation_node_completed outbox row
 // (→ validation.node.completed:v1) instead of the three production task-status rows.
-// release-id and node-id come from the Job labels; outcome is derived from the
-// terminal status. Running/unknown statuses are not terminal — it returns nil so a
-// re-check is scheduled elsewhere without emitting a result.
+// release_id and node_id are read from the Job annotations (raw, unsanitized) so
+// they match the executor's executor_deployments key; outcome is derived from the
+// terminal status. An Unknown status is not terminal — the handler re-polls via the
+// shared check.k8s:v1 ticket so a Job that is briefly Unknown (e.g. pods not yet
+// scheduled) is re-checked rather than emitting a premature failure. Running is
+// handled by the shared re-poll before this function is reached.
 func (h *CheckStatusHandler) handleValidationTerminal(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	cmd command.CheckJobStatus,
 	result *model.K8sPodResult,
-	labels map[string]string,
+	annotations map[string]string,
 ) error {
-	switch result.Status {
-	case model.JobStatusRunning, model.JobStatusUnknown:
-		return nil // not terminal yet; wait
+	if result.Status == model.JobStatusUnknown {
+		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
 	_, logS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
@@ -179,10 +193,11 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 		outcome = "ok"
 	}
 
-	releaseID := labels["release-id"]
+	releaseID := annotations[pkgmodel.AnnotationReleaseID]
+	nodeID := annotations[pkgmodel.AnnotationNodeID]
 	payload, err := json.Marshal(map[string]any{
 		"release_id":  releaseID,
-		"node_id":     labels["node-id"],
+		"node_id":     nodeID,
 		"outcome":     outcome,
 		"dbt_log_uri": logS3Key,
 	})
@@ -204,7 +219,7 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 	h.logger.Info("Validation Job terminal — validation_node_completed outbox entry created",
 		"job_name", cmd.JobName,
 		"release_id", releaseID,
-		"node_id", labels["node-id"],
+		"node_id", nodeID,
 		"outcome", outcome,
 	)
 	return nil

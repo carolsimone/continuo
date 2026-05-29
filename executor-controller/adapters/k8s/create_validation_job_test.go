@@ -120,9 +120,54 @@ func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {
 	assert.Equal(t, want, job.Labels)
 	assert.Equal(t, want, job.Spec.Template.Labels)
 
+	// Raw identity is also stamped as annotations (authoritative for the
+	// validation.node.completed payload). Here the values are charset-clean and
+	// short, so labels and annotations agree.
+	wantAnnotations := map[string]string{
+		pkg_model.AnnotationReleaseID: "rel123",
+		pkg_model.AnnotationNodeID:    "svc.orders",
+	}
+	assert.Equal(t, wantAnnotations, job.Annotations)
+	assert.Equal(t, wantAnnotations, job.Spec.Template.Annotations)
+
 	require.NotNil(t, job.Spec.BackoffLimit)
 	assert.Equal(t, int32(0), *job.Spec.BackoffLimit)
 	assert.Equal(t, corev1.RestartPolicyNever, job.Spec.Template.Spec.RestartPolicy)
+}
+
+// TestCreateValidationJob_AnnotationsCarryRawIDsWhenLabelWouldSanitize verifies
+// the I2 fix: a release/node id that sanitizeK8sLabel would alter (out-of-charset
+// chars and >63 chars) is preserved verbatim in the Job annotations even though
+// the label is sanitized — so the round-trip into the outcome lookup is lossless.
+func TestCreateValidationJob_AnnotationsCarryRawIDsWhenLabelWouldSanitize(t *testing.T) {
+	c := newValidationTestClient()
+	p := validationParams()
+	rawNodeID := "service-1.analytics.my_model:with/colon+" + repeatStr("x", 60) // out-of-charset AND >63 chars
+	rawReleaseID := "release/2026-05-29T12:00:00+00:00"
+	p.NodeID = rawNodeID
+	p.ReleaseID = rawReleaseID
+
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+
+	// Annotations carry the raw values verbatim.
+	assert.Equal(t, rawNodeID, job.Annotations[pkg_model.AnnotationNodeID])
+	assert.Equal(t, rawReleaseID, job.Annotations[pkg_model.AnnotationReleaseID])
+
+	// Labels are sanitized (differ from raw) — proving annotations are the
+	// authoritative carrier, not the labels.
+	assert.NotEqual(t, rawNodeID, job.Labels["node-id"])
+	assert.Equal(t, sanitizeK8sLabel(rawNodeID), job.Labels["node-id"])
+	assert.Equal(t, sanitizeK8sLabel(rawReleaseID), job.Labels["release-id"])
+}
+
+func repeatStr(s string, n int) string {
+	out := ""
+	for i := 0; i < n; i++ {
+		out += s
+	}
+	return out
 }
 
 func TestCreateValidationJob_IsIdempotent_AlreadyExists(t *testing.T) {

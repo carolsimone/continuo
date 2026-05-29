@@ -192,8 +192,10 @@ type ValidationJobParams struct {
 
 // CreateValidationJob builds and creates a mode=validation K8s Job
 // (idempotent by job name). The Job carries app=dbt-job so existing watchers
-// stay correct, plus mode=validation and release-id/node-id so k8s-controller
-// can route its terminal status to validation.node.completed:v1.
+// stay correct, plus the mode=validation label so k8s-controller routes its
+// terminal status to validation.node.completed:v1. release-id/node-id are stored
+// twice: as sanitized labels (for selection/observability) and as raw
+// annotations (the authoritative identity k8s-controller echoes into the payload).
 func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJobParams) error {
 	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
 	if err != nil {
@@ -222,16 +224,21 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 		"schema_name":  params.SchemaName,
 		"table_name":   params.TableName,
 	}
+	annotations := map[string]string{
+		pkg_model.AnnotationReleaseID: params.ReleaseID,
+		pkg_model.AnnotationNodeID:    params.NodeID,
+	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      params.JobName,
-			Namespace: params.Namespace,
-			Labels:    labels,
+			Name:        params.JobName,
+			Namespace:   params.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec:       podSpec,
 			},
 		},

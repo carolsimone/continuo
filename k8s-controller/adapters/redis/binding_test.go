@@ -43,8 +43,8 @@ func (c *countingK8sClient) GetJobStatus(context.Context, string, string) (*mode
 func (c *countingK8sClient) GetPodLogs(context.Context, string, string, int64) (string, string, error) {
 	return "", "", nil
 }
-func (c *countingK8sClient) GetJobLabels(context.Context, string, string) (map[string]string, error) {
-	return nil, nil
+func (c *countingK8sClient) GetJobMeta(context.Context, string, string) (labels, annotations map[string]string, err error) {
+	return nil, nil, nil
 }
 
 type alwaysDupMPRepo struct{}
