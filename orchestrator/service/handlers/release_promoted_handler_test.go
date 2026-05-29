@@ -104,6 +104,14 @@ func expectedEventID(releaseID string) string {
 	return uuid.NewSHA1(ns, []byte(releaseID)).String()
 }
 
+// expectedAggregateID returns the deterministic UUID v5 stamped on every
+// outbox row for the given release_id. Same namespace as expectedEventID,
+// disambiguated by an "aggregate:" prefix so the two values never collide.
+func expectedAggregateID(releaseID string) uuid.UUID {
+	ns := uuid.MustParse("f0d20655-ae9f-4dc9-a512-99f7ce3955c8")
+	return uuid.NewSHA1(ns, []byte("aggregate:"+releaseID))
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 // 1. Happy path: topology is promoted, TopologyRoot updated, schedules.loaded:v1
@@ -210,6 +218,11 @@ func TestReleasePromoted_IdempotentRedelivery_ReemitsOutboxWithSameEventID(t *te
 	assert.Equal(t, expectedEventID("rA"), payload.EventID,
 		"event_id must be identical to the original emission so state dedups it")
 
+	// AggregateID must be the SAME deterministic value as the happy-path emission
+	// so audit queries can correlate every outbox row for this release.
+	assert.Equal(t, expectedAggregateID("rA"), entry.AggregateID,
+		"AggregateID must be deterministic per release_id, not random")
+
 	// topology_generation is the current value (not incremented).
 	assert.Equal(t, int64(7), payload.TopologyGeneration)
 
@@ -217,8 +230,14 @@ func TestReleasePromoted_IdempotentRedelivery_ReemitsOutboxWithSameEventID(t *te
 	assert.Equal(t, 0, topoState.incrementCalls, "IncrementGeneration must not be called on changed=false")
 	assert.Equal(t, 1, topoState.getCalls, "GetGeneration must be called once on changed=false")
 
-	// SetServiceMetadata must NOT be called (topology unchanged).
-	assert.Empty(t, topoRepo.setServiceMetadataCalls, "SetServiceMetadata must not be called on changed=false")
+	// SetServiceMetadata IS called on changed=false to catch up any cross-step
+	// crash where attempt 1 incremented the counter but never wrote :TopologyRoot.
+	// MERGE makes it idempotent so the no-crash redelivery case is a no-op
+	// beyond an updated_at bump.
+	require.Len(t, topoRepo.setServiceMetadataCalls, 1,
+		"SetServiceMetadata must be called on changed=false to close the drift window")
+	assert.Equal(t, int64(7), topoRepo.setServiceMetadataCalls[0].TopologyGeneration,
+		"SetServiceMetadata must be called with the current generation, not an incremented one")
 
 	// Dedup row still written so the message is not replayed again.
 	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-idem", streams.ReleasePromotedV1)

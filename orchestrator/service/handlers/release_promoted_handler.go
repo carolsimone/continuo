@@ -121,7 +121,12 @@ func (h *ReleasePromotedHandler) Handle(
 
 	// Atomically swap the Neo4j topology. PromoteRelease short-circuits (returns
 	// changed=false) when the :Meta singleton already records the same release_id.
-	changed, err := h.topology.PromoteRelease(ctx, in.ReleaseID, domainNodes, time.Now())
+	// time.Now().UTC() at the boundary: the Neo4j Go driver serialises time.Time
+	// using its Location().String() as a timezone identifier and rejects "Local".
+	// The adapter also normalises to UTC defensively (see release_promotion_repository.go),
+	// but converting here documents the contract and protects future call sites
+	// from re-encountering the same bug.
+	changed, err := h.topology.PromoteRelease(ctx, in.ReleaseID, domainNodes, time.Now().UTC())
 	if err != nil {
 		// Transient failure: do not write dedup so the message can be replayed.
 		return fmt.Errorf("failed to promote release topology: %w", err)
@@ -148,14 +153,26 @@ func (h *ReleasePromotedHandler) Handle(
 	// after this promotion inherit the correct generation and metadata.
 	// On a no-op (changed=false), read the current generation for the payload
 	// without bumping it — the topology has not actually changed.
+	//
+	// Drift window — known limitation. IncrementGeneration commits its own tx
+	// independent of the main UoW (topology_state is shared mutable state across
+	// IngestTopologyHandler too; see orchestrator/adapters/postgres/topology_state_repository.go).
+	// If attempt 1 commits PromoteRelease in Neo4j and IncrementGeneration in
+	// Postgres but the main UoW then rolls back, attempt 2 sees changed=false
+	// and reads the already-advanced generation — end state stays consistent.
+	// If attempt 1 fails BEFORE IncrementGeneration commits and PromoteRelease
+	// already committed, attempt 2 sees changed=false with the OLD generation,
+	// and :TopologyRoot stays at the previous generation. Fully closing this
+	// requires pulling IncrementGeneration into the main UoW — tracked as a
+	// cross-handler refactor in https://github.com/carolsimone/continuo/issues/94.
+	// Calling SetServiceMetadata on both branches narrows the window: if
+	// attempt 1 incremented but never wrote :TopologyRoot, attempt 2's retry
+	// catches up since SetServiceMetadata is an idempotent MERGE.
 	var topologyGeneration int64
 	if changed {
 		topologyGeneration, err = h.topologyStateRepo.IncrementGeneration(ctx)
 		if err != nil {
 			return fmt.Errorf("increment topology generation: %w", err)
-		}
-		if err := h.topologyRepo.SetServiceMetadata(ctx, serviceMetadata, topologyGeneration); err != nil {
-			return fmt.Errorf("set service metadata on :TopologyRoot: %w", err)
 		}
 	} else {
 		topologyGeneration, err = h.topologyStateRepo.GetGeneration(ctx)
@@ -167,6 +184,14 @@ func (h *ReleasePromotedHandler) Handle(
 			"release_id", in.ReleaseID,
 			"topology_generation", topologyGeneration,
 		)
+	}
+	// SetServiceMetadata is an idempotent MERGE on :TopologyRoot, so calling
+	// it on the changed=false branch catches up any cross-step crash where
+	// attempt 1 incremented the counter but never landed :TopologyRoot. On
+	// the no-crash redelivery case it re-writes the same values plus an
+	// updated_at bump — no functional impact.
+	if err := h.topologyRepo.SetServiceMetadata(ctx, serviceMetadata, topologyGeneration); err != nil {
+		return fmt.Errorf("set service metadata on :TopologyRoot: %w", err)
 	}
 
 	// Build schedules.loaded:v1 outbox payload. The shape is identical to the one
@@ -182,11 +207,16 @@ func (h *ReleasePromotedHandler) Handle(
 		return fmt.Errorf("failed to marshal outbox payload: %w", err)
 	}
 
+	// AggregateID is derived deterministically from release_id so every
+	// outbox row this handler writes for the same release shares the same
+	// aggregate identity. That makes audit queries (e.g., "show all outbox
+	// rows for release X") trivial and keeps the always-emit-on-redelivery
+	// pattern from leaving uncorrelated duplicates in orchestrator_outbox.
 	outboxEntry := &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
-		AggregateID:         uuid.New(),
+		AggregateID:         uuid.NewSHA1(releaseSchedulesNamespace, []byte("aggregate:"+in.ReleaseID)),
 		EventType:           "release_promoted",
 		Payload:             outboxPayload,
 		StreamName:          streams.SchedulesLoadedV1,
