@@ -22,6 +22,8 @@ type deploymentsRepository struct {
 	logger *slog.Logger
 }
 
+var _ repository.DeploymentRepository = (*deploymentsRepository)(nil)
+
 // NewDeploymentsRepository constructs a repository.DeploymentRepository over
 // executor_deployments. Pass *sqlx.DB for autocommit or *sqlx.Tx for
 // transactional use; outbox.Executor abstracts both.

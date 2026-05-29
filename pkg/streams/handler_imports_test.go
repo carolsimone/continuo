@@ -9,14 +9,18 @@ import (
 	"testing"
 )
 
-// handlerDirs lists application-layer handler packages (relative to repo root)
-// that must not import any adapters/* package. The dependency arrow runs
-// adapter → port, never application → adapter.
+// handlerDirs lists application-layer packages (relative to repo root) that
+// must not import any adapters/* package. The dependency arrow runs
+// adapter → port, never application → adapter. This covers request handlers as
+// well as other application services (dispatchers, domain-service helpers) that
+// orchestrate via ports.
 var handlerDirs = []string{
 	"k8s-controller/service/handlers",
 	"orchestrator/service/handlers",
 	"state/service/handlers",
 	"executor-controller/service/handlers",
+	"executor-controller/service/deployer",
+	"executor-controller/service/validation",
 	"release-controller/service/handlers",
 }
 
