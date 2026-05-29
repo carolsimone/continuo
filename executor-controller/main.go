@@ -118,11 +118,17 @@ func main() {
 	queryHandler := handlers.NewQueryModelHandler(logger)
 	retryHandler := handlers.NewRetryTaskHandler(logger)
 	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
+	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
+	validationNodeHandler := handlers.NewValidationNodeCompletedHandler(logger)
 
 	queryBinding := redis.NewQueryModelBinding(uowFactory, queryHandler, logger)
 	retryBinding := redis.NewRetryTaskBinding(uowFactory, retryHandler, logger)
 	scheduleCancelledBinding := redis.NewScheduleCancelledBinding(
 		uowFactory, scheduleCancelledHandler, logger)
+	validationReqBinding := redis.NewValidationRequestedBinding(
+		uowFactory, validationReqHandler, logger)
+	validationNodeBinding := redis.NewValidationNodeCompletedBinding(
+		uowFactory, validationNodeHandler, logger)
 
 	// ========================================================================
 	// INITIALIZE REDIS PRODUCERS + CONSUMERS
@@ -145,6 +151,18 @@ func main() {
 		scheduleCancelledBinding, logger)
 	logger.Info("schedule.cancelled consumer initialized",
 		"stream", streams.ScheduleCancelledV1, "group", streams.ExecutorScheduleCancelled)
+
+	validationReqConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ValidationRequestedV1, streams.ExecutorValidationRequested,
+		validationReqBinding, logger)
+	logger.Info("validation.requested consumer initialized",
+		"stream", streams.ValidationRequestedV1, "group", streams.ExecutorValidationRequested)
+
+	validationNodeConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ValidationNodeCompletedV1, streams.ExecutorControllerValidationNodeCompleted,
+		validationNodeBinding, logger)
+	logger.Info("validation.node.completed consumer initialized",
+		"stream", streams.ValidationNodeCompletedV1, "group", streams.ExecutorControllerValidationNodeCompleted)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -231,9 +249,9 @@ func main() {
 
 	logger.Info("Service initialization complete, starting consumers")
 
-	// All three consumers run as goroutines so no single stream blocks
-	// the main goroutine. Lifecycle is tied to ctx; the lifecycle
-	// manager cancels ctx on shutdown, which exits each Start cleanly.
+	// All consumers run as goroutines so no single stream blocks the main
+	// goroutine. Lifecycle is tied to ctx; the lifecycle manager cancels ctx
+	// on shutdown, which exits each Start cleanly.
 	go func() {
 		if err := queryConsumer.Start(ctx); err != nil {
 			logger.Error("query.model consumer error", "error", err)
@@ -247,6 +265,16 @@ func main() {
 	go func() {
 		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
 			logger.Error("schedule.cancelled consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := validationReqConsumer.Start(ctx); err != nil {
+			logger.Error("validation.requested consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := validationNodeConsumer.Start(ctx); err != nil {
+			logger.Error("validation.node.completed consumer error", "error", err)
 		}
 	}()
 
