@@ -85,7 +85,7 @@ Publish manifest.loaded:v1 (all nodes with resolved deps as JSON payload)
 ACK message
 ```
 
-On any exception: message is **not ACKed** → replayed on next poll.
+On any exception: message is **not ACKed**; it stays in the group PEL and is retried by the reclaim sweep (see Consumer Reliability).
 
 ### On `release.requested:v1`
 
@@ -99,7 +99,9 @@ list_manifests() from the per-release prefix
 
 Pass 1 — Parse
   For each manifest file: parse_manifest(path, version, image_tag) → list[ManifestNode]
-  Malformed manifest JSON → publish status=failed (error_class=MalformedManifest), ACK
+  Malformed manifest — invalid JSON, a missing top-level `nodes` key, or an
+    invalid node shape (missing `schema`/`fqn`, empty `fqn`) → publish
+    status=failed (error_class=MalformedManifest), ACK
 
 Pass 2 — Build registry (in memory only; no CSV persisted)
   Build lookup dict: (schema_name, table_name) → NodeRegistryEntry
@@ -114,7 +116,7 @@ Publish manifest.loaded.candidate:v1 status=ok with the topology, ACK
 
 This flow differs from the graph-update flow in three ways: it does not run the publish-boundary `image_tag` validator (`image_tag` is empty by design and joined in by `release-controller`); it persists no registry; and it reports parse/resolve failures back as a `status=failed` business signal rather than failing silently.
 
-Failure-handling distinction: a parse or resolve failure that re-delivery cannot fix (malformed manifest, unresolvable reference) is published as `status=failed` and the message is ACKed — replaying it would not help. A transient infrastructure failure (S3 read error, Redis publish error) propagates so the message is **not ACKed** and replays on the next poll.
+Failure-handling distinction: a parse or resolve failure that re-delivery cannot fix (malformed manifest JSON or node shape, unresolvable reference) is published as `status=failed` and the message is ACKed — replaying it would not help. A transient infrastructure failure (S3 read error, Redis publish error) propagates so the message is **not ACKed**; it stays in the group PEL and is retried by the reclaim sweep (see Consumer Reliability).
 
 ### Dependency resolution rules (sqlglot)
 
@@ -143,7 +145,8 @@ No S3 writes.
 - Consumer group is created with `id="0"` (reads from the beginning on first create; `BUSYGROUP` error on re-create is ignored)
 - Consumer name is `consumer-{random_hex}` (unique per process restart)
 - `NOGROUP` error recovery: consumer group is recreated and the loop retries after 3 seconds
-- Message is ACKed only after the handler returns without raising; failures leave the message in the PEL for redelivery
+- Message is ACKed only after the handler returns without raising; a failure leaves the message in the group PEL
+- Each loop iteration first runs an `XAUTOCLAIM` reclaim sweep before reading new (`>`) messages. Because consumer names are random per restart, a message left pending by a transient failure (or by a crashed consumer) would otherwise never be re-read. The sweep claims and re-dispatches any message idle longer than the reclaim window (60s — wide enough never to steal a live peer's in-flight work), so transient failures are retried instead of stranding the release; a still-failing message stays pending for the next sweep
 - The main thread parks on both consumer threads. On `SIGTERM` the process exits and the daemon threads are abandoned; Kubernetes restarts the pod.
 
 ## Background Loops
