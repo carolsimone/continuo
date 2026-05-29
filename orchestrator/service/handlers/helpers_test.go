@@ -11,11 +11,16 @@ import (
 )
 
 // fakeOutboxRepository captures created outbox entries in memory.
+// Set createErr to inject an error from Create for failure-path tests.
 type fakeOutboxRepository struct {
 	CreatedEntries []*pkgoutbox.Entry
+	createErr      error
 }
 
 func (f *fakeOutboxRepository) Create(ctx context.Context, entry *pkgoutbox.Entry) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
 	f.CreatedEntries = append(f.CreatedEntries, entry)
 	return nil
 }

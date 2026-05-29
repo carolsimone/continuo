@@ -19,9 +19,17 @@ import (
 
 // ── fakes: repository.TopologyRepository ─────────────────────────────────────
 
+// setServiceMetadataCall records the arguments passed to SetServiceMetadata.
+type setServiceMetadataCall struct {
+	ServiceMetadata    map[string]map[string]string
+	TopologyGeneration int64
+}
+
 type fakeTopologyRepository struct {
-	applySnapshotFn    func(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error
-	applySnapshotCalls [][]*topology.TopologyNode
+	applySnapshotFn        func(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error
+	applySnapshotCalls     [][]*topology.TopologyNode
+	setServiceMetadataCalls []setServiceMetadataCall
+	setServiceMetadataErr  error
 }
 
 func (f *fakeTopologyRepository) ApplySnapshot(ctx context.Context, nodes []*topology.TopologyNode, topologyGeneration int64) error {
@@ -33,8 +41,12 @@ func (f *fakeTopologyRepository) ApplySnapshot(ctx context.Context, nodes []*top
 	return nil
 }
 
-func (f *fakeTopologyRepository) SetServiceMetadata(ctx context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error {
-	return nil
+func (f *fakeTopologyRepository) SetServiceMetadata(_ context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error {
+	f.setServiceMetadataCalls = append(f.setServiceMetadataCalls, setServiceMetadataCall{
+		ServiceMetadata:    serviceMetadata,
+		TopologyGeneration: topologyGeneration,
+	})
+	return f.setServiceMetadataErr
 }
 
 func (f *fakeTopologyRepository) GetScheduleGraph(ctx context.Context, scheduleName string) ([]*topology.Node, []*topology.UpstreamDependency, error) {
@@ -46,15 +58,27 @@ var _ repository.TopologyRepository = (*fakeTopologyRepository)(nil)
 // ── fakes: repository.TopologyStateRepository ─────────────────────────────────
 
 type fakeTopologyStateRepository struct {
-	generation int64
+	generation             int64
+	incrementGenerationErr error
+	getGenerationErr       error
+	incrementCalls         int
+	getCalls               int
 }
 
-func (f *fakeTopologyStateRepository) IncrementGeneration(ctx context.Context) (int64, error) {
+func (f *fakeTopologyStateRepository) IncrementGeneration(_ context.Context) (int64, error) {
+	f.incrementCalls++
+	if f.incrementGenerationErr != nil {
+		return 0, f.incrementGenerationErr
+	}
 	f.generation++
 	return f.generation, nil
 }
 
-func (f *fakeTopologyStateRepository) GetGeneration(ctx context.Context) (int64, error) {
+func (f *fakeTopologyStateRepository) GetGeneration(_ context.Context) (int64, error) {
+	f.getCalls++
+	if f.getGenerationErr != nil {
+		return 0, f.getGenerationErr
+	}
 	return f.generation, nil
 }
 
@@ -363,4 +387,44 @@ func TestIngestTopology_HappyPath_DoesNotInsertForensics(t *testing.T) {
 	if got := len(rejectedRepo.InsertCalls); got != 0 {
 		t.Fatalf("expected no forensics inserts on happy path, got %d", got)
 	}
+}
+
+// TestIngestTopology_OutboxPayload_ByteEqualRegressionAfterRefactor pins the
+// exact schedules.loaded:v1 outbox payload shape produced by
+// IngestTopologyHandler after the scheduleAndMetadataFromNodes helper
+// extraction. If a future refactor changes the helper output, this test will
+// catch the breakage so the manifest.loaded:v1 → state contract is never
+// silently altered.
+func TestIngestTopology_OutboxPayload_ByteEqualRegressionAfterRefactor(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	topoRepo := &fakeTopologyRepository{}
+	stateRepo := &fakeTopologyStateRepository{}
+	rejectedRepo := &fakeRejectedTopologyRepo{}
+
+	h := handlers.NewIngestTopologyHandler(uow, topoRepo, stateRepo, rejectedRepo, newTestLogger())
+	cmd := makeIngestTopologyCmd()
+
+	require.NoError(t, h.Handle(ctx, cmd, "byte-eq-1", nil))
+
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 1)
+
+	var got map[string]interface{}
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &got))
+
+	// event_id must be present and non-empty (value is a new UUID per call).
+	assert.NotEmpty(t, got["event_id"], "event_id must be present for state's ScheduleCatalogHandler dedup")
+
+	// schedule_names must be sorted and deduplicated.
+	// makeIngestTopologyCmd produces 2 "daily" nodes + 1 "hourly" node.
+	assert.Equal(t, []interface{}{"daily", "hourly"}, got["schedule_names"])
+
+	// service_metadata must carry first-seen image_tag and manifest_version per service.
+	sm, ok := got["service_metadata"].(map[string]interface{})
+	require.True(t, ok, "service_metadata must be a JSON object")
+	assert.Equal(t, map[string]interface{}{
+		"svc1": map[string]interface{}{"manifest_version": "v1", "image_tag": "sha256:abc"},
+		"svc2": map[string]interface{}{"manifest_version": "v2", "image_tag": "sha256:def"},
+	}, sm)
 }

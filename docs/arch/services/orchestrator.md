@@ -346,6 +346,22 @@ is monotonically incremented before any `:Table` stamping, so the invariant is
 `run.topology_generation <= latest_topology_generation`. Inversions are logged
 as warnings by `RunQueryService` but otherwise pass through unmodified.
 
+## Topology swap pattern
+
+`IngestTopologyHandler` replaces the `:Table` topology graph using a **retire-then-orphan-cleanup** pattern, not a truncate-and-load. Every `:Table` node may have incoming `:Run-[:EXECUTES]->Table` edges from active or historical runs; a blunt `MATCH (n:Table) DETACH DELETE n` would erase that history and strand in-flight runs. The pattern:
+
+1. **Retire** — `MATCH (t:Table) WHERE NOT t.unique_id IN $new SET t.active = false, t.retired_at = $now`. Nodes stay in the graph; their `:Run` edges still resolve.
+2. **Upsert** — `MERGE (existing:Table {unique_id: ...}) SET ..., active = true, retired_at = NULL`. Reactivates any node that's back in the new topology.
+3. **Clear outgoing edges** on upserted nodes so dependencies can be rebuilt: `MATCH (a:Table {unique_id: ...})-[r:DEPENDS_ON]->() DELETE r`.
+4. **Rebuild `:DEPENDS_ON`** between nodes in the new topology. References to `unique_id`s outside the candidate set are silently skipped (matches dbt's compile semantics for cross-service dependencies).
+5. **Orphan cleanup** — `MATCH (t:Table) WHERE COALESCE(t.active, true) = false AND NOT EXISTS { (:Run)-[:EXECUTES]->(t) } DETACH DELETE t`. Removes only the `:Table` nodes no run still references.
+
+Reference impl: `orchestrator/adapters/neo4j/topology_repository.go:231-277` (`retireMissingNodes` + `deleteInactiveOrphans`).
+
+**Design constraint for future topology-write paths:** any new handler that replaces `:Table` topology in this orchestrator (e.g., the forthcoming `release.promoted:v1` consumer) MUST follow the same pattern. Truncate-and-load is not safe in this graph.
+
+When the Neo4j Go driver binds `time.Time` parameters into Cypher, it uses `Location().String()` as a timezone identifier and rejects `"Local"`. Always pass `now.UTC()` at the boundary.
+
 ## Reliability Patterns
 
 - **Inbound dedup**: `message_processing` keyed by `(message_id, stream_name)`; INSERT IF NOT EXISTS prevents double-processing. The composite key is required because Redis Streams assign IDs per-stream, so a single publisher can emit two messages to two streams in the same millisecond and produce identical message IDs that must not collide.

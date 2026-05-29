@@ -41,3 +41,17 @@ type TopologyNode struct {
 	ImageTag        string
 	Dependencies    []UpstreamDependency
 }
+
+// ReleasePromotedTopologyNode is the domain representation of a node in a
+// release.promoted:v1 payload. Used by ReleasePromotionRepository.
+// Distinct from TopologyNode because the release pipeline keys nodes by
+// unique_id rather than (schema_name, table_name).
+type ReleasePromotedTopologyNode struct {
+	UniqueID          string
+	SchemaName        string
+	TableName         string
+	ServiceName       string
+	ImageTag          string
+	Schedule          string
+	UpstreamUniqueIDs []string
+}

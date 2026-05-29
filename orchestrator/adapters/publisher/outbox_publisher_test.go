@@ -99,6 +99,7 @@ func TestOutboxPublisher_GenericPayloadCases(t *testing.T) {
 		"rerun_ready",
 		"run_entries_dispatched",
 		"run_entries_dispatch_failed",
+		"release_promoted",
 	} {
 		t.Run(evtType, func(t *testing.T) {
 			raw := []byte(`{"key":"value"}`)

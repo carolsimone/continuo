@@ -41,3 +41,22 @@ type TopologyRepository interface {
 	SetServiceMetadata(ctx context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error
 	GetScheduleGraph(ctx context.Context, scheduleName string) ([]*topology.Node, []*topology.UpstreamDependency, error)
 }
+
+// ReleasePromotionRepository performs the atomic Neo4j topology swap triggered
+// by release.promoted:v1. Implementations MUST:
+//  1. Run all writes inside a single Neo4j explicit transaction.
+//  2. Read :Meta {key:'current_release'} first and short-circuit (return
+//     false, nil) if release_id already matches.
+//  3. Otherwise TRUNCATE :Table + :DEPENDS_ON, recreate from `nodes`, and
+//     MERGE the :Meta singleton to the new release_id within the same tx.
+type ReleasePromotionRepository interface {
+	// PromoteRelease atomically swaps the current topology to the one carried
+	// by nodes. Returns (changed=true) when the swap was performed; (false)
+	// when current_release already matched and the call was a no-op.
+	PromoteRelease(
+		ctx context.Context,
+		releaseID string,
+		nodes []topology.ReleasePromotedTopologyNode,
+		now time.Time,
+	) (changed bool, err error)
+}
