@@ -48,6 +48,29 @@ func (d *Deployer) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 	})
 }
 
+// DeployValidation maps the domain ValidationJobSpec to K8s validation job
+// params and creates the Job (idempotent by job name). An unparseable node
+// type can never succeed, so it is reported as a permanent error.
+func (d *Deployer) DeployValidation(ctx context.Context, spec deploy.ValidationJobSpec) error {
+	nodeType, err := pkg_model.ParseNodeType(spec.NodeType)
+	if err != nil {
+		return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
+	}
+	return d.client.CreateValidationJob(ctx, ValidationJobParams{
+		JobName:         spec.JobName,
+		ReleaseID:       spec.ReleaseID,
+		NodeID:          spec.NodeID,
+		ServiceName:     spec.ServiceName,
+		SchemaName:      spec.SchemaName,
+		TableName:       spec.TableName,
+		NodeType:        nodeType,
+		ImageTag:        spec.ImageTag,
+		CandidateSchema: spec.CandidateSchema,
+		DeferStateURI:   spec.DeferStateURI,
+		Namespace:       d.namespace,
+	})
+}
+
 // CountActive returns the number of executor dbt Jobs currently running.
 func (d *Deployer) CountActive(ctx context.Context) (int, error) {
 	return d.client.CountActiveJobs(ctx, d.namespace, dbtJobLabelSelector)

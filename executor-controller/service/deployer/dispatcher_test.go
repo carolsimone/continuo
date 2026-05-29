@@ -25,13 +25,18 @@ import (
 
 // fakeDeployer implements domain/deploy.Deployer.
 type fakeDeployer struct {
-	deployErr   error
-	deployCalls int
-	active      int
+	deployErr             error
+	deployCalls           int
+	validationDeployCalls int
+	active                int
 }
 
 func (f *fakeDeployer) Deploy(_ context.Context, _ deploy.JobSpec) error {
 	f.deployCalls++
+	return f.deployErr
+}
+func (f *fakeDeployer) DeployValidation(_ context.Context, _ deploy.ValidationJobSpec) error {
+	f.validationDeployCalls++
 	return f.deployErr
 }
 func (f *fakeDeployer) CountActive(_ context.Context) (int, error) { return f.active, nil }

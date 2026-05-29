@@ -63,3 +63,21 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		ImageTag:     c.ImageTag,
 	}
 }
+
+// ToValidationJobSpec projects the command onto the domain
+// deploy.ValidationJobSpec the Deployer port consumes for mode=validation
+// rows. The mapping is a pure field copy — no infrastructure concern.
+func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
+	return deploy.ValidationJobSpec{
+		JobName:         c.JobName,
+		ReleaseID:       c.ReleaseID,
+		NodeID:          c.NodeID,
+		ServiceName:     c.ServiceName,
+		SchemaName:      c.SchemaName,
+		TableName:       c.TableName,
+		NodeType:        c.NodeType,
+		ImageTag:        c.ImageTag,
+		CandidateSchema: c.CandidateSchema,
+		DeferStateURI:   c.DeferStateURI,
+	}
+}

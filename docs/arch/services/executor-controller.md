@@ -89,6 +89,7 @@ On terminal failure (permanent error or retry-budget exhaustion), the dispatcher
 ### Kubernetes API
 
 - `CreateQueryJob` — creates a K8s batch Job in the configured namespace with label `app=dbt-job`; container name is `dbt-job`; treated as idempotent (already-exists is not an error on retry)
+- `CreateValidationJob` — creates a `mode=validation` K8s batch Job in the configured namespace (idempotent by job name, `BackoffLimit` 0, `RestartPolicy` Never). Labels: `app=dbt-job` (so existing watchers stay correct) plus `mode=validation` and `release-id`/`node-id` (sanitised to valid label values) so k8s-controller can route the Job's terminal status to `validation.node.completed:v1`. The container command comes from `ValidationDbtCommand` (`dbt run/seed/snapshot --select <table> --empty --target-schema <candidate>`, plus `--defer --state <uri>` when a defer-state URI is present). Env mirrors the query Job's `DBT_POSTGRES_*` connection forwarding and adds `DBT_TARGET_SCHEMA`, `RELEASE_ID`, `NODE_ID`. A missing `image_tag` is a permanent error.
 
 ### K8s client configuration
 
