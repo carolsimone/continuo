@@ -13,14 +13,15 @@ logger = logging.getLogger(__name__)
 class S3Source(ManifestSource):
     """Downloads manifests from S3 to a local temp dir, returns ManifestFile objects."""
 
-    def __init__(self, bucket: str, env: str, s3_client) -> None:
+    def __init__(self, bucket: str, env: str, s3_client, prefix: str | None = None) -> None:
         self._bucket = bucket
         self._env = env
         self._s3 = s3_client
+        self._prefix_override = prefix
         self._tmpdir = tempfile.TemporaryDirectory()
 
     def list_manifests(self) -> list[ManifestFile]:
-        prefix = f"{self._env}/manifest/"
+        prefix = self._prefix_override if self._prefix_override is not None else f"{self._env}/manifest/"
         response = self._s3.list_objects_v2(Bucket=self._bucket, Prefix=prefix)
         contents = response.get("Contents", [])
 
