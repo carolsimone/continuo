@@ -156,6 +156,21 @@ func TestRecordOutcome_RejectsInvalidOutcome(t *testing.T) {
 	assert.Nil(t, d.OutcomeAt())
 }
 
+func TestRecordOutcome_RejectsSecondRecording(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	require.NoError(t, d.MarkDeployed(now))
+	require.NoError(t, d.RecordOutcome("ok", "s3://logs/first", now))
+
+	// A second recording is rejected and leaves the first outcome intact.
+	later := now.Add(time.Minute)
+	assert.Error(t, d.RecordOutcome("failed", "s3://logs/second", later), "outcome recorded once")
+	assert.Equal(t, "ok", d.Outcome(), "first outcome unchanged")
+	assert.Equal(t, "s3://logs/first", d.DBTLogURI(), "first logURI unchanged")
+	require.NotNil(t, d.OutcomeAt())
+	assert.Equal(t, now, *d.OutcomeAt(), "first timestamp unchanged")
+}
+
 func TestRecordOutcome_RejectsOnProductionDeployment(t *testing.T) {
 	now := time.Now()
 	d := model.NewDeployment(deployableCmd(), nil, now)

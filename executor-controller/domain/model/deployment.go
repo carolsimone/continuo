@@ -211,6 +211,9 @@ func (d *Deployment) RecordOutcome(outcome, logURI string, now time.Time) error 
 	if d.mode != ModeValidation {
 		return fmt.Errorf("RecordOutcome called on non-validation deployment %s", d.id)
 	}
+	if d.outcomeAt != nil {
+		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
+	}
 	if d.status != StatusDeployed {
 		return fmt.Errorf("RecordOutcome from status %q; expected deployed", d.status)
 	}
@@ -229,11 +232,20 @@ func (d *Deployment) ID() uuid.UUID                   { return d.id }
 func (d *Deployment) MessageProcessingID() *uuid.UUID { return d.messageProcessingID }
 func (d *Deployment) Mode() Mode                      { return d.mode }
 func (d *Deployment) Command() command.DeployTask     { return d.command }
+
+// ValidationCommand is meaningful only when Mode() == ModeValidation; for
+// production deployments it returns the zero ValidationDeployTask.
 func (d *Deployment) ValidationCommand() command.ValidationDeployTask {
 	return d.validationCmd
 }
-func (d *Deployment) ReleaseID() string        { return d.validationCmd.ReleaseID }
-func (d *Deployment) NodeID() string           { return d.validationCmd.NodeID }
+
+// ReleaseID is meaningful only when Mode() == ModeValidation; for production
+// deployments it returns "".
+func (d *Deployment) ReleaseID() string { return d.validationCmd.ReleaseID }
+
+// NodeID is meaningful only when Mode() == ModeValidation; for production
+// deployments it returns "".
+func (d *Deployment) NodeID() string { return d.validationCmd.NodeID }
 func (d *Deployment) Status() Status           { return d.status }
 func (d *Deployment) RetryCount() int          { return d.retryCount }
 func (d *Deployment) MaxRetries() int          { return d.maxRetries }
