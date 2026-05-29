@@ -77,10 +77,22 @@ type fakeAggRepo struct {
 	won        bool
 	claimErr   error
 	claimCalls int
+	lockErr    error
+	lockCalls  int
+	// calls records the ordered sequence of method names so tests can assert
+	// LockRelease precedes ClaimEmission.
+	calls []string
+}
+
+func (r *fakeAggRepo) LockRelease(context.Context, string) error {
+	r.lockCalls++
+	r.calls = append(r.calls, "LockRelease")
+	return r.lockErr
 }
 
 func (r *fakeAggRepo) ClaimEmission(context.Context, string, time.Time) (bool, error) {
 	r.claimCalls++
+	r.calls = append(r.calls, "ClaimEmission")
 	return r.won, r.claimErr
 }
 
@@ -303,4 +315,46 @@ func TestMaybeEmit_SentinelClaimReturnsFalse_NoDuplicateOutboxRow(t *testing.T) 
 
 	assert.Equal(t, 1, agg.claimCalls, "claim attempted")
 	assert.Empty(t, outboxRepo.created, "claim lost => no duplicate outbox row")
+}
+
+// I1: the per-release advisory lock must be taken BEFORE the pending count and
+// the sentinel claim, so the count->claim->emit sequence is serialized per
+// release. The fake records call order; LockRelease must come first.
+func TestMaybeEmit_LocksReleaseBeforeClaiming(t *testing.T) {
+	d := silentDispatcher(&fakeValidationDeployer{})
+	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{recordedResult(t, "node_a", "ok", "")}}
+	agg := &fakeAggRepo{won: true}
+	outboxRepo := &fakeOutboxRepo{}
+
+	require.NoError(t, d.maybeEmitValidationAggregate(context.Background(), repo, outboxRepo, agg, "rel_1", time.Now()))
+
+	assert.Equal(t, 1, agg.lockCalls, "lock taken exactly once")
+	require.GreaterOrEqual(t, len(agg.calls), 2)
+	assert.Equal(t, "LockRelease", agg.calls[0], "lock must precede the sentinel claim")
+	idxLock, idxClaim := -1, -1
+	for i, c := range agg.calls {
+		if c == "LockRelease" && idxLock == -1 {
+			idxLock = i
+		}
+		if c == "ClaimEmission" && idxClaim == -1 {
+			idxClaim = i
+		}
+	}
+	require.NotEqual(t, -1, idxClaim, "claim attempted")
+	assert.Less(t, idxLock, idxClaim, "LockRelease ordered before ClaimEmission")
+}
+
+// I1: the lock is taken even when nodes remain pending (the gate must serialize
+// before reading the count), and a lock error aborts the gate before any claim.
+func TestMaybeEmit_LockErrorAbortsBeforeClaim(t *testing.T) {
+	d := silentDispatcher(&fakeValidationDeployer{})
+	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{recordedResult(t, "node_a", "ok", "")}}
+	agg := &fakeAggRepo{won: true, lockErr: errors.New("lock failed")}
+	outboxRepo := &fakeOutboxRepo{}
+
+	err := d.maybeEmitValidationAggregate(context.Background(), repo, outboxRepo, agg, "rel_1", time.Now())
+
+	require.Error(t, err)
+	assert.Equal(t, 0, agg.claimCalls, "lock failure aborts before any claim")
+	assert.Empty(t, outboxRepo.created, "no emission when the lock cannot be taken")
 }

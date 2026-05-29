@@ -72,6 +72,12 @@ func (r *fakeOutboxRepo) IncrementRetry(context.Context, uuid.UUID) error     { 
 type fakeAggRepo struct {
 	won        bool
 	claimCalls int
+	lockCalls  int
+}
+
+func (r *fakeAggRepo) LockRelease(context.Context, string) error {
+	r.lockCalls++
+	return nil
 }
 
 func (r *fakeAggRepo) ClaimEmission(context.Context, string, time.Time) (bool, error) {

@@ -30,10 +30,16 @@ var DedupNamespace = uuid.MustParse("e2a9c7d4-3f1b-4a8e-9c5d-1b6f0a2e8d7c")
 
 // EmitValidationAggregateIfComplete emits validation.completed:v1 for releaseID
 // once every mode=validation row for that release has reached a terminal
-// outcome. It is a no-op while any node is still pending. The sentinel
-// ClaimEmission ensures exactly one of the racing callers writes the outbox row;
-// losers return without emitting. The aggregate_status is "ok" iff every per-node
-// outcome is "ok".
+// outcome. It is a no-op while any node is still pending. It first takes a
+// per-release transaction advisory lock so the count -> claim -> emit sequence
+// is serialized across concurrent transactions, then the sentinel ClaimEmission
+// ensures exactly one of the racing callers writes the outbox row; losers return
+// without emitting. Together they make emission exactly-once — never zero, never
+// double. The aggregate_status is "ok" iff every per-node outcome is "ok".
+//
+// It runs inside the caller's transaction (the dispatch tx or the
+// node-completed UoW); the advisory lock auto-releases at that transaction's
+// commit/rollback.
 //
 // namespace is passed in (rather than read from the package var directly) so the
 // caller threads the single immutable source explicitly; pass DedupNamespace.
@@ -46,6 +52,18 @@ func EmitValidationAggregateIfComplete(
 	releaseID string,
 	now time.Time,
 ) error {
+	// Serialize the whole count -> claim -> emit sequence per release. Without
+	// this lock, two overlapping last-node terminals (e.g. the dispatcher's
+	// FailValidation-at-dispatch path racing the validation.node.completed
+	// handler, or two replicas) can each read the other node as still pending
+	// under READ COMMITTED and both no-op, leaving the release hung in
+	// "validating" with no aggregate emitted. The advisory lock is
+	// transaction-scoped: the second caller blocks here until the first commits,
+	// then sees pending==0 and either wins the sentinel or loses cleanly.
+	if err := aggRepo.LockRelease(ctx, releaseID); err != nil {
+		return fmt.Errorf("lock release for aggregate gate: %w", err)
+	}
+
 	pending, err := depRepo.PendingValidationCount(ctx, releaseID)
 	if err != nil {
 		return fmt.Errorf("pending validation count: %w", err)

@@ -26,6 +26,20 @@ func NewValidationAggregateRepository(exec outbox.Executor) repository.Validatio
 	return &validationAggregateRepository{exec: exec}
 }
 
+// LockRelease takes a transaction-scoped advisory lock keyed on releaseID via
+// pg_advisory_xact_lock. hashtext maps the release_id string to the int8 the
+// advisory-lock API needs. The lock auto-releases at commit/rollback, so it
+// only serializes callers that hold it inside an open transaction — concurrent
+// gate runs for the same release block here until the holder commits, then
+// proceed and see the now-consistent pending count.
+func (r *validationAggregateRepository) LockRelease(ctx context.Context, releaseID string) error {
+	const q = `SELECT pg_advisory_xact_lock(hashtext($1))`
+	if _, err := r.exec.ExecContext(ctx, q, releaseID); err != nil {
+		return fmt.Errorf("lock release %s: %w", releaseID, err)
+	}
+	return nil
+}
+
 // ClaimEmission inserts the per-release sentinel row. The INSERT ... ON CONFLICT
 // DO NOTHING makes the claim atomic: exactly one concurrent caller affects a
 // row (true) and may emit validation.completed:v1; losers see zero rows

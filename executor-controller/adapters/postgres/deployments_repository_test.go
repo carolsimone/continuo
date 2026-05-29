@@ -14,7 +14,10 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	executortest "github.com/carolsimone/continuo/executor-controller/test"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -447,4 +450,112 @@ func TestClaimEmission_FirstCallerWins_SecondReturnsFalse(t *testing.T) {
 	wonOther, err := repo.ClaimEmission(ctx, "rel-6", now)
 	require.NoError(t, err)
 	assert.True(t, wonOther)
+}
+
+// seedDeployedValidationNode inserts a mode=validation row in status=deployed
+// with no outcome yet — i.e. one that PendingValidationCount counts as pending.
+func seedDeployedValidationNode(t *testing.T, db *sqlx.DB, releaseID, nodeID string, now time.Time) {
+	t.Helper()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	dep := model.NewValidationDeployment(validValidationCmd(releaseID, nodeID), nil, now)
+	require.NoError(t, repo.Add(context.Background(), dep))
+	require.NoError(t, dep.MarkDeployed(now))
+	require.NoError(t, repo.Save(context.Background(), dep))
+}
+
+// runGateInTx mirrors a production call site: inside one transaction it records
+// the terminal outcome for (releaseID, nodeID) and runs the aggregate-emit gate
+// (LockRelease -> PendingValidationCount -> ClaimEmission -> emit) over the
+// executor_outbox. The caller decides when to commit so the test can hold one
+// tx's advisory lock open while a second tx blocks on it.
+func runGateInTx(t *testing.T, tx *sqlx.Tx, releaseID, nodeID string, now time.Time) error {
+	t.Helper()
+	logger := testLogger()
+	depRepo := postgres.NewDeploymentsRepository(tx, logger)
+	dep, err := depRepo.GetByReleaseNode(context.Background(), releaseID, nodeID)
+	require.NoError(t, err)
+	require.NoError(t, dep.RecordOutcome("ok", "", now))
+	require.NoError(t, depRepo.Save(context.Background(), dep))
+
+	return validation.EmitValidationAggregateIfComplete(
+		context.Background(),
+		depRepo,
+		outbox.NewPostgresRepository(tx, "executor_outbox", logger),
+		postgres.NewValidationAggregateRepository(tx),
+		validation.DedupNamespace,
+		releaseID,
+		now,
+	)
+}
+
+func countValidationCompletedOutbox(t *testing.T, db *sqlx.DB, releaseID string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow(
+		`SELECT count(*) FROM executor_outbox WHERE stream_name = $1 AND payload::jsonb->>'release_id' = $2`,
+		streams.ValidationCompletedV1, releaseID,
+	).Scan(&n))
+	return n
+}
+
+// TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce is the I1 regression
+// guard. Two mode=validation nodes for one release are both deployed-without-
+// outcome (PendingValidationCount == 2). Two concurrent transactions each mark
+// their node terminal and run the gate — the dispatcher-vs-consumer overlap that
+// previously lost the emission: under READ COMMITTED both counts saw the other
+// node as still pending and both no-op'd.
+//
+// The per-release advisory lock taken at the top of the gate serializes the two
+// transactions: tx_B blocks on LockRelease until tx_A commits, then sees
+// pending==0 and the sentinel resolves it to exactly one emission. The test
+// drives that interleaving deterministically — tx_A holds the lock until a
+// barrier confirms tx_B is parked on it — and asserts EXACTLY ONE
+// validation.completed:v1 row results (never zero, never two).
+func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	const releaseID = "rel-race"
+
+	seedDeployedValidationNode(t, db, releaseID, "n1", now)
+	seedDeployedValidationNode(t, db, releaseID, "n2", now)
+
+	txA, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	txB, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+
+	// tx_A records n1's outcome and runs the gate, taking the advisory lock. It
+	// sees n2 as still pending (n2's outcome is uncommitted in tx_B), so it does
+	// NOT emit yet. It keeps the lock until commit.
+	require.NoError(t, runGateInTx(t, txA, releaseID, "n1", now))
+
+	// tx_B runs the gate in a goroutine; LockRelease must block on tx_A's lock.
+	bDone := make(chan error, 1)
+	go func() { bDone <- runGateInTx(t, txB, releaseID, "n2", now) }()
+
+	// Confirm tx_B is genuinely parked on the lock (not racing ahead): it must
+	// NOT finish while tx_A still holds the advisory lock.
+	select {
+	case err := <-bDone:
+		t.Fatalf("tx_B gate returned before tx_A committed — advisory lock did not serialize (err=%v)", err)
+	case <-time.After(500 * time.Millisecond):
+		// blocked as required
+	}
+
+	// Releasing tx_A unblocks tx_B; it now sees both nodes terminal (n1 committed,
+	// n2 its own) and wins the sentinel, emitting exactly once.
+	require.NoError(t, txA.Commit())
+
+	select {
+	case err := <-bDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("tx_B gate did not complete after tx_A committed")
+	}
+	require.NoError(t, txB.Commit())
+
+	assert.Equal(t, 1, countValidationCompletedOutbox(t, db, releaseID),
+		"exactly one validation.completed:v1 row — never zero (lost) and never two (double)")
 }

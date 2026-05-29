@@ -40,6 +40,14 @@ type DeploymentRepository interface {
 // ValidationAggregateRepository guards single emission of
 // validation.completed:v1 via the validation_aggregates sentinel table.
 type ValidationAggregateRepository interface {
+	// LockRelease takes a transaction-scoped advisory lock keyed on releaseID,
+	// serializing the aggregate-emit gate (pending-count -> claim -> emit)
+	// across concurrent transactions for the same release. It auto-releases at
+	// commit/rollback. Without it, two overlapping last-node terminals could
+	// each read the other as still pending under READ COMMITTED and both no-op,
+	// hanging the release with no aggregate ever emitted. Must be called inside
+	// a transaction, before PendingValidationCount.
+	LockRelease(ctx context.Context, releaseID string) error
 	// ClaimEmission inserts a sentinel row for releaseID. Returns (true, nil)
 	// if this caller won the race and should emit validation.completed:v1;
 	// returns (false, nil) on PK conflict (another caller already emitted).
