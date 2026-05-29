@@ -2,6 +2,14 @@ import json
 import sys
 from types import SimpleNamespace
 import main
+from streams_contract import (
+    UPDATE_GRAPH_V1,
+    MANIFEST_LOADED_V1,
+    MANIFEST_UPDATE_GRAPH,
+    RELEASE_REQUESTED_V1,
+    MANIFEST_LOADED_CANDIDATE_V1,
+    MANIFEST_CONTROLLER_RELEASE_REQUESTED,
+)
 
 
 class _RecordingConsumer:
@@ -38,12 +46,12 @@ def _common_monkeypatches(monkeypatch):
     monkeypatch.setattr(main, "S3_BUCKET", "continuo")
     monkeypatch.setattr(main, "S3_ENV", "local")
     monkeypatch.setattr(main, "REDIS_URL", "redis://localhost:6379/0")
-    monkeypatch.setattr(main, "MANIFEST_LOADED_STREAM", "manifest.loaded:v1")
-    monkeypatch.setattr(main, "REDIS_STREAM", "update.graph:v1")
-    monkeypatch.setattr(main, "REDIS_GROUP", "manifest-controller-update-graph")
-    monkeypatch.setattr(main, "RELEASE_REQUESTED_STREAM", "release.requested:v1")
-    monkeypatch.setattr(main, "RELEASE_REQUESTED_GROUP", "manifest-controller-release-requested")
-    monkeypatch.setattr(main, "MANIFEST_LOADED_CANDIDATE_STREAM", "manifest.loaded.candidate:v1")
+    monkeypatch.setattr(main, "MANIFEST_LOADED_STREAM", MANIFEST_LOADED_V1)
+    monkeypatch.setattr(main, "REDIS_STREAM", UPDATE_GRAPH_V1)
+    monkeypatch.setattr(main, "REDIS_GROUP", MANIFEST_UPDATE_GRAPH)
+    monkeypatch.setattr(main, "RELEASE_REQUESTED_STREAM", RELEASE_REQUESTED_V1)
+    monkeypatch.setattr(main, "RELEASE_REQUESTED_GROUP", MANIFEST_CONTROLLER_RELEASE_REQUESTED)
+    monkeypatch.setattr(main, "MANIFEST_LOADED_CANDIDATE_STREAM", MANIFEST_LOADED_CANDIDATE_V1)
     monkeypatch.setattr(main, "FilesystemRegistryRepository", lambda path: object())
     monkeypatch.setattr(main, "ManifestLoadedPublisher", lambda *a, **kw: object())
     monkeypatch.setattr(main, "CandidateManifestPublisher", lambda *a, **kw: object())
@@ -61,15 +69,15 @@ def test_main_starts_two_consumers(monkeypatch):
     _common_monkeypatches(monkeypatch)
     main.main()
     streams = sorted(c.stream_name for c in _RecordingConsumer.instances)
-    assert streams == ["release.requested:v1", "update.graph:v1"]
+    assert streams == sorted([RELEASE_REQUESTED_V1, UPDATE_GRAPH_V1])
 
 
 def test_main_consumer_groups_correct(monkeypatch):
     _common_monkeypatches(monkeypatch)
     main.main()
     by_stream = {c.stream_name: c.group_name for c in _RecordingConsumer.instances}
-    assert by_stream["update.graph:v1"] == "manifest-controller-update-graph"
-    assert by_stream["release.requested:v1"] == "manifest-controller-release-requested"
+    assert by_stream[UPDATE_GRAPH_V1] == MANIFEST_UPDATE_GRAPH
+    assert by_stream[RELEASE_REQUESTED_V1] == MANIFEST_CONTROLLER_RELEASE_REQUESTED
 
 
 def test_main_update_graph_handler_dispatches_on_source_local(monkeypatch):
@@ -101,7 +109,7 @@ def test_main_update_graph_handler_dispatches_on_source_local(monkeypatch):
 
     main.main()
     update_graph_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == "update.graph:v1"
+        c for c in _RecordingConsumer.instances if c.stream_name == UPDATE_GRAPH_V1
     )
     update_graph_consumer.message_handler({b"source": b"local"})
     assert seen.get("handle") is True
@@ -116,7 +124,7 @@ def test_main_update_graph_handler_rejects_unknown_source(monkeypatch):
 
     main.main()
     update_graph_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == "update.graph:v1"
+        c for c in _RecordingConsumer.instances if c.stream_name == UPDATE_GRAPH_V1
     )
     import pytest
     with pytest.raises(ValueError, match="unknown source"):
@@ -140,7 +148,7 @@ def test_main_candidate_handler_dispatches_with_release_id_and_uri(monkeypatch):
 
     main.main()
     candidate_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == "release.requested:v1"
+        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
     )
     payload = json.dumps({
         "release_id": "rel-77",
@@ -160,7 +168,7 @@ def test_main_candidate_handler_rejects_missing_payload(monkeypatch):
     monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
     main.main()
     candidate_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == "release.requested:v1"
+        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
     )
     import pytest
     with pytest.raises(ValueError, match="missing payload"):
@@ -173,7 +181,7 @@ def test_main_candidate_handler_rejects_invalid_json_payload(monkeypatch):
     monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
     main.main()
     candidate_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == "release.requested:v1"
+        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
     )
     import pytest
     with pytest.raises(ValueError, match="not valid JSON"):
@@ -186,7 +194,7 @@ def test_main_candidate_handler_rejects_payload_missing_fields(monkeypatch):
     monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
     main.main()
     candidate_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == "release.requested:v1"
+        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
     )
     import json as _json
     import pytest
