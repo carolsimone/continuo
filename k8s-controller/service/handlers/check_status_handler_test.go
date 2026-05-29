@@ -25,6 +25,7 @@ import (
 type fakeK8sClient struct {
 	status *model.K8sPodResult
 	err    error
+	labels map[string]string
 }
 
 func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
@@ -33,6 +34,10 @@ func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8s
 
 func (f *fakeK8sClient) GetPodLogs(_ context.Context, _, _ string, _ int64) (string, string, error) {
 	return "", "", nil
+}
+
+func (f *fakeK8sClient) GetJobLabels(_ context.Context, _, _ string) (map[string]string, error) {
+	return f.labels, nil
 }
 
 type fakeLogUploader struct{}
@@ -662,6 +667,199 @@ func TestHandleSucceeded(t *testing.T) {
 	}
 	if execPayload.ExecutionSeconds != 5.0 {
 		t.Errorf("expected execution_seconds=5.0, got %f", execPayload.ExecutionSeconds)
+	}
+}
+
+// TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly verifies
+// that a succeeded Job carrying mode=validation emits exactly one
+// validation_node_completed row (outcome=ok, release_id/node_id from labels) and
+// none of the three production task-status rows.
+func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			labels: map[string]string{
+				"mode":       "validation",
+				"release-id": "rel-123",
+				"node-id":    "node-abc",
+			},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "validate-node-abc",
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly 1 outbox entry (validation_node_completed), got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.EventType != "validation_node_completed" {
+		t.Errorf("expected event_type=validation_node_completed, got %q", entry.EventType)
+	}
+	if entry.StreamName != "validation.node.completed:v1" {
+		t.Errorf("expected stream=validation.node.completed:v1, got %q", entry.StreamName)
+	}
+	if entry.AggregateType != "release" {
+		t.Errorf("expected aggregate_type=release, got %q", entry.AggregateType)
+	}
+
+	// Ensure no production rows leaked in.
+	for _, e := range entries {
+		switch e.EventType {
+		case "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+			t.Errorf("unexpected production outbox row %q for validation Job", e.EventType)
+		}
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal validation_node_completed: %v", err)
+	}
+	if payload["release_id"] != "rel-123" {
+		t.Errorf("expected release_id=rel-123, got %v", payload["release_id"])
+	}
+	if payload["node_id"] != "node-abc" {
+		t.Errorf("expected node_id=node-abc, got %v", payload["node_id"])
+	}
+	if payload["outcome"] != "ok" {
+		t.Errorf("expected outcome=ok, got %v", payload["outcome"])
+	}
+}
+
+// TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed verifies a failed
+// validation Job emits a single row with outcome=failed.
+func TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: failedResult(),
+			labels: map[string]string{
+				"mode":       "validation",
+				"release-id": "rel-9",
+				"node-id":    "node-z",
+			},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "validate-node-z",
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(outbox.entries) != 1 {
+		t.Fatalf("expected exactly 1 outbox entry, got %d", len(outbox.entries))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(outbox.entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["outcome"] != "failed" {
+		t.Errorf("expected outcome=failed, got %v", payload["outcome"])
+	}
+}
+
+// TestHandle_ValidationModeLabel_RunningStatus_NoOutboxRow verifies a still-running
+// validation Job is not terminal: no outbox row is written (a re-check is scheduled
+// elsewhere).
+func TestHandle_ValidationModeLabel_RunningStatus_NoOutboxRow(t *testing.T) {
+	for _, status := range []model.JobStatus{model.JobStatusRunning, model.JobStatusUnknown} {
+		outbox := &fakeOutboxRepo{}
+		handler := newHandler(
+			&fakeK8sClient{
+				status: &model.K8sPodResult{Status: status},
+				labels: map[string]string{
+					"mode":       "validation",
+					"release-id": "rel-1",
+					"node-id":    "node-1",
+				},
+			},
+			noopCancelledRepo(), 3,
+		)
+
+		cmd := command.CheckJobStatus{
+			TaskID:     uuid.New(),
+			ScheduleID: uuid.New(),
+			JobName:    "validate-node-1",
+			MaxRetries: 3,
+		}
+
+		if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			t.Fatalf("Handle (%s): %v", status, err)
+		}
+		if len(outbox.entries) != 0 {
+			t.Errorf("status %s: expected no outbox rows for non-terminal validation Job, got %d", status, len(outbox.entries))
+		}
+	}
+}
+
+// TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange locks the
+// production path: a Job without mode=validation (here mode=production, but a
+// missing label behaves identically) still writes the three production rows.
+func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testing.T) {
+	now := time.Now()
+	for _, labels := range []map[string]string{
+		{"mode": "production"},
+		nil,
+	} {
+		outbox := &fakeOutboxRepo{}
+		handler := newHandler(
+			&fakeK8sClient{
+				status: &model.K8sPodResult{
+					Status:           model.JobStatusSucceeded,
+					StartedAt:        &now,
+					CompletedAt:      &now,
+					ExecutionSeconds: 5.0,
+				},
+				labels: labels,
+			},
+			noopCancelledRepo(), 3,
+		)
+
+		cmd := command.CheckJobStatus{
+			TaskID:     uuid.New(),
+			ScheduleID: uuid.New(),
+			JobName:    "job-prod",
+			MaxRetries: 3,
+		}
+
+		if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			t.Fatalf("Handle (labels=%v): %v", labels, err)
+		}
+
+		entries := outbox.entries
+		if len(entries) != 3 {
+			t.Fatalf("labels=%v: expected 3 production outbox rows, got %d", labels, len(entries))
+		}
+		if got := eventTypeOf(entries, 0); got != "task_status_updated" {
+			t.Errorf("labels=%v: entries[0]: expected task_status_updated, got %q", labels, got)
+		}
+		if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
+			t.Errorf("labels=%v: entries[1]: expected task_execution_recorded, got %q", labels, got)
+		}
+		if got := eventTypeOf(entries, 2); got != "node_status_updated" {
+			t.Errorf("labels=%v: entries[2]: expected node_status_updated, got %q", labels, got)
+		}
+		if findEntryByEventType(entries, "validation_node_completed") != nil {
+			t.Errorf("labels=%v: unexpected validation_node_completed row on production path", labels)
+		}
 	}
 }
 

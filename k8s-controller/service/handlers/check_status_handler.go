@@ -19,10 +19,17 @@ import (
 	"github.com/google/uuid"
 )
 
+// validationLabelNamespace is the immutable UUIDv5 namespace used to derive the
+// validation_node_completed outbox row's AggregateID from the release-id label.
+// It must never change: deriving the aggregate ID deterministically lets a
+// re-observed terminal Job map to the same aggregate for downstream dedup.
+var validationLabelNamespace = uuid.MustParse("a4f1c2e6-8b3d-4f7a-9c1e-2d6b5a0f3e8c")
+
 // K8sStatusChecker defines interface for checking K8s job status
 type K8sStatusChecker interface {
 	GetJobStatus(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error)
 	GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (fullLog, tail string, err error)
+	GetJobLabels(ctx context.Context, namespace, jobName string) (map[string]string, error)
 }
 
 // HandlerConfig contains handler configuration
@@ -88,6 +95,14 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 		return nil
 	}
 
+	labels, err := h.k8sClient.GetJobLabels(ctx, h.config.K8sNamespace, cmd.JobName)
+	if err != nil {
+		return fmt.Errorf("fetch job labels: %w", err)
+	}
+	if labels["mode"] == "validation" {
+		return h.handleValidationTerminal(ctx, u, cmd, result, labels)
+	}
+
 	switch result.Status {
 	case model.JobStatusSucceeded:
 		return h.handleSucceeded(ctx, u, cmd, result)
@@ -136,6 +151,62 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 		"execution_time", result.ExecutionSeconds,
 	)
 
+	return nil
+}
+
+// handleValidationTerminal emits the per-node validation result for a Job carrying
+// the mode=validation label. It writes a single validation_node_completed outbox row
+// (→ validation.node.completed:v1) instead of the three production task-status rows.
+// release-id and node-id come from the Job labels; outcome is derived from the
+// terminal status. Running/unknown statuses are not terminal — it returns nil so a
+// re-check is scheduled elsewhere without emitting a result.
+func (h *CheckStatusHandler) handleValidationTerminal(
+	ctx context.Context,
+	u uow.UnitOfWork,
+	cmd command.CheckJobStatus,
+	result *model.K8sPodResult,
+	labels map[string]string,
+) error {
+	switch result.Status {
+	case model.JobStatusRunning, model.JobStatusUnknown:
+		return nil // not terminal yet; wait
+	}
+
+	_, logS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
+
+	outcome := "failed"
+	if result.Status == model.JobStatusSucceeded {
+		outcome = "ok"
+	}
+
+	releaseID := labels["release-id"]
+	payload, err := json.Marshal(map[string]any{
+		"release_id":  releaseID,
+		"node_id":     labels["node-id"],
+		"outcome":     outcome,
+		"dbt_log_uri": logS3Key,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal validation_node_completed payload: %w", err)
+	}
+
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		AggregateType: "release",
+		AggregateID:   uuid.NewSHA1(validationLabelNamespace, []byte("release:"+releaseID)),
+		EventType:     "validation_node_completed",
+		Payload:       payload,
+		StreamName:    streams.ValidationNodeCompletedV1,
+		MaxRetries:    3,
+	}); err != nil {
+		return fmt.Errorf("create validation_node_completed row: %w", err)
+	}
+
+	h.logger.Info("Validation Job terminal — validation_node_completed outbox entry created",
+		"job_name", cmd.JobName,
+		"release_id", releaseID,
+		"node_id", labels["node-id"],
+		"outcome", outcome,
+	)
 	return nil
 }
 

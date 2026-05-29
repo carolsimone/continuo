@@ -10,6 +10,7 @@ import (
 type FakeK8sClient struct {
 	GetJobStatusFunc func(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error)
 	GetPodLogsFunc   func(ctx context.Context, namespace, jobName string, tailLines int64) (string, string, error)
+	GetJobLabelsFunc func(ctx context.Context, namespace, jobName string) (map[string]string, error)
 	CallCount        int
 	LastNamespace    string
 	LastJobName      string
@@ -32,4 +33,12 @@ func (f *FakeK8sClient) GetPodLogs(ctx context.Context, namespace, jobName strin
 		return f.GetPodLogsFunc(ctx, namespace, jobName, tailLines)
 	}
 	return "full log line 1\nfull log line 2", "full log line 2", nil
+}
+
+// GetJobLabels implements K8sStatusChecker. Defaults to no labels (production path).
+func (f *FakeK8sClient) GetJobLabels(ctx context.Context, namespace, jobName string) (map[string]string, error) {
+	if f.GetJobLabelsFunc != nil {
+		return f.GetJobLabelsFunc(ctx, namespace, jobName)
+	}
+	return nil, nil
 }

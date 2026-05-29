@@ -191,6 +191,18 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 	return result, nil
 }
 
+// GetJobLabels returns the labels stamped on a Job. The terminal-status handler
+// reads the `mode` label to decide whether a Job is a validation Job (emitting a
+// single validation_node_completed row) or a production task Job (emitting the
+// three production task-status rows).
+func (c *K8sClient) GetJobLabels(ctx context.Context, namespace, jobName string) (map[string]string, error) {
+	job, err := c.clientset.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get job labels: %w", err)
+	}
+	return job.Labels, nil
+}
+
 // GetPodLogs fetches logs for the first pod of a completed job.
 // Returns both the full log and the last tailLines lines.
 // Returns empty strings if no pod is found or no logs are available.
