@@ -6,8 +6,6 @@ from redis import Redis
 
 logger = logging.getLogger(__name__)
 
-_KNOWN_SOURCES = {"local", "s3"}
-
 
 class Consumer:
     def __init__(
@@ -15,13 +13,13 @@ class Consumer:
         redis_client: Redis,
         stream_name: str,
         group_name: str,
-        handler_factory: Callable[[str], None],
+        message_handler: Callable[[dict], None],
     ) -> None:
         self._redis = redis_client
         self._stream = stream_name
         self._group = group_name
         self._name = f"consumer-{uuid.uuid4().hex[:8]}"
-        self._handler_factory = handler_factory
+        self._message_handler = message_handler
         self._create_group()
 
     def _create_group(self) -> None:
@@ -35,14 +33,7 @@ class Consumer:
                 raise
 
     def _process_message(self, msg_id: str, fields: dict) -> None:
-        source = fields.get(b"source") or fields.get("source")
-        if not source:
-            raise ValueError(f"Message {msg_id} missing source")
-        if isinstance(source, bytes):
-            source = source.decode()
-        if source not in _KNOWN_SOURCES:
-            raise ValueError(f"Message {msg_id} has unknown source '{source}'")
-        self._handler_factory(source)
+        self._message_handler(fields)
 
     def start(self) -> None:
         logger.info("Consumer starting", extra={"consumer_name": self._name, "stream": self._stream})
