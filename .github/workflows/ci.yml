@@ -29,6 +29,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+
+      - name: Run pkg static guards
+        # The pkg module holds cross-cutting static guards (stream/group-name
+        # wiring, handler→adapter import rules, deploy-time migration
+        # provisioning) that need no running infrastructure. Run them first so
+        # they fail fast, before the slow docker/kind setup below.
+        working-directory: pkg
+        run: go test ./...
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
