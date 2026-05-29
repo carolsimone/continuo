@@ -100,8 +100,9 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 	}
 
 	// outbox_entry_id is the release-controller outbox row ID, carried as
-	// provenance. Absent or empty → uuid.Nil (dedup relies solely on
-	// (msg.ID, stream_name)). Present-but-malformed → permanent error.
+	// provenance only. The binding does not dedup on it; dedup keys on a
+	// deterministic release-derived UUID (see validationDedupKey). Absent or
+	// empty → uuid.Nil. Present-but-malformed → permanent error.
 	var outboxEntryID uuid.UUID
 	if s := stringField(msg.Values, "outbox_entry_id"); s != "" {
 		var err error

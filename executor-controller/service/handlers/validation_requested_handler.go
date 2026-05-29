@@ -22,7 +22,7 @@ import (
 // enqueuing one pending validation Deployment per node in the request. A single
 // inbound message carries every node for a release; the handler is pure
 // orchestration — it never parses JSON, manages the transaction, or runs dedup
-// (dedup is binding-level on the shared (msg.ID, stream_name) layer).
+// (dedup is binding-level, keyed per-release on a deterministic outbox_entry_id).
 type ValidationRequestedHandler struct {
 	logger *slog.Logger
 }
