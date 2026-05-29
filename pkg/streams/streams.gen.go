@@ -54,6 +54,8 @@ const (
 	ManifestLoadedCandidateV1 = "manifest.loaded.candidate:v1"
 	// ValidationRequestedV1 — dbt --empty validation run requested by release-controller; executor-controller dispatches per-node jobs.
 	ValidationRequestedV1 = "validation.requested:v1"
+	// ValidationNodeCompletedV1 — Per-node validation Job terminal status from k8s-controller back to executor-controller; aggregated into validation.completed:v1.
+	ValidationNodeCompletedV1 = "validation.node.completed:v1"
 	// ValidationCompletedV1 — Per-node validation results from executor-controller back to release-controller.
 	ValidationCompletedV1 = "validation.completed:v1"
 	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
@@ -114,6 +116,8 @@ const (
 	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
 	// ExecutorValidationRequested — executor-controller consumer group on validation.requested:v1.
 	ExecutorValidationRequested = "executor-validation-requested"
+	// ExecutorControllerValidationNodeCompleted — executor-controller consumer group on validation.node.completed:v1.
+	ExecutorControllerValidationNodeCompleted = "executor-controller-validation-node-completed"
 	// ReleaseControllerValidationCompleted — release-controller consumer group on validation.completed:v1.
 	ReleaseControllerValidationCompleted = "release-controller-validation-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.

@@ -249,6 +249,15 @@ streams:
         group: executor-validation-requested
         const: ExecutorValidationRequested
 
+  - name: validation.node.completed:v1
+    const: ValidationNodeCompletedV1
+    description: Per-node validation Job terminal status from k8s-controller back to executor-controller; aggregated into validation.completed:v1.
+    producers: [k8s-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-controller-validation-node-completed
+        const: ExecutorControllerValidationNodeCompleted
+
   - name: validation.completed:v1
     const: ValidationCompletedV1
     description: Per-node validation results from executor-controller back to release-controller.
