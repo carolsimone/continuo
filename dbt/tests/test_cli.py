@@ -106,6 +106,44 @@ class TestCliLoad:
         # Verify env was overridden in the target config
         assert target_cfg["env"] == "staging"
 
+    @patch("dbt_upload.cli.upload_services")
+    @patch("dbt_upload.cli.load_target")
+    @patch("dbt_upload.cli._find_targets_yaml")
+    @patch("dbt_upload.cli.compile_services")
+    @patch("dbt_upload.cli.resolve_service_dirs")
+    def test_load_release_id_threaded_to_upload(
+        self, mock_resolve, mock_compile, mock_find_yaml, mock_load_target, mock_upload
+    ):
+        mock_resolve.return_value = ["/app/services/svc-1"]
+        mock_compile.return_value = (["/app/services/svc-1"], [])
+        mock_find_yaml.return_value = "/dummy/targets.yaml"
+        mock_load_target.return_value = {"env": "local", "bucket": "continuo"}
+        mock_upload.return_value = (["/app/services/svc-1"], [])
+
+        code = main(["load", "--services-dir", "./services", "--release-id", "rel-123"])
+
+        assert code == 0
+        mock_upload.assert_called_once()
+        assert mock_upload.call_args.kwargs["release_id"] == "rel-123"
+
+    @patch("dbt_upload.cli.upload_services")
+    @patch("dbt_upload.cli.load_target")
+    @patch("dbt_upload.cli._find_targets_yaml")
+    @patch("dbt_upload.cli.compile_services")
+    @patch("dbt_upload.cli.resolve_service_dirs")
+    def test_load_without_release_id_defaults_empty(
+        self, mock_resolve, mock_compile, mock_find_yaml, mock_load_target, mock_upload
+    ):
+        mock_resolve.return_value = ["/app/services/svc-1"]
+        mock_compile.return_value = (["/app/services/svc-1"], [])
+        mock_find_yaml.return_value = "/dummy/targets.yaml"
+        mock_load_target.return_value = {"env": "local", "bucket": "continuo"}
+        mock_upload.return_value = (["/app/services/svc-1"], [])
+
+        main(["load", "--services-dir", "./services"])
+
+        assert mock_upload.call_args.kwargs["release_id"] == ""
+
 
 class TestCliPositionalPaths:
     @patch("dbt_upload.cli.compile_services")

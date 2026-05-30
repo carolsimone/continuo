@@ -138,3 +138,82 @@ def test_upload_manifest_increments_from_v7_to_v8(s3, s3_prefix, tmp_path):
 
     response = s3.get_object(Bucket=S3_BUCKET, Key=f"{s3_prefix}manifest_v8.json")
     assert "nodes" in json.loads(response["Body"].read())
+
+
+# Per-release upload layout (no localstack — MagicMock S3 client)
+
+
+def test_upload_manifest_release_mode_writes_v1_under_release_prefix(tmp_path):
+    """release_id uploads to releases/<id>/manifests/<service>/manifest_v1.json,
+    always v1 (fresh prefix), with no next_version lookup and no sidecar."""
+    from unittest.mock import MagicMock
+    from dbt_upload.upload import upload_manifest
+
+    service_dir = tmp_path / "service-1"
+    (service_dir / "target").mkdir(parents=True)
+    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+
+    mock_s3 = MagicMock()
+
+    result = upload_manifest(
+        mock_s3, str(service_dir), "local", "continuo", release_id="rel-abc"
+    )
+
+    assert result is True
+    # next_version is never consulted on the per-release path.
+    mock_s3.get_paginator.assert_not_called()
+
+    upload_calls = [str(c) for c in mock_s3.upload_file.call_args_list]
+    assert any(
+        "releases/rel-abc/manifests/service-1/manifest_v1.json" in c
+        for c in upload_calls
+    ), f"per-release manifest_v1.json not uploaded; calls={upload_calls}"
+    # No sidecar on the per-release path.
+    assert not any("service_metadata.json" in c for c in upload_calls), \
+        f"service_metadata.json must NOT be uploaded on the release path; calls={upload_calls}"
+
+
+def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatch):
+    """With release_id set and IMAGE_TAG_PER_SERVICE empty, every service still
+    uploads to releases/<id>/manifests/<service>/manifest_v1.json with no sidecar."""
+    from unittest.mock import MagicMock, patch
+    from dbt_upload.upload import upload_services
+
+    services = ["service-1", "service-2"]
+    service_dirs = []
+    for name in services:
+        d = tmp_path / name
+        (d / "target").mkdir(parents=True)
+        (d / "target" / "manifest.json").write_text(
+            '{"nodes": {"model.x.y": {"resource_type": "model", "name": "y", "tags": []}}}'
+        )
+        service_dirs.append(str(d))
+
+    monkeypatch.setenv("IMAGE_TAG_PER_SERVICE", "")
+
+    target_config = {
+        "endpoint_url": "http://localstack:4566",
+        "access_key_id": "test",
+        "secret_access_key": "test",
+        "region": "us-east-1",
+        "env": "local",
+        "bucket": "continuo",
+    }
+
+    mock_s3 = MagicMock()
+    with patch("dbt_upload.upload.boto3.client", return_value=mock_s3):
+        succeeded, failed = upload_services(
+            service_dirs, target_config, release_id="rel-xyz"
+        )
+
+    assert failed == []
+    assert succeeded == service_dirs
+
+    upload_calls = [str(c) for c in mock_s3.upload_file.call_args_list]
+    for name in services:
+        assert any(
+            f"releases/rel-xyz/manifests/{name}/manifest_v1.json" in c
+            for c in upload_calls
+        ), f"missing per-release manifest for {name}; calls={upload_calls}"
+    assert not any("service_metadata.json" in c for c in upload_calls), \
+        f"no sidecar on the release path; calls={upload_calls}"

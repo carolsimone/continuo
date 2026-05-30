@@ -54,15 +54,24 @@ def filter_manifest(service_dir: str) -> None:
 
 
 def upload_manifest(
-    s3_client, service_dir: str, env: str, bucket: str, image_tag: str = ""
+    s3_client,
+    service_dir: str,
+    env: str,
+    bucket: str,
+    image_tag: str = "",
+    release_id: str = "",
 ) -> bool:
-    """Upload target/manifest.json to S3 with an auto-incremented version key.
+    """Upload target/manifest.json to S3. Returns True on success.
 
-    Checks the current highest manifest_v{N}.json in the service S3 prefix
-    and uploads as manifest_v{N+1}.json. Returns True on success.
-
-    If image_tag is provided, also writes and uploads service_metadata.json
-    alongside the versioned manifest.
+    Two layouts:
+    - Per-release (release_id set): uploads to a fresh per-release prefix
+      releases/{release_id}/manifests/{service_name}/manifest_v1.json. The
+      filename is always v1 (the prefix is fresh per release, so no version
+      lookup is needed) and no service_metadata.json sidecar is written —
+      image tags travel in the POST /releases body, not in S3.
+    - Legacy (release_id empty): checks the current highest manifest_v{N}.json
+      in the service S3 prefix and uploads as manifest_v{N+1}.json. If image_tag
+      is provided, also writes and uploads a service_metadata.json sidecar.
     """
     service_name = os.path.basename(service_dir)
     manifest_path = os.path.join(service_dir, "target", "manifest.json")
@@ -70,6 +79,16 @@ def upload_manifest(
     if not os.path.exists(manifest_path):
         logger.error("manifest.json not found at %s", manifest_path)
         return False
+
+    if release_id:
+        key = f"releases/{release_id}/manifests/{service_name}/manifest_v1.json"
+        try:
+            s3_client.upload_file(manifest_path, bucket, key)
+        except Exception:
+            logger.exception("S3 upload failed for %s", service_name)
+            return False
+        logger.info("Uploaded %s -> s3://%s/%s", service_name, bucket, key)
+        return True
 
     prefix = f"{env}/manifest/{service_name}/"
     version = next_version(s3_client, bucket, prefix)
@@ -99,9 +118,15 @@ def upload_manifest(
 
 
 def upload_services(
-    service_dirs: list[str], target_config: dict
+    service_dirs: list[str], target_config: dict, release_id: str = ""
 ) -> tuple[list[str], list[str]]:
     """Filter and upload manifests for each service directory.
+
+    When release_id is set, manifests go to the per-release prefix
+    releases/{release_id}/manifests/{service}/manifest_v1.json and no
+    image_tag is required (tags travel in the POST /releases body). When
+    release_id is empty, the legacy {env}/manifest/{service}/manifest_v{N}.json
+    layout is used and every service must have an image_tag for its sidecar.
 
     Returns (succeeded_dirs, failed_dirs).
     """
@@ -125,11 +150,13 @@ def upload_services(
         service_name = os.path.basename(service_dir)
         logger.info("Uploading %s", service_name)
 
-        # Refuse to upload before image_tag is known: a successful manifest upload
-        # without a sidecar poisons the snapshot — manifest-controller propagates
-        # image_tag="" and the run fails at deployment time on every task.
+        # On the legacy path, refuse to upload before image_tag is known: a
+        # successful manifest upload without a sidecar poisons the snapshot —
+        # manifest-controller propagates image_tag="" and the run fails at
+        # deployment time on every task. The per-release path carries no sidecar
+        # (tags travel in the POST /releases body), so it needs no image_tag.
         image_tag = image_tag_map.get(service_name, "")
-        if not image_tag:
+        if not release_id and not image_tag:
             logger.error(
                 "image_tag missing for %s — set IMAGE_TAG_PER_SERVICE=%s=<tag>,...; refusing to upload",
                 service_name, service_name,
@@ -144,7 +171,10 @@ def upload_services(
             failed.append(service_dir)
             continue
 
-        if upload_manifest(s3_client, service_dir, env, bucket, image_tag=image_tag):
+        if upload_manifest(
+            s3_client, service_dir, env, bucket,
+            image_tag=image_tag, release_id=release_id,
+        ):
             succeeded.append(service_dir)
         else:
             failed.append(service_dir)
