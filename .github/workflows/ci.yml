@@ -90,7 +90,7 @@ jobs:
 
       - name: Wait for service containers to be running
         run: |
-          for container in state orchestrator executor-controller k8s-controller manifest-controller; do
+          for container in state orchestrator executor-controller k8s-controller manifest-controller release-controller; do
             echo "Waiting for $container..."
             for i in $(seq 1 30); do
               if docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
@@ -184,6 +184,24 @@ jobs:
           docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"
           sleep 3
           echo "✓ manifest-controller started"
+
+          echo "Building and starting release-controller (HTTP :8088)..."
+          docker exec release-controller go build -o bin/release-controller .
+          docker exec -d release-controller ./bin/release-controller
+
+          echo "Waiting for release-controller HTTP port 8088..."
+          for i in $(seq 1 30); do
+            if docker exec release-controller bash -c 'echo > /dev/tcp/localhost/8088' 2>/dev/null; then
+              echo "✓ release-controller HTTP ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "✗ release-controller HTTP not ready after 60s"
+              docker logs release-controller --tail 30 || true
+              exit 1
+            fi
+            sleep 2
+          done
 
       - name: Start ui-service container
         run: |

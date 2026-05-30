@@ -22,12 +22,13 @@ log_error() {
 check_health() {
   local service=$1
   local port=$2
+  local path=${3:-/health}
   local max_retries=30
 
-  log_info "Waiting for $service to become healthy (port $port)..."
+  log_info "Waiting for $service to become healthy (port $port$path)..."
 
   for i in $(seq 1 $max_retries); do
-    if docker exec "$service" curl -sf http://localhost:"$port"/health >/dev/null; then
+    if docker exec "$service" curl -sf "http://localhost:${port}${path}" >/dev/null; then
       log_info "$service is healthy!"
       return 0
     else
@@ -81,6 +82,13 @@ check_health "orchestrator" 8087 || exit 1
 # Uncomment if you started executor/k8s controllers:
 # check_health "executor-controller" 8084 || exit 1
 # check_health "k8s-controller" 8085 || exit 1
+
+# release-controller (blue/green release API + stream consumers) runs in
+# docker-compose alongside the other stream services. The e2e release-promote
+# test reaches its HTTP API at release-controller:8088 over the compose network,
+# and its consumers drive the candidate-parse → validation → promotion loop.
+start_service "release-controller" "release-controller" "release-controller"
+check_health "release-controller" 8088 "/healthz" || exit 1
 
 log_info "Starting manifest-controller..."
 docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"

@@ -7,6 +7,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/jmoiron/sqlx"
@@ -28,6 +31,9 @@ type testClients struct {
 	orchestratorDB     *sqlx.DB
 	k8sDB              *sqlx.DB
 	stateDB            *sqlx.DB
+	releaseDB          *sqlx.DB
+	s3Client           *s3.Client
+	releaseBase        string
 	logger             *slog.Logger
 	uiBase             string
 }
@@ -80,6 +86,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	orchestratorDB := connectPostgres(t, pgHost, "continuo_orchestrator")
 	k8sDB := connectPostgres(t, pgHost, "continuo_k8s")
 	stateDB := connectPostgres(t, pgHost, "continuo_state")
+	releaseDB := connectPostgres(t, pgHost, "continuo_release")
 
 	return &testClients{
 		orchestratorClient: orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
@@ -90,9 +97,30 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		orchestratorDB:     orchestratorDB,
 		k8sDB:              k8sDB,
 		stateDB:            stateDB,
+		releaseDB:          releaseDB,
+		s3Client:           newLocalstackS3Client(),
+		releaseBase:        getEnv("RELEASE_CONTROLLER_BASE", "http://release-controller:8088"),
 		logger:             logger,
 		uiBase:             uiBase,
 	}
+}
+
+// newLocalstackS3Client builds an S3 client pointed at the e2e LocalStack
+// endpoint with path-style addressing (LocalStack does not support
+// virtual-hosted-style buckets). Credentials and endpoint mirror the
+// dbt-compile-and-load / manifest-controller configuration.
+func newLocalstackS3Client() *s3.Client {
+	cfg := aws.Config{
+		Region: getEnv("AWS_DEFAULT_REGION", "us-east-1"),
+		Credentials: awscreds.NewStaticCredentialsProvider(
+			getEnv("AWS_ACCESS_KEY_ID", "test"),
+			getEnv("AWS_SECRET_ACCESS_KEY", "test"), ""),
+	}
+	endpoint := getEnv("S3_ENDPOINT_URL", "http://localstack:4566")
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+		o.BaseEndpoint = aws.String(endpoint)
+	})
 }
 
 // connectPostgres establishes a PostgreSQL connection
@@ -115,6 +143,7 @@ func (c *testClients) close(ctx context.Context) {
 	c.orchestratorDB.Close()
 	c.k8sDB.Close()
 	c.stateDB.Close()
+	c.releaseDB.Close()
 }
 
 // getEnv returns environment variable or default value
