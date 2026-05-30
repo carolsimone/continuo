@@ -116,8 +116,8 @@ const (
 	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
 	// ExecutorValidationRequested — executor-controller consumer group on validation.requested:v1.
 	ExecutorValidationRequested = "executor-validation-requested"
-	// ExecutorControllerValidationNodeCompleted — executor-controller consumer group on validation.node.completed:v1.
-	ExecutorControllerValidationNodeCompleted = "executor-controller-validation-node-completed"
+	// ExecutorValidationNodeCompleted — executor-controller consumer group on validation.node.completed:v1.
+	ExecutorValidationNodeCompleted = "executor-validation-node-completed"
 	// ReleaseControllerValidationCompleted — release-controller consumer group on validation.completed:v1.
 	ReleaseControllerValidationCompleted = "release-controller-validation-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.

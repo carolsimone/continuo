@@ -255,8 +255,8 @@ streams:
     producers: [k8s-controller]
     consumers:
       - service: executor-controller
-        group: executor-controller-validation-node-completed
-        const: ExecutorControllerValidationNodeCompleted
+        group: executor-validation-node-completed
+        const: ExecutorValidationNodeCompleted
 
   - name: validation.completed:v1
     const: ValidationCompletedV1

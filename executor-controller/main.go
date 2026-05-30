@@ -159,10 +159,10 @@ func main() {
 		"stream", streams.ValidationRequestedV1, "group", streams.ExecutorValidationRequested)
 
 	validationNodeConsumer := pkgredis.NewStreamConsumer(
-		redisClient, streams.ValidationNodeCompletedV1, streams.ExecutorControllerValidationNodeCompleted,
+		redisClient, streams.ValidationNodeCompletedV1, streams.ExecutorValidationNodeCompleted,
 		validationNodeBinding, logger)
 	logger.Info("validation.node.completed consumer initialized",
-		"stream", streams.ValidationNodeCompletedV1, "group", streams.ExecutorControllerValidationNodeCompleted)
+		"stream", streams.ValidationNodeCompletedV1, "group", streams.ExecutorValidationNodeCompleted)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
