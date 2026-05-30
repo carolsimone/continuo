@@ -30,10 +30,9 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID:      releaseID,
-		ChangedNodeIDs: []string{"a", "b"},
-		ImageTags:      map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"},
-		ManifestsURI:   "s3://continuo/releases/" + releaseID + "/manifests/",
+		ReleaseID:    releaseID,
+		ImageTags:    map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"},
+		ManifestsURI: "s3://continuo/releases/" + releaseID + "/manifests/",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 

@@ -50,10 +50,9 @@ func TestIntegration_HappyPath(t *testing.T) {
 
 	// 1. POST /releases
 	body, _ := json.Marshal(handlers.ReceiveCandidateInput{
-		ReleaseID:      "rA",
-		ChangedNodeIDs: []string{"a"},
-		ImageTags:      map[string]string{"service-1": "sha-rA"},
-		ManifestsURI:   "s3://b/r/rA/manifests/",
+		ReleaseID:    "rA",
+		ImageTags:    map[string]string{"service-1": "sha-rA"},
+		ManifestsURI: "s3://b/r/rA/manifests/",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/releases", bytes.NewReader(body))
 	w := httptest.NewRecorder()

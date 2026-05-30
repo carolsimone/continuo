@@ -37,7 +37,6 @@ var _ repository.ReleaseRepository = (*ReleaseRepository)(nil)
 type releaseRow struct {
 	ReleaseID         string         `db:"release_id"`
 	Status            string         `db:"status"`
-	ChangedNodeIDs    pq.StringArray `db:"changed_node_ids"`
 	ImageTagsJSON     []byte         `db:"image_tags"`
 	ManifestsURI      string         `db:"manifests_uri"`
 	CandidateTopology []byte         `db:"candidate_topology"`
@@ -53,7 +52,7 @@ type releaseRow struct {
 func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Release, error) {
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
-		`SELECT release_id, status, changed_node_ids, image_tags, manifests_uri,
+		`SELECT release_id, status, image_tags, manifests_uri,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 		        dbt_logs_uri, created_at, transitions
 		 FROM releases WHERE release_id = $1`, id)
@@ -71,7 +70,7 @@ func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Releas
 func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Release, error) {
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
-		`SELECT release_id, status, changed_node_ids, image_tags, manifests_uri,
+		`SELECT release_id, status, image_tags, manifests_uri,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 		        dbt_logs_uri, created_at, transitions
 		 FROM releases WHERE status = 'received'
@@ -90,7 +89,7 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release, error) {
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
-		`SELECT release_id, status, changed_node_ids, image_tags, manifests_uri,
+		`SELECT release_id, status, image_tags, manifests_uri,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 		        dbt_logs_uri, created_at, transitions
 		 FROM releases WHERE status IN ('parsing','validating')
@@ -105,8 +104,8 @@ func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release
 }
 
 // Save persists a Release using an upsert keyed on release_id. Immutable
-// fields (changed_node_ids, image_tags, manifests_uri, created_at) are only
-// written on INSERT; the ON CONFLICT clause updates the mutable fields.
+// fields (image_tags, manifests_uri, created_at) are only written on INSERT;
+// the ON CONFLICT clause updates the mutable fields.
 func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) error {
 	imageTagsJSON, err := json.Marshal(rel.ImageTags())
 	if err != nil {
@@ -125,10 +124,10 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 
 	_, err = r.q.ExecContext(ctx,
 		`INSERT INTO releases (
-		   release_id, status, changed_node_ids, image_tags, manifests_uri,
+		   release_id, status, image_tags, manifests_uri,
 		   candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 		   dbt_logs_uri, created_at, transitions
-		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		 ON CONFLICT (release_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   candidate_topology = EXCLUDED.candidate_topology,
@@ -137,7 +136,7 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		   failing_nodes = EXCLUDED.failing_nodes,
 		   dbt_logs_uri = EXCLUDED.dbt_logs_uri,
 		   transitions = EXCLUDED.transitions`,
-		rel.ID(), string(rel.Status()), pq.StringArray(rel.ChangedNodeIDs()),
+		rel.ID(), string(rel.Status()),
 		imageTagsJSON, rel.ManifestsURI(), topoJSON, pq.StringArray(rel.ValidationNodeIDs()),
 		rejectReason, pq.StringArray(rel.FailingNodes()), dbtLogsURI,
 		rel.CreatedAt(), transitionsJSON)
@@ -170,7 +169,6 @@ func rowToRelease(row releaseRow) (*release.Release, error) {
 	return release.Rehydrate(release.RehydrateInput{
 		ID:                row.ReleaseID,
 		Status:            release.Status(row.Status),
-		ChangedNodeIDs:    []string(row.ChangedNodeIDs),
 		ImageTags:         imageTags,
 		ManifestsURI:      row.ManifestsURI,
 		CandidateTopology: topo,

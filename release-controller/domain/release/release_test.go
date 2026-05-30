@@ -10,18 +10,18 @@ import (
 )
 
 func TestRelease_NewIsReceived(t *testing.T) {
-	r := release.New("sha-abc", []string{"svc1.t_a"}, map[string]string{"svc1": "sha-abc"}, "s3://b/r/sha-abc/manifests/", time.Unix(0, 0))
+	r := release.New("sha-abc", map[string]string{"svc1": "sha-abc"}, "s3://b/r/sha-abc/manifests/", time.Unix(0, 0))
 	assert.Equal(t, release.StatusReceived, r.Status())
 }
 
 func TestRelease_TransitionReceivedToParsing(t *testing.T) {
-	r := release.New("sha-abc", []string{"n"}, nil, "u", time.Unix(0, 0))
+	r := release.New("sha-abc", nil, "u", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	assert.Equal(t, release.StatusParsing, r.Status())
 }
 
 func TestRelease_TransitionParsingToValidating(t *testing.T) {
-	r := release.New("sha-abc", []string{"n"}, nil, "u", time.Unix(0, 0))
+	r := release.New("sha-abc", nil, "u", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	assert.Equal(t, release.StatusValidating, r.Status())
@@ -29,7 +29,7 @@ func TestRelease_TransitionParsingToValidating(t *testing.T) {
 }
 
 func TestRelease_TransitionValidatingToPromoted(t *testing.T) {
-	r := release.New("sha-abc", []string{"n"}, nil, "u", time.Unix(0, 0))
+	r := release.New("sha-abc", nil, "u", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.TransitionToPromoted(time.Unix(3, 0)))
@@ -37,7 +37,7 @@ func TestRelease_TransitionValidatingToPromoted(t *testing.T) {
 }
 
 func TestRelease_TransitionValidatingToRejected(t *testing.T) {
-	r := release.New("sha-abc", []string{"n"}, nil, "u", time.Unix(0, 0))
+	r := release.New("sha-abc", nil, "u", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.TransitionToRejected("validation_failed", []string{"n"}, "s3://logs", time.Unix(3, 0)))
@@ -46,13 +46,13 @@ func TestRelease_TransitionValidatingToRejected(t *testing.T) {
 }
 
 func TestRelease_CannotSkipStates(t *testing.T) {
-	r := release.New("sha-abc", []string{"n"}, nil, "u", time.Unix(0, 0))
+	r := release.New("sha-abc", nil, "u", time.Unix(0, 0))
 	assert.Error(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(1, 0)))
 	assert.Error(t, r.TransitionToPromoted(time.Unix(1, 0)))
 }
 
 func TestRelease_CannotDoublePromote(t *testing.T) {
-	r := release.New("sha-abc", []string{"n"}, nil, "u", time.Unix(0, 0))
+	r := release.New("sha-abc", nil, "u", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.TransitionToPromoted(time.Unix(3, 0)))
@@ -60,7 +60,7 @@ func TestRelease_CannotDoublePromote(t *testing.T) {
 }
 
 func TestRelease_TransitionsAreRecorded(t *testing.T) {
-	r := release.New("sha-abc", []string{"n"}, nil, "u", time.Unix(0, 0))
+	r := release.New("sha-abc", nil, "u", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	transitions := r.Transitions()

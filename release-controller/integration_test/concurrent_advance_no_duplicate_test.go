@@ -27,10 +27,9 @@ func TestIntegration_ConcurrentAdvance_PromotesAtMostOnce(t *testing.T) {
 
 	// Seed a single Received candidate.
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID:      "rA",
-		ChangedNodeIDs: []string{"a"},
-		ImageTags:      map[string]string{"service-1": "sha-rA"},
-		ManifestsURI:   "s3://continuo/releases/rA/manifests/",
+		ReleaseID:    "rA",
+		ImageTags:    map[string]string{"service-1": "sha-rA"},
+		ManifestsURI: "s3://continuo/releases/rA/manifests/",
 	}))
 
 	// Truncate any outbox rows from setup() so the count assertion below is

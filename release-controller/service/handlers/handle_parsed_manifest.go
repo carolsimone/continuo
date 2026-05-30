@@ -90,21 +90,51 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 
 func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
 	topo := joinImageTags(in.Topology, r.ImageTags())
-	validationIDs := release.DescendantsClosure(topo, r.ChangedNodeIDs())
+
+	cp, err := u.CurrentProdRepo().Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get current prod: %w", err)
+	}
+
+	// Derive the validation seed set from the content_hash diff against the
+	// current prod topology: candidate nodes that are new or whose hash changed.
+	// Bootstrap (no prod row) yields an empty prod snapshot, so every candidate
+	// node is treated as new and the whole topology is validated.
+	changed := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
+	validationIDs := release.DescendantsClosure(topo, changed)
 
 	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to validating: %w", err)
 	}
+
+	// Nothing to validate: no candidate node is new or content-changed vs prod
+	// (e.g. a release that only bumps image tags, or removes a node). Emitting an
+	// empty validation.requested would be rejected by executor-controller as a
+	// permanent parse error, so no validation.completed would ever arrive and the
+	// release would block the queue indefinitely. Promote directly instead — an
+	// empty candidate diff trivially passes the gate.
+	if len(validationIDs) == 0 {
+		if err := promoteToProduction(ctx, u, r, in.ReleaseID, now); err != nil {
+			return err
+		}
+		if err := u.Commit(); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
+		// Emit the full lifecycle span sequence (parsed → validated-0-nodes →
+		// promoted) so this no-validation-needed promotion is observable the same
+		// way a normal pass is, just with a zero-node validation.
+		d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
+		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
+		d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
+		return nil
+	}
+
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
 	candidateSchema := "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID)
 
-	cp, err := u.CurrentProdRepo().Get(ctx)
-	if err != nil {
-		return fmt.Errorf("get current prod: %w", err)
-	}
 	deferStateURI := ""
 	if cp.ReleaseID() != "" {
 		deferStateURI = fmt.Sprintf("s3://continuo/releases/%s/manifests/", cp.ReleaseID())

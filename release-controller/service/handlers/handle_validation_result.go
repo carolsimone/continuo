@@ -76,12 +76,18 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	return handleValidationOK(ctx, d, u, r, in, now)
 }
 
-func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, now time.Time) error {
+// promoteToProduction applies the promotion effects shared by the
+// validation-passed path and the nothing-to-validate short-circuit: it points
+// current_prod at this release's candidate topology, transitions the release to
+// Promoted, persists it, and writes the release.promoted:v1 outbox row. The
+// caller owns Begin/Commit and any telemetry. The release must already hold its
+// candidate topology (i.e. be in Validating).
+func promoteToProduction(ctx context.Context, u uow.UnitOfWork, r *release.Release, releaseID string, now time.Time) error {
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	cp.Update(in.ReleaseID, r.CandidateTopology(), now)
+	cp.Update(releaseID, r.CandidateTopology(), now)
 	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
 		return fmt.Errorf("upsert current prod: %w", err)
 	}
@@ -94,25 +100,29 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"release_id": in.ReleaseID,
+		"release_id": releaseID,
 		"topology":   r.CandidateTopology(),
 		"image_tags": r.ImageTags(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+	return u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(in.ReleaseID),
+		AggregateID:   AggregateIDForRelease(releaseID),
 		EventType:     "release_promoted",
 		Payload:       payload,
 		StreamName:    streams.ReleasePromotedV1,
 		Status:        "pending",
 		MaxRetries:    3,
 		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	})
+}
+
+func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, now time.Time) error {
+	if err := promoteToProduction(ctx, u, r, in.ReleaseID, now); err != nil {
+		return err
 	}
 
 	if err := u.Commit(); err != nil {

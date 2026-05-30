@@ -9,20 +9,18 @@ import (
 )
 
 // ReceiveCandidateInput carries the fields required to register a new
-// release candidate. All four fields are mandatory.
+// release candidate. All three fields are mandatory. The changed-node set is
+// not supplied by the caller — release-controller derives it later from the
+// content_hash diff against the current prod topology in HandleParsedManifest.
 type ReceiveCandidateInput struct {
-	ReleaseID      string            `json:"release_id"`
-	ChangedNodeIDs []string          `json:"changed_node_ids"`
-	ImageTags      map[string]string `json:"image_tags"`
-	ManifestsURI   string            `json:"manifests_uri"`
+	ReleaseID    string            `json:"release_id"`
+	ImageTags    map[string]string `json:"image_tags"`
+	ManifestsURI string            `json:"manifests_uri"`
 }
 
 func (i ReceiveCandidateInput) validate() error {
 	if i.ReleaseID == "" {
 		return errors.New("release_id is required")
-	}
-	if len(i.ChangedNodeIDs) == 0 {
-		return errors.New("changed_node_ids must be non-empty")
 	}
 	if len(i.ImageTags) == 0 {
 		return errors.New("image_tags must be non-empty")
@@ -51,13 +49,13 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return u.Commit()
 	}
 
-	r := release.New(in.ReleaseID, in.ChangedNodeIDs, in.ImageTags, in.ManifestsURI, d.Clock.Now())
+	r := release.New(in.ReleaseID, in.ImageTags, in.ManifestsURI, d.Clock.Now())
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseReceived(ctx, in.ReleaseID, len(in.ChangedNodeIDs))
+	d.Telemetry.ReleaseReceived(ctx, in.ReleaseID)
 	return nil
 }

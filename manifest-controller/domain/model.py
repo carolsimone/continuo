@@ -32,6 +32,7 @@ class ManifestNode:
     criticality: str  # "REGULATORY" | "CORE" | "SECONDARY"
     compiled_sql: str
     node_type: str = "dbt-model"  # dbt-model | dbt-seed | dbt-snapshot
+    content_hash: str = ""  # dbt's per-node source checksum (checksum.checksum)
     manifest_version: str = ""
     image_tag: str = ""
     upstream_deps: list[UpstreamDep] = field(default_factory=list)
