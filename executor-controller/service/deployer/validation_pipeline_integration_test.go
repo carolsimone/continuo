@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	executorpg "github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
@@ -160,6 +161,31 @@ func countDeployments(t *testing.T, db *sqlx.DB, query string, args ...any) int 
 	return n
 }
 
+// waitValidationRowsDue blocks until no pending validation row for releaseID has
+// a next_attempt_at in the DB's future. next_attempt_at is stamped with the Go
+// process clock and GetDueBatch compares against the DB's NOW(); on a VM-backed
+// Docker host those clocks can differ by tens of milliseconds, so a row enqueued
+// "now" can read as not-yet-due for a moment. Production dispatches on a 5s tick
+// where this is moot; the test dispatches immediately, so wait for the DB to
+// agree the rows are due before driving the dispatcher.
+func waitValidationRowsDue(t *testing.T, db *sqlx.DB, releaseID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		notYetDue := countDeployments(t, db,
+			`SELECT COUNT(*) FROM executor_deployments
+			 WHERE release_id=$1 AND mode='validation' AND status='pending' AND next_attempt_at > NOW()`,
+			releaseID)
+		if notYetDue == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("validation rows for %s still not due after 5s (host/DB clock skew)", releaseID)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // TestValidationPipeline_EndToEnd drives the whole executor side of the
 // validation pipeline against testcontainer Postgres with a fake K8s deployer:
 // validation.requested:v1 → per-node deployments → dispatch (validation Jobs +
@@ -197,6 +223,12 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 
 	// Step 3: dispatch the batch. Each row → a DeployValidation call + a
 	// node.deployed:v1 trigger; rows move to status=deployed; NO terminal yet.
+	// Wait for the rows to be due first: next_attempt_at is stamped with the Go
+	// process clock while GetDueBatch compares against the DB's NOW(), and on a
+	// VM-backed Docker host (colima) those can differ by tens of ms. Production
+	// dispatches on a 5s tick so the skew is irrelevant there; the test dispatches
+	// immediately, so wait until the DB agrees the rows are due.
+	waitValidationRowsDue(t, db, releaseID)
 	dep := &capturingDeployer{}
 	require.NoError(t, newCapturingDispatcher(db, dep).ProcessBatch(ctx))
 
@@ -277,6 +309,7 @@ func TestValidationPipeline_FailurePath(t *testing.T) {
 	requested := newValidationRequestedBinding(db)
 	require.NoError(t, requested(ctx, requestedXMessage(t, "500-0", releaseID, candidateSchema, deferURI, nodes)))
 
+	waitValidationRowsDue(t, db, releaseID)
 	dep := &capturingDeployer{}
 	require.NoError(t, newCapturingDispatcher(db, dep).ProcessBatch(ctx))
 	require.Len(t, dep.specs(), 3)
