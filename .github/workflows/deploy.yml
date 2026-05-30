@@ -414,42 +414,37 @@ jobs:
           PGPASSWORD=runner psql -h localhost -U continuo_svc -d continuo_dbt \
             -c "CREATE SCHEMA IF NOT EXISTS e2e_schema;"
 
-      - name: Compile + upload manifests + service_metadata sidecars
+      - name: Compile + upload per-release manifests
         working-directory: dbt
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.HETZNER_S3_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.HETZNER_S3_SECRET_ACCESS_KEY }}
-          # Pin sidecars to the same SHA the build-publish-dbt job pushed to Docker Hub.
-          # Executor-controller's buildPodSpec constructs the dbt-job pod image as
-          # <DOCKERHUB_USERNAME>/<service_name>:<image_tag-from-sidecar>, so this SHA
-          # must equal the one this same workflow run just pushed.
-          IMAGE_TAG_PER_SERVICE: "service-1=${{ github.sha }},service-2=${{ github.sha }},service-3=${{ github.sha }}"
         run: |
           uv run python -m dbt_upload load \
             --target hetzner \
-            --services-dir services
+            --services-dir services \
+            --release-id ${{ github.sha }}
 
-      - name: Publish graph rebuild request to ui-service (via SSH tunnel)
+      - name: Trigger blue/green release (POST /releases)
         uses: appleboy/ssh-action@v1
         env:
-          GRAPH_TOKEN: ${{ secrets.CONTINUO_GRAPH_TOKEN }}
           DEPLOY_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: root
           key: ${{ secrets.HETZNER_SSH_KEY }}
           command_timeout: 2m
-          envs: GRAPH_TOKEN,DEPLOY_SHA
+          envs: DEPLOY_SHA
           script: |
             set -euo pipefail
             export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-            kubectl -n continuo run "graph-trigger-${DEPLOY_SHA}" \
+            BODY="{\"release_id\":\"${DEPLOY_SHA}\",\"image_tags\":{\"service-1\":\"${DEPLOY_SHA}\",\"service-2\":\"${DEPLOY_SHA}\",\"service-3\":\"${DEPLOY_SHA}\"},\"manifests_uri\":\"s3://continuo-dev/releases/${DEPLOY_SHA}/manifests/\"}"
+            kubectl -n continuo run "release-trigger-${DEPLOY_SHA}" \
               --rm -i --restart=Never \
               --image=curlimages/curl:8.10.1 \
               --command -- \
               curl --fail-with-body --silent --show-error \
-                -X POST "http://ui-service:8090/api/graph/update" \
-                -H "Authorization: Bearer ${GRAPH_TOKEN}" \
+                -X POST "http://release-controller:8088/releases" \
                 -H "X-Request-Id: deploy-${DEPLOY_SHA}" \
                 -H "Content-Type: application/json" \
-                -d '{"source":"s3"}'
+                -d "${BODY}"
