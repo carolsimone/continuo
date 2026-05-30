@@ -35,6 +35,18 @@ type SourceFQN struct {
 	FQN
 }
 
+// Annotation keys carrying the RAW (unsanitized) release/node identity on a
+// validation Job. They are the cross-service contract between executor-controller
+// (which stamps them) and k8s-controller (which reads them into
+// validation.node.completed:v1). Labels are sanitized for K8s (charset + 63-char
+// limit) and serve only routing/selection; these annotations preserve the exact
+// values so the executor's outcome lookup matches the unmodified
+// executor_deployments key.
+const (
+	AnnotationReleaseID = "continuo.dev/release-id"
+	AnnotationNodeID    = "continuo.dev/node-id"
+)
+
 // NodeType represents the dbt resource type for a graph node.
 type NodeType string
 

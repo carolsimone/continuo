@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
+	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -27,6 +28,11 @@ import (
 // *sqlx.Tx the dispatcher opens per batch). Injecting it keeps the concrete
 // Postgres adapter out of this package.
 type RepoFactory func(exec outbox.Executor) repository.DeploymentRepository
+
+// ValidationAggRepoFactory builds a ValidationAggregateRepository bound to the
+// per-batch executor, mirroring RepoFactory so the concrete Postgres sentinel
+// adapter stays out of this package.
+type ValidationAggRepoFactory func(exec outbox.Executor) repository.ValidationAggregateRepository
 
 // DispatcherConfig groups the optional knobs.
 type DispatcherConfig struct {
@@ -43,6 +49,7 @@ type Dispatcher struct {
 	db            *sqlx.DB
 	deployer      deploy.Deployer
 	newRepo       RepoFactory
+	newAggRepo    ValidationAggRepoFactory
 	maxConcurrent int
 	logger        *slog.Logger
 	tick          time.Duration
@@ -55,6 +62,7 @@ func NewDispatcher(
 	db *sqlx.DB,
 	deployer deploy.Deployer,
 	newRepo RepoFactory,
+	newAggRepo ValidationAggRepoFactory,
 	maxConcurrent int,
 	logger *slog.Logger,
 	cfg DispatcherConfig,
@@ -75,6 +83,7 @@ func NewDispatcher(
 		db:            db,
 		deployer:      deployer,
 		newRepo:       newRepo,
+		newAggRepo:    newAggRepo,
 		maxConcurrent: maxConcurrent,
 		logger:        logger,
 		tick:          cfg.Tick,
@@ -147,6 +156,7 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 	}()
 
 	repo := d.newRepo(tx)
+	aggRepo := d.newAggRepo(tx)
 	outboxRepo := outbox.NewPostgresRepository(tx, "executor_outbox", d.logger)
 
 	due, err := repo.GetDueBatch(ctx, 1)
@@ -161,7 +171,7 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	if err := d.dispatchOne(ctx, repo, outboxRepo, due[0]); err != nil {
+	if err := d.dispatchOne(ctx, repo, outboxRepo, aggRepo, due[0]); err != nil {
 		return false, fmt.Errorf("dispatch deployment %s: %w", due[0].ID(), err)
 	}
 
@@ -172,7 +182,11 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, dep *model.Deployment) error {
+func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
+	if dep.Mode() == model.ModeValidation {
+		return d.dispatchValidation(ctx, repo, outboxRepo, aggRepo, dep)
+	}
+
 	now := d.now()
 
 	// A row whose job_params could not be deserialized is unrunnable; fail it
@@ -209,6 +223,73 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	return repo.Save(ctx, dep)
 }
 
+// dispatchValidation handles a mode=validation row. On success it marks the row
+// deployed and emits a node.deployed:v1 trigger so k8s-controller status-checks
+// the validation Job (it never polls); it skips the production-only
+// task_status_updated announcement. The per-node terminal outcome ("ok"/"failed")
+// arrives later via validation.node.completed:v1 and is attached by the outcome
+// handler, which then triggers the aggregate emit. A validation row that cannot be dispatched
+// (not deployable, or a permanent pre-deploy deployer error) is failed terminally
+// here via FailValidation — which sets a "failed" outcome from pending without
+// requiring StatusDeployed — and we attempt the aggregate emit so a release whose
+// last outstanding node fails at dispatch still announces its (failed) result.
+func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
+	now := d.now()
+
+	if !dep.IsDeployable() {
+		if err := dep.FailValidation("validation deployment not deployable", now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate. The gate reads
+		// PendingValidationCount and must see this node as terminal (its own
+		// uncommitted write is visible within this transaction); otherwise it
+		// counts the row as still pending, skips the emission, and no later
+		// validation.node.completed event will re-run the gate for this release.
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now)
+	}
+
+	deployErr := d.deployer.DeployValidation(ctx, dep.ValidationCommand().ToValidationJobSpec())
+	if deployErr == nil {
+		if err := dep.MarkDeployed(now); err != nil {
+			return err
+		}
+		if err := d.writeValidationDeployedTrigger(ctx, outboxRepo, dep); err != nil {
+			return err
+		}
+		return repo.Save(ctx, dep)
+	}
+
+	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
+	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) { // terminal
+		d.logger.Error("Validation deploy terminal failure",
+			"deployment_id", dep.ID(), "release_id", dep.ReleaseID(), "node_id", dep.NodeID(), "cause", deployErr)
+		if err := dep.FailValidation(deployErr.Error(), now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate so PendingValidationCount
+		// sees this node as terminal (see the not-deployable branch above).
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now)
+	}
+	d.logger.Warn("Validation deploy transient failure — rescheduling",
+		"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
+	return repo.Save(ctx, dep)
+}
+
+// maybeEmitValidationAggregate runs the shared per-release aggregate-emit gate
+// inside the dispatcher's per-batch transaction. The logic lives in
+// service/validation so the validation.node.completed:v1 handler runs the
+// identical gate under its own Unit-of-Work.
+func (d *Dispatcher) maybeEmitValidationAggregate(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, releaseID string, now time.Time) error {
+	return validation.EmitValidationAggregateIfComplete(
+		ctx, repo, outboxRepo, aggRepo, validation.DedupNamespace, releaseID, now)
+}
+
 func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	cmd := dep.Command()
 	if err := d.createOutbox(ctx, outboxRepo, dep, "task_status_updated", streams.TaskStatusUpdatedV1,
@@ -223,6 +304,54 @@ func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo 
 	}
 	if err := d.createOutbox(ctx, outboxRepo, dep, "node_deployed", streams.NodeDeployedV1, deployed); err != nil {
 		return fmt.Errorf("write node_deployed announcement: %w", err)
+	}
+	return nil
+}
+
+// writeValidationDeployedTrigger emits the node.deployed:v1 trigger after a
+// validation Job is created. k8s-controller is event-driven and never polls, so
+// without this row the validation Job would never be status-checked and the
+// release would hang in "validating". This is NOT the production success path:
+// it writes only the node_deployed check trigger and skips the production-only
+// task_status_updated / RUNNING announcement (validation rows have no real
+// task/schedule, so there is no UI task status to advance). The per-node
+// terminal outcome still arrives later via validation.node.completed:v1.
+//
+// The trigger carries the deterministic synthetic task/schedule UUIDs derived
+// from (release_id, node_id). They are inert carriers for validation: the
+// k8s-controller routes the resulting check by the Job's mode=validation label,
+// not by these IDs — they only need to be valid UUIDs so ParseNodeDeployed
+// accepts the message, and to satisfy the outbox AggregateID.
+func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
+	vc := dep.ValidationCommand()
+	taskID, scheduleID := model.ValidationSyntheticIDs(dep.ReleaseID(), dep.NodeID())
+	deployed := event.JobDeployed{
+		TaskID:         taskID.String(),
+		ScheduleID:     scheduleID.String(),
+		ScheduleName:   "", // validation has no schedule
+		ServiceName:    vc.ServiceName,
+		SchemaName:     vc.SchemaName,
+		TableName:      vc.TableName,
+		JobName:        vc.JobName,
+		NodeType:       vc.NodeType,
+		ImageTag:       vc.ImageTag,
+		TaskRetryCount: 0,
+		MaxRetries:     0,
+	}
+	body, err := json.Marshal(deployed)
+	if err != nil {
+		return fmt.Errorf("marshal validation node_deployed payload: %w", err)
+	}
+	if err := outboxRepo.Create(ctx, &outbox.Entry{
+		MessageProcessingID: dep.MessageProcessingID(),
+		AggregateType:       "task",
+		AggregateID:         taskID,
+		EventType:           "node_deployed",
+		Payload:             body,
+		StreamName:          streams.NodeDeployedV1,
+		MaxRetries:          3,
+	}); err != nil {
+		return fmt.Errorf("write validation node_deployed trigger: %w", err)
 	}
 	return nil
 }

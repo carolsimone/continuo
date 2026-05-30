@@ -14,17 +14,21 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
 // --- fakes ---
 
 type fakeK8sClient struct {
-	status *model.K8sPodResult
-	err    error
+	status      *model.K8sPodResult
+	err         error
+	labels      map[string]string
+	annotations map[string]string
 }
 
 func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
@@ -33,6 +37,10 @@ func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8s
 
 func (f *fakeK8sClient) GetPodLogs(_ context.Context, _, _ string, _ int64) (string, string, error) {
 	return "", "", nil
+}
+
+func (f *fakeK8sClient) GetJobMeta(_ context.Context, _, _ string) (labels, annotations map[string]string, err error) {
+	return f.labels, f.annotations, nil
 }
 
 type fakeLogUploader struct{}
@@ -593,8 +601,8 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 
 	// Verify the node_status_updated stream is correct
 	nodeEntry := findEntryByEventType(entries, "node_status_updated")
-	if nodeEntry != nil && nodeEntry.StreamName != "node.updated:v1" {
-		t.Errorf("node_status_updated stream: expected node.updated:v1, got %q", nodeEntry.StreamName)
+	if nodeEntry != nil && nodeEntry.StreamName != streams.NodeUpdatedV1 {
+		t.Errorf("node_status_updated stream: expected %s, got %q", streams.NodeUpdatedV1, nodeEntry.StreamName)
 	}
 }
 
@@ -662,6 +670,324 @@ func TestHandleSucceeded(t *testing.T) {
 	}
 	if execPayload.ExecutionSeconds != 5.0 {
 		t.Errorf("expected execution_seconds=5.0, got %f", execPayload.ExecutionSeconds)
+	}
+}
+
+// TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly verifies
+// that a succeeded Job carrying mode=validation emits exactly one
+// validation_node_completed row (outcome=ok, release_id/node_id from labels) and
+// none of the three production task-status rows.
+func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			labels: map[string]string{"mode": "validation"},
+			annotations: map[string]string{
+				pkgmodel.AnnotationReleaseID: "rel-123",
+				pkgmodel.AnnotationNodeID:    "node-abc",
+			},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "validate-node-abc",
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly 1 outbox entry (validation_node_completed), got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.EventType != "validation_node_completed" {
+		t.Errorf("expected event_type=validation_node_completed, got %q", entry.EventType)
+	}
+	if entry.StreamName != streams.ValidationNodeCompletedV1 {
+		t.Errorf("expected stream=%s, got %q", streams.ValidationNodeCompletedV1, entry.StreamName)
+	}
+	if entry.AggregateType != "release" {
+		t.Errorf("expected aggregate_type=release, got %q", entry.AggregateType)
+	}
+
+	// Ensure no production rows leaked in.
+	for _, e := range entries {
+		switch e.EventType {
+		case "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+			t.Errorf("unexpected production outbox row %q for validation Job", e.EventType)
+		}
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal validation_node_completed: %v", err)
+	}
+	if payload["release_id"] != "rel-123" {
+		t.Errorf("expected release_id=rel-123, got %v", payload["release_id"])
+	}
+	if payload["node_id"] != "node-abc" {
+		t.Errorf("expected node_id=node-abc, got %v", payload["node_id"])
+	}
+	if payload["outcome"] != "ok" {
+		t.Errorf("expected outcome=ok, got %v", payload["outcome"])
+	}
+}
+
+// TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed verifies a failed
+// validation Job emits a single row with outcome=failed.
+func TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: failedResult(),
+			labels: map[string]string{"mode": "validation"},
+			annotations: map[string]string{
+				pkgmodel.AnnotationReleaseID: "rel-9",
+				pkgmodel.AnnotationNodeID:    "node-z",
+			},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "validate-node-z",
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(outbox.entries) != 1 {
+		t.Fatalf("expected exactly 1 outbox entry, got %d", len(outbox.entries))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(outbox.entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["outcome"] != "failed" {
+		t.Errorf("expected outcome=failed, got %v", payload["outcome"])
+	}
+}
+
+// TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll verifies a
+// still-running (or briefly Unknown) validation Job is re-polled: the handler
+// writes exactly one check.k8s:v1 re-poll ticket and no validation.node.completed
+// or production rows. Without this the Job would be checked once and dropped,
+// hanging the release.
+func TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T) {
+	for _, status := range []model.JobStatus{model.JobStatusRunning, model.JobStatusUnknown} {
+		outbox := &fakeOutboxRepo{}
+		handler := newHandler(
+			&fakeK8sClient{
+				status: &model.K8sPodResult{Status: status},
+				labels: map[string]string{"mode": "validation"},
+				annotations: map[string]string{
+					pkgmodel.AnnotationReleaseID: "rel-1",
+					pkgmodel.AnnotationNodeID:    "node-1",
+				},
+			},
+			noopCancelledRepo(), 3,
+		)
+
+		cmd := command.CheckJobStatus{
+			TaskID:     uuid.New(),
+			ScheduleID: uuid.New(),
+			JobName:    "validate-node-1",
+			MaxRetries: 3,
+		}
+
+		if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			t.Fatalf("Handle (%s): %v", status, err)
+		}
+		entries := outbox.entries
+		if len(entries) != 1 {
+			t.Fatalf("status %s: expected exactly 1 check.k8s:v1 re-poll row, got %d", status, len(entries))
+		}
+		if entries[0].EventType != "check_delayed" {
+			t.Errorf("status %s: expected event_type=check_delayed, got %q", status, entries[0].EventType)
+		}
+		if entries[0].StreamName != streams.CheckK8sV1 {
+			t.Errorf("status %s: expected stream=%s, got %q", status, streams.CheckK8sV1, entries[0].StreamName)
+		}
+		for _, e := range entries {
+			switch e.EventType {
+			case "validation_node_completed", "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+				t.Errorf("status %s: unexpected non-repoll row %q for running validation Job", status, e.EventType)
+			}
+		}
+	}
+}
+
+// TestHandle_ValidationModeLabel_RunningThenSucceeded_EmitsNodeCompletedOnlyOnTerminal
+// drives the re-poll lifecycle at the unit level: the first check (Running) writes
+// a single check.k8s:v1 re-poll and emits nothing terminal; the second check
+// (Succeeded) emits exactly one validation_node_completed.
+func TestHandle_ValidationModeLabel_RunningThenSucceeded_EmitsNodeCompletedOnlyOnTerminal(t *testing.T) {
+	labels := map[string]string{"mode": "validation"}
+	annotations := map[string]string{
+		pkgmodel.AnnotationReleaseID: "rel-7",
+		pkgmodel.AnnotationNodeID:    "node-7",
+	}
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "validate-node-7",
+		MaxRetries: 3,
+	}
+
+	// First check: Running → one re-poll, nothing terminal.
+	runningOutbox := &fakeOutboxRepo{}
+	runningHandler := newHandler(
+		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}, labels: labels, annotations: annotations},
+		noopCancelledRepo(), 3,
+	)
+	if err := runningHandler.Handle(context.Background(), newFakeUoW(runningOutbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle (running): %v", err)
+	}
+	if len(runningOutbox.entries) != 1 || runningOutbox.entries[0].EventType != "check_delayed" {
+		t.Fatalf("running check: expected 1 check_delayed re-poll, got %v", eventTypesOf(runningOutbox.entries))
+	}
+
+	// Re-check: Succeeded → one validation_node_completed.
+	doneOutbox := &fakeOutboxRepo{}
+	doneHandler := newHandler(
+		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusSucceeded}, labels: labels, annotations: annotations},
+		noopCancelledRepo(), 3,
+	)
+	if err := doneHandler.Handle(context.Background(), newFakeUoW(doneOutbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle (succeeded): %v", err)
+	}
+	if len(doneOutbox.entries) != 1 || doneOutbox.entries[0].EventType != "validation_node_completed" {
+		t.Fatalf("terminal check: expected 1 validation_node_completed, got %v", eventTypesOf(doneOutbox.entries))
+	}
+}
+
+// TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations verifies the I2 fix:
+// a node_id that sanitizeK8sLabel WOULD alter (out-of-charset chars and >63 chars)
+// is carried losslessly via Job annotations into the validation.node.completed
+// payload, so the executor's raw-keyed outcome lookup matches.
+func TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations(t *testing.T) {
+	// Out-of-charset chars (: / +) AND >63 chars: sanitizeK8sLabel would both
+	// replace and truncate this, so a label round-trip would desync the lookup.
+	rawNodeID := "service-1.analytics.my_model:with/colon+" + repeatStr("x", 60)
+	rawReleaseID := "release/2026-05-29T12:00:00+00:00"
+
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			labels: map[string]string{"mode": "validation"},
+			annotations: map[string]string{
+				pkgmodel.AnnotationReleaseID: rawReleaseID,
+				pkgmodel.AnnotationNodeID:    rawNodeID,
+			},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "validate-node-raw",
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(outbox.entries) != 1 {
+		t.Fatalf("expected 1 validation_node_completed row, got %d", len(outbox.entries))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(outbox.entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["node_id"] != rawNodeID {
+		t.Errorf("node_id not round-tripped: want %q, got %v", rawNodeID, payload["node_id"])
+	}
+	if payload["release_id"] != rawReleaseID {
+		t.Errorf("release_id not round-tripped: want %q, got %v", rawReleaseID, payload["release_id"])
+	}
+}
+
+// repeatStr returns s repeated n times.
+func repeatStr(s string, n int) string {
+	out := ""
+	for i := 0; i < n; i++ {
+		out += s
+	}
+	return out
+}
+
+// eventTypesOf returns the event_type of every entry, for failure messages.
+func eventTypesOf(entries []*pkgoutbox.Entry) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.EventType
+	}
+	return out
+}
+
+// TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange locks the
+// production path: a Job without mode=validation (here mode=production, but a
+// missing label behaves identically) still writes the three production rows.
+func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testing.T) {
+	now := time.Now()
+	for _, labels := range []map[string]string{
+		{"mode": "production"},
+		nil,
+	} {
+		outbox := &fakeOutboxRepo{}
+		handler := newHandler(
+			&fakeK8sClient{
+				status: &model.K8sPodResult{
+					Status:           model.JobStatusSucceeded,
+					StartedAt:        &now,
+					CompletedAt:      &now,
+					ExecutionSeconds: 5.0,
+				},
+				labels: labels,
+			},
+			noopCancelledRepo(), 3,
+		)
+
+		cmd := command.CheckJobStatus{
+			TaskID:     uuid.New(),
+			ScheduleID: uuid.New(),
+			JobName:    "job-prod",
+			MaxRetries: 3,
+		}
+
+		if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			t.Fatalf("Handle (labels=%v): %v", labels, err)
+		}
+
+		entries := outbox.entries
+		if len(entries) != 3 {
+			t.Fatalf("labels=%v: expected 3 production outbox rows, got %d", labels, len(entries))
+		}
+		if got := eventTypeOf(entries, 0); got != "task_status_updated" {
+			t.Errorf("labels=%v: entries[0]: expected task_status_updated, got %q", labels, got)
+		}
+		if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
+			t.Errorf("labels=%v: entries[1]: expected task_execution_recorded, got %q", labels, got)
+		}
+		if got := eventTypeOf(entries, 2); got != "node_status_updated" {
+			t.Errorf("labels=%v: entries[2]: expected node_status_updated, got %q", labels, got)
+		}
+		if findEntryByEventType(entries, "validation_node_completed") != nil {
+			t.Errorf("labels=%v: unexpected validation_node_completed row on production path", labels)
+		}
 	}
 }
 

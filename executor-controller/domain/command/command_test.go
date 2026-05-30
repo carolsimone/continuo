@@ -1,10 +1,12 @@
 package command_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDeployTask_ToJobSpec(t *testing.T) {
@@ -23,4 +25,31 @@ func TestDeployTask_ToJobSpec(t *testing.T) {
 	assert.Equal(t, "orders", spec.TableName)
 	assert.Equal(t, "dbt-model", spec.NodeType)
 	assert.Equal(t, "sha-abc", spec.ImageTag)
+}
+
+func TestValidationDeployTask_SatisfiesCommand(t *testing.T) {
+	var c command.Command = command.ValidationDeployTask{}
+	assert.NotNil(t, c)
+}
+
+func TestValidationDeployTask_JSONRoundTrip(t *testing.T) {
+	orig := command.ValidationDeployTask{
+		ReleaseID:       "rel_123",
+		NodeID:          "node_456",
+		ServiceName:     "dbt",
+		SchemaName:      "public",
+		TableName:       "orders",
+		NodeType:        "dbt-model",
+		ImageTag:        "sha-abc",
+		JobName:         "validate-public-orders",
+		CandidateSchema: "_candidate_rel_123",
+		DeferStateURI:   "s3://continuo/releases/prev/manifests/",
+	}
+
+	raw, err := json.Marshal(orig)
+	require.NoError(t, err)
+
+	var got command.ValidationDeployTask
+	require.NoError(t, json.Unmarshal(raw, &got))
+	assert.Equal(t, orig, got)
 }

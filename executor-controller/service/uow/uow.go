@@ -24,6 +24,7 @@ import (
 type UnitOfWork interface {
 	OutboxRepo() pkgoutbox.Repository
 	DeploymentsRepo() repository.DeploymentRepository
+	ValidationAggregateRepo() repository.ValidationAggregateRepository
 	CancelledSchedulesRepo() postgres.CancelledSchedulesRepository
 	MessageProcessingRepo() messageprocessing.Repository
 
@@ -62,6 +63,13 @@ func (u *PostgresUnitOfWork) DeploymentsRepo() repository.DeploymentRepository {
 		return postgres.NewDeploymentsRepository(u.tx, u.logger)
 	}
 	return postgres.NewDeploymentsRepository(u.db, u.logger)
+}
+
+func (u *PostgresUnitOfWork) ValidationAggregateRepo() repository.ValidationAggregateRepository {
+	if u.tx != nil {
+		return postgres.NewValidationAggregateRepository(u.tx)
+	}
+	return postgres.NewValidationAggregateRepository(u.db)
 }
 
 func (u *PostgresUnitOfWork) CancelledSchedulesRepo() postgres.CancelledSchedulesRepository {

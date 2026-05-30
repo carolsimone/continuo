@@ -28,6 +28,26 @@ type DeployTask struct {
 
 func (DeployTask) isCommand() {}
 
+// ValidationDeployTask is the command to deploy one validation node's dbt
+// --empty job. Parallel to DeployTask: production fields stay on DeployTask;
+// validation-only fields (ReleaseID, NodeID, CandidateSchema, DeferStateURI)
+// live here. The dispatcher branches on which command sits behind the
+// executor_deployments row's mode column.
+type ValidationDeployTask struct {
+	ReleaseID       string `json:"release_id"`
+	NodeID          string `json:"node_id"`
+	ServiceName     string `json:"service_name"`
+	SchemaName      string `json:"schema_name"`
+	TableName       string `json:"table_name"`
+	NodeType        string `json:"node_type"`
+	ImageTag        string `json:"image_tag"`
+	JobName         string `json:"job_name"`
+	CandidateSchema string `json:"candidate_schema"`
+	DeferStateURI   string `json:"defer_state_uri"`
+}
+
+func (ValidationDeployTask) isCommand() {}
+
 // ToJobSpec projects the command onto the domain deploy.JobSpec the Deployer
 // port consumes. The mapping is a pure field copy — no infrastructure concern.
 func (c DeployTask) ToJobSpec() deploy.JobSpec {
@@ -41,5 +61,23 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		TableName:    c.TableName,
 		NodeType:     c.NodeType,
 		ImageTag:     c.ImageTag,
+	}
+}
+
+// ToValidationJobSpec projects the command onto the domain
+// deploy.ValidationJobSpec the Deployer port consumes for mode=validation
+// rows. The mapping is a pure field copy — no infrastructure concern.
+func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
+	return deploy.ValidationJobSpec{
+		JobName:         c.JobName,
+		ReleaseID:       c.ReleaseID,
+		NodeID:          c.NodeID,
+		ServiceName:     c.ServiceName,
+		SchemaName:      c.SchemaName,
+		TableName:       c.TableName,
+		NodeType:        c.NodeType,
+		ImageTag:        c.ImageTag,
+		CandidateSchema: c.CandidateSchema,
+		DeferStateURI:   c.DeferStateURI,
 	}
 }

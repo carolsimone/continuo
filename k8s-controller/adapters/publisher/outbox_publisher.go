@@ -117,6 +117,13 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return e.ToMap(), nil
 
+	case "validation_node_completed":
+		// validation.node.completed:v1 carries the per-node result as a single
+		// JSON "payload" field (release_id, node_id, outcome, dbt_log_uri) — the
+		// shape executor-controller's ParseValidationNodeCompleted decodes. The
+		// stored payload is already that body; re-emit it verbatim.
+		return map[string]interface{}{"payload": string(entry.Payload)}, nil
+
 	default:
 		return nil, fmt.Errorf("k8s publisher: unknown event_type %q", entry.EventType)
 	}

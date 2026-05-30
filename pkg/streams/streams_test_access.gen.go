@@ -32,6 +32,7 @@ func PkgConstantsForTest() map[string]string {
 		"ReleaseRequestedV1": ReleaseRequestedV1,
 		"ManifestLoadedCandidateV1": ManifestLoadedCandidateV1,
 		"ValidationRequestedV1": ValidationRequestedV1,
+		"ValidationNodeCompletedV1": ValidationNodeCompletedV1,
 		"ValidationCompletedV1": ValidationCompletedV1,
 		"ReleasePromotedV1": ReleasePromotedV1,
 		"ReleaseRejectedV1": ReleaseRejectedV1,
@@ -60,6 +61,7 @@ func PkgConstantsForTest() map[string]string {
 		"ManifestControllerReleaseRequested": ManifestControllerReleaseRequested,
 		"ReleaseControllerManifestLoadedCandidate": ReleaseControllerManifestLoadedCandidate,
 		"ExecutorValidationRequested": ExecutorValidationRequested,
+		"ExecutorValidationNodeCompleted": ExecutorValidationNodeCompleted,
 		"ReleaseControllerValidationCompleted": ReleaseControllerValidationCompleted,
 		"OrchestratorReleasePromoted": OrchestratorReleasePromoted,
 	}

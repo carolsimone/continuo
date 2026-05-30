@@ -10,6 +10,7 @@ import (
 type FakeK8sClient struct {
 	GetJobStatusFunc func(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error)
 	GetPodLogsFunc   func(ctx context.Context, namespace, jobName string, tailLines int64) (string, string, error)
+	GetJobMetaFunc   func(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error)
 	CallCount        int
 	LastNamespace    string
 	LastJobName      string
@@ -32,4 +33,12 @@ func (f *FakeK8sClient) GetPodLogs(ctx context.Context, namespace, jobName strin
 		return f.GetPodLogsFunc(ctx, namespace, jobName, tailLines)
 	}
 	return "full log line 1\nfull log line 2", "full log line 2", nil
+}
+
+// GetJobMeta implements K8sStatusChecker. Defaults to no labels/annotations (production path).
+func (f *FakeK8sClient) GetJobMeta(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error) {
+	if f.GetJobMetaFunc != nil {
+		return f.GetJobMetaFunc(ctx, namespace, jobName)
+	}
+	return nil, nil, nil
 }

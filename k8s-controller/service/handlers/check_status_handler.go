@@ -13,16 +13,28 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
+// validationLabelNamespace is the immutable UUIDv5 namespace used to derive the
+// validation_node_completed outbox row's AggregateID from the release-id label.
+// It must never change: deriving the aggregate ID deterministically lets a
+// re-observed terminal Job map to the same aggregate for downstream dedup.
+var validationLabelNamespace = uuid.MustParse("a4f1c2e6-8b3d-4f7a-9c1e-2d6b5a0f3e8c")
+
 // K8sStatusChecker defines interface for checking K8s job status
 type K8sStatusChecker interface {
 	GetJobStatus(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error)
 	GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (fullLog, tail string, err error)
+	// GetJobMeta returns the Job's labels and annotations. The `mode` label routes
+	// validation vs production; the raw release/node identity for a validation Job
+	// is read from the annotations (labels are sanitized and would desync the
+	// executor's outcome lookup).
+	GetJobMeta(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error)
 }
 
 // HandlerConfig contains handler configuration
@@ -88,6 +100,38 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 		return nil
 	}
 
+	// A still-running Job is mode-agnostic: re-poll it by writing a check.k8s:v1
+	// ticket. On the next check the Job's mode is re-read and routing recurs, so a
+	// validation Job (always Running on the first node.deployed-triggered check) is
+	// polled until terminal instead of being checked once and dropped. The Job
+	// metadata is only needed to route a terminal result, so it is fetched after
+	// this check — a Job spends most of its checks Running, and skipping the extra
+	// Get there keeps the re-poll loop to a single API call.
+	if result.Status == model.JobStatusRunning {
+		return h.handleRunning(ctx, u, cmd)
+	}
+
+	labels, annotations, err := h.k8sClient.GetJobMeta(ctx, h.config.K8sNamespace, cmd.JobName)
+	if err != nil {
+		return fmt.Errorf("fetch job meta: %w", err)
+	}
+
+	if labels["mode"] == "validation" {
+		return h.handleValidationTerminal(ctx, u, cmd, result, annotations)
+	}
+
+	// Empty metadata means the Job is gone (deleted/TTL-reaped): GetJobMeta maps
+	// NotFound to empty maps. A vanished Job has no mode label, so it falls through
+	// to the production task-status path below — correct for a production Job
+	// (whose NotFound→Failed status must still drive the retry/permanent handlers).
+	// A vanished *validation* Job cannot be identified here (no annotations to
+	// recover release_id/node_id), so its per-node outcome is not emitted; surface
+	// it for operators rather than silently writing production rows for it.
+	if len(labels) == 0 {
+		h.logger.Warn("Job metadata unavailable on terminal check — routing as production; a vanished validation Job will not emit its per-node outcome",
+			"job_name", cmd.JobName, "status", result.Status)
+	}
+
 	switch result.Status {
 	case model.JobStatusSucceeded:
 		return h.handleSucceeded(ctx, u, cmd, result)
@@ -96,8 +140,6 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 			return h.handleFailedPermanent(ctx, u, cmd, result, retryCount)
 		}
 		return h.handleFailedWithRetry(ctx, u, cmd, result, retryCount, maxRetries)
-	case model.JobStatusRunning:
-		return h.handleRunning(ctx, u, cmd)
 	default:
 		return h.handleUnknown(ctx, u, cmd, result)
 	}
@@ -136,6 +178,65 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 		"execution_time", result.ExecutionSeconds,
 	)
 
+	return nil
+}
+
+// handleValidationTerminal emits the per-node validation result for a Job carrying
+// the mode=validation label. It writes a single validation_node_completed outbox row
+// (→ validation.node.completed:v1) instead of the three production task-status rows.
+// release_id and node_id are read from the Job annotations (raw, unsanitized) so
+// they match the executor's executor_deployments key; outcome is derived from the
+// terminal status. An Unknown status is not terminal — the handler re-polls via the
+// shared check.k8s:v1 ticket so a Job that is briefly Unknown (e.g. pods not yet
+// scheduled) is re-checked rather than emitting a premature failure. Running is
+// handled by the shared re-poll before this function is reached.
+func (h *CheckStatusHandler) handleValidationTerminal(
+	ctx context.Context,
+	u uow.UnitOfWork,
+	cmd command.CheckJobStatus,
+	result *model.K8sPodResult,
+	annotations map[string]string,
+) error {
+	if result.Status == model.JobStatusUnknown {
+		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
+	}
+
+	_, logS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
+
+	outcome := "failed"
+	if result.Status == model.JobStatusSucceeded {
+		outcome = "ok"
+	}
+
+	releaseID := annotations[pkgmodel.AnnotationReleaseID]
+	nodeID := annotations[pkgmodel.AnnotationNodeID]
+	payload, err := json.Marshal(map[string]any{
+		"release_id":  releaseID,
+		"node_id":     nodeID,
+		"outcome":     outcome,
+		"dbt_log_uri": logS3Key,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal validation_node_completed payload: %w", err)
+	}
+
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		AggregateType: "release",
+		AggregateID:   uuid.NewSHA1(validationLabelNamespace, []byte("release:"+releaseID)),
+		EventType:     "validation_node_completed",
+		Payload:       payload,
+		StreamName:    streams.ValidationNodeCompletedV1,
+		MaxRetries:    3,
+	}); err != nil {
+		return fmt.Errorf("create validation_node_completed row: %w", err)
+	}
+
+	h.logger.Info("Validation Job terminal — validation_node_completed outbox entry created",
+		"job_name", cmd.JobName,
+		"release_id", releaseID,
+		"node_id", nodeID,
+		"outcome", outcome,
+	)
 	return nil
 }
 

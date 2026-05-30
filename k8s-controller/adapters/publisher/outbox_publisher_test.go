@@ -7,15 +7,45 @@ import (
 	"os"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/publisher"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+func TestPublisher_ValidationNodeCompleted(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	r := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	pub := publisher.NewOutboxPublisher(r, newTestLogger())
+
+	// handleValidationTerminal stores the per-node result body as the entry
+	// payload; the publisher must re-emit it on the "payload" field so the
+	// executor's ParseValidationNodeCompleted can decode it.
+	body := []byte(`{"release_id":"rel_1","node_id":"public.orders","outcome":"ok","dbt_log_uri":"s3://logs/x"}`)
+	id := uuid.New()
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: id, EventType: "validation_node_completed", StreamName: streams.ValidationNodeCompletedV1, Payload: body,
+	}))
+
+	res, err := r.XRange(context.Background(), streams.ValidationNodeCompletedV1, "-", "+").Result()
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	v := res[0].Values
+	assert.Equal(t, id.String(), v["outbox_entry_id"])
+	payloadStr, ok := v["payload"].(string)
+	require.True(t, ok, "expected a string payload field")
+	assert.JSONEq(t, string(body), payloadStr, "stored per-node result re-emitted verbatim")
 }
 
 func TestPublisher_UnknownEventTypeReturnsError(t *testing.T) {

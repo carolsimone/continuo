@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 )
@@ -22,4 +23,33 @@ type DeploymentRepository interface {
 	GetDueBatch(ctx context.Context, limit int) ([]*model.Deployment, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
+	// GetByReleaseNode returns the validation Deployment for (release_id, node_id),
+	// or sql.ErrNoRows when none exists. Used by the validation.node.completed
+	// handler to attach an outcome to the right row.
+	GetByReleaseNode(ctx context.Context, releaseID, nodeID string) (*model.Deployment, error)
+	// PendingValidationCount counts mode='validation' rows for releaseID that
+	// are not yet terminal — i.e. status IN ('pending','deployed') AND
+	// outcome IS NULL. Used by the aggregate-emit gate.
+	PendingValidationCount(ctx context.Context, releaseID string) (int, error)
+	// ListValidationResults returns all mode='validation' rows for releaseID
+	// whose outcome is non-NULL. The dispatcher uses this to build the per-node
+	// results array on the aggregate validation.completed:v1 emission.
+	ListValidationResults(ctx context.Context, releaseID string) ([]*model.Deployment, error)
+}
+
+// ValidationAggregateRepository guards single emission of
+// validation.completed:v1 via the validation_aggregates sentinel table.
+type ValidationAggregateRepository interface {
+	// LockRelease takes a transaction-scoped advisory lock keyed on releaseID,
+	// serializing the aggregate-emit gate (pending-count -> claim -> emit)
+	// across concurrent transactions for the same release. It auto-releases at
+	// commit/rollback. Without it, two overlapping last-node terminals could
+	// each read the other as still pending under READ COMMITTED and both no-op,
+	// hanging the release with no aggregate ever emitted. Must be called inside
+	// a transaction, before PendingValidationCount.
+	LockRelease(ctx context.Context, releaseID string) error
+	// ClaimEmission inserts a sentinel row for releaseID. Returns (true, nil)
+	// if this caller won the race and should emit validation.completed:v1;
+	// returns (false, nil) on PK conflict (another caller already emitted).
+	ClaimEmission(ctx context.Context, releaseID string, now time.Time) (bool, error)
 }

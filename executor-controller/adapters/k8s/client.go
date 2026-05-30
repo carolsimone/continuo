@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 
+	validationmodel "github.com/carolsimone/continuo/executor-controller/domain/model"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	batchv1 "k8s.io/api/batch/v1"
@@ -166,6 +168,144 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 
 	// Step 3: Create the job
 	return c.CreateJob(ctx, job)
+}
+
+// ValidationJobParams represents the parameters needed to create a
+// mode=validation K8s Job. It mirrors JobParams for the production fields a
+// validation node still needs and adds the validation-only fields (release/node
+// identity, candidate schema, defer state).
+type ValidationJobParams struct {
+	JobName     string
+	ReleaseID   string
+	NodeID      string
+	ServiceName string
+	SchemaName  string
+	TableName   string
+	NodeType    pkg_model.NodeType
+	ImageTag    string
+
+	CandidateSchema string
+	DeferStateURI   string
+
+	Namespace string
+}
+
+// CreateValidationJob builds and creates a mode=validation K8s Job
+// (idempotent by job name). The Job carries app=dbt-job so existing watchers
+// stay correct, plus the mode=validation label so k8s-controller routes its
+// terminal status to validation.node.completed:v1. release-id/node-id are stored
+// twice: as sanitized labels (for selection/observability) and as raw
+// annotations (the authoritative identity k8s-controller echoes into the payload).
+func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJobParams) error {
+	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		c.logger.Info("Validation K8s job already exists, skipping creation",
+			"namespace", params.Namespace,
+			"job_name", params.JobName,
+		)
+		return nil
+	}
+
+	podSpec, err := buildValidationPodSpec(params)
+	if err != nil {
+		return fmt.Errorf("failed to build validation pod spec: %w", err)
+	}
+
+	backoffLimit := int32(0)
+	labels := map[string]string{
+		"app":          "dbt-job",
+		"mode":         "validation",
+		"release-id":   sanitizeK8sLabel(params.ReleaseID),
+		"node-id":      sanitizeK8sLabel(params.NodeID),
+		"service_name": params.ServiceName,
+		"schema_name":  params.SchemaName,
+		"table_name":   params.TableName,
+	}
+	annotations := map[string]string{
+		pkg_model.AnnotationReleaseID: params.ReleaseID,
+		pkg_model.AnnotationNodeID:    params.NodeID,
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        params.JobName,
+			Namespace:   params.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+				Spec:       podSpec,
+			},
+		},
+	}
+
+	return c.CreateJob(ctx, job)
+}
+
+// buildValidationPodSpec constructs the PodSpec for a validation node's dbt
+// --empty job. Image construction and the dbt-profile env conventions mirror
+// the production buildPodSpec; the container command comes from
+// model.ValidationDbtCommand, the single source of truth for the validation
+// CLI. An empty ImageTag is a permanent error — content-addressed tags must be
+// explicit.
+func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
+	if p.ImageTag == "" {
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing for service %s",
+			events.ErrPermanent, p.ServiceName)
+	}
+
+	image := p.ServiceName + ":" + p.ImageTag
+	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+		image = user + "/" + image
+	}
+
+	envVars := []corev1.EnvVar{
+		{Name: "RELEASE_ID", Value: p.ReleaseID},
+		{Name: "NODE_ID", Value: p.NodeID},
+		{Name: "SERVICE_NAME", Value: p.ServiceName},
+		{Name: "SCHEMA", Value: p.SchemaName},
+		{Name: "TABLE_NAME", Value: p.TableName},
+		{Name: "JOB_NAME", Value: p.JobName},
+		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
+		// dbt profile connection — forwarded from executor-controller environment
+		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
+		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
+		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
+		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
+		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+	}
+
+	return corev1.PodSpec{
+		RestartPolicy: corev1.RestartPolicyNever,
+		Containers: []corev1.Container{
+			{
+				Name:            "dbt-job",
+				Image:           image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Command:         validationmodel.ValidationDbtCommand(p.NodeType, p.TableName, p.CandidateSchema, p.DeferStateURI),
+				Env:             envVars,
+			},
+		},
+	}, nil
+}
+
+// nonK8sLabel matches characters not allowed in a Kubernetes label value.
+var nonK8sLabel = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
+
+// sanitizeK8sLabel coerces an arbitrary string into a valid Kubernetes label
+// value: disallowed characters become "-" and the result is truncated to the
+// 63-character limit.
+func sanitizeK8sLabel(s string) string {
+	out := nonK8sLabel.ReplaceAllString(s, "-")
+	if len(out) > 63 {
+		out = out[:63]
+	}
+	return out
 }
 
 // CountActiveJobs returns the number of Jobs in the namespace matching

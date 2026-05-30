@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"os"
 	"sync"
@@ -13,7 +14,10 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	executortest "github.com/carolsimone/continuo/executor-controller/test"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -72,6 +76,16 @@ func validCmd() command.DeployTask {
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders",
 		JobName: "dbt-public-orders", NodeType: "dbt-model", ImageTag: "sha-abc",
 		TaskRetryCount: 0, TaskMaxRetries: 2,
+	}
+}
+
+func validValidationCmd(releaseID, nodeID string) command.ValidationDeployTask {
+	return command.ValidationDeployTask{
+		ReleaseID: releaseID, NodeID: nodeID,
+		ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		NodeType: "dbt-model", ImageTag: "sha-cand",
+		JobName: "dbt-validate-public-orders", CandidateSchema: "candidate_rel1",
+		DeferStateURI: "s3://state/prod",
 	}
 }
 
@@ -280,4 +294,268 @@ func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
 	for id, n := range all {
 		assert.Equal(t, 1, n, "row %s claimed by exactly one worker", id)
 	}
+}
+
+func TestAdd_ValidationRow_RoundTrip(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	now := time.Now()
+	cmd := validValidationCmd("rel-1", "node-A")
+	dep := model.NewValidationDeployment(cmd, nil, now)
+	require.NoError(t, repo.Add(context.Background(), dep))
+
+	// The mode/release/node columns and synthetic NOT NULL ids are persisted.
+	var (
+		mode             string
+		releaseID        string
+		nodeID           string
+		taskID, schedule uuid.UUID
+		jobParams        []byte
+	)
+	require.NoError(t, db.QueryRow(
+		`SELECT mode, release_id, node_id, task_id, schedule_id, job_params
+		 FROM executor_deployments WHERE id=$1`, dep.ID(),
+	).Scan(&mode, &releaseID, &nodeID, &taskID, &schedule, &jobParams))
+	assert.Equal(t, "validation", mode)
+	assert.Equal(t, "rel-1", releaseID)
+	assert.Equal(t, "node-A", nodeID)
+	assert.Contains(t, string(jobParams), "dbt-validate-public-orders", "validation command serialized into job_params")
+	require.NotEqual(t, uuid.Nil, taskID)
+	require.NotEqual(t, uuid.Nil, schedule)
+	assert.NotEqual(t, taskID, schedule, "task and schedule synthetic ids must differ")
+
+	// Synthetic ids are deterministic across re-adds of the same (release,node).
+	dep2 := model.NewValidationDeployment(cmd, nil, now)
+	_, delErr := db.Exec(`DELETE FROM executor_deployments WHERE id=$1`, dep.ID())
+	require.NoError(t, delErr)
+	require.NoError(t, repo.Add(context.Background(), dep2))
+	var taskID2, schedule2 uuid.UUID
+	require.NoError(t, db.QueryRow(
+		`SELECT task_id, schedule_id FROM executor_deployments WHERE id=$1`, dep2.ID(),
+	).Scan(&taskID2, &schedule2))
+	assert.Equal(t, taskID, taskID2, "synthetic task_id deterministic for same (release,node)")
+	assert.Equal(t, schedule, schedule2, "synthetic schedule_id deterministic for same (release,node)")
+
+	// Reconstitution via GetByReleaseNode rebuilds the validation aggregate.
+	got, err := repo.GetByReleaseNode(context.Background(), "rel-1", "node-A")
+	require.NoError(t, err)
+	assert.Equal(t, model.ModeValidation, got.Mode())
+	assert.Equal(t, cmd, got.ValidationCommand())
+	assert.Equal(t, "rel-1", got.ReleaseID())
+	assert.Equal(t, "node-A", got.NodeID())
+}
+
+func TestGetByReleaseNode_HitAndMiss(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	dep := model.NewValidationDeployment(validValidationCmd("rel-2", "node-X"), nil, time.Now())
+	require.NoError(t, repo.Add(context.Background(), dep))
+
+	got, err := repo.GetByReleaseNode(context.Background(), "rel-2", "node-X")
+	require.NoError(t, err)
+	assert.Equal(t, dep.ID(), got.ID())
+
+	_, err = repo.GetByReleaseNode(context.Background(), "rel-2", "node-MISSING")
+	assert.ErrorIs(t, err, sql.ErrNoRows, "miss signals sql.ErrNoRows")
+}
+
+func TestPendingValidationCount_PendingDeployedDoneMix(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	ctx := context.Background()
+	now := time.Now()
+
+	// pending row (counts)
+	pending := model.NewValidationDeployment(validValidationCmd("rel-3", "n1"), nil, now)
+	require.NoError(t, repo.Add(ctx, pending))
+
+	// deployed, outcome not yet recorded (counts)
+	deployed := model.NewValidationDeployment(validValidationCmd("rel-3", "n2"), nil, now)
+	require.NoError(t, repo.Add(ctx, deployed))
+	require.NoError(t, deployed.MarkDeployed(now))
+	require.NoError(t, repo.Save(ctx, deployed))
+
+	// deployed + outcome recorded (does NOT count — terminal)
+	done := model.NewValidationDeployment(validValidationCmd("rel-3", "n3"), nil, now)
+	require.NoError(t, repo.Add(ctx, done))
+	require.NoError(t, done.MarkDeployed(now))
+	require.NoError(t, done.RecordOutcome("ok", "s3://logs/n3", now))
+	require.NoError(t, repo.Save(ctx, done))
+
+	// a different release's pending row must not leak into the count
+	other := model.NewValidationDeployment(validValidationCmd("rel-OTHER", "n1"), nil, now)
+	require.NoError(t, repo.Add(ctx, other))
+
+	count, err := repo.PendingValidationCount(ctx, "rel-3")
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "pending + deployed-without-outcome count; outcomed row excluded")
+}
+
+func TestListValidationResults_OnlyOutcomedRows(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	ctx := context.Background()
+	now := time.Now()
+
+	// outcomed ok
+	okDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n1"), nil, now)
+	require.NoError(t, repo.Add(ctx, okDep))
+	require.NoError(t, okDep.MarkDeployed(now))
+	require.NoError(t, okDep.RecordOutcome("ok", "s3://logs/n1", now))
+	require.NoError(t, repo.Save(ctx, okDep))
+
+	// outcomed failed (later outcome_at so it orders second)
+	failDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n2"), nil, now)
+	require.NoError(t, repo.Add(ctx, failDep))
+	require.NoError(t, failDep.MarkDeployed(now))
+	require.NoError(t, failDep.RecordOutcome("failed", "s3://logs/n2", now.Add(time.Second)))
+	require.NoError(t, repo.Save(ctx, failDep))
+
+	// pending, no outcome — excluded
+	pending := model.NewValidationDeployment(validValidationCmd("rel-4", "n3"), nil, now)
+	require.NoError(t, repo.Add(ctx, pending))
+
+	results, err := repo.ListValidationResults(ctx, "rel-4")
+	require.NoError(t, err)
+	require.Len(t, results, 2, "only outcomed rows returned")
+	assert.Equal(t, "ok", results[0].Outcome(), "ordered by outcome_at ASC")
+	assert.Equal(t, "s3://logs/n1", results[0].DBTLogURI())
+	require.NotNil(t, results[0].OutcomeAt())
+	assert.Equal(t, "failed", results[1].Outcome())
+	assert.Equal(t, "n2", results[1].NodeID())
+}
+
+func TestClaimEmission_FirstCallerWins_SecondReturnsFalse(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewValidationAggregateRepository(db)
+	ctx := context.Background()
+	now := time.Now()
+
+	won, err := repo.ClaimEmission(ctx, "rel-5", now)
+	require.NoError(t, err)
+	assert.True(t, won, "first caller claims emission")
+
+	won2, err := repo.ClaimEmission(ctx, "rel-5", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.False(t, won2, "second caller loses on PK conflict")
+
+	// a distinct release is independent
+	wonOther, err := repo.ClaimEmission(ctx, "rel-6", now)
+	require.NoError(t, err)
+	assert.True(t, wonOther)
+}
+
+// seedDeployedValidationNode inserts a mode=validation row in status=deployed
+// with no outcome yet — i.e. one that PendingValidationCount counts as pending.
+func seedDeployedValidationNode(t *testing.T, db *sqlx.DB, releaseID, nodeID string, now time.Time) {
+	t.Helper()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	dep := model.NewValidationDeployment(validValidationCmd(releaseID, nodeID), nil, now)
+	require.NoError(t, repo.Add(context.Background(), dep))
+	require.NoError(t, dep.MarkDeployed(now))
+	require.NoError(t, repo.Save(context.Background(), dep))
+}
+
+// runGateInTx mirrors a production call site: inside one transaction it records
+// the terminal outcome for (releaseID, nodeID) and runs the aggregate-emit gate
+// (LockRelease -> PendingValidationCount -> ClaimEmission -> emit) over the
+// executor_outbox. The caller decides when to commit so the test can hold one
+// tx's advisory lock open while a second tx blocks on it.
+func runGateInTx(t *testing.T, tx *sqlx.Tx, releaseID, nodeID string, now time.Time) error {
+	t.Helper()
+	logger := testLogger()
+	depRepo := postgres.NewDeploymentsRepository(tx, logger)
+	dep, err := depRepo.GetByReleaseNode(context.Background(), releaseID, nodeID)
+	require.NoError(t, err)
+	require.NoError(t, dep.RecordOutcome("ok", "", now))
+	require.NoError(t, depRepo.Save(context.Background(), dep))
+
+	return validation.EmitValidationAggregateIfComplete(
+		context.Background(),
+		depRepo,
+		outbox.NewPostgresRepository(tx, "executor_outbox", logger),
+		postgres.NewValidationAggregateRepository(tx),
+		validation.DedupNamespace,
+		releaseID,
+		now,
+	)
+}
+
+func countValidationCompletedOutbox(t *testing.T, db *sqlx.DB, releaseID string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow(
+		`SELECT count(*) FROM executor_outbox WHERE stream_name = $1 AND payload::jsonb->>'release_id' = $2`,
+		streams.ValidationCompletedV1, releaseID,
+	).Scan(&n))
+	return n
+}
+
+// TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce is the I1 regression
+// guard. Two mode=validation nodes for one release are both deployed-without-
+// outcome (PendingValidationCount == 2). Two concurrent transactions each mark
+// their node terminal and run the gate — the dispatcher-vs-consumer overlap that
+// previously lost the emission: under READ COMMITTED both counts saw the other
+// node as still pending and both no-op'd.
+//
+// The per-release advisory lock taken at the top of the gate serializes the two
+// transactions: tx_B blocks on LockRelease until tx_A commits, then sees
+// pending==0 and the sentinel resolves it to exactly one emission. The test
+// drives that interleaving deterministically — tx_A holds the lock until a
+// barrier confirms tx_B is parked on it — and asserts EXACTLY ONE
+// validation.completed:v1 row results (never zero, never two).
+func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	const releaseID = "rel-race"
+
+	seedDeployedValidationNode(t, db, releaseID, "n1", now)
+	seedDeployedValidationNode(t, db, releaseID, "n2", now)
+
+	txA, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	txB, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+
+	// tx_A records n1's outcome and runs the gate, taking the advisory lock. It
+	// sees n2 as still pending (n2's outcome is uncommitted in tx_B), so it does
+	// NOT emit yet. It keeps the lock until commit.
+	require.NoError(t, runGateInTx(t, txA, releaseID, "n1", now))
+
+	// tx_B runs the gate in a goroutine; LockRelease must block on tx_A's lock.
+	bDone := make(chan error, 1)
+	go func() { bDone <- runGateInTx(t, txB, releaseID, "n2", now) }()
+
+	// Confirm tx_B is genuinely parked on the lock (not racing ahead): it must
+	// NOT finish while tx_A still holds the advisory lock.
+	select {
+	case err := <-bDone:
+		t.Fatalf("tx_B gate returned before tx_A committed — advisory lock did not serialize (err=%v)", err)
+	case <-time.After(500 * time.Millisecond):
+		// blocked as required
+	}
+
+	// Releasing tx_A unblocks tx_B; it now sees both nodes terminal (n1 committed,
+	// n2 its own) and wins the sentinel, emitting exactly once.
+	require.NoError(t, txA.Commit())
+
+	select {
+	case err := <-bDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("tx_B gate did not complete after tx_A committed")
+	}
+	require.NoError(t, txB.Commit())
+
+	assert.Equal(t, 1, countValidationCompletedOutbox(t, db, releaseID),
+		"exactly one validation.completed:v1 row — never zero (lost) and never two (double)")
 }

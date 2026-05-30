@@ -191,6 +191,29 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 	return result, nil
 }
 
+// GetJobMeta returns the labels and annotations stamped on a Job in one API call.
+// The terminal-status handler reads the `mode` label to decide whether a Job is a
+// validation Job (emitting a single validation_node_completed row) or a production
+// task Job (emitting the three production task-status rows). For validation Jobs it
+// reads the RAW release/node identity from the annotations — labels are sanitized
+// (charset + 63-char limit) and would desync the executor's outcome lookup.
+func (c *K8sClient) GetJobMeta(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error) {
+	job, err := c.clientset.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// The Job is gone (deleted, or TTL-reaped). There is no metadata to
+			// route on, so return empty maps rather than an error: GetJobStatus
+			// has already mapped NotFound to JobStatusFailed, and absent labels
+			// route to the production failure path so the existing retry/
+			// permanent-failure handlers still emit their outbox rows. Failing
+			// here instead would strand the check message as a transient error.
+			return map[string]string{}, map[string]string{}, nil
+		}
+		return nil, nil, fmt.Errorf("get job meta: %w", err)
+	}
+	return job.Labels, job.Annotations, nil
+}
+
 // GetPodLogs fetches logs for the first pod of a completed job.
 // Returns both the full log and the last tailLines lines.
 // Returns empty strings if no pod is found or no logs are available.

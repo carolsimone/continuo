@@ -16,10 +16,11 @@ import (
 // Construct it with fake repo implementations satisfying the
 // pkgoutbox.Repository and messageprocessing.* interfaces. Tx() returns nil.
 type FakeUnitOfWork struct {
-	Outbox            pkgoutbox.Repository
-	Deployments       repository.DeploymentRepository
-	Cancelled         postgres.CancelledSchedulesRepository
-	MessageProcessing messageprocessing.Repository
+	Outbox              pkgoutbox.Repository
+	Deployments         repository.DeploymentRepository
+	ValidationAggregate repository.ValidationAggregateRepository
+	Cancelled           postgres.CancelledSchedulesRepository
+	MessageProcessing   messageprocessing.Repository
 
 	BeginCalled    int
 	CommitCalled   int
@@ -30,6 +31,9 @@ type FakeUnitOfWork struct {
 
 func (f *FakeUnitOfWork) OutboxRepo() pkgoutbox.Repository                 { return f.Outbox }
 func (f *FakeUnitOfWork) DeploymentsRepo() repository.DeploymentRepository { return f.Deployments }
+func (f *FakeUnitOfWork) ValidationAggregateRepo() repository.ValidationAggregateRepository {
+	return f.ValidationAggregate
+}
 func (f *FakeUnitOfWork) CancelledSchedulesRepo() postgres.CancelledSchedulesRepository {
 	return f.Cancelled
 }

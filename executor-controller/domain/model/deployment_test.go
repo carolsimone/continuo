@@ -88,6 +88,140 @@ func TestRegisterFailure_PermanentFailsImmediately(t *testing.T) {
 	assert.Equal(t, model.StatusFailed, d.Status())
 }
 
+func validationCmd() command.ValidationDeployTask {
+	return command.ValidationDeployTask{
+		ReleaseID: uuid.New().String(), NodeID: uuid.New().String(),
+		JobName: "dbt-public-orders", NodeType: "dbt-model",
+		ImageTag: "sha-abc123", CandidateSchema: "candidate_orders",
+	}
+}
+
+func TestNewValidationDeployment_Defaults(t *testing.T) {
+	now := time.Now()
+	cmd := validationCmd()
+	d := model.NewValidationDeployment(cmd, nil, now)
+
+	assert.NotEqual(t, uuid.Nil, d.ID())
+	assert.Equal(t, model.ModeValidation, d.Mode())
+	assert.Equal(t, cmd.ReleaseID, d.ReleaseID())
+	assert.Equal(t, cmd.NodeID, d.NodeID())
+	assert.Equal(t, model.StatusPending, d.Status())
+	assert.Equal(t, 3, d.MaxRetries(), "default deploy-attempt budget")
+	assert.Equal(t, now, d.NextAttemptAt(), "due immediately")
+	assert.Equal(t, "", d.Outcome(), "no outcome until recorded")
+	assert.Nil(t, d.OutcomeAt())
+	assert.True(t, d.IsDeployable())
+}
+
+func TestNewDeployment_ModeProduction(t *testing.T) {
+	d := model.NewDeployment(deployableCmd(), nil, time.Now())
+	assert.Equal(t, model.ModeProduction, d.Mode(), "production constructor sets mode explicitly")
+}
+
+func TestValidationIsDeployable_FalseWhenIncomplete(t *testing.T) {
+	cmd := command.ValidationDeployTask{ReleaseID: uuid.New().String(), NodeID: uuid.New().String()}
+	d := model.NewValidationDeployment(cmd, nil, time.Now())
+	assert.False(t, d.IsDeployable(), "missing JobName/NodeType/ImageTag => not deployable")
+}
+
+func TestRecordOutcome_OnlyFromDeployed(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now)
+
+	// pending => rejected
+	assert.Error(t, d.RecordOutcome("ok", "s3://logs/run", now))
+
+	require.NoError(t, d.MarkDeployed(now))
+	require.NoError(t, d.RecordOutcome("ok", "s3://logs/run", now))
+	assert.Equal(t, "ok", d.Outcome())
+	assert.Equal(t, "s3://logs/run", d.DBTLogURI())
+	require.NotNil(t, d.OutcomeAt())
+	assert.Equal(t, now, *d.OutcomeAt())
+}
+
+func TestRecordOutcome_AcceptsFailed(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	require.NoError(t, d.MarkDeployed(now))
+	require.NoError(t, d.RecordOutcome("failed", "s3://logs/run", now))
+	assert.Equal(t, "failed", d.Outcome())
+}
+
+func TestRecordOutcome_RejectsInvalidOutcome(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	require.NoError(t, d.MarkDeployed(now))
+	assert.Error(t, d.RecordOutcome("maybe", "s3://logs/run", now))
+	assert.Equal(t, "", d.Outcome(), "rejected outcome is not stored")
+	assert.Nil(t, d.OutcomeAt())
+}
+
+func TestRecordOutcome_RejectsSecondRecording(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	require.NoError(t, d.MarkDeployed(now))
+	require.NoError(t, d.RecordOutcome("ok", "s3://logs/first", now))
+
+	// A second recording is rejected and leaves the first outcome intact.
+	later := now.Add(time.Minute)
+	assert.Error(t, d.RecordOutcome("failed", "s3://logs/second", later), "outcome recorded once")
+	assert.Equal(t, "ok", d.Outcome(), "first outcome unchanged")
+	assert.Equal(t, "s3://logs/first", d.DBTLogURI(), "first logURI unchanged")
+	require.NotNil(t, d.OutcomeAt())
+	assert.Equal(t, now, *d.OutcomeAt(), "first timestamp unchanged")
+}
+
+func TestRecordOutcome_RejectsOnProductionDeployment(t *testing.T) {
+	now := time.Now()
+	d := model.NewDeployment(deployableCmd(), nil, now)
+	require.NoError(t, d.MarkDeployed(now))
+	assert.Error(t, d.RecordOutcome("ok", "s3://logs/run", now), "RecordOutcome is validation-only")
+}
+
+func TestReconstituteValidation_RestoresOutcome(t *testing.T) {
+	now := time.Now()
+	cmd := validationCmd()
+	ts := now
+	d := model.ReconstituteValidation(
+		uuid.New(), nil, cmd, model.StatusDeployed, 0, 3, now, now, &now, nil,
+		"ok", "s3://logs/run", &ts,
+	)
+	assert.Equal(t, model.ModeValidation, d.Mode())
+	assert.Equal(t, cmd.ReleaseID, d.ReleaseID())
+	assert.Equal(t, cmd.NodeID, d.NodeID())
+	assert.Equal(t, "ok", d.Outcome())
+	assert.Equal(t, "s3://logs/run", d.DBTLogURI())
+	require.NotNil(t, d.OutcomeAt())
+	assert.Equal(t, cmd, d.ValidationCommand())
+}
+
+func TestFailValidation_FromPendingSetsTerminalFailedOutcome(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now)
+
+	// Still pending (never dispatched) — RecordOutcome would reject this.
+	require.NoError(t, d.FailValidation("not deployable", now))
+	assert.Equal(t, model.StatusFailed, d.Status())
+	assert.Equal(t, "failed", d.Outcome())
+	require.NotNil(t, d.OutcomeAt())
+	assert.Equal(t, now, *d.OutcomeAt())
+	require.NotNil(t, d.ErrorMessage())
+	assert.Equal(t, "not deployable", *d.ErrorMessage())
+}
+
+func TestFailValidation_RejectsSecondRecording(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	require.NoError(t, d.FailValidation("first", now))
+	assert.Error(t, d.FailValidation("second", now.Add(time.Minute)), "outcome recorded once")
+	assert.Equal(t, "first", *d.ErrorMessage(), "first reason unchanged")
+}
+
+func TestFailValidation_RejectsOnProductionDeployment(t *testing.T) {
+	d := model.NewDeployment(deployableCmd(), nil, time.Now())
+	assert.Error(t, d.FailValidation("x", time.Now()), "FailValidation is validation-only")
+}
+
 func TestBackoff_CapAndOverflow(t *testing.T) {
 	now := time.Now()
 	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 30 * time.Second}

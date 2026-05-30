@@ -45,6 +45,35 @@ func TestGetJobStatus_StartedAt_FromJobWhenPodsGone(t *testing.T) {
 	assert.Equal(t, startTime.Time.UTC(), result.StartedAt.UTC())
 }
 
+func TestGetJobMeta_ReturnsLabelsAndAnnotations(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-job", Namespace: "default",
+			Labels:      map[string]string{"mode": "validation", "node-id": "public-orders"},
+			Annotations: map[string]string{"continuo.dev/node-id": "public.orders:long+raw"},
+		},
+	}
+	client := &K8sClient{clientset: fake.NewSimpleClientset(job), logger: slog.Default()}
+
+	labels, annotations, err := client.GetJobMeta(context.Background(), "default", "test-job")
+	require.NoError(t, err)
+	assert.Equal(t, "validation", labels["mode"])
+	assert.Equal(t, "public.orders:long+raw", annotations["continuo.dev/node-id"], "raw id from annotation")
+}
+
+func TestGetJobMeta_MissingJob_ReturnsEmptyMetaNoError(t *testing.T) {
+	// A deleted/TTL-reaped Job must not error here: GetJobStatus already maps
+	// NotFound to Failed, and absent metadata routes to the production failure
+	// path so the retry/permanent-failure handlers still emit. Erroring would
+	// strand the check message as a transient failure with no outbox row.
+	client := &K8sClient{clientset: fake.NewSimpleClientset(), logger: slog.Default()}
+
+	labels, annotations, err := client.GetJobMeta(context.Background(), "default", "gone-job")
+	require.NoError(t, err, "missing Job is not an error for metadata lookup")
+	assert.Empty(t, labels)
+	assert.Empty(t, annotations)
+}
+
 func TestGetJobStatus_ImagePullBackOff_ReturnsJobStatusFailed(t *testing.T) {
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-job", Namespace: "default"},
