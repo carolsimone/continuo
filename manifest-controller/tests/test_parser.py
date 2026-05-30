@@ -97,26 +97,46 @@ def test_parse_sets_content_hash_from_checksum(tmp_path):
     assert nodes[0].content_hash == "deadbeefcafef00d"
 
 
-def test_parse_defaults_content_hash_to_empty_when_absent(tmp_path):
-    manifest = {
-        "nodes": {
-            "model.svc.users": {
-                "resource_type": "model",
-                "name": "users",
-                "schema": "public",
-                "fqn": ["svc_a"],
-                "config": {"meta": {"owner": "team-a"}},
-                "tags": ["nightly"],
-            }
-        }
+def _manifest_with(raw_code: str | None) -> dict:
+    node = {
+        "resource_type": "model",
+        "name": "users",
+        "schema": "public",
+        "fqn": ["svc_a"],
+        "config": {"meta": {"owner": "team-a"}},
+        "tags": ["nightly"],
     }
+    if raw_code is not None:
+        node["raw_code"] = raw_code
+    return {"nodes": {"model.svc.users": node}}
+
+
+def test_parse_falls_back_to_nonempty_hash_when_checksum_absent(tmp_path):
+    # A supported node without checksum must still get a non-empty, change-sensitive
+    # fingerprint — release-controller uses content_hash as the sole change detector,
+    # so an empty hash would make later edits to the node undetectable.
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps(manifest))
+    path.write_text(json.dumps(_manifest_with(raw_code="select 1")))
 
     nodes = parse_manifest(str(path), manifest_version="v1")
 
     assert len(nodes) == 1
-    assert nodes[0].content_hash == ""
+    assert nodes[0].content_hash != ""
+    assert nodes[0].content_hash.startswith("sha256:")
+
+
+def test_parse_fallback_hash_is_deterministic_and_change_sensitive(tmp_path):
+    def hash_for(raw_code):
+        p = tmp_path / f"m_{abs(hash(raw_code))}.json"
+        p.write_text(json.dumps(_manifest_with(raw_code=raw_code)))
+        return parse_manifest(str(p), manifest_version="v1")[0].content_hash
+
+    h1 = hash_for("select 1")
+    h1_again = hash_for("select 1")
+    h2 = hash_for("select 2")
+
+    assert h1 == h1_again, "same source -> same fallback hash (deterministic)"
+    assert h1 != h2, "different source -> different fallback hash (change-sensitive)"
 
 
 def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
