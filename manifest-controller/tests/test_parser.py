@@ -126,14 +126,14 @@ def test_parse_falls_back_to_nonempty_hash_when_checksum_absent(tmp_path):
 
 
 def test_parse_fallback_hash_is_deterministic_and_change_sensitive(tmp_path):
-    def hash_for(raw_code):
-        p = tmp_path / f"m_{abs(hash(raw_code))}.json"
+    def hash_for(raw_code, fname):
+        p = tmp_path / fname
         p.write_text(json.dumps(_manifest_with(raw_code=raw_code)))
         return parse_manifest(str(p), manifest_version="v1")[0].content_hash
 
-    h1 = hash_for("select 1")
-    h1_again = hash_for("select 1")
-    h2 = hash_for("select 2")
+    h1 = hash_for("select 1", "a.json")
+    h1_again = hash_for("select 1", "a_again.json")
+    h2 = hash_for("select 2", "b.json")
 
     assert h1 == h1_again, "same source -> same fallback hash (deterministic)"
     assert h1 != h2, "different source -> different fallback hash (change-sensitive)"

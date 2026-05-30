@@ -44,6 +44,23 @@ func main() {
 		log.Fatalf("parse topology: %v", err)
 	}
 
+	// release-controller derives the validation seed set by diffing each
+	// candidate node's content_hash against this seeded snapshot. If the seed
+	// topology omits content_hash, every node of the first real release will
+	// differ from an empty hash and be validated (safe, but it over-validates
+	// once until the first promotion rewrites the snapshot with real hashes).
+	// Prefer generating this file from a manifest-controller candidate emission
+	// so the seed already carries hashes.
+	var missingHash int
+	for _, n := range topo {
+		if n.ContentHash == "" {
+			missingHash++
+		}
+	}
+	if missingHash > 0 {
+		log.Printf("WARNING: %d/%d seed nodes have no content_hash — the first release will validate every node until the snapshot is rewritten on first promotion", missingHash, len(topo))
+	}
+
 	db, err := sqlx.Connect("postgres", *dsn)
 	if err != nil {
 		log.Fatalf("connect: %v", err)

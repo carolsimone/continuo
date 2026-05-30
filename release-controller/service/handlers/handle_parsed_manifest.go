@@ -120,7 +120,11 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
+		// Emit the full lifecycle span sequence (parsed → validated-0-nodes →
+		// promoted) so this no-validation-needed promotion is observable the same
+		// way a normal pass is, just with a zero-node validation.
 		d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
+		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
 		d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
 		return nil
 	}
