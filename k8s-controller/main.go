@@ -25,6 +25,12 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// K8sStatusChecker is a consumer-defined port in service/handlers, so the
+// adapter cannot carry the implements-assertion without an adapter→application
+// import. Assert it here at the composition root, where both packages are
+// already wired, to get an explicit compile-time check.
+var _ handlers.K8sStatusChecker = (*k8s.K8sClient)(nil)
+
 func main() {
 	// Step 1: Setup structured JSON logger
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
