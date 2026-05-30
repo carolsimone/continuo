@@ -48,6 +48,17 @@ func TestDerivedChangedNodeIDs_EmptyProdValidatesAll(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, release.DerivedChangedNodeIDs(cand, nil))
 }
 
+// A node whose hash equals prod's is skipped even when both hashes are empty.
+// Today this is unreachable (dbt always assigns a checksum to model/seed/snapshot,
+// the only resource types the parser admits), but pinning it surfaces the risk if
+// SUPPORTED_RESOURCE_TYPES ever admits a checksum-less resource: such a node would
+// silently skip validation, and the diff would then need to treat "" as changed.
+func TestDerivedChangedNodeIDs_BothEmptyHashTreatedAsUnchanged(t *testing.T) {
+	prod := release.Topology{{UniqueID: "a", ContentHash: ""}}
+	cand := release.Topology{{UniqueID: "a", ContentHash: ""}}
+	assert.Empty(t, release.DerivedChangedNodeIDs(cand, prod))
+}
+
 // Output order follows candidate order for determinism.
 func TestDerivedChangedNodeIDs_DeterministicCandidateOrder(t *testing.T) {
 	prod := release.Topology{}

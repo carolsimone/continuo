@@ -3,7 +3,6 @@ package ports
 import "context"
 
 // Telemetry emits OTEL spans for release-controller state transitions.
-// Implementations live in adapters/observability (added in a later PR).
 type Telemetry interface {
 	ReleaseReceived(ctx context.Context, releaseID string)
 	ReleaseParseRequested(ctx context.Context, releaseID string)
