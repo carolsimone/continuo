@@ -90,6 +90,13 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return e.ToMap(), nil
 
+	case "validation_completed":
+		// validation.completed:v1 carries the aggregate as a single JSON
+		// "payload" field (release_id, per_node_results, aggregate_status) — the
+		// shape release-controller's HandleValidationResult decodes. The stored
+		// payload is already that body; re-emit it verbatim.
+		return map[string]interface{}{"payload": string(entry.Payload)}, nil
+
 	default:
 		return nil, fmt.Errorf("executor publisher: unknown event_type %q", entry.EventType)
 	}

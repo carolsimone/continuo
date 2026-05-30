@@ -108,6 +108,27 @@ func TestPublisher_NodeUpdatedFailed(t *testing.T) {
 	assert.Equal(t, "orders", v["table_name"])
 }
 
+func TestPublisher_ValidationCompleted(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	r := newRedis(t)
+	pub := publisher.NewOutboxPublisher(r, logger)
+
+	// The aggregate gate stores the validation.completed body as the entry
+	// payload; the publisher must re-emit it on the "payload" field so
+	// release-controller's HandleValidationResult can decode it.
+	body := []byte(`{"release_id":"rel_1","per_node_results":[{"node_id":"public.orders","status":"ok"}],"aggregate_status":"ok"}`)
+	id := uuid.New()
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: id, EventType: "validation_completed", StreamName: streams.ValidationCompletedV1, Payload: body,
+	}))
+
+	v := lastEntryFields(t, r, streams.ValidationCompletedV1)
+	assert.Equal(t, id.String(), v["outbox_entry_id"])
+	payloadStr, ok := v["payload"].(string)
+	require.True(t, ok, "expected a string payload field")
+	assert.JSONEq(t, string(body), payloadStr, "stored aggregate payload re-emitted verbatim")
+}
+
 func TestPublisher_UnknownEventType(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	r := newRedis(t)
