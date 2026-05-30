@@ -601,8 +601,8 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 
 	// Verify the node_status_updated stream is correct
 	nodeEntry := findEntryByEventType(entries, "node_status_updated")
-	if nodeEntry != nil && nodeEntry.StreamName != "node.updated:v1" {
-		t.Errorf("node_status_updated stream: expected node.updated:v1, got %q", nodeEntry.StreamName)
+	if nodeEntry != nil && nodeEntry.StreamName != streams.NodeUpdatedV1 {
+		t.Errorf("node_status_updated stream: expected %s, got %q", streams.NodeUpdatedV1, nodeEntry.StreamName)
 	}
 }
 
@@ -710,8 +710,8 @@ func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t
 	if entry.EventType != "validation_node_completed" {
 		t.Errorf("expected event_type=validation_node_completed, got %q", entry.EventType)
 	}
-	if entry.StreamName != "validation.node.completed:v1" {
-		t.Errorf("expected stream=validation.node.completed:v1, got %q", entry.StreamName)
+	if entry.StreamName != streams.ValidationNodeCompletedV1 {
+		t.Errorf("expected stream=%s, got %q", streams.ValidationNodeCompletedV1, entry.StreamName)
 	}
 	if entry.AggregateType != "release" {
 		t.Errorf("expected aggregate_type=release, got %q", entry.AggregateType)
