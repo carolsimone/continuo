@@ -240,10 +240,15 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 		if err := dep.FailValidation("validation deployment not deployable", now); err != nil {
 			return err
 		}
-		if err := d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now); err != nil {
+		// Persist outcome='failed' BEFORE the aggregate gate. The gate reads
+		// PendingValidationCount and must see this node as terminal (its own
+		// uncommitted write is visible within this transaction); otherwise it
+		// counts the row as still pending, skips the emission, and no later
+		// validation.node.completed event will re-run the gate for this release.
+		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}
-		return repo.Save(ctx, dep)
+		return d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now)
 	}
 
 	deployErr := d.deployer.DeployValidation(ctx, dep.ValidationCommand().ToValidationJobSpec())
@@ -264,13 +269,15 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 		if err := dep.FailValidation(deployErr.Error(), now); err != nil {
 			return err
 		}
-		if err := d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now); err != nil {
+		// Persist outcome='failed' BEFORE the aggregate gate so PendingValidationCount
+		// sees this node as terminal (see the not-deployable branch above).
+		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}
-	} else {
-		d.logger.Warn("Validation deploy transient failure — rescheduling",
-			"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
+		return d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now)
 	}
+	d.logger.Warn("Validation deploy transient failure — rescheduling",
+		"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
 	return repo.Save(ctx, dep)
 }
 

@@ -48,6 +48,9 @@ type fakeDeploymentRepo struct {
 	pendingErr error
 	results    []*model.Deployment
 	resultsErr error
+	// calls records the ordered sequence of method names so a test can assert
+	// Save persists the terminal outcome before the aggregate gate counts.
+	calls []string
 }
 
 func (r *fakeDeploymentRepo) Add(context.Context, *model.Deployment) error { return nil }
@@ -58,6 +61,7 @@ func (r *fakeDeploymentRepo) Save(_ context.Context, d *model.Deployment) error 
 	if r.saveErr != nil {
 		return r.saveErr
 	}
+	r.calls = append(r.calls, "Save")
 	r.saved = append(r.saved, d)
 	return nil
 }
@@ -65,6 +69,7 @@ func (r *fakeDeploymentRepo) GetByReleaseNode(context.Context, string, string) (
 	return nil, nil
 }
 func (r *fakeDeploymentRepo) PendingValidationCount(context.Context, string) (int, error) {
+	r.calls = append(r.calls, "PendingValidationCount")
 	return r.pending, r.pendingErr
 }
 func (r *fakeDeploymentRepo) ListValidationResults(context.Context, string) ([]*model.Deployment, error) {
@@ -211,6 +216,50 @@ func TestDispatcher_DispatchOne_ValidationMode_OnPermanentFailure_RecordsOutcome
 	assert.Equal(t, 1, agg.claimCalls, "aggregate emit attempted once last node is terminal")
 	require.Len(t, outboxRepo.created, 1, "aggregate validation.completed:v1 row written")
 	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
+}
+
+func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGate(t *testing.T) {
+	// Regression: a validation node that fails before a Job is created must
+	// persist outcome='failed' BEFORE the aggregate gate reads
+	// PendingValidationCount, or the gate counts it as still pending and never
+	// emits — stranding the release (no later validation.node.completed re-runs
+	// the gate for a node that was never deployed).
+	d := silentDispatcher(&fakeValidationDeployer{})
+	// pending=0 models the DB state once this last node's outcome is persisted.
+	failed := model.NewValidationDeployment(deployableValidation(), nil, time.Now())
+	require.NoError(t, failed.FailValidation("not deployable", time.Now()))
+	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
+	outboxRepo := &fakeOutboxRepo{}
+	agg := &fakeAggRepo{won: true}
+
+	// A non-deployable validation row (empty command → IsDeployable() == false).
+	dep := model.NewValidationDeployment(command.ValidationDeployTask{
+		ReleaseID: "rel_1", NodeID: "node_1",
+	}, nil, time.Now())
+	require.False(t, dep.IsDeployable())
+
+	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
+
+	require.Len(t, repo.saved, 1)
+	assert.Equal(t, "failed", repo.saved[0].Outcome(), "terminal outcome persisted")
+	// The fix: Save must come before the gate's PendingValidationCount read.
+	saveIdx := indexOf(repo.calls, "Save")
+	countIdx := indexOf(repo.calls, "PendingValidationCount")
+	require.GreaterOrEqual(t, saveIdx, 0, "Save was called")
+	require.GreaterOrEqual(t, countIdx, 0, "gate counted pending")
+	assert.Less(t, saveIdx, countIdx, "outcome is persisted before the aggregate gate counts pending")
+	// And with no other nodes pending, the aggregate fires.
+	require.Len(t, outboxRepo.created, 1, "aggregate validation.completed:v1 emitted for the last (failed) node")
+	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
+}
+
+func indexOf(s []string, v string) int {
+	for i, x := range s {
+		if x == v {
+			return i
+		}
+	}
+	return -1
 }
 
 // --- Task 14: maybeEmitValidationAggregate ---------------------------------
