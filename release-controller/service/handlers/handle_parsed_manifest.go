@@ -106,6 +106,25 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to validating: %w", err)
 	}
+
+	// Nothing to validate: no candidate node is new or content-changed vs prod
+	// (e.g. a release that only bumps image tags, or removes a node). Emitting an
+	// empty validation.requested would be rejected by executor-controller as a
+	// permanent parse error, so no validation.completed would ever arrive and the
+	// release would block the queue indefinitely. Promote directly instead — an
+	// empty candidate diff trivially passes the gate.
+	if len(validationIDs) == 0 {
+		if err := promoteToProduction(ctx, u, r, in.ReleaseID, now); err != nil {
+			return err
+		}
+		if err := u.Commit(); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
+		d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
+		d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
+		return nil
+	}
+
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}

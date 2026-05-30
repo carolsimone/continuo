@@ -241,6 +241,42 @@ func TestHandleParsedManifest_OK_BootstrapValidatesAllNodes(t *testing.T) {
 	assert.ElementsMatch(t, []string{"a", "b", "c"}, validIDs, "bootstrap validates every node")
 }
 
+// A candidate whose nodes all match prod (same hashes, no new nodes) has nothing
+// to validate. The handler must promote directly — NOT emit an empty
+// validation.requested, which executor-controller rejects as a permanent parse
+// error, leaving no validation.completed and blocking the queue forever.
+func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
+		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
+	}, time.Unix(50, 0).UTC()))
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
+		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusPromoted, r.Status(), "nothing to validate -> promote directly")
+
+	entries := outboxEntries(store)
+	for _, e := range entries {
+		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
+	}
+	last := entries[len(entries)-1]
+	assert.Equal(t, streams.ReleasePromotedV1, last.StreamName, "promotes directly")
+
+	cp := store.GetCurrentProd()
+	assert.Equal(t, "rA", cp.ReleaseID(), "current prod advanced to this release")
+}
+
 func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	imageTags := map[string]string{
 		"svc-a": "tag-alpha",
