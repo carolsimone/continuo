@@ -15,21 +15,20 @@ import (
 
 // seedToParsing advances a release from Received to Parsing via ReceiveCandidate + AdvanceQueue.
 // Returns the deps and fakeStore for further assertions or handler calls.
-func seedToParsing(t *testing.T, releaseID string, changedNodeIDs []string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
+func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID:      releaseID,
-		ChangedNodeIDs: changedNodeIDs,
-		ImageTags:      imageTags,
-		ManifestsURI:   "s3://continuo/releases/" + releaseID + "/manifests/",
+		ReleaseID:    releaseID,
+		ImageTags:    imageTags,
+		ManifestsURI: "s3://continuo/releases/" + releaseID + "/manifests/",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	return deps, store
 }
 
 func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
-	deps, store := seedToParsing(t, "rA", []string{"a", "b"}, map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
@@ -63,7 +62,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 }
 
 func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
-	deps, store := seedToParsing(t, "rA", []string{"a"}, map[string]string{"svc-a": "sha-a"})
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rA",
@@ -91,7 +90,7 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 // topological order. executor-controller needs these to build candidate dbt
 // jobs without re-deriving fields from the unique_id string.
 func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *testing.T) {
-	deps, store := seedToParsing(t, "rA", []string{"a"}, map[string]string{
+	deps, store := seedToParsing(t, "rA", map[string]string{
 		"svc-a": "sha-a",
 		"svc-b": "sha-b",
 	})
@@ -111,10 +110,10 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 	require.Equal(t, streams.ValidationRequestedV1, entries[1].StreamName)
 
 	var payload struct {
-		ReleaseID       string   `json:"release_id"`
-		Mode            string   `json:"mode"`
-		NodeIDsInOrder  []string `json:"node_ids_in_order"`
-		Nodes           []struct {
+		ReleaseID      string   `json:"release_id"`
+		Mode           string   `json:"mode"`
+		NodeIDsInOrder []string `json:"node_ids_in_order"`
+		Nodes          []struct {
 			UniqueID    string `json:"unique_id"`
 			ServiceName string `json:"service_name"`
 			NodeType    string `json:"node_type"`
@@ -153,12 +152,101 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 	assert.Equal(t, "sha-b", b.ImageTag)
 }
 
+// TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff seeds a
+// current_prod snapshot with known hashes, then submits a candidate where one
+// existing node's hash changed and one node is new. The validation closure must
+// contain the changed node, the new node, and the downstream of the changed
+// node — but not an unchanged node that is neither.
+func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+
+	// Prod: a (hash h_a), b (hash h_b, downstream of a), c (hash h_c, isolated).
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
+		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "c", ServiceName: "svc-a", ContentHash: "h_c"},
+	}, time.Unix(50, 0).UTC()))
+
+	// Candidate: a unchanged, b changed (h_b2), c unchanged, d new (downstream of c).
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
+		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b2", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "c", ServiceName: "svc-a", ContentHash: "h_c"},
+		{UniqueID: "d", ServiceName: "svc-a", ContentHash: "h_d", UpstreamUniqueIDs: []string{"c"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+
+	assert.Contains(t, validIDs, "b", "b's hash changed -> seed")
+	assert.Contains(t, validIDs, "d", "d is new -> seed")
+	assert.NotContains(t, validIDs, "a", "a unchanged and not downstream of a changed node")
+	assert.NotContains(t, validIDs, "c", "c unchanged and not downstream of a changed node")
+}
+
+// TestHandleParsedManifest_OK_ChangedNodePullsDownstream confirms a changed
+// node drags its downstream descendants into the validation closure even when
+// the downstream node's own hash is unchanged.
+func TestHandleParsedManifest_OK_ChangedNodePullsDownstream(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
+		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
+	}, time.Unix(50, 0).UTC()))
+
+	// a changed, b unchanged but downstream of a.
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a2"},
+		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, "a")
+	assert.Contains(t, validIDs, "b", "downstream of changed a is pulled in")
+}
+
+// TestHandleParsedManifest_OK_BootstrapValidatesAllNodes confirms that with no
+// current_prod row, every candidate node is treated as new -> validate-all.
+func TestHandleParsedManifest_OK_BootstrapValidatesAllNodes(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
+		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "c", ServiceName: "svc-a", ContentHash: "h_c"},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.ElementsMatch(t, []string{"a", "b", "c"}, validIDs, "bootstrap validates every node")
+}
+
 func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	imageTags := map[string]string{
 		"svc-a": "tag-alpha",
 		"svc-b": "tag-beta",
 	}
-	deps, store := seedToParsing(t, "rA", []string{"a", "b"}, imageTags)
+	deps, store := seedToParsing(t, "rA", imageTags)
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},

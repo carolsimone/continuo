@@ -5,7 +5,7 @@ import "context"
 // Telemetry emits OTEL spans for release-controller state transitions.
 // Implementations live in adapters/observability (added in a later PR).
 type Telemetry interface {
-	ReleaseReceived(ctx context.Context, releaseID string, changedNodeCount int)
+	ReleaseReceived(ctx context.Context, releaseID string)
 	ReleaseParseRequested(ctx context.Context, releaseID string)
 	ReleaseParseCompleted(ctx context.Context, releaseID string, ok bool, durationMS int64)
 	ReleaseValidationRequested(ctx context.Context, releaseID string, nodeCount int)
@@ -17,7 +17,7 @@ type Telemetry interface {
 // NoOpTelemetry is the default for tests and bring-up.
 type NoOpTelemetry struct{}
 
-func (NoOpTelemetry) ReleaseReceived(context.Context, string, int)                              {}
+func (NoOpTelemetry) ReleaseReceived(context.Context, string)                                   {}
 func (NoOpTelemetry) ReleaseParseRequested(context.Context, string)                             {}
 func (NoOpTelemetry) ReleaseParseCompleted(context.Context, string, bool, int64)                {}
 func (NoOpTelemetry) ReleaseValidationRequested(context.Context, string, int)                   {}

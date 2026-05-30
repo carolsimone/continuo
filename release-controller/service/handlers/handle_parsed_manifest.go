@@ -90,7 +90,18 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 
 func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
 	topo := joinImageTags(in.Topology, r.ImageTags())
-	validationIDs := release.DescendantsClosure(topo, r.ChangedNodeIDs())
+
+	cp, err := u.CurrentProdRepo().Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get current prod: %w", err)
+	}
+
+	// Derive the validation seed set from the content_hash diff against the
+	// current prod topology: candidate nodes that are new or whose hash changed.
+	// Bootstrap (no prod row) yields an empty prod snapshot, so every candidate
+	// node is treated as new and the whole topology is validated.
+	changed := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
+	validationIDs := release.DescendantsClosure(topo, changed)
 
 	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to validating: %w", err)
@@ -101,10 +112,6 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 
 	candidateSchema := "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID)
 
-	cp, err := u.CurrentProdRepo().Get(ctx)
-	if err != nil {
-		return fmt.Errorf("get current prod: %w", err)
-	}
 	deferStateURI := ""
 	if cp.ReleaseID() != "" {
 		deferStateURI = fmt.Sprintf("s3://continuo/releases/%s/manifests/", cp.ReleaseID())

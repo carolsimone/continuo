@@ -57,6 +57,14 @@ func (s *fakeStore) GetRelease(id string) (*release.Release, error) {
 	return r, nil
 }
 
+// SeedCurrentProd installs a current-prod snapshot directly, simulating a
+// prior promotion. Used by handler tests to exercise the content_hash diff.
+func (s *fakeStore) SeedCurrentProd(cp *release.CurrentProd) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cp = cp
+}
+
 // GetCurrentProd returns the stored current-prod record, or a fresh one if
 // none has been written yet.
 func (s *fakeStore) GetCurrentProd() *release.CurrentProd {

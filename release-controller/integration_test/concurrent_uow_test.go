@@ -25,10 +25,9 @@ func TestIntegration_ConcurrentReceiveAndAdvance_NoTxCollision(t *testing.T) {
 			defer wg.Done()
 			id := "r" + string(rune('A'+i))
 			errs <- handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-				ReleaseID:      id,
-				ChangedNodeIDs: []string{"a"},
-				ImageTags:      map[string]string{"service-1": "sha-" + id},
-				ManifestsURI:   "u",
+				ReleaseID:    id,
+				ImageTags:    map[string]string{"service-1": "sha-" + id},
+				ManifestsURI: "u",
 			})
 		}(i)
 		go func() {

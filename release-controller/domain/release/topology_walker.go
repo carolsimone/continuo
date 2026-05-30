@@ -5,6 +5,28 @@ import (
 	"sort"
 )
 
+// DerivedChangedNodeIDs returns the unique_ids of candidate nodes whose dbt
+// content_hash differs from the current prod topology — either because the node
+// is new (absent from prod) or because its hash changed. Removed nodes (present
+// in prod but absent from the candidate) are not returned: only candidate nodes
+// can seed a validation run. Output follows candidate order for determinism.
+//
+// Bootstrap: an empty prod topology yields an empty hash map, so every
+// candidate node is treated as new and returned — i.e. validate-all.
+func DerivedChangedNodeIDs(candidate, prod Topology) []string {
+	prodHash := make(map[string]string, len(prod))
+	for _, n := range prod {
+		prodHash[n.UniqueID] = n.ContentHash
+	}
+	changed := []string{}
+	for _, n := range candidate {
+		if h, ok := prodHash[n.UniqueID]; !ok || h != n.ContentHash {
+			changed = append(changed, n.UniqueID)
+		}
+	}
+	return changed
+}
+
 // DescendantsClosure returns the union of the seed nodes and all their
 // transitive downstream descendants, deduplicated and sorted topologically
 // (upstreams before downstreams). Nodes named in seeds but not present in

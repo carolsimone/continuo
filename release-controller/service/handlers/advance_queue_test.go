@@ -16,7 +16,7 @@ import (
 func TestAdvanceQueue_NoActive_PromotesNextReceivedToParsing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID: "rA", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
+		ReleaseID: "rA", ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	r, _ := store.GetRelease("rA")
@@ -33,11 +33,11 @@ func TestAdvanceQueue_NoActive_PromotesNextReceivedToParsing(t *testing.T) {
 func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID: "rA", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
+		ReleaseID: "rA", ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID: "rB", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u2",
+		ReleaseID: "rB", ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u2",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rB, _ := store.GetRelease("rB")
@@ -54,10 +54,10 @@ func TestAdvanceQueue_NoQueued_DoesNothing(t *testing.T) {
 func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID: "rOLD", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
+		ReleaseID: "rOLD", ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
 	}))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID: "rNEW", ChangedNodeIDs: []string{"n"}, ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
+		ReleaseID: "rNEW", ImageTags: map[string]string{"s": "t"}, ManifestsURI: "u",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rOLD, _ := store.GetRelease("rOLD")

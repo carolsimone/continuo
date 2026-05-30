@@ -29,6 +29,7 @@ type Node struct {
 	TableName         string   `json:"table_name"`
 	ServiceName       string   `json:"service_name"`
 	NodeType          string   `json:"node_type"`
+	ContentHash       string   `json:"content_hash"`
 	ImageTag          string   `json:"image_tag"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Schedule          string   `json:"schedule"`
@@ -37,7 +38,6 @@ type Node struct {
 type Release struct {
 	id                  string
 	status              Status
-	changedNodeIDs      []string
 	imageTags           map[string]string
 	manifestsURI        string
 	candidateTopology   Topology
@@ -53,21 +53,19 @@ type Release struct {
 	transitions         []Transition
 }
 
-func New(id string, changedNodeIDs []string, imageTags map[string]string, manifestsURI string, now time.Time) *Release {
+func New(id string, imageTags map[string]string, manifestsURI string, now time.Time) *Release {
 	return &Release{
-		id:             id,
-		status:         StatusReceived,
-		changedNodeIDs: changedNodeIDs,
-		imageTags:      imageTags,
-		manifestsURI:   manifestsURI,
-		createdAt:      now,
-		transitions:    []Transition{{To: StatusReceived, At: now}},
+		id:           id,
+		status:       StatusReceived,
+		imageTags:    imageTags,
+		manifestsURI: manifestsURI,
+		createdAt:    now,
+		transitions:  []Transition{{To: StatusReceived, At: now}},
 	}
 }
 
 func (r *Release) ID() string                   { return r.id }
 func (r *Release) Status() Status               { return r.status }
-func (r *Release) ChangedNodeIDs() []string     { return r.changedNodeIDs }
 func (r *Release) ImageTags() map[string]string { return r.imageTags }
 func (r *Release) ManifestsURI() string         { return r.manifestsURI }
 func (r *Release) CandidateTopology() Topology  { return r.candidateTopology }
@@ -128,7 +126,6 @@ func (r *Release) TransitionToRejected(reason string, failingNodes []string, dbt
 type RehydrateInput struct {
 	ID                string
 	Status            Status
-	ChangedNodeIDs    []string
 	ImageTags         map[string]string
 	ManifestsURI      string
 	CandidateTopology Topology
@@ -146,7 +143,6 @@ func Rehydrate(in RehydrateInput) *Release {
 	return &Release{
 		id:                in.ID,
 		status:            in.Status,
-		changedNodeIDs:    in.ChangedNodeIDs,
 		imageTags:         in.ImageTags,
 		manifestsURI:      in.ManifestsURI,
 		candidateTopology: in.CandidateTopology,
