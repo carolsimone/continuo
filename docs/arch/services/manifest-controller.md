@@ -114,7 +114,7 @@ Pass 3 — Resolve deps and shape candidate topology
 Publish manifest.loaded.candidate:v1 status=ok with the topology, ACK
 ```
 
-This flow differs from the graph-update flow in three ways: it does not run the publish-boundary `image_tag` validator (`image_tag` is empty by design and joined in by `release-controller`); it persists no registry; and it reports parse/resolve failures back as a `status=failed` business signal rather than failing silently.
+This flow differs from the graph-update flow in three ways: it leaves `image_tag` empty by design (`release-controller` joins the per-service tags from the `POST /releases` body onto the candidate topology); it persists no registry; and it reports parse/resolve failures back as a `status=failed` business signal rather than failing silently.
 
 Failure-handling distinction: a parse or resolve failure that re-delivery cannot fix (malformed manifest JSON or node shape, unresolvable reference) is published as `status=failed` and the message is ACKed — replaying it would not help. A transient infrastructure failure (S3 read error, Redis publish error) propagates so the message is **not ACKed**; it stays in the group PEL and is retried by the reclaim sweep (see Consumer Reliability).
 
@@ -165,4 +165,4 @@ None -- manifest-controller is not called via gRPC by any service.
 - No local outbox -- if the Redis publish of `manifest.loaded:v1` fails, the message is not ACKed and the entire load is replayed.
 - The candidate flow has no per-message dedup store. A `release.requested:v1` redelivered after a successful publish causes a second `manifest.loaded.candidate:v1`; `release-controller` handles this idempotently (the candidate transition only applies while the release is still parsing, and a duplicate is logged and ACKed).
 - An unresolvable reference in pass 3 aborts the whole load: on the graph-update flow the exception is not ACKed and the message replays; on the candidate flow it is reported as `status=failed` and ACKed.
-- `update.graph:v1` is published by `ui-service` via `POST /api/graph/update`. In production the deploy CI workflow triggers this endpoint through a one-shot `kubectl run` curl pod inside the `continuo` namespace. In local development it is reached via `dbt/update-graph.sh`.
+- `update.graph:v1` is published by `ui-service` via `POST /api/graph/update`, reached in local development via `dbt/update-graph.sh`. Production releases do not use this path — they enter through `release-controller`'s `POST /releases` and the candidate flow.

@@ -121,18 +121,9 @@ Provisioning databases inside the job — rather than relying solely on the Post
 |---|---|
 | Durable state | none |
 | gRPC server methods owned | none |
-| Redis consumes | `update.graph:v1` |
-| Redis produces | `manifest.loaded:v1` |
+| Redis consumes | `update.graph:v1`, `release.requested:v1` |
+| Redis produces | `manifest.loaded:v1`, `manifest.loaded.candidate:v1` |
 | Outbound gRPC calls | none |
-
-### Invariants
-
-- **Publish-time validation.** Refuses to publish `manifest.loaded:v1`
-  if any node has an empty `image_tag`. The triggering `update.graph:v1`
-  is ACKed regardless — redelivery cannot help when the source of truth
-  (S3) hasn't changed. Logs structured ERROR
-  `event=manifest_publish_rejected` with `missing_image_tag_count`,
-  `total_node_count`, and `offenders`.
 
 ## `ui-service`
 

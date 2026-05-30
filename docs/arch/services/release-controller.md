@@ -31,7 +31,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | `GET /current-prod` | The current promoted release + topology snapshot. |
 | `GET /healthz` | Liveness. |
 
-`POST /releases` does not carry a changed-node list — release-controller derives it (see Processing Logic).
+`POST /releases` is the production entry point for a deploy: the CI deploy workflow uploads the per-release manifests to S3 (`releases/<id>/manifests/<service>/manifest_v1.json`) and posts the release here. It does not carry a changed-node list — release-controller derives it (see Processing Logic).
 
 ### Redis consumer
 

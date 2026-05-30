@@ -112,10 +112,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 #### Graph Update Callers
 
-`POST /api/graph/update` is called in two contexts:
-
-- **Production deploys**: the CI deploy workflow SSHes into the cluster host and runs a one-shot `kubectl run` curl pod inside the `continuo` namespace. The pod sends the HTTP POST with `Authorization: Bearer $GRAPH_UPDATE_TOKEN` and exits.
-- **Local development**: `dbt/update-graph.sh` calls the endpoint directly.
+`POST /api/graph/update` reloads the standing topology and is called in local development by `dbt/update-graph.sh`. Production releases do not use this endpoint — the CI deploy workflow drives them through `release-controller`'s `POST /releases`.
 
 ## What It Reads
 
