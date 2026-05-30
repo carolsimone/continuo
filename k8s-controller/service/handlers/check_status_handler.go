@@ -100,21 +100,36 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 		return nil
 	}
 
+	// A still-running Job is mode-agnostic: re-poll it by writing a check.k8s:v1
+	// ticket. On the next check the Job's mode is re-read and routing recurs, so a
+	// validation Job (always Running on the first node.deployed-triggered check) is
+	// polled until terminal instead of being checked once and dropped. The Job
+	// metadata is only needed to route a terminal result, so it is fetched after
+	// this check — a Job spends most of its checks Running, and skipping the extra
+	// Get there keeps the re-poll loop to a single API call.
+	if result.Status == model.JobStatusRunning {
+		return h.handleRunning(ctx, u, cmd)
+	}
+
 	labels, annotations, err := h.k8sClient.GetJobMeta(ctx, h.config.K8sNamespace, cmd.JobName)
 	if err != nil {
 		return fmt.Errorf("fetch job meta: %w", err)
 	}
 
-	// A still-running Job is mode-agnostic: re-poll it by writing a check.k8s:v1
-	// ticket. On the next check the Job's mode is re-read and routing recurs, so a
-	// validation Job (always Running on the first node.deployed-triggered check) is
-	// polled until terminal instead of being checked once and dropped.
-	if result.Status == model.JobStatusRunning {
-		return h.handleRunning(ctx, u, cmd)
-	}
-
 	if labels["mode"] == "validation" {
 		return h.handleValidationTerminal(ctx, u, cmd, result, annotations)
+	}
+
+	// Empty metadata means the Job is gone (deleted/TTL-reaped): GetJobMeta maps
+	// NotFound to empty maps. A vanished Job has no mode label, so it falls through
+	// to the production task-status path below — correct for a production Job
+	// (whose NotFound→Failed status must still drive the retry/permanent handlers).
+	// A vanished *validation* Job cannot be identified here (no annotations to
+	// recover release_id/node_id), so its per-node outcome is not emitted; surface
+	// it for operators rather than silently writing production rows for it.
+	if len(labels) == 0 {
+		h.logger.Warn("Job metadata unavailable on terminal check — routing as production; a vanished validation Job will not emit its per-node outcome",
+			"job_name", cmd.JobName, "status", result.Status)
 	}
 
 	switch result.Status {
