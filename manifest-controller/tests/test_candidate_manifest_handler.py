@@ -54,6 +54,20 @@ def test_handle_publishes_ok_with_node_type_on_each_node(resolved_topology):
     assert {node["node_type"] for node in resolved_topology} == {"dbt-model"}
 
 
+def test_handle_publishes_ok_with_content_hash_from_node_checksum(resolved_topology):
+    # Each published node carries dbt's native per-node source checksum,
+    # read from checksum.checksum in the source manifest fixtures.
+    expected = {}
+    for name in ("manifest_service1.json", "manifest_service2.json"):
+        manifest = json.loads((FIXTURES / name).read_text())
+        for node in manifest["nodes"].values():
+            expected[node["name"]] = node["checksum"]["checksum"]
+
+    for node in resolved_topology:
+        assert node["content_hash"], f"{node['table_name']} missing content_hash"
+        assert node["content_hash"] == expected[node["table_name"]]
+
+
 def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     source = create_autospec(ManifestSource)
     source.list_manifests.return_value = []

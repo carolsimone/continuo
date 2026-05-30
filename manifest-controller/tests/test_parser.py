@@ -74,6 +74,51 @@ def test_parse_stamps_manifest_version_on_all_nodes():
     assert all(n.manifest_version == "v7" for n in nodes)
 
 
+def test_parse_sets_content_hash_from_checksum(tmp_path):
+    manifest = {
+        "nodes": {
+            "model.svc.users": {
+                "resource_type": "model",
+                "name": "users",
+                "schema": "public",
+                "fqn": ["svc_a"],
+                "config": {"meta": {"owner": "team-a"}},
+                "tags": ["nightly"],
+                "checksum": {"name": "sha256", "checksum": "deadbeefcafef00d"},
+            }
+        }
+    }
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    nodes = parse_manifest(str(path), manifest_version="v1")
+
+    assert len(nodes) == 1
+    assert nodes[0].content_hash == "deadbeefcafef00d"
+
+
+def test_parse_defaults_content_hash_to_empty_when_absent(tmp_path):
+    manifest = {
+        "nodes": {
+            "model.svc.users": {
+                "resource_type": "model",
+                "name": "users",
+                "schema": "public",
+                "fqn": ["svc_a"],
+                "config": {"meta": {"owner": "team-a"}},
+                "tags": ["nightly"],
+            }
+        }
+    }
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    nodes = parse_manifest(str(path), manifest_version="v1")
+
+    assert len(nodes) == 1
+    assert nodes[0].content_hash == ""
+
+
 def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
     manifest = {
         "nodes": {

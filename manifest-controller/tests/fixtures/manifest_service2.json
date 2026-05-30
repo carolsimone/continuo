@@ -10,7 +10,8 @@
       "config": {
         "meta": { "owner": "team-b", "criticality": "SECONDARY" }
       },
-      "compiled_code": "SELECT * FROM test_schema.users"
+      "compiled_code": "SELECT * FROM test_schema.users",
+      "checksum": { "name": "sha256", "checksum": "ff00eeddccbbaa998877665544332211009f8e7d6c5b4a3928170615f4e3d2c1" }
     }
   }
 }
