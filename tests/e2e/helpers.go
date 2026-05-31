@@ -402,37 +402,3 @@ func queryFirstTaskTrackerMetadata(t *testing.T, db *sqlx.DB, scheduleID uuid.UU
 		`SELECT manifest_version, image_tag FROM task_tracker WHERE schedule_id = $1 LIMIT 1`, scheduleID))
 	return sample.ManifestVersion, sample.ImageTag
 }
-
-// deleteS3Sidecar removes service_metadata.json from localstack S3 for a
-// service. Used by E2E.1 to create the "no sidecar" condition that A1's
-// publish-boundary validator must reject. Shells out to dbt-compile-and-load
-// (which already has boto3 + the localstack endpoint configured) so we don't
-// need to add aws-sdk-go to tests/e2e/go.mod.
-func deleteS3Sidecar(t *testing.T, serviceName string) {
-	t.Helper()
-	pyScript := fmt.Sprintf(`
-import boto3, os
-s3 = boto3.client(
-    "s3",
-    endpoint_url=os.environ["S3_ENDPOINT_URL"],
-    region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
-    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", "test"),
-    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "test"),
-)
-key = os.environ["S3_ENV"] + "/manifest/%s/service_metadata.json"
-s3.delete_object(Bucket=os.environ["S3_BUCKET"], Key=key)
-print("deleted", key)
-`, serviceName)
-	cmd := exec.Command("docker", "exec",
-		"-e", "S3_ENDPOINT_URL=http://localstack:4566",
-		"-e", "S3_BUCKET=continuo",
-		"-e", "S3_ENV=local",
-		"-e", "AWS_ACCESS_KEY_ID=test",
-		"-e", "AWS_SECRET_ACCESS_KEY=test",
-		"-e", "AWS_DEFAULT_REGION=us-east-1",
-		"dbt-compile-and-load",
-		"uv", "run", "python", "-c", pyScript)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "deleteS3Sidecar(%q) failed: %s", serviceName, string(out))
-	t.Logf("deleted sidecar for %s: %s", serviceName, string(out))
-}

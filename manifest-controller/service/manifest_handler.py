@@ -5,7 +5,6 @@ from adapters.sources import ManifestSource
 from domain.model import NodeRegistry, NodeRegistryEntry
 from service.parser import parse_manifest
 from service.resolver import resolve_upstream_deps
-from service.validators import ManifestValidationError, validate_manifest_batch
 
 logger = logging.getLogger(__name__)
 
@@ -35,26 +34,6 @@ class ManifestHandler:
         for mf in manifests:
             logger.info("Parsing manifest", extra={"manifest_path": mf.path, "version": mf.version})
             all_nodes.extend(parse_manifest(mf.path, mf.version, mf.image_tag))
-
-        # Publish-boundary validation: refuse the whole batch if any node
-        # has an empty image_tag. The triggering update.graph:v1 message is
-        # ACKed at the consumer level (this handler returning without
-        # raising is the ACK signal) — redelivery cannot help because S3
-        # hasn't changed.
-        try:
-            validate_manifest_batch(all_nodes)
-        except ManifestValidationError as exc:
-            logger.error(
-                "manifest_publish_rejected",
-                extra={
-                    "event": "manifest_publish_rejected",
-                    "reason": "empty_image_tag",
-                    "missing_image_tag_count": exc.total_missing,
-                    "total_node_count": len(all_nodes),
-                    "offenders": exc.offenders,
-                },
-            )
-            return
 
         # Pass 2: build combined registry and persist
         registry = NodeRegistry(entries=[

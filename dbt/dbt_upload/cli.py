@@ -57,6 +57,11 @@ def main(argv: list[str] | None = None) -> int:
     p_load.add_argument("--services-dir", default=None, help="Directory containing services")
     p_load.add_argument("--target", default="localstack", help="Target profile name")
     p_load.add_argument("--env", default=None, help="Override S3 env prefix")
+    p_load.add_argument(
+        "--release-id",
+        default="",
+        help="Upload to per-release prefix releases/<id>/manifests/<service>/manifest_v1.json",
+    )
 
     args = parser.parse_args(argv)
 
@@ -88,7 +93,9 @@ def main(argv: list[str] | None = None) -> int:
             logger.error("No services compiled successfully")
             return 1
 
-        uploaded_ok, upload_failed = upload_services(compiled_ok, target_config)
+        uploaded_ok, upload_failed = upload_services(
+            compiled_ok, target_config, release_id=args.release_id
+        )
         total_failed = len(compile_failed) + len(upload_failed)
         logger.info(
             "Load done: %d compiled, %d uploaded, %d failed",

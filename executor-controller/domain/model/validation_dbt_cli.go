@@ -9,13 +9,16 @@ import (
 )
 
 // ValidationDbtCommand returns the dbt CLI args for a single validation node.
-// candidateSchema is the destination schema for the dry-run materialization;
+// The dry-run materialization always uses --empty (zero input rows). The
+// destination candidate schema is NOT a CLI argument — dbt has no such flag;
+// it is delivered through the DBT_TARGET_SCHEMA env var, which each service's
+// generate_schema_name macro reads to override the materialization schema.
 // deferStateURI may be empty (bootstrap release) in which case --defer/--state
 // are omitted — the dbt run executes without deferring to a prior manifest.
-func ValidationDbtCommand(nt pkg_model.NodeType, tableName, candidateSchema, deferStateURI string) []string {
+func ValidationDbtCommand(nt pkg_model.NodeType, tableName, deferStateURI string) []string {
 	base := nt.Command(tableName) // shares the prod verb mapping
 	args := append([]string{}, base...)
-	args = append(args, "--empty", "--target-schema", candidateSchema)
+	args = append(args, "--empty")
 	if deferStateURI != "" {
 		args = append(args, "--defer", "--state", deferStateURI)
 	}

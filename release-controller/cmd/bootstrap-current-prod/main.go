@@ -7,6 +7,7 @@
 //	bootstrap-current-prod \
 //	  --release-id bootstrap-2026-05-28 \
 //	  --topology-file /path/to/topology.json \
+//	  --manifests-uri s3://continuo-dev/releases/bootstrap-2026-05-28/manifests/ \
 //	  --pg-dsn 'host=... user=... password=... dbname=continuo_release sslmode=disable'
 package main
 
@@ -27,11 +28,15 @@ import (
 func main() {
 	releaseID := flag.String("release-id", "", "release_id to seed (e.g. bootstrap-YYYY-MM-DD)")
 	topoFile := flag.String("topology-file", "", "path to topology JSON (array of nodes)")
+	manifestsURI := flag.String("manifests-uri", "", "S3 URI of this release's manifests (e.g. s3://continuo-dev/releases/<id>/manifests/); the defer-state base for the next release")
 	dsn := flag.String("pg-dsn", "", "Postgres DSN for continuo_release")
 	flag.Parse()
 
 	if *releaseID == "" || *topoFile == "" || *dsn == "" {
 		log.Fatalf("all of --release-id, --topology-file, --pg-dsn are required")
+	}
+	if *manifestsURI == "" {
+		log.Printf("WARNING: --manifests-uri is empty — the next release will validate without --defer (no prior-manifest state to defer to)")
 	}
 
 	raw, err := os.ReadFile(*topoFile)
@@ -68,7 +73,7 @@ func main() {
 	defer db.Close()
 
 	repo := postgres.NewCurrentProdRepository(db)
-	cp := release.RehydrateCurrentProd(*releaseID, topo, time.Now().UTC())
+	cp := release.RehydrateCurrentProd(*releaseID, *manifestsURI, topo, time.Now().UTC())
 
 	if err := repo.Upsert(context.Background(), cp); err != nil {
 		log.Fatalf("upsert: %v", err)

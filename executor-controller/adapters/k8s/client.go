@@ -287,7 +287,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 				Name:            "dbt-job",
 				Image:           image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command:         validationmodel.ValidationDbtCommand(p.NodeType, p.TableName, p.CandidateSchema, p.DeferStateURI),
+				Command:         validationmodel.ValidationDbtCommand(p.NodeType, p.TableName, p.DeferStateURI),
 				Env:             envVars,
 			},
 		},

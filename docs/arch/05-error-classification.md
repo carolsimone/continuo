@@ -26,12 +26,6 @@ permanent.
 | `executor-controller/adapters/k8s/client.go:177` (`buildPodSpec`) | `image_tag` missing on dispatch | `fmt.Errorf("%w: image_tag missing from job params for service %s", events.ErrPermanent, params.ServiceName)` |
 | `state/adapters/redis/*_binding.go` (each binding) | per-stream parser returns a parse/validation failure (malformed payload, missing required field, bad UUID, unknown enum value) | `fmt.Errorf("%w: %v", pkgevents.ErrPermanent, err)` after the binding's parser returns an error |
 
-The Python counterpart (`manifest-controller/service/validators.py`)
-raises `ManifestValidationError` instead of wrapping a sentinel — Python
-doesn't share the Go sentinel by design — but the message format is kept
-symmetric (`image_tag empty for N node(s): svc/schema/table, ..., ...and N more`)
-so logs across the two layers are visually consistent.
-
 Add new emitters to this table as they land.
 
 ## Who recognises it
@@ -64,11 +58,6 @@ non-transactional and best-effort: a failed insert MUST NOT turn a
 permanent error into a transient one (that would loop the message in
 the Redis pending list under XCLAIM redelivery). See `docs/arch/02-interaction-matrix.md`
 for the local durable state inventory.
-
-The manifest-controller logs structured `event=manifest_publish_rejected`
-at ERROR with `missing_image_tag_count`, `total_node_count`, and
-`offenders` — no Postgres sink (manifest-controller owns no durable
-state by design).
 
 ## See also
 

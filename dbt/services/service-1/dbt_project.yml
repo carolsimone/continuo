@@ -29,3 +29,5 @@ models:
       +tags: ["e2e-schedule-failure"]
     ftable_b:
       +tags: ["e2e-schedule-failure"]
+    rel_probe:
+      +tags: ["rel-probe"]

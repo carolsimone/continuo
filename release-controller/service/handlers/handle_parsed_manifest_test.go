@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -161,7 +162,7 @@ func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	// Prod: a (hash h_a), b (hash h_b, downstream of a), c (hash h_c, isolated).
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 		{UniqueID: "c", ServiceName: "svc-a", ContentHash: "h_c"},
@@ -188,6 +189,30 @@ func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing
 	assert.Contains(t, validIDs, "d", "d is new -> seed")
 	assert.NotContains(t, validIDs, "a", "a unchanged and not downstream of a changed node")
 	assert.NotContains(t, validIDs, "c", "c unchanged and not downstream of a changed node")
+
+	// The validation defer-state base must be the prod release's submitted
+	// manifests_uri verbatim — not a URI reconstructed from a hardcoded bucket,
+	// which would point --defer/--state at a location with no manifests.
+	var payload struct {
+		DeferStateURI string `json:"defer_state_uri"`
+	}
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ValidationRequestedV1).Payload, &payload))
+	assert.Equal(t, "s3://continuo/releases/prev/manifests/", payload.DeferStateURI)
+}
+
+// findEntry returns the single outbox entry on the given stream, failing if
+// there is not exactly one.
+func findEntry(t *testing.T, store *fakeStore, stream string) *pkgoutbox.Entry {
+	t.Helper()
+	var match *pkgoutbox.Entry
+	for _, e := range outboxEntries(store) {
+		if e.StreamName == stream {
+			require.Nil(t, match, "expected exactly one %s entry", stream)
+			match = e
+		}
+	}
+	require.NotNil(t, match, "no %s outbox entry written", stream)
+	return match
 }
 
 // TestHandleParsedManifest_OK_ChangedNodePullsDownstream confirms a changed
@@ -196,7 +221,7 @@ func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing
 func TestHandleParsedManifest_OK_ChangedNodePullsDownstream(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 	}, time.Unix(50, 0).UTC()))
@@ -247,7 +272,7 @@ func TestHandleParsedManifest_OK_BootstrapValidatesAllNodes(t *testing.T) {
 // error, leaving no validation.completed and blocking the queue forever.
 func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 	}, time.Unix(50, 0).UTC()))

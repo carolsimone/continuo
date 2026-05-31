@@ -15,8 +15,8 @@ class CandidateManifestHandler:
     candidate topology back to release-controller.
 
     Differs from ManifestHandler in three places:
-    - skips the publish-boundary image_tag validator (image_tag is empty
-      by design on the candidate path; release-controller joins it in).
+    - leaves image_tag empty by design; release-controller joins the
+      per-service tags from the POST /releases body onto the topology.
     - does not persist the registry anywhere; it is built in-memory solely
       for dependency resolution.
     - publishes the manifest.loaded.candidate:v1 envelope shape.

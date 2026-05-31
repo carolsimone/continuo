@@ -63,7 +63,7 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtModel_WithDefer(t *testing
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t,
 		[]string{"dbt", "run", "--select", "orders",
-			"--empty", "--target-schema", "_candidate_rel_123",
+			"--empty",
 			"--defer", "--state", "s3://continuo/releases/prev/manifests/"},
 		job.Spec.Template.Spec.Containers[0].Command)
 	assert.Equal(t, "service-1:abc-1714300000", job.Spec.Template.Spec.Containers[0].Image)
@@ -80,7 +80,7 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtModel_BootstrapNoDefer(t *
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t,
 		[]string{"dbt", "run", "--select", "orders",
-			"--empty", "--target-schema", "_candidate_rel_123"},
+			"--empty"},
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
@@ -97,8 +97,31 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed_NoDefer(t *testing.T)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t,
 		[]string{"dbt", "seed", "--select", "country_codes",
-			"--empty", "--target-schema", "_candidate_rel_123"},
+			"--empty"},
 		job.Spec.Template.Spec.Containers[0].Command)
+}
+
+// The candidate schema is delivered to dbt through the DBT_TARGET_SCHEMA env
+// var (read by each service's generate_schema_name macro), not a CLI flag.
+// Dropping this env would silently route validation runs into the production
+// schema, so pin it here.
+func TestCreateValidationJob_PassesCandidateSchemaViaEnv(t *testing.T) {
+	c := newValidationTestClient()
+	p := validationParams()
+
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+	require.Len(t, job.Spec.Template.Spec.Containers, 1)
+	var got string
+	found := false
+	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+		if e.Name == "DBT_TARGET_SCHEMA" {
+			got, found = e.Value, true
+		}
+	}
+	require.True(t, found, "validation job must set DBT_TARGET_SCHEMA")
+	assert.Equal(t, p.CandidateSchema, got)
 }
 
 func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {
