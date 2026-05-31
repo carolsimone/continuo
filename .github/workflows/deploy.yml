@@ -433,18 +433,43 @@ jobs:
           host: ${{ secrets.HETZNER_HOST }}
           username: root
           key: ${{ secrets.HETZNER_SSH_KEY }}
-          command_timeout: 2m
+          # Long enough to cover validation: POST + poll until the release is
+          # promoted (or rejected). A 202 only means "accepted"; the deploy must
+          # not be marked green until validation has actually passed.
+          command_timeout: 20m
           envs: DEPLOY_SHA
           script: |
             set -euo pipefail
             export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
             BODY="{\"release_id\":\"${DEPLOY_SHA}\",\"image_tags\":{\"service-1\":\"${DEPLOY_SHA}\",\"service-2\":\"${DEPLOY_SHA}\",\"service-3\":\"${DEPLOY_SHA}\"},\"manifests_uri\":\"s3://continuo-dev/releases/${DEPLOY_SHA}/manifests/\"}"
+            # Run inside the cluster (release-controller is a ClusterIP service):
+            # POST the release, then poll GET /releases/<sha> until it reaches a
+            # terminal state. Exit non-zero on rejection or timeout so the deploy
+            # fails loudly instead of going green on an un-promoted release.
             kubectl -n continuo run "release-trigger-${DEPLOY_SHA}" \
               --rm -i --restart=Never \
               --image=curlimages/curl:8.10.1 \
-              --command -- \
-              curl --fail-with-body --silent --show-error \
-                -X POST "http://release-controller:8088/releases" \
-                -H "X-Request-Id: deploy-${DEPLOY_SHA}" \
-                -H "Content-Type: application/json" \
-                -d "${BODY}"
+              --env="RELEASE_BODY=${BODY}" \
+              --env="DEPLOY_SHA=${DEPLOY_SHA}" \
+              --command -- sh -c '
+                set -eu
+                RC="http://release-controller:8088"
+                curl --fail-with-body --silent --show-error \
+                  -X POST "$RC/releases" \
+                  -H "X-Request-Id: deploy-$DEPLOY_SHA" \
+                  -H "Content-Type: application/json" \
+                  -d "$RELEASE_BODY"
+                echo
+                i=0
+                while [ "$i" -lt 110 ]; do
+                  i=$((i + 1))
+                  RESP="$(curl --silent --show-error "$RC/releases/$DEPLOY_SHA" || true)"
+                  case "$RESP" in
+                    *\"status\":\"promoted\"*) echo "release $DEPLOY_SHA promoted"; exit 0 ;;
+                    *\"status\":\"rejected\"*) echo "release $DEPLOY_SHA rejected: $RESP"; exit 1 ;;
+                  esac
+                  sleep 10
+                done
+                echo "timed out waiting for release $DEPLOY_SHA to promote: $RESP"
+                exit 1
+              '
