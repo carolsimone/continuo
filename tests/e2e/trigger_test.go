@@ -41,8 +41,8 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Load graph — manifest-controller creates all nodes (seeds + models)
-	triggerGraphLoad(t, ctx, clients)
+	// Seed topology directly into Neo4j + schedule_catalog.
+	seedTopology(t, ctx, clients)
 
 	// Verify "seed" schedule is in the catalog (required by TriggerSchedule)
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
