@@ -46,7 +46,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	// Ensure graph topology is loaded so that Snapshot+SingleNode can resolve
 	// the target node in Neo4j.
 	cleanupTestData(t, ctx, clients, "single-node-run")
-	triggerGraphLoad(t, ctx, clients)
+	seedTopology(t, ctx, clients)
 
 	// Trigger the single-node run via the state gRPC.
 	t.Logf("Calling TriggerSingleNodeRun: %s.%s.%s (latest)", targetService, targetSchema, targetTable)
@@ -182,7 +182,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 	// Ensure we have a clean slate for the source schedule and graph topology.
 	cleanupTestData(t, ctx, clients, srcSchedule)
 	defer cleanupTestData(t, ctx, clients, srcSchedule)
-	triggerGraphLoad(t, ctx, clients)
+	seedTopology(t, ctx, clients)
 
 	// ── Step 1: Trigger the source cron run ───────────────────────────────────
 	t.Log("=== Step 1: Triggering source seed run ===")
@@ -275,7 +275,7 @@ func TestSingleNodeRunTargetNotFound(t *testing.T) {
 	// Snapshot+SingleNode's "target not found" branch when the requested
 	// node is absent from the loaded graph.
 	cleanupTestData(t, ctx, clients, "single-node-run")
-	triggerGraphLoad(t, ctx, clients)
+	seedTopology(t, ctx, clients)
 
 	// Use a service/schema/table triple that is guaranteed to be absent.
 	const (
