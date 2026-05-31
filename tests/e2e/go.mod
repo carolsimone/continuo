@@ -4,6 +4,7 @@ go 1.25.1
 
 replace (
 	github.com/carolsimone/continuo/orchestrator => ../../orchestrator
+	github.com/carolsimone/continuo/pkg => ../../pkg
 	github.com/carolsimone/continuo/state => ../../state
 )
 
@@ -12,6 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0
 	github.com/carolsimone/continuo/orchestrator v0.0.0-00010101000000-000000000000
+	github.com/carolsimone/continuo/pkg v0.0.0-00010101000000-000000000000
 	github.com/carolsimone/continuo/state v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0

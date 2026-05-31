@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
@@ -304,7 +305,7 @@ func assertValidationRequestedNodes(t *testing.T, ctx context.Context, clients *
 	t.Helper()
 	var got []string
 	pollUntil(t, ctx, 3*time.Minute, 1*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, "validation.requested:v1", "-", "+").Result()
+		msgs, err := clients.redisClient.XRange(ctx, streams.ValidationRequestedV1, "-", "+").Result()
 		if err != nil {
 			return false, nil
 		}
