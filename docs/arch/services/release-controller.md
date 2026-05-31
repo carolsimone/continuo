@@ -13,11 +13,11 @@ Postgres (its own database). Tables:
 | Table | Purpose |
 |---|---|
 | `releases` | One row per candidate release: status, image tags, manifests URI, candidate topology, validation node ids, per-node results, transition history. |
-| `current_prod` | Singleton row: the promoted `release_id` + its `topology_snapshot` (the live topology). |
+| `current_prod` | Singleton row: the promoted `release_id`, the `manifests_uri` that release was submitted with, and its `topology_snapshot` (the live topology). |
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
 | `message_processing` | Inbound dedup ledger (`outbox_entry_id` / message id) for idempotent consumption. |
 
-The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`). It is the base for two things: the dbt `--defer --state` target for candidate validation, and the per-node `content_hash` comparison that determines which nodes a new candidate must validate.
+The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. The candidate validation's dbt `--defer --state` target is `current_prod.manifests_uri` — the exact S3 location the promoted release's manifests were uploaded to, stored verbatim so it stays correct regardless of which bucket an environment uses.
 
 ## Inbound Interfaces
 
@@ -76,7 +76,7 @@ status=ok:
   else:
       transition to Validating, emit validation.requested:v1
         (mode=validation, candidate_schema=_candidate_<release_id>,
-         defer_state_uri=s3://.../releases/<current_prod>/manifests/, dbt_flags=[--empty])
+         defer_state_uri=<current_prod.manifests_uri>, dbt_flags=[--empty])
   advance queue
 ```
 Bootstrap (no `current_prod` yet) yields an empty snapshot, so every candidate node is new and the whole topology is validated.

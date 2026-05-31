@@ -135,10 +135,13 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 
 	candidateSchema := "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID)
 
-	deferStateURI := ""
-	if cp.ReleaseID() != "" {
-		deferStateURI = fmt.Sprintf("s3://continuo/releases/%s/manifests/", cp.ReleaseID())
-	}
+	// Defer the candidate validation to the current prod release's manifests at
+	// the exact location they were uploaded to. Reconstructing this from a
+	// hardcoded bucket would diverge from the submitted manifests_uri (the
+	// deploy bucket differs per environment), pointing --defer/--state at a
+	// location where no manifests exist. Bootstrap (no prod release) leaves it
+	// empty, so the first release validates without deferral.
+	deferStateURI := cp.ManifestsURI()
 
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,

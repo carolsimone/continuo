@@ -25,6 +25,7 @@ func TestCurrentProdRepository_UpsertAndGet(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewCurrentProdRepository(db)
 	cp := release.RehydrateCurrentProd("sha-xyz",
+		"s3://continuo-dev/releases/sha-xyz/manifests/",
 		release.Topology{{UniqueID: "a"}},
 		time.Unix(500, 0).UTC())
 	require.NoError(t, repo.Upsert(context.Background(), cp))
@@ -32,5 +33,6 @@ func TestCurrentProdRepository_UpsertAndGet(t *testing.T) {
 	got, err := repo.Get(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "sha-xyz", got.ReleaseID())
+	assert.Equal(t, "s3://continuo-dev/releases/sha-xyz/manifests/", got.ManifestsURI())
 	assert.Len(t, got.TopologySnapshot(), 1)
 }

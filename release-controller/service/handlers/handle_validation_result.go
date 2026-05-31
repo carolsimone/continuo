@@ -87,7 +87,7 @@ func promoteToProduction(ctx context.Context, u uow.UnitOfWork, r *release.Relea
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	cp.Update(releaseID, r.CandidateTopology(), now)
+	cp.Update(releaseID, r.ManifestsURI(), r.CandidateTopology(), now)
 	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
 		return fmt.Errorf("upsert current prod: %w", err)
 	}

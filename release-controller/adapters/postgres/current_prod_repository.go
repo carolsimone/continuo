@@ -28,12 +28,13 @@ var _ repository.CurrentProdRepository = (*CurrentProdRepository)(nil)
 // first promotion), a zero-value CurrentProd is returned — not an error.
 func (c *CurrentProdRepository) Get(ctx context.Context) (*release.CurrentProd, error) {
 	var row struct {
-		ReleaseID string       `db:"release_id"`
-		Topology  []byte       `db:"topology_snapshot"`
-		UpdatedAt sql.NullTime `db:"updated_at"`
+		ReleaseID    string       `db:"release_id"`
+		ManifestsURI string       `db:"manifests_uri"`
+		Topology     []byte       `db:"topology_snapshot"`
+		UpdatedAt    sql.NullTime `db:"updated_at"`
 	}
 	err := c.q.GetContext(ctx, &row,
-		`SELECT release_id, topology_snapshot, updated_at FROM current_prod WHERE id = 1`)
+		`SELECT release_id, manifests_uri, topology_snapshot, updated_at FROM current_prod WHERE id = 1`)
 	if errors.Is(err, sql.ErrNoRows) {
 		return release.NewCurrentProd(), nil
 	}
@@ -46,7 +47,7 @@ func (c *CurrentProdRepository) Get(ctx context.Context) (*release.CurrentProd, 
 			return nil, fmt.Errorf("unmarshal topology: %w", err)
 		}
 	}
-	return release.RehydrateCurrentProd(row.ReleaseID, topo, row.UpdatedAt.Time), nil
+	return release.RehydrateCurrentProd(row.ReleaseID, row.ManifestsURI, topo, row.UpdatedAt.Time), nil
 }
 
 // Upsert writes the current production state. The singleton id=1 row is
@@ -57,13 +58,14 @@ func (c *CurrentProdRepository) Upsert(ctx context.Context, cp *release.CurrentP
 		return fmt.Errorf("marshal topology: %w", err)
 	}
 	_, err = c.q.ExecContext(ctx,
-		`INSERT INTO current_prod (id, release_id, topology_snapshot, updated_at)
-		 VALUES (1, $1, $2, $3)
+		`INSERT INTO current_prod (id, release_id, manifests_uri, topology_snapshot, updated_at)
+		 VALUES (1, $1, $2, $3, $4)
 		 ON CONFLICT (id) DO UPDATE SET
 		   release_id = EXCLUDED.release_id,
+		   manifests_uri = EXCLUDED.manifests_uri,
 		   topology_snapshot = EXCLUDED.topology_snapshot,
 		   updated_at = EXCLUDED.updated_at`,
-		cp.ReleaseID(), topoJSON, cp.UpdatedAt())
+		cp.ReleaseID(), cp.ManifestsURI(), topoJSON, cp.UpdatedAt())
 	if err != nil {
 		return fmt.Errorf("upsert current_prod: %w", err)
 	}
