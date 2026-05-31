@@ -37,9 +37,9 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// Cleanup any existing data
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// Trigger manifest-controller to load the graph
-	t.Log("Triggering manifest-controller graph load...")
-	triggerGraphLoad(t, ctx, clients)
+	// Seed the topology directly into Neo4j (bypasses legacy update.graph:v1 path).
+	t.Log("Seeding topology directly into Neo4j...")
+	seedTopology(t, ctx, clients)
 
 	// Create and activate scheduler
 	t.Log("Creating and activating scheduler...")
