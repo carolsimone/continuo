@@ -146,7 +146,7 @@ flowchart TD
 Each accepted `manifest.loaded:v1` atomically increments `topology_state.topology_generation` (a monotonic `BIGINT` in orchestrator's Postgres). The counter is stamped on:
 
 - The `:TopologyRoot {id:'singleton'}` Neo4j node — holds the current generation and the full `service_metadata` JSON map (`{svc: {manifest_version, image_tag}}`).
-- Each `Table` node in Neo4j (`image_tag`, `topology_generation` properties).
+- Each `Table` node in Neo4j (`image_tag`, `node_type`, `topology_generation` properties).
 - Each `Run` node in Neo4j (`topology_generation`, `service_metadata` properties) — **copied from `:TopologyRoot` at `SnapshotGraph` time**.
 - Each `EXECUTES` edge in Neo4j (`image_tag`, `manifest_version` properties) — **stamped from the Table at `SnapshotGraph` time**.
 

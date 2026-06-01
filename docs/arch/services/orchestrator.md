@@ -17,7 +17,7 @@ It is responsible for:
 
 | Entity | Description |
 |---|---|
-| `Table` node | One per model/seed; carries topology metadata, `last_updated_at`, and an `active` flag for current-topology reconciliation |
+| `Table` node | One per model/seed; carries topology metadata (`schema_name`, `table_name`, `service_name`, `node_type`, `schedule_name`, `image_tag`), `last_updated_at`, and an `active` flag for current-topology reconciliation |
 | `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at`, `kind`, `source_run_id`, `topology_generation`, `total_nodes`, `terminal_count`, `version` |
 | `DEPENDS_ON` relationship | Directed edge from downstream to upstream `Table` |
 | `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status`, pre-assigned `task_id` UUID, per-task `image_tag` + `manifest_version`, and (for rebase-projected inherited rows only) an optional `inherited_from_task_id` property pointing to the root executed `task_id` in the source lineage |
