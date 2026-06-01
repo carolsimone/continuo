@@ -101,10 +101,16 @@ func EmitValidationAggregateIfComplete(
 		}
 	}
 
+	candidateSchema := ""
+	if len(results) > 0 {
+		candidateSchema = results[0].ValidationCommand().CandidateSchema
+	}
+
 	payload, err := json.Marshal(map[string]any{
 		"release_id":       releaseID,
 		"per_node_results": perNode,
 		"aggregate_status": aggregate,
+		"candidate_schema": candidateSchema,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal aggregate payload: %w", err)
