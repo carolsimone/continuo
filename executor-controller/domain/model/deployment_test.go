@@ -99,7 +99,7 @@ func validationCmd() command.ValidationDeployTask {
 func TestNewValidationDeployment_Defaults(t *testing.T) {
 	now := time.Now()
 	cmd := validationCmd()
-	d := model.NewValidationDeployment(cmd, nil, now)
+	d := model.NewValidationDeployment(cmd, nil, now, false)
 
 	assert.NotEqual(t, uuid.Nil, d.ID())
 	assert.Equal(t, model.ModeValidation, d.Mode())
@@ -120,13 +120,13 @@ func TestNewDeployment_ModeProduction(t *testing.T) {
 
 func TestValidationIsDeployable_FalseWhenIncomplete(t *testing.T) {
 	cmd := command.ValidationDeployTask{ReleaseID: uuid.New().String(), NodeID: uuid.New().String()}
-	d := model.NewValidationDeployment(cmd, nil, time.Now())
+	d := model.NewValidationDeployment(cmd, nil, time.Now(), false)
 	assert.False(t, d.IsDeployable(), "missing JobName/NodeType/ImageTag => not deployable")
 }
 
 func TestRecordOutcome_OnlyFromDeployed(t *testing.T) {
 	now := time.Now()
-	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 
 	// pending => rejected
 	assert.Error(t, d.RecordOutcome("ok", "s3://logs/run", now))
@@ -141,7 +141,7 @@ func TestRecordOutcome_OnlyFromDeployed(t *testing.T) {
 
 func TestRecordOutcome_AcceptsFailed(t *testing.T) {
 	now := time.Now()
-	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 	require.NoError(t, d.MarkDeployed(now))
 	require.NoError(t, d.RecordOutcome("failed", "s3://logs/run", now))
 	assert.Equal(t, "failed", d.Outcome())
@@ -149,7 +149,7 @@ func TestRecordOutcome_AcceptsFailed(t *testing.T) {
 
 func TestRecordOutcome_RejectsInvalidOutcome(t *testing.T) {
 	now := time.Now()
-	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 	require.NoError(t, d.MarkDeployed(now))
 	assert.Error(t, d.RecordOutcome("maybe", "s3://logs/run", now))
 	assert.Equal(t, "", d.Outcome(), "rejected outcome is not stored")
@@ -158,7 +158,7 @@ func TestRecordOutcome_RejectsInvalidOutcome(t *testing.T) {
 
 func TestRecordOutcome_RejectsSecondRecording(t *testing.T) {
 	now := time.Now()
-	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 	require.NoError(t, d.MarkDeployed(now))
 	require.NoError(t, d.RecordOutcome("ok", "s3://logs/first", now))
 
@@ -197,7 +197,7 @@ func TestReconstituteValidation_RestoresOutcome(t *testing.T) {
 
 func TestFailValidation_FromPendingSetsTerminalFailedOutcome(t *testing.T) {
 	now := time.Now()
-	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 
 	// Still pending (never dispatched) — RecordOutcome would reject this.
 	require.NoError(t, d.FailValidation("not deployable", now))
@@ -211,7 +211,7 @@ func TestFailValidation_FromPendingSetsTerminalFailedOutcome(t *testing.T) {
 
 func TestFailValidation_RejectsSecondRecording(t *testing.T) {
 	now := time.Now()
-	d := model.NewValidationDeployment(validationCmd(), nil, now)
+	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 	require.NoError(t, d.FailValidation("first", now))
 	assert.Error(t, d.FailValidation("second", now.Add(time.Minute)), "outcome recorded once")
 	assert.Equal(t, "first", *d.ErrorMessage(), "first reason unchanged")
@@ -220,6 +220,35 @@ func TestFailValidation_RejectsSecondRecording(t *testing.T) {
 func TestFailValidation_RejectsOnProductionDeployment(t *testing.T) {
 	d := model.NewDeployment(deployableCmd(), nil, time.Now())
 	assert.Error(t, d.FailValidation("x", time.Now()), "FailValidation is validation-only")
+}
+
+func TestNewValidationDeployment_InitialState(t *testing.T) {
+	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", NodeType: "dbt-model", ImageTag: "t"}
+	now := time.Now()
+	blocked := model.NewValidationDeployment(cmd, nil, now, true)
+	assert.Equal(t, model.StatusBlocked, blocked.Status(), "hasUpstreams=true => blocked")
+	root := model.NewValidationDeployment(cmd, nil, now, false)
+	assert.Equal(t, model.StatusPending, root.Status(), "hasUpstreams=false => pending")
+}
+
+func TestDeployment_Unblock(t *testing.T) {
+	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", NodeType: "dbt-model", ImageTag: "t"}
+	now := time.Now()
+	d := model.NewValidationDeployment(cmd, nil, now, true)
+	require.NoError(t, d.Unblock(now))
+	assert.Equal(t, model.StatusPending, d.Status(), "after Unblock => pending")
+	assert.Error(t, d.Unblock(now), "Unblock from pending should error")
+}
+
+func TestDeployment_Skip(t *testing.T) {
+	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", NodeType: "dbt-model", ImageTag: "t"}
+	now := time.Now()
+	d := model.NewValidationDeployment(cmd, nil, now, true)
+	require.NoError(t, d.Skip("upstream a1 failed", now))
+	assert.Equal(t, model.StatusSkipped, d.Status())
+	assert.Equal(t, "skipped", d.Outcome())
+	require.NotNil(t, d.OutcomeAt())
+	assert.Error(t, d.Skip("x", now), "Skip from skipped should error")
 }
 
 func TestBackoff_CapAndOverflow(t *testing.T) {

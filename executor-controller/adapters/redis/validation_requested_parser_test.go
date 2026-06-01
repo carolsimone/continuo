@@ -41,7 +41,6 @@ func validationPayload() map[string]any {
 		"node_ids_in_order": []string{"model.shop.orders", "model.shop.customers"},
 		"image_tags":        map[string]string{"shop": "sha-abc"},
 		"candidate_schema":  "_candidate_rel_123",
-		"defer_state_uri":   "s3://continuo/releases/rel-000/manifests/",
 		"dbt_flags":         []string{"--empty"},
 	}
 }
@@ -70,7 +69,6 @@ func TestParseValidationRequested_HappyPath(t *testing.T) {
 	assert.Equal(t, "rel-123", evt.ReleaseID)
 	assert.Equal(t, "validation", evt.Mode)
 	assert.Equal(t, "_candidate_rel_123", evt.CandidateSchema)
-	assert.Equal(t, "s3://continuo/releases/rel-000/manifests/", evt.DeferStateURI)
 	assert.Equal(t, []string{"--empty"}, evt.DBTFlags)
 	assert.Equal(t, map[string]string{"shop": "sha-abc"}, evt.ImageTags)
 	assert.Equal(t, []string{"model.shop.orders", "model.shop.customers"}, evt.NodeIDsInOrder)
@@ -156,6 +154,28 @@ func TestParseValidationRequested_InvalidNodeType(t *testing.T) {
 	nodes[0]["node_type"] = "no_such_type"
 	_, err := ParseValidationRequested(validationMsg(t, p, ""))
 	require.Error(t, err)
+}
+
+// TestParseValidationRequested_UpstreamNodeIDsRoundTrip verifies that per-node
+// upstream_node_ids present in the payload are threaded onto the parsed
+// ValidationNode and absent upstream_node_ids produce a nil/empty slice rather
+// than an error.
+func TestParseValidationRequested_UpstreamNodeIDsRoundTrip(t *testing.T) {
+	p := validationPayload()
+	// Set upstream_node_ids on the second node; leave the first without the field.
+	nodes := p["nodes"].([]map[string]any)
+	nodes[1]["upstream_node_ids"] = []string{"model.shop.orders"}
+
+	evt, err := ParseValidationRequested(validationMsg(t, p, ""))
+	require.NoError(t, err)
+
+	// First node has no upstream_node_ids in payload → empty slice.
+	assert.Empty(t, evt.Nodes[0].UpstreamNodeIDs,
+		"node without upstream_node_ids must have empty slice")
+
+	// Second node has upstream_node_ids threaded through.
+	assert.Equal(t, []string{"model.shop.orders"}, evt.Nodes[1].UpstreamNodeIDs,
+		"upstream_node_ids must round-trip from wire payload to ValidationNode")
 }
 
 func TestParseValidationRequested_NodesMismatchOrderList(t *testing.T) {

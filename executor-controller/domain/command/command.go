@@ -30,20 +30,24 @@ func (DeployTask) isCommand() {}
 
 // ValidationDeployTask is the command to deploy one validation node's dbt
 // --empty job. Parallel to DeployTask: production fields stay on DeployTask;
-// validation-only fields (ReleaseID, NodeID, CandidateSchema, DeferStateURI)
+// validation-only fields (ReleaseID, NodeID, CandidateSchema, UpstreamNodeIDs)
 // live here. The dispatcher branches on which command sits behind the
 // executor_deployments row's mode column.
+//
+// UpstreamNodeIDs lists the dbt unique_ids of intra-service nodes that gate
+// dispatch of this node. It is persisted in job_params and read back by the
+// dispatcher to evaluate whether all upstreams have completed successfully.
 type ValidationDeployTask struct {
-	ReleaseID       string `json:"release_id"`
-	NodeID          string `json:"node_id"`
-	ServiceName     string `json:"service_name"`
-	SchemaName      string `json:"schema_name"`
-	TableName       string `json:"table_name"`
-	NodeType        string `json:"node_type"`
-	ImageTag        string `json:"image_tag"`
-	JobName         string `json:"job_name"`
-	CandidateSchema string `json:"candidate_schema"`
-	DeferStateURI   string `json:"defer_state_uri"`
+	ReleaseID       string   `json:"release_id"`
+	NodeID          string   `json:"node_id"`
+	ServiceName     string   `json:"service_name"`
+	SchemaName      string   `json:"schema_name"`
+	TableName       string   `json:"table_name"`
+	NodeType        string   `json:"node_type"`
+	ImageTag        string   `json:"image_tag"`
+	JobName         string   `json:"job_name"`
+	CandidateSchema string   `json:"candidate_schema"`
+	UpstreamNodeIDs []string `json:"upstream_node_ids"`
 }
 
 func (ValidationDeployTask) isCommand() {}
@@ -67,6 +71,8 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 // ToValidationJobSpec projects the command onto the domain
 // deploy.ValidationJobSpec the Deployer port consumes for mode=validation
 // rows. The mapping is a pure field copy — no infrastructure concern.
+// UpstreamNodeIDs is intentionally not forwarded: gating lives in the
+// dispatcher, not in the K8s Job pod.
 func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 	return deploy.ValidationJobSpec{
 		JobName:         c.JobName,
@@ -78,6 +84,5 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		NodeType:        c.NodeType,
 		ImageTag:        c.ImageTag,
 		CandidateSchema: c.CandidateSchema,
-		DeferStateURI:   c.DeferStateURI,
 	}
 }

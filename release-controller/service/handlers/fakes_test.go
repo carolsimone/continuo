@@ -91,14 +91,13 @@ type fakeReleaseRepo struct {
 	store *fakeStore
 }
 
+// Get mirrors the Postgres ReleaseRepository contract: a missing release yields
+// (nil, nil), not an error. Handlers must nil-check the result, so the fake must
+// reproduce that contract or it would mask nil-deref bugs.
 func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*release.Release, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
-	r, ok := f.store.releases[id]
-	if !ok {
-		return nil, fmt.Errorf("release %s not found", id)
-	}
-	return r, nil
+	return f.store.releases[id], nil
 }
 
 func (f *fakeReleaseRepo) Save(_ context.Context, r *release.Release) error {

@@ -29,7 +29,6 @@ func TestValidationRequestedHandler_EnqueuesOneRowPerNode(t *testing.T) {
 		ReleaseID:       "rel-2026-05-29",
 		Mode:            "validation",
 		CandidateSchema: "public_candidate",
-		DeferStateURI:   "s3://state/prod/manifest.json",
 		Nodes: []events.ValidationNode{
 			{
 				NodeID:      "model.shop.orders",
@@ -59,7 +58,6 @@ func TestValidationRequestedHandler_EnqueuesOneRowPerNode(t *testing.T) {
 		cmd := dep.ValidationCommand()
 		assert.Equal(t, "rel-2026-05-29", cmd.ReleaseID)
 		assert.Equal(t, "public_candidate", cmd.CandidateSchema)
-		assert.Equal(t, "s3://state/prod/manifest.json", cmd.DeferStateURI)
 		assert.NotEmpty(t, cmd.JobName, "every enqueued node carries a K8s Job name")
 		assert.True(t, dep.IsDeployable(), "validation rows must be deployable")
 		seen[cmd.NodeID] = true
@@ -78,14 +76,13 @@ func TestValidationRequestedHandler_EnqueuesOneRowPerNode(t *testing.T) {
 	assert.True(t, seen["model.shop.customers"])
 }
 
-func TestValidationRequestedHandler_EmptyDeferStateURI_StillEnqueues(t *testing.T) {
+func TestValidationRequestedHandler_RootNodeEnqueuesPending(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
 	u := &uow.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.ValidationRequested{
 		ReleaseID:       "rel-1",
 		CandidateSchema: "cand",
-		DeferStateURI:   "",
 		Nodes: []events.ValidationNode{
 			{NodeID: "model.shop.orders", NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "sha-1"},
 		},
@@ -95,8 +92,51 @@ func TestValidationRequestedHandler_EmptyDeferStateURI_StillEnqueues(t *testing.
 	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
 	require.Len(t, depl.added, 1)
 
-	cmd := depl.added[0].ValidationCommand()
-	assert.Equal(t, "", cmd.DeferStateURI, "empty defer state URI stored faithfully")
+	assert.Equal(t, model.StatusPending, depl.added[0].Status(),
+		"root node with no upstreams must start pending")
+}
+
+// TestValidationRequestedHandler_BlocksGatedNodes verifies that a node with
+// intra-service upstreams starts blocked while a root node starts pending.
+// This is the core gating invariant: hasUpstreams drives NewValidationDeployment
+// and determines whether dispatch is immediate (pending) or held (blocked).
+func TestValidationRequestedHandler_BlocksGatedNodes(t *testing.T) {
+	depl := &stubDeploymentsRepo{}
+	u := &uow.FakeUnitOfWork{Deployments: depl}
+
+	h := handlers.NewValidationRequestedHandler(discardLogger())
+	evt := events.ValidationRequested{
+		ReleaseID: "rel", Mode: "validation", CandidateSchema: "_candidate_rel",
+		Nodes: []events.ValidationNode{
+			{NodeID: "a1", ServiceName: "s", SchemaName: "sc", TableName: "a1",
+				NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t"},
+			{NodeID: "a2", ServiceName: "s", SchemaName: "sc", TableName: "a2",
+				NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t",
+				UpstreamNodeIDs: []string{"a1"}},
+		},
+	}
+
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.Nil))
+	require.Len(t, depl.added, 2)
+
+	// Find both deployments by their NodeID.
+	byNode := map[string]*model.Deployment{}
+	for _, dep := range depl.added {
+		byNode[dep.ValidationCommand().NodeID] = dep
+	}
+
+	a1 := byNode["a1"]
+	require.NotNil(t, a1, "a1 must be enqueued")
+	assert.Equal(t, model.StatusPending, a1.Status(),
+		"root node with no upstreams starts pending")
+
+	a2 := byNode["a2"]
+	require.NotNil(t, a2, "a2 must be enqueued")
+	assert.Equal(t, model.StatusBlocked, a2.Status(),
+		"node with upstreams starts blocked")
+
+	// The UpstreamNodeIDs are persisted in the command.
+	assert.Equal(t, []string{"a1"}, a2.ValidationCommand().UpstreamNodeIDs)
 }
 
 func TestBuildValidationJobName_TruncationKeepsDeterministicHash(t *testing.T) {

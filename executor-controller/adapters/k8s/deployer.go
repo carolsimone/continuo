@@ -66,7 +66,6 @@ func (d *Deployer) DeployValidation(ctx context.Context, spec deploy.ValidationJ
 		NodeType:        nodeType,
 		ImageTag:        spec.ImageTag,
 		CandidateSchema: spec.CandidateSchema,
-		DeferStateURI:   spec.DeferStateURI,
 		Namespace:       d.namespace,
 	})
 }

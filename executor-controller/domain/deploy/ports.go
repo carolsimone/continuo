@@ -23,9 +23,9 @@ type JobSpec struct {
 // ValidationJobSpec is the domain description of a single validation deploy.
 // It mirrors JobSpec for the production fields a validation node still needs
 // (service/schema/table, node type, image tag, job name) and adds the
-// validation-only fields (release/node identity, candidate schema, defer
-// state). Like JobSpec it carries no adapter concerns such as the namespace;
-// NodeType stays a string so the domain port does not depend on pkg_model.
+// validation-only fields (release/node identity, candidate schema). Like
+// JobSpec it carries no adapter concerns such as the namespace; NodeType stays
+// a string so the domain port does not depend on pkg_model.
 type ValidationJobSpec struct {
 	JobName         string
 	ReleaseID       string
@@ -36,7 +36,6 @@ type ValidationJobSpec struct {
 	NodeType        string
 	ImageTag        string
 	CandidateSchema string
-	DeferStateURI   string
 }
 
 // Deployer is the driven port the dispatcher uses to deploy work and observe

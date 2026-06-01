@@ -48,7 +48,7 @@ func seedDeployedValidationNode(t *testing.T, db *sqlx.DB, releaseID, nodeID str
 		ReleaseID: releaseID, NodeID: nodeID, ServiceName: "shop",
 		SchemaName: "public", TableName: nodeID, NodeType: "dbt-model",
 		ImageTag: "sha-abc", JobName: "validate-" + nodeID,
-	}, nil, now)
+	}, nil, now, false)
 	require.NoError(t, repo.Add(context.Background(), dep))
 	require.NoError(t, dep.MarkDeployed(now))
 	require.NoError(t, repo.Save(context.Background(), dep))

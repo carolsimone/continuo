@@ -70,13 +70,8 @@ func (h *ValidationNodeCompletedHandler) Handle(
 		return fmt.Errorf("save deployment: %w", err)
 	}
 
-	return validation.EmitValidationAggregateIfComplete(
-		ctx,
-		u.DeploymentsRepo(),
-		u.OutboxRepo(),
-		u.ValidationAggregateRepo(),
-		validation.DedupNamespace,
-		evt.ReleaseID,
-		now,
+	return validation.SettleNodeTerminal(
+		ctx, u.DeploymentsRepo(), u.OutboxRepo(), u.ValidationAggregateRepo(),
+		validation.DedupNamespace, evt.ReleaseID, evt.NodeID, evt.Outcome, now,
 	)
 }

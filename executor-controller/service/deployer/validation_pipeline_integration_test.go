@@ -107,9 +107,9 @@ type pipelineNode struct {
 }
 
 // requestedXMessage assembles a validation.requested:v1 XMessage with the full
-// canonical payload (image_tags, candidate_schema, defer_state_uri, dbt_flags)
-// for the given nodes — the exact wire shape release-controller emits.
-func requestedXMessage(t *testing.T, msgID, releaseID, candidateSchema, deferURI string, nodes []pipelineNode) goredis.XMessage {
+// canonical payload (image_tags, candidate_schema, dbt_flags) for the given
+// nodes — the exact wire shape release-controller emits.
+func requestedXMessage(t *testing.T, msgID, releaseID, candidateSchema string, nodes []pipelineNode) goredis.XMessage {
 	t.Helper()
 	order := make([]string, 0, len(nodes))
 	imageTags := map[string]string{}
@@ -124,7 +124,6 @@ func requestedXMessage(t *testing.T, msgID, releaseID, candidateSchema, deferURI
 		"node_ids_in_order": order,
 		"image_tags":        imageTags,
 		"candidate_schema":  candidateSchema,
-		"defer_state_uri":   deferURI,
 		"dbt_flags":         []string{"--empty"},
 	}
 	raw, err := json.Marshal(body)
@@ -201,7 +200,6 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	ctx := context.Background()
 	releaseID := "rel-pipeline-1"
 	candidateSchema := "_candidate_" + releaseID
-	deferURI := "s3://prior/manifests/"
 	nodes := []pipelineNode{
 		{UniqueID: "model.shop.orders", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "orders", ImageTag: "sha-orders"},
 		{UniqueID: "model.shop.customers", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "customers", ImageTag: "sha-customers"},
@@ -210,7 +208,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 
 	// Step 2: validation.requested:v1 → one pending validation deployment per node.
 	requested := newValidationRequestedBinding(db)
-	require.NoError(t, requested(ctx, requestedXMessage(t, "100-0", releaseID, candidateSchema, deferURI, nodes)))
+	require.NoError(t, requested(ctx, requestedXMessage(t, "100-0", releaseID, candidateSchema, nodes)))
 
 	assert.Equal(t, 3, countDeployments(t, db,
 		`SELECT COUNT(*) FROM executor_deployments WHERE mode='validation' AND release_id=$1`, releaseID),
@@ -249,7 +247,6 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 		assert.Equal(t, n.ServiceName, s.ServiceName)
 		assert.Equal(t, n.ImageTag, s.ImageTag)
 		assert.Equal(t, candidateSchema, s.CandidateSchema, "candidate schema threaded to the Job")
-		assert.Equal(t, deferURI, s.DeferStateURI, "defer state uri threaded to the Job")
 	}
 
 	// node.deployed:v1 trigger: one per dispatched validation Job so k8s-controller
@@ -299,7 +296,6 @@ func TestValidationPipeline_FailurePath(t *testing.T) {
 	ctx := context.Background()
 	releaseID := "rel-pipeline-fail"
 	candidateSchema := "_candidate_" + releaseID
-	deferURI := "s3://prior/manifests/"
 	nodes := []pipelineNode{
 		{UniqueID: "model.shop.orders", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "orders", ImageTag: "sha-orders"},
 		{UniqueID: "model.shop.customers", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "customers", ImageTag: "sha-customers"},
@@ -307,7 +303,7 @@ func TestValidationPipeline_FailurePath(t *testing.T) {
 	}
 
 	requested := newValidationRequestedBinding(db)
-	require.NoError(t, requested(ctx, requestedXMessage(t, "500-0", releaseID, candidateSchema, deferURI, nodes)))
+	require.NoError(t, requested(ctx, requestedXMessage(t, "500-0", releaseID, candidateSchema, nodes)))
 
 	waitValidationRowsDue(t, db, releaseID)
 	dep := &capturingDeployer{}

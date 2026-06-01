@@ -63,7 +63,23 @@ func EmitValidationAggregateIfComplete(
 	if err := aggRepo.LockRelease(ctx, releaseID); err != nil {
 		return fmt.Errorf("lock release for aggregate gate: %w", err)
 	}
+	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, namespace, releaseID, now)
+}
 
+// emitAggregateIfComplete is the post-lock body of the aggregate-emit gate. It
+// assumes the per-release advisory lock is ALREADY held (taken by the public
+// wrapper or by SettleNodeTerminal) and must never take it itself, so a settle
+// that already locked once does not double-lock. It counts pending nodes, claims
+// the emission sentinel, and writes the validation.completed:v1 outbox row.
+func emitAggregateIfComplete(
+	ctx context.Context,
+	depRepo repository.DeploymentRepository,
+	outboxRepo outbox.Repository,
+	aggRepo repository.ValidationAggregateRepository,
+	namespace uuid.UUID,
+	releaseID string,
+	now time.Time,
+) error {
 	pending, err := depRepo.PendingValidationCount(ctx, releaseID)
 	if err != nil {
 		return fmt.Errorf("pending validation count: %w", err)
@@ -101,10 +117,16 @@ func EmitValidationAggregateIfComplete(
 		}
 	}
 
+	candidateSchema := ""
+	if len(results) > 0 {
+		candidateSchema = results[0].ValidationCommand().CandidateSchema
+	}
+
 	payload, err := json.Marshal(map[string]any{
 		"release_id":       releaseID,
 		"per_node_results": perNode,
 		"aggregate_status": aggregate,
+		"candidate_schema": candidateSchema,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal aggregate payload: %w", err)

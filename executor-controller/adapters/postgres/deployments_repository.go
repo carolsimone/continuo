@@ -172,7 +172,7 @@ func (r *deploymentsRepository) PendingValidationCount(ctx context.Context, rele
 		SELECT COUNT(*)
 		FROM executor_deployments
 		WHERE mode = 'validation' AND release_id = $1
-		  AND status IN ('pending','deployed') AND outcome IS NULL`
+		  AND status IN ('pending','blocked','deployed') AND outcome IS NULL`
 	var n int
 	if err := r.exec.QueryRowContext(ctx, query, releaseID).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count pending validations for release %s: %w", releaseID, err)
@@ -189,6 +189,23 @@ func (r *deploymentsRepository) ListValidationResults(ctx context.Context, relea
 	var rows []*deploymentRow
 	if err := r.exec.SelectContext(ctx, &rows, query, releaseID); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("list validation results for release %s: %w", releaseID, err)
+	}
+	out := make([]*model.Deployment, len(rows))
+	for i, row := range rows {
+		out[i] = r.toAggregate(row)
+	}
+	return out, nil
+}
+
+func (r *deploymentsRepository) ListValidationByRelease(ctx context.Context, releaseID string) ([]*model.Deployment, error) {
+	const query = `
+		SELECT` + validationSelectColumns + `
+		FROM executor_deployments
+		WHERE mode = 'validation' AND release_id = $1
+		ORDER BY created_at ASC`
+	var rows []*deploymentRow
+	if err := r.exec.SelectContext(ctx, &rows, query, releaseID); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("list validation deployments for release %s: %w", releaseID, err)
 	}
 	out := make([]*model.Deployment, len(rows))
 	for i, row := range rows {

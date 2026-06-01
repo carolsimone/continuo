@@ -66,7 +66,6 @@ func validationRequestedXMessage(t *testing.T, msgID, releaseID string, nodeIDs 
 		"nodes":             nodes,
 		"node_ids_in_order": nodeIDs,
 		"candidate_schema":  "candidate_" + releaseID,
-		"defer_state_uri":   "s3://state/" + releaseID,
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)

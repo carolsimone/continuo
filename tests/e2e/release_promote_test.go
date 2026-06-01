@@ -95,8 +95,8 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	t.Logf("seeded prod snapshot with %d nodes (rel_probe excluded)", len(prodNodes))
 
 	// 2. Free the release queue from any prior run and seed current_prod with the
-	//    baseline-minus-probe snapshot. release_id is left empty so the validation
-	//    job runs without --defer (no prior state to defer to).
+	//    baseline-minus-probe snapshot, so the derived changed set is exactly the
+	//    rel_probe node — which builds into the candidate schema in isolation.
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 
@@ -118,6 +118,196 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	//    orchestrator consumes it — so poll rather than asserting once.
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
 	t.Log("✅ release validated, promoted, and Neo4j topology swapped to the new release")
+}
+
+// probeUpUniqueID and probeDownUniqueID are the unique_ids manifest-controller
+// derives for the rel_probe_up / rel_probe_down models. rel_probe_up is a
+// self-contained leaf (`SELECT 1`); rel_probe_down is `SELECT id FROM
+// {{ ref('rel_probe_up') }}` — an intra-service ref, so manifest-controller
+// derives rel_probe_down's upstream = rel_probe_up (same service-1). The pair
+// exercises the gated intra-service path: rel_probe_up builds into the candidate
+// schema first, then rel_probe_down validates against it.
+const (
+	probeUpUniqueID   = "e2e_schema.rel_probe_up"
+	probeDownUniqueID = "e2e_schema.rel_probe_down"
+)
+
+// ftableD / ftableC are an existing cross-service edge used by the rejection
+// test: ftable_d (service-2) reads raw `FROM e2e_schema.ftable_c`, and ftable_c
+// lives in service-3 — so manifest-controller resolves ftable_d's upstream to a
+// different-service node. Seeding current_prod WITHOUT ftable_c makes ftable_c a
+// NEW cross-service upstream of the changed ftable_d, which the release-controller
+// must reject early with reason new_cross_service_upstream.
+const (
+	ftableDUniqueID = "e2e_schema.ftable_d"
+	ftableCUniqueID = "e2e_schema.ftable_c"
+)
+
+// TestE2E_ReleasePromote_GatedIntraServiceUpstream proves that when a changed
+// node depends on a CHANGED intra-service upstream, the upstream builds into the
+// candidate schema first (topologically gated) and the dependent validates
+// against it; the release then promotes and the candidate schema is torn down.
+//
+// current_prod is seeded with every candidate node EXCEPT rel_probe_up and
+// rel_probe_down. The derived changed set is therefore exactly
+// {rel_probe_up, rel_probe_down} with the intra-service gating edge
+// rel_probe_down → rel_probe_up. Both validate cleanly with `dbt run --empty`.
+func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-rel-" + uuid.NewString()[:8]
+	t.Logf("release_id=%s", releaseID)
+
+	// Build the prod snapshot of every candidate node except the rel_probe* chain
+	// so the derived changed set is exactly {rel_probe_up, rel_probe_down}.
+	excluded := map[string]bool{
+		probeUpUniqueID:   true,
+		probeDownUniqueID: true,
+	}
+	manifestKeys := listLatestManifestKeys(t, ctx, clients)
+	require.NotEmpty(t, manifestKeys,
+		"no manifests under s3://%s/local/manifest/ — setup.sh dbt upload must run first", e2eS3Bucket)
+
+	var prodNodes []map[string]string
+	imageTags := map[string]string{}
+	var upFound, downFound bool
+	for service, key := range manifestKeys {
+		imageTags[service] = readServiceImageTag(t, ctx, clients, service)
+		for _, n := range parseManifestNodes(t, getS3Object(t, ctx, clients, key)) {
+			switch n.uniqueID {
+			case probeUpUniqueID:
+				upFound = true
+			case probeDownUniqueID:
+				downFound = true
+			}
+			if excluded[n.uniqueID] {
+				continue // keep these out of prod → they become the changed set
+			}
+			prodNodes = append(prodNodes, map[string]string{
+				"unique_id":    n.uniqueID,
+				"content_hash": n.contentHash,
+			})
+		}
+		dst := fmt.Sprintf("releases/%s/manifests/%s/manifest_v1.json", releaseID, service)
+		copyS3Object(t, ctx, clients, key, dst)
+	}
+	require.True(t, upFound,
+		"rel_probe_up not found in any manifest — is the model in service-1 and the image rebuilt + manifests re-uploaded?")
+	require.True(t, downFound,
+		"rel_probe_down not found in any manifest — is the model in service-1 and the image rebuilt + manifests re-uploaded?")
+	t.Logf("seeded prod snapshot with %d nodes (rel_probe* chain excluded)", len(prodNodes))
+
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+
+	postRelease(t, clients, releaseID, imageTags,
+		fmt.Sprintf("s3://%s/releases/%s/manifests/", e2eS3Bucket, releaseID))
+
+	// The derived validation set must be exactly the intra-service chain, in
+	// topological order (upstream first).
+	assertValidationRequestedNodes(t, ctx, clients, releaseID,
+		[]string{probeUpUniqueID, probeDownUniqueID})
+
+	// The gated upstream builds into the candidate schema first, the dependent
+	// validates against it, and on success the release promotes.
+	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
+
+	// The orchestrator must swap the Neo4j topology to this release; assert on
+	// the dependent node so both chain members are present.
+	waitForTopologySwap(t, ctx, clients, releaseID, probeDownUniqueID, 2*time.Minute)
+
+	// After validation.completed:v1 the executor drops _candidate_<releaseID>
+	// from the dbt warehouse. Teardown is asynchronous, so poll.
+	assertCandidateSchemaDropped(t, ctx, clients, releaseID, 3*time.Minute)
+	t.Log("✅ gated intra-service upstream validated, release promoted, topology swapped, candidate schema dropped")
+}
+
+// TestE2E_ReleaseReject_NewCrossServiceUpstream proves that a changed node whose
+// cross-service upstream is NOT in prod causes the release to be rejected early
+// with reason new_cross_service_upstream and NO validation jobs dispatched.
+//
+// ftable_d (service-2) reads raw `FROM e2e_schema.ftable_c`, and ftable_c lives
+// in service-3. Seeding current_prod with every candidate node EXCEPT ftable_d
+// and ftable_c makes ftable_d a changed node with a new cross-service upstream
+// ftable_c (absent from prod) — the exact reject condition.
+func TestE2E_ReleaseReject_NewCrossServiceUpstream(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-rel-" + uuid.NewString()[:8]
+	t.Logf("release_id=%s", releaseID)
+
+	excluded := map[string]bool{
+		ftableDUniqueID: true,
+		ftableCUniqueID: true,
+	}
+	manifestKeys := listLatestManifestKeys(t, ctx, clients)
+	require.NotEmpty(t, manifestKeys,
+		"no manifests under s3://%s/local/manifest/ — setup.sh dbt upload must run first", e2eS3Bucket)
+
+	var prodNodes []map[string]string
+	imageTags := map[string]string{}
+	var dFound, cFound bool
+	for service, key := range manifestKeys {
+		imageTags[service] = readServiceImageTag(t, ctx, clients, service)
+		for _, n := range parseManifestNodes(t, getS3Object(t, ctx, clients, key)) {
+			switch n.uniqueID {
+			case ftableDUniqueID:
+				dFound = true
+			case ftableCUniqueID:
+				cFound = true
+			}
+			if excluded[n.uniqueID] {
+				continue // ftable_d changed; ftable_c absent → new cross-service upstream
+			}
+			prodNodes = append(prodNodes, map[string]string{
+				"unique_id":    n.uniqueID,
+				"content_hash": n.contentHash,
+			})
+		}
+		dst := fmt.Sprintf("releases/%s/manifests/%s/manifest_v1.json", releaseID, service)
+		copyS3Object(t, ctx, clients, key, dst)
+	}
+	require.True(t, dFound, "ftable_d not found in any manifest")
+	require.True(t, cFound, "ftable_c not found in any manifest")
+	t.Logf("seeded prod snapshot with %d nodes (ftable_d + ftable_c excluded)", len(prodNodes))
+
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+
+	postRelease(t, clients, releaseID, imageTags,
+		fmt.Sprintf("s3://%s/releases/%s/manifests/", e2eS3Bucket, releaseID))
+
+	// The release must end rejected with the cross-service reason.
+	waitForReleaseRejected(t, ctx, clients, releaseID, "new_cross_service_upstream", 5*time.Minute)
+
+	// And no validation Job may ever be dispatched for this release. The reject
+	// happens before any validation.requested:v1, so no validate-* Job is created.
+	assertNoValidationJobsDispatched(t, ctx, clients, releaseID)
+	t.Log("✅ new cross-service upstream rejected, no validation jobs dispatched")
 }
 
 // requireReleaseControllerHealthy verifies the release-controller HTTP API is
@@ -262,12 +452,11 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 
 // seedCurrentProd writes the singleton current_prod row. Only unique_id and
 // content_hash matter for the change-detector; other Node fields default to
-// zero values on the release-controller side. Both release_id and manifests_uri
-// are reset to empty so the release runs in bootstrap mode: an empty
-// manifests_uri keeps the validation defer-state URI empty (no --defer/--state),
-// which is required for the self-contained rel_probe node. manifests_uri MUST be
-// cleared explicitly — a prior promoted release leaves it populated, and an
-// inherited stale value would point dbt --state at a non-existent manifest.
+// zero values on the release-controller side. release_id and manifests_uri are
+// reset to empty for a clean baseline: manifests_uri is a record-keeping column
+// (validation builds the candidate schema directly and never defers to a prior
+// manifest), so clearing it just stops a prior promoted release's value from
+// lingering across reused-stack runs.
 func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, nodes []map[string]string) {
 	t.Helper()
 	topoJSON, err := json.Marshal(nodes)
@@ -399,6 +588,94 @@ func waitForTopologySwap(t *testing.T, ctx context.Context, clients *testClients
 	}, fmt.Sprintf("timeout waiting for Neo4j topology swap to release %s "+
 		"(:Meta=%q, node %s active=%v release_id=%q)", releaseID, lastMeta, uniqueID, lastActive, lastNodeRel))
 }
+
+// waitForReleaseRejected polls GET /releases/{id} until the release reaches
+// "rejected" and asserts the recorded reject_reason matches wantReason. A
+// "promoted" status fails immediately (the release should never validate).
+func waitForReleaseRejected(t *testing.T, ctx context.Context, clients *testClients, releaseID, wantReason string, timeout time.Duration) {
+	t.Helper()
+	var gotReason string
+	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
+		resp, err := http.Get(fmt.Sprintf("%s/releases/%s", clients.releaseBase, releaseID))
+		if err != nil {
+			return false, nil
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false, nil
+		}
+		body, _ := io.ReadAll(resp.Body)
+		var r struct {
+			Status       string `json:"status"`
+			RejectReason string `json:"reject_reason"`
+		}
+		if json.Unmarshal(body, &r) != nil {
+			return false, nil
+		}
+		switch r.Status {
+		case "rejected":
+			gotReason = r.RejectReason
+			return true, nil
+		case "promoted":
+			t.Fatalf("release %s promoted but should have been rejected (%s)", releaseID, wantReason)
+		}
+		return false, nil
+	}, fmt.Sprintf("timeout waiting for release %s to reach rejected", releaseID))
+	require.Equal(t, wantReason, gotReason,
+		"release %s rejected for the wrong reason", releaseID)
+}
+
+// assertCandidateSchemaDropped polls the dbt warehouse until the release's
+// _candidate_<sanitized releaseID> schema is absent from
+// information_schema.schemata. The executor drops the schema asynchronously on
+// validation.completed:v1, so this must poll. The schema name is computed with
+// the same sanitization release-controller applies (non-[A-Za-z0-9_] → _).
+func assertCandidateSchemaDropped(t *testing.T, ctx context.Context, clients *testClients, releaseID string, timeout time.Duration) {
+	t.Helper()
+	schema := "_candidate_" + sanitizeReleaseSchemaSuffix(releaseID)
+	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
+		var n int
+		err := clients.dbtDB.GetContext(ctx, &n,
+			`SELECT count(*) FROM information_schema.schemata WHERE schema_name = $1`, schema)
+		if err != nil {
+			return false, nil
+		}
+		return n == 0, nil
+	}, fmt.Sprintf("timeout waiting for candidate schema %q to be dropped from the dbt warehouse", schema))
+	t.Logf("✅ candidate schema %q dropped", schema)
+}
+
+// assertNoValidationJobsDispatched confirms no mode=validation K8s Job was ever
+// created for releaseID. A rejected release never emits validation.requested:v1,
+// so the executor never dispatches a job. A short grace window absorbs any
+// in-flight dispatch race before the final assertion.
+func assertNoValidationJobsDispatched(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
+	t.Helper()
+	selector := fmt.Sprintf("mode=validation,release-id=%s", releaseID)
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		jobs, err := getK8sJobs(ctx, selector)
+		require.NoError(t, err, "list validation jobs for release %s", releaseID)
+		require.Empty(t, jobs.Items,
+			"expected no validation jobs for rejected release %s, found %d", releaseID, len(jobs.Items))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+	t.Logf("✅ no validation jobs dispatched for rejected release %s", releaseID)
+}
+
+// sanitizeReleaseSchemaSuffix mirrors release-controller's sanitizeSchemaSuffix:
+// every character that is not [A-Za-z0-9_] becomes _. Kept local to the e2e
+// package so the test computes the candidate schema name independently of the
+// service-internal helper.
+func sanitizeReleaseSchemaSuffix(s string) string {
+	return releaseSchemaSuffixRe.ReplaceAllString(s, "_")
+}
+
+var releaseSchemaSuffixRe = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
 // neo4jScalarString runs a query expected to return a single string column `v`
 // and returns it (empty string if no row).

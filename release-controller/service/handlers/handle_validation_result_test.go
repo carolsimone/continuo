@@ -24,21 +24,23 @@ type rejectedPayload struct {
 
 // seedToValidating advances a release from Received through Parsing to Validating.
 // It uses ReceiveCandidate → AdvanceQueue → HandleParsedManifest(ok) with a
-// two-node topology (a → b). Returns the shared deps and fakeStore.
+// two-node single-service topology (a → b, both svc-a) so that bootstrap with
+// no prod snapshot does not trigger the cross-service upstream rejection.
+// Returns the shared deps and fakeStore.
 func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		ReleaseID:    releaseID,
-		ImageTags:    map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"},
+		ImageTags:    map[string]string{"svc-a": "sha-a"},
 		ManifestsURI: "s3://continuo/releases/" + releaseID + "/manifests/",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "b", ServiceName: "svc-b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: releaseID,
@@ -46,6 +48,29 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 		Topology:  topo,
 	}))
 	return deps, store
+}
+
+// TestHandleValidationResult_UnknownRelease_DropsWithoutPanic guards against a
+// stale or duplicate validation.completed:v1 message whose release row no longer
+// exists (e.g. it was pruned, or the message was reclaimed from a previous
+// consumer for a deleted release). ReleaseRepo.Get returns (nil, nil) for a
+// missing release; the handler must ack and drop rather than dereference a nil
+// aggregate and crash the consumer on reclaim.
+func TestHandleValidationResult_UnknownRelease_DropsWithoutPanic(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "does-not-exist",
+		PerNodeResults: []handlers.NodeResult{
+			{NodeID: "a", Status: "ok"},
+		},
+		AggregateStatus: "ok",
+	})
+	require.NoError(t, err, "unknown release must be dropped, not error")
+
+	// Nothing was written: no promotion, no rejection, no outbox rows.
+	require.Empty(t, outboxEntries(store))
+	assert.Equal(t, "", store.GetCurrentProd().ReleaseID())
 }
 
 func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {

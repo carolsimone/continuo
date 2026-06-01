@@ -31,3 +31,7 @@ models:
       +tags: ["e2e-schedule-failure"]
     rel_probe:
       +tags: ["rel-probe"]
+    rel_probe_up:
+      +tags: ["rel-probe"]
+    rel_probe_down:
+      +tags: ["rel-probe"]

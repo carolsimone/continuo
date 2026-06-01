@@ -231,8 +231,10 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 // handler, which then triggers the aggregate emit. A validation row that cannot be dispatched
 // (not deployable, or a permanent pre-deploy deployer error) is failed terminally
 // here via FailValidation — which sets a "failed" outcome from pending without
-// requiring StatusDeployed — and we attempt the aggregate emit so a release whose
-// last outstanding node fails at dispatch still announces its (failed) result.
+// requiring StatusDeployed — and we then settle the node: its blocked descendants
+// are skipped and the per-release aggregate is emitted (under the advisory lock),
+// so a release whose node fails at dispatch never strands its downstream rows in
+// "blocked" and still announces its (failed) result.
 func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
 	now := d.now()
 
@@ -248,7 +250,7 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}
-		return d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now)
+		return d.settleFailedValidation(ctx, repo, outboxRepo, aggRepo, dep, now)
 	}
 
 	deployErr := d.deployer.DeployValidation(ctx, dep.ValidationCommand().ToValidationJobSpec())
@@ -274,20 +276,24 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}
-		return d.maybeEmitValidationAggregate(ctx, repo, outboxRepo, aggRepo, dep.ReleaseID(), now)
+		return d.settleFailedValidation(ctx, repo, outboxRepo, aggRepo, dep, now)
 	}
 	d.logger.Warn("Validation deploy transient failure — rescheduling",
 		"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
 	return repo.Save(ctx, dep)
 }
 
-// maybeEmitValidationAggregate runs the shared per-release aggregate-emit gate
-// inside the dispatcher's per-batch transaction. The logic lives in
-// service/validation so the validation.node.completed:v1 handler runs the
-// identical gate under its own Unit-of-Work.
-func (d *Dispatcher) maybeEmitValidationAggregate(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, releaseID string, now time.Time) error {
-	return validation.EmitValidationAggregateIfComplete(
-		ctx, repo, outboxRepo, aggRepo, validation.DedupNamespace, releaseID, now)
+// settleFailedValidation settles a validation node that failed AT dispatch: it
+// runs the shared per-release gating-propagation + aggregate-emit gate under the
+// per-release advisory lock so the failed node's blocked descendants are skipped
+// and the aggregate can fire. The logic lives in service/validation so the
+// validation.node.completed:v1 handler runs the identical gate under its own
+// Unit-of-Work. The failed node's own outcome is already persisted before this
+// call; "failed" drives the transitive skip of its blocked downstreams.
+func (d *Dispatcher) settleFailedValidation(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
+	return validation.SettleNodeTerminal(
+		ctx, repo, outboxRepo, aggRepo, validation.DedupNamespace,
+		dep.ReleaseID(), dep.NodeID(), "failed", now)
 }
 
 func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {

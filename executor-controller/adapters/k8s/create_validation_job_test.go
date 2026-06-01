@@ -47,12 +47,11 @@ func validationParams() ValidationJobParams {
 		NodeType:        pkg_model.NodeTypeDbtModel,
 		ImageTag:        "abc-1714300000",
 		CandidateSchema: "_candidate_rel_123",
-		DeferStateURI:   "s3://continuo/releases/prev/manifests/",
 		Namespace:       "default",
 	}
 }
 
-func TestCreateValidationJob_BuildsExpectedCommand_DbtModel_WithDefer(t *testing.T) {
+func TestCreateValidationJob_BuildsExpectedCommand_DbtModel(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newValidationTestClient()
 	p := validationParams()
@@ -62,42 +61,23 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtModel_WithDefer(t *testing
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t,
-		[]string{"dbt", "run", "--select", "orders",
-			"--empty",
-			"--defer", "--state", "s3://continuo/releases/prev/manifests/"},
+		[]string{"dbt", "run", "--select", "orders", "--empty"},
 		job.Spec.Template.Spec.Containers[0].Command)
 	assert.Equal(t, "service-1:abc-1714300000", job.Spec.Template.Spec.Containers[0].Image)
 }
 
-func TestCreateValidationJob_BuildsExpectedCommand_DbtModel_BootstrapNoDefer(t *testing.T) {
-	c := newValidationTestClient()
-	p := validationParams()
-	p.DeferStateURI = ""
-
-	require.NoError(t, c.CreateValidationJob(context.Background(), p))
-
-	job := fetchJob(t, c, p.Namespace, p.JobName)
-	require.Len(t, job.Spec.Template.Spec.Containers, 1)
-	assert.Equal(t,
-		[]string{"dbt", "run", "--select", "orders",
-			"--empty"},
-		job.Spec.Template.Spec.Containers[0].Command)
-}
-
-func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed_NoDefer(t *testing.T) {
+func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 	c := newValidationTestClient()
 	p := validationParams()
 	p.NodeType = pkg_model.NodeTypeDbtSeed
 	p.TableName = "country_codes"
-	p.DeferStateURI = ""
 
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t,
-		[]string{"dbt", "seed", "--select", "country_codes",
-			"--empty"},
+		[]string{"dbt", "seed", "--select", "country_codes", "--empty"},
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 

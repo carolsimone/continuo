@@ -29,11 +29,13 @@ func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) 
 }
 
 func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
-	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
+	// Single-service topology avoids cross-service upstream rejection in bootstrap
+	// (no prod snapshot means every cross-service upstream would be "new").
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "b", ServiceName: "svc-b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"}},
 	}
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
@@ -90,15 +92,16 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 // objects (unique_id, service_name, schema_name, table_name, image_tag) in
 // topological order. executor-controller needs these to build candidate dbt
 // jobs without re-deriving fields from the unique_id string.
+// Single-service topology is used to avoid cross-service upstream rejection on
+// bootstrap (no prod snapshot).
 func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{
 		"svc-a": "sha-a",
-		"svc-b": "sha-b",
 	})
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", SchemaName: "schema_a", TableName: "table_a"},
-		{UniqueID: "b", ServiceName: "svc-b", NodeType: "dbt-seed", SchemaName: "schema_b", TableName: "table_b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "b", ServiceName: "svc-a", NodeType: "dbt-seed", SchemaName: "schema_b", TableName: "table_b", UpstreamUniqueIDs: []string{"a"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
@@ -146,11 +149,11 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 	assert.Equal(t, "table_a", a.TableName)
 	assert.Equal(t, "sha-a", a.ImageTag, "image_tag was joined from Release.ImageTags before publishing")
 
-	assert.Equal(t, "svc-b", b.ServiceName)
+	assert.Equal(t, "svc-a", b.ServiceName)
 	assert.Equal(t, "dbt-seed", b.NodeType, "node_type is forwarded from the candidate topology")
 	assert.Equal(t, "schema_b", b.SchemaName)
 	assert.Equal(t, "table_b", b.TableName)
-	assert.Equal(t, "sha-b", b.ImageTag)
+	assert.Equal(t, "sha-a", b.ImageTag, "b is in svc-a so it gets svc-a's image tag")
 }
 
 // TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff seeds a
@@ -187,17 +190,14 @@ func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing
 
 	assert.Contains(t, validIDs, "b", "b's hash changed -> seed")
 	assert.Contains(t, validIDs, "d", "d is new -> seed")
-	assert.NotContains(t, validIDs, "a", "a unchanged and not downstream of a changed node")
-	assert.NotContains(t, validIDs, "c", "c unchanged and not downstream of a changed node")
+	assert.Contains(t, validIDs, "a", "a is an intra-service ancestor of changed b -> pulled into build set so its ref()s resolve in the candidate schema")
+	assert.Contains(t, validIDs, "c", "c is an intra-service ancestor of new node d -> pulled into build set so d's ref()s resolve in the candidate schema")
 
-	// The validation defer-state base must be the prod release's submitted
-	// manifests_uri verbatim — not a URI reconstructed from a hardcoded bucket,
-	// which would point --defer/--state at a location with no manifests.
-	var payload struct {
-		DeferStateURI string `json:"defer_state_uri"`
-	}
-	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ValidationRequestedV1).Payload, &payload))
-	assert.Equal(t, "s3://continuo/releases/prev/manifests/", payload.DeferStateURI)
+	// defer_state_uri is no longer emitted in validation.requested:v1.
+	var rawPayload map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ValidationRequestedV1).Payload, &rawPayload))
+	_, hasDeferURI := rawPayload["defer_state_uri"]
+	assert.False(t, hasDeferURI, "defer_state_uri must not appear in validation.requested:v1")
 }
 
 // findEntry returns the single outbox entry on the given stream, failing if
@@ -302,16 +302,131 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 	assert.Equal(t, "rA", cp.ReleaseID(), "current prod advanced to this release")
 }
 
+// TestHandleParseOK_RejectsNewCrossServiceUpstream verifies that a candidate
+// where a changed node gains a NEW cross-service upstream (absent from prod)
+// is rejected early with reason "new_cross_service_upstream" and no
+// validation.requested:v1 event is emitted.
+func TestHandleParseOK_RejectsNewCrossServiceUpstream(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
+
+	// Prod is empty (bootstrap), so any cross-service upstream is new.
+	// Candidate: a2 (svcA) is changed (new node) with upstream b_new (svcB).
+	topo := release.Topology{
+		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"b_new"}},
+		{UniqueID: "b_new", ServiceName: "svc-b", ContentHash: "h_b_new"},
+	}
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	})
+	require.NoError(t, err, "handler must return nil (graceful rejection, not an infrastructure error)")
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status(), "release must be Rejected")
+	assert.Equal(t, "new_cross_service_upstream", r.RejectReason())
+
+	entries := outboxEntries(store)
+	var rejectedEntry *pkgoutbox.Entry
+	for _, e := range entries {
+		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must NOT emit validation.requested:v1")
+		if e.StreamName == streams.ReleaseRejectedV1 {
+			rejectedEntry = e
+		}
+	}
+	require.NotNil(t, rejectedEntry, "release.rejected:v1 outbox entry must be created")
+
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(rejectedEntry.Payload, &payload))
+	assert.Equal(t, "new_cross_service_upstream", payload["reason"])
+	assert.Equal(t, "rA", payload["release_id"])
+}
+
+// TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI verifies that the
+// validation.requested:v1 payload carries upstream_node_ids per node and does
+// NOT contain defer_state_uri. Single-service chain a1->a2, both changed.
+func TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+
+	// a1 and a2 are both new (bootstrap, no prod snapshot), a2 depends on a1.
+	topo := release.Topology{
+		{UniqueID: "a1", ServiceName: "svc-a", ContentHash: "h_a1", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"a1"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	}))
+
+	entry := findEntry(t, store, streams.ValidationRequestedV1)
+
+	var rawPayload map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry.Payload, &rawPayload))
+
+	_, hasDeferURI := rawPayload["defer_state_uri"]
+	assert.False(t, hasDeferURI, "payload must NOT contain defer_state_uri")
+
+	_, hasNodes := rawPayload["nodes"]
+	assert.True(t, hasNodes, "payload must contain nodes array")
+
+	var nodes []struct {
+		UniqueID        string   `json:"unique_id"`
+		UpstreamNodeIDs []string `json:"upstream_node_ids"`
+	}
+	require.NoError(t, json.Unmarshal(rawPayload["nodes"], &nodes))
+
+	byID := map[string][]string{}
+	for _, n := range nodes {
+		byID[n.UniqueID] = n.UpstreamNodeIDs
+	}
+
+	assert.Empty(t, byID["a1"], "a1 has no in-set intra-service upstreams")
+	assert.Equal(t, []string{"a1"}, byID["a2"], "a2 must carry a1 as its in-set upstream")
+}
+
+// TestHandleParseOK_UnknownRelease_DropsWithoutPanic guards against a stale or
+// duplicate manifest.loaded:v1 message whose release row no longer exists (e.g.
+// it was pruned, or the message was reclaimed from a previous consumer for a
+// deleted release). ReleaseRepo.Get returns (nil, nil) for a missing release;
+// the handler must ack and drop rather than dereference a nil aggregate and
+// crash the consumer on reclaim.
+func TestHandleParseOK_UnknownRelease_DropsWithoutPanic(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "does-not-exist",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a"},
+		},
+	})
+	require.NoError(t, err, "unknown release must be dropped, not error")
+
+	// Nothing was written: no validation.requested, no release.rejected, no promotion.
+	require.Empty(t, outboxEntries(store))
+	assert.Equal(t, "", store.GetCurrentProd().ReleaseID())
+}
+
 func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
+	// Two-service topology with the cross-service upstream already present in
+	// prod so NewCrossServiceUpstreams does not fire. This tests that image tags
+	// from the Release are joined into the stored candidate topology correctly.
 	imageTags := map[string]string{
 		"svc-a": "tag-alpha",
 		"svc-b": "tag-beta",
 	}
 	deps, store := seedToParsing(t, "rA", imageTags)
 
+	// Seed prod containing "a" so "b->a" is not a NEW cross-service upstream.
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
+	}, time.Unix(50, 0).UTC()))
+
 	topo := release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "b", ServiceName: "svc-b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}, ContentHash: "h_a"},
+		{UniqueID: "b", ServiceName: "svc-b", UpstreamUniqueIDs: []string{"a"}, ContentHash: "h_b_new"},
 	}
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",

@@ -63,6 +63,7 @@ func PkgConstantsForTest() map[string]string {
 		"ExecutorValidationRequested": ExecutorValidationRequested,
 		"ExecutorValidationNodeCompleted": ExecutorValidationNodeCompleted,
 		"ReleaseControllerValidationCompleted": ReleaseControllerValidationCompleted,
+		"ExecutorValidationCompleted": ExecutorValidationCompleted,
 		"OrchestratorReleasePromoted": OrchestratorReleasePromoted,
 	}
 }
