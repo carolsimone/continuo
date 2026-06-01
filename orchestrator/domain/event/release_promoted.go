@@ -1,10 +1,8 @@
 package event
 
 // ReleasePromotedNode is the wire-format representation of a single node in a
-// release.promoted:v1 payload's topology array. Distinct from
-// ManifestLoadedNode because the release pipeline keys nodes by unique_id and
-// carries upstream relationships as a string-id list (vs. the manifest path's
-// service/schema/table tuple).
+// release.promoted:v1 payload's topology array. Nodes are keyed by unique_id
+// and carry upstream relationships as a string-id list.
 type ReleasePromotedNode struct {
 	UniqueID          string   `json:"unique_id"`
 	SchemaName        string   `json:"schema_name"`

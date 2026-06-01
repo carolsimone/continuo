@@ -2,12 +2,18 @@ package handlers_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
+	"testing"
 
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
 )
 
 // fakeOutboxRepository captures created outbox entries in memory.
@@ -114,4 +120,119 @@ func (f *fakeUnitOfWork) Rollback() error                 { f.RolledBackTx = tru
 // newTestLogger returns a debug-level text logger writing to stdout.
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// ── fakes: repository.TopologyRepository ─────────────────────────────────────
+
+// fakeTopologyRepository is an in-memory stub for repository.TopologyRepository.
+type fakeTopologyRepository struct {
+	setServiceMetadataCalls []setServiceMetadataCall
+	setServiceMetadataErr   error
+}
+
+type setServiceMetadataCall struct {
+	ServiceMetadata    map[string]map[string]string
+	TopologyGeneration int64
+}
+
+func (f *fakeTopologyRepository) SetServiceMetadata(_ context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error {
+	f.setServiceMetadataCalls = append(f.setServiceMetadataCalls, setServiceMetadataCall{
+		ServiceMetadata:    serviceMetadata,
+		TopologyGeneration: topologyGeneration,
+	})
+	return f.setServiceMetadataErr
+}
+
+var _ repository.TopologyRepository = (*fakeTopologyRepository)(nil)
+
+// ── fakes: repository.TopologyStateRepository ────────────────────────────────
+
+type fakeTopologyStateRepository struct {
+	generation             int64
+	incrementGenerationErr error
+	getGenerationErr       error
+	incrementCalls         int
+	getCalls               int
+}
+
+func (f *fakeTopologyStateRepository) IncrementGeneration(_ context.Context) (int64, error) {
+	f.incrementCalls++
+	if f.incrementGenerationErr != nil {
+		return 0, f.incrementGenerationErr
+	}
+	f.generation++
+	return f.generation, nil
+}
+
+func (f *fakeTopologyStateRepository) GetGeneration(_ context.Context) (int64, error) {
+	f.getCalls++
+	if f.getGenerationErr != nil {
+		return 0, f.getGenerationErr
+	}
+	return f.generation, nil
+}
+
+var _ repository.TopologyStateRepository = (*fakeTopologyStateRepository)(nil)
+
+// ── integration test infrastructure ──────────────────────────────────────────
+
+func commandTestNeo4jURI() string {
+	if u := os.Getenv("NEO4J_URI"); u != "" {
+		return u
+	}
+	return "bolt://neo4j:7687"
+}
+
+func commandTestNeo4jUser() string {
+	if u := os.Getenv("NEO4J_USER"); u != "" {
+		return u
+	}
+	return "neo4j"
+}
+
+func commandTestNeo4jPassword() string {
+	if p := os.Getenv("NEO4J_PASSWORD"); p != "" {
+		return p
+	}
+	return "neo4j"
+}
+
+// newCommandTestNeo4jClient creates a Neo4j client for integration tests,
+// skipping if Neo4j is unavailable.
+func newCommandTestNeo4jClient(t *testing.T) neo4jinfra.Neo4jClient {
+	t.Helper()
+	client, err := neo4jinfra.NewNeo4jClient(
+		commandTestNeo4jURI(),
+		commandTestNeo4jUser(),
+		commandTestNeo4jPassword(),
+		newTestLogger(),
+	)
+	if err != nil {
+		t.Skipf("Neo4j unavailable, skipping integration test: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close(context.Background()) })
+	return client
+}
+
+// newCommandTestDB creates a Postgres connection for integration tests,
+// skipping if Postgres is unavailable.
+func newCommandTestDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	host := os.Getenv("POSTGRES_HOST")
+	if host == "" {
+		host = "postgres"
+	}
+	port := os.Getenv("POSTGRES_PORT")
+	if port == "" {
+		port = "5432"
+	}
+	db, err := sqlx.Connect("postgres", fmt.Sprintf(
+		"host=%s port=%s dbname=continuo_orchestrator user=continuo_svc password=continuo sslmode=disable",
+		host, port,
+	))
+	if err != nil {
+		t.Skipf("Postgres unavailable: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
 }
