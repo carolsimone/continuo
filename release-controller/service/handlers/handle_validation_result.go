@@ -46,6 +46,15 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
+	if r == nil {
+		// The release referenced by this result no longer exists (e.g. it was
+		// pruned, or this is a stale/duplicate message reclaimed from a previous
+		// consumer for a release that was deleted). There is nothing to promote
+		// or reject; ack and drop rather than dereference a nil aggregate.
+		d.Logger.Warn("validation result for unknown release; dropping",
+			"release_id", in.ReleaseID)
+		return nil
+	}
 
 	now := d.Clock.Now()
 

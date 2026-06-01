@@ -50,6 +50,29 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 	return deps, store
 }
 
+// TestHandleValidationResult_UnknownRelease_DropsWithoutPanic guards against a
+// stale or duplicate validation.completed:v1 message whose release row no longer
+// exists (e.g. it was pruned, or the message was reclaimed from a previous
+// consumer for a deleted release). ReleaseRepo.Get returns (nil, nil) for a
+// missing release; the handler must ack and drop rather than dereference a nil
+// aggregate and crash the consumer on reclaim.
+func TestHandleValidationResult_UnknownRelease_DropsWithoutPanic(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "does-not-exist",
+		PerNodeResults: []handlers.NodeResult{
+			{NodeID: "a", Status: "ok"},
+		},
+		AggregateStatus: "ok",
+	})
+	require.NoError(t, err, "unknown release must be dropped, not error")
+
+	// Nothing was written: no promotion, no rejection, no outbox rows.
+	require.Empty(t, outboxEntries(store))
+	assert.Equal(t, "", store.GetCurrentProd().ReleaseID())
+}
+
 func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 

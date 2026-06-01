@@ -102,6 +102,7 @@ Promotion is shared by the validation-passed path and the nothing-to-validate sh
 - Two consumer groups (`manifest.loaded.candidate:v1`, `validation.completed:v1`) run in the same process; each maintains its own offset.
 - Inbound messages are deduped via `message_processing` (idempotent on the upstream `outbox_entry_id`), so a redelivery is absorbed.
 - A permanent parse-decode failure is ACKed (logged, not retried); transient errors are not ACKed and replay.
+- A `manifest.loaded.candidate:v1` or `validation.completed:v1` message whose `release_id` no longer has a `releases` row (pruned, or reclaimed from a previous consumer for a deleted release) is logged and dropped rather than processed. The repository's `Get` returns no row as `(nil, nil)`, so both handlers nil-check the aggregate before use; without that guard a reclaimed message for a missing release would crash the consumer on startup.
 - State changes and the outbox row are written in one transaction; the outbox publisher drains rows and XADDs them, injecting `outbox_entry_id` for downstream dedup.
 
 ## Background Loops

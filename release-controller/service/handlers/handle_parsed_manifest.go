@@ -42,6 +42,14 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
+	if r == nil {
+		// The release referenced by this parse result no longer exists (pruned,
+		// or a stale/duplicate message reclaimed for a deleted release). Ack and
+		// drop rather than dereference a nil aggregate.
+		d.Logger.Warn("parsed manifest for unknown release; dropping",
+			"release_id", in.ReleaseID)
+		return nil
+	}
 
 	now := d.Clock.Now()
 

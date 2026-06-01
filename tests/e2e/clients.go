@@ -32,6 +32,7 @@ type testClients struct {
 	k8sDB              *sqlx.DB
 	stateDB            *sqlx.DB
 	releaseDB          *sqlx.DB
+	dbtDB              *sqlx.DB
 	s3Client           *s3.Client
 	releaseBase        string
 	logger             *slog.Logger
@@ -87,6 +88,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	k8sDB := connectPostgres(t, pgHost, "continuo_k8s")
 	stateDB := connectPostgres(t, pgHost, "continuo_state")
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
+	dbtDB := connectPostgres(t, pgHost, getEnv("DBT_POSTGRES_DB", "continuo_dbt"))
 
 	return &testClients{
 		orchestratorClient: orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
@@ -98,6 +100,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		k8sDB:              k8sDB,
 		stateDB:            stateDB,
 		releaseDB:          releaseDB,
+		dbtDB:              dbtDB,
 		s3Client:           newLocalstackS3Client(),
 		releaseBase:        getEnv("RELEASE_CONTROLLER_BASE", "http://release-controller:8088"),
 		logger:             logger,
@@ -144,6 +147,7 @@ func (c *testClients) close(ctx context.Context) {
 	c.k8sDB.Close()
 	c.stateDB.Close()
 	c.releaseDB.Close()
+	c.dbtDB.Close()
 }
 
 // getEnv returns environment variable or default value
