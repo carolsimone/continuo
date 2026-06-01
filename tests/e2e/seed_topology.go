@@ -2,14 +2,19 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
-	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
-// topoNode is one node of the fixed e2e DAG seeded directly into Neo4j.
+// topoNode is one node of the fixed e2e DAG seeded into the topology.
 type topoNode struct {
 	table    string   // table_name; unique_id is "e2e_schema."+table
 	service  string   // service-1|2|3
@@ -46,11 +51,32 @@ var e2eDAG = []topoNode{
 
 const seedSchemaName = "e2e_schema"
 
-// seedTopology writes the full e2e DAG into Neo4j (:Table + :DEPENDS_ON) and
-// the schedule names into schedule_catalog, replacing the legacy
-// update.graph:v1 → manifest.loaded:v1 → IngestTopology path. Per-service
-// image_tag is read from the service_metadata.json sidecars in S3 so the
-// seeded nodes carry the content-addressed tag that kind actually has.
+// promotedNode mirrors orchestrator/domain/event.ReleasePromotedNode (the
+// release.promoted:v1 topology element).
+type promotedNode struct {
+	UniqueID          string   `json:"unique_id"`
+	SchemaName        string   `json:"schema_name"`
+	TableName         string   `json:"table_name"`
+	ServiceName       string   `json:"service_name"`
+	NodeType          string   `json:"node_type"`
+	ImageTag          string   `json:"image_tag"`
+	Schedule          string   `json:"schedule"`
+	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
+}
+
+// seedTopology installs the full e2e topology by publishing a release.promoted:v1
+// event and waiting for the orchestrator to apply it. This reuses the production
+// promotion path (the same handler a real release drives), so it establishes the
+// complete topology state — Neo4j :Table/:DEPENDS_ON, the topology_generation +
+// :TopologyRoot, the :Meta current_release pointer, and schedules.loaded ->
+// schedule_catalog — without re-implementing any of it. It bypasses validation
+// (release.promoted is post-validation), so it can seed any topology, including
+// the intentionally-failing ftable_* DAGs whose runs fail at execution time.
+//
+// Per-service image_tag is read from the service_metadata.json sidecars in S3 so
+// the seeded nodes carry the content-addressed tag the kind images actually have.
+// Seed *data* (e2e_schema.seed_table_*) is materialized separately by setup.sh's
+// `dbt seed` step; this only establishes the topology graph.
 func seedTopology(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
 
@@ -59,63 +85,63 @@ func seedTopology(t *testing.T, ctx context.Context, clients *testClients) {
 		imageTags[svc] = readServiceImageTag(t, ctx, clients, svc)
 	}
 
-	// Build the node payload for a single UNWIND MERGE.
-	nodes := make([]map[string]any, 0, len(e2eDAG))
+	scheduleSet := map[string]bool{}
+	topology := make([]promotedNode, 0, len(e2eDAG))
 	for _, n := range e2eDAG {
+		scheduleSet[n.schedule] = true
 		ups := make([]string, 0, len(n.upstream))
 		for _, u := range n.upstream {
 			ups = append(ups, seedSchemaName+"."+u)
 		}
-		nodes = append(nodes, map[string]any{
-			"unique_id":     seedSchemaName + "." + n.table,
-			"schema_name":   seedSchemaName,
-			"table_name":    n.table,
-			"service_name":  n.service,
-			"image_tag":     imageTags[n.service],
-			"schedule_name": n.schedule,
-			"upstreams":     ups,
+		// node_type drives the run reader: seed upstreams are pulled into a
+		// model's run only when typed "dbt-seed". The e2e project's only seeds
+		// are the seed_table_* files; everything else is a dbt model.
+		nodeType := "dbt-model"
+		if strings.HasPrefix(n.table, "seed_table") {
+			nodeType = "dbt-seed"
+		}
+		topology = append(topology, promotedNode{
+			UniqueID:          seedSchemaName + "." + n.table,
+			SchemaName:        seedSchemaName,
+			TableName:         n.table,
+			ServiceName:       n.service,
+			NodeType:          nodeType,
+			ImageTag:          imageTags[n.service],
+			Schedule:          n.schedule,
+			UpstreamUniqueIDs: ups,
 		})
 	}
 
-	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{AccessMode: neo4jdriver.AccessModeWrite})
-	defer session.Close(ctx)
+	releaseID := "e2e-seed-" + uuid.NewString()[:8]
+	payload, err := json.Marshal(map[string]any{
+		"release_id": releaseID,
+		"topology":   topology,
+		"image_tags": imageTags,
+	})
+	require.NoError(t, err, "marshal release.promoted payload")
 
-	// MERGE nodes (mirrors release_promotion_repository PromoteRelease shape).
-	_, err := session.Run(ctx, `
-		UNWIND $nodes AS n
-		MERGE (t:Table {unique_id: n.unique_id})
-		SET t.schema_name = n.schema_name,
-		    t.table_name = n.table_name,
-		    t.service_name = n.service_name,
-		    t.image_tag = n.image_tag,
-		    t.schedule_name = n.schedule_name,
-		    t.active = true,
-		    t.retired_at = null
-	`, map[string]any{"nodes": nodes})
-	require.NoError(t, err, "seedTopology: MERGE :Table nodes")
+	require.NoError(t, clients.redisClient.XAdd(ctx, &goredis.XAddArgs{
+		Stream: streams.ReleasePromotedV1,
+		Values: map[string]any{"payload": string(payload)},
+	}).Err(), "publish release.promoted:v1")
 
-	// Rebuild :DEPENDS_ON edges.
-	_, err = session.Run(ctx, `
-		UNWIND $nodes AS n
-		UNWIND n.upstreams AS up
-		MATCH (a:Table {unique_id: n.unique_id}), (b:Table {unique_id: up})
-		MERGE (a)-[:DEPENDS_ON]->(b)
-	`, map[string]any{"nodes": nodes})
-	require.NoError(t, err, "seedTopology: MERGE :DEPENDS_ON edges")
-
-	// Insert schedule_catalog rows for every distinct schedule (idempotent).
-	seen := map[string]bool{}
-	now := time.Now().UTC()
-	for _, n := range e2eDAG {
-		if seen[n.schedule] {
-			continue
+	// Wait until the orchestrator has applied the promotion: the Neo4j :Meta
+	// current_release pointer flips to this release, and the schedule_catalog
+	// reflects every seeded schedule (so the tests' ActivateSchedule/Trigger
+	// calls find their schedules). Polling both proves the swap committed and
+	// schedules.loaded propagated to the state service.
+	wantSchedules := len(scheduleSet)
+	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
+		if neo4jScalarString(ctx, clients,
+			`MATCH (m:Meta {key: 'current_release'}) RETURN m.release_id AS v`, nil) != releaseID {
+			return false, nil
 		}
-		seen[n.schedule] = true
-		_, err := clients.stateDB.ExecContext(ctx,
-			`INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, service_metadata)
-			 VALUES ($1, $2, $2, '{}'::jsonb)
-			 ON CONFLICT (schedule_name) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at, removed_at = NULL`,
-			n.schedule, now)
-		require.NoError(t, err, "seedTopology: upsert schedule_catalog %s", n.schedule)
-	}
+		var count int
+		if err := clients.stateDB.QueryRowContext(ctx,
+			`SELECT COUNT(DISTINCT schedule_name) FROM schedule_catalog WHERE removed_at IS NULL`,
+		).Scan(&count); err != nil {
+			return false, nil
+		}
+		return count >= wantSchedules, nil
+	}, fmt.Sprintf("timeout waiting for orchestrator to apply seeded topology (release %s)", releaseID))
 }

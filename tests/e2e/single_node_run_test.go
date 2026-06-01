@@ -84,9 +84,10 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	require.NoError(t, err, "failed to count task_tracker rows")
 	require.Equal(t, 1, taskCount, "expected exactly 1 task for a single-node run")
 
-	// Assert image_tag and manifest_version are populated.
+	// Assert image_tag is populated. manifest_version is a legacy manifest-ingest
+	// field absent from release-sourced topology (provenance is release_id), so it
+	// is empty here by design and is not asserted.
 	manifestVersion, imageTag := queryFirstTaskTrackerMetadata(t, clients.stateDB, runID)
-	assert.NotEmpty(t, manifestVersion, "task_tracker.manifest_version must be non-empty")
 	assert.NotEmpty(t, imageTag, "task_tracker.image_tag must be non-empty")
 	t.Logf("task_tracker metadata: manifest_version=%s image_tag=%s", manifestVersion, imageTag)
 
@@ -137,7 +138,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	assert.Equal(t, runID.String(), top.RunId, "ListNodeRuns[0].run_id must match the run we just triggered")
 	assert.Equal(t, "single_node_run", top.Kind, "ListNodeRuns[0].kind must be 'single_node_run'")
 	assert.NotEmpty(t, top.ImageTag, "ListNodeRuns[0].image_tag must be populated")
-	assert.NotEmpty(t, top.ManifestVersion, "ListNodeRuns[0].manifest_version must be populated")
+	// manifest_version is empty for release-sourced topology (see above); not asserted.
 	assert.Equal(t, "succeeded", top.TaskStatus, "ListNodeRuns[0].task_status must be 'succeeded'")
 
 	t.Log("TestSingleNodeRunLatest passed")
@@ -205,7 +206,8 @@ func TestSingleNodeRunStale(t *testing.T) {
 	t.Log("=== Step 3: Reading source task metadata ===")
 	srcImage, srcManifest := readTaskMetadata(t, ctx, clients, srcID, targetService, targetSchema, targetTable)
 	require.NotEmpty(t, srcImage, "source task_tracker.image_tag must be non-empty")
-	require.NotEmpty(t, srcManifest, "source task_tracker.manifest_version must be non-empty")
+	// manifest_version is empty for release-sourced topology (legacy ingest field);
+	// stale-mode inheritance is still asserted below (Step 6) as src == new.
 	t.Logf("Source metadata: image_tag=%s manifest_version=%s", srcImage, srcManifest)
 
 	// ── Step 4: Trigger single-node run in stale mode ─────────────────────────
