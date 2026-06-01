@@ -13,9 +13,8 @@ It provides:
 - rebase triggering: proxies `POST /api/schedulers/:id/rebase` to the `TriggerRebase` gRPC method on `state`
 - single-node run triggering: proxies `POST /api/nodes/:service/:schema/:table/run` to the `TriggerSingleNodeRun` gRPC method on `state`
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`
-- graph update triggering: publishes `update.graph:v1` to Redis via `POST /api/graph/update`
 
-It owns no storage.
+It owns no storage and constructs no Redis client.
 
 **Runtime**: Node.js / Express / TypeScript (port 8090).
 
@@ -35,7 +34,6 @@ None.
 | `/api/schedules/:name/graph` | GET | `GetScheduleGraph` → orchestrator gRPC. Response includes `topology_generation` (current `:TopologyRoot.topology_generation`; `0` = unknown). |
 | `/api/schedules/:name/runs` | GET | `ListRuns` → orchestrator gRPC |
 | `/api/schedules/:name/trigger` | POST | `TriggerSchedule` → state gRPC |
-| `/api/graph/update` | POST | Publishes `update.graph:v1` → Redis |
 
 #### Topology API
 
@@ -104,15 +102,7 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 
 On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" }`.
 
-### Redis (`REDIS_URL`)
-
-| Operation | Route | Description |
-|---|---|---|
-| `update.graph:v1` | `POST /api/graph/update` | Publishes graph reload command with `source` field (`s3` or `local`); endpoint requires `Authorization: Bearer $GRAPH_UPDATE_TOKEN` when `GRAPH_UPDATE_TOKEN` is set |
-
-#### Graph Update Callers
-
-`POST /api/graph/update` reloads the standing topology and is called in local development by `dbt/update-graph.sh`. Production releases do not use this endpoint — the CI deploy workflow drives them through `release-controller`'s `POST /releases`.
+`ui-service` makes no Redis connection; it reaches every backend through gRPC (`state`, `orchestrator`) and S3 (log proxy) only.
 
 ## What It Reads
 
@@ -136,7 +126,6 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 | Rebase trigger (re-execute failed/cancelled tasks + new arrivals against latest topology) | `state.TriggerRebase` via `POST /api/schedulers/:id/rebase` |
 | Single-node run trigger (one-task ad-hoc run for a specific dbt node) | `state.TriggerSingleNodeRun` via `POST /api/nodes/:service/:schema/:table/run` |
 | Schedule trigger (start full DAG run) | `state.TriggerSchedule` via `POST /api/schedules/:name/trigger` |
-| Graph update command | Redis `update.graph:v1` stream via `POST /api/graph/update` |
 
 ## Data Transformations
 
@@ -164,7 +153,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 ## Reliability Notes
 
-- Mostly read-only; write-side effects are `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), `TriggerRebase` (via `POST /api/schedulers/:id/rebase`), `TriggerSingleNodeRun` (via `POST /api/nodes/:service/:schema/:table/run`), `TriggerSchedule` (via `POST /api/schedules/:name/trigger`), and `POST /api/graph/update` (publishes `update.graph:v1` to Redis). All trigger calls delegate atomicity and error semantics to `state`.
+- Mostly read-only; write-side effects are `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), `TriggerRebase` (via `POST /api/schedulers/:id/rebase`), `TriggerSingleNodeRun` (via `POST /api/nodes/:service/:schema/:table/run`), and `TriggerSchedule` (via `POST /api/schedules/:name/trigger`). All trigger calls delegate atomicity and error semantics to `state`.
 - gRPC errors are surfaced as HTTP 500 with the gRPC error message.
 - S3 errors are surfaced as HTTP 502.
 - `log_s3_key` is stored by `k8s-controller` on task execution records; the UI does not resolve or generate S3 keys itself.
