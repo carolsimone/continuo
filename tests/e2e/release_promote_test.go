@@ -95,8 +95,8 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	t.Logf("seeded prod snapshot with %d nodes (rel_probe excluded)", len(prodNodes))
 
 	// 2. Free the release queue from any prior run and seed current_prod with the
-	//    baseline-minus-probe snapshot. release_id is left empty so the validation
-	//    job runs without --defer (no prior state to defer to).
+	//    baseline-minus-probe snapshot, so the derived changed set is exactly the
+	//    rel_probe node — which builds into the candidate schema in isolation.
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 
@@ -452,12 +452,11 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 
 // seedCurrentProd writes the singleton current_prod row. Only unique_id and
 // content_hash matter for the change-detector; other Node fields default to
-// zero values on the release-controller side. Both release_id and manifests_uri
-// are reset to empty so the release runs in bootstrap mode: an empty
-// manifests_uri keeps the validation defer-state URI empty (no --defer/--state),
-// which is required for the self-contained rel_probe node. manifests_uri MUST be
-// cleared explicitly — a prior promoted release leaves it populated, and an
-// inherited stale value would point dbt --state at a non-existent manifest.
+// zero values on the release-controller side. release_id and manifests_uri are
+// reset to empty for a clean baseline: manifests_uri is a record-keeping column
+// (validation builds the candidate schema directly and never defers to a prior
+// manifest), so clearing it just stops a prior promoted release's value from
+// lingering across reused-stack runs.
 func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, nodes []map[string]string) {
 	t.Helper()
 	topoJSON, err := json.Marshal(nodes)
