@@ -252,44 +252,6 @@ func verifyRedisStreamHasMessages(
 	t.Logf("✅ Redis stream %s has at least %d messages", streamName, minCount)
 }
 
-// xpending returns the count of unacked messages in a Redis stream's consumer group.
-// Returns 0 if the consumer group doesn't exist (treats NOGROUP as "no pending").
-func xpending(t *testing.T, ctx context.Context, clients *testClients, stream, group string) int64 {
-	t.Helper()
-	res, err := clients.redisClient.XPending(ctx, stream, group).Result()
-	if err != nil {
-		// NOGROUP variants vary across Redis versions; broaden the substring match.
-		if errStr := err.Error(); len(errStr) >= 7 && errStr[:7] == "NOGROUP" {
-			return 0
-		}
-		require.NoError(t, err, "XPENDING %s %s failed", stream, group)
-	}
-	return res.Count
-}
-
-// readTopologyGeneration returns the current topology_generation counter from
-// the orchestrator's Postgres state. Used by tests that assert no topology
-// commit happened (counter unchanged).
-func readTopologyGeneration(t *testing.T, ctx context.Context, clients *testClients) int64 {
-	t.Helper()
-	var gen int64
-	err := clients.orchestratorDB.GetContext(ctx, &gen,
-		`SELECT topology_generation FROM topology_state WHERE id = TRUE`)
-	require.NoError(t, err, "SELECT topology_generation failed")
-	return gen
-}
-
-// countRejectedTopologyMessages returns the number of rows in the orchestrator's
-// rejected_topology_messages forensics table.
-func countRejectedTopologyMessages(t *testing.T, ctx context.Context, clients *testClients) int {
-	t.Helper()
-	var n int
-	err := clients.orchestratorDB.GetContext(ctx, &n,
-		`SELECT count(*) FROM rejected_topology_messages`)
-	require.NoError(t, err, "SELECT count(*) FROM rejected_topology_messages failed")
-	return n
-}
-
 // manifestControllerLogContains tails the manifest-controller container's log
 // file (where its main loop writes via start-services.sh's bash launch line).
 func manifestControllerLogContains(t *testing.T, substr string) bool {
