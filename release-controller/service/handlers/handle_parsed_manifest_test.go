@@ -386,6 +386,29 @@ func TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI(t *testing.T) {
 	assert.Equal(t, []string{"a1"}, byID["a2"], "a2 must carry a1 as its in-set upstream")
 }
 
+// TestHandleParseOK_UnknownRelease_DropsWithoutPanic guards against a stale or
+// duplicate manifest.loaded:v1 message whose release row no longer exists (e.g.
+// it was pruned, or the message was reclaimed from a previous consumer for a
+// deleted release). ReleaseRepo.Get returns (nil, nil) for a missing release;
+// the handler must ack and drop rather than dereference a nil aggregate and
+// crash the consumer on reclaim.
+func TestHandleParseOK_UnknownRelease_DropsWithoutPanic(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "does-not-exist",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a"},
+		},
+	})
+	require.NoError(t, err, "unknown release must be dropped, not error")
+
+	// Nothing was written: no validation.requested, no release.rejected, no promotion.
+	require.Empty(t, outboxEntries(store))
+	assert.Equal(t, "", store.GetCurrentProd().ReleaseID())
+}
+
 func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	// Two-service topology with the cross-service upstream already present in
 	// prod so NewCrossServiceUpstreams does not fire. This tests that image tags
