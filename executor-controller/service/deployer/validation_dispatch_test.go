@@ -75,6 +75,9 @@ func (r *fakeDeploymentRepo) PendingValidationCount(context.Context, string) (in
 func (r *fakeDeploymentRepo) ListValidationResults(context.Context, string) ([]*model.Deployment, error) {
 	return r.results, r.resultsErr
 }
+func (r *fakeDeploymentRepo) ListValidationByRelease(context.Context, string) ([]*model.Deployment, error) {
+	return nil, nil
+}
 
 var _ repository.DeploymentRepository = (*fakeDeploymentRepo)(nil)
 

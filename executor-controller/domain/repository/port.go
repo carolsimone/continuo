@@ -28,13 +28,20 @@ type DeploymentRepository interface {
 	// handler to attach an outcome to the right row.
 	GetByReleaseNode(ctx context.Context, releaseID, nodeID string) (*model.Deployment, error)
 	// PendingValidationCount counts mode='validation' rows for releaseID that
-	// are not yet terminal — i.e. status IN ('pending','deployed') AND
-	// outcome IS NULL. Used by the aggregate-emit gate.
+	// are not yet terminal — i.e. status IN ('pending','blocked','deployed') AND
+	// outcome IS NULL. 'blocked' rows are not terminal: they are waiting for
+	// in-set upstreams to complete before they can be dispatched. Including them
+	// prevents the aggregate-emit gate from firing before all nodes have settled.
 	PendingValidationCount(ctx context.Context, releaseID string) (int, error)
 	// ListValidationResults returns all mode='validation' rows for releaseID
 	// whose outcome is non-NULL. The dispatcher uses this to build the per-node
 	// results array on the aggregate validation.completed:v1 emission.
 	ListValidationResults(ctx context.Context, releaseID string) ([]*model.Deployment, error)
+	// ListValidationByRelease returns every mode='validation' row for releaseID
+	// as reconstituted aggregates (status, outcome, and UpstreamNodeIDs from
+	// job_params). The validation.node.completed handler uses it to compute
+	// downstream readiness and to skip transitive downstreams on failure.
+	ListValidationByRelease(ctx context.Context, releaseID string) ([]*model.Deployment, error)
 }
 
 // ValidationAggregateRepository guards single emission of

@@ -32,3 +32,6 @@ func (r *stubDeploymentsRepo) PendingValidationCount(_ context.Context, _ string
 func (r *stubDeploymentsRepo) ListValidationResults(_ context.Context, _ string) ([]*model.Deployment, error) {
 	return nil, nil
 }
+func (r *stubDeploymentsRepo) ListValidationByRelease(_ context.Context, _ string) ([]*model.Deployment, error) {
+	return nil, nil
+}

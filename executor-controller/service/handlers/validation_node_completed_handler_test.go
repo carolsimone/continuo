@@ -53,6 +53,9 @@ func (r *nodeCompletedDeploymentsRepo) PendingValidationCount(context.Context, s
 func (r *nodeCompletedDeploymentsRepo) ListValidationResults(context.Context, string) ([]*model.Deployment, error) {
 	return r.results, nil
 }
+func (r *nodeCompletedDeploymentsRepo) ListValidationByRelease(context.Context, string) ([]*model.Deployment, error) {
+	return nil, nil
+}
 
 type fakeOutboxRepo struct {
 	created []*outbox.Entry

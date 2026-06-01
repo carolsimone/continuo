@@ -510,6 +510,45 @@ func countValidationCompletedOutbox(t *testing.T, db *sqlx.DB, releaseID string)
 // drives that interleaving deterministically — tx_A holds the lock until a
 // barrier confirms tx_B is parked on it — and asserts EXACTLY ONE
 // validation.completed:v1 row results (never zero, never two).
+func TestDeploymentsRepository_ListValidationByRelease_And_BlockedPending(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	ctx := context.Background()
+	now := time.Now()
+
+	const releaseID = "rel-listval"
+	root := command.ValidationDeployTask{
+		ReleaseID: releaseID, NodeID: "a1", JobName: "ja1",
+		ServiceName: "s", SchemaName: "sc", TableName: "a1",
+		NodeType: "dbt-model", ImageTag: "t", CandidateSchema: "_candidate_rel",
+	}
+	child := command.ValidationDeployTask{
+		ReleaseID: releaseID, NodeID: "a2", JobName: "ja2",
+		ServiceName: "s", SchemaName: "sc", TableName: "a2",
+		NodeType: "dbt-model", ImageTag: "t", CandidateSchema: "_candidate_rel",
+		UpstreamNodeIDs: []string{"a1"},
+	}
+	require.NoError(t, repo.Add(ctx, model.NewValidationDeployment(root, nil, now, false)))
+	require.NoError(t, repo.Add(ctx, model.NewValidationDeployment(child, nil, now, true)))
+
+	// Blocked child counts toward "pending" so the aggregate gate does not fire early.
+	n, err := repo.PendingValidationCount(ctx, releaseID)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+
+	rows, err := repo.ListValidationByRelease(ctx, releaseID)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	byNode := map[string]*model.Deployment{}
+	for _, d := range rows {
+		byNode[d.NodeID()] = d
+	}
+	require.Equal(t, model.StatusPending, byNode["a1"].Status())
+	require.Equal(t, model.StatusBlocked, byNode["a2"].Status())
+	require.Equal(t, []string{"a1"}, byNode["a2"].ValidationCommand().UpstreamNodeIDs)
+}
+
 func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
