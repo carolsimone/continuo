@@ -17,7 +17,7 @@ Postgres (its own database). Tables:
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
 | `message_processing` | Inbound dedup ledger (`outbox_entry_id` / message id) for idempotent consumption. |
 
-The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. The candidate validation's dbt `--defer --state` target is `current_prod.manifests_uri` — the exact S3 location the promoted release's manifests were uploaded to, stored verbatim so it stays correct regardless of which bucket an environment uses.
+The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. When a new candidate is promoted, its candidate topology (carrying `content_hash` + joined `image_tag`) replaces the snapshot, forming the change-detection base for the next release.
 
 ## Inbound Interfaces
 
@@ -69,14 +69,18 @@ status=ok:
   join per-service image_tags into the candidate topology
   load current_prod.topology_snapshot
   derive changed = candidate nodes whose content_hash differs from prod, or are new
-  validationIDs = DescendantsClosure(candidate, changed)   # changed + their downstream
-  if validationIDs is empty:
+  for each changed node: if it has a new cross-service upstream absent from current_prod:
+      Reject(reason=new_cross_service_upstream), emit release.rejected:v1, advance queue, return
+  inSet = DescendantsClosure(candidate, changed) ∪ AncestorsClosure(intra-service, inSet)
+          # changed + their downstream + transitive intra-service ancestors of each in-set node
+  for each inSet node: upstream_node_ids = inSet ∩ same-service direct upstreams of node
+  if inSet is empty:
       promote directly (nothing to validate trivially passes the gate):
         update current_prod, transition to Promoted, emit release.promoted:v1
   else:
       transition to Validating, emit validation.requested:v1
         (mode=validation, candidate_schema=_candidate_<release_id>,
-         defer_state_uri=<current_prod.manifests_uri>, dbt_flags=[--empty])
+         nodes carry upstream_node_ids)
   advance queue
 ```
 Bootstrap (no `current_prod` yet) yields an empty snapshot, so every candidate node is new and the whole topology is validated.
@@ -91,7 +95,7 @@ any node failed / missing / aggregate not ok → Reject(reason=validation_failed
 advance queue
 ```
 
-Promotion is shared by the validation-passed path and the nothing-to-validate short-circuit: both point `current_prod` at the candidate topology, transition the release to `Promoted`, and emit `release.promoted:v1`. The candidate topology (carrying `content_hash` + joined `image_tag`) becomes the new snapshot, so the next release's change-detection diff and defer-state base are correct.
+Promotion is shared by the validation-passed path and the nothing-to-validate short-circuit: both point `current_prod` at the candidate topology, transition the release to `Promoted`, and emit `release.promoted:v1`. The candidate topology (carrying `content_hash` + joined `image_tag`) becomes the new snapshot, so the next release's change-detection diff is correct.
 
 ## Consumer Reliability
 
@@ -116,4 +120,4 @@ None — release-controller is not called via gRPC by any service.
 
 - Idempotent on `release_id`: a redelivered `POST /releases` or re-promotion is a no-op; `release.promoted:v1` carries a deterministic aggregate id so orchestrator dedups re-emissions.
 - Change detection relies on each candidate node carrying a non-empty `content_hash` (manifest-controller emits dbt's per-node checksum, with a deterministic fallback). An empty-vs-empty hash would skip validation; this is structurally avoided upstream.
-- One-time bootstrap (`cmd/bootstrap-current-prod`) seeds `current_prod` from the live topology so the first real release has a defer-state and change-detection base. A seed lacking `content_hash` makes the first release validate every node once (safe), until the first promotion rewrites the snapshot with real hashes.
+- One-time bootstrap (`cmd/bootstrap-current-prod`) seeds `current_prod` from the live topology so the first real release has a change-detection base. A seed lacking `content_hash` makes the first release validate every node once (safe), until the first promotion rewrites the snapshot with real hashes.
