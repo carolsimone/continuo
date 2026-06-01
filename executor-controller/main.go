@@ -73,7 +73,31 @@ func main() {
 		return pgDB.Close()
 	})
 
-	// 2. Redis client
+	// 2. dbt-warehouse PostgreSQL client (used to drop candidate schemas after
+	// validation completes; same host/port/credentials as the main PG client but
+	// targets the dbt materialization database).
+	dbtDB, err := postgres.NewPostgresClient(
+		cfg.DBTWarehouse.Host,
+		cfg.DBTWarehouse.Port,
+		cfg.DBTWarehouse.DB,
+		cfg.DBTWarehouse.User,
+		cfg.DBTWarehouse.Password,
+		logger,
+	)
+	if err != nil {
+		logger.Error("Failed to connect to dbt warehouse", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("dbt-warehouse client initialized")
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		logger.Info("Closing dbt-warehouse connection")
+		return dbtDB.Close()
+	})
+
+	candidateSchemaCleaner := postgres.NewCandidateSchemaCleaner(dbtDB, logger)
+
+	// 3. Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
 		Addr:     cfg.Redis.Addr(),
 		Password: cfg.Redis.Password,
@@ -129,6 +153,8 @@ func main() {
 		uowFactory, validationReqHandler, logger)
 	validationNodeBinding := redis.NewValidationNodeCompletedBinding(
 		uowFactory, validationNodeHandler, logger)
+	validationCompletedTeardownBinding := redis.NewValidationCompletedTeardownBinding(
+		candidateSchemaCleaner, logger)
 
 	// ========================================================================
 	// INITIALIZE REDIS PRODUCERS + CONSUMERS
@@ -163,6 +189,12 @@ func main() {
 		validationNodeBinding, logger)
 	logger.Info("validation.node.completed consumer initialized",
 		"stream", streams.ValidationNodeCompletedV1, "group", streams.ExecutorValidationNodeCompleted)
+
+	validationCompletedTeardownConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ValidationCompletedV1, streams.ExecutorValidationCompleted,
+		validationCompletedTeardownBinding, logger)
+	logger.Info("validation.completed teardown consumer initialized",
+		"stream", streams.ValidationCompletedV1, "group", streams.ExecutorValidationCompleted)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -275,6 +307,11 @@ func main() {
 	go func() {
 		if err := validationNodeConsumer.Start(ctx); err != nil {
 			logger.Error("validation.node.completed consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := validationCompletedTeardownConsumer.Start(ctx); err != nil {
+			logger.Error("validation.completed teardown consumer error", "error", err)
 		}
 	}()
 
