@@ -85,7 +85,6 @@ func validValidationCmd(releaseID, nodeID string) command.ValidationDeployTask {
 		ServiceName: "dbt", SchemaName: "public", TableName: "orders",
 		NodeType: "dbt-model", ImageTag: "sha-cand",
 		JobName: "dbt-validate-public-orders", CandidateSchema: "candidate_rel1",
-		DeferStateURI: "s3://state/prod",
 	}
 }
 

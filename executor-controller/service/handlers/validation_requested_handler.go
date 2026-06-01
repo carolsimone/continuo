@@ -54,9 +54,9 @@ func (h *ValidationRequestedHandler) Handle(
 			ImageTag:        n.ImageTag,
 			JobName:         jobName,
 			CandidateSchema: evt.CandidateSchema,
-			DeferStateURI:   evt.DeferStateURI,
+			UpstreamNodeIDs: n.UpstreamNodeIDs,
 		}
-		if err := createValidationDeployment(ctx, u, cmd, msgProcID, now); err != nil {
+		if err := createValidationDeployment(ctx, u, cmd, msgProcID, now, len(n.UpstreamNodeIDs) > 0); err != nil {
 			return fmt.Errorf("enqueue validation node %s: %w", n.NodeID, err)
 		}
 	}
@@ -65,24 +65,26 @@ func (h *ValidationRequestedHandler) Handle(
 	return nil
 }
 
-// createValidationDeployment writes one pending validation Deployment aggregate
-// to the executor_deployments command queue through the UoW deployments repo.
-// msgProcID is stored for provenance; pass uuid.Nil when no inbound trigger
-// applies.
+// createValidationDeployment writes one validation Deployment aggregate to the
+// executor_deployments command queue through the UoW deployments repo.
+// hasUpstreams gates the initial status: true starts the deployment as blocked
+// (intra-service upstreams must complete first), false as pending (root node,
+// immediately dispatchable). msgProcID is stored for provenance; pass uuid.Nil
+// when no inbound trigger applies.
 func createValidationDeployment(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	cmd command.ValidationDeployTask,
 	msgProcID uuid.UUID,
 	now time.Time,
+	hasUpstreams bool,
 ) error {
 	var procID *uuid.UUID
 	if msgProcID != uuid.Nil {
 		id := msgProcID
 		procID = &id
 	}
-	// TODO(T10): pass real hasUpstreams from node.UpstreamNodeIDs
-	if err := u.DeploymentsRepo().Add(ctx, model.NewValidationDeployment(cmd, procID, now, false)); err != nil {
+	if err := u.DeploymentsRepo().Add(ctx, model.NewValidationDeployment(cmd, procID, now, hasUpstreams)); err != nil {
 		return fmt.Errorf("add validation deployment: %w", err)
 	}
 	return nil

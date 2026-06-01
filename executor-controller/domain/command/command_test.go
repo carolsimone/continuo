@@ -43,7 +43,7 @@ func TestValidationDeployTask_JSONRoundTrip(t *testing.T) {
 		ImageTag:        "sha-abc",
 		JobName:         "validate-public-orders",
 		CandidateSchema: "_candidate_rel_123",
-		DeferStateURI:   "s3://continuo/releases/prev/manifests/",
+		UpstreamNodeIDs: []string{"model.shop.upstream_a", "model.shop.upstream_b"},
 	}
 
 	raw, err := json.Marshal(orig)

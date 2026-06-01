@@ -14,13 +14,18 @@ import (
 // the per-node "unique_id" key). It is the node's identity throughout the
 // executor: the K8s Job name, the executor_deployments.node_id column, and
 // the (release_id, node_id) lookup key all derive from this value.
+//
+// UpstreamNodeIDs lists the dbt unique_ids of intra-service nodes that must
+// complete successfully before this node may be dispatched. An empty slice
+// means the node is a root and can be dispatched immediately.
 type ValidationNode struct {
-	NodeID      string // dbt unique_id
-	ServiceName string
-	SchemaName  string
-	TableName   string
-	NodeType    pkg_model.NodeType
-	ImageTag    string
+	NodeID          string // dbt unique_id
+	ServiceName     string
+	SchemaName      string
+	TableName       string
+	NodeType        pkg_model.NodeType
+	ImageTag        string
+	UpstreamNodeIDs []string
 }
 
 // ValidationRequested is the parsed validation.requested:v1 stream payload —
@@ -43,6 +48,5 @@ type ValidationRequested struct {
 	NodeIDsInOrder  []string
 	ImageTags       map[string]string
 	CandidateSchema string
-	DeferStateURI   string
 	DBTFlags        []string
 }

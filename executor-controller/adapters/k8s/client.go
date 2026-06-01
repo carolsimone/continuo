@@ -173,7 +173,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 // ValidationJobParams represents the parameters needed to create a
 // mode=validation K8s Job. It mirrors JobParams for the production fields a
 // validation node still needs and adds the validation-only fields (release/node
-// identity, candidate schema, defer state).
+// identity, candidate schema).
 type ValidationJobParams struct {
 	JobName     string
 	ReleaseID   string
@@ -185,7 +185,6 @@ type ValidationJobParams struct {
 	ImageTag    string
 
 	CandidateSchema string
-	DeferStateURI   string
 
 	Namespace string
 }

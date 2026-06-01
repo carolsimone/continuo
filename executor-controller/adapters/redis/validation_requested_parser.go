@@ -21,17 +21,17 @@ type validationRequestedDTO struct {
 	NodeIDsInOrder  []string                  `json:"node_ids_in_order"`
 	ImageTags       map[string]string         `json:"image_tags"`
 	CandidateSchema string                    `json:"candidate_schema"`
-	DeferStateURI   string                    `json:"defer_state_uri"`
 	DBTFlags        []string                  `json:"dbt_flags"`
 }
 
 type validationRequestedNode struct {
-	UniqueID    string `json:"unique_id"`
-	ServiceName string `json:"service_name"`
-	NodeType    string `json:"node_type"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
-	ImageTag    string `json:"image_tag"`
+	UniqueID        string   `json:"unique_id"`
+	ServiceName     string   `json:"service_name"`
+	NodeType        string   `json:"node_type"`
+	SchemaName      string   `json:"schema_name"`
+	TableName       string   `json:"table_name"`
+	ImageTag        string   `json:"image_tag"`
+	UpstreamNodeIDs []string `json:"upstream_node_ids"`
 }
 
 // ParseValidationRequested translates a validation.requested:v1 XMessage into
@@ -85,12 +85,13 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 				fmt.Errorf("node[%d] (%s) invalid node_type: %w", i, n.UniqueID, err)
 		}
 		nodes = append(nodes, events.ValidationNode{
-			NodeID:      n.UniqueID,
-			ServiceName: n.ServiceName,
-			SchemaName:  n.SchemaName,
-			TableName:   n.TableName,
-			NodeType:    nodeType,
-			ImageTag:    n.ImageTag,
+			NodeID:          n.UniqueID,
+			ServiceName:     n.ServiceName,
+			SchemaName:      n.SchemaName,
+			TableName:       n.TableName,
+			NodeType:        nodeType,
+			ImageTag:        n.ImageTag,
+			UpstreamNodeIDs: n.UpstreamNodeIDs,
 		})
 		nodeIDSet[n.UniqueID] = struct{}{}
 	}
@@ -120,7 +121,6 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 		NodeIDsInOrder:  dto.NodeIDsInOrder,
 		ImageTags:       dto.ImageTags,
 		CandidateSchema: dto.CandidateSchema,
-		DeferStateURI:   dto.DeferStateURI,
 		DBTFlags:        dto.DBTFlags,
 	}, nil
 }
