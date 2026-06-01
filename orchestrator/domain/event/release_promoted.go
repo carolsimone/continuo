@@ -10,6 +10,7 @@ type ReleasePromotedNode struct {
 	SchemaName        string   `json:"schema_name"`
 	TableName         string   `json:"table_name"`
 	ServiceName       string   `json:"service_name"`
+	NodeType          string   `json:"node_type"`
 	ImageTag          string   `json:"image_tag"`
 	Schedule          string   `json:"schedule"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`

@@ -13,7 +13,7 @@ func TestParseReleasePromoted_HappyPath(t *testing.T) {
 	msg := goredis.XMessage{
 		ID: "1-0",
 		Values: map[string]interface{}{
-			"payload": `{"release_id":"rel-1","topology":[{"unique_id":"a","schema_name":"public","table_name":"orders","service_name":"svc-a","image_tag":"sha256:aaa","schedule":"daily","upstream_unique_ids":[]},{"unique_id":"b","schema_name":"public","table_name":"customers","service_name":"svc-a","image_tag":"sha256:aaa","schedule":"daily","upstream_unique_ids":["a"]}],"image_tags":{"svc-a":"sha256:aaa"}}`,
+			"payload": `{"release_id":"rel-1","topology":[{"unique_id":"a","schema_name":"public","table_name":"orders","service_name":"svc-a","node_type":"dbt-seed","image_tag":"sha256:aaa","schedule":"daily","upstream_unique_ids":[]},{"unique_id":"b","schema_name":"public","table_name":"customers","service_name":"svc-a","node_type":"dbt-model","image_tag":"sha256:aaa","schedule":"daily","upstream_unique_ids":["a"]}],"image_tags":{"svc-a":"sha256:aaa"}}`,
 		},
 	}
 	evt, err := ParseReleasePromoted(msg)
@@ -21,6 +21,11 @@ func TestParseReleasePromoted_HappyPath(t *testing.T) {
 	assert.Equal(t, "rel-1", evt.ReleaseID)
 	require.Len(t, evt.Topology, 2)
 	assert.Equal(t, "a", evt.Topology[0].UniqueID)
+	// node_type must round-trip: the run reader pulls seed upstreams into a
+	// model's run only when they are typed "dbt-seed", so dropping it stalls
+	// any promoted schedule with seed dependencies.
+	assert.Equal(t, "dbt-seed", evt.Topology[0].NodeType)
+	assert.Equal(t, "dbt-model", evt.Topology[1].NodeType)
 	assert.Equal(t, []string{"a"}, evt.Topology[1].UpstreamUniqueIDs)
 	assert.Equal(t, "sha256:aaa", evt.ImageTags["svc-a"])
 }
