@@ -211,12 +211,13 @@ func joinImageTags(topo release.Topology, imageTags map[string]string) release.T
 	return result
 }
 
-// validationNodesInOrder returns one map per validation node in topological
-// order, carrying the per-node fields executor-controller needs to build a
-// candidate dbt job. upstream_node_ids lists the in-set, same-service
+// validationNodesInOrder returns one map per validation node in lexical
+// (sorted) order, carrying the per-node fields executor-controller needs to
+// build a candidate dbt job. upstream_node_ids lists the in-set, same-service
 // upstreams that must succeed before this node can run its candidate schema
-// build. The order follows validationIDs which is the topo-sorted output of
-// the build-set computation.
+// build. Dispatch ordering is deterministic but NOT topological; per-node
+// execution sequencing is enforced at runtime by the executor's topological
+// gating on upstream_node_ids, not by position in this list.
 func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet map[string]bool) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
