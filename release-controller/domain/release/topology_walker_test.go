@@ -141,3 +141,37 @@ func TestAncestorsClosure_CycleDetected_Panics(t *testing.T) {
 		release.AncestorsClosure(topo, []string{"a"})
 	}, "expected panic on cyclic topology")
 }
+
+func TestInSetIntraServiceUpstreams(t *testing.T) {
+	topo := release.Topology{
+		{UniqueID: "a1", ServiceName: "svcA"},
+		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a1", "b1"}},
+		{UniqueID: "b1", ServiceName: "svcB"},
+	}
+	set := map[string]bool{"a1": true, "a2": true} // b1 not in build-set
+	got := release.InSetIntraServiceUpstreams(topo, "a2", set)
+	want := []string{"a1"} // a1 in-set + same service; b1 excluded (cross-service & not in set)
+	assert.Equal(t, want, got)
+}
+
+func TestNewCrossServiceUpstreams(t *testing.T) {
+	candidate := release.Topology{
+		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"b_new", "b_old"}},
+		{UniqueID: "b_new", ServiceName: "svcB"},
+		{UniqueID: "b_old", ServiceName: "svcB"},
+	}
+	prod := release.Topology{{UniqueID: "b_old", ServiceName: "svcB"}} // b_old in prod, b_new is new
+	changed := []string{"a2"}
+	got := release.NewCrossServiceUpstreams(candidate, prod, changed)
+	want := []release.CrossServiceEdge{{Node: "a2", Upstream: "b_new"}}
+	assert.Equal(t, want, got)
+}
+
+func TestNewCrossServiceUpstreams_NoneWhenUpstreamInProd(t *testing.T) {
+	candidate := release.Topology{
+		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"b_old"}},
+		{UniqueID: "b_old", ServiceName: "svcB"},
+	}
+	prod := release.Topology{{UniqueID: "b_old", ServiceName: "svcB"}}
+	assert.Empty(t, release.NewCrossServiceUpstreams(candidate, prod, []string{"a2"}))
+}
