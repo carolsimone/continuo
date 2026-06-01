@@ -1,6 +1,7 @@
 package release_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -93,4 +94,29 @@ func TestTopologyWalker_CycleDetected_Panics(t *testing.T) {
 	assert.Panics(t, func() {
 		release.DescendantsClosure(topo, []string{"a"})
 	}, "expected panic on cyclic topology")
+}
+
+func TestAncestorsClosure_IntraServiceOnly(t *testing.T) {
+	// svcA: a1 -> a2 -> a3 (a3 depends on a2 depends on a1)
+	// svcB: b1 -> a3 cross-service edge (a3 upstream includes b1, different service)
+	topo := release.Topology{
+		{UniqueID: "a1", ServiceName: "svcA"},
+		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
+		{UniqueID: "a3", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a2", "b1"}},
+		{UniqueID: "b1", ServiceName: "svcB"},
+	}
+	got := release.AncestorsClosure(topo, []string{"a3"})
+	// a3 + intra-service ancestors a2,a1; b1 excluded (cross-service).
+	want := []string{"a1", "a2", "a3"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("AncestorsClosure = %v, want %v", got, want)
+	}
+}
+
+func TestAncestorsClosure_SeedsNotInTopoIgnored(t *testing.T) {
+	topo := release.Topology{{UniqueID: "a1", ServiceName: "svcA"}}
+	got := release.AncestorsClosure(topo, []string{"ghost"})
+	if len(got) != 0 {
+		t.Fatalf("AncestorsClosure = %v, want empty", got)
+	}
 }

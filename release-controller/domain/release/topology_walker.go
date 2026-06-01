@@ -104,3 +104,92 @@ func DescendantsClosure(topo Topology, seeds []string) []string {
 	}
 	return out
 }
+
+// AncestorsClosure returns the union of the seed nodes and all their
+// transitive UPSTREAM ancestors that share the seed's service, deduplicated and
+// sorted topologically (upstreams before downstreams). The walk crosses only
+// intra-service edges: a cross-service upstream is not followed (cross-service
+// refs are raw schema-qualified SQL that read the prod schema, so they need not
+// be built into the candidate schema). Seeds absent from the topology are
+// ignored. Panics on a cycle — a data-integrity violation dbt rejects at
+// compile time.
+func AncestorsClosure(topo Topology, seeds []string) []string {
+	byID := make(map[string]Node, len(topo))
+	parents := map[string][]string{}
+	for _, n := range topo {
+		byID[n.UniqueID] = n
+	}
+	for _, n := range topo {
+		for _, up := range n.UpstreamUniqueIDs {
+			upNode, ok := byID[up]
+			if !ok || upNode.ServiceName != n.ServiceName {
+				continue // cross-service or unknown edge: not an intra-service ancestor edge
+			}
+			parents[n.UniqueID] = append(parents[n.UniqueID], up)
+		}
+	}
+
+	included := map[string]bool{}
+	for _, s := range seeds {
+		if _, ok := byID[s]; !ok {
+			continue
+		}
+		stack := []string{s}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if included[cur] {
+				continue
+			}
+			included[cur] = true
+			stack = append(stack, parents[cur]...)
+		}
+	}
+
+	return topoSortIncluded(byID, included)
+}
+
+// topoSortIncluded returns the included node IDs in topological order
+// (upstreams before downstreams), considering only intra-included edges.
+// Ties break on lexical order for determinism. Panics on a cycle.
+func topoSortIncluded(byID map[string]Node, included map[string]bool) []string {
+	children := map[string][]string{}
+	indegree := map[string]int{}
+	for id := range included {
+		indegree[id] = 0
+	}
+	for id := range included {
+		for _, up := range byID[id].UpstreamUniqueIDs {
+			if included[up] {
+				indegree[id]++
+				children[up] = append(children[up], id)
+			}
+		}
+	}
+	queue := []string{}
+	for id, d := range indegree {
+		if d == 0 {
+			queue = append(queue, id)
+		}
+	}
+	sort.Strings(queue)
+	out := make([]string, 0, len(included))
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		out = append(out, cur)
+		var ready []string
+		for _, c := range children[cur] {
+			indegree[c]--
+			if indegree[c] == 0 {
+				ready = append(ready, c)
+			}
+		}
+		sort.Strings(ready)
+		queue = append(queue, ready...)
+	}
+	if len(out) != len(included) {
+		panic(fmt.Sprintf("topology_walker: cycle detected; included=%d emitted=%d", len(included), len(out)))
+	}
+	return out
+}
