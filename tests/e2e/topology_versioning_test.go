@@ -12,8 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTopologyVersioning_MidRunIsolation validates that a new manifest.loaded:v1
-// arriving between Run 1's SnapshotGraph and its completion does NOT affect the
+// TestTopologyVersioning_MidRunIsolation validates that a new release.promoted:v1 arriving between Run 1's SnapshotGraph and its completion does NOT affect the
 // in-flight run: its topology_generation must remain pinned to the value captured
 // at SnapshotGraph time. Run 2 (triggered after the reload) must pick up the
 // incremented generation.
@@ -40,10 +39,11 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 2: Clean any leftover data from previous runs.
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Step 3: Load the graph for the first time and wait for schedules.loaded:v1,
-	// which confirms orchestrator committed IngestTopology (generation G1).
-	t.Log("=== Step 3: triggerGraphLoad — establishing generation G1 ===")
-	triggerGraphLoad(t, ctx, clients)
+	// Step 3: Seed topology for the first time and wait for the orchestrator to
+	// apply the release.promoted topology swap, which confirms the orchestrator
+	// applied the release.promoted topology swap (generation G1).
+	t.Log("=== Step 3: seedTopology — establishing generation G1 ===")
+	seedTopology(t, ctx, clients)
 
 	// Step 4: Read G1 from orchestrator_db.
 	var g1 int64
@@ -101,10 +101,10 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 		"Run 1's topology_generation must equal G1=%d, got %d", g1, s1Gen)
 	t.Logf("S1 topology_generation = %d (expected G1=%d) ✓", s1Gen, g1)
 
-	// Step 8: Trigger a second graph load while S1 is still in-flight.
-	// This increments the generation to G2 = G1+1.
-	t.Log("=== Step 8: triggerGraphLoad mid-run — incrementing to G2 ===")
-	triggerGraphLoad(t, ctx, clients)
+	// Step 8: Seed topology again while S1 is still in-flight (fresh release_id,
+	// same DAG). This increments the generation to G2 = G1+1.
+	t.Log("=== Step 8: seedTopology mid-run (fresh release_id, same DAG) — incrementing to G2 ===")
+	seedTopology(t, ctx, clients)
 
 	// Step 9: Read G2 from orchestrator_db and assert G2 == G1+1.
 	var g2 int64
