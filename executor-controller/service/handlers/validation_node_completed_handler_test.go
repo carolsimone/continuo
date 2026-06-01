@@ -147,6 +147,10 @@ func newFakeUoWWithChain(t *testing.T, releaseID string, chain []chainNode) *fak
 			// NewValidationDeployment with hasUpstreams=true already sets blocked.
 		case model.StatusPending:
 			// Default for hasUpstreams=false.
+		case model.StatusSkipped:
+			// NewValidationDeployment with hasUpstreams=true starts blocked; Skip
+			// transitions it directly to the terminal skipped state.
+			require.NoError(t, d.Skip("pre-seeded terminal", now), "seed %s to skipped", cn.node)
 		}
 		repo.nodes[cn.node] = d
 	}
@@ -344,4 +348,85 @@ func TestValidationNodeCompleted_SkipsTransitiveDownstreamOnFailure(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, model.StatusSkipped, u.StatusOf("a2"), "a2 must be skipped — upstream a1 failed")
 	require.Equal(t, model.StatusSkipped, u.StatusOf("a3"), "a3 must be transitively skipped")
+}
+
+func TestValidationNodeCompleted_MultiUpstreamStaysBlockedUntilAllOk(t *testing.T) {
+	// Chain: a (deployed), b (deployed), c (blocked, ups=[a,b]).
+	// Completing a with "ok" must NOT unblock c because b has no recorded outcome
+	// yet. Only after b also completes "ok" should c become pending.
+	// This pins the ALL-upstreams semantics: "any upstream ok" would incorrectly
+	// unblock c on the first Handle call.
+	h := handlers.NewValidationNodeCompletedHandler(discardLogger())
+	u := newFakeUoWWithChain(t, "rel-multi", []chainNode{
+		{node: "a", status: model.StatusDeployed},
+		{node: "b", status: model.StatusDeployed},
+		{node: "c", status: model.StatusBlocked, ups: []string{"a", "b"}},
+	})
+
+	// First completion: a ok — c must stay blocked because b is not yet ok.
+	require.NoError(t, h.Handle(context.Background(), u, events.ValidationNodeCompleted{
+		ReleaseID: "rel-multi", NodeID: "a", Outcome: "ok",
+	}, uuid.Nil))
+	require.Equal(t, model.StatusBlocked, u.StatusOf("c"),
+		"c must remain blocked after only a completes ok — b has no outcome yet")
+
+	// Second completion: b ok — now both upstreams are ok so c unblocks to pending.
+	require.NoError(t, h.Handle(context.Background(), u, events.ValidationNodeCompleted{
+		ReleaseID: "rel-multi", NodeID: "b", Outcome: "ok",
+	}, uuid.Nil))
+	require.Equal(t, model.StatusPending, u.StatusOf("c"),
+		"c must be unblocked to pending once both a and b have outcome ok")
+}
+
+func TestValidationNodeCompleted_SkipLeavesAlreadyTerminalDescendantAlone(t *testing.T) {
+	// Chain: a1 (deployed) → a2 (blocked, ups=[a1]) → a3 (skipped, ups=[a2]).
+	// a3 is already terminal (skipped) before the Handle call.
+	// When a1 fails, a2 must become skipped. The propagateGating reachable BFS
+	// visits a3 as well, but the Status==StatusBlocked guard must stop it from
+	// calling Skip again — Skip rejects a second call from a non-blocked status.
+	h := handlers.NewValidationNodeCompletedHandler(discardLogger())
+	u := newFakeUoWWithChain(t, "rel-terminal", []chainNode{
+		{node: "a1", status: model.StatusDeployed},
+		{node: "a2", status: model.StatusBlocked, ups: []string{"a1"}},
+		// a3 is seeded as skipped (already terminal) and depends on a2.
+		// newFakeUoWWithChain drives it: hasUpstreams=true → blocked → Skip.
+		{node: "a3", status: model.StatusSkipped, ups: []string{"a2"}},
+	})
+
+	require.NoError(t, h.Handle(context.Background(), u, events.ValidationNodeCompleted{
+		ReleaseID: "rel-terminal", NodeID: "a1", Outcome: "failed",
+	}, uuid.Nil))
+
+	require.Equal(t, model.StatusSkipped, u.StatusOf("a2"),
+		"a2 must be skipped — upstream a1 failed")
+	require.Equal(t, model.StatusSkipped, u.StatusOf("a3"),
+		"a3 was already terminal (skipped) and must not be re-touched")
+}
+
+func TestValidationNodeCompleted_DiamondConvergence(t *testing.T) {
+	// Diamond topology: a→b, a→c, b→d, c→d (d has ups=[b,c]).
+	// a starts deployed; b, c, d start blocked.
+	// When a completes ok:
+	//   - b and c each have only one upstream (a) which is now ok → both unblock to pending.
+	//   - d has two upstreams (b and c); neither has an outcome yet → d stays blocked.
+	// This exercises the seen-set in the BFS reachable walk and the multi-parent
+	// index: d must not be unblocked prematurely even though a is transitively above it.
+	h := handlers.NewValidationNodeCompletedHandler(discardLogger())
+	u := newFakeUoWWithChain(t, "rel-diamond", []chainNode{
+		{node: "a", status: model.StatusDeployed},
+		{node: "b", status: model.StatusBlocked, ups: []string{"a"}},
+		{node: "c", status: model.StatusBlocked, ups: []string{"a"}},
+		{node: "d", status: model.StatusBlocked, ups: []string{"b", "c"}},
+	})
+
+	require.NoError(t, h.Handle(context.Background(), u, events.ValidationNodeCompleted{
+		ReleaseID: "rel-diamond", NodeID: "a", Outcome: "ok",
+	}, uuid.Nil))
+
+	require.Equal(t, model.StatusPending, u.StatusOf("b"),
+		"b has only one upstream (a) which succeeded — must unblock to pending")
+	require.Equal(t, model.StatusPending, u.StatusOf("c"),
+		"c has only one upstream (a) which succeeded — must unblock to pending")
+	require.Equal(t, model.StatusBlocked, u.StatusOf("d"),
+		"d requires both b and c to have outcome ok — must remain blocked")
 }
