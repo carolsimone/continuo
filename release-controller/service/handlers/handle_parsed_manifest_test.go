@@ -368,8 +368,8 @@ func TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI(t *testing.T) {
 	_, hasDeferURI := rawPayload["defer_state_uri"]
 	assert.False(t, hasDeferURI, "payload must NOT contain defer_state_uri")
 
-	_, hasUpstreamNodeIDs := rawPayload["nodes"]
-	assert.True(t, hasUpstreamNodeIDs, "payload must contain nodes array")
+	_, hasNodes := rawPayload["nodes"]
+	assert.True(t, hasNodes, "payload must contain nodes array")
 
 	var nodes []struct {
 		UniqueID        string   `json:"unique_id"`

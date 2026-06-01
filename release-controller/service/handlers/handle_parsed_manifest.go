@@ -294,6 +294,7 @@ func rejectNewCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWor
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
+	// Parse phase succeeded; the release is rejected at validation-policy level, not parse level.
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
 	d.Telemetry.ReleaseRejected(ctx, releaseID, "new_cross_service_upstream", nil)
 	return nil
