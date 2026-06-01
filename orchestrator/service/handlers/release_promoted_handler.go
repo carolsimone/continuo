@@ -259,6 +259,7 @@ func toDomainNodes(wire []domainEvent.ReleasePromotedNode) []topology.ReleasePro
 			SchemaName:        n.SchemaName,
 			TableName:         n.TableName,
 			ServiceName:       n.ServiceName,
+			NodeType:          n.NodeType,
 			ImageTag:          n.ImageTag,
 			Schedule:          n.Schedule,
 			UpstreamUniqueIDs: append([]string(nil), n.UpstreamUniqueIDs...),

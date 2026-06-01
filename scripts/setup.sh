@@ -139,6 +139,16 @@ echo "Compiling and uploading dbt manifests to localstack S3..."
 docker exec dbt-compile-and-load uv run python -m dbt_upload load --services-dir /app/services --target localstack
 echo "✓ dbt manifests compiled and uploaded to localstack S3"
 
+# Materialize dbt seeds into e2e_schema. The e2e topology is seeded directly
+# into Neo4j (no manifest.loaded ingest), and the standing "seed" schedule is
+# not run before the seed-dependent models (e.g. table_a = ref('seed_table_1')),
+# so their seed inputs must already exist in the shared dbt database. Only
+# service-1 ships seeds; dbt-compile-and-load shares continuo_dbt with the kind
+# run-jobs, so seeds land where those jobs read them.
+echo "Materializing dbt seeds into e2e_schema..."
+docker exec dbt-compile-and-load bash -c "cd /app/services/service-1 && dbt seed --profiles-dir ."
+echo "✓ dbt seeds materialized"
+
 # Wait for control plane
 echo "Waiting for control plane..."
 kubectl wait --for=condition=Ready node/${CLUSTER_NAME}-control-plane --timeout=60s

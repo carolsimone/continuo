@@ -50,9 +50,9 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// ── Phase 1: Load graph + trigger via UI endpoint ─────────────────────────
-	t.Log("Phase 1: loading graph and triggering schedule via UI...")
-	triggerGraphLoad(t, ctx, clients)
+	// ── Phase 1: Seed topology + trigger via UI endpoint ─────────────────────────
+	t.Log("Phase 1: seeding topology and triggering schedule via UI...")
+	seedTopology(t, ctx, clients)
 
 	cancelledIDStr := triggerScheduleHTTP(t, clients.uiBase, testScheduleName)
 	cancelledID, err := uuid.Parse(cancelledIDStr)
