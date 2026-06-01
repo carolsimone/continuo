@@ -1,7 +1,6 @@
 package release_test
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -98,7 +97,7 @@ func TestTopologyWalker_CycleDetected_Panics(t *testing.T) {
 
 func TestAncestorsClosure_IntraServiceOnly(t *testing.T) {
 	// svcA: a1 -> a2 -> a3 (a3 depends on a2 depends on a1)
-	// svcB: b1 -> a3 cross-service edge (a3 upstream includes b1, different service)
+	// svcB: b1 is a cross-service upstream of a3 and must not be followed.
 	topo := release.Topology{
 		{UniqueID: "a1", ServiceName: "svcA"},
 		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
@@ -106,17 +105,39 @@ func TestAncestorsClosure_IntraServiceOnly(t *testing.T) {
 		{UniqueID: "b1", ServiceName: "svcB"},
 	}
 	got := release.AncestorsClosure(topo, []string{"a3"})
-	// a3 + intra-service ancestors a2,a1; b1 excluded (cross-service).
-	want := []string{"a1", "a2", "a3"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("AncestorsClosure = %v, want %v", got, want)
-	}
+	// a3 + intra-service ancestors a2, a1; b1 excluded (cross-service).
+	assert.Equal(t, []string{"a1", "a2", "a3"}, got)
 }
 
 func TestAncestorsClosure_SeedsNotInTopoIgnored(t *testing.T) {
 	topo := release.Topology{{UniqueID: "a1", ServiceName: "svcA"}}
 	got := release.AncestorsClosure(topo, []string{"ghost"})
-	if len(got) != 0 {
-		t.Fatalf("AncestorsClosure = %v, want empty", got)
+	assert.Empty(t, got)
+}
+
+func TestAncestorsClosure_MultiSeedUnionDeduped(t *testing.T) {
+	// svcA: a1 <- a2 <- a3, a1 <- a4
+	// Seeds a3 and a4 share ancestor a1; the union must be deduplicated and
+	// topologically ordered (upstreams before downstreams).
+	topo := release.Topology{
+		{UniqueID: "a1", ServiceName: "svcA"},
+		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
+		{UniqueID: "a3", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a2"}},
+		{UniqueID: "a4", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
 	}
+	got := release.AncestorsClosure(topo, []string{"a3", "a4"})
+	// Expected: a1 first (root), then a2 and a4 (both depend only on a1),
+	// then a3 (depends on a2). Ties between a2 and a4 break lexically.
+	assert.Equal(t, []string{"a1", "a2", "a4", "a3"}, got)
+}
+
+func TestAncestorsClosure_CycleDetected_Panics(t *testing.T) {
+	// a -> b -> a (cycle within same service)
+	topo := release.Topology{
+		withUpstream(release.Node{UniqueID: "a", ServiceName: "svcA"}, "b"),
+		withUpstream(release.Node{UniqueID: "b", ServiceName: "svcA"}, "a"),
+	}
+	assert.Panics(t, func() {
+		release.AncestorsClosure(topo, []string{"a"})
+	}, "expected panic on cyclic topology")
 }
