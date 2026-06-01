@@ -403,7 +403,10 @@ jobs:
       - name: Install dbt-postgres + upload tool deps
         working-directory: dbt
         run: |
-          pip install --no-cache-dir uv dbt-postgres
+          # Pin dbt to the classic postgres-supporting line — unpinned pulls dbt
+          # Fusion, which dropped the postgres adapter (InvalidConfig dbt1005).
+          # Must match dbt/base/Dockerfile.
+          pip install --no-cache-dir uv "dbt-core==1.12.0b1" "dbt-postgres==1.10.0"
           uv sync --frozen
 
       - name: Pre-create dbt schema in postgres
