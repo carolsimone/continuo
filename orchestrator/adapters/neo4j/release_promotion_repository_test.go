@@ -105,6 +105,76 @@ func TestReleasePromotionRepository_FirstPromotionCreatesNodesEdgesAndMeta(t *te
 	assert.Equal(t, "rel-1", rid)
 }
 
+// TestReleasePromotionRepository_RetiresTablesWithoutUniqueID verifies that a
+// promotion retires any :Table node carrying no unique_id, rather than leaving
+// it active beside the unique_id-keyed nodes the release creates. A node with no
+// incoming :Run reference is orphan-deleted; one referenced by a :Run is kept
+// (retired) so run history survives. This guards the retire query's
+// `unique_id IS NULL` clause: a node whose `unique_id IN $list` evaluates to NULL
+// would otherwise never match the negation and would stay active.
+func TestReleasePromotionRepository_RetiresTablesWithoutUniqueID(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t) // skips if Neo4j is unreachable
+	wipeReleaseFixtures(t, client)
+	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
+
+	// Seed two active :Table nodes that carry no unique_id property (keyed only
+	// by schema/table). One is referenced by a :Run-[:EXECUTES] edge; the other
+	// is unreferenced.
+	wSession := client.NewSession(ctx, neo4j.AccessModeWrite)
+	seedRes, err := wSession.Run(ctx, `
+		CREATE (:Table {schema_name:'public', table_name:'noid_orphan', service_name:'svc', schedule_name:'daily', active:true})
+		CREATE (referenced:Table {schema_name:'public', table_name:'noid_referenced', service_name:'svc', schedule_name:'daily', active:true})
+		CREATE (r:Run {run_id:'legacy-run'})
+		CREATE (r)-[:EXECUTES]->(referenced)
+	`, nil)
+	require.NoError(t, err)
+	_, err = seedRes.Consume(ctx)
+	require.NoError(t, err)
+	wSession.Close(ctx)
+
+	repo := newReleaseRepo(client)
+	nodes := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "public.new_tbl", SchemaName: "public", TableName: "new_tbl", ServiceName: "svc", ImageTag: "sha:1", Schedule: "daily", UpstreamUniqueIDs: []string{}},
+	}
+	changed, err := repo.PromoteRelease(ctx, "rel-upgrade", nodes, time.Now().UTC())
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	s := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer s.Close(ctx)
+
+	// No unique_id-less :Table may remain active after the promotion.
+	activeNoID, err := s.Run(ctx,
+		`MATCH (t:Table) WHERE t.unique_id IS NULL AND COALESCE(t.active, true) RETURN count(t) AS n`, nil)
+	require.NoError(t, err)
+	require.True(t, activeNoID.Next(ctx))
+	n, _ := activeNoID.Record().Get("n")
+	assert.Equal(t, int64(0), n, "no unique_id-less :Table may remain active after promotion")
+
+	// The unreferenced node is orphan-deleted.
+	orphanRes, err := s.Run(ctx, `MATCH (t:Table {table_name:'noid_orphan'}) RETURN count(t) AS n`, nil)
+	require.NoError(t, err)
+	require.True(t, orphanRes.Next(ctx))
+	on, _ := orphanRes.Record().Get("n")
+	assert.Equal(t, int64(0), on, "unreferenced unique_id-less node must be orphan-deleted")
+
+	// The run-referenced node survives as retired so run history is preserved.
+	refRes, err := s.Run(ctx,
+		`MATCH (:Run {run_id:'legacy-run'})-[:EXECUTES]->(t:Table {table_name:'noid_referenced'}) RETURN t.active AS active`, nil)
+	require.NoError(t, err)
+	require.True(t, refRes.Next(ctx), "run-referenced unique_id-less node must survive (retired)")
+	active, _ := refRes.Record().Get("active")
+	assert.Equal(t, false, active, "run-referenced node must be retired, not active")
+
+	// The new unique_id-keyed node is active.
+	newRes, err := s.Run(ctx, `MATCH (t:Table {unique_id:'public.new_tbl'}) RETURN t.active AS active`, nil)
+	require.NoError(t, err)
+	require.True(t, newRes.Next(ctx))
+	na, _ := newRes.Record().Get("active")
+	assert.Equal(t, true, na)
+}
+
 // TestReleasePromotionRepository_RedeliveryWithSameReleaseIDIsNoOp tests that
 // calling PromoteRelease twice with the same release_id returns (false, nil) on
 // the second call and leaves the topology unchanged.

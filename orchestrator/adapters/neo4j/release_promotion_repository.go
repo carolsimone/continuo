@@ -121,10 +121,14 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 
 	// Step B — Retire :Table nodes that are not in the new topology. Setting
 	// active=false and retired_at preserves the nodes (and their incoming
-	// :Run-[:EXECUTES] edges) so that run history is not destroyed.
+	// :Run-[:EXECUTES] edges) so that run history is not destroyed. The
+	// `unique_id IS NULL` clause also retires any :Table node that carries no
+	// unique_id; without it such a node (whose `unique_id IN $list` evaluates to
+	// NULL, never matching the negation) would linger active beside the
+	// unique_id-keyed nodes this release creates.
 	retireRes, err := tx.Run(ctx, `
 		MATCH (t:Table)
-		WHERE NOT t.unique_id IN $new_unique_ids
+		WHERE t.unique_id IS NULL OR NOT t.unique_id IN $new_unique_ids
 		SET t.active = false, t.retired_at = $now
 	`, map[string]interface{}{
 		"new_unique_ids": newUniqueIDs,
