@@ -1,27 +1,18 @@
 import os
 
 from streams_contract import (
-    UPDATE_GRAPH_V1,
-    MANIFEST_LOADED_V1,
-    MANIFEST_UPDATE_GRAPH,
     RELEASE_REQUESTED_V1,
     MANIFEST_LOADED_CANDIDATE_V1,
     MANIFEST_CONTROLLER_RELEASE_REQUESTED,
 )
 
 REDIS_URL       = os.environ.get("REDIS_URL", "")
-REDIS_STREAM    = UPDATE_GRAPH_V1
-REDIS_GROUP     = MANIFEST_UPDATE_GRAPH
-REGISTRY_PATH   = os.environ.get("REGISTRY_PATH", "")
-MANIFESTS_BASE  = os.environ.get("MANIFESTS_BASE", "")
 
 S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "")
 S3_BUCKET       = os.environ.get("S3_BUCKET", "")
 S3_ENV          = os.environ.get("S3_ENV", "")
 
 AWS_DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION", "")
-
-MANIFEST_LOADED_STREAM = MANIFEST_LOADED_V1
 
 # Candidate-parse flow: release.requested:v1 → manifest.loaded.candidate:v1.
 RELEASE_REQUESTED_STREAM         = RELEASE_REQUESTED_V1
@@ -30,7 +21,6 @@ MANIFEST_LOADED_CANDIDATE_STREAM = MANIFEST_LOADED_CANDIDATE_V1
 
 _REQUIRED = [
     "REDIS_URL",
-    "REGISTRY_PATH", "MANIFESTS_BASE",
     "S3_ENDPOINT_URL", "S3_BUCKET", "S3_ENV", "AWS_DEFAULT_REGION",
 ]
 

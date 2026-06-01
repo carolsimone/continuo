@@ -4,22 +4,16 @@ import os
 import threading
 import redis
 from config.config import (
-    REDIS_URL, REDIS_STREAM, REDIS_GROUP,
-    REGISTRY_PATH, MANIFESTS_BASE,
+    REDIS_URL,
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
-    MANIFEST_LOADED_STREAM,
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
     MANIFEST_LOADED_CANDIDATE_STREAM,
     validate,
 )
-from adapters.redis.publisher import ManifestLoadedPublisher
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
-from adapters.filesystem.registry_repository import FilesystemRegistryRepository
 from adapters.redis.consumer import Consumer
-from adapters.sources.local import LocalFilesystemSource
 from adapters.sources.s3 import S3Source
 from adapters.sources.s3_uri import parse_s3_uri
-from service.manifest_handler import ManifestHandler
 from service.candidate_manifest_handler import CandidateManifestHandler
 
 logging.basicConfig(
@@ -27,8 +21,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-_KNOWN_SOURCES = {"local", "s3"}
 
 
 def _decode_field(fields: dict, name: str) -> str | None:
@@ -40,11 +32,9 @@ def _decode_field(fields: dict, name: str) -> str | None:
 
 def main() -> None:
     validate()
-    logger.info("manifest-controller starting (two consumers: legacy + candidate)")
+    logger.info("manifest-controller starting (candidate consumer)")
 
     import boto3  # imported inside main() to avoid module-level side effects in tests
-
-    registry_repo = FilesystemRegistryRepository(REGISTRY_PATH)
 
     s3_client = boto3.client(
         "s3",
@@ -55,29 +45,6 @@ def main() -> None:
     )
 
     redis_client = redis.from_url(REDIS_URL, decode_responses=False)
-
-    # Legacy update.graph:v1 -> manifest.loaded:v1 wiring.
-    manifest_publisher = ManifestLoadedPublisher(redis_client, MANIFEST_LOADED_STREAM)
-    legacy_sources = {
-        "local": lambda: LocalFilesystemSource(MANIFESTS_BASE),
-        "s3":    lambda: S3Source(bucket=S3_BUCKET, env=S3_ENV, s3_client=s3_client),
-    }
-
-    def handle_update_graph(fields: dict) -> None:
-        source_name = _decode_field(fields, "source")
-        if not source_name:
-            raise ValueError("update.graph:v1 message missing source")
-        if source_name not in _KNOWN_SOURCES:
-            raise ValueError(f"update.graph:v1 unknown source '{source_name}'")
-        source = legacy_sources[source_name]()
-        try:
-            ManifestHandler(
-                source=source,
-                manifest_publisher=manifest_publisher,
-                registry_repo=registry_repo,
-            ).handle()
-        finally:
-            source.cleanup()
 
     # Candidate-parse flow (release.requested:v1 -> manifest.loaded.candidate:v1).
     candidate_publisher = CandidateManifestPublisher(
@@ -105,12 +72,6 @@ def main() -> None:
             release_id=release_id,
         )
 
-    legacy_consumer = Consumer(
-        redis_client=redis_client,
-        stream_name=REDIS_STREAM,
-        group_name=REDIS_GROUP,
-        message_handler=handle_update_graph,
-    )
     candidate_consumer = Consumer(
         redis_client=redis_client,
         stream_name=RELEASE_REQUESTED_STREAM,
@@ -118,17 +79,12 @@ def main() -> None:
         message_handler=handle_release_requested,
     )
 
-    legacy_thread = threading.Thread(
-        target=legacy_consumer.start, daemon=True, name="consumer-update-graph",
-    )
     candidate_thread = threading.Thread(
         target=candidate_consumer.start, daemon=True, name="consumer-release-requested",
     )
-    legacy_thread.start()
     candidate_thread.start()
-    # Park the main thread on the two daemon consumer loops; on SIGTERM the
-    # process exits and the daemon threads are abandoned.
-    legacy_thread.join()
+    # Park the main thread on the candidate consumer loop; on SIGTERM the
+    # process exits and the daemon thread is abandoned.
     candidate_thread.join()
 
 
