@@ -1,6 +1,11 @@
 FROM python:3.12-slim
 
-RUN pip install --no-cache-dir dbt-postgres
+# Pin dbt to the classic postgres-supporting line. An unpinned `pip install
+# dbt-postgres` now resolves to dbt Fusion, which dropped the postgres adapter
+# ("InvalidConfig dbt1005: 'postgres' adapter is not yet supported by dbt
+# Fusion") — breaking every dbt compile/run/validation. These are the exact
+# versions the e2e suite is validated against.
+RUN pip install --no-cache-dir "dbt-core==1.12.0b1" "dbt-postgres==1.10.0"
 
 WORKDIR /project
 

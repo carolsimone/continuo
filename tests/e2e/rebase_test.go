@@ -38,7 +38,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)
 
-	triggerGraphLoad(t, ctx, clients)
+	seedTopology(t, ctx, clients)
 
 	// ── Drive the source run to FAILED (mirrors failure_test.go) ────────────
 	srcIDStr := createAndActivateFailureScheduler(t, ctx, clients)
@@ -193,7 +193,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)
 
-	triggerGraphLoad(t, ctx, clients)
+	seedTopology(t, ctx, clients)
 
 	// ── Drive the source run to FAILED ──────────────────────────────────────
 	srcIDStr := createAndActivateFailureScheduler(t, ctx, clients)

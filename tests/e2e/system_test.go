@@ -37,9 +37,9 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// Cleanup any existing data
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// Trigger manifest-controller to load the graph
-	t.Log("Triggering manifest-controller graph load...")
-	triggerGraphLoad(t, ctx, clients)
+	// Seed the topology directly into Neo4j (bypasses legacy update.graph:v1 path).
+	t.Log("Seeding topology directly into Neo4j...")
+	seedTopology(t, ctx, clients)
 
 	// Create and activate scheduler
 	t.Log("Creating and activating scheduler...")
@@ -64,7 +64,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	verifyUIService(t, ctx, schedulerIDStr)
 
 	// ── PR0 audit assertions: kind stamped on both stores; per-task metadata populated ──
-	t.Log("Verifying PR0 audit fields (kind, image_tag, manifest_version)...")
+	t.Log("Verifying PR0 audit fields (kind, image_tag)...")
 
 	runKind := queryNeo4jRunKind(t, clients, schedulerID)
 	assert.Equal(t, "cron", runKind, "fresh schedule trigger must stamp :Run.kind = cron")
@@ -72,8 +72,10 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	trackerKind := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
 	assert.Equal(t, "cron", trackerKind, "scheduler_tracker.kind must be cron after fresh activation")
 
-	manifestVersion, imageTag := queryFirstTaskTrackerMetadata(t, clients.stateDB, schedulerID)
-	assert.NotEmpty(t, manifestVersion, "task_tracker.manifest_version must be populated")
+	// manifest_version is a legacy manifest-ingest field; release-sourced topology
+	// (release.promoted) does not carry it — provenance is the release_id — so it
+	// is empty here by design and is not asserted. image_tag still flows through.
+	_, imageTag := queryFirstTaskTrackerMetadata(t, clients.stateDB, schedulerID)
 	assert.NotEmpty(t, imageTag, "task_tracker.image_tag must be populated")
 
 	t.Log("✅ PR0 audit assertions passed")

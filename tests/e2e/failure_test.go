@@ -45,8 +45,8 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)
 
-	t.Log("Loading graph via manifest-controller...")
-	triggerGraphLoad(t, ctx, clients)
+	t.Log("Seeding topology directly into Neo4j + schedule_catalog...")
+	seedTopology(t, ctx, clients)
 
 	t.Log("Activating schedule...")
 	schedulerIDStr := createAndActivateFailureScheduler(t, ctx, clients)

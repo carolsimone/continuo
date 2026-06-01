@@ -51,6 +51,7 @@ type ReleasePromotedTopologyNode struct {
 	SchemaName        string
 	TableName         string
 	ServiceName       string
+	NodeType          string
 	ImageTag          string
 	Schedule          string
 	UpstreamUniqueIDs []string

@@ -452,17 +452,22 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 
 // seedCurrentProd writes the singleton current_prod row. Only unique_id and
 // content_hash matter for the change-detector; other Node fields default to
-// zero values on the release-controller side. An empty release_id keeps the
-// validation defer-state URI empty (no prior manifest to defer to).
+// zero values on the release-controller side. Both release_id and manifests_uri
+// are reset to empty so the release runs in bootstrap mode: an empty
+// manifests_uri keeps the validation defer-state URI empty (no --defer/--state),
+// which is required for the self-contained rel_probe node. manifests_uri MUST be
+// cleared explicitly — a prior promoted release leaves it populated, and an
+// inherited stale value would point dbt --state at a non-existent manifest.
 func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, nodes []map[string]string) {
 	t.Helper()
 	topoJSON, err := json.Marshal(nodes)
 	require.NoError(t, err, "marshal current_prod snapshot")
 	_, err = clients.releaseDB.ExecContext(ctx,
-		`INSERT INTO current_prod (id, release_id, topology_snapshot, updated_at)
-		 VALUES (1, '', $1, now())
+		`INSERT INTO current_prod (id, release_id, manifests_uri, topology_snapshot, updated_at)
+		 VALUES (1, '', '', $1, now())
 		 ON CONFLICT (id) DO UPDATE SET
 		   release_id = EXCLUDED.release_id,
+		   manifests_uri = EXCLUDED.manifests_uri,
 		   topology_snapshot = EXCLUDED.topology_snapshot,
 		   updated_at = EXCLUDED.updated_at`,
 		topoJSON)
