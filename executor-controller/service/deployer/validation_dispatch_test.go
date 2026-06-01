@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
+	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -265,7 +266,122 @@ func indexOf(s []string, v string) int {
 	return -1
 }
 
-// --- Task 14: maybeEmitValidationAggregate ---------------------------------
+// chainDeploymentRepo is a map-backed DeploymentRepository whose Save writes back
+// into the same map ListValidationByRelease reads — so a node failed during
+// dispatch and its descendants skipped by SettleNodeTerminal are all visible to
+// the aggregate count, matching production's within-transaction consistency.
+type chainDeploymentRepo struct {
+	nodes map[string]*model.Deployment // keyed by nodeID
+}
+
+func newChainDeploymentRepo(chain ...*model.Deployment) *chainDeploymentRepo {
+	m := make(map[string]*model.Deployment, len(chain))
+	for _, d := range chain {
+		m[d.NodeID()] = d
+	}
+	return &chainDeploymentRepo{nodes: m}
+}
+
+func (r *chainDeploymentRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *chainDeploymentRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
+	return nil, nil
+}
+func (r *chainDeploymentRepo) Save(_ context.Context, d *model.Deployment) error {
+	r.nodes[d.NodeID()] = d
+	return nil
+}
+func (r *chainDeploymentRepo) GetByReleaseNode(_ context.Context, _ string, nodeID string) (*model.Deployment, error) {
+	return r.nodes[nodeID], nil
+}
+func (r *chainDeploymentRepo) PendingValidationCount(context.Context, string) (int, error) {
+	count := 0
+	for _, d := range r.nodes {
+		switch d.Status() {
+		case model.StatusPending, model.StatusBlocked, model.StatusDeployed:
+			count++
+		}
+	}
+	return count, nil
+}
+func (r *chainDeploymentRepo) ListValidationResults(_ context.Context, _ string) ([]*model.Deployment, error) {
+	out := make([]*model.Deployment, 0, len(r.nodes))
+	for _, d := range r.nodes {
+		out = append(out, d)
+	}
+	return out, nil
+}
+func (r *chainDeploymentRepo) ListValidationByRelease(_ context.Context, _ string) ([]*model.Deployment, error) {
+	out := make([]*model.Deployment, 0, len(r.nodes))
+	for _, d := range r.nodes {
+		out = append(out, d)
+	}
+	return out, nil
+}
+func (r *chainDeploymentRepo) statusOf(nodeID string) model.Status {
+	if d, ok := r.nodes[nodeID]; ok {
+		return d.Status()
+	}
+	return ""
+}
+
+var _ repository.DeploymentRepository = (*chainDeploymentRepo)(nil)
+
+// validationNodeFor builds a validation deployment for (releaseID, nodeID) with
+// the given upstreams; hasUpstreams seeds it blocked when ups is non-empty.
+func validationNodeFor(releaseID, nodeID string, ups ...string) *model.Deployment {
+	cmd := command.ValidationDeployTask{
+		ReleaseID:       releaseID,
+		NodeID:          nodeID,
+		ServiceName:     "dbt",
+		SchemaName:      "public",
+		TableName:       nodeID,
+		NodeType:        "dbt-model",
+		ImageTag:        "sha-abc",
+		JobName:         "validate-" + nodeID,
+		CandidateSchema: "_cand_" + releaseID,
+		UpstreamNodeIDs: ups,
+	}
+	return model.NewValidationDeployment(cmd, nil, time.Now(), len(ups) > 0)
+}
+
+// Bug A: a validation node that fails AT dispatch must skip its blocked
+// descendants and emit the (failed) aggregate. Before the fix the dispatcher
+// only ran the aggregate gate, leaving B blocked forever so the count never
+// reached 0 and validation.completed never fired.
+func TestDispatcher_DispatchValidation_FailAtDispatch_SkipsDescendant_EmitsAggregate(t *testing.T) {
+	d := silentDispatcher(&fakeValidationDeployer{})
+
+	// A is not deployable (empty command); B is blocked downstream of A.
+	a := model.NewValidationDeployment(command.ValidationDeployTask{
+		ReleaseID: "rel_1", NodeID: "node_a",
+	}, nil, time.Now(), false)
+	require.False(t, a.IsDeployable())
+	b := validationNodeFor("rel_1", "node_b", "node_a")
+	require.Equal(t, model.StatusBlocked, b.Status())
+
+	repo := newChainDeploymentRepo(a, b)
+	outboxRepo := &fakeOutboxRepo{}
+	agg := &fakeAggRepo{won: true}
+
+	require.NoError(t, d.dispatchValidation(context.Background(), repo, outboxRepo, agg, a))
+
+	assert.Equal(t, model.StatusFailed, repo.statusOf("node_a"), "A failed at dispatch")
+	assert.Equal(t, "failed", repo.nodes["node_a"].Outcome())
+	assert.Equal(t, model.StatusSkipped, repo.statusOf("node_b"), "B skipped — its only upstream A failed")
+
+	require.Len(t, outboxRepo.created, 1, "validation.completed aggregate emitted")
+	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
+}
+
+// --- Task 14: aggregate-emit gate (validation.EmitValidationAggregateIfComplete) -
+
+// emitAggregate runs the shared per-release aggregate-emit gate directly. The
+// dispatcher's fail-at-dispatch path reaches it via SettleNodeTerminal; these
+// tests exercise the gate's count -> lock -> claim -> emit logic in isolation.
+func emitAggregate(repo repository.DeploymentRepository, outboxRepo outbox.Repository, agg repository.ValidationAggregateRepository, releaseID string, now time.Time) error {
+	return validation.EmitValidationAggregateIfComplete(
+		context.Background(), repo, outboxRepo, agg, validation.DedupNamespace, releaseID, now)
+}
 
 func recordedResult(t *testing.T, nodeID, outcome, logURI string) *model.Deployment {
 	t.Helper()
@@ -279,19 +395,17 @@ func recordedResult(t *testing.T, nodeID, outcome, logURI string) *model.Deploym
 }
 
 func TestMaybeEmit_NoOpWhenPendingRemain(t *testing.T) {
-	d := silentDispatcher(&fakeValidationDeployer{})
 	repo := &fakeDeploymentRepo{pending: 2}
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
 
-	require.NoError(t, d.maybeEmitValidationAggregate(context.Background(), repo, outboxRepo, agg, "rel_1", time.Now()))
+	require.NoError(t, emitAggregate(repo, outboxRepo, agg, "rel_1", time.Now()))
 
 	assert.Equal(t, 0, agg.claimCalls, "no claim while nodes remain pending")
 	assert.Empty(t, outboxRepo.created, "no emission while pending")
 }
 
 func TestMaybeEmit_EmitsAggregateOk_WhenAllOutcomesOk(t *testing.T) {
-	d := silentDispatcher(&fakeValidationDeployer{})
 	repo := &fakeDeploymentRepo{
 		pending: 0,
 		results: []*model.Deployment{
@@ -302,7 +416,7 @@ func TestMaybeEmit_EmitsAggregateOk_WhenAllOutcomesOk(t *testing.T) {
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
 
-	require.NoError(t, d.maybeEmitValidationAggregate(context.Background(), repo, outboxRepo, agg, "rel_1", time.Now()))
+	require.NoError(t, emitAggregate(repo, outboxRepo, agg, "rel_1", time.Now()))
 
 	require.Len(t, outboxRepo.created, 1)
 	e := outboxRepo.created[0]
@@ -336,7 +450,6 @@ func TestMaybeEmit_EmitsAggregateOk_WhenAllOutcomesOk(t *testing.T) {
 }
 
 func TestMaybeEmit_EmitsAggregateFailed_WhenAnyOutcomeFailed(t *testing.T) {
-	d := silentDispatcher(&fakeValidationDeployer{})
 	repo := &fakeDeploymentRepo{
 		pending: 0,
 		results: []*model.Deployment{
@@ -347,7 +460,7 @@ func TestMaybeEmit_EmitsAggregateFailed_WhenAnyOutcomeFailed(t *testing.T) {
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
 
-	require.NoError(t, d.maybeEmitValidationAggregate(context.Background(), repo, outboxRepo, agg, "rel_1", time.Now()))
+	require.NoError(t, emitAggregate(repo, outboxRepo, agg, "rel_1", time.Now()))
 
 	require.Len(t, outboxRepo.created, 1)
 	var payload struct {
@@ -358,12 +471,11 @@ func TestMaybeEmit_EmitsAggregateFailed_WhenAnyOutcomeFailed(t *testing.T) {
 }
 
 func TestMaybeEmit_SentinelClaimReturnsFalse_NoDuplicateOutboxRow(t *testing.T) {
-	d := silentDispatcher(&fakeValidationDeployer{})
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{recordedResult(t, "node_a", "ok", "")}}
 	agg := &fakeAggRepo{won: false} // another caller already emitted
 	outboxRepo := &fakeOutboxRepo{}
 
-	require.NoError(t, d.maybeEmitValidationAggregate(context.Background(), repo, outboxRepo, agg, "rel_1", time.Now()))
+	require.NoError(t, emitAggregate(repo, outboxRepo, agg, "rel_1", time.Now()))
 
 	assert.Equal(t, 1, agg.claimCalls, "claim attempted")
 	assert.Empty(t, outboxRepo.created, "claim lost => no duplicate outbox row")
@@ -373,12 +485,11 @@ func TestMaybeEmit_SentinelClaimReturnsFalse_NoDuplicateOutboxRow(t *testing.T) 
 // the sentinel claim, so the count->claim->emit sequence is serialized per
 // release. The fake records call order; LockRelease must come first.
 func TestMaybeEmit_LocksReleaseBeforeClaiming(t *testing.T) {
-	d := silentDispatcher(&fakeValidationDeployer{})
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{recordedResult(t, "node_a", "ok", "")}}
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
 
-	require.NoError(t, d.maybeEmitValidationAggregate(context.Background(), repo, outboxRepo, agg, "rel_1", time.Now()))
+	require.NoError(t, emitAggregate(repo, outboxRepo, agg, "rel_1", time.Now()))
 
 	assert.Equal(t, 1, agg.lockCalls, "lock taken exactly once")
 	require.GreaterOrEqual(t, len(agg.calls), 2)
@@ -399,12 +510,11 @@ func TestMaybeEmit_LocksReleaseBeforeClaiming(t *testing.T) {
 // I1: the lock is taken even when nodes remain pending (the gate must serialize
 // before reading the count), and a lock error aborts the gate before any claim.
 func TestMaybeEmit_LockErrorAbortsBeforeClaim(t *testing.T) {
-	d := silentDispatcher(&fakeValidationDeployer{})
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{recordedResult(t, "node_a", "ok", "")}}
 	agg := &fakeAggRepo{won: true, lockErr: errors.New("lock failed")}
 	outboxRepo := &fakeOutboxRepo{}
 
-	err := d.maybeEmitValidationAggregate(context.Background(), repo, outboxRepo, agg, "rel_1", time.Now())
+	err := emitAggregate(repo, outboxRepo, agg, "rel_1", time.Now())
 
 	require.Error(t, err)
 	assert.Equal(t, 0, agg.claimCalls, "lock failure aborts before any claim")
