@@ -120,6 +120,8 @@ const (
 	ExecutorValidationNodeCompleted = "executor-validation-node-completed"
 	// ReleaseControllerValidationCompleted — release-controller consumer group on validation.completed:v1.
 	ReleaseControllerValidationCompleted = "release-controller-validation-completed"
+	// ExecutorValidationCompleted — executor-controller consumer group on validation.completed:v1.
+	ExecutorValidationCompleted = "executor-validation-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 )

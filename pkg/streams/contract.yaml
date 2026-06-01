@@ -266,6 +266,9 @@ streams:
       - service: release-controller
         group: release-controller-validation-completed
         const: ReleaseControllerValidationCompleted
+      - service: executor-controller
+        group: executor-validation-completed
+        const: ExecutorValidationCompleted
 
   - name: release.promoted:v1
     const: ReleasePromotedV1
