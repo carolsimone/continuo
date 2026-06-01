@@ -14,8 +14,10 @@ type Status string
 
 const (
 	StatusPending  Status = "pending"
+	StatusBlocked  Status = "blocked"
 	StatusDeployed Status = "deployed"
 	StatusFailed   Status = "failed"
+	StatusSkipped  Status = "skipped"
 )
 
 // defaultMaxRetries is the deploy-attempt budget for a new Deployment.
@@ -82,16 +84,22 @@ func NewDeployment(cmd command.DeployTask, msgProcID *uuid.UUID, now time.Time) 
 	}
 }
 
-// NewValidationDeployment starts a fresh pending validation Deployment due
-// immediately. It carries the ValidationDeployTask identity instead of a
-// production DeployTask; the dispatcher branches on Mode.
-func NewValidationDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
+// NewValidationDeployment starts a fresh validation Deployment. When
+// hasUpstreams is true the deployment begins in StatusBlocked, waiting for all
+// in-set intra-service upstreams to succeed before the dispatcher can pick it
+// up. When false (root node in the build set) it starts StatusPending and is
+// eligible for dispatch immediately.
+func NewValidationDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID, now time.Time, hasUpstreams bool) *Deployment {
+	status := StatusPending
+	if hasUpstreams {
+		status = StatusBlocked
+	}
 	return &Deployment{
 		id:                  uuid.New(),
 		messageProcessingID: msgProcID,
 		mode:                ModeValidation,
 		validationCmd:       cmd,
-		status:              StatusPending,
+		status:              status,
 		maxRetries:          defaultMaxRetries,
 		nextAttemptAt:       now,
 		createdAt:           now,
@@ -245,6 +253,41 @@ func (d *Deployment) FailValidation(reason string, now time.Time) error {
 	d.errorMessage = &msg
 	d.status = StatusFailed
 	d.outcome = "failed"
+	ts := now
+	d.outcomeAt = &ts
+	return nil
+}
+
+// Unblock transitions a gated validation deployment from blocked to pending so
+// the dispatcher can pick it up. Caller decides readiness (all in-set upstreams
+// succeeded); the aggregate only guards the source state.
+func (d *Deployment) Unblock(now time.Time) error {
+	if d.mode != ModeValidation {
+		return fmt.Errorf("Unblock called on non-validation deployment %s", d.id)
+	}
+	if d.status != StatusBlocked {
+		return fmt.Errorf("cannot Unblock from status %q", d.status)
+	}
+	d.status = StatusPending
+	d.nextAttemptAt = now
+	return nil
+}
+
+// Skip drives a blocked validation deployment to a terminal skipped state with
+// outcome="skipped". Used when an in-set upstream failed, so this node can never
+// be validated. Like FailValidation it produces a terminal outcome so the
+// per-release aggregate gate counts it (skipped is non-"ok" => release rejected).
+func (d *Deployment) Skip(reason string, now time.Time) error {
+	if d.mode != ModeValidation {
+		return fmt.Errorf("Skip called on non-validation deployment %s", d.id)
+	}
+	if d.status != StatusBlocked {
+		return fmt.Errorf("cannot Skip from status %q", d.status)
+	}
+	msg := reason
+	d.errorMessage = &msg
+	d.status = StatusSkipped
+	d.outcome = "skipped"
 	ts := now
 	d.outcomeAt = &ts
 	return nil

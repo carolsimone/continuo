@@ -303,7 +303,7 @@ func TestAdd_ValidationRow_RoundTrip(t *testing.T) {
 
 	now := time.Now()
 	cmd := validValidationCmd("rel-1", "node-A")
-	dep := model.NewValidationDeployment(cmd, nil, now)
+	dep := model.NewValidationDeployment(cmd, nil, now, false)
 	require.NoError(t, repo.Add(context.Background(), dep))
 
 	// The mode/release/node columns and synthetic NOT NULL ids are persisted.
@@ -327,7 +327,7 @@ func TestAdd_ValidationRow_RoundTrip(t *testing.T) {
 	assert.NotEqual(t, taskID, schedule, "task and schedule synthetic ids must differ")
 
 	// Synthetic ids are deterministic across re-adds of the same (release,node).
-	dep2 := model.NewValidationDeployment(cmd, nil, now)
+	dep2 := model.NewValidationDeployment(cmd, nil, now, false)
 	_, delErr := db.Exec(`DELETE FROM executor_deployments WHERE id=$1`, dep.ID())
 	require.NoError(t, delErr)
 	require.NoError(t, repo.Add(context.Background(), dep2))
@@ -352,7 +352,7 @@ func TestGetByReleaseNode_HitAndMiss(t *testing.T) {
 	defer cleanup()
 	repo := postgres.NewDeploymentsRepository(db, testLogger())
 
-	dep := model.NewValidationDeployment(validValidationCmd("rel-2", "node-X"), nil, time.Now())
+	dep := model.NewValidationDeployment(validValidationCmd("rel-2", "node-X"), nil, time.Now(), false)
 	require.NoError(t, repo.Add(context.Background(), dep))
 
 	got, err := repo.GetByReleaseNode(context.Background(), "rel-2", "node-X")
@@ -371,24 +371,24 @@ func TestPendingValidationCount_PendingDeployedDoneMix(t *testing.T) {
 	now := time.Now()
 
 	// pending row (counts)
-	pending := model.NewValidationDeployment(validValidationCmd("rel-3", "n1"), nil, now)
+	pending := model.NewValidationDeployment(validValidationCmd("rel-3", "n1"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, pending))
 
 	// deployed, outcome not yet recorded (counts)
-	deployed := model.NewValidationDeployment(validValidationCmd("rel-3", "n2"), nil, now)
+	deployed := model.NewValidationDeployment(validValidationCmd("rel-3", "n2"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, deployed))
 	require.NoError(t, deployed.MarkDeployed(now))
 	require.NoError(t, repo.Save(ctx, deployed))
 
 	// deployed + outcome recorded (does NOT count — terminal)
-	done := model.NewValidationDeployment(validValidationCmd("rel-3", "n3"), nil, now)
+	done := model.NewValidationDeployment(validValidationCmd("rel-3", "n3"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, done))
 	require.NoError(t, done.MarkDeployed(now))
 	require.NoError(t, done.RecordOutcome("ok", "s3://logs/n3", now))
 	require.NoError(t, repo.Save(ctx, done))
 
 	// a different release's pending row must not leak into the count
-	other := model.NewValidationDeployment(validValidationCmd("rel-OTHER", "n1"), nil, now)
+	other := model.NewValidationDeployment(validValidationCmd("rel-OTHER", "n1"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, other))
 
 	count, err := repo.PendingValidationCount(ctx, "rel-3")
@@ -404,21 +404,21 @@ func TestListValidationResults_OnlyOutcomedRows(t *testing.T) {
 	now := time.Now()
 
 	// outcomed ok
-	okDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n1"), nil, now)
+	okDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n1"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, okDep))
 	require.NoError(t, okDep.MarkDeployed(now))
 	require.NoError(t, okDep.RecordOutcome("ok", "s3://logs/n1", now))
 	require.NoError(t, repo.Save(ctx, okDep))
 
 	// outcomed failed (later outcome_at so it orders second)
-	failDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n2"), nil, now)
+	failDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n2"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, failDep))
 	require.NoError(t, failDep.MarkDeployed(now))
 	require.NoError(t, failDep.RecordOutcome("failed", "s3://logs/n2", now.Add(time.Second)))
 	require.NoError(t, repo.Save(ctx, failDep))
 
 	// pending, no outcome — excluded
-	pending := model.NewValidationDeployment(validValidationCmd("rel-4", "n3"), nil, now)
+	pending := model.NewValidationDeployment(validValidationCmd("rel-4", "n3"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, pending))
 
 	results, err := repo.ListValidationResults(ctx, "rel-4")
@@ -457,7 +457,7 @@ func TestClaimEmission_FirstCallerWins_SecondReturnsFalse(t *testing.T) {
 func seedDeployedValidationNode(t *testing.T, db *sqlx.DB, releaseID, nodeID string, now time.Time) {
 	t.Helper()
 	repo := postgres.NewDeploymentsRepository(db, testLogger())
-	dep := model.NewValidationDeployment(validValidationCmd(releaseID, nodeID), nil, now)
+	dep := model.NewValidationDeployment(validValidationCmd(releaseID, nodeID), nil, now, false)
 	require.NoError(t, repo.Add(context.Background(), dep))
 	require.NoError(t, dep.MarkDeployed(now))
 	require.NoError(t, repo.Save(context.Background(), dep))

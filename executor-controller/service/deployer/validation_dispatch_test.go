@@ -148,7 +148,7 @@ func TestDispatcher_DispatchOne_ValidationMode_CallsDeployValidation(t *testing.
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
-	dep := model.NewValidationDeployment(deployableValidation(), nil, time.Now())
+	dep := model.NewValidationDeployment(deployableValidation(), nil, time.Now(), false)
 
 	require.NoError(t, d.dispatchOne(context.Background(), repo, &fakeOutboxRepo{}, &fakeAggRepo{}, dep))
 
@@ -162,7 +162,7 @@ func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesNodeDeployedTrigg
 	repo := &fakeDeploymentRepo{}
 	outboxRepo := &fakeOutboxRepo{}
 	vc := deployableValidation()
-	dep := model.NewValidationDeployment(vc, nil, time.Now())
+	dep := model.NewValidationDeployment(vc, nil, time.Now(), false)
 
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
@@ -201,12 +201,12 @@ func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesNodeDeployedTrigg
 func TestDispatcher_DispatchOne_ValidationMode_OnPermanentFailure_RecordsOutcomeFailedAndAggregates(t *testing.T) {
 	fk := &fakeValidationDeployer{deployErr: errors.Join(errors.New("bad image"), pkgevents.ErrPermanent)}
 	d := silentDispatcher(fk)
-	failed := model.NewValidationDeployment(deployableValidation(), nil, time.Now())
+	failed := model.NewValidationDeployment(deployableValidation(), nil, time.Now(), false)
 	require.NoError(t, failed.FailValidation("bad image", time.Now())) // the row as ListValidationResults would return it
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
 	outboxRepo := &fakeOutboxRepo{}
 	agg := &fakeAggRepo{won: true}
-	dep := model.NewValidationDeployment(deployableValidation(), nil, time.Now())
+	dep := model.NewValidationDeployment(deployableValidation(), nil, time.Now(), false)
 
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
 
@@ -226,7 +226,7 @@ func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGa
 	// the gate for a node that was never deployed).
 	d := silentDispatcher(&fakeValidationDeployer{})
 	// pending=0 models the DB state once this last node's outcome is persisted.
-	failed := model.NewValidationDeployment(deployableValidation(), nil, time.Now())
+	failed := model.NewValidationDeployment(deployableValidation(), nil, time.Now(), false)
 	require.NoError(t, failed.FailValidation("not deployable", time.Now()))
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
 	outboxRepo := &fakeOutboxRepo{}
@@ -235,7 +235,7 @@ func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGa
 	// A non-deployable validation row (empty command → IsDeployable() == false).
 	dep := model.NewValidationDeployment(command.ValidationDeployTask{
 		ReleaseID: "rel_1", NodeID: "node_1",
-	}, nil, time.Now())
+	}, nil, time.Now(), false)
 	require.False(t, dep.IsDeployable())
 
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
@@ -269,7 +269,7 @@ func recordedResult(t *testing.T, nodeID, outcome, logURI string) *model.Deploym
 	cmd := deployableValidation()
 	cmd.NodeID = nodeID
 	now := time.Now()
-	d := model.NewValidationDeployment(cmd, nil, now)
+	d := model.NewValidationDeployment(cmd, nil, now, false)
 	require.NoError(t, d.MarkDeployed(now))
 	require.NoError(t, d.RecordOutcome(outcome, logURI, now))
 	return d

@@ -95,7 +95,7 @@ func deployedValidationNode(t *testing.T, releaseID, nodeID string) *model.Deplo
 		ImageTag: "sha-abc", JobName: "validate-" + nodeID,
 	}
 	now := time.Now()
-	d := model.NewValidationDeployment(cmd, nil, now)
+	d := model.NewValidationDeployment(cmd, nil, now, false)
 	require.NoError(t, d.MarkDeployed(now))
 	return d
 }

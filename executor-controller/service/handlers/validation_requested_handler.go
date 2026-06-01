@@ -81,7 +81,8 @@ func createValidationDeployment(
 		id := msgProcID
 		procID = &id
 	}
-	if err := u.DeploymentsRepo().Add(ctx, model.NewValidationDeployment(cmd, procID, now)); err != nil {
+	// TODO(T10): pass real hasUpstreams from node.UpstreamNodeIDs
+	if err := u.DeploymentsRepo().Add(ctx, model.NewValidationDeployment(cmd, procID, now, false)); err != nil {
 		return fmt.Errorf("add validation deployment: %w", err)
 	}
 	return nil
