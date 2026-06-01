@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -101,7 +103,21 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	// Bootstrap (no prod row) yields an empty prod snapshot, so every candidate
 	// node is treated as new and the whole topology is validated.
 	changed := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
-	validationIDs := release.DescendantsClosure(topo, changed)
+
+	// A changed node with a NEW cross-service upstream (absent from prod) cannot
+	// be validated: its raw schema-qualified SQL reads the prod schema, where the
+	// upstream does not yet exist. Reject early with a clear, actionable message
+	// rather than letting dbt fail cryptically mid-run.
+	if edges := release.NewCrossServiceUpstreams(topo, cp.TopologySnapshot(), changed); len(edges) > 0 {
+		return rejectNewCrossServiceUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
+	}
+
+	// Validate the changed-and-downstream closure, plus the transitive
+	// intra-service ancestors of that closure so every node's ref()s resolve
+	// inside the candidate schema (the ancestors build --empty first; the
+	// dispatcher gates on them).
+	changedClosure := release.DescendantsClosure(topo, changed)
+	validationIDs := unionSorted(changedClosure, release.AncestorsClosure(topo, changedClosure))
 
 	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to validating: %w", err)
@@ -135,22 +151,18 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 
 	candidateSchema := "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID)
 
-	// Defer the candidate validation to the current prod release's manifests at
-	// the exact location they were uploaded to. Reconstructing this from a
-	// hardcoded bucket would diverge from the submitted manifests_uri (the
-	// deploy bucket differs per environment), pointing --defer/--state at a
-	// location where no manifests exist. Bootstrap (no prod release) leaves it
-	// empty, so the first release validates without deferral.
-	deferStateURI := cp.ManifestsURI()
+	inSet := make(map[string]bool, len(validationIDs))
+	for _, id := range validationIDs {
+		inSet[id] = true
+	}
 
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,
 		"mode":              "validation",
-		"nodes":             validationNodesInOrder(topo, validationIDs),
+		"nodes":             validationNodesInOrder(topo, validationIDs, inSet),
 		"node_ids_in_order": validationIDs,
 		"image_tags":        r.ImageTags(),
 		"candidate_schema":  candidateSchema,
-		"defer_state_uri":   deferStateURI,
 		"dbt_flags":         []string{"--empty"},
 	})
 	if err != nil {
@@ -191,14 +203,13 @@ func joinImageTags(topo release.Topology, imageTags map[string]string) release.T
 	return result
 }
 
-// validationNodesInOrder returns one map per validation node in
-// topological order, carrying the per-node fields executor-controller needs
-// to build a candidate dbt job: unique_id, service_name, node_type,
-// schema_name, table_name, image_tag. The map shape is intentionally flat (no nested
-// upstreams) — executor-controller only needs what to run, not how the
-// candidate DAG is structured. The order follows validationIDs which is the
-// topo-sorted output of DescendantsClosure.
-func validationNodesInOrder(topo release.Topology, validationIDs []string) []map[string]any {
+// validationNodesInOrder returns one map per validation node in topological
+// order, carrying the per-node fields executor-controller needs to build a
+// candidate dbt job. upstream_node_ids lists the in-set, same-service
+// upstreams that must succeed before this node can run its candidate schema
+// build. The order follows validationIDs which is the topo-sorted output of
+// the build-set computation.
+func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet map[string]bool) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
 		byID[n.UniqueID] = n
@@ -210,12 +221,13 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string) []map
 			continue
 		}
 		out = append(out, map[string]any{
-			"unique_id":    n.UniqueID,
-			"service_name": n.ServiceName,
-			"node_type":    n.NodeType,
-			"schema_name":  n.SchemaName,
-			"table_name":   n.TableName,
-			"image_tag":    n.ImageTag,
+			"unique_id":         n.UniqueID,
+			"service_name":      n.ServiceName,
+			"node_type":         n.NodeType,
+			"schema_name":       n.SchemaName,
+			"table_name":        n.TableName,
+			"image_tag":         n.ImageTag,
+			"upstream_node_ids": release.InSetIntraServiceUpstreams(topo, id, inSet),
 		})
 	}
 	return out
@@ -227,4 +239,74 @@ var nonAlphanumUnderscore = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 // Used to derive a safe Postgres schema name suffix from a release_id.
 func sanitizeSchemaSuffix(s string) string {
 	return nonAlphanumUnderscore.ReplaceAllString(s, "_")
+}
+
+// unionSorted merges two ID slices into a deduplicated, lexically-sorted slice.
+func unionSorted(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	for _, s := range a {
+		seen[s] = true
+	}
+	for _, s := range b {
+		seen[s] = true
+	}
+	out := make([]string, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// rejectNewCrossServiceUpstream transitions the release to Rejected and emits
+// release.rejected:v1 naming the offending edge(s), advising the operator to
+// split the work into ordered releases (land the upstream first).
+func rejectNewCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
+	detail := formatCrossServiceEdges(edges)
+	if err := r.TransitionToRejected("new_cross_service_upstream", nil, "", now); err != nil {
+		return fmt.Errorf("transition to rejected: %w", err)
+	}
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+	payload, err := json.Marshal(map[string]string{
+		"release_id":   releaseID,
+		"reason":       "new_cross_service_upstream",
+		"error_class":  "validation_unsupported",
+		"error_detail": detail,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		ID:            uuid.New(),
+		AggregateType: "release-controller",
+		AggregateID:   AggregateIDForRelease(releaseID),
+		EventType:     "release_rejected",
+		Payload:       payload,
+		StreamName:    streams.ReleaseRejectedV1,
+		Status:        "pending",
+		MaxRetries:    3,
+		CreatedAt:     now,
+	}); err != nil {
+		return fmt.Errorf("outbox insert: %w", err)
+	}
+	if err := u.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
+	d.Telemetry.ReleaseRejected(ctx, releaseID, "new_cross_service_upstream", nil)
+	return nil
+}
+
+// formatCrossServiceEdges renders offending edges as a human-readable string
+// listing each node->upstream pair separated by commas, followed by an
+// actionable hint to split the work into ordered releases.
+func formatCrossServiceEdges(edges []release.CrossServiceEdge) string {
+	parts := make([]string, 0, len(edges))
+	for _, e := range edges {
+		parts = append(parts, e.Node+"->"+e.Upstream)
+	}
+	return strings.Join(parts, ", ") +
+		"; split into ordered releases (land the new cross-service upstream first)"
 }
