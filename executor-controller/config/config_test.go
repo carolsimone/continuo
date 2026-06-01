@@ -9,8 +9,9 @@ import (
 
 func TestLoad_MaxConcurrentJobsDefault(t *testing.T) {
 	os.Setenv("K8S_NAMESPACE", "default")
+	os.Setenv("DBT_POSTGRES_DB", "continuo_dbt")
 	os.Unsetenv("MAX_CONCURRENT_JOBS")
-	defer os.Unsetenv("K8S_NAMESPACE")
+	defer func() { os.Unsetenv("K8S_NAMESPACE"); os.Unsetenv("DBT_POSTGRES_DB") }()
 
 	cfg := Load(&pkgconfig.Validator{})
 	if cfg.MaxConcurrentJobs != 50 {
@@ -20,8 +21,13 @@ func TestLoad_MaxConcurrentJobsDefault(t *testing.T) {
 
 func TestLoad_MaxConcurrentJobsFromEnv(t *testing.T) {
 	os.Setenv("K8S_NAMESPACE", "default")
+	os.Setenv("DBT_POSTGRES_DB", "continuo_dbt")
 	os.Setenv("MAX_CONCURRENT_JOBS", "12")
-	defer func() { os.Unsetenv("K8S_NAMESPACE"); os.Unsetenv("MAX_CONCURRENT_JOBS") }()
+	defer func() {
+		os.Unsetenv("K8S_NAMESPACE")
+		os.Unsetenv("DBT_POSTGRES_DB")
+		os.Unsetenv("MAX_CONCURRENT_JOBS")
+	}()
 
 	cfg := Load(&pkgconfig.Validator{})
 	if cfg.MaxConcurrentJobs != 12 {
