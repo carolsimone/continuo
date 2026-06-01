@@ -18,8 +18,6 @@ const (
 	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
 	// NodeUpdatedV1 — Node state transitions; orchestrator updates its projections.
 	NodeUpdatedV1 = "node.updated:v1"
-	// ManifestLoadedV1 — dbt manifest topology loaded by manifest-controller.
-	ManifestLoadedV1 = "manifest.loaded:v1"
 	// InitializeRunV1 — Trigger to initialize a new run.
 	InitializeRunV1 = "initialize.run:v1"
 	// TriggerRerunV1 — User-initiated rerun trigger.
@@ -46,8 +44,6 @@ const (
 	TaskFailedV1 = "task.failed:v1"
 	// ScheduleCancelledV1 — Schedule cancellation broadcast; fanned out to orchestrator, executor, k8s.
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
-	// UpdateGraphV1 — Manifest refresh trigger; manifest-controller reloads dbt artifacts.
-	UpdateGraphV1 = "update.graph:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
 	// ManifestLoadedCandidateV1 — Resolved candidate topology from manifest-controller back to release-controller.
@@ -80,8 +76,6 @@ const (
 	StateTaskExecutionRecorded = "state-task-execution-recorded"
 	// OrchestratorNodeUpdated — orchestrator consumer group on node.updated:v1.
 	OrchestratorNodeUpdated = "orchestrator-node-updated"
-	// OrchestratorManifestLoaded — orchestrator consumer group on manifest.loaded:v1.
-	OrchestratorManifestLoaded = "orchestrator-manifest-loaded"
 	// OrchestratorInitializeRun — orchestrator consumer group on initialize.run:v1.
 	OrchestratorInitializeRun = "orchestrator-initialize-run"
 	// OrchestratorRerun — orchestrator consumer group on trigger.rerun:v1.
@@ -108,8 +102,6 @@ const (
 	ExecutorScheduleCancelled = "executor-schedule-cancelled"
 	// K8sScheduleCancelled — k8s-controller consumer group on schedule.cancelled:v1.
 	K8sScheduleCancelled = "k8s-schedule-cancelled"
-	// ManifestUpdateGraph — manifest-controller consumer group on update.graph:v1.
-	ManifestUpdateGraph = "manifest-controller-update-graph"
 	// ManifestControllerReleaseRequested — manifest-controller consumer group on release.requested:v1.
 	ManifestControllerReleaseRequested = "manifest-controller-release-requested"
 	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v1.
