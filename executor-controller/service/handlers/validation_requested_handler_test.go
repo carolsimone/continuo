@@ -98,8 +98,8 @@ func TestValidationRequestedHandler_RootNodeEnqueuesPending(t *testing.T) {
 
 // TestValidationRequestedHandler_BlocksGatedNodes verifies that a node with
 // intra-service upstreams starts blocked while a root node starts pending.
-// This is the T7+T10 gating invariant: hasUpstreams drives NewValidationDeployment
-// and determines whether dispatch is immediate or deferred.
+// This is the core gating invariant: hasUpstreams drives NewValidationDeployment
+// and determines whether dispatch is immediate (pending) or held (blocked).
 func TestValidationRequestedHandler_BlocksGatedNodes(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
 	u := &uow.FakeUnitOfWork{Deployments: depl}
