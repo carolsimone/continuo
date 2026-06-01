@@ -428,10 +428,8 @@ func main() {
 	// Consumer: release.promoted:v1 — atomically replaces the Neo4j topology
 	// when release-controller promotes a candidate release to production, then
 	// emits schedules.loaded:v1 so state can refresh its schedule projections.
-	// Runs concurrently with manifest.loaded:v1; the two write to disjoint dedup
-	// namespaces and disjoint Neo4j subgraphs so there is no cross-consumer
-	// contention. The consumer is dormant until release-controller emits its
-	// first release.promoted:v1 event in production.
+	// The consumer is dormant until release-controller emits its first
+	// release.promoted:v1 event in production.
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
 	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, topologyRepo, topologyStateRepo, logger)
 	releasePromotedBinding := redis.NewReleasePromotedBinding(releasePromotedHandler, logger)

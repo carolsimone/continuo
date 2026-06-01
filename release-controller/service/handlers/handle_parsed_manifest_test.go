@@ -387,7 +387,7 @@ func TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI(t *testing.T) {
 }
 
 // TestHandleParseOK_UnknownRelease_DropsWithoutPanic guards against a stale or
-// duplicate manifest.loaded:v1 message whose release row no longer exists (e.g.
+// duplicate manifest.loaded.candidate:v1 message whose release row no longer exists (e.g.
 // it was pruned, or the message was reclaimed from a previous consumer for a
 // deleted release). ReleaseRepo.Get returns (nil, nil) for a missing release;
 // the handler must ack and drop rather than dereference a nil aggregate and

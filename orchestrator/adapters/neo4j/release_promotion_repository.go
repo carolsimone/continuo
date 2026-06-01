@@ -14,8 +14,7 @@ import (
 // ReleasePromotionRepository implements repository.ReleasePromotionRepository
 // against Neo4j. The swap runs in a single explicit transaction: read the
 // :Meta singleton, short-circuit on a release_id match, otherwise apply a
-// retire-then-orphan-cleanup pattern identical to IngestTopologyHandler, and
-// MERGE :Meta.
+// retire-then-orphan-cleanup pattern, and MERGE :Meta.
 type ReleasePromotionRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
@@ -45,8 +44,8 @@ func NewReleasePromotionRepository(client Neo4jClient, logger *slog.Logger) *Rel
 //  5. Rebuild :DEPENDS_ON edges between nodes in the new topology. References
 //     to unique_ids outside the set are silently skipped.
 //  6. Delete :Table nodes that are inactive AND have no incoming
-//     :Run-[:EXECUTES] reference (mirrors IngestTopologyHandler's orphan-
-//     cleanup step).
+//     :Run-[:EXECUTES] reference. Inactive nodes still referenced by a run
+//     remain (retired) so run history is preserved.
 //  7. MERGE :Meta singleton — set release_id and updated_at.
 func (r *ReleasePromotionRepository) PromoteRelease(
 	ctx context.Context,
@@ -122,8 +121,7 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 
 	// Step B — Retire :Table nodes that are not in the new topology. Setting
 	// active=false and retired_at preserves the nodes (and their incoming
-	// :Run-[:EXECUTES] edges) so that run history is not destroyed, mirroring
-	// the behaviour of IngestTopologyHandler.retireMissingNodes.
+	// :Run-[:EXECUTES] edges) so that run history is not destroyed.
 	retireRes, err := tx.Run(ctx, `
 		MATCH (t:Table)
 		WHERE NOT t.unique_id IN $new_unique_ids
@@ -209,8 +207,7 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 
 	// Step D.5 — Delete inactive :Table nodes that have no incoming
 	// :Run-[:EXECUTES] reference. Nodes that are still referenced by a Run
-	// remain in the graph (retired) so that run history stays intact,
-	// mirroring IngestTopologyHandler.deleteInactiveOrphans.
+	// remain in the graph (retired) so that run history stays intact.
 	orphanRes, err := tx.Run(ctx, `
 		MATCH (t:Table)
 		WHERE COALESCE(t.active, true) = false

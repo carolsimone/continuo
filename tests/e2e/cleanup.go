@@ -129,10 +129,8 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 		"trigger.single_node_run:v1",
 		"initialize.run:v1",
 		"run.initialized:v1",
-		"manifest.loaded:v1",
 		"rerun.ready:v1",
 		"schedules.loaded:v1",
-		"update.graph:v1",
 		"schedule.cancelled:v1",
 	}
 
