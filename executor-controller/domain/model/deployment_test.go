@@ -226,49 +226,29 @@ func TestNewValidationDeployment_InitialState(t *testing.T) {
 	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", NodeType: "dbt-model", ImageTag: "t"}
 	now := time.Now()
 	blocked := model.NewValidationDeployment(cmd, nil, now, true)
-	if blocked.Status() != model.StatusBlocked {
-		t.Fatalf("hasUpstreams=true => %q, want blocked", blocked.Status())
-	}
+	assert.Equal(t, model.StatusBlocked, blocked.Status(), "hasUpstreams=true => blocked")
 	root := model.NewValidationDeployment(cmd, nil, now, false)
-	if root.Status() != model.StatusPending {
-		t.Fatalf("hasUpstreams=false => %q, want pending", root.Status())
-	}
+	assert.Equal(t, model.StatusPending, root.Status(), "hasUpstreams=false => pending")
 }
 
 func TestDeployment_Unblock(t *testing.T) {
 	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", NodeType: "dbt-model", ImageTag: "t"}
 	now := time.Now()
 	d := model.NewValidationDeployment(cmd, nil, now, true)
-	if err := d.Unblock(now); err != nil {
-		t.Fatalf("Unblock: %v", err)
-	}
-	if d.Status() != model.StatusPending {
-		t.Fatalf("after Unblock = %q, want pending", d.Status())
-	}
-	if err := d.Unblock(now); err == nil {
-		t.Fatal("Unblock from pending should error")
-	}
+	require.NoError(t, d.Unblock(now))
+	assert.Equal(t, model.StatusPending, d.Status(), "after Unblock => pending")
+	assert.Error(t, d.Unblock(now), "Unblock from pending should error")
 }
 
 func TestDeployment_Skip(t *testing.T) {
 	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", NodeType: "dbt-model", ImageTag: "t"}
 	now := time.Now()
 	d := model.NewValidationDeployment(cmd, nil, now, true)
-	if err := d.Skip("upstream a1 failed", now); err != nil {
-		t.Fatalf("Skip: %v", err)
-	}
-	if d.Status() != model.StatusSkipped {
-		t.Fatalf("status = %q, want skipped", d.Status())
-	}
-	if d.Outcome() != "skipped" {
-		t.Fatalf("outcome = %q, want skipped", d.Outcome())
-	}
-	if d.OutcomeAt() == nil {
-		t.Fatal("OutcomeAt must be set")
-	}
-	if err := d.Skip("x", now); err == nil {
-		t.Fatal("Skip from skipped should error")
-	}
+	require.NoError(t, d.Skip("upstream a1 failed", now))
+	assert.Equal(t, model.StatusSkipped, d.Status())
+	assert.Equal(t, "skipped", d.Outcome())
+	require.NotNil(t, d.OutcomeAt())
+	assert.Error(t, d.Skip("x", now), "Skip from skipped should error")
 }
 
 func TestBackoff_CapAndOverflow(t *testing.T) {
