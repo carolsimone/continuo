@@ -2,7 +2,6 @@ import path from 'path';
 import express from 'express';
 import { createGrpcClient } from './grpc-client';
 import { createGrpcGraphClient } from './grpc-graph-client';
-import { createRedisClient } from './redis-client';
 import { createApp } from './app';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
@@ -12,8 +11,7 @@ const CONFIG_FILE = process.env.CONFIG_FILE;
 
 const client = createGrpcClient(STATE_GRPC_ADDR);
 const graphClient = createGrpcGraphClient(ORCHESTRATOR_GRPC_ADDR);
-const redisClient = createRedisClient();
-const app = createApp(client, graphClient, redisClient, CONFIG_FILE);
+const app = createApp(client, graphClient, CONFIG_FILE);
 
 if (process.env.NODE_ENV === 'production') {
   const staticDir = path.join(__dirname, '../dist');
