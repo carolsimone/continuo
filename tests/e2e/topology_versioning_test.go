@@ -39,9 +39,8 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 2: Clean any leftover data from previous runs.
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Step 3: Seed topology for the first time and wait for the orchestrator to
-	// apply the release.promoted topology swap, which confirms the orchestrator
-	// applied the release.promoted topology swap (generation G1).
+	// Step 3: Seed the topology and wait for the orchestrator to apply the
+	// release.promoted topology swap, establishing generation G1.
 	t.Log("=== Step 3: seedTopology — establishing generation G1 ===")
 	seedTopology(t, ctx, clients)
 
