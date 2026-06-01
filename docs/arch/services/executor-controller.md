@@ -36,7 +36,7 @@ It is responsible for:
 | `retry.task:v1` | `executor-retry` | Retry dispatch: re-attempt a failed node |
 | `schedule.cancelled:v1` | `executor-schedule-cancelled` | Schedule cancellation: suppress future deployments for the schedule |
 | `validation.requested:v1` | `executor-validation-requested` | Candidate-release validation request: enqueue one `mode=validation` deployment per node |
-| `validation.node.completed:v1` | `executor-controller-validation-node-completed` | Per-node validation Job terminal status from k8s-controller; records the node outcome, unblocks or skips in-set downstreams, and runs the per-release aggregate-emit gate |
+| `validation.node.completed:v1` | `executor-validation-node-completed` | Per-node validation Job terminal status from k8s-controller; records the node outcome, unblocks or skips in-set downstreams, and runs the per-release aggregate-emit gate |
 | `validation.completed:v1` | `executor-validation-completed` | Per-release validation aggregate emitted by executor-controller itself; consumed by a second consumer in the same process to drop the `_candidate_<release>` schema from the dbt warehouse via `CandidateSchemaCleaner` |
 
 `query.model:v1` and `retry.task:v1` carry the same fields:
