@@ -47,3 +47,16 @@ func TestReceiveCandidate_RejectsEmptyReleaseID(t *testing.T) {
 	})
 	assert.Error(t, err)
 }
+
+func TestReceiveCandidate_PersistsBootstrapFlag(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		ReleaseID:    "rBoot",
+		ImageTags:    map[string]string{"svc-a": "sha-a"},
+		ManifestsURI: "s3://continuo/releases/rBoot/manifests/",
+		Bootstrap:    true,
+	}))
+	r, err := store.GetRelease("rBoot")
+	require.NoError(t, err)
+	assert.True(t, r.IsBootstrap())
+}

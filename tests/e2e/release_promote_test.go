@@ -310,6 +310,80 @@ func TestE2E_ReleaseReject_NewCrossServiceUpstream(t *testing.T) {
 	t.Log("✅ new cross-service upstream rejected, no validation jobs dispatched")
 }
 
+// postReleaseBootstrap POSTs a release with bootstrap=true, which promotes
+// without validation even against an empty current_prod.
+func postReleaseBootstrap(t *testing.T, clients *testClients, releaseID string, imageTags map[string]string, manifestsURI string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"release_id":    releaseID,
+		"image_tags":    imageTags,
+		"manifests_uri": manifestsURI,
+		"bootstrap":     true,
+	})
+	require.NoError(t, err)
+
+	resp, err := http.Post(clients.releaseBase+"/releases", "application/json", strings.NewReader(string(body)))
+	require.NoError(t, err, "POST /releases (bootstrap)")
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode,
+		"POST /releases (bootstrap): expected 202, got %d: %s", resp.StatusCode, string(respBody))
+	t.Logf("POST /releases (bootstrap) accepted: %s", string(respBody))
+}
+
+// TestE2E_ReleasePromote_BootstrapSkipsValidation proves that a release posted
+// with bootstrap=true promotes directly against an empty current_prod without
+// dispatching any validation jobs. This covers the first-ever deploy scenario
+// where there is no production baseline to diff against.
+func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-boot-" + uuid.NewString()[:8]
+	t.Logf("release_id=%s", releaseID)
+
+	manifestKeys := listLatestManifestKeys(t, ctx, clients)
+	require.NotEmpty(t, manifestKeys,
+		"no manifests under s3://%s/local/manifest/ — setup.sh dbt upload must run first", e2eS3Bucket)
+	imageTags := map[string]string{}
+	for service, key := range manifestKeys {
+		imageTags[service] = readServiceImageTag(t, ctx, clients, service)
+		dst := fmt.Sprintf("releases/%s/manifests/%s/manifest_v1.json", releaseID, service)
+		copyS3Object(t, ctx, clients, key, dst)
+	}
+
+	// Empty current_prod: a non-bootstrap release of this cross-service topology
+	// would be rejected (new_cross_service_upstream). Reset the queue and clear
+	// the current_prod row so this is a true from-scratch bootstrap.
+	resetReleaseControllerQueue(t, ctx, clients)
+	_, err := clients.releaseDB.ExecContext(ctx, "DELETE FROM current_prod")
+	require.NoError(t, err, "clear current_prod")
+
+	postReleaseBootstrap(t, clients, releaseID, imageTags,
+		fmt.Sprintf("s3://%s/releases/%s/manifests/", e2eS3Bucket, releaseID))
+
+	// The bootstrap release must promote (no validation) and swap Neo4j topology:
+	// :Meta current_release flips to this release_id.
+	pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
+		return neo4jScalarString(ctx, clients,
+			`MATCH (m:Meta {key: 'current_release'}) RETURN m.release_id AS v`, nil) == releaseID, nil
+	}, "timeout waiting for bootstrap release "+releaseID+" to promote + swap topology")
+
+	// No validation Job is ever dispatched (bootstrap skips validation).
+	assertNoValidationJobsDispatched(t, ctx, clients, releaseID)
+	t.Log("✅ bootstrap release promoted without validation; topology swapped")
+}
+
 // requireReleaseControllerHealthy verifies the release-controller HTTP API is
 // reachable before the test drives it.
 func requireReleaseControllerHealthy(t *testing.T, clients *testClients) {

@@ -46,6 +46,7 @@ type releaseRow struct {
 	DBTLogsURI        sql.NullString `db:"dbt_logs_uri"`
 	CreatedAt         sql.NullTime   `db:"created_at"`
 	TransitionsJSON   []byte         `db:"transitions"`
+	Bootstrap         bool           `db:"bootstrap"`
 }
 
 // Get returns the Release with the given ID, or nil if it does not exist.
@@ -54,7 +55,7 @@ func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Releas
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, manifests_uri,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        dbt_logs_uri, created_at, transitions
+		        dbt_logs_uri, created_at, transitions, bootstrap
 		 FROM releases WHERE release_id = $1`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -72,7 +73,7 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, manifests_uri,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        dbt_logs_uri, created_at, transitions
+		        dbt_logs_uri, created_at, transitions, bootstrap
 		 FROM releases WHERE status = 'received'
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -91,7 +92,7 @@ func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, manifests_uri,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        dbt_logs_uri, created_at, transitions
+		        dbt_logs_uri, created_at, transitions, bootstrap
 		 FROM releases WHERE status IN ('parsing','validating')
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -126,8 +127,8 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		`INSERT INTO releases (
 		   release_id, status, image_tags, manifests_uri,
 		   candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		   dbt_logs_uri, created_at, transitions
-		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		   dbt_logs_uri, created_at, transitions, bootstrap
+		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		 ON CONFLICT (release_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   candidate_topology = EXCLUDED.candidate_topology,
@@ -139,7 +140,7 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		rel.ID(), string(rel.Status()),
 		imageTagsJSON, rel.ManifestsURI(), topoJSON, pq.StringArray(rel.ValidationNodeIDs()),
 		rejectReason, pq.StringArray(rel.FailingNodes()), dbtLogsURI,
-		rel.CreatedAt(), transitionsJSON)
+		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap())
 	if err != nil {
 		return fmt.Errorf("upsert release: %w", err)
 	}
@@ -178,5 +179,6 @@ func rowToRelease(row releaseRow) (*release.Release, error) {
 		DBTLogsURI:        row.DBTLogsURI.String,
 		CreatedAt:         row.CreatedAt.Time,
 		Transitions:       transitions,
+		Bootstrap:         row.Bootstrap,
 	}), nil
 }
