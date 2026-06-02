@@ -88,7 +88,10 @@ func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
 // --- fakeReleaseRepo ---
 
 type fakeReleaseRepo struct {
-	store *fakeStore
+	store             *fakeStore
+	lastCutoff        time.Time
+	lastKeepReleaseID string
+	deletedCount      int
 }
 
 // Get mirrors the Postgres ReleaseRepository contract: a missing release yields
@@ -133,6 +136,19 @@ func (f *fakeReleaseRepo) ActiveRelease(_ context.Context) (*release.Release, er
 		}
 	}
 	return nil, nil
+}
+
+// List returns an empty page; handler unit tests do not exercise the list path.
+func (f *fakeReleaseRepo) List(_ context.Context, _ repository.ListFilter) ([]*release.Release, *repository.ListCursor, error) {
+	return nil, nil, nil
+}
+
+// DeleteResolvedBefore records the call parameters and returns the configured
+// deletedCount so handler tests can assert on retention behaviour.
+func (f *fakeReleaseRepo) DeleteResolvedBefore(_ context.Context, cutoff time.Time, keepReleaseID string) (int, error) {
+	f.lastCutoff = cutoff
+	f.lastKeepReleaseID = keepReleaseID
+	return f.deletedCount, nil
 }
 
 var _ repository.ReleaseRepository = (*fakeReleaseRepo)(nil)
