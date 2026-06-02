@@ -41,6 +41,27 @@ func TestReleaseRepository_SaveAndGet(t *testing.T) {
 	assert.Equal(t, release.StatusReceived, got.Status())
 }
 
+func TestReleaseRepository_BootstrapRoundTrips(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db)
+	ctx := context.Background()
+
+	boot := release.New("r-boot", map[string]string{"svc-a": "sha-a"}, "s3://b/r-boot/", true, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, boot))
+	plain := release.New("r-plain", map[string]string{"svc-a": "sha-a"}, "s3://b/r-plain/", false, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, plain))
+
+	gotBoot, err := repo.Get(ctx, "r-boot")
+	require.NoError(t, err)
+	require.NotNil(t, gotBoot)
+	assert.True(t, gotBoot.IsBootstrap())
+
+	gotPlain, err := repo.Get(ctx, "r-plain")
+	require.NoError(t, err)
+	require.NotNil(t, gotPlain)
+	assert.False(t, gotPlain.IsBootstrap())
+}
+
 func TestReleaseRepository_NextQueuedAndActive(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db)
