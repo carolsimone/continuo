@@ -8,14 +8,17 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
-// ReceiveCandidateInput carries the fields required to register a new
-// release candidate. All three fields are mandatory. The changed-node set is
-// not supplied by the caller — release-controller derives it later from the
-// content_hash diff against the current prod topology in HandleParsedManifest.
+// ReceiveCandidateInput carries the fields required to register a new release
+// candidate. ReleaseID, ImageTags, and ManifestsURI are mandatory; Bootstrap is
+// optional (defaults false) and, when true, promotes the release without
+// validation. The changed-node set is not supplied by the caller —
+// release-controller derives it later from the content_hash diff against the
+// current prod topology in HandleParsedManifest.
 type ReceiveCandidateInput struct {
 	ReleaseID    string            `json:"release_id"`
 	ImageTags    map[string]string `json:"image_tags"`
 	ManifestsURI string            `json:"manifests_uri"`
+	Bootstrap    bool              `json:"bootstrap"`
 }
 
 func (i ReceiveCandidateInput) validate() error {
@@ -49,7 +52,7 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return u.Commit()
 	}
 
-	r := release.New(in.ReleaseID, in.ImageTags, in.ManifestsURI, d.Clock.Now())
+	r := release.New(in.ReleaseID, in.ImageTags, in.ManifestsURI, in.Bootstrap, d.Clock.Now())
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}

@@ -31,7 +31,7 @@ func openTestDB(t *testing.T) *sqlx.DB {
 func TestReleaseRepository_SaveAndGet(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db)
-	r := release.New("rA", map[string]string{"s": "t"}, "u", time.Unix(100, 0).UTC())
+	r := release.New("rA", map[string]string{"s": "t"}, "u", false, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(context.Background(), r))
 
 	got, err := repo.Get(context.Background(), "rA")
@@ -44,8 +44,8 @@ func TestReleaseRepository_SaveAndGet(t *testing.T) {
 func TestReleaseRepository_NextQueuedAndActive(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db)
-	older := release.New("rOLD", map[string]string{"s": "t"}, "u", time.Unix(100, 0).UTC())
-	newer := release.New("rNEW", map[string]string{"s": "t"}, "u", time.Unix(200, 0).UTC())
+	older := release.New("rOLD", map[string]string{"s": "t"}, "u", false, time.Unix(100, 0).UTC())
+	newer := release.New("rNEW", map[string]string{"s": "t"}, "u", false, time.Unix(200, 0).UTC())
 	require.NoError(t, repo.Save(context.Background(), older))
 	require.NoError(t, repo.Save(context.Background(), newer))
 

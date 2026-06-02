@@ -51,14 +51,16 @@ type Release struct {
 	validatingStartedAt *time.Time
 	resolvedAt          *time.Time
 	transitions         []Transition
+	bootstrap           bool
 }
 
-func New(id string, imageTags map[string]string, manifestsURI string, now time.Time) *Release {
+func New(id string, imageTags map[string]string, manifestsURI string, bootstrap bool, now time.Time) *Release {
 	return &Release{
 		id:           id,
 		status:       StatusReceived,
 		imageTags:    imageTags,
 		manifestsURI: manifestsURI,
+		bootstrap:    bootstrap,
 		createdAt:    now,
 		transitions:  []Transition{{To: StatusReceived, At: now}},
 	}
@@ -68,6 +70,7 @@ func (r *Release) ID() string                   { return r.id }
 func (r *Release) Status() Status               { return r.status }
 func (r *Release) ImageTags() map[string]string { return r.imageTags }
 func (r *Release) ManifestsURI() string         { return r.manifestsURI }
+func (r *Release) IsBootstrap() bool            { return r.bootstrap }
 func (r *Release) CandidateTopology() Topology  { return r.candidateTopology }
 func (r *Release) ValidationNodeIDs() []string  { return r.validationNodeIDs }
 func (r *Release) RejectReason() string         { return r.rejectReason }
@@ -135,6 +138,7 @@ type RehydrateInput struct {
 	DBTLogsURI        string
 	CreatedAt         time.Time
 	Transitions       []Transition
+	Bootstrap         bool
 }
 
 // Rehydrate reconstructs a Release from persistence. Bypasses state-machine
@@ -152,5 +156,6 @@ func Rehydrate(in RehydrateInput) *Release {
 		dbtLogsURI:        in.DBTLogsURI,
 		createdAt:         in.CreatedAt,
 		transitions:       in.Transitions,
+		bootstrap:         in.Bootstrap,
 	}
 }
