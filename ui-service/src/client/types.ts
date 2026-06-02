@@ -118,3 +118,49 @@ export interface ScheduleTopologySummary {
 export interface TopologyListResponse {
   schedules: ScheduleTopologySummary[];
 }
+
+export interface ReleaseListItem {
+  release_id: string;
+  status: string; // received|parsing|validating|promoted|rejected|superseded
+  created_at: string;
+  resolved_at: string | null;
+  node_count: number;
+  bootstrap: boolean;
+  reject_reason?: string;
+}
+
+export interface ReleasesListResponse {
+  releases: ReleaseListItem[];
+  next_cursor: string;
+}
+
+export interface CurrentProd {
+  current_prod_release_id: string;
+  node_count: number;
+  updated_at: string;
+}
+
+export interface NodeValidationResult {
+  node_id: string;
+  status: string;
+  dbt_log_uri?: string;
+  duration_ms?: number;
+}
+
+export interface ReleaseTransition {
+  to: string;
+  at: string;
+}
+
+export interface ReleaseDetail {
+  release_id: string;
+  status: string;
+  transitions: ReleaseTransition[];
+  validation_node_ids: string[] | null;
+  reject_reason: string;
+  failing_nodes: string[] | null;
+  per_node_results: NodeValidationResult[] | null;
+  image_tags: Record<string, string>;
+  manifests_uri: string;
+  bootstrap: boolean;
+}
