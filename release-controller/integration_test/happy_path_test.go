@@ -80,12 +80,16 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
 		ReleaseID: "rA",
 		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"}, {NodeID: "b", Status: "ok"},
+			{NodeID: "a", Status: "ok", DurationMS: 5}, {NodeID: "b", Status: "ok"},
 		},
 		AggregateStatus: "ok",
 	}))
 	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	assert.Equal(t, release.StatusPromoted, r.Status())
+	require.NotNil(t, r)
+	require.NotEmpty(t, r.PerNodeResults())
+	assert.Equal(t, "ok", r.PerNodeResults()[0].Status)
+	assert.Equal(t, int64(5), r.PerNodeResults()[0].DurationMS)
 
 	// 5. GET /current-prod
 	req = httptest.NewRequest(http.MethodGet, "/current-prod", nil)

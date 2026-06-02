@@ -58,6 +58,17 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 
 	now := d.Clock.Now()
 
+	results := make([]release.NodeValidationResult, len(in.PerNodeResults))
+	for i, n := range in.PerNodeResults {
+		results[i] = release.NodeValidationResult{
+			NodeID:     n.NodeID,
+			Status:     n.Status,
+			DBTLogURI:  n.DBTLogURI,
+			DurationMS: n.DurationMS,
+		}
+	}
+	r.RecordValidationResults(results)
+
 	seen := map[string]string{}
 	for _, n := range in.PerNodeResults {
 		seen[n.NodeID] = n.Status
@@ -154,7 +165,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	combined := append([]string{}, failing...)
 	combined = append(combined, missing...)
 
-	if err := r.TransitionToRejected("validation_failed", combined, "", now); err != nil {
+	if err := r.TransitionToRejected("validation_failed", combined, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
