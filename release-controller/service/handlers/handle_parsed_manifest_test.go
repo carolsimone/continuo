@@ -28,6 +28,20 @@ func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) 
 	return deps, store
 }
 
+// seedToParsingBootstrap is seedToParsing for a bootstrap release.
+func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
+	t.Helper()
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		ReleaseID:    releaseID,
+		ImageTags:    imageTags,
+		ManifestsURI: "s3://continuo/releases/" + releaseID + "/manifests/",
+		Bootstrap:    true,
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	return deps, store
+}
+
 func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 	// Single-service topology avoids cross-service upstream rejection in bootstrap
 	// (no prod snapshot means every cross-service upstream would be "new").
@@ -447,4 +461,34 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	}
 	assert.Equal(t, "tag-alpha", nodeByID["a"].ImageTag)
 	assert.Equal(t, "tag-beta", nodeByID["b"].ImageTag)
+}
+
+func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) {
+	deps, store := seedToParsingBootstrap(t, "rBoot", map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", ServiceName: "svc-b", UpstreamUniqueIDs: []string{"a"}}, // NEW cross-service upstream vs empty prod
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rBoot",
+		Status:    "ok",
+		Topology:  topo,
+	}))
+
+	r, err := store.GetRelease("rBoot")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusPromoted, r.Status())
+	// The candidate topology is recorded — promoteToProduction reads it to seed
+	// current_prod and the release.promoted:v1 payload; an empty one would
+	// silently produce an empty prod snapshot.
+	assert.Len(t, r.CandidateTopology(), 2)
+
+	// current_prod seeded to this release.
+	assert.Equal(t, "rBoot", store.GetCurrentProd().ReleaseID())
+
+	// Exactly ReleaseRequested + ReleasePromoted; NO validation_requested, NO rejection.
+	entries := outboxEntries(store)
+	require.Len(t, entries, 2)
+	assert.Equal(t, streams.ReleasePromotedV1, entries[1].StreamName)
 }

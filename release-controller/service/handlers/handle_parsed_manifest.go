@@ -101,6 +101,14 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
 	topo := joinImageTags(in.Topology, r.ImageTags())
 
+	// A bootstrap release skips validation entirely: it seeds current_prod and
+	// swaps topology directly. This is the one-time cutover (or a trusted
+	// re-baseline) where current_prod is empty/mismatched and normal validation
+	// would reject every cross-service upstream as new.
+	if r.IsBootstrap() {
+		return promoteBootstrap(ctx, d, u, r, in.ReleaseID, topo, now)
+	}
+
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
@@ -195,6 +203,33 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	}
 	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
 	d.Telemetry.ReleaseValidationRequested(ctx, in.ReleaseID, len(validationIDs))
+	return nil
+}
+
+// promoteBootstrap promotes a bootstrap release without validation: it records
+// the candidate topology (TransitionToValidating with no validation nodes) and
+// runs the shared promoteToProduction path, which seeds current_prod and emits
+// release.promoted:v1. The full parse/validated/promoted telemetry span is
+// emitted (with a zero-node validation) so a bootstrap is observable like any
+// other promotion.
+func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, topo release.Topology, now time.Time) error {
+	// TransitionToValidating records the candidate topology and satisfies
+	// promoteToProduction's Validating precondition; no nodes are submitted to
+	// validation.
+	if err := r.TransitionToValidating(topo, nil, now); err != nil {
+		return fmt.Errorf("transition to validating (bootstrap): %w", err)
+	}
+	if err := promoteToProduction(ctx, u, r, releaseID, now); err != nil {
+		return err
+	}
+	if err := u.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	// okCount is 0: a bootstrap validates no nodes (consistent with the
+	// no-validation promote path's zero-node validation span).
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
+	d.Telemetry.ReleaseValidationCompleted(ctx, releaseID, true, 0, 0, 0)
+	d.Telemetry.ReleasePromoted(ctx, releaseID, len(topo))
 	return nil
 }
 
