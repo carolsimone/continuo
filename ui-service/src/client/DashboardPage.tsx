@@ -3,6 +3,7 @@ import { ScheduleSummary, SchedulesResponse, ScheduleTopologySummary, TopologyLi
 import SchedulerCard from './SchedulerCard';
 import SnapshotTile from './SnapshotTile';
 import Tabs, { useActiveTab } from './Tabs';
+import ReleasesPanel from './ReleasesPanel';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -45,6 +46,7 @@ export default function DashboardPage() {
   const tabSpecs = [
     { slug: 'runs', label: 'Runs', count: schedules.length },
     { slug: 'topology', label: 'Topology', count: topologies.length },
+    { slug: 'releases', label: 'Releases' },
   ];
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
 
@@ -93,6 +95,7 @@ export default function DashboardPage() {
             )}
           </>
         )}
+        {activeTab === 'releases' && <ReleasesPanel />}
       </main>
     </div>
   );
