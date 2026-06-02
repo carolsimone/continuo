@@ -390,6 +390,7 @@ services:
     depends_on:
       - state
       - localstack
+      - release-controller
     environment:
       - STATE_GRPC_ADDR=state:50051
       - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
@@ -400,6 +401,7 @@ services:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
+      - RELEASE_CONTROLLER_URL=http://release-controller:8088
     ports:
       - "8090:8090"
     volumes:
