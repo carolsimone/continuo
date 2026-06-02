@@ -25,7 +25,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 
 | Route | Purpose |
 |---|---|
-| `POST /releases` | Accept a candidate release. Body: `{release_id, image_tags, manifests_uri}`. Idempotent on `release_id`. |
+| `POST /releases` | Accept a candidate release. Body: `{release_id, image_tags, manifests_uri, bootstrap?}`. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
 | `GET /releases/{id}` | Full release detail incl. transition history and per-node validation results. |
 | `GET /releases` | List releases (filterable by status). |
 | `GET /current-prod` | The current promoted release + topology snapshot. |
@@ -67,6 +67,9 @@ Create a `Received` release (idempotent: an existing `release_id` is a no-op). T
 status=failed → Reject(reason=parse_failed), emit release.rejected:v1, advance queue
 status=ok:
   join per-service image_tags into the candidate topology
+  if release.bootstrap: promote directly, skipping validation
+      (record candidate topology, update current_prod, transition to Promoted,
+       emit release.promoted:v1); advance queue, return
   load current_prod.topology_snapshot
   derive changed = candidate nodes whose content_hash differs from prod, or are new
   for each changed node: if it has a new cross-service upstream absent from current_prod:
@@ -83,7 +86,7 @@ status=ok:
          nodes carry upstream_node_ids)
   advance queue
 ```
-Bootstrap (no `current_prod` yet) yields an empty snapshot, so every candidate node is new and the whole topology is validated.
+A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`, where normal validation would reject every cross-service upstream as new. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.
 
 ### On `validation.completed:v1`
 ```
@@ -121,4 +124,4 @@ None — release-controller is not called via gRPC by any service.
 
 - Idempotent on `release_id`: a redelivered `POST /releases` or re-promotion is a no-op; `release.promoted:v1` carries a deterministic aggregate id so orchestrator dedups re-emissions.
 - Change detection relies on each candidate node carrying a non-empty `content_hash` (manifest-controller emits dbt's per-node checksum, with a deterministic fallback). An empty-vs-empty hash would skip validation; this is structurally avoided upstream.
-- One-time bootstrap (`cmd/bootstrap-current-prod`) seeds `current_prod` from the live topology so the first real release has a change-detection base. A seed lacking `content_hash` makes the first release validate every node once (safe), until the first promotion rewrites the snapshot with real hashes.
+- The first release into an empty `current_prod` is submitted with `bootstrap:true`: it promotes without validation and seeds `current_prod` from the candidate topology, giving subsequent releases a change-detection base. A bootstrap promotes whatever topology it carries, so it must be a trusted one.
