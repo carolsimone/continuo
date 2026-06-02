@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -117,6 +119,10 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	//    only lands after the release.promoted:v1 outbox row is published and the
 	//    orchestrator consumes it — so poll rather than asserting once.
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
+
+	// The promoted release must surface in the history list and carry per-node
+	// validation results (with a dbt log URI) retrievable through the UI BFF.
+	assertReleaseHistoryAndPerNodeLog(t, ctx, clients, releaseID, probeUniqueID)
 	t.Log("✅ release validated, promoted, and Neo4j topology swapped to the new release")
 }
 
@@ -750,6 +756,76 @@ func sanitizeReleaseSchemaSuffix(s string) string {
 }
 
 var releaseSchemaSuffixRe = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+
+// assertReleaseHistoryAndPerNodeLog verifies the read surfaces the Releases tab
+// depends on: the promoted release appears in the paginated history list, its
+// detail carries per-node validation results with a dbt log URI, and that log is
+// retrievable through the UI BFF's log proxy. The UI-BFF check is skipped when
+// UI_HTTP_BASE is unset (developer runs without the UI container).
+func assertReleaseHistoryAndPerNodeLog(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeID string) {
+	t.Helper()
+
+	// 1. History list includes this release with status=promoted.
+	listResp, err := http.Get(clients.releaseBase + "/releases?status=promoted&limit=50")
+	require.NoError(t, err, "GET /releases history list")
+	defer listResp.Body.Close()
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+	var list struct {
+		Releases []struct {
+			ReleaseID string `json:"release_id"`
+			Status    string `json:"status"`
+			NodeCount int    `json:"node_count"`
+		} `json:"releases"`
+		NextCursor string `json:"next_cursor"`
+	}
+	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&list))
+	var listed bool
+	for _, r := range list.Releases {
+		if r.ReleaseID == releaseID {
+			listed = true
+			require.Equal(t, "promoted", r.Status, "history row status for %s", releaseID)
+		}
+	}
+	require.True(t, listed, "release %s must appear in GET /releases history", releaseID)
+
+	// 2. Detail carries per-node results with a dbt log URI for the validated node.
+	detailResp, err := http.Get(fmt.Sprintf("%s/releases/%s", clients.releaseBase, releaseID))
+	require.NoError(t, err, "GET /releases/{id}")
+	defer detailResp.Body.Close()
+	require.Equal(t, http.StatusOK, detailResp.StatusCode)
+	var detail struct {
+		PerNodeResults []struct {
+			NodeID    string `json:"node_id"`
+			Status    string `json:"status"`
+			DBTLogURI string `json:"dbt_log_uri"`
+		} `json:"per_node_results"`
+	}
+	require.NoError(t, json.NewDecoder(detailResp.Body).Decode(&detail))
+	require.NotEmpty(t, detail.PerNodeResults, "release %s detail must carry per-node results", releaseID)
+
+	var logURI string
+	for _, n := range detail.PerNodeResults {
+		if n.NodeID == nodeID {
+			require.Equal(t, "ok", n.Status, "validated node %s status", nodeID)
+			logURI = n.DBTLogURI
+		}
+	}
+	require.NotEmpty(t, logURI, "per-node result for %s must carry a dbt_log_uri", nodeID)
+
+	// 3. The dbt log is retrievable through the UI BFF log proxy (skipped without UI).
+	uiBase := os.Getenv("UI_HTTP_BASE")
+	if uiBase == "" {
+		t.Log("UI_HTTP_BASE not set — skipping UI BFF per-node log assertion")
+		return
+	}
+	logResp, err := http.Get(fmt.Sprintf("%s/api/releases/log?key=%s", uiBase, url.QueryEscape(logURI)))
+	require.NoError(t, err, "GET ui /api/releases/log")
+	defer logResp.Body.Close()
+	require.Equal(t, http.StatusOK, logResp.StatusCode, "UI BFF should stream the per-node dbt log")
+	body, _ := io.ReadAll(logResp.Body)
+	require.NotEmpty(t, body, "per-node dbt log should not be empty")
+	t.Logf("✅ release history + per-node log surfaced (node %s log %d bytes)", nodeID, len(body))
+}
 
 // neo4jScalarString runs a query expected to return a single string column `v`
 // and returns it (empty string if no row).
