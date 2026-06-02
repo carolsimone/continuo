@@ -8,11 +8,15 @@ import { createExecutionsRouter } from './routes/executions';
 import { createTaskExecutionRouter } from './routes/task-execution';
 import { createConfigRouter } from './routes/config';
 import { createTopologyRouter } from './routes/topology';
+import { createReleasesRouter } from './routes/releases';
+import { createReleaseClient } from './release-client';
+import { getLogObject } from './s3';
 
 export function createApp(
   client: GrpcClient,
   graphClient: GrpcGraphClient,
   configFilePath = '/app/config/cancel-config.json',
+  releaseControllerUrl = 'http://release-controller:8088',
 ) {
   const app = express();
   app.use(express.json());
@@ -24,5 +28,6 @@ export function createApp(
   app.use('/api/task-execution', createTaskExecutionRouter());
   app.use('/api/topology', createTopologyRouter(graphClient));
   app.use('/api/config', createConfigRouter(configFilePath));
+  app.use('/api/releases', createReleasesRouter(createReleaseClient(releaseControllerUrl), getLogObject));
   return app;
 }
