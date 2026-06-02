@@ -24,6 +24,7 @@ type Config struct {
 	ValidationTimeout     string
 	ValidationHardTimeout string
 	JanitorInterval       string
+	RetentionDays         string
 	RecoverStuckInterval  string
 }
 
@@ -49,6 +50,7 @@ func Load(v *pkgconfig.Validator) Config {
 		ValidationTimeout:     pkgconfig.EnvOrDefault("RELEASE_VALIDATION_TIMEOUT", "30m"),
 		ValidationHardTimeout: pkgconfig.EnvOrDefault("RELEASE_VALIDATION_HARD_TIMEOUT", "2h"),
 		JanitorInterval:       pkgconfig.EnvOrDefault("RELEASE_JANITOR_INTERVAL", "24h"),
+		RetentionDays:         pkgconfig.EnvOrDefault("RELEASE_RETENTION_DAYS", "90"),
 		RecoverStuckInterval:  pkgconfig.EnvOrDefault("RECOVER_STUCK_INTERVAL", "1m"),
 	}
 }

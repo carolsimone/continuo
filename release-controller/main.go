@@ -5,9 +5,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	redisadapter "github.com/carolsimone/continuo/release-controller/adapters/redis"
@@ -15,7 +18,6 @@ import (
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
-	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
 func main() {
@@ -86,6 +88,38 @@ func main() {
 	go func() {
 		if err := validationConsumer.Start(ctx); err != nil && ctx.Err() == nil {
 			logger.Error("validation.completed consumer stopped", "error", err)
+		}
+	}()
+
+	// Retention loop: prune terminal releases older than the retention window on
+	// the janitor interval. current_prod is never pruned.
+	retentionDays, err := strconv.Atoi(cfg.RetentionDays)
+	if err != nil {
+		logger.Error("invalid RELEASE_RETENTION_DAYS", "value", cfg.RetentionDays)
+		os.Exit(1)
+	}
+	janitorEvery, err := time.ParseDuration(cfg.JanitorInterval)
+	if err != nil {
+		logger.Error("invalid RELEASE_JANITOR_INTERVAL", "value", cfg.JanitorInterval)
+		os.Exit(1)
+	}
+	go func() {
+		ticker := time.NewTicker(janitorEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				n, err := handlers.PruneResolvedReleases(ctx, deps, retentionDays, time.Now().UTC())
+				if err != nil {
+					logger.Error("retention prune failed", "error", err)
+					continue
+				}
+				if n > 0 {
+					logger.Info("pruned resolved releases", "count", n)
+				}
+			}
 		}
 	}()
 
