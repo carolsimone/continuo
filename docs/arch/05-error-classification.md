@@ -22,7 +22,6 @@ permanent.
 
 | Site | When | Wrapping idiom |
 |---|---|---|
-| `orchestrator/service/handlers/ingest_topology.go` (`validateTopologyNodes`) | any node has empty `image_tag` | `fmt.Errorf("%w: image_tag empty for N node(s): ...", events.ErrPermanent, ...)` |
 | `executor-controller/adapters/k8s/client.go:177` (`buildPodSpec`) | `image_tag` missing on dispatch | `fmt.Errorf("%w: image_tag missing from job params for service %s", events.ErrPermanent, params.ServiceName)` |
 | `state/adapters/redis/*_binding.go` (each binding) | per-stream parser returns a parse/validation failure (malformed payload, missing required field, bad UUID, unknown enum value) | `fmt.Errorf("%w: %v", pkgevents.ErrPermanent, err)` after the binding's parser returns an error |
 
@@ -49,21 +48,9 @@ Add new emitters to this table as they land.
 - **Programmer errors** (panics, nil pointer derefs). Let the runtime
   handle those — wrapping with a sentinel hides the stack trace.
 
-## Forensics
-
-When the orchestrator's `IngestTopologyHandler` rejects a payload, it
-writes a row to `rejected_topology_messages` (Postgres, V7 migration)
-with `message_id`, `reason`, and the raw `payload` JSON. The insert is
-non-transactional and best-effort: a failed insert MUST NOT turn a
-permanent error into a transient one (that would loop the message in
-the Redis pending list under XCLAIM redelivery). See `docs/arch/02-interaction-matrix.md`
-for the local durable state inventory.
-
 ## See also
 
 - `docs/arch/03-sequence-flows.md` §3 (permanent fast-path note in the
   retry/terminal flow) and §8 (dispatch watchdog termination).
 - `docs/arch/04-service-ownership.md` (per-service invariants under
   orchestrator, executor-controller, and manifest-controller).
-- `docs/arch/02-interaction-matrix.md` (ACK-on-permanent annotations on
-  `update.graph:v1` and `manifest.loaded:v1`).

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,7 +16,6 @@ import (
 	orchpublisher "github.com/carolsimone/continuo/orchestrator/adapters/publisher"
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
 	"github.com/carolsimone/continuo/orchestrator/config"
-	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/internal/lifecycle"
 	"github.com/carolsimone/continuo/orchestrator/internal/reconciler"
@@ -142,8 +140,6 @@ func main() {
 	// consumers process messages concurrently — the second Begin() sees inTx=true
 	// and the message is never ACKed, getting stuck in the PEL forever.
 	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
-	rejectedTopologyRepo := postgres.NewRejectedTopologyRepository(pgDB)
-	ingestTopologyHandler := handlers.NewIngestTopologyHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), topologyRepo, topologyStateRepo, rejectedTopologyRepo, logger)
 	initializeRunHandler := handlers.NewInitializeRunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), runAggRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), queryRepo, snapshotService, logger)
@@ -290,27 +286,6 @@ func main() {
 		logger,
 	)
 
-	// Consumer 2: manifest.loaded:v1 -> IngestTopology
-	manifestLoadedHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		payloadStr, ok := msg.Values["payload"].(string)
-		if !ok {
-			return fmt.Errorf("missing or invalid payload in manifest.loaded message %s", msg.ID)
-		}
-		var nodes []domainEvent.ManifestLoadedNode
-		if err := json.Unmarshal([]byte(payloadStr), &nodes); err != nil {
-			return fmt.Errorf("failed to unmarshal manifest.loaded payload: %w", err)
-		}
-		cmd := domainModel.IngestTopologyInput{Nodes: nodes}
-		return ingestTopologyHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
-	}
-	manifestLoadedConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.ManifestLoadedV1,
-		streams.OrchestratorManifestLoaded,
-		manifestLoadedHandler,
-		logger,
-	)
-
 	// Consumer 3: initialize.run:v1 -> InitializeRun
 	initRunHandler := func(ctx context.Context, msg goredis.XMessage) error {
 		scheduleName, _ := msg.Values["schedule_name"].(string)
@@ -453,10 +428,8 @@ func main() {
 	// Consumer: release.promoted:v1 — atomically replaces the Neo4j topology
 	// when release-controller promotes a candidate release to production, then
 	// emits schedules.loaded:v1 so state can refresh its schedule projections.
-	// Runs concurrently with manifest.loaded:v1; the two write to disjoint dedup
-	// namespaces and disjoint Neo4j subgraphs so there is no cross-consumer
-	// contention. The consumer is dormant until release-controller emits its
-	// first release.promoted:v1 event in production.
+	// The consumer is dormant until release-controller emits its first
+	// release.promoted:v1 event in production.
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
 	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, topologyRepo, topologyStateRepo, logger)
 	releasePromotedBinding := redis.NewReleasePromotedBinding(releasePromotedHandler, logger)
@@ -472,12 +445,6 @@ func main() {
 	go func() {
 		if err := nodeUpdatedConsumer.Start(ctx); err != nil {
 			logger.Error("Node updated consumer error", "error", err)
-		}
-	}()
-
-	go func() {
-		if err := manifestLoadedConsumer.Start(ctx); err != nil {
-			logger.Error("Manifest loaded consumer error", "error", err)
 		}
 	}()
 

@@ -14,12 +14,10 @@ class CandidateManifestHandler:
     """Parses a per-release set of dbt manifests and publishes the resolved
     candidate topology back to release-controller.
 
-    Differs from ManifestHandler in three places:
-    - leaves image_tag empty by design; release-controller joins the
-      per-service tags from the POST /releases body onto the topology.
-    - does not persist the registry anywhere; it is built in-memory solely
-      for dependency resolution.
-    - publishes the manifest.loaded.candidate:v1 envelope shape.
+    image_tag is left empty by design; release-controller joins the
+    per-service tags from the POST /releases body onto the topology.
+    The registry is built in-memory solely for dependency resolution
+    and is not persisted anywhere.
 
     On parse/resolve failures that re-delivery cannot fix, publishes
     status=failed and returns normally so the consumer ACKs.

@@ -390,7 +390,6 @@ services:
     depends_on:
       - state
       - localstack
-      - redis
     environment:
       - STATE_GRPC_ADDR=state:50051
       - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
@@ -401,8 +400,6 @@ services:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
-      - REDIS_URL=redis://:continuo@redis:6379
-      - GRAPH_UPDATE_TOKEN=${GRAPH_UPDATE_TOKEN:-}
     ports:
       - "8090:8090"
     volumes:
@@ -435,8 +432,6 @@ services:
     container_name: manifest-controller
     environment:
       REDIS_URL: redis://:continuo@redis:6379
-      REGISTRY_PATH: /data/registry.csv
-      MANIFESTS_BASE: /manifests
       S3_ENDPOINT_URL: http://localstack:4566
       S3_BUCKET: continuo
       S3_ENV: local
@@ -444,9 +439,7 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       AWS_DEFAULT_REGION: us-east-1
     volumes:
-      - ./dbt/services:/manifests:ro
       - ./pkg:/app/pkg:ro
-      - manifest-registry:/data
     depends_on:
       redis:
         condition: service_started
@@ -486,7 +479,6 @@ services:
 volumes:
   neo4j_data:
   neo4j_logs:
-  manifest-registry:
 
 networks:
   kind:

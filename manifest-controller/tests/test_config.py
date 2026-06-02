@@ -3,13 +3,12 @@ import pytest
 
 
 def test_validate_raises_listing_all_missing(monkeypatch):
-    """validate() raises RuntimeError naming every missing Tier 1 var."""
-    tier1 = [
+    """validate() raises RuntimeError naming every missing required var."""
+    required = [
         "REDIS_URL",
-        "REGISTRY_PATH", "MANIFESTS_BASE",
         "S3_ENDPOINT_URL", "S3_BUCKET", "S3_ENV", "AWS_DEFAULT_REGION",
     ]
-    for key in tier1:
+    for key in required:
         monkeypatch.delenv(key, raising=False)
 
     from config.config import validate
@@ -17,15 +16,13 @@ def test_validate_raises_listing_all_missing(monkeypatch):
         validate()
 
     msg = str(exc_info.value)
-    for key in tier1:
+    for key in required:
         assert key in msg, f"expected {key} in error message, got: {msg}"
 
 
 def test_validate_passes_when_all_required_set(monkeypatch):
-    """validate() does not raise when all Tier 1 vars are present."""
+    """validate() does not raise when all required vars are present."""
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
-    monkeypatch.setenv("REGISTRY_PATH", "/data/registry.csv")
-    monkeypatch.setenv("MANIFESTS_BASE", "/manifests")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://localstack:4566")
     monkeypatch.setenv("S3_BUCKET", "continuo")
     monkeypatch.setenv("S3_ENV", "local")

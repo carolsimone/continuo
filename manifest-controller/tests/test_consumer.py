@@ -1,19 +1,22 @@
 import pytest
 from unittest.mock import MagicMock
 from adapters.redis.consumer import Consumer
-from streams_contract import UPDATE_GRAPH_V1, MANIFEST_UPDATE_GRAPH
+from streams_contract import RELEASE_REQUESTED_V1, MANIFEST_CONTROLLER_RELEASE_REQUESTED
+
+_STREAM = RELEASE_REQUESTED_V1
+_GROUP = MANIFEST_CONTROLLER_RELEASE_REQUESTED
 
 
 def test_consumer_creates_group_on_init():
     mock_redis = MagicMock()
     Consumer(
         redis_client=mock_redis,
-        stream_name=UPDATE_GRAPH_V1,
-        group_name=MANIFEST_UPDATE_GRAPH,
+        stream_name=_STREAM,
+        group_name=_GROUP,
         message_handler=MagicMock(),
     )
     mock_redis.xgroup_create.assert_called_once_with(
-        UPDATE_GRAPH_V1, MANIFEST_UPDATE_GRAPH, id="0", mkstream=True
+        _STREAM, _GROUP, id="0", mkstream=True
     )
 
 
@@ -23,8 +26,8 @@ def test_consumer_ignores_busygroup_error():
     # Should not raise
     Consumer(
         redis_client=mock_redis,
-        stream_name=UPDATE_GRAPH_V1,
-        group_name=MANIFEST_UPDATE_GRAPH,
+        stream_name=_STREAM,
+        group_name=_GROUP,
         message_handler=MagicMock(),
     )
 

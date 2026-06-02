@@ -69,18 +69,18 @@ Provisioning databases inside the job — rather than relying solely on the Post
 |---|---|
 | Durable state | Neo4j `Table` nodes (+ `image_tag`, `topology_generation` props), `Run` nodes (+ `topology_generation`, `service_metadata` props), `DEPENDS_ON` edges, `EXECUTES` edges (+ `image_tag` prop); Neo4j `:TopologyRoot {id:'singleton'}` (generation + service_metadata); Postgres `topology_state`, `message_processing`, `orchestrator_outbox` |
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
-| Redis consumes | `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1` |
+| Redis consumes | `node.updated:v1`, `release.promoted:v1`, `initialize.run:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1` |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1` (SKIPPED on cascade-skip of a downstream node) |
 | Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `CancelSchedule` (watchdog only) |
 
 ### Invariants
 
-- **Ingest-time validation.** `IngestTopologyHandler` rejects any
-  `manifest.loaded:v1` batch carrying an empty `image_tag`. Rejections are
-  durable (`rejected_topology_messages` Postgres table) and ACKed in Redis
-  to keep the pending list clean. The validator runs before any side
-  effect; on rejection the stream binding recognises `events.ErrPermanent`
-  via `errors.Is` and ACKs.
+- **Topology swap on promotion.** `ReleasePromotedHandler` consumes
+  `release.promoted:v1` and calls `ReleasePromotionRepository.PromoteRelease`
+  to swap the Neo4j topology. `image_tag` arrives already populated:
+  `manifest-controller` leaves it empty and `release-controller` joins the
+  per-service tags from the `POST /releases` body onto the topology before
+  promotion, so there is no orchestrator-side `image_tag` rejection.
 - **Dispatch watchdog.** Periodic loop terminates `is_running=true`
   schedules that have no task in `RUNNING` and no task progress within
   `ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES` (default 30m), via the
@@ -125,8 +125,8 @@ Provisioning databases inside the job — rather than relying solely on the Post
 |---|---|
 | Durable state | none |
 | gRPC server methods owned | none |
-| Redis consumes | `update.graph:v1`, `release.requested:v1` |
-| Redis produces | `manifest.loaded:v1`, `manifest.loaded.candidate:v1` |
+| Redis consumes | `release.requested:v1` |
+| Redis produces | `manifest.loaded.candidate:v1` |
 | Outbound gRPC calls | none |
 
 ## `ui-service`
@@ -136,5 +136,5 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Durable state | none |
 | gRPC server methods owned | none |
 | Redis consumes | none |
-| Redis produces | `update.graph:v1` |
-| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `TriggerRerun`, `TriggerSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
+| Redis produces | none |
+| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `ListNodeRuns`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |

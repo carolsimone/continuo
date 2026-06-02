@@ -75,15 +75,6 @@ streams:
         group: orchestrator-node-updated
         const: OrchestratorNodeUpdated
 
-  - name: manifest.loaded:v1
-    const: ManifestLoadedV1
-    description: dbt manifest topology loaded by manifest-controller.
-    producers: [manifest-controller]
-    consumers:
-      - service: orchestrator
-        group: orchestrator-manifest-loaded
-        const: OrchestratorManifestLoaded
-
   - name: initialize.run:v1
     const: InitializeRunV1
     description: Trigger to initialize a new run.
@@ -208,17 +199,6 @@ streams:
       - service: k8s-controller
         group: k8s-schedule-cancelled
         const: K8sScheduleCancelled
-
-  # ---------------- manifest-controller ----------------
-
-  - name: update.graph:v1
-    const: UpdateGraphV1
-    description: Manifest refresh trigger; manifest-controller reloads dbt artifacts.
-    producers: [state]
-    consumers:
-      - service: manifest-controller
-        group: manifest-controller-update-graph
-        const: ManifestUpdateGraph
 
   # ---------------- release-controller streams (dbt blue/green) ----------------
 

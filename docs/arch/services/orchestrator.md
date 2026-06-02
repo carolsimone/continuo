@@ -5,7 +5,7 @@
 `orchestrator` owns the dependency topology in Neo4j, handles run initialization and node completion events, and serves gRPC queries for the UI.
 
 It is responsible for:
-- ingesting topology from manifest-controller (via `manifest.loaded:v1`)
+- swapping the production topology on release promotion (via `release.promoted:v1`)
 - initializing run snapshots on scheduler start (via `scheduler.started:v1`)
 - processing node completion events, unlocking downstream nodes (via `node.updated:v1`)
 - producing task dispatch events for the executor pipeline
@@ -116,7 +116,6 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 | `orchestrator_outbox` | Canonical transactional outbox — each write-time side effect is a separate row with a JSONB payload; `pkg/outbox.Processor` polls and publishes to the typed Redis stream per row |
 | `topology_state` | Singleton row holding the monotonic `topology_generation` counter |
 | `cancelled_schedules` | Schedule IDs cancelled by an upstream control-plane signal; consulted to short-circuit terminal-state processing for already-cancelled runs |
-| `rejected_topology_messages` | Forensics for permanently-rejected `manifest.loaded:v1` payloads |
 
 All `orchestrator_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`.
 
@@ -129,11 +128,11 @@ All ports the service layer depends on for adapter-replaceable storage live in `
 | `OutboxRepository` | Postgres |
 | `MessageProcessingRepository` | Postgres |
 | `CancelledSchedulesRepository` | Postgres |
-| `RejectedTopologyRepository` | Postgres |
 | `TopologyStateRepository` | Postgres |
 | `TopologyRepository` | Neo4j |
+| `ReleasePromotionRepository` | Neo4j |
 
-One narrow exception is allowed to import adapter packages directly: `service/handlers/ingest_topology_integration_test.go` wires the real Postgres and Neo4j adapters against a live database. Production handlers and unit-test fakes hold only `repository.*` types. The `UnitOfWork` interface is declared in `service/uow/uow.go`; its concrete implementation (`PostgresUnitOfWork`) lives in `adapters/postgres/unit_of_work.go`.
+One narrow exception is allowed to import adapter packages directly: `service/handlers/release_promoted_handler_integration_test.go` wires the real Postgres and Neo4j adapters against a live database. Production handlers and unit-test fakes hold only `repository.*` types. The `UnitOfWork` interface is declared in `service/uow/uow.go`; its concrete implementation (`PostgresUnitOfWork`) lives in `adapters/postgres/unit_of_work.go`.
 
 Read-side ports specific to the CQRS query path (`RunReader`, `TopologyStateReader`) are defined where they are consumed — `service/queries/run_query_service.go` — and intentionally not promoted into `domain/repository/`.
 
@@ -152,7 +151,7 @@ Three goroutines started in `main.go` run for the process lifetime:
 |---|---|---|
 | `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — runs `Snapshot(LatestFullDAG)`, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` + `query.model:v1` for seed/root nodes |
 | `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes (SUCCEEDED → `query.model:v1` for newly-ready nodes; FAILED → cascade-skip downstream + emit `task.status.updated:v1` for skipped tasks) |
-| `manifest.loaded:v1` | `orchestrator_manifest_loaded` | `IngestTopology` — applies the full manifest snapshot, rewrites `DEPENDS_ON`, retires missing `Table` nodes, then emits `schedules.loaded:v1` |
+| `release.promoted:v1` | `orchestrator-release-promoted` | `ReleasePromotedHandler` — swaps the `:Table` topology via `ReleasePromotionRepository.PromoteRelease`, increments `topology_generation`, writes `:TopologyRoot` service_metadata, then emits `schedules.loaded:v1` |
 | `trigger.rerun:v1` | `orchestrator_rerun` | `HandleRerun` — runs `Snapshot(SourcePinnedDAG{})` against the **new** `:Run` minted by state's `TriggerRerun`, projecting the source's pinned DAG with non-SUCCEEDED tasks + their descendants as rebased PENDING and the rest as inherited at source's stored status; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only |
 | `trigger.rebase:v1` | `orchestrator-rebase` | `HandleRebaseHandler` — runs `Snapshot(RebasePartition)` against the new `:Run`; projects rebase_set ∪ inherit_set against the latest topology; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only |
 | `initialize.run:v1` | `orchestrator_initialize_run` | `InitializeRunHandler` — secondary entry point (no active producer); runs `Snapshot(LatestFullDAG)` + dispatch, same shape as `HandleSchedulerStarted` |
@@ -179,7 +178,7 @@ Three goroutines started in `main.go` run for the process lifetime:
 | Stream | Trigger |
 |---|---|
 | `query.model:v1` | One message per newly-ready downstream node after a SUCCEEDED node is processed; for rerun/rebase only the rebased rows on the **dispatch frontier** get an initial `query.model:v1` (a rebased row whose upstream is itself rebased waits until that upstream completes; inherited rows are already SUCCEEDED at dispatch and never enter the executor pipeline) |
-| `schedules.loaded:v1` | Produced by IngestTopology after successful topology load (schedule names list) |
+| `schedules.loaded:v1` | Produced by `ReleasePromotedHandler` after a successful topology swap (schedule names list + service_metadata + topology_generation) |
 | `run.entries.dispatched:v1` | Produced by every `Snapshot`-driven handler (`HandleSchedulerStarted`, `HandleRerun`, `HandleRebase`, `HandleSingleNodeRun`) after the projection is materialised. Carries all task entries with pre-assigned UUIDs, root/seed node lists, plus per-task `Status` (defaults `"pending"`, `"succeeded"` for inherited rows) and `InheritedFromTaskID` (empty for non-inherited; root-resolved source `task_id` for inherited). Each `DispatchedTask` stamps `MaxRetries = pkg/events.DefaultTaskMaxRetries (= 2)` so state's `task_tracker.max_retries` matches the k8s retry budget. |
 | `run.entries.dispatch_failed:v1` | Produced by `HandleSingleNodeRunHandler` on `snapshot.ErrTargetNotFound`, and by `HandleSingleNodeRunHandler`, `HandleRerunHandler`, `HandleRebaseHandler`, and `HandleSchedulerStartedHandler` on `snapshot.ErrEmptyProjection`. Symmetric counterpart of `run.entries.dispatched:v1`: same `scheduler_tracker` target, opposite outcome. State row-locks the row, marks status=`failed`, emits `run.finalized:v1`. |
 
@@ -201,15 +200,16 @@ Orchestrator no longer calls `state` gRPC for any internal writes. All state mut
 
 When `Snapshot(LatestFullDAG)` returns `snapshot.ErrEmptyProjection` (a schedule whose topology has zero active `:Table` nodes), the handler emits `run.entries.dispatch_failed:v1` with `reason=empty_projection` and the run finalises as `failed`.
 
-### On `manifest.loaded:v1` — IngestTopology
+### On `release.promoted:v1` — ReleasePromotedHandler
 
-Receives a JSON payload of topology nodes representing the full current manifest snapshot. Within one Neo4j write transaction it:
+Receives the full promoted topology for a release (each node carries its `image_tag`, already joined by `release-controller`). The handler runs in one Postgres UoW transaction:
 
-1. upserts every current `Table` node and rewrites its outgoing `DEPENDS_ON` edges
-2. marks any previously-active `Table` node missing from the payload as `active=false`
-3. deletes inactive `Table` nodes only when they are no longer referenced by any `Run` snapshot
+1. Dedup on `message_processing`, keyed `(message_id, release.promoted:v1)`; a secondary uniqueness key on the upstream outbox entry ID catches a re-XADD under a fresh Redis message ID.
+2. `ReleasePromotionRepository.PromoteRelease` performs the atomic Neo4j topology swap in a single Neo4j transaction (retire-then-orphan-cleanup; see "Topology swap pattern" below). It short-circuits (`changed=false`) when the `:Meta {key:'current_release'}` singleton already records this `release_id`.
+3. If `changed=true`, increment `topology_state.topology_generation`; otherwise read the current value. Either way, write the per-service `service_metadata` and the generation onto `:TopologyRoot` (idempotent MERGE).
+4. Always write a `schedules.loaded:v1` outbox entry with the schedule names, `service_metadata`, and `topology_generation`. The `event_id` is a deterministic UUID v5 of `(namespace, release_id)`, so re-emissions from idempotent redeliveries are deduplicated by state's `ScheduleCatalogHandler`.
 
-Schedule graph reads and new run snapshots only consider `active=true` `Table` nodes, while historical `Run` graphs remain intact through their `EXECUTES` edges. Deduplication still keys off the Redis message ID via `message_processing`.
+Schedule graph reads and new run snapshots only consider `active=true` `Table` nodes, while historical `Run` graphs remain intact through their `EXECUTES` edges.
 
 ### On `trigger.rerun:v1` — HandleRerun
 
@@ -294,7 +294,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 |---|---|
 | Redis consumer (`scheduler.started:v1`) | Reads and dispatches to HandleSchedulerStarted handler |
 | Redis consumer (`node.updated:v1`) | Reads and dispatches to HandleNodeCompleted handler |
-| Redis consumer (`manifest.loaded:v1`) | Reads and dispatches to IngestTopology handler |
+| Redis consumer (`release.promoted:v1`) | Reads and dispatches to ReleasePromotedHandler |
 | Redis consumer (`trigger.rerun:v1`) | Reads and dispatches to HandleRerun handler |
 | Redis consumer (`trigger.rebase:v1`) | Reads and dispatches to HandleRebase handler |
 | Redis consumer (`trigger.single_node_run:v1`) | Reads and dispatches to HandleSingleNodeRunHandler |
@@ -329,8 +329,10 @@ Postgres on the read path:
 - `ListActiveRunDrifts()` — surfaces the single newest in-flight run per schedule plus the latest `topology_state.topology_generation`. "In-flight" means `completed_at IS NULL`; `run.finalized:v1` stamps `completed_at` for all terminal outcomes (succeeded, failed, cancelled), so a cancelled run leaves the active set once the projection arrives. The underlying `ListActiveRuns` query (Neo4j adapter) orders by `schedule_name`, then `created_at DESC`; `RunQueryService` keeps the head row per schedule. Used by e2e tests as a probe for orchestrator-side active-run state.
 
 `topology_state` (Postgres) is now read by both:
-- the **write path** — `IngestTopologyHandler.IncrementGeneration` allocates
-  the next monotonic value before stamping every `:Table` node with it.
+- the **write path** — `ReleasePromotedHandler` calls
+  `TopologyStateRepository.IncrementGeneration` to allocate the next
+  monotonic value, then stamps it onto `:TopologyRoot` on each promotion
+  that changes the current release.
 - the **read path** — `RunQueryService` calls `TopologyStateRepository.GetGeneration`
   on each query to expose the current value. The port lives at
   `orchestrator/domain/repository/port.go`; the Postgres adapter is the only
@@ -348,7 +350,7 @@ as warnings by `RunQueryService` but otherwise pass through unmodified.
 
 ## Topology swap pattern
 
-`IngestTopologyHandler` replaces the `:Table` topology graph using a **retire-then-orphan-cleanup** pattern, not a truncate-and-load. Every `:Table` node may have incoming `:Run-[:EXECUTES]->Table` edges from active or historical runs; a blunt `MATCH (n:Table) DETACH DELETE n` would erase that history and strand in-flight runs. The pattern:
+`ReleasePromotionRepository.PromoteRelease` (invoked by `ReleasePromotedHandler`) replaces the `:Table` topology graph using a **retire-then-orphan-cleanup** pattern, not a truncate-and-load. Every `:Table` node may have incoming `:Run-[:EXECUTES]->Table` edges from active or historical runs; a blunt `MATCH (n:Table) DETACH DELETE n` would erase that history and strand in-flight runs. The swap runs in a single Neo4j transaction:
 
 1. **Retire** — `MATCH (t:Table) WHERE NOT t.unique_id IN $new SET t.active = false, t.retired_at = $now`. Nodes stay in the graph; their `:Run` edges still resolve.
 2. **Upsert** — `MERGE (existing:Table {unique_id: ...}) SET ..., active = true, retired_at = NULL`. Reactivates any node that's back in the new topology.
@@ -356,9 +358,11 @@ as warnings by `RunQueryService` but otherwise pass through unmodified.
 4. **Rebuild `:DEPENDS_ON`** between nodes in the new topology. References to `unique_id`s outside the candidate set are silently skipped (matches dbt's compile semantics for cross-service dependencies).
 5. **Orphan cleanup** — `MATCH (t:Table) WHERE COALESCE(t.active, true) = false AND NOT EXISTS { (:Run)-[:EXECUTES]->(t) } DETACH DELETE t`. Removes only the `:Table` nodes no run still references.
 
-Reference impl: `orchestrator/adapters/neo4j/topology_repository.go:231-277` (`retireMissingNodes` + `deleteInactiveOrphans`).
+Before any of these steps, the transaction reads the `:Meta {key:'current_release'}` singleton; if its `release_id` already matches the incoming release it commits empty and returns `changed=false` (idempotent redelivery). After the swap it MERGEs the `:Meta` singleton with the new `release_id`. Each upserted `:Table` node is stamped with `release_id`.
 
-**Design constraint for future topology-write paths:** any new handler that replaces `:Table` topology in this orchestrator (e.g., the forthcoming `release.promoted:v1` consumer) MUST follow the same pattern. Truncate-and-load is not safe in this graph.
+Reference impl: `orchestrator/adapters/neo4j/release_promotion_repository.go` (`PromoteRelease`).
+
+**Design constraint for any topology-write path:** any handler that replaces `:Table` topology in this orchestrator MUST follow the same pattern. Truncate-and-load is not safe in this graph because it destroys `:Run-[:EXECUTES]->:Table` run history.
 
 When the Neo4j Go driver binds `time.Time` parameters into Cypher, it uses `Location().String()` as a timezone identifier and rejects `"Local"`. Always pass `now.UTC()` at the boundary.
 
@@ -366,7 +370,7 @@ When the Neo4j Go driver binds `time.Time` parameters into Cypher, it uses `Loca
 
 - **Inbound dedup**: `message_processing` keyed by `(message_id, stream_name)`; INSERT IF NOT EXISTS prevents double-processing. The composite key is required because Redis Streams assign IDs per-stream, so a single publisher can emit two messages to two streams in the same millisecond and produce identical message IDs that must not collide.
 - **Neo4j updates are outside the Postgres tx**: topology and status writes are idempotent; if the tx fails the message will be redelivered
-- **Snapshot reconciliation**: `manifest.loaded:v1` is treated as authoritative; nodes missing from the latest payload are retired from the current topology automatically
+- **Snapshot reconciliation**: the promoted topology on `release.promoted:v1` is treated as authoritative; nodes missing from it are retired from the current topology automatically (and deleted once no `:Run` references them)
 - **Pre-assigned task UUIDs**: task IDs are committed to Neo4j EXECUTES edges before `run.entries.dispatched:v1` is produced; the outbox processor reads them at publish time, ensuring consistent IDs across retries
 - **No state gRPC dependency**: orchestrator is fully decoupled from the state write path; all state mutations go through events
 - **RunSweeper**: deletion is best-effort; a sweep failure is logged and retried on the next tick

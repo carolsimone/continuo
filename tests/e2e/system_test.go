@@ -37,8 +37,8 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// Cleanup any existing data
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// Seed the topology directly into Neo4j (bypasses legacy update.graph:v1 path).
-	t.Log("Seeding topology directly into Neo4j...")
+	// Seed the full e2e topology via a release.promoted:v1 event.
+	t.Log("Seeding topology via release.promoted:v1...")
 	seedTopology(t, ctx, clients)
 
 	// Create and activate scheduler

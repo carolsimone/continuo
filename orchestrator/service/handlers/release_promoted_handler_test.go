@@ -51,8 +51,6 @@ func (f *fakeReleasePromotionRepository) PromoteRelease(
 var _ repository.ReleasePromotionRepository = (*fakeReleasePromotionRepository)(nil)
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-// fakeTopologyRepository and fakeTopologyStateRepository are shared with
-// ingest_topology_test.go (same package); see that file for declarations.
 
 // newReleasePromotedHandler wires up a ReleasePromotedHandler with the given
 // fakes. topoState.generation is pre-seeded to the provided value so that

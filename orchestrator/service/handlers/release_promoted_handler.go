@@ -100,9 +100,8 @@ func (h *ReleasePromotedHandler) Handle(
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	// Dedup check using (message_id, release.promoted:v1) namespace — isolated
-	// from the manifest.loaded:v1 consumer's dedup namespace so the two paths
-	// never collide even if they produce schedules.loaded:v1 for the same topology.
+	// Dedup check keyed on the (message_id, release.promoted:v1) namespace, so
+	// this consumer's dedup state is scoped to its own stream.
 	// outboxEntryID provides a secondary uniqueness key that catches a re-XADD
 	// of the same upstream outbox row under a fresh Redis message ID.
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
@@ -155,8 +154,8 @@ func (h *ReleasePromotedHandler) Handle(
 	// without bumping it — the topology has not actually changed.
 	//
 	// Drift window — known limitation. IncrementGeneration commits its own tx
-	// independent of the main UoW (topology_state is shared mutable state across
-	// IngestTopologyHandler too; see orchestrator/adapters/postgres/topology_state_repository.go).
+	// independent of the main UoW (topology_state is shared mutable state; see
+	// orchestrator/adapters/postgres/topology_state_repository.go).
 	// If attempt 1 commits PromoteRelease in Neo4j and IncrementGeneration in
 	// Postgres but the main UoW then rolls back, attempt 2 sees changed=false
 	// and reads the already-advanced generation — end state stays consistent.
@@ -194,9 +193,8 @@ func (h *ReleasePromotedHandler) Handle(
 		return fmt.Errorf("set service metadata on :TopologyRoot: %w", err)
 	}
 
-	// Build schedules.loaded:v1 outbox payload. The shape is identical to the one
-	// produced by IngestTopologyHandler so state's ScheduleCatalogHandler can
-	// consume from a single stream regardless of which path produced the message.
+	// Build the schedules.loaded:v1 outbox payload consumed by state's
+	// ScheduleCatalogHandler to refresh its schedule projections.
 	outboxPayload, err := json.Marshal(map[string]interface{}{
 		"event_id":            eventID.String(),
 		"schedule_names":      scheduleNames,

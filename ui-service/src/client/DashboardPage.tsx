@@ -8,9 +8,6 @@ export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [graphLoading, setGraphLoading] = useState(false);
-  const [graphStatus, setGraphStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  const [graphError, setGraphError] = useState<string | null>(null);
   const [topologies, setTopologies] = useState<ScheduleTopologySummary[]>([]);
   const [topologiesError, setTopologiesError] = useState<string | null>(null);
 
@@ -45,47 +42,6 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
-  const handleUpdateGraph = () => {
-    setGraphLoading(true);
-    setGraphStatus('idle');
-    setGraphError(null);
-    fetch('/api/dashboard/graph-update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 's3' }),
-    })
-      .then(async r => {
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}));
-          throw new Error(body.error || `HTTP ${r.status}`);
-        }
-        setGraphStatus('success');
-        setTimeout(() => setGraphStatus('idle'), 3000);
-      })
-      .catch(err => {
-        setGraphError(err.message);
-        setGraphStatus('error');
-        setTimeout(() => {
-          setGraphError(null);
-          setGraphStatus('idle');
-        }, 5000);
-      })
-      .finally(() => setGraphLoading(false));
-  };
-
-  const graphBtnLabel = graphLoading
-    ? 'Updating…'
-    : graphStatus === 'success'
-    ? 'Updated'
-    : 'Update Graph';
-
-  const graphBtnClass = [
-    'btn',
-    'btn--secondary',
-    graphLoading ? 'is-loading' : '',
-    graphStatus === 'success' ? 'is-success' : '',
-  ].filter(Boolean).join(' ');
-
   const tabSpecs = [
     { slug: 'runs', label: 'Runs', count: schedules.length },
     { slug: 'topology', label: 'Topology', count: topologies.length },
@@ -100,17 +56,8 @@ export default function DashboardPage() {
           <span className="live-badge">
             ● live{lastUpdated ? ` · ${lastUpdated.toLocaleTimeString()}` : ''}
           </span>
-          <button
-            className={graphBtnClass}
-            disabled={graphLoading}
-            onClick={handleUpdateGraph}
-            title="Reload graph from S3 manifests"
-          >
-            {graphBtnLabel}
-          </button>
         </div>
       </header>
-      {graphError && <div className="info-strip info-strip--error">{graphError}</div>}
       <main className="page-content page-content--readable">
         <Tabs param="tab" defaultSlug="runs" tabs={tabSpecs} />
         {activeTab === 'runs' && (

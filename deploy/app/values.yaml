@@ -32,11 +32,6 @@ global:
     accessKeyId: ""
     secretKey: ""
 
-  graphUpdate:
-    # Shared bearer token expected on ui-service's POST /api/graph/update.
-    # Leave empty to keep the endpoint open (not recommended for production).
-    token: ""
-
 services:
   - name: state
     enabled: true
@@ -160,17 +155,12 @@ services:
         secretKey: AWS_ACCESS_KEY_ID
       - name: AWS_SECRET_ACCESS_KEY
         secretKey: AWS_SECRET_ACCESS_KEY
-      - name: REDIS_PASSWORD
-        secretKey: REDIS_PASSWORD
-      - name: GRAPH_UPDATE_TOKEN
-        secretKey: GRAPH_UPDATE_TOKEN
     ingress:
       enabled: true
       host: dev.yourdomain.com
     env:
       PORT: "8090"
       NODE_ENV: production
-      REDIS_URL: __REDIS_URL_FROM_AUTH__
     volumeMounts:
       - name: cancel-config
         mountPath: /app/config
@@ -192,21 +182,10 @@ services:
         secretKey: REDIS_PASSWORD
     env:
       REDIS_URL: __REDIS_URL_FROM_AUTH__
-      REGISTRY_PATH: /data/registry.csv
-      MANIFESTS_BASE: /manifests
-    volumeMounts:
-      - name: manifests
-        mountPath: /manifests
-        readOnly: true
-    volumes:
-      - name: manifests
-        emptyDir: {}
     resources:
       requests:
         cpu: 200m
         memory: 256Mi
-    # The local compose setup mounts dbt manifests into /manifests. In-cluster this
-    # needs a follow-up source such as a PVC, baked-in artifacts, or S3-backed sync.
 
   - name: release-controller
     enabled: true

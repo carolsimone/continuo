@@ -12,8 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTopologyVersioning_MidRunIsolation validates that a new manifest.loaded:v1
-// arriving between Run 1's SnapshotGraph and its completion does NOT affect the
+// TestTopologyVersioning_MidRunIsolation validates that a new release.promoted:v1 arriving between Run 1's SnapshotGraph and its completion does NOT affect the
 // in-flight run: its topology_generation must remain pinned to the value captured
 // at SnapshotGraph time. Run 2 (triggered after the reload) must pick up the
 // incremented generation.
@@ -40,10 +39,10 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 2: Clean any leftover data from previous runs.
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Step 3: Load the graph for the first time and wait for schedules.loaded:v1,
-	// which confirms orchestrator committed IngestTopology (generation G1).
-	t.Log("=== Step 3: triggerGraphLoad — establishing generation G1 ===")
-	triggerGraphLoad(t, ctx, clients)
+	// Step 3: Seed the topology and wait for the orchestrator to apply the
+	// release.promoted topology swap, establishing generation G1.
+	t.Log("=== Step 3: seedTopology — establishing generation G1 ===")
+	seedTopology(t, ctx, clients)
 
 	// Step 4: Read G1 from orchestrator_db.
 	var g1 int64
@@ -101,10 +100,10 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 		"Run 1's topology_generation must equal G1=%d, got %d", g1, s1Gen)
 	t.Logf("S1 topology_generation = %d (expected G1=%d) ✓", s1Gen, g1)
 
-	// Step 8: Trigger a second graph load while S1 is still in-flight.
-	// This increments the generation to G2 = G1+1.
-	t.Log("=== Step 8: triggerGraphLoad mid-run — incrementing to G2 ===")
-	triggerGraphLoad(t, ctx, clients)
+	// Step 8: Seed topology again while S1 is still in-flight (fresh release_id,
+	// same DAG). This increments the generation to G2 = G1+1.
+	t.Log("=== Step 8: seedTopology mid-run (fresh release_id, same DAG) — incrementing to G2 ===")
+	seedTopology(t, ctx, clients)
 
 	// Step 9: Read G2 from orchestrator_db and assert G2 == G1+1.
 	var g2 int64
@@ -130,19 +129,10 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, s1)
 	t.Log("Run 1 completed successfully")
 
-	// Step 12: Assert task_tracker rows for S1 have non-empty manifest_version.
-	t.Log("=== Step 12: verifying task_tracker manifest_version for S1 ===")
-	var s1ManifestVersions []string
-	err = clients.stateDB.SelectContext(ctx, &s1ManifestVersions,
-		`SELECT manifest_version FROM task_tracker WHERE schedule_id = $1`,
-		s1,
-	)
-	require.NoError(t, err, "failed to query manifest_version for Run 1")
-	require.NotEmpty(t, s1ManifestVersions, "expected task_tracker rows for Run 1")
-	for _, mv := range s1ManifestVersions {
-		assert.NotEmpty(t, mv, "task manifest_version must be non-empty for Run 1")
-	}
-	t.Logf("S1: all %d task_tracker rows have non-empty manifest_version ✓", len(s1ManifestVersions))
+	// manifest_version is a legacy manifest-ingest field and is empty for
+	// release-sourced topology, so it is not asserted here (see system_test.go /
+	// single_node_run_test.go). Run 1's success above already proves its
+	// task_tracker rows landed.
 
 	// Step 13: Clean up Run 1 data before triggering Run 2.
 	t.Log("=== Step 13: cleaning up Run 1 data ===")
@@ -201,19 +191,9 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, s2)
 	t.Log("Run 2 completed successfully")
 
-	// Step 18: Assert task_tracker rows for S2 have non-empty manifest_version.
-	t.Log("=== Step 18: verifying task_tracker manifest_version for S2 ===")
-	var s2ManifestVersions []string
-	err = clients.stateDB.SelectContext(ctx, &s2ManifestVersions,
-		`SELECT manifest_version FROM task_tracker WHERE schedule_id = $1`,
-		s2,
-	)
-	require.NoError(t, err, "failed to query manifest_version for Run 2")
-	require.NotEmpty(t, s2ManifestVersions, "expected task_tracker rows for Run 2")
-	for _, mv := range s2ManifestVersions {
-		assert.NotEmpty(t, mv, "task manifest_version must be non-empty for Run 2")
-	}
-	t.Logf("S2: all %d task_tracker rows have non-empty manifest_version ✓", len(s2ManifestVersions))
+	// manifest_version is empty for release-sourced topology (legacy ingest
+	// field); not asserted. Run 2's success above proves its task_tracker rows
+	// landed.
 
 	t.Log("TestTopologyVersioning_MidRunIsolation PASSED")
 }

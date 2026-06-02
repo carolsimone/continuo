@@ -16,7 +16,7 @@ Legend:
 | `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `W` | `-` | `W` (candidate schema teardown) |
 | `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `R` | `W` | `-` |
 | `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `R` | `-` |
-| `ui-service` | `-` | `-` | `W` | `RW` | `R` | `-` | `-` | `-` |
+| `ui-service` | `-` | `-` | `-` | `RW` | `R` | `-` | `-` | `-` |
 | `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` |
 
 > `startup-controller` has been removed. Its responsibilities were absorbed into `orchestrator`.
@@ -27,8 +27,6 @@ Legend:
 
 | Stream | Producer(s) | Consumer(s) | Purpose |
 |---|---|---|---|
-| `update.graph:v1` | `ui-service` (via `POST /api/graph/update`, reached by `dbt/update-graph.sh` in local development) | `manifest-controller` | Trigger a reload of the standing topology from the `local` or `s3` source. |
-| `manifest.loaded:v1` | `manifest-controller` | `orchestrator` | Topology payload for graph ingestion; each node carries image_tag per-service. **ACK on permanent**: handler returns `events.ErrPermanent`-wrapped error → consumer logs ERROR, writes forensics row to `rejected_topology_messages`, ACKs (no XCLAIM loop). |
 | `schedules.loaded:v1` | `orchestrator` | `state` | Reconcile `schedule_catalog` |
 | `scheduler.started:v1` | `state` | `orchestrator` | Start schedule initialization; orchestrator creates run snapshot and emits `run.entries.dispatched:v1` |
 | `run.entries.dispatched:v1` | `orchestrator` | `state` | All task entries with pre-assigned UUIDs and per-task manifest_version + image_tag (each carries the canonical k8s retry budget `pkg/events.DefaultTaskMaxRetries = 2`); state creates task rows, sets total_task_count, marks run as initialized |
@@ -77,7 +75,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 
 | Service | Operation type | Concrete calls |
 |---|---|---|
-| `manifest-controller` | read | `list_objects_v2`, `download_file` (manifest.json + service_metadata.json sidecar) |
+| `manifest-controller` | read | `list_objects_v2`, `download_file` (candidate `manifest.json` files under the per-release prefix), `get_object` (best-effort `service_metadata.json`) |
 | `k8s-controller` | write | `PutObject` |
 
 ## Local Durable State by Service
@@ -85,7 +83,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | Service | Tables / durable structures |
 |---|---|
 | `state` | `scheduler_tracker`, `schedule_catalog` (+ `service_metadata` JSONB), `task_tracker` (+ `manifest_version` column), `task_execution`, `state_outbox`, `message_processing` |
-| `orchestrator` | Neo4j `Table` (+ `image_tag`, `topology_generation`), `Run` (+ `topology_generation`, `service_metadata`), `DEPENDS_ON`, `EXECUTES` (+ `image_tag`); Neo4j `:TopologyRoot {id:'singleton'}`; Postgres `topology_state`, `message_processing`, `orchestrator_outbox`, `rejected_topology_messages` (forensic sink for ingest validation rejections) |
+| `orchestrator` | Neo4j `Table` (+ `image_tag`, `topology_generation`), `Run` (+ `topology_generation`, `service_metadata`), `DEPENDS_ON`, `EXECUTES` (+ `image_tag`); Neo4j `:TopologyRoot {id:'singleton'}`; Postgres `topology_state`, `message_processing`, `orchestrator_outbox` |
 | `executor-controller` | `executor_deployments`, `executor_outbox`, `message_processing`, `cancelled_schedules`, `validation_aggregates` |
 | `k8s-controller` | `k8s_outbox`, `message_processing` |
 | `manifest-controller` | none |

@@ -221,20 +221,20 @@ Running K8s pods are left to complete naturally; their results are suppressed at
 
 ## 7. Topology Versioning — Lazy Generation Switch
 
-Shows what happens when `manifest.loaded:v1` arrives while a run is in-flight.
+Shows what happens when `release.promoted:v1` arrives while a run is in-flight.
 
 ```mermaid
 sequenceDiagram
-  participant MC as manifest-controller
+  participant RC as release-controller
   participant R as Redis
   participant OR as orchestrator
   participant ORPG as orchestrator Postgres
   participant NEO as Neo4j
 
-  note over MC,NEO: Run S1 is already in-flight — Snapshot already committed
+  note over RC,NEO: Run S1 is already in-flight — Snapshot already committed
 
-  MC->>R: manifest.loaded:v1 (image_tag=T2, manifest_version=V2)
-  R->>OR: consume manifest.loaded:v1
+  RC->>R: release.promoted:v1 (image_tag=T2, release_id=V2)
+  R->>OR: consume release.promoted:v1
   OR->>ORPG: UPDATE topology_state SET topology_generation = G1+1
   OR->>NEO: MERGE :TopologyRoot SET topology_generation=G1+1, service_metadata=...
   OR->>NEO: MERGE Table nodes SET image_tag=T2, topology_generation=G1+1

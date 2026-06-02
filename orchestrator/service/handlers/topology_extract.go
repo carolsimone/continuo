@@ -9,11 +9,6 @@ import "sort"
 // version values are silently ignored (the caller may log a warning for
 // conflicts, keeping this helper pure and logging-free).
 //
-// Generic over node type T so both event.ManifestLoadedNode and
-// event.ReleasePromotedNode slices flow through one code path; keeps the
-// schedules.loaded:v1 outbox emission byte-shape identical between the
-// manifest.loaded:v1 and release.promoted:v1 consumers.
-//
 // The accessor func returns (schedule, service, imageTag, manifestVersion).
 func scheduleAndMetadataFromNodes[T any](
 	nodes []T,
