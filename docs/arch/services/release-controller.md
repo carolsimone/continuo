@@ -26,8 +26,8 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | Route | Purpose |
 |---|---|
 | `POST /releases` | Accept a candidate release. Body: `{release_id, image_tags, manifests_uri, bootstrap?}`. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
-| `GET /releases/{id}` | Full release detail incl. transition history and per-node validation results. |
-| `GET /releases` | List releases (filterable by status). |
+| `GET /releases/{id}` | Full release detail: `{release_id, status, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, manifests_uri, bootstrap}`. `per_node_results` is an array of `{node_id, status, dbt_log_uri, duration_ms}`. |
+| `GET /releases` | Paginated release history, newest-first. Query params: `status` (optional exact-match filter), `limit` (default 20; values that are non-positive or exceed 100 fall back to the default of 20), `cursor` (opaque keyset cursor). Response: `{"releases":[{release_id, status, created_at, resolved_at, node_count, bootstrap, reject_reason}], "next_cursor":"<opaque or empty>"}`. |
 | `GET /current-prod` | The current promoted release + topology snapshot. |
 | `GET /healthz` | Liveness. |
 
@@ -115,6 +115,7 @@ Promotion is shared by the validation-passed path and the nothing-to-validate sh
 | Outbox publisher | Drains `release_controller_outbox` and XADDs each row to its stream. |
 | `manifest.loaded.candidate:v1` consumer | Dispatches to the parsed-manifest handler. |
 | `validation.completed:v1` consumer | Dispatches to the validation-result handler. |
+| Retention | Runs on the janitor interval (`RELEASE_JANITOR_INTERVAL`, default 24h). Deletes terminal releases (promoted, rejected, superseded) whose creation timestamp is older than `RELEASE_RETENTION_DAYS` (default 90 days). Never deletes the release referenced by `current_prod`. |
 
 ## gRPC Callers
 

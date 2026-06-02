@@ -8,7 +8,9 @@ It provides:
 - a real-time dashboard of all schedules and their last-run status
 - a detail view per schedule run: DAG topology, node statuses, task list, execution history
 - a per-node detail page: recent run history for a single dbt node, with trigger controls
-- S3 log proxying: fetches pod logs from S3 and streams them to the browser
+- a Releases tab on the homepage: live prod release, in-flight candidate, and paginated release history
+- a release detail page: per-node validation results with an inline dbt log viewer
+- S3 log proxying: fetches pod logs from S3 and streams them to the browser (used by both task executions and release validation logs)
 - rerun triggering: proxies `POST /api/schedulers/:id/rerun` to the `TriggerRerun` gRPC method on `state`
 - rebase triggering: proxies `POST /api/schedulers/:id/rebase` to the `TriggerRebase` gRPC method on `state`
 - single-node run triggering: proxies `POST /api/nodes/:service/:schema/:table/run` to the `TriggerSingleNodeRun` gRPC method on `state`
@@ -59,6 +61,15 @@ None.
 | `/api/nodes/:service/:schema/:table/runs` | GET | `ListNodeRuns` → state gRPC. Returns the last 50 task instances that executed on the node, most recent first. |
 | `/api/nodes/:service/:schema/:table/run` | POST | `TriggerSingleNodeRun` → state gRPC. Body `{}` → `metadata_source=latest`; body `{"source_run_id": "<uuid>"}` → `metadata_source=snapshot_of_run`. |
 
+#### Release API
+
+| Route | Method | Backend |
+|---|---|---|
+| `/api/releases` | GET | Proxies `GET /releases` on release-controller (passes through `status`, `limit`, `cursor` query params). Returns paginated history. |
+| `/api/releases/current-prod` | GET | Proxies `GET /current-prod` on release-controller. |
+| `/api/releases/:id` | GET | Proxies `GET /releases/{id}` on release-controller. Returns full detail including `per_node_results`. |
+| `/api/releases/log?key=<s3_key_or_uri>` | GET | S3 `GetObject` — streams dbt log content as `text/plain`. Accepts `s3://<bucket>/<key>` URIs or bare keys. |
+
 #### Log proxy
 
 | Route | Method | Backend |
@@ -94,15 +105,26 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 | `GetRunGraph` | `GET /api/runs/:run_id/graph` (used both directly and by per-card drift polling on the dashboard) |
 | `ListScheduleTopologies` | `GET /api/topology/schedules` |
 
+### HTTP to `release-controller` (`RELEASE_CONTROLLER_URL`, default `http://release-controller:8088`)
+
+| Route proxied | BFF route |
+|---|---|
+| `GET /releases` | `GET /api/releases` |
+| `GET /releases/{id}` | `GET /api/releases/:id` |
+| `GET /current-prod` | `GET /api/releases/current-prod` |
+
+HTTP errors from release-controller are forwarded with their status code; network errors return HTTP 502.
+
 ### S3
 
 | Operation | Route | Description |
 |---|---|---|
-| `GetObject` | `GET /api/task-executions/:id/logs` | Fetches log by `key` query param; proxies content to browser |
+| `GetObject` | `GET /api/task-executions/:id/logs` | Fetches task-execution log by `key` query param; proxies content to browser |
+| `GetObject` | `GET /api/releases/log` | Fetches dbt validation log by `key` query param (accepts `s3://` URI or bare key); proxies content to browser |
 
 On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" }`.
 
-`ui-service` makes no Redis connection; it reaches every backend through gRPC (`state`, `orchestrator`) and S3 (log proxy) only.
+`ui-service` makes no Redis connection; it reaches backends through gRPC (`state`, `orchestrator`), HTTP (`release-controller`), and S3 (log proxy) only.
 
 ## What It Reads
 
@@ -116,7 +138,11 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 | Schedule topology (all nodes + edges) | `orchestrator.GetScheduleGraph` |
 | Run list (historical) | `orchestrator.ListRuns` |
 | Per-run graph with node statuses + per-run/latest topology generation | `orchestrator.GetRunGraph` |
+| Paginated release history | `release-controller GET /releases` |
+| Release detail (per-node validation results) | `release-controller GET /releases/{id}` |
+| Current production release + topology snapshot | `release-controller GET /current-prod` |
 | Pod logs | S3 (via `log_s3_key` from task execution records) |
+| dbt validation logs | S3 (via `dbt_log_uri` from per-node validation results) |
 
 ## What It Writes
 
@@ -143,7 +169,9 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 ## Frontend Architecture
 
 - React SPA (TypeScript + Vite)
-- `DashboardPage`: two URL-routed tabs under the page header — `Runs` (default, `/`) shows the `SchedulerCard` list, and `Topology` (`/?tab=topology`) shows the `SnapshotTile` grid. Both data sources poll every 5 seconds regardless of active tab: `/api/schedules` feeds the `Runs` tab and the `Runs` count pill; `/api/topology/schedules` feeds the `Topology` tab and its count pill. Each snapshot tile navigates to `/schedule/:name/latest`.
+- `DashboardPage`: three URL-routed tabs under the page header — `Runs` (default, `/?tab=runs`) shows the `SchedulerCard` list, `Topology` (`/?tab=topology`) shows the `SnapshotTile` grid, and `Releases` (`/?tab=releases`) shows `ReleasesPanel`. Schedule and topology data sources poll every 5 seconds regardless of active tab: `/api/schedules` feeds the `Runs` tab and the `Runs` count pill; `/api/topology/schedules` feeds the `Topology` tab and its count pill. Each snapshot tile navigates to `/schedule/:name/latest`.
+- `ReleasesPanel`: displays the live `current_prod` release, the first in-flight candidate (parsing or validating), and a paginated release history list with status filtering. Fetches `/api/releases/current-prod` and `/api/releases` (with optional `status` and `cursor` params); supports load-more pagination via `next_cursor`. Each release row links to `ReleaseDetailPage`.
+- `ReleaseDetailPage`: full detail view for a single release at `/releases/:id`. Fetches `/api/releases/:id`. Shows status, bootstrap flag, reject reason, and a per-node validation results table. Each row with a `dbt_log_uri` includes an inline log viewer that fetches `/api/releases/log?key=<uri>` on demand.
 - `SchedulerCard`: displays schedule name, running status, cron expression, last run time and progress; polls `/api/schedulers/:last_run_id/tasks` for task progress and `/api/runs/:last_run_id/graph` for topology-drift information (both every 5 s); shows a warning strip when the last run's `run_topology_generation` is older than the orchestrator's `latest_topology_generation`, matching the drift logic used on the schedule detail page; includes a "Trigger run" button to start a full DAG run (disabled while a run is active) and a "Cancel" button while a run is in flight
 - `DetailPage`: two-column layout — left column shows the `Dependency Graph` (`DAGPanel`). Right column branches on mode. In `/schedule/:name` the column header is a panel-level tab bar with two URL-routed tabs (`Nodes` default, `Past Runs` via `?panel=runs`). In `/schedule/:name/latest` the column is a single `.detail-card` with a `.section-header` titled `Past Runs` followed by `PastRunsPanel` — the panel tab strip is omitted because only one panel remains, per `.claude/design-guideline/ui.md`. Includes Rerun and Rebase buttons for terminal runs with drift badge when topology generation differs.
 - `DAGPanel`: renders graph topology using run graph or schedule graph

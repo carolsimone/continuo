@@ -9,15 +9,15 @@ Legend:
 - `RW` = both
 - `-` = no direct interaction found
 
-| Service | Own Postgres | Own Neo4j | Redis | state gRPC | orchestrator gRPC | K8s API | S3 | dbt Postgres |
-|---|---|---|---|---|---|---|---|---|
-| `state` | `RW` | `-` | `RW` | server | `-` | `-` | `-` | `-` |
-| `orchestrator` | `RW` (`topology_state` also read on query path) | `RW` | `RW` | `R` (watchdog) | server | `-` | `-` | `-` |
-| `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `W` | `-` | `W` (candidate schema teardown) |
-| `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `R` | `W` | `-` |
-| `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `R` | `-` |
-| `ui-service` | `-` | `-` | `-` | `RW` | `R` | `-` | `-` | `-` |
-| `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` |
+| Service | Own Postgres | Own Neo4j | Redis | state gRPC | orchestrator gRPC | release-controller HTTP | K8s API | S3 | dbt Postgres |
+|---|---|---|---|---|---|---|---|---|---|
+| `state` | `RW` | `-` | `RW` | server | `-` | `-` | `-` | `-` | `-` |
+| `orchestrator` | `RW` (`topology_state` also read on query path) | `RW` | `RW` | `R` (watchdog) | server | `-` | `-` | `-` | `-` |
+| `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `W` | `-` | `W` (candidate schema teardown) |
+| `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `R` | `W` | `-` |
+| `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `-` | `R` | `-` |
+| `ui-service` | `-` | `-` | `-` | `RW` | `R` | `R` | `-` | `R` | `-` |
+| `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` | `-` |
 
 > `startup-controller` has been removed. Its responsibilities were absorbed into `orchestrator`.
 
@@ -71,12 +71,19 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
 | `continuo CLI` | `GetScheduleGraph` |
 
+## HTTP Calls to `release-controller`
+
+| Caller | Routes used |
+|---|---|
+| `ui-service` | `GET /releases`, `GET /releases/{id}`, `GET /current-prod` |
+
 ## S3 Matrix
 
 | Service | Operation type | Concrete calls |
 |---|---|---|
 | `manifest-controller` | read | `list_objects_v2`, `download_file` (candidate `manifest.json` files under the per-release prefix), `get_object` (best-effort `service_metadata.json`) |
 | `k8s-controller` | write | `PutObject` |
+| `ui-service` | read | `GetObject` — task-execution pod logs (proxied via `GET /api/task-executions/:id/logs`) and dbt validation logs (proxied via `GET /api/releases/log`) |
 
 ## Local Durable State by Service
 
