@@ -120,20 +120,19 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	// node is treated as new and the whole topology is validated.
 	changed := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
 
-	// A changed node with a NEW cross-service upstream (absent from prod) cannot
-	// be validated: its raw schema-qualified SQL reads the prod schema, where the
-	// upstream does not yet exist. Reject early with a clear, actionable message
-	// rather than letting dbt fail cryptically mid-run.
-	if edges := release.NewCrossServiceUpstreams(topo, cp.TopologySnapshot(), changed); len(edges) > 0 {
-		return rejectNewCrossServiceUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
+	// A changed node referencing an upstream absent from the candidate topology
+	// cannot be built into the candidate schema. Reject early with a clear,
+	// actionable message rather than letting dbt fail cryptically mid-run.
+	if edges := release.UnbuildableCrossServiceUpstreams(topo, changed); len(edges) > 0 {
+		return rejectUnbuildableCrossServiceUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
 	}
 
-	// Validate the changed-and-downstream closure, plus the transitive
-	// intra-service ancestors of that closure so every node's ref()s resolve
-	// inside the candidate schema (the ancestors build --empty first; the
-	// dispatcher gates on them).
+	// Validate the changed-and-downstream closure plus the FULL transitive
+	// upstream closure (across service boundaries) so every node's refs — intra-
+	// service ref()s and cross-service {{ xschema() }} refs alike — resolve inside
+	// the candidate schema. Upstreams build --empty first; the executor gates on them.
 	changedClosure := release.DescendantsClosure(topo, changed)
-	validationIDs := unionSorted(changedClosure, release.AncestorsClosure(topo, changedClosure))
+	validationIDs := unionSorted(changedClosure, release.FullAncestorsClosure(topo, changedClosure))
 
 	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to validating: %w", err)
@@ -248,11 +247,11 @@ func joinImageTags(topo release.Topology, imageTags map[string]string) release.T
 
 // validationNodesInOrder returns one map per validation node in lexical
 // (sorted) order, carrying the per-node fields executor-controller needs to
-// build a candidate dbt job. upstream_node_ids lists the in-set, same-service
-// upstreams that must succeed before this node can run its candidate schema
-// build. Dispatch ordering is deterministic but NOT topological; per-node
-// execution sequencing is enforced at runtime by the executor's topological
-// gating on upstream_node_ids, not by position in this list.
+// build a candidate dbt job. upstream_node_ids lists the in-set upstreams (intra-
+// AND cross-service) that must succeed before this node can run its candidate
+// schema build. Dispatch ordering is deterministic but NOT topological; per-node
+// execution sequencing is enforced at runtime by the executor's gating on
+// upstream_node_ids, not by position in this list.
 func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet map[string]bool) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
@@ -271,7 +270,7 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 			"schema_name":       n.SchemaName,
 			"table_name":        n.TableName,
 			"image_tag":         n.ImageTag,
-			"upstream_node_ids": release.InSetIntraServiceUpstreams(topo, id, inSet),
+			"upstream_node_ids": release.InSetUpstreams(topo, id, inSet),
 		})
 	}
 	return out
@@ -302,12 +301,13 @@ func unionSorted(a, b []string) []string {
 	return out
 }
 
-// rejectNewCrossServiceUpstream transitions the release to Rejected and emits
-// release.rejected:v1 naming the offending edge(s), advising the operator to
-// split the work into ordered releases (land the upstream first).
-func rejectNewCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
+// rejectUnbuildableCrossServiceUpstream transitions the release to Rejected and
+// emits release.rejected:v1 naming the offending edge(s) — upstreams that are
+// referenced by a changed node but absent from the candidate topology and
+// therefore cannot be built into the candidate schema.
+func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
 	detail := formatCrossServiceEdges(edges)
-	if err := r.TransitionToRejected("new_cross_service_upstream", nil, now); err != nil {
+	if err := r.TransitionToRejected("unbuildable_cross_service_upstream", nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
@@ -315,7 +315,7 @@ func rejectNewCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWor
 	}
 	payload, err := json.Marshal(map[string]string{
 		"release_id":   releaseID,
-		"reason":       "new_cross_service_upstream",
+		"reason":       "unbuildable_cross_service_upstream",
 		"error_class":  "validation_unsupported",
 		"error_detail": detail,
 	})
@@ -340,18 +340,18 @@ func rejectNewCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWor
 	}
 	// Parse phase succeeded; the release is rejected at validation-policy level, not parse level.
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
-	d.Telemetry.ReleaseRejected(ctx, releaseID, "new_cross_service_upstream", nil)
+	d.Telemetry.ReleaseRejected(ctx, releaseID, "unbuildable_cross_service_upstream", nil)
 	return nil
 }
 
 // formatCrossServiceEdges renders offending edges as a human-readable string
 // listing each node->upstream pair separated by commas, followed by an
-// actionable hint to split the work into ordered releases.
+// actionable hint naming the missing producing model.
 func formatCrossServiceEdges(edges []release.CrossServiceEdge) string {
 	parts := make([]string, 0, len(edges))
 	for _, e := range edges {
 		parts = append(parts, e.Node+"->"+e.Upstream)
 	}
 	return strings.Join(parts, ", ") +
-		"; split into ordered releases (land the new cross-service upstream first)"
+		"; upstream is not produced by any service in this release — add the producing model"
 }

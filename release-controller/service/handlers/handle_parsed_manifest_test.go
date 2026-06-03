@@ -316,18 +316,20 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 	assert.Equal(t, "rA", cp.ReleaseID(), "current prod advanced to this release")
 }
 
-// TestHandleParseOK_RejectsNewCrossServiceUpstream verifies that a candidate
-// where a changed node gains a NEW cross-service upstream (absent from prod)
-// is rejected early with reason "new_cross_service_upstream" and no
-// validation.requested:v1 event is emitted.
-func TestHandleParseOK_RejectsNewCrossServiceUpstream(t *testing.T) {
-	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
+// TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream verifies that a
+// candidate where a changed node references an upstream that is absent from the
+// candidate topology entirely is rejected early with reason
+// "unbuildable_cross_service_upstream" and no validation.requested:v1 event is
+// emitted. A cross-service upstream that IS present in the candidate topology
+// is buildable and must NOT trigger rejection.
+func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
-	// Prod is empty (bootstrap), so any cross-service upstream is new.
-	// Candidate: a2 (svcA) is changed (new node) with upstream b_new (svcB).
+	// Candidate: a2 (svc-a) is a new node with an upstream "ghost_upstream" that
+	// does not appear anywhere in the candidate topology — a dangling reference
+	// that cannot be built into the candidate schema.
 	topo := release.Topology{
-		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"b_new"}},
-		{UniqueID: "b_new", ServiceName: "svc-b", ContentHash: "h_b_new"},
+		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"ghost_upstream"}},
 	}
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
@@ -339,7 +341,7 @@ func TestHandleParseOK_RejectsNewCrossServiceUpstream(t *testing.T) {
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
 	assert.Equal(t, release.StatusRejected, r.Status(), "release must be Rejected")
-	assert.Equal(t, "new_cross_service_upstream", r.RejectReason())
+	assert.Equal(t, "unbuildable_cross_service_upstream", r.RejectReason())
 
 	entries := outboxEntries(store)
 	var rejectedEntry *pkgoutbox.Entry
@@ -353,8 +355,55 @@ func TestHandleParseOK_RejectsNewCrossServiceUpstream(t *testing.T) {
 
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal(rejectedEntry.Payload, &payload))
-	assert.Equal(t, "new_cross_service_upstream", payload["reason"])
+	assert.Equal(t, "unbuildable_cross_service_upstream", payload["reason"])
 	assert.Equal(t, "rA", payload["release_id"])
+}
+
+// TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes verifies that a
+// changed node with a cross-service upstream that IS present in the candidate
+// topology is NOT rejected. Under self-contained validation the upstream is
+// built into the candidate schema, so the reference is resolvable.
+func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
+
+	// a2 (svc-a) is new and depends on b_up (svc-b). b_up is present in the
+	// candidate topology — it is buildable and must not cause a rejection.
+	topo := release.Topology{
+		{UniqueID: "b_up", ServiceName: "svc-b", ContentHash: "h_b"},
+		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"b_up"}},
+	}
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	})
+	require.NoError(t, err)
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusValidating, r.Status(), "cross-service upstream present in candidate must transition to Validating")
+
+	// The full ancestor closure must include b_up (cross-service upstream of the changed a2).
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, "a2", "changed node is in validation set")
+	assert.Contains(t, validIDs, "b_up", "cross-service upstream pulled into validation closure")
+
+	// validation.requested:v1 must be emitted (not rejected), with b_up listed as
+	// upstream_node_ids for a2.
+	entry := findEntry(t, store, streams.ValidationRequestedV1)
+	var rawPayload map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry.Payload, &rawPayload))
+	var nodes []struct {
+		UniqueID        string   `json:"unique_id"`
+		UpstreamNodeIDs []string `json:"upstream_node_ids"`
+	}
+	require.NoError(t, json.Unmarshal(rawPayload["nodes"], &nodes))
+	byID := map[string][]string{}
+	for _, n := range nodes {
+		byID[n.UniqueID] = n.UpstreamNodeIDs
+	}
+	assert.Equal(t, []string{"b_up"}, byID["a2"], "a2's upstream_node_ids carries cross-service b_up")
+	assert.Empty(t, byID["b_up"], "b_up has no in-set upstreams")
 }
 
 // TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI verifies that the
@@ -396,7 +445,7 @@ func TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI(t *testing.T) {
 		byID[n.UniqueID] = n.UpstreamNodeIDs
 	}
 
-	assert.Empty(t, byID["a1"], "a1 has no in-set intra-service upstreams")
+	assert.Empty(t, byID["a1"], "a1 has no in-set upstreams")
 	assert.Equal(t, []string{"a1"}, byID["a2"], "a2 must carry a1 as its in-set upstream")
 }
 
@@ -424,16 +473,18 @@ func TestHandleParseOK_UnknownRelease_DropsWithoutPanic(t *testing.T) {
 }
 
 func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
-	// Two-service topology with the cross-service upstream already present in
-	// prod so NewCrossServiceUpstreams does not fire. This tests that image tags
-	// from the Release are joined into the stored candidate topology correctly.
+	// Two-service topology with all upstreams present in the candidate topology
+	// (no dangling references). This tests that image tags from the Release are
+	// joined into the stored candidate topology correctly.
 	imageTags := map[string]string{
 		"svc-a": "tag-alpha",
 		"svc-b": "tag-beta",
 	}
 	deps, store := seedToParsing(t, "rA", imageTags)
 
-	// Seed prod containing "a" so "b->a" is not a NEW cross-service upstream.
+	// Seed prod with "a" (unchanged hash) so "a" is not in the changed set; "b"
+	// is the only changed node and its upstream "a" is present in the candidate
+	// topology, so no unbuildable-upstream rejection fires.
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 	}, time.Unix(50, 0).UTC()))
@@ -468,7 +519,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "b", ServiceName: "svc-b", UpstreamUniqueIDs: []string{"a"}}, // NEW cross-service upstream vs empty prod
+		{UniqueID: "b", ServiceName: "svc-b", UpstreamUniqueIDs: []string{"a"}}, // cross-service upstream — bootstrap bypasses all guards
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rBoot",
