@@ -13,7 +13,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// NodeResult carries the per-node outcome of a dbt validation run.
+// NodeResult is the wire-input counterpart of the domain value object
+// release.NodeValidationResult. It is intentionally kept separate (rather than
+// reusing the domain type) so the inbound transport shape stays decoupled from
+// the domain: the handler maps NodeResult → release.NodeValidationResult before
+// recording it on the aggregate. The outbox payload (perNodeEntry) is likewise a
+// distinct boundary DTO that deliberately omits duration_ms.
 type NodeResult struct {
 	NodeID     string `json:"node_id"`
 	Status     string `json:"status"` // "ok" or "failed"

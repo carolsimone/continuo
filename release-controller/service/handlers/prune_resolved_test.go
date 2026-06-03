@@ -34,7 +34,9 @@ func TestPruneResolvedReleases_PassesCutoffAndKeepID(t *testing.T) {
 		return u
 	}
 
-	n, err := handlers.PruneResolvedReleases(context.Background(), deps, 90, now)
+	// now is supplied via deps' fakeClock (set by newDeps), so the handler
+	// derives the cutoff from d.Clock.Now() rather than a caller-supplied time.
+	n, err := handlers.PruneResolvedReleases(context.Background(), deps, 90)
 	require.NoError(t, err)
 	require.NotNil(t, captured, "NewUoW factory was never called")
 	assert.Equal(t, 3, n)

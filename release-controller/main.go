@@ -111,7 +111,7 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				n, err := handlers.PruneResolvedReleases(ctx, deps, retentionDays, time.Now().UTC())
+				n, err := handlers.PruneResolvedReleases(ctx, deps, retentionDays)
 				if err != nil {
 					logger.Error("retention prune failed", "error", err)
 					continue

@@ -3,14 +3,14 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"time"
 )
 
 // PruneResolvedReleases deletes terminal releases older than retentionDays,
 // never the current_prod release. Returns the number deleted. Runs in its own
-// transaction.
-func PruneResolvedReleases(ctx context.Context, d *Deps, retentionDays int, now time.Time) (int, error) {
-	cutoff := now.AddDate(0, 0, -retentionDays)
+// transaction. The cutoff is taken from the injected Clock so the time source
+// stays consistent with the other handlers and is deterministic under test.
+func PruneResolvedReleases(ctx context.Context, d *Deps, retentionDays int) (int, error) {
+	cutoff := d.Clock.Now().AddDate(0, 0, -retentionDays)
 
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
