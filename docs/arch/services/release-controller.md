@@ -72,10 +72,10 @@ status=ok:
        emit release.promoted:v1); advance queue, return
   load current_prod.topology_snapshot
   derive changed = candidate nodes whose content_hash differs from prod, or are new
-  for each changed node: if any of its direct upstreams is absent from the candidate topology:
-      Reject(reason=unbuildable_cross_service_upstream), emit release.rejected:v1, advance queue, return
-  inSet = DescendantsClosure(candidate, changed) ∪ AncestorsClosure(cross-service, inSet)
+  inSet = DescendantsClosure(candidate, changed) ∪ FullAncestorsClosure(candidate, that)
           # changed + their downstream + full transitive upstream closure across service boundaries
+  for each inSet node: if any of its direct upstreams is absent from the candidate topology:
+      Reject(reason=unbuildable_cross_service_upstream), emit release.rejected:v1, advance queue, return
   for each inSet node: upstream_node_ids = inSet ∩ direct upstreams of node (intra- and cross-service)
   if inSet is empty:
       promote directly (nothing to validate trivially passes the gate):

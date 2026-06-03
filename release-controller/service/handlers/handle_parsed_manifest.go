@@ -120,19 +120,20 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	// node is treated as new and the whole topology is validated.
 	changed := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
 
-	// A changed node referencing an upstream absent from the candidate topology
-	// cannot be built into the candidate schema. Reject early with a clear,
-	// actionable message rather than letting dbt fail cryptically mid-run.
-	if edges := release.UnbuildableCrossServiceUpstreams(topo, changed); len(edges) > 0 {
-		return rejectUnbuildableCrossServiceUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
-	}
-
 	// Validate the changed-and-downstream closure plus the FULL transitive
 	// upstream closure (across service boundaries) so every node's refs — intra-
 	// service ref()s and cross-service {{ xschema() }} refs alike — resolve inside
 	// the candidate schema. Upstreams build --empty first; the executor gates on them.
 	changedClosure := release.DescendantsClosure(topo, changed)
 	validationIDs := unionSorted(changedClosure, release.FullAncestorsClosure(topo, changedClosure))
+
+	// Every node in the validation build set must have all its upstreams present
+	// in the candidate topology; an upstream absent from it cannot be built into
+	// the candidate schema and would fail the dbt --empty run with a missing
+	// relation. Reject early with a clear, actionable message instead.
+	if edges := release.UnbuildableCrossServiceUpstreams(topo, validationIDs); len(edges) > 0 {
+		return rejectUnbuildableCrossServiceUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
+	}
 
 	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to validating: %w", err)

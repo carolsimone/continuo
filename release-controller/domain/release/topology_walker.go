@@ -177,19 +177,21 @@ type CrossServiceEdge struct {
 	Upstream string
 }
 
-// UnbuildableCrossServiceUpstreams returns, for every changed node, each
+// UnbuildableCrossServiceUpstreams returns, for every node in nodeIDs, each
 // upstream edge whose target is absent from the CANDIDATE topology — a dangling
 // reference that cannot be built into the candidate schema and would make the
-// dependent's SQL fail. Under self-contained validation every in-topology
-// upstream (intra- or cross-service) is built in the candidate schema, so only
-// truly unknown upstreams are flagged. Output is sorted (node, upstream).
-func UnbuildableCrossServiceUpstreams(candidate Topology, changed []string) []CrossServiceEdge {
+// dependent's SQL fail. Pass the full validation build set: any node that will
+// run a candidate --empty job must have all its upstreams present. Under
+// self-contained validation every in-topology upstream (intra- or cross-service)
+// is built in the candidate schema, so only truly unknown upstreams are flagged.
+// Output is sorted (node, upstream).
+func UnbuildableCrossServiceUpstreams(candidate Topology, nodeIDs []string) []CrossServiceEdge {
 	byID := make(map[string]Node, len(candidate))
 	for _, n := range candidate {
 		byID[n.UniqueID] = n
 	}
 	var out []CrossServiceEdge
-	for _, id := range changed {
+	for _, id := range nodeIDs {
 		n, ok := byID[id]
 		if !ok {
 			continue

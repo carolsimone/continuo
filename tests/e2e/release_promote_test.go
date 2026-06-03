@@ -371,8 +371,9 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 		copyS3Object(t, ctx, clients, key, dst)
 	}
 
-	// Empty current_prod: a non-bootstrap release of this cross-service topology
-	// would be rejected (new_cross_service_upstream). Reset the queue and clear
+	// Empty current_prod: a non-bootstrap release would treat every node as
+	// changed and validate the whole topology (including the deliberately-broken
+	// failure-path fixtures), so it could not promote. Reset the queue and clear
 	// the current_prod row so this is a true from-scratch bootstrap.
 	resetReleaseControllerQueue(t, ctx, clients)
 	_, err := clients.releaseDB.ExecContext(ctx, "DELETE FROM current_prod")

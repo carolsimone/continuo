@@ -359,6 +359,39 @@ func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 	assert.Equal(t, "rA", payload["release_id"])
 }
 
+// TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode proves the guard
+// covers the WHOLE validation build set, not just the changed seeds. A
+// non-changed downstream node dragged into the closure, whose own upstream is
+// absent from the candidate topology, must reject the release early rather than
+// fail its dbt --empty job at runtime on a missing relation.
+func TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+
+	// Seed prod with c2 (unchanged hash) so only c1 is in the changed set. c2 is a
+	// downstream of c1 (so it is pulled into the validation closure), and c2
+	// references "ghost_upstream", which is absent from the candidate topology.
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
+		{UniqueID: "c2", ServiceName: "svc-a", ContentHash: "h_c2"},
+	}, time.Unix(50, 0).UTC()))
+
+	topo := release.Topology{
+		{UniqueID: "c1", ServiceName: "svc-a", ContentHash: "h_c1_new"},
+		{UniqueID: "c2", ServiceName: "svc-a", ContentHash: "h_c2", UpstreamUniqueIDs: []string{"c1", "ghost_upstream"}},
+	}
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	})
+	require.NoError(t, err)
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status(),
+		"a downstream node with an unbuildable upstream must reject the whole release")
+	assert.Equal(t, "unbuildable_cross_service_upstream", r.RejectReason())
+}
+
 // TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes verifies that a
 // changed node with a cross-service upstream that IS present in the candidate
 // topology is NOT rejected. Under self-contained validation the upstream is
