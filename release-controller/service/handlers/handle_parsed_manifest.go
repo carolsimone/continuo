@@ -60,7 +60,7 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 }
 
 func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
-	if err := r.TransitionToRejected("parse_failed", nil, "", now); err != nil {
+	if err := r.TransitionToRejected("parse_failed", nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
@@ -307,7 +307,7 @@ func unionSorted(a, b []string) []string {
 // split the work into ordered releases (land the upstream first).
 func rejectNewCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
 	detail := formatCrossServiceEdges(edges)
-	if err := r.TransitionToRejected("new_cross_service_upstream", nil, "", now); err != nil {
+	if err := r.TransitionToRejected("new_cross_service_upstream", nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {

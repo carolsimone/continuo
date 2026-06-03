@@ -161,6 +161,7 @@ services:
     env:
       PORT: "8090"
       NODE_ENV: production
+      RELEASE_CONTROLLER_URL: http://release-controller:8088
     volumeMounts:
       - name: cancel-config
         mountPath: /app/config

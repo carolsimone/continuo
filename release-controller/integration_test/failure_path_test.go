@@ -42,6 +42,17 @@ func TestIntegration_FailedValidationKeepsCurrentProdUnchanged(t *testing.T) {
 	r, _ := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rFAIL")
 	assert.Equal(t, release.StatusRejected, r.Status())
 
+	require.Len(t, r.PerNodeResults(), 2)
+	var bResult release.NodeValidationResult
+	for _, n := range r.PerNodeResults() {
+		if n.NodeID == "b" {
+			bResult = n
+		}
+	}
+	assert.Equal(t, "failed", bResult.Status)
+	assert.Equal(t, "s3://logs/b", bResult.DBTLogURI)
+	assert.Zero(t, bResult.DurationMS)
+
 	cp, _ := deps.NewUoW().CurrentProdRepo().Get(context.Background())
 	assert.Empty(t, cp.ReleaseID(), "current_prod must remain unchanged on validation failure")
 }

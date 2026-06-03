@@ -13,7 +13,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// NodeResult carries the per-node outcome of a dbt validation run.
+// NodeResult is the wire-input counterpart of the domain value object
+// release.NodeValidationResult. It is intentionally kept separate (rather than
+// reusing the domain type) so the inbound transport shape stays decoupled from
+// the domain: the handler maps NodeResult → release.NodeValidationResult before
+// recording it on the aggregate. The outbox payload (perNodeEntry) is likewise a
+// distinct boundary DTO that deliberately omits duration_ms.
 type NodeResult struct {
 	NodeID     string `json:"node_id"`
 	Status     string `json:"status"` // "ok" or "failed"
@@ -57,6 +62,17 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	}
 
 	now := d.Clock.Now()
+
+	results := make([]release.NodeValidationResult, len(in.PerNodeResults))
+	for i, n := range in.PerNodeResults {
+		results[i] = release.NodeValidationResult{
+			NodeID:     n.NodeID,
+			Status:     n.Status,
+			DBTLogURI:  n.DBTLogURI,
+			DurationMS: n.DurationMS,
+		}
+	}
+	r.RecordValidationResults(results)
 
 	seen := map[string]string{}
 	for _, n := range in.PerNodeResults {
@@ -154,7 +170,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	combined := append([]string{}, failing...)
 	combined = append(combined, missing...)
 
-	if err := r.TransitionToRejected("validation_failed", combined, "", now); err != nil {
+	if err := r.TransitionToRejected("validation_failed", combined, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {

@@ -21,6 +21,15 @@ type Transition struct {
 	At time.Time `json:"at"`
 }
 
+// NodeValidationResult is the persisted per-node outcome of a candidate's dbt
+// validation run. It is recorded for both the promote and reject paths.
+type NodeValidationResult struct {
+	NodeID     string `json:"node_id"`
+	Status     string `json:"status"` // "ok" | "failed"
+	DBTLogURI  string `json:"dbt_log_uri,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+}
+
 type Topology []Node
 
 type Node struct {
@@ -42,10 +51,9 @@ type Release struct {
 	manifestsURI        string
 	candidateTopology   Topology
 	validationNodeIDs   []string
-	perNodeResults      map[string]string
+	perNodeResults      []NodeValidationResult
 	rejectReason        string
 	failingNodes        []string
-	dbtLogsURI          string
 	createdAt           time.Time
 	parsingStartedAt    *time.Time
 	validatingStartedAt *time.Time
@@ -66,18 +74,24 @@ func New(id string, imageTags map[string]string, manifestsURI string, bootstrap 
 	}
 }
 
-func (r *Release) ID() string                   { return r.id }
-func (r *Release) Status() Status               { return r.status }
-func (r *Release) ImageTags() map[string]string { return r.imageTags }
-func (r *Release) ManifestsURI() string         { return r.manifestsURI }
-func (r *Release) IsBootstrap() bool            { return r.bootstrap }
-func (r *Release) CandidateTopology() Topology  { return r.candidateTopology }
-func (r *Release) ValidationNodeIDs() []string  { return r.validationNodeIDs }
-func (r *Release) RejectReason() string         { return r.rejectReason }
-func (r *Release) FailingNodes() []string       { return r.failingNodes }
-func (r *Release) DBTLogsURI() string           { return r.dbtLogsURI }
-func (r *Release) CreatedAt() time.Time         { return r.createdAt }
-func (r *Release) Transitions() []Transition    { return r.transitions }
+func (r *Release) ID() string                             { return r.id }
+func (r *Release) Status() Status                         { return r.status }
+func (r *Release) ImageTags() map[string]string           { return r.imageTags }
+func (r *Release) ManifestsURI() string                   { return r.manifestsURI }
+func (r *Release) IsBootstrap() bool                      { return r.bootstrap }
+func (r *Release) CandidateTopology() Topology            { return r.candidateTopology }
+func (r *Release) ValidationNodeIDs() []string            { return r.validationNodeIDs }
+func (r *Release) RejectReason() string                   { return r.rejectReason }
+func (r *Release) FailingNodes() []string                 { return r.failingNodes }
+func (r *Release) PerNodeResults() []NodeValidationResult { return r.perNodeResults }
+func (r *Release) CreatedAt() time.Time                   { return r.createdAt }
+func (r *Release) Transitions() []Transition              { return r.transitions }
+
+// RecordValidationResults stores the per-node validation outcomes on the
+// aggregate. Called before the promote/reject branch so both paths persist them.
+func (r *Release) RecordValidationResults(results []NodeValidationResult) {
+	r.perNodeResults = results
+}
 
 func (r *Release) TransitionToParsing(now time.Time) error {
 	if r.status != StatusReceived {
@@ -111,14 +125,13 @@ func (r *Release) TransitionToPromoted(now time.Time) error {
 	return nil
 }
 
-func (r *Release) TransitionToRejected(reason string, failingNodes []string, dbtLogsURI string, now time.Time) error {
+func (r *Release) TransitionToRejected(reason string, failingNodes []string, now time.Time) error {
 	if r.status != StatusReceived && r.status != StatusParsing && r.status != StatusValidating {
 		return fmt.Errorf("cannot transition to rejected from %s", r.status)
 	}
 	r.status = StatusRejected
 	r.rejectReason = reason
 	r.failingNodes = failingNodes
-	r.dbtLogsURI = dbtLogsURI
 	r.resolvedAt = &now
 	r.transitions = append(r.transitions, Transition{To: StatusRejected, At: now})
 	return nil
@@ -133,9 +146,9 @@ type RehydrateInput struct {
 	ManifestsURI      string
 	CandidateTopology Topology
 	ValidationNodeIDs []string
+	PerNodeResults    []NodeValidationResult
 	RejectReason      string
 	FailingNodes      []string
-	DBTLogsURI        string
 	CreatedAt         time.Time
 	Transitions       []Transition
 	Bootstrap         bool
@@ -151,9 +164,9 @@ func Rehydrate(in RehydrateInput) *Release {
 		manifestsURI:      in.ManifestsURI,
 		candidateTopology: in.CandidateTopology,
 		validationNodeIDs: in.ValidationNodeIDs,
+		perNodeResults:    in.PerNodeResults,
 		rejectReason:      in.RejectReason,
 		failingNodes:      in.FailingNodes,
-		dbtLogsURI:        in.DBTLogsURI,
 		createdAt:         in.CreatedAt,
 		transitions:       in.Transitions,
 		bootstrap:         in.Bootstrap,
