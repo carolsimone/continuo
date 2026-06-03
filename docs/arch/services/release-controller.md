@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`release-controller` owns the dbt blue/green candidate-release lifecycle: it gates every candidate behind a `dbt --empty` validation against the changed-and-downstream models and only swaps production (topology, schedules, image tags) when validation passes. It holds the `current_prod` pointer — the single source of truth for what is live — and orchestrates the release state machine across manifest-controller, executor-controller, and orchestrator via Redis streams.
+`release-controller` owns the dbt blue/green candidate-release lifecycle: it gates every candidate behind a `dbt --empty` validation against the changed nodes, their downstream descendants, and their full transitive upstream closure across service boundaries — making every validation self-contained — and only swaps production (topology, schedules, image tags) when validation passes. It holds the `current_prod` pointer — the single source of truth for what is live — and orchestrates the release state machine across manifest-controller, executor-controller, and orchestrator via Redis streams.
 
 **Runtime**: Go service. Exposes an HTTP API and consumes/produces Redis streams; persists to its own Postgres database via a transactional outbox.
 
@@ -72,21 +72,21 @@ status=ok:
        emit release.promoted:v1); advance queue, return
   load current_prod.topology_snapshot
   derive changed = candidate nodes whose content_hash differs from prod, or are new
-  for each changed node: if it has a new cross-service upstream absent from current_prod:
-      Reject(reason=new_cross_service_upstream), emit release.rejected:v1, advance queue, return
-  inSet = DescendantsClosure(candidate, changed) ∪ AncestorsClosure(intra-service, inSet)
-          # changed + their downstream + transitive intra-service ancestors of each in-set node
-  for each inSet node: upstream_node_ids = inSet ∩ same-service direct upstreams of node
+  for each changed node: if any of its direct upstreams is absent from the candidate topology:
+      Reject(reason=unbuildable_cross_service_upstream), emit release.rejected:v1, advance queue, return
+  inSet = DescendantsClosure(candidate, changed) ∪ AncestorsClosure(cross-service, inSet)
+          # changed + their downstream + full transitive upstream closure across service boundaries
+  for each inSet node: upstream_node_ids = inSet ∩ direct upstreams of node (intra- and cross-service)
   if inSet is empty:
       promote directly (nothing to validate trivially passes the gate):
         update current_prod, transition to Promoted, emit release.promoted:v1
   else:
       transition to Validating, emit validation.requested:v1
         (mode=validation, candidate_schema=_candidate_<release_id>,
-         nodes carry upstream_node_ids)
+         nodes carry upstream_node_ids = all in-set upstreams, intra- and cross-service)
   advance queue
 ```
-A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`, where normal validation would reject every cross-service upstream as new. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.
+A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.
 
 ### On `validation.completed:v1`
 ```
