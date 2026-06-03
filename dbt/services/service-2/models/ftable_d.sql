@@ -1,2 +1,2 @@
 {{ config(materialized='table') }}
-SELECT id FROM e2e_schema.ftable_c
+SELECT id FROM {{ xschema() }}.ftable_c
