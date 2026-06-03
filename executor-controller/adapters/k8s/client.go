@@ -271,7 +271,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
-		// Redirect cross-service input reads ({{ xschema() }}) to the candidate
+		// Redirect cross-service input reads ({{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}) to the candidate
 		// schema so the dependent validates against this release's upstreams, not
 		// prod's. Unset on the prod query path, where reads resolve to target.schema.
 		{Name: "DBT_UPSTREAM_SCHEMA", Value: p.CandidateSchema},

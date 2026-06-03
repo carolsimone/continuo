@@ -1,2 +1,2 @@
 {{ config(materialized='table') }}
-SELECT id FROM {{ xschema() }}.ftable_g
+SELECT id FROM {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}.ftable_g

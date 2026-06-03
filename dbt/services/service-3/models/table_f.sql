@@ -1,2 +1,2 @@
 {{ config(materialized='table') }}
-SELECT * FROM {{ xschema() }}.table_a JOIN {{ xschema() }}.table_c USING (id)
+SELECT * FROM {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}.table_a JOIN {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}.table_c USING (id)

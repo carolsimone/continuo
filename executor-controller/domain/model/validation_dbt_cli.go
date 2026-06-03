@@ -14,8 +14,8 @@ import (
 // the generate_schema_name macro). Intra-service ref()s resolve inside the
 // candidate schema — upstream candidate tables are built first by continuo's
 // topologically-gated dispatch — so dbt is never asked to --defer to a prior
-// manifest. Cross-service refs use the {{ xschema() }} macro, which the executor
-// redirects to the candidate schema via DBT_UPSTREAM_SCHEMA, so they too resolve
+// manifest. Cross-service refs read from {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}, which the executor
+// sets to the candidate schema via DBT_UPSTREAM_SCHEMA, so they too resolve
 // against the in-flight candidate build.
 func ValidationDbtCommand(nt pkg_model.NodeType, tableName string) []string {
 	base := nt.Command(tableName) // shares the prod verb mapping

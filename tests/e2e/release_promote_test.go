@@ -139,7 +139,7 @@ const (
 )
 
 // xprobeUp / xprobeDown are a CLEAN cross-service chain used by the self-contained
-// validation test: xprobe_down (service-2) reads `FROM {{ xschema() }}.xprobe_up`,
+// validation test: xprobe_down (service-2) reads `FROM {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}.xprobe_up`,
 // and xprobe_up lives in service-3 — so manifest-controller resolves xprobe_down's
 // upstream to a different-service node. Neither has any broken or downstream model,
 // so the full closure is exactly the pair.
@@ -243,7 +243,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 // validation: a changed node whose upstream lives in ANOTHER service and is NOT
 // materialized in prod still validates, because the upstream is built into the
 // candidate schema first (cross-service topological gating) and the dependent's
-// {{ xschema() }} ref is redirected there via DBT_UPSTREAM_SCHEMA. The release
+// {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }} ref is redirected there via DBT_UPSTREAM_SCHEMA. The release
 // then promotes and the candidate schema is torn down.
 //
 // current_prod is seeded with every candidate node EXCEPT the xprobe pair, so the
