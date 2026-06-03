@@ -138,15 +138,14 @@ const (
 	probeDownUniqueID = "e2e_schema.rel_probe_down"
 )
 
-// ftableD / ftableC are an existing cross-service edge used by the rejection
-// test: ftable_d (service-2) reads raw `FROM e2e_schema.ftable_c`, and ftable_c
-// lives in service-3 — so manifest-controller resolves ftable_d's upstream to a
-// different-service node. Seeding current_prod WITHOUT ftable_c makes ftable_c a
-// NEW cross-service upstream of the changed ftable_d, which the release-controller
-// must reject early with reason new_cross_service_upstream.
+// xprobeUp / xprobeDown are a CLEAN cross-service chain used by the self-contained
+// validation test: xprobe_down (service-2) reads `FROM {{ xschema() }}.xprobe_up`,
+// and xprobe_up lives in service-3 — so manifest-controller resolves xprobe_down's
+// upstream to a different-service node. Neither has any broken or downstream model,
+// so the full closure is exactly the pair.
 const (
-	ftableDUniqueID = "e2e_schema.ftable_d"
-	ftableCUniqueID = "e2e_schema.ftable_c"
+	xprobeUpUniqueID   = "e2e_schema.xprobe_up"
+	xprobeDownUniqueID = "e2e_schema.xprobe_down"
 )
 
 // TestE2E_ReleasePromote_GatedIntraServiceUpstream proves that when a changed
@@ -240,20 +239,22 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 	t.Log("✅ gated intra-service upstream validated, release promoted, topology swapped, candidate schema dropped")
 }
 
-// TestE2E_ReleaseReject_NewCrossServiceUpstream proves that a changed node whose
-// cross-service upstream is NOT in prod causes the release to be rejected early
-// with reason new_cross_service_upstream and NO validation jobs dispatched.
+// TestE2E_ReleasePromote_GatedCrossServiceUpstream proves self-contained
+// validation: a changed node whose upstream lives in ANOTHER service and is NOT
+// materialized in prod still validates, because the upstream is built into the
+// candidate schema first (cross-service topological gating) and the dependent's
+// {{ xschema() }} ref is redirected there via DBT_UPSTREAM_SCHEMA. The release
+// then promotes and the candidate schema is torn down.
 //
-// ftable_d (service-2) reads raw `FROM e2e_schema.ftable_c`, and ftable_c lives
-// in service-3. Seeding current_prod with every candidate node EXCEPT ftable_d
-// and ftable_c makes ftable_d a changed node with a new cross-service upstream
-// ftable_c (absent from prod) — the exact reject condition.
-func TestE2E_ReleaseReject_NewCrossServiceUpstream(t *testing.T) {
+// current_prod is seeded with every candidate node EXCEPT the xprobe pair, so the
+// derived changed set is exactly {xprobe_up, xprobe_down} with the cross-service
+// gating edge xprobe_down -> xprobe_up.
+func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -267,8 +268,8 @@ func TestE2E_ReleaseReject_NewCrossServiceUpstream(t *testing.T) {
 	t.Logf("release_id=%s", releaseID)
 
 	excluded := map[string]bool{
-		ftableDUniqueID: true,
-		ftableCUniqueID: true,
+		xprobeUpUniqueID:   true,
+		xprobeDownUniqueID: true,
 	}
 	manifestKeys := listLatestManifestKeys(t, ctx, clients)
 	require.NotEmpty(t, manifestKeys,
@@ -276,18 +277,18 @@ func TestE2E_ReleaseReject_NewCrossServiceUpstream(t *testing.T) {
 
 	var prodNodes []map[string]string
 	imageTags := map[string]string{}
-	var dFound, cFound bool
+	var upFound, downFound bool
 	for service, key := range manifestKeys {
 		imageTags[service] = readServiceImageTag(t, ctx, clients, service)
 		for _, n := range parseManifestNodes(t, getS3Object(t, ctx, clients, key)) {
 			switch n.uniqueID {
-			case ftableDUniqueID:
-				dFound = true
-			case ftableCUniqueID:
-				cFound = true
+			case xprobeUpUniqueID:
+				upFound = true
+			case xprobeDownUniqueID:
+				downFound = true
 			}
 			if excluded[n.uniqueID] {
-				continue // ftable_d changed; ftable_c absent → new cross-service upstream
+				continue
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
@@ -297,9 +298,11 @@ func TestE2E_ReleaseReject_NewCrossServiceUpstream(t *testing.T) {
 		dst := fmt.Sprintf("releases/%s/manifests/%s/manifest_v1.json", releaseID, service)
 		copyS3Object(t, ctx, clients, key, dst)
 	}
-	require.True(t, dFound, "ftable_d not found in any manifest")
-	require.True(t, cFound, "ftable_c not found in any manifest")
-	t.Logf("seeded prod snapshot with %d nodes (ftable_d + ftable_c excluded)", len(prodNodes))
+	require.True(t, upFound,
+		"xprobe_up not found in any manifest — is the model in service-3 and the image rebuilt + manifests re-uploaded?")
+	require.True(t, downFound,
+		"xprobe_down not found in any manifest — is the model in service-2 and the image rebuilt + manifests re-uploaded?")
+	t.Logf("seeded prod snapshot with %d nodes (xprobe pair excluded)", len(prodNodes))
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -307,13 +310,13 @@ func TestE2E_ReleaseReject_NewCrossServiceUpstream(t *testing.T) {
 	postRelease(t, clients, releaseID, imageTags,
 		fmt.Sprintf("s3://%s/releases/%s/manifests/", e2eS3Bucket, releaseID))
 
-	// The release must end rejected with the cross-service reason.
-	waitForReleaseRejected(t, ctx, clients, releaseID, "new_cross_service_upstream", 5*time.Minute)
+	assertValidationRequestedNodes(t, ctx, clients, releaseID,
+		[]string{xprobeUpUniqueID, xprobeDownUniqueID})
 
-	// And no validation Job may ever be dispatched for this release. The reject
-	// happens before any validation.requested:v1, so no validate-* Job is created.
-	assertNoValidationJobsDispatched(t, ctx, clients, releaseID)
-	t.Log("✅ new cross-service upstream rejected, no validation jobs dispatched")
+	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
+	waitForTopologySwap(t, ctx, clients, releaseID, xprobeDownUniqueID, 2*time.Minute)
+	assertCandidateSchemaDropped(t, ctx, clients, releaseID, 3*time.Minute)
+	t.Log("✅ gated CROSS-service upstream validated self-contained, promoted, candidate schema dropped")
 }
 
 // postReleaseBootstrap POSTs a release with bootstrap=true, which promotes
@@ -667,42 +670,6 @@ func waitForTopologySwap(t *testing.T, ctx context.Context, clients *testClients
 		return lastActive && lastNodeRel == releaseID, nil
 	}, fmt.Sprintf("timeout waiting for Neo4j topology swap to release %s "+
 		"(:Meta=%q, node %s active=%v release_id=%q)", releaseID, lastMeta, uniqueID, lastActive, lastNodeRel))
-}
-
-// waitForReleaseRejected polls GET /releases/{id} until the release reaches
-// "rejected" and asserts the recorded reject_reason matches wantReason. A
-// "promoted" status fails immediately (the release should never validate).
-func waitForReleaseRejected(t *testing.T, ctx context.Context, clients *testClients, releaseID, wantReason string, timeout time.Duration) {
-	t.Helper()
-	var gotReason string
-	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
-		resp, err := http.Get(fmt.Sprintf("%s/releases/%s", clients.releaseBase, releaseID))
-		if err != nil {
-			return false, nil
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return false, nil
-		}
-		body, _ := io.ReadAll(resp.Body)
-		var r struct {
-			Status       string `json:"status"`
-			RejectReason string `json:"reject_reason"`
-		}
-		if json.Unmarshal(body, &r) != nil {
-			return false, nil
-		}
-		switch r.Status {
-		case "rejected":
-			gotReason = r.RejectReason
-			return true, nil
-		case "promoted":
-			t.Fatalf("release %s promoted but should have been rejected (%s)", releaseID, wantReason)
-		}
-		return false, nil
-	}, fmt.Sprintf("timeout waiting for release %s to reach rejected", releaseID))
-	require.Equal(t, wantReason, gotReason,
-		"release %s rejected for the wrong reason", releaseID)
 }
 
 // assertCandidateSchemaDropped polls the dbt warehouse until the release's

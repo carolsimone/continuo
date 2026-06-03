@@ -27,3 +27,5 @@ models:
       +tags: ["e2e-schedule-failure"]
     ftable_g:
       +tags: ["e2e-schedule-failure"]
+    xprobe_up:
+      +tags: ["xprobe"]
