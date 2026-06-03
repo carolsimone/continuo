@@ -105,15 +105,14 @@ func DescendantsClosure(topo Topology, seeds []string) []string {
 	return out
 }
 
-// AncestorsClosure returns the union of the seed nodes and all their
-// transitive UPSTREAM ancestors that share the seed's service, deduplicated and
-// sorted topologically (upstreams before downstreams). The walk crosses only
-// intra-service edges: a cross-service upstream is not followed (cross-service
-// refs are raw schema-qualified SQL that read the prod schema, so they need not
-// be built into the candidate schema). Seeds absent from the topology are
-// ignored. Panics on a cycle — a data-integrity violation dbt rejects at
-// compile time.
-func AncestorsClosure(topo Topology, seeds []string) []string {
+// FullAncestorsClosure returns the union of the seed nodes and ALL their
+// transitive upstream ancestors — across service boundaries — deduplicated and
+// sorted topologically (upstreams before downstreams). Under self-contained
+// validation every upstream (intra- or cross-service) is built into the
+// candidate schema, so the walk follows every known edge. Seeds absent from the
+// topology are ignored. Panics on a cycle — a data-integrity violation dbt
+// rejects at compile time.
+func FullAncestorsClosure(topo Topology, seeds []string) []string {
 	byID := make(map[string]Node, len(topo))
 	parents := map[string][]string{}
 	for _, n := range topo {
@@ -121,9 +120,8 @@ func AncestorsClosure(topo Topology, seeds []string) []string {
 	}
 	for _, n := range topo {
 		for _, up := range n.UpstreamUniqueIDs {
-			upNode, ok := byID[up]
-			if !ok || upNode.ServiceName != n.ServiceName {
-				continue // cross-service or unknown edge: not an intra-service ancestor edge
+			if _, ok := byID[up]; !ok {
+				continue // unknown edge: not a buildable ancestor
 			}
 			parents[n.UniqueID] = append(parents[n.UniqueID], up)
 		}
@@ -149,12 +147,11 @@ func AncestorsClosure(topo Topology, seeds []string) []string {
 	return topoSortIncluded(byID, included)
 }
 
-// InSetIntraServiceUpstreams returns nodeID's upstreams that are BOTH in the
-// build-set and the same service — the gating edges that must succeed before
-// nodeID's candidate --empty run can resolve its ref()s. Cross-service edges
-// and out-of-set edges are excluded. Output is lexically sorted for
-// determinism.
-func InSetIntraServiceUpstreams(topo Topology, nodeID string, set map[string]bool) []string {
+// InSetUpstreams returns nodeID's upstreams that are in the build-set — the
+// gating edges (intra- AND cross-service) that must succeed before nodeID's
+// candidate --empty run can resolve its refs. Out-of-set edges are excluded.
+// Output is lexically sorted for determinism.
+func InSetUpstreams(topo Topology, nodeID string, set map[string]bool) []string {
 	byID := make(map[string]Node, len(topo))
 	for _, n := range topo {
 		byID[n.UniqueID] = n
@@ -165,8 +162,7 @@ func InSetIntraServiceUpstreams(topo Topology, nodeID string, set map[string]boo
 	}
 	var out []string
 	for _, up := range n.UpstreamUniqueIDs {
-		upNode, known := byID[up]
-		if !known || !set[up] || upNode.ServiceName != n.ServiceName {
+		if !set[up] {
 			continue
 		}
 		out = append(out, up)
@@ -181,20 +177,16 @@ type CrossServiceEdge struct {
 	Upstream string
 }
 
-// NewCrossServiceUpstreams returns, for every changed node, each cross-service
-// upstream that is absent from the prod topology — i.e. a NEW cross-service
-// dependency. Such a release cannot be validated (the dependent's raw
-// schema-qualified SQL reads the prod schema, where the upstream does not yet
-// exist) and must be rejected early. Output is sorted (node, upstream) for
-// determinism.
-func NewCrossServiceUpstreams(candidate, prod Topology, changed []string) []CrossServiceEdge {
+// UnbuildableCrossServiceUpstreams returns, for every changed node, each
+// upstream edge whose target is absent from the CANDIDATE topology — a dangling
+// reference that cannot be built into the candidate schema and would make the
+// dependent's SQL fail. Under self-contained validation every in-topology
+// upstream (intra- or cross-service) is built in the candidate schema, so only
+// truly unknown upstreams are flagged. Output is sorted (node, upstream).
+func UnbuildableCrossServiceUpstreams(candidate Topology, changed []string) []CrossServiceEdge {
 	byID := make(map[string]Node, len(candidate))
 	for _, n := range candidate {
 		byID[n.UniqueID] = n
-	}
-	inProd := make(map[string]bool, len(prod))
-	for _, n := range prod {
-		inProd[n.UniqueID] = true
 	}
 	var out []CrossServiceEdge
 	for _, id := range changed {
@@ -203,11 +195,7 @@ func NewCrossServiceUpstreams(candidate, prod Topology, changed []string) []Cros
 			continue
 		}
 		for _, up := range n.UpstreamUniqueIDs {
-			upNode, known := byID[up]
-			if !known || upNode.ServiceName == n.ServiceName {
-				continue // intra-service edges are built into the candidate schema
-			}
-			if !inProd[up] {
+			if _, known := byID[up]; !known {
 				out = append(out, CrossServiceEdge{Node: id, Upstream: up})
 			}
 		}
