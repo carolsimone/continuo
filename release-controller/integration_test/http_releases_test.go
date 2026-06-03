@@ -38,6 +38,32 @@ func TestIntegration_ListReleasesPaginated(t *testing.T) {
 	assert.NotEmpty(t, resp.NextCursor)
 }
 
+// TestIntegration_ListReleasesLimitFallback locks in the documented contract:
+// an unparseable, non-positive, or out-of-range limit is not a client error —
+// it falls back to the default page size rather than returning 400.
+func TestIntegration_ListReleasesLimitFallback(t *testing.T) {
+	srv, deps, db := setup(t)
+	defer db.Close()
+	ctx := context.Background()
+	for _, id := range []string{"rl1", "rl2", "rl3"} {
+		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
+			ReleaseID: id, ImageTags: map[string]string{"service-1": "t"}, ManifestsURI: "u",
+		}))
+	}
+	for _, limit := range []string{"abc", "0", "-1", "999"} {
+		req := httptest.NewRequest(http.MethodGet, "/releases?limit="+limit, nil)
+		w := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, "limit=%q should fall back, not 400", limit)
+
+		var resp struct {
+			Releases []map[string]any `json:"releases"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Releases, 3, "limit=%q should return the default page of all 3 seeded releases", limit)
+	}
+}
+
 func TestIntegration_GetReleaseIncludesPerNode(t *testing.T) {
 	srv, deps, db := setup(t)
 	defer db.Close()
