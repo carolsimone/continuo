@@ -15,9 +15,10 @@ import (
 // executor: the K8s Job name, the executor_deployments.node_id column, and
 // the (release_id, node_id) lookup key all derive from this value.
 //
-// UpstreamNodeIDs lists the dbt unique_ids of intra-service nodes that must
-// complete successfully before this node may be dispatched. An empty slice
-// means the node is a root and can be dispatched immediately.
+// UpstreamNodeIDs lists the dbt unique_ids of in-set nodes (intra- AND
+// cross-service) that must complete successfully before this node may be
+// dispatched. An empty slice means the node is a root and can be dispatched
+// immediately.
 type ValidationNode struct {
 	NodeID          string // dbt unique_id
 	ServiceName     string

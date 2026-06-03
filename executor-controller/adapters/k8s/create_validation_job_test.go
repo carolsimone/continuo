@@ -85,6 +85,8 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 // var (read by each service's generate_schema_name macro), not a CLI flag.
 // Dropping this env would silently route validation runs into the production
 // schema, so pin it here.
+// DBT_UPSTREAM_SCHEMA is also set so that cross-service {{ xschema() }} macro
+// calls redirect input reads to the candidate schema instead of prod.
 func TestCreateValidationJob_PassesCandidateSchemaViaEnv(t *testing.T) {
 	c := newValidationTestClient()
 	p := validationParams()
@@ -93,15 +95,12 @@ func TestCreateValidationJob_PassesCandidateSchemaViaEnv(t *testing.T) {
 
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
-	var got string
-	found := false
-	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
-		if e.Name == "DBT_TARGET_SCHEMA" {
-			got, found = e.Value, true
-		}
-	}
-	require.True(t, found, "validation job must set DBT_TARGET_SCHEMA")
-	assert.Equal(t, p.CandidateSchema, got)
+	spec := job.Spec.Template.Spec
+
+	require.NotEmpty(t, envByName(spec, "DBT_TARGET_SCHEMA"), "validation job must set DBT_TARGET_SCHEMA")
+	assert.Equal(t, p.CandidateSchema, envByName(spec, "DBT_TARGET_SCHEMA"))
+	assert.Equal(t, p.CandidateSchema, envByName(spec, "DBT_UPSTREAM_SCHEMA"),
+		"validation pod must redirect cross-service input reads to the candidate schema")
 }
 
 func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {
@@ -163,6 +162,15 @@ func TestCreateValidationJob_AnnotationsCarryRawIDsWhenLabelWouldSanitize(t *tes
 	assert.NotEqual(t, rawNodeID, job.Labels["node-id"])
 	assert.Equal(t, sanitizeK8sLabel(rawNodeID), job.Labels["node-id"])
 	assert.Equal(t, sanitizeK8sLabel(rawReleaseID), job.Labels["release-id"])
+}
+
+func envByName(spec corev1.PodSpec, name string) string {
+	for _, e := range spec.Containers[0].Env {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
 }
 
 func repeatStr(s string, n int) string {
