@@ -11,6 +11,7 @@ import os
 import sys
 
 import psycopg2
+from psycopg2 import errors as pg_errors
 from psycopg2 import sql
 
 
@@ -22,10 +23,28 @@ def _require(name: str) -> str:
     return value
 
 
+def _ensure_schema(cur, schema: str) -> None:
+    """Create the candidate schema, tolerating a concurrent create.
+
+    `CREATE SCHEMA IF NOT EXISTS` is not atomic under concurrency: root validation
+    nodes have no gating upstreams and dispatch in parallel, so several pods can
+    race this statement and raise DuplicateSchema / UniqueViolation on pg_namespace.
+    Either means the schema now exists, which is the desired outcome — swallow it.
+    (autocommit is on, so the failed statement leaves no aborted transaction.)
+    """
+    stmt = sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema))
+    print(f"-- executing:\n{stmt.as_string(cur.connection)}", flush=True)
+    try:
+        cur.execute(stmt)
+    except (pg_errors.DuplicateSchema, pg_errors.UniqueViolation):
+        print(f"-- schema {schema} already exists (concurrent create); continuing", flush=True)
+
+
 def main() -> None:
     schema = _require("DBT_TARGET_SCHEMA")
     table = _require("TABLE_NAME")
-    candidate_sql = _require("CANDIDATE_SQL")
+    # Strip any trailing terminator so it embeds cleanly inside CREATE TABLE AS (...).
+    candidate_sql = _require("CANDIDATE_SQL").strip().rstrip(";").strip()
 
     conn = psycopg2.connect(
         host=_require("DBT_POSTGRES_HOST"),
@@ -36,17 +55,19 @@ def main() -> None:
     )
     conn.autocommit = True
     try:
-        statements = (
-            sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)),
-            sql.SQL("DROP TABLE IF EXISTS {}.{}").format(sql.Identifier(schema), sql.Identifier(table)),
-            # CANDIDATE_SQL is the compiled model SELECT with schema refs rewritten to
-            # the candidate schema. WITH NO DATA validates structure against the empty
-            # upstreams built earlier, without scanning or loading any rows.
-            sql.SQL("CREATE TABLE {}.{} AS ({}) WITH NO DATA").format(
-                sql.Identifier(schema), sql.Identifier(table), sql.SQL(candidate_sql)
-            ),
-        )
         with conn.cursor() as cur:
+            _ensure_schema(cur, schema)
+            # CANDIDATE_SQL is the compiled model SELECT with schema refs rewritten to
+            # the candidate schema. WITH NO DATA validates that the SQL builds against
+            # the empty upstreams created earlier, without scanning or loading rows.
+            # (Every node is materialized as a table here regardless of its real
+            # materialization — validation checks the SELECT, not view/incremental behaviour.)
+            statements = (
+                sql.SQL("DROP TABLE IF EXISTS {}.{}").format(sql.Identifier(schema), sql.Identifier(table)),
+                sql.SQL("CREATE TABLE {}.{} AS ({}) WITH NO DATA").format(
+                    sql.Identifier(schema), sql.Identifier(table), sql.SQL(candidate_sql)
+                ),
+            )
             for stmt in statements:
                 print(f"-- executing:\n{stmt.as_string(conn)}", flush=True)
                 cur.execute(stmt)
