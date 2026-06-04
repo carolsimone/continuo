@@ -1,2 +1,2 @@
 {{ config(materialized='table') }}
-SELECT * FROM {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}.table_a JOIN {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}.table_b USING (id)
+SELECT * FROM e2e_schema.table_a JOIN e2e_schema.table_b USING (id)

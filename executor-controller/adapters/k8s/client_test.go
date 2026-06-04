@@ -97,14 +97,11 @@ func TestBuildPodSpec_RefusesEmptyImageTag(t *testing.T) {
 		"empty image_tag must wrap events.ErrPermanent so outbox processor classifies non-retryable")
 }
 
-// TestBuildPodSpec_NoSchemaRedirectEnv locks the load-bearing invariant that the
-// production query job carries NEITHER schema-redirect env var. DBT_TARGET_SCHEMA
-// (output) and DBT_UPSTREAM_SCHEMA (cross-service input) are validation-only; if
-// either leaked onto a prod job, models would read/write the candidate schema
-// instead of production. With both unset, generate_schema_name and the inline
-// env_var('DBT_UPSTREAM_SCHEMA', target.schema) cross-service refs resolve to the
-// production schema, leaving prod materialization byte-identical.
-func TestBuildPodSpec_NoSchemaRedirectEnv(t *testing.T) {
+// TestBuildPodSpec_NoCandidateSchemaEnv locks that the production query job does
+// not carry DBT_TARGET_SCHEMA: that env var routes a model's output to the
+// candidate schema and is validation-only. With it unset, generate_schema_name
+// resolves to the production schema, leaving prod materialization byte-identical.
+func TestBuildPodSpec_NoCandidateSchemaEnv(t *testing.T) {
 	spec, err := buildPodSpec(JobParams{
 		ServiceName: "service-1",
 		ImageTag:    "tag",
@@ -115,6 +112,4 @@ func TestBuildPodSpec_NoSchemaRedirectEnv(t *testing.T) {
 	require.Len(t, spec.Containers, 1)
 	assert.Empty(t, envByName(spec, "DBT_TARGET_SCHEMA"),
 		"prod query job must not set the candidate output schema")
-	assert.Empty(t, envByName(spec, "DBT_UPSTREAM_SCHEMA"),
-		"prod query job must not set the candidate input schema")
 }

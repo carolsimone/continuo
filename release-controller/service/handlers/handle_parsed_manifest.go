@@ -121,9 +121,10 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	changed := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
 
 	// Validate the changed-and-downstream closure plus the FULL transitive
-	// upstream closure (across service boundaries) so every node's refs — intra-
-	// service ref()s and cross-service {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }} refs alike — resolve inside
-	// the candidate schema. Upstreams build --empty first; the executor gates on them.
+	// upstream closure (across service boundaries) so every upstream is built as an
+	// empty table in the candidate schema before its dependents. The executor
+	// builds each node from compiled SQL whose schema-qualified refs are rewritten
+	// to the candidate schema, gated in dependency order.
 	changedClosure := release.DescendantsClosure(topo, changed)
 	validationIDs := unionSorted(changedClosure, release.FullAncestorsClosure(topo, changedClosure))
 

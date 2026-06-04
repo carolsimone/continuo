@@ -85,8 +85,6 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 // var (read by each service's generate_schema_name macro), not a CLI flag.
 // Dropping this env would silently route validation runs into the production
 // schema, so pin it here.
-// DBT_UPSTREAM_SCHEMA is also set so that cross-service {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }} reads
-// calls redirect input reads to the candidate schema instead of prod.
 func TestCreateValidationJob_PassesCandidateSchemaViaEnv(t *testing.T) {
 	c := newValidationTestClient()
 	p := validationParams()
@@ -99,8 +97,6 @@ func TestCreateValidationJob_PassesCandidateSchemaViaEnv(t *testing.T) {
 
 	require.NotEmpty(t, envByName(spec, "DBT_TARGET_SCHEMA"), "validation job must set DBT_TARGET_SCHEMA")
 	assert.Equal(t, p.CandidateSchema, envByName(spec, "DBT_TARGET_SCHEMA"))
-	assert.Equal(t, p.CandidateSchema, envByName(spec, "DBT_UPSTREAM_SCHEMA"),
-		"validation pod must redirect cross-service input reads to the candidate schema")
 }
 
 func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {

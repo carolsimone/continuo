@@ -1,2 +1,2 @@
 {{ config(materialized='table') }}
-SELECT id FROM {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}.ftable_c
+SELECT id FROM e2e_schema.ftable_c
