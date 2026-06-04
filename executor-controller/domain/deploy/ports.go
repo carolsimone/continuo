@@ -36,6 +36,7 @@ type ValidationJobSpec struct {
 	NodeType        string
 	ImageTag        string
 	CandidateSchema string
+	CandidateSQL    string
 }
 
 // Deployer is the driven port the dispatcher uses to deploy work and observe

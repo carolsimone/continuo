@@ -173,7 +173,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 // ValidationJobParams represents the parameters needed to create a
 // mode=validation K8s Job. It mirrors JobParams for the production fields a
 // validation node still needs and adds the validation-only fields (release/node
-// identity, candidate schema).
+// identity, candidate schema, candidate SQL).
 type ValidationJobParams struct {
 	JobName     string
 	ReleaseID   string
@@ -185,6 +185,7 @@ type ValidationJobParams struct {
 	ImageTag    string
 
 	CandidateSchema string
+	CandidateSQL    string
 
 	Namespace string
 }
@@ -246,12 +247,13 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 	return c.CreateJob(ctx, job)
 }
 
-// buildValidationPodSpec constructs the PodSpec for a validation node's dbt
-// --empty job. Image construction and the dbt-profile env conventions mirror
-// the production buildPodSpec; the container command comes from
-// model.ValidationDbtCommand, the single source of truth for the validation
-// CLI. An empty ImageTag is a permanent error — content-addressed tags must be
-// explicit.
+// buildValidationPodSpec constructs the PodSpec for a validation node job.
+// Image construction and the dbt-profile env conventions mirror the production
+// buildPodSpec; the container command comes from model.ValidationCommand, the
+// single source of truth for the validation CLI. Model/snapshot nodes run
+// validation_runner.py (reading CANDIDATE_SQL from env); seed nodes use
+// `dbt seed --select <table> --empty`. An empty ImageTag is a permanent error —
+// content-addressed tags must be explicit.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing for service %s",
@@ -271,6 +273,10 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
+		// candidate_sql is the node's compiled SQL with schema refs already
+		// rewritten to the candidate schema; validation_runner.py reads it to build
+		// the node as an empty table. Empty for seeds (they use `dbt seed --empty`).
+		{Name: "CANDIDATE_SQL", Value: p.CandidateSQL},
 		// dbt profile connection — forwarded from executor-controller environment
 		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
 		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
@@ -286,7 +292,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 				Name:            "dbt-job",
 				Image:           image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command:         validationmodel.ValidationDbtCommand(p.NodeType, p.TableName),
+				Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
 				Env:             envVars,
 			},
 		},
