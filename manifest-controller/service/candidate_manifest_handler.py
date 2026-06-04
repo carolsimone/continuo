@@ -6,6 +6,7 @@ from domain.exceptions import UnqualifiedTableReferenceError
 from domain.model import NodeRegistry, NodeRegistryEntry
 from service.parser import parse_manifest
 from service.resolver import resolve_upstream_deps
+from service.rewriter import candidate_schema_name, rewrite_to_candidate_schema
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ class CandidateManifestHandler:
             for n in all_nodes
         ])
         lookup = registry.to_lookup()
+        candidate_schema = candidate_schema_name(release_id)
 
         topology: list[dict] = []
         for node in all_nodes:
@@ -88,6 +90,11 @@ class CandidateManifestHandler:
                 )
                 return
 
+            # candidate_sql is the node's compiled SQL with every known-node schema
+            # reference redirected to the candidate schema, so blue/green validation
+            # can build it against the empty upstream closure (seeds carry "").
+            candidate_sql = rewrite_to_candidate_schema(node.compiled_sql, lookup, candidate_schema)
+
             topology.append({
                 "unique_id":           f"{node.schema_name}.{node.table_name}",
                 "schema_name":         node.schema_name,
@@ -100,6 +107,7 @@ class CandidateManifestHandler:
                     f"{dep.schema_name}.{dep.table_name}" for dep in node.upstream_deps
                 ],
                 "schedule":            node.schedule_name,
+                "candidate_sql":       candidate_sql,
             })
 
         self._publisher.publish_ok(release_id=release_id, topology=topology)
