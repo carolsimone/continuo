@@ -33,16 +33,25 @@ def rewrite_to_candidate_schema(
     compiled_sql: str,
     registry: dict[tuple[str, str], NodeRegistryEntry],
     candidate_schema: str,
+    self_schema: str = "",
+    self_table: str = "",
 ) -> str:
     """Return compiled_sql with every known-node schema-qualified reference
     redirected to candidate_schema. Empty input (e.g. a seed, which has no SQL)
     is returned unchanged.
+
+    A qualified self-reference (self_schema.self_table — e.g. an incremental model
+    selecting from {{ this }}) is left on its production schema: the validation
+    runner drops and recreates <candidate>.<table>, so a self-reference rewritten
+    to the candidate schema would read a relation that no longer exists. This
+    mirrors the dependency resolver, which also skips self-references.
     """
     if not compiled_sql:
         return compiled_sql
 
     parsed = sqlglot.parse_one(compiled_sql, dialect="postgres")
     cte_names = {cte.alias.lower() for cte in parsed.find_all(exp.CTE)}
+    self_ref = (self_schema.lower(), self_table.lower())
 
     for table in parsed.find_all(exp.Table):
         name = table.name.lower()
@@ -50,7 +59,10 @@ def rewrite_to_candidate_schema(
         # CTE references and unqualified names carry no schema to redirect.
         if name in cte_names or not schema_raw:
             continue
-        if (schema_raw.lower(), name) in registry:
+        key = (schema_raw.lower(), name)
+        if key == self_ref:
+            continue
+        if key in registry:
             table.set("db", exp.to_identifier(candidate_schema, quoted=True))
 
     return parsed.sql(dialect="postgres")

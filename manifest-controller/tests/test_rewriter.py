@@ -62,5 +62,31 @@ def test_cte_reference_not_rewritten():
     assert _schemas_of(out) == {"_candidate_r1"}
 
 
+def test_self_reference_not_rewritten():
+    # A qualified self-reference (e.g. an incremental model selecting from itself)
+    # must stay on its prod schema — the runner drops+recreates the candidate copy,
+    # so a self-ref rewritten to the candidate schema would read a dropped relation.
+    out = rewrite_to_candidate_schema(
+        "SELECT id FROM public.orders WHERE id > 0",
+        _registry("orders"),
+        "_candidate_r1",
+        self_schema="public",
+        self_table="orders",
+    )
+    assert _schemas_of(out) == {"public"}
+
+
+def test_self_reference_left_but_real_upstream_rewritten():
+    out = rewrite_to_candidate_schema(
+        "SELECT o.id FROM public.orders o JOIN public.users u ON o.uid = u.id",
+        _registry("orders", "users"),
+        "_candidate_r1",
+        self_schema="public",
+        self_table="orders",
+    )
+    # orders (self) stays on prod; users (a real upstream) is redirected.
+    assert _schemas_of(out) == {"public", "_candidate_r1"}
+
+
 def test_empty_sql_returns_empty():
     assert rewrite_to_candidate_schema("", _registry("users"), "_candidate_r1") == ""

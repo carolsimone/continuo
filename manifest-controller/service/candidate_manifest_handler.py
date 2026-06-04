@@ -93,7 +93,10 @@ class CandidateManifestHandler:
             # candidate_sql is the node's compiled SQL with every known-node schema
             # reference redirected to the candidate schema, so blue/green validation
             # can build it against the empty upstream closure (seeds carry "").
-            candidate_sql = rewrite_to_candidate_schema(node.compiled_sql, lookup, candidate_schema)
+            candidate_sql = rewrite_to_candidate_schema(
+                node.compiled_sql, lookup, candidate_schema,
+                self_schema=node.schema_name, self_table=node.table_name,
+            )
 
             topology.append({
                 "unique_id":           f"{node.schema_name}.{node.table_name}",
