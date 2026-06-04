@@ -37,7 +37,7 @@ None (no HTTP interface; runs as `tail -f /dev/null` in dev; started manually or
 |---|---|
 | `manifest.loaded.candidate:v1` | Published after a `release.requested:v1` load (success or failure); consumed by `release-controller` |
 
-`manifest.loaded.candidate:v1` is a single Redis field `payload` containing JSON. On success: `{release_id, status: "ok", topology}` where `topology` is a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`). `node_type` is the dbt resource type (`dbt-model`, `dbt-seed`, or `dbt-snapshot`). `content_hash` is dbt's per-node source checksum (`checksum.checksum` from the manifest node); `release-controller` diffs it against the prod snapshot to derive the changed-node set for the validation gate, detecting model SQL, seed CSV, and snapshot changes uniformly. `image_tag` is left empty — `release-controller` joins in the per-service image tags it received from CI. On failure: `{release_id, status: "failed", error_class, error_detail}`. `release-controller` uses this to transition a release from parsing to validating, or to mark it failed.
+`manifest.loaded.candidate:v1` is a single Redis field `payload` containing JSON. On success: `{release_id, status: "ok", topology}` where `topology` is a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`, `candidate_sql`). `node_type` is the dbt resource type (`dbt-model`, `dbt-seed`, or `dbt-snapshot`). `content_hash` is dbt's per-node source checksum (`checksum.checksum` from the manifest node); `release-controller` diffs it against the prod snapshot to derive the changed-node set for the validation gate, detecting model SQL, seed CSV, and snapshot changes uniformly. `candidate_sql` is the node's compiled SQL with every schema-qualified reference that resolves to a known graph node rewritten (via sqlglot) to the candidate schema (`_candidate_<release>`); seeds carry an empty string because they have no SELECT to rewrite. `image_tag` is left empty — `release-controller` joins in the per-service image tags it received from CI. On failure: `{release_id, status: "failed", error_class, error_detail}`. `release-controller` uses this to transition a release from parsing to validating, or to mark it failed.
 
 Calls no gRPC services.
 
@@ -62,10 +62,14 @@ Pass 1 — Parse
 Pass 2 — Build registry (in memory only; no CSV persisted)
   Build lookup dict: (schema_name, table_name) → NodeRegistryEntry
 
-Pass 3 — Resolve deps and shape candidate topology
+Pass 3 — Resolve deps, rewrite SQL, and shape candidate topology
   For each node: resolve_upstream_deps(node, lookup) (sqlglot rules below)
     UnqualifiedTableReferenceError → publish status=failed (error_class=UnqualifiedTableReference), ACK
-  Shape each node as {unique_id, schema_name, table_name, service_name, node_type, content_hash, image_tag, upstream_unique_ids, schedule}
+  For each node: rewrite_to_candidate_schema(compiled_sql, lookup, candidate_schema)
+    Rewrites every schema-qualified reference whose (schema, table) pair is in the registry
+    to the candidate schema using sqlglot; CTE aliases, unqualified refs, and tables
+    not in the registry are left unchanged; seeds carry empty compiled_sql → candidate_sql=""
+  Shape each node as {unique_id, schema_name, table_name, service_name, node_type, content_hash, image_tag, upstream_unique_ids, schedule, candidate_sql}
 
 Publish manifest.loaded.candidate:v1 status=ok with the topology, ACK
 ```
