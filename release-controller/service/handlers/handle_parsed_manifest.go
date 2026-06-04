@@ -273,6 +273,7 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 			"table_name":        n.TableName,
 			"image_tag":         n.ImageTag,
 			"upstream_node_ids": release.InSetUpstreams(topo, id, inSet),
+			"candidate_sql":     n.CandidateSQL,
 		})
 	}
 	return out

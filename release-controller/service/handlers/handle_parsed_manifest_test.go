@@ -439,6 +439,40 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 	assert.Empty(t, byID["b_up"], "b_up has no in-set upstreams")
 }
 
+// TestHandleParseOK_EmitsCandidateSQLPerNode verifies each node's candidate_sql
+// (the compiled SQL rewritten to the candidate schema by manifest-controller) is
+// carried into the validation.requested:v1 payload, where the executor reads it
+// to build the empty candidate table.
+func TestHandleParseOK_EmitsCandidateSQLPerNode(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+
+	topo := release.Topology{
+		{UniqueID: "a1", ServiceName: "svc-a", ContentHash: "h_a1", CandidateSQL: "SELECT 1 AS id"},
+		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"a1"},
+			CandidateSQL: `SELECT id FROM "_candidate_rA".a1`},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topo,
+	}))
+
+	entry := findEntry(t, store, streams.ValidationRequestedV1)
+	var rawPayload map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry.Payload, &rawPayload))
+	var nodes []struct {
+		UniqueID     string `json:"unique_id"`
+		CandidateSQL string `json:"candidate_sql"`
+	}
+	require.NoError(t, json.Unmarshal(rawPayload["nodes"], &nodes))
+	got := map[string]string{}
+	for _, n := range nodes {
+		got[n.UniqueID] = n.CandidateSQL
+	}
+	assert.Equal(t, "SELECT 1 AS id", got["a1"])
+	assert.Equal(t, `SELECT id FROM "_candidate_rA".a1`, got["a2"])
+}
+
 // TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI verifies that the
 // validation.requested:v1 payload carries upstream_node_ids per node and does
 // NOT contain defer_state_uri. Single-service chain a1->a2, both changed.
