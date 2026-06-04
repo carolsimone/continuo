@@ -15,9 +15,16 @@ import (
 // executor: the K8s Job name, the executor_deployments.node_id column, and
 // the (release_id, node_id) lookup key all derive from this value.
 //
-// UpstreamNodeIDs lists the dbt unique_ids of intra-service nodes that must
-// complete successfully before this node may be dispatched. An empty slice
-// means the node is a root and can be dispatched immediately.
+// UpstreamNodeIDs lists the dbt unique_ids of in-set nodes (intra- AND
+// cross-service) that must complete successfully before this node may be
+// dispatched. An empty slice means the node is a root and can be dispatched
+// immediately.
+//
+// CandidateSQL is the node's compiled SQL with every schema-qualified reference
+// already rewritten to the candidate schema. For model/snapshot nodes it is
+// passed as the CANDIDATE_SQL env var on the validation K8s Job so
+// validation_runner.py can build an empty CTAS table without a dbt recompile.
+// Empty for seed nodes (seeds use `dbt seed --empty` instead).
 type ValidationNode struct {
 	NodeID          string // dbt unique_id
 	ServiceName     string
@@ -26,6 +33,7 @@ type ValidationNode struct {
 	NodeType        pkg_model.NodeType
 	ImageTag        string
 	UpstreamNodeIDs []string
+	CandidateSQL    string
 }
 
 // ValidationRequested is the parsed validation.requested:v1 stream payload —

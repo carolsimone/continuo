@@ -46,11 +46,11 @@ Legend:
 | `schedule.cancelled:v1` | `state` (triggered by `ui-service.CancelSchedule` **OR by `orchestrator` dispatch watchdog**) | `orchestrator`, `executor-controller`, `k8s-controller` | Signal active-run cancellation; consumers halt in-flight work for the cancelled schedule. Watchdog uses `cancelled_by="watchdog"` and `cancellation_reason="watchdog: ..."`. |
 | `release.requested:v1` | `release-controller` | `manifest-controller` | Trigger manifest load for a candidate release. |
 | `manifest.loaded.candidate:v1` | `manifest-controller` | `release-controller` | Resolved candidate topology (or parse failure) for a release; release-controller derives the validation set and advances the state machine. |
-| `validation.requested:v1` | `release-controller` | `executor-controller` | Candidate-release validation request; each node entry carries `upstream_node_ids` (in-set intra-service gating edges); executor-controller creates one `executor_deployments` row per node (`blocked` or `pending`). |
+| `validation.requested:v1` | `release-controller` | `executor-controller` | Candidate-release validation request; each node entry carries `upstream_node_ids` (in-set gating edges, intra- and cross-service); executor-controller creates one `executor_deployments` row per node (`blocked` or `pending`). |
 | `validation.node.completed:v1` | `k8s-controller` | `executor-controller` | Per-node validation Job terminal status; executor-controller records the outcome, unblocks or skips in-set downstreams, and runs the per-release aggregate-emit gate. |
 | `validation.completed:v1` | `executor-controller` | `release-controller` (result), `executor-controller` (group `executor-validation-completed`, candidate schema teardown) | Per-release validation aggregate; consumed by release-controller to advance the release state machine and by executor-controller to drop `_candidate_<release>` from the dbt warehouse. |
 | `release.promoted:v1` | `release-controller` | `orchestrator` | A release is promoted to production; orchestrator swaps schedules, topology, and image tags. |
-| `release.rejected:v1` | `release-controller` | (observers) | A release failed parsing, validation, or pre-validation checks (e.g. `new_cross_service_upstream`). |
+| `release.rejected:v1` | `release-controller` | (observers) | A release failed parsing, validation, or pre-validation checks (e.g. `unbuildable_cross_service_upstream`). |
 
 ## Outbound gRPC Calls by Service
 

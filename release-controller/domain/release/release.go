@@ -42,6 +42,25 @@ type Node struct {
 	ImageTag          string   `json:"image_tag"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Schedule          string   `json:"schedule"`
+	// CandidateSQL is the node's compiled SQL with schema-qualified references
+	// rewritten to the candidate schema (produced by manifest-controller). It is
+	// carried only into validation.requested so the executor can build the node
+	// as an empty table in the candidate schema; it is transient validation data,
+	// not part of the promoted topology, so it is stripped before current_prod.
+	CandidateSQL string `json:"candidate_sql,omitempty"`
+}
+
+// WithoutCandidateSQL returns a copy of the topology with per-node CandidateSQL
+// cleared. CandidateSQL is a release-specific rewrite into that release's
+// candidate schema — transient validation data that must not be persisted to
+// current_prod or published in the promoted topology.
+func (t Topology) WithoutCandidateSQL() Topology {
+	out := make(Topology, len(t))
+	for i, n := range t {
+		n.CandidateSQL = ""
+		out[i] = n
+	}
+	return out
 }
 
 type Release struct {

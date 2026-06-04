@@ -47,10 +47,15 @@ func validationParams() ValidationJobParams {
 		NodeType:        pkg_model.NodeTypeDbtModel,
 		ImageTag:        "abc-1714300000",
 		CandidateSchema: "_candidate_rel_123",
+		CandidateSQL:    "select id, amount from _candidate_rel_123.payments",
 		Namespace:       "default",
 	}
 }
 
+// TestCreateValidationJob_BuildsExpectedCommand_DbtModel verifies that model
+// nodes run validation_runner.py (CTAS path) rather than a dbt command.
+// CANDIDATE_SQL env must be populated from the params so the runner can build
+// the empty table without a dbt recompile.
 func TestCreateValidationJob_BuildsExpectedCommand_DbtModel(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newValidationTestClient()
@@ -61,9 +66,14 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtModel(t *testing.T) {
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t,
-		[]string{"dbt", "run", "--select", "orders", "--empty"},
+		[]string{"python", "/validation_runner.py"},
 		job.Spec.Template.Spec.Containers[0].Command)
 	assert.Equal(t, "service-1:abc-1714300000", job.Spec.Template.Spec.Containers[0].Image)
+
+	// CANDIDATE_SQL must be wired through so validation_runner.py can build the
+	// empty CTAS table.
+	assert.Equal(t, p.CandidateSQL, envByName(job.Spec.Template.Spec, "CANDIDATE_SQL"),
+		"model validation job must set CANDIDATE_SQL env")
 }
 
 func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
@@ -81,11 +91,12 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
-// The candidate schema is delivered to dbt through the DBT_TARGET_SCHEMA env
-// var (read by each service's generate_schema_name macro), not a CLI flag.
-// Dropping this env would silently route validation runs into the production
-// schema, so pin it here.
-func TestCreateValidationJob_PassesCandidateSchemaViaEnv(t *testing.T) {
+// TestCreateValidationJob_PassesCandidateEnvsViaEnv verifies that both
+// DBT_TARGET_SCHEMA and CANDIDATE_SQL are set on the validation pod.
+// DBT_TARGET_SCHEMA routes the generate_schema_name macro to the candidate
+// schema; CANDIDATE_SQL carries the rewritten SQL for validation_runner.py.
+// Dropping either would silently break the validation run.
+func TestCreateValidationJob_PassesCandidateEnvsViaEnv(t *testing.T) {
 	c := newValidationTestClient()
 	p := validationParams()
 
@@ -93,15 +104,13 @@ func TestCreateValidationJob_PassesCandidateSchemaViaEnv(t *testing.T) {
 
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
-	var got string
-	found := false
-	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
-		if e.Name == "DBT_TARGET_SCHEMA" {
-			got, found = e.Value, true
-		}
-	}
-	require.True(t, found, "validation job must set DBT_TARGET_SCHEMA")
-	assert.Equal(t, p.CandidateSchema, got)
+	spec := job.Spec.Template.Spec
+
+	require.NotEmpty(t, envByName(spec, "DBT_TARGET_SCHEMA"), "validation job must set DBT_TARGET_SCHEMA")
+	assert.Equal(t, p.CandidateSchema, envByName(spec, "DBT_TARGET_SCHEMA"))
+
+	require.NotEmpty(t, envByName(spec, "CANDIDATE_SQL"), "validation job must set CANDIDATE_SQL")
+	assert.Equal(t, p.CandidateSQL, envByName(spec, "CANDIDATE_SQL"))
 }
 
 func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {
@@ -163,6 +172,15 @@ func TestCreateValidationJob_AnnotationsCarryRawIDsWhenLabelWouldSanitize(t *tes
 	assert.NotEqual(t, rawNodeID, job.Labels["node-id"])
 	assert.Equal(t, sanitizeK8sLabel(rawNodeID), job.Labels["node-id"])
 	assert.Equal(t, sanitizeK8sLabel(rawReleaseID), job.Labels["release-id"])
+}
+
+func envByName(spec corev1.PodSpec, name string) string {
+	for _, e := range spec.Containers[0].Env {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
 }
 
 func repeatStr(s string, n int) string {

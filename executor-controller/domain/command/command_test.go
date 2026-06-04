@@ -43,6 +43,7 @@ func TestValidationDeployTask_JSONRoundTrip(t *testing.T) {
 		ImageTag:        "sha-abc",
 		JobName:         "validate-public-orders",
 		CandidateSchema: "_candidate_rel_123",
+		CandidateSQL:    "select id from _candidate_rel_123.upstream",
 		UpstreamNodeIDs: []string{"model.shop.upstream_a", "model.shop.upstream_b"},
 	}
 
@@ -52,4 +53,31 @@ func TestValidationDeployTask_JSONRoundTrip(t *testing.T) {
 	var got command.ValidationDeployTask
 	require.NoError(t, json.Unmarshal(raw, &got))
 	assert.Equal(t, orig, got)
+}
+
+func TestValidationDeployTask_ToValidationJobSpec(t *testing.T) {
+	c := command.ValidationDeployTask{
+		ReleaseID:       "rel_123",
+		NodeID:          "node_456",
+		ServiceName:     "svc",
+		SchemaName:      "public",
+		TableName:       "orders",
+		NodeType:        "dbt-model",
+		ImageTag:        "sha-abc",
+		JobName:         "validate-public-orders",
+		CandidateSchema: "_candidate_rel_123",
+		CandidateSQL:    "select id from _candidate_rel_123.upstream",
+		UpstreamNodeIDs: []string{"model.shop.upstream"},
+	}
+	spec := c.ToValidationJobSpec()
+	assert.Equal(t, c.JobName, spec.JobName)
+	assert.Equal(t, c.ReleaseID, spec.ReleaseID)
+	assert.Equal(t, c.NodeID, spec.NodeID)
+	assert.Equal(t, c.ServiceName, spec.ServiceName)
+	assert.Equal(t, c.SchemaName, spec.SchemaName)
+	assert.Equal(t, c.TableName, spec.TableName)
+	assert.Equal(t, c.NodeType, spec.NodeType)
+	assert.Equal(t, c.ImageTag, spec.ImageTag)
+	assert.Equal(t, c.CandidateSchema, spec.CandidateSchema)
+	assert.Equal(t, c.CandidateSQL, spec.CandidateSQL)
 }

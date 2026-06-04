@@ -13,6 +13,12 @@ WORKDIR /project
 # which routes validation runs to the candidate schema via DBT_TARGET_SCHEMA).
 COPY macros/ /project/macros/
 
+# Blue/green validation runner: builds a node as an empty table in the candidate
+# schema from execution-time-rewritten compiled SQL. Inherited by every service
+# image (FROM dbt-base); invoked by the executor as the validation Job command for
+# model/snapshot nodes instead of `dbt run`.
+COPY validation_runner.py /validation_runner.py
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

@@ -15,19 +15,21 @@ import (
 // validationPayload mirrors the flat JSON body release-controller emits in the
 // "payload" field of a validation.requested:v1 message (see
 // release-controller/service/handlers/handle_parsed_manifest.go). Per-node
-// identity is keyed by "unique_id".
+// identity is keyed by "unique_id". candidate_sql carries the pre-rewritten
+// compiled SQL for model/snapshot nodes.
 func validationPayload() map[string]any {
 	return map[string]any{
 		"release_id": "rel-123",
 		"mode":       "validation",
 		"nodes": []map[string]any{
 			{
-				"unique_id":    "model.shop.orders",
-				"service_name": "shop",
-				"node_type":    "dbt-model",
-				"schema_name":  "public",
-				"table_name":   "orders",
-				"image_tag":    "sha-abc",
+				"unique_id":     "model.shop.orders",
+				"service_name":  "shop",
+				"node_type":     "dbt-model",
+				"schema_name":   "public",
+				"table_name":    "orders",
+				"image_tag":     "sha-abc",
+				"candidate_sql": "select id from _candidate_rel_123.payments",
 			},
 			{
 				"unique_id":    "model.shop.customers",
@@ -80,8 +82,12 @@ func TestParseValidationRequested_HappyPath(t *testing.T) {
 	assert.Equal(t, "orders", evt.Nodes[0].TableName)
 	assert.Equal(t, pkg_model.NodeTypeDbtModel, evt.Nodes[0].NodeType)
 	assert.Equal(t, "sha-abc", evt.Nodes[0].ImageTag)
+	assert.Equal(t, "select id from _candidate_rel_123.payments", evt.Nodes[0].CandidateSQL,
+		"candidate_sql must round-trip from wire payload to ValidationNode")
 	assert.Equal(t, "model.shop.customers", evt.Nodes[1].NodeID)
 	assert.Equal(t, pkg_model.NodeTypeDbtSeed, evt.Nodes[1].NodeType)
+	assert.Empty(t, evt.Nodes[1].CandidateSQL,
+		"seed node without candidate_sql must have empty string")
 }
 
 func TestParseValidationRequested_OutboxEntryIDAbsentIsNilUUID(t *testing.T) {

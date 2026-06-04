@@ -112,7 +112,10 @@ func promoteToProduction(ctx context.Context, u uow.UnitOfWork, r *release.Relea
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	cp.Update(releaseID, r.ManifestsURI(), r.CandidateTopology(), now)
+	// candidate_sql is transient, release-specific validation data; the promoted
+	// topology (current_prod and the release.promoted event) must not carry it.
+	promotedTopo := r.CandidateTopology().WithoutCandidateSQL()
+	cp.Update(releaseID, r.ManifestsURI(), promotedTopo, now)
 	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
 		return fmt.Errorf("upsert current prod: %w", err)
 	}
@@ -126,7 +129,7 @@ func promoteToProduction(ctx context.Context, u uow.UnitOfWork, r *release.Relea
 
 	payload, err := json.Marshal(map[string]any{
 		"release_id": releaseID,
-		"topology":   r.CandidateTopology(),
+		"topology":   promotedTopo,
 		"image_tags": r.ImageTags(),
 	})
 	if err != nil {

@@ -96,3 +96,20 @@ func TestBuildPodSpec_RefusesEmptyImageTag(t *testing.T) {
 	assert.True(t, errors.Is(err, events.ErrPermanent),
 		"empty image_tag must wrap events.ErrPermanent so outbox processor classifies non-retryable")
 }
+
+// TestBuildPodSpec_NoCandidateSchemaEnv locks that the production query job does
+// not carry DBT_TARGET_SCHEMA: that env var routes a model's output to the
+// candidate schema and is validation-only. With it unset, generate_schema_name
+// resolves to the production schema, leaving prod materialization byte-identical.
+func TestBuildPodSpec_NoCandidateSchemaEnv(t *testing.T) {
+	spec, err := buildPodSpec(JobParams{
+		ServiceName: "service-1",
+		ImageTag:    "tag",
+		NodeType:    pkg_model.NodeTypeDbtModel,
+		TableName:   "users",
+	})
+	require.NoError(t, err)
+	require.Len(t, spec.Containers, 1)
+	assert.Empty(t, envByName(spec, "DBT_TARGET_SCHEMA"),
+		"prod query job must not set the candidate output schema")
+}

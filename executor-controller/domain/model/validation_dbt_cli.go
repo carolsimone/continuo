@@ -1,5 +1,5 @@
-// Package model contains validation_dbt_cli, the dbt CLI builder for the
-// mode=validation dispatch path. It deliberately does not extend
+// Package model contains ValidationCommand, the container-command builder for
+// the mode=validation dispatch path. It deliberately does not extend
 // pkg/domain/model.NodeType.Command(): that method's contract is the prod
 // path and must stay byte-stable.
 package model
@@ -8,17 +8,22 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// ValidationDbtCommand returns the dbt CLI args for a single validation node.
-// The dry-run materialization always uses --empty (zero input rows) into the
-// candidate schema (delivered out-of-band via the DBT_TARGET_SCHEMA env var and
-// the generate_schema_name macro). Intra-service ref()s resolve inside the
-// candidate schema — upstream candidate tables are built first by continuo's
-// topologically-gated dispatch — so dbt is never asked to --defer to a prior
-// manifest. Cross-service refs are raw schema-qualified SQL that read the prod
-// schema directly.
-func ValidationDbtCommand(nt pkg_model.NodeType, tableName string) []string {
-	base := nt.Command(tableName) // shares the prod verb mapping
-	args := append([]string{}, base...)
-	args = append(args, "--empty")
-	return args
+// ValidationCommand returns the container command for a single validation node.
+//
+// Seeds have no SELECT to rewrite: dbt builds an empty seed table in the
+// candidate schema (DBT_TARGET_SCHEMA) from the CSV's column definitions, so they
+// keep `dbt seed --select <table> --empty`.
+//
+// Models and snapshots are built by validation_runner.py, which executes
+// `CREATE TABLE <candidate>.<table> AS (<CANDIDATE_SQL>) WITH NO DATA`. CANDIDATE_SQL
+// is the node's compiled SQL with every schema-qualified reference already
+// rewritten to the candidate schema, so raw cross-service refs resolve against the
+// empty upstream tables built earlier in dependency order — no model edits, no dbt
+// recompile from production-schema refs.
+func ValidationCommand(nt pkg_model.NodeType, tableName string) []string {
+	if nt == pkg_model.NodeTypeDbtSeed {
+		args := append([]string{}, nt.Command(tableName)...) // dbt seed --select <table>
+		return append(args, "--empty")
+	}
+	return []string{"python", "/validation_runner.py"}
 }
