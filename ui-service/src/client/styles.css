@@ -171,6 +171,7 @@ body {
 }
 .detail-back-link:hover { text-decoration: underline; }
 
+.detail-page-title,
 .detail-scheduler-name {
   font-size: 18px;
   font-weight: 700;
@@ -764,74 +765,6 @@ body {
   border-color: #c7d2fe;
 }
 
-/* ---- Releases tab ---- */
-.release-banner {
-  display: flex;
-  gap: 1rem;
-  margin: 1rem 0;
-}
-
-.release-banner__card {
-  flex: 1;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-}
-
-.release-banner__card h3 {
-  margin: 0 0 0.25rem;
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  opacity: 0.7;
-}
-
-.release-filter {
-  margin: 0.5rem 0;
-}
-
-.release-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.release-table th {
-  text-align: left;
-  padding: 0.4rem 0.6rem;
-  background: #f9fafb;
-  color: #6b7280;
-  font-weight: 500;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.release-table td {
-  text-align: left;
-  padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid #f3f4f6;
-}
-
-.log-view {
-  background: #1e1e1e;
-  color: #eee;
-  padding: 0.75rem;
-  border-radius: 6px;
-  max-height: 400px;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-family: monospace;
-  font-size: 12px;
-}
-
-.log-view--error {
-  background: #3a1e1e;
-}
-
-.btn--small {
-  font-size: 0.8rem;
-  padding: 0.2rem 0.5rem;
-}
-
 .snapshot-tile__name {
   font-weight: 600;
   font-size: 13px;
@@ -841,6 +774,47 @@ body {
 .snapshot-tile__meta {
   font-size: 12px;
   color: #6b7280;
+}
+
+/* ---- Log block: fetched log/code text shown inline (paired with link-out) ---- */
+.log-block {
+  margin-top: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: 'SF Mono', 'Fira Mono', monospace;
+  font-size: 11.5px;
+  color: #334155;
+}
+
+/* ---- Form field: label + native control ---- */
+.form-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.form-field > label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+
+.form-field > select {
+  font: 500 12px/1.4 inherit;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
 }
 
 
