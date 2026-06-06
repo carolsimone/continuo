@@ -33,7 +33,7 @@ function renderPanel() {
   );
 }
 
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('ReleasesPanel', () => {
   it('renders info-strip banner, .form-field filter, and a nodes-table; no legacy classes', async () => {

@@ -27,7 +27,7 @@ function renderDetail() {
   );
 }
 
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('ReleaseDetailPage', () => {
   it('renders a compliant header, section-headers, nodes-table, and reject-reason strip', async () => {
