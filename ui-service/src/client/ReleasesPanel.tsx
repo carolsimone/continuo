@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ReleaseListItem, ReleasesListResponse, CurrentProd } from './types';
 import { firstInFlight, releasePillClass } from './release-helpers';
 
@@ -98,17 +98,25 @@ export default function ReleasesPanel() {
               {items.map(r => (
                 <tr
                   key={r.release_id}
-                  tabIndex={0}
-                  role="button"
-                  onClick={() => navigate(`/releases/${r.release_id}`)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      navigate(`/releases/${r.release_id}`);
-                    }
+                  onClick={e => {
+                    // Whole-row click is a mouse convenience; the release-id
+                    // cell holds the real link. Defer to it for clicks that
+                    // land on the anchor, and leave modifier-clicks to the
+                    // browser so Cmd/Ctrl/middle-click can open a new tab.
+                    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                    if ((e.target as HTMLElement).closest('a')) return;
+                    navigate(`/releases/${r.release_id}`);
                   }}
                 >
-                  <td><div className="nodes-node-name">{r.release_id}</div></td>
+                  <td>
+                    <Link
+                      className="nodes-node-name"
+                      to={`/releases/${r.release_id}`}
+                      onClick={e => e.stopPropagation()}
+                    >
+                      {r.release_id}
+                    </Link>
+                  </td>
                   <td>
                     <span className={`pill-sm ${releasePillClass(r.status).replace('pill--', 'pill-sm--')}`}>
                       {r.status}

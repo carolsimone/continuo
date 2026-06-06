@@ -54,7 +54,19 @@ describe('ReleasesPanel', () => {
     expect(container.querySelector('.release-table')).toBeNull();
   });
 
-  it('navigates to the detail route when a row is clicked', async () => {
+  it('exposes a real link to the release detail (supports new-tab / keyboard)', async () => {
+    vi.stubGlobal('fetch', mockFetch([REL], {
+      current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
+    }));
+    const { container } = renderPanel();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+
+    const link = container.querySelector('a[href="/releases/rel_abc"]');
+    expect(link).toBeTruthy();
+    expect(link?.textContent).toBe('rel_abc');
+  });
+
+  it('navigates when the release link is clicked', async () => {
     vi.stubGlobal('fetch', mockFetch([REL], {
       current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
     }));
@@ -65,15 +77,15 @@ describe('ReleasesPanel', () => {
     expect(screen.getByText('DETAIL')).toBeInTheDocument();
   });
 
-  it('navigates when a row is activated by keyboard', async () => {
+  it('navigates when a non-link cell of the row is clicked', async () => {
     vi.stubGlobal('fetch', mockFetch([REL], {
       current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
     }));
     renderPanel();
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
 
-    const row = screen.getByText('rel_abc').closest('tr')!;
-    fireEvent.keyDown(row, { key: 'Enter' });
+    // node-count cell is not a link; clicking it exercises the row-wide handler
+    fireEvent.click(screen.getByText('7'));
     expect(screen.getByText('DETAIL')).toBeInTheDocument();
   });
 

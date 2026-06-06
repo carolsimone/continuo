@@ -9,12 +9,13 @@ export function firstInFlight(items: ReleaseListItem[]): ReleaseListItem | null 
 }
 
 // releasePillClass maps a status to a design-system pill variant. It handles
-// release lifecycle statuses (promoted/rejected/validating/…) and falls back to
-// run-style keyword matching for per-node validation statuses
-// (succeeded/failed/running/…), defaulting to pending when nothing matches.
+// release lifecycle statuses (promoted/rejected/validating/…) and per-node
+// validation statuses (`ok`/`failed`), and falls back to run-style keyword
+// matching, defaulting to pending when nothing matches.
 export function releasePillClass(status: string): string {
   switch (status) {
     case 'promoted':   return 'pill--succeeded';
+    case 'ok':         return 'pill--succeeded';
     case 'rejected':   return 'pill--failed';
     case 'validating':
     case 'parsing':    return 'pill--running';

@@ -29,9 +29,13 @@ describe('releasePillClass', () => {
     expect(releasePillClass('superseded')).toBe('pill--cancelled');
   });
 
-  it('maps per-node validation statuses via run-style keywords', () => {
-    expect(releasePillClass('succeeded')).toBe('pill--succeeded');
+  it('maps per-node validation statuses (ok / failed) to pill variants', () => {
+    expect(releasePillClass('ok')).toBe('pill--succeeded');
     expect(releasePillClass('failed')).toBe('pill--failed');
+  });
+
+  it('maps run-style keyword statuses', () => {
+    expect(releasePillClass('succeeded')).toBe('pill--succeeded');
     expect(releasePillClass('running')).toBe('pill--running');
     expect(releasePillClass('cancelled')).toBe('pill--cancelled');
     expect(releasePillClass('pending')).toBe('pill--pending');
