@@ -76,4 +76,18 @@ describe('ReleasesPanel', () => {
     fireEvent.keyDown(row, { key: 'Enter' });
     expect(screen.getByText('DETAIL')).toBeInTheDocument();
   });
+
+  it('reloads with the status filter when the select changes', async () => {
+    const fetch = mockFetch([REL], {
+      current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',
+    });
+    vi.stubGlobal('fetch', fetch);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'promoted' } });
+    await waitFor(() =>
+      expect(fetch.mock.calls.some(c =>
+        String(c[0]).includes('/api/releases?') && String(c[0]).includes('status=promoted'))).toBe(true));
+  });
 });

@@ -18,7 +18,7 @@ export default function ReleasesPanel() {
     if (status) qs.set('status', status);
     if (cursor) qs.set('cursor', cursor);
     fetch(`/api/releases?${qs.toString()}`)
-      .then(r => r.json())
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((data: ReleasesListResponse) => {
         setItems(prev => (replace ? data.releases : [...prev, ...data.releases]));
         setNextCursor(data.next_cursor || '');

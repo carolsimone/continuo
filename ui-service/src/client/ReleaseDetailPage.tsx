@@ -61,7 +61,7 @@ export default function ReleaseDetailPage() {
   return (
     <div className="page">
       <header className="page-header">
-        <button className="detail-back-link" onClick={() => navigate('/?tab=releases')}>← Back</button>
+        <button type="button" className="detail-back-link" onClick={() => navigate('/?tab=releases')}>← Back</button>
         <div className="detail-page-title">{rel.release_id}</div>
         <span className={`pill ${releasePillClass(rel.status)}`}>{rel.status}</span>
       </header>

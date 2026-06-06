@@ -87,4 +87,12 @@ describe('ReleaseDetailPage', () => {
     });
     expect(container.querySelector('.log-block')).toBeNull();
   });
+
+  it('renders a full-page error strip when the release fetch fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) })));
+    const { container } = renderDetail();
+    await waitFor(() =>
+      expect(container.querySelector('.info-strip--error')?.textContent).toContain('HTTP 404'));
+  });
 });
