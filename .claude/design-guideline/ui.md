@@ -266,6 +266,35 @@ Rules:
 - Always paired with `.tabs__count` when the tabs index a countable
   collection. Same rule as `.section-header__count`.
 
+## Form fields
+
+The sanctioned wrapper for a labelled native control (e.g. a filter
+`<select>`). One label plus one control per `.form-field`.
+
+```jsx
+<div className="form-field">
+  <label htmlFor="release-status-filter">Status</label>
+  <select id="release-status-filter">{/* … */}</select>
+</div>
+```
+
+```css
+.form-field          { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
+.form-field > label  { font-size: 11px; font-weight: 700; color: #94a3b8;
+                       text-transform: uppercase; letter-spacing: 0.7px; }
+.form-field > select { font: 500 12px/1.4 inherit; padding: 4px 8px;
+                       border: 1px solid #d1d5db; border-radius: 4px;
+                       background: #fff; color: #374151; cursor: pointer; }
+```
+
+Rules:
+
+- The label is the uppercase gray micro-label — same treatment as
+  `.section-header__title`.
+- Use a native control. Do not build a custom dropdown widget.
+- For a filter that drives a list, the `.form-field` sits above the
+  `.section-header` of the list it filters.
+
 ## Tables
 
 - Reuse `.nodes-table` shape. Header row is uppercase 10.5px gray.
@@ -275,6 +304,38 @@ Rules:
   ~280px). Provide a `more` toggle that expands inline via
   `.nodes-error-full--visible`. Always also link out to the full log
   source.
+
+## Log block
+
+For showing fetched log or code text inline (e.g. a per-node dbt log on
+the release detail page). A light, scrollable, monospace surface — never
+a dark terminal box.
+
+```jsx
+<button type="button" className="btn btn--secondary" onClick={toggle}>view</button>
+<a className="btn btn--secondary" href={logUrl} target="_blank" rel="noreferrer">open full log ↗</a>
+{open && <pre className="log-block">{content}</pre>}
+```
+
+```css
+.log-block { margin-top: 8px; background: #f8fafc; border: 1px solid #e2e8f0;
+             border-radius: 6px; padding: 10px 12px; max-height: 220px;
+             overflow: auto; white-space: pre-wrap;
+             font-family: 'SF Mono', 'Fira Mono', monospace;
+             font-size: 11.5px; color: #334155; }
+```
+
+Rules:
+
+- A toggle (`view` / `hide`, a `.btn--secondary`) reveals the block
+  inline; collapsed by default so rows stay scannable.
+- Always pair it with a link-out to the full source (`open full log ↗`,
+  also a `.btn--secondary`). The inline block is a preview, not the
+  system of record.
+- A failed fetch renders below as an `.info-strip--error`, not inside
+  the `.log-block`.
+- This is distinct from the Tables truncate-with-`more` rule, which
+  covers short inline error text inside a single cell.
 
 ## Snapshot tiles
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { firstInFlight, IN_FLIGHT_STATUSES } from '../../src/client/release-helpers';
+import { firstInFlight, IN_FLIGHT_STATUSES, releasePillClass } from '../../src/client/release-helpers';
 import { ReleaseListItem } from '../../src/client/types';
 
 const mk = (id: string, status: string): ReleaseListItem => ({
@@ -16,5 +16,32 @@ describe('firstInFlight', () => {
   });
   it('IN_FLIGHT_STATUSES covers the three active states', () => {
     expect(IN_FLIGHT_STATUSES).toEqual(['received', 'parsing', 'validating']);
+  });
+});
+
+describe('releasePillClass', () => {
+  it('maps release lifecycle statuses to pill variants', () => {
+    expect(releasePillClass('promoted')).toBe('pill--succeeded');
+    expect(releasePillClass('rejected')).toBe('pill--failed');
+    expect(releasePillClass('validating')).toBe('pill--running');
+    expect(releasePillClass('parsing')).toBe('pill--running');
+    expect(releasePillClass('received')).toBe('pill--pending');
+    expect(releasePillClass('superseded')).toBe('pill--cancelled');
+  });
+
+  it('maps per-node validation statuses (ok / failed) to pill variants', () => {
+    expect(releasePillClass('ok')).toBe('pill--succeeded');
+    expect(releasePillClass('failed')).toBe('pill--failed');
+  });
+
+  it('maps run-style keyword statuses', () => {
+    expect(releasePillClass('succeeded')).toBe('pill--succeeded');
+    expect(releasePillClass('running')).toBe('pill--running');
+    expect(releasePillClass('cancelled')).toBe('pill--cancelled');
+    expect(releasePillClass('pending')).toBe('pill--pending');
+  });
+
+  it('falls back to pending for unknown statuses', () => {
+    expect(releasePillClass('weird')).toBe('pill--pending');
   });
 });
