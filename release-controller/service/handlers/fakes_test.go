@@ -98,10 +98,10 @@ func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
 // --- fakeReleaseRepo ---
 
 type fakeReleaseRepo struct {
-	store             *fakeStore
-	lastCutoff        time.Time
-	lastKeepReleaseID string
-	deletedCount      int
+	store              *fakeStore
+	lastCutoff         time.Time
+	lastKeepReleaseIDs []string
+	deletedCount       int
 }
 
 // Get mirrors the Postgres ReleaseRepository contract: a missing release yields
@@ -155,9 +155,9 @@ func (f *fakeReleaseRepo) List(_ context.Context, _ repository.ListFilter) ([]*r
 
 // DeleteResolvedBefore records the call parameters and returns the configured
 // deletedCount so handler tests can assert on retention behaviour.
-func (f *fakeReleaseRepo) DeleteResolvedBefore(_ context.Context, cutoff time.Time, keepReleaseID string) (int, error) {
+func (f *fakeReleaseRepo) DeleteResolvedBefore(_ context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	f.lastCutoff = cutoff
-	f.lastKeepReleaseID = keepReleaseID
+	f.lastKeepReleaseIDs = keepReleaseIDs
 	return f.deletedCount, nil
 }
 

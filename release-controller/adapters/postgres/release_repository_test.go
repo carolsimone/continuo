@@ -224,7 +224,7 @@ func TestReleaseRepository_DeleteResolvedBeforeKeepsCurrentProd(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, r))
 
 	cutoff := time.Unix(1000, 0).UTC()
-	n, err := repo.DeleteResolvedBefore(ctx, cutoff, "old-keep")
+	n, err := repo.DeleteResolvedBefore(ctx, cutoff, []string{"old-keep"})
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
 
@@ -236,4 +236,66 @@ func TestReleaseRepository_DeleteResolvedBeforeKeepsCurrentProd(t *testing.T) {
 	assert.NotNil(t, kept)
 	young, _ := repo.Get(ctx, "received-young")
 	assert.NotNil(t, young)
+}
+
+func TestReleaseRepository_DeleteResolvedBeforeKeepsServiceProdRefs(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db)
+	spRepo := postgres.NewServiceProdRepository(db)
+	ctx := context.Background()
+
+	mkPromoted := func(id string, ts int64) {
+		r := release.New(id, "svc", "t", false, time.Unix(ts, 0).UTC())
+		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
+		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
+		require.NoError(t, r.TransitionToPromoted(time.Unix(ts+3, 0).UTC()))
+		require.NoError(t, repo.Save(ctx, r))
+	}
+
+	// Two old promoted releases; svc-a's pointer references sp-ref, the other has no pointer.
+	mkPromoted("sp-ref", 100)
+	mkPromoted("sp-unref", 100)
+	// svc-a still points at sp-ref (its last promoted release).
+	require.NoError(t, spRepo.Upsert(ctx, release.NewServiceProd("svc-a", "sp-ref", "s3://a", "t1", time.Unix(100, 0).UTC())))
+
+	// Collect keep IDs by reading service_prod (mirroring what PruneResolvedReleases does).
+	sps, err := spRepo.List(ctx)
+	require.NoError(t, err)
+	keepIDs := make([]string, 0, len(sps))
+	for _, sp := range sps {
+		keepIDs = append(keepIDs, sp.ReleaseID())
+	}
+
+	cutoff := time.Unix(1000, 0).UTC()
+	n, err := repo.DeleteResolvedBefore(ctx, cutoff, keepIDs)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "only the unreferenced old release should be deleted")
+
+	// sp-ref is still reachable (service_prod points at it).
+	kept, _ := repo.Get(ctx, "sp-ref")
+	assert.NotNil(t, kept, "release referenced by service_prod must survive retention")
+
+	// sp-unref has no pointer and is older than cutoff — it should be gone.
+	gone, _ := repo.Get(ctx, "sp-unref")
+	assert.Nil(t, gone, "unreferenced old terminal release must be pruned")
+}
+
+func TestReleaseRepository_DeleteResolvedBeforeEmptyKeepSlice(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db)
+	ctx := context.Background()
+
+	r := release.New("old-prom", "svc", "t", false, time.Unix(100, 0).UTC())
+	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
+	require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(102, 0).UTC()))
+	require.NoError(t, r.TransitionToPromoted(time.Unix(103, 0).UTC()))
+	require.NoError(t, repo.Save(ctx, r))
+
+	cutoff := time.Unix(1000, 0).UTC()
+	n, err := repo.DeleteResolvedBefore(ctx, cutoff, []string{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "an empty keep set should delete all matching old terminal releases")
+
+	gone, _ := repo.Get(ctx, "old-prom")
+	assert.Nil(t, gone)
 }

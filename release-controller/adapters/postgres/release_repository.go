@@ -262,14 +262,15 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 
 // DeleteResolvedBefore removes releases that are in a terminal state
 // (promoted, rejected, or superseded), were created before the given cutoff,
-// and are not the release identified by keepReleaseID. Returns the number of
-// rows deleted.
-func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff time.Time, keepReleaseID string) (int, error) {
+// and are not in the keepReleaseIDs set. An empty keepReleaseIDs slice means
+// no extra releases are preserved. Returns the number of rows deleted.
+func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	res, err := r.q.ExecContext(ctx,
 		`DELETE FROM releases
 		 WHERE status IN ('promoted','rejected','superseded')
 		   AND created_at < $1
-		   AND release_id <> $2`, cutoff, keepReleaseID)
+		   AND release_id <> ALL($2)`,
+		cutoff, pq.Array(keepReleaseIDs))
 	if err != nil {
 		return 0, fmt.Errorf("delete resolved releases: %w", err)
 	}

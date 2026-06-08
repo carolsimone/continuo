@@ -25,8 +25,8 @@ type ListFilter struct {
 type ReleaseRepository interface {
 	Get(ctx context.Context, id string) (*release.Release, error)
 	Save(ctx context.Context, r *release.Release) error
-	NextQueuedRelease(ctx context.Context) (*release.Release, error)                                // oldest StatusReceived; nil if none
-	ActiveRelease(ctx context.Context) (*release.Release, error)                                    // single Parsing or Validating; nil if none
-	List(ctx context.Context, f ListFilter) (items []*release.Release, next *ListCursor, err error) // paginated history newest-first
-	DeleteResolvedBefore(ctx context.Context, cutoff time.Time, keepReleaseID string) (int, error)  // retention prune
+	NextQueuedRelease(ctx context.Context) (*release.Release, error)                                  // oldest StatusReceived; nil if none
+	ActiveRelease(ctx context.Context) (*release.Release, error)                                      // single Parsing or Validating; nil if none
+	List(ctx context.Context, f ListFilter) (items []*release.Release, next *ListCursor, err error)   // paginated history newest-first
+	DeleteResolvedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) // retention prune; keeps all IDs in the slice
 }
