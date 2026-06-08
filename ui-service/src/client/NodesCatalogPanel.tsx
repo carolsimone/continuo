@@ -22,8 +22,10 @@ export default function NodesCatalogPanel() {
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const offsetRef = useRef(0);
+  const genRef = useRef(0);
 
   const fetchPage = useCallback(async (offset: number, append: boolean) => {
+    const myGen = ++genRef.current;
     const params = new URLSearchParams();
     if (search) params.set('search', search);
     if (service) params.set('service', service);
@@ -31,13 +33,16 @@ export default function NodesCatalogPanel() {
     params.set('offset', String(offset));
     try {
       const res = await fetch(`/api/nodes?${params.toString()}`);
+      if (myGen !== genRef.current) return;            // superseded while awaiting fetch
       if (!res.ok) { setError('Failed to load nodes'); return; }
       const data: NodesResponse = await res.json();
+      if (myGen !== genRef.current) return;            // superseded while awaiting json
       setError(null);
       setTotal(data.total_count || 0);
       offsetRef.current = offset;
       setNodes(prev => (append ? [...prev, ...(data.nodes || [])] : (data.nodes || [])));
     } catch {
+      if (myGen !== genRef.current) return;
       setError('Failed to load nodes');
     }
   }, [search, service]);
