@@ -4,13 +4,14 @@ Comprehensive end-to-end test validating the complete Continuo orchestration pip
 
 ## Test Overview
 
-Tests a 6-node `ftable_*` DAG executing through all services:
-- `state` - Creates scheduler
-- `orchestrator` - Identifies root nodes, publishes to query.model:v1
+The suite covers both the run-orchestration pipeline and the dbt blue/green release pipeline. The happy-path test exercises a 6-node `ftable_*` DAG through every service:
+- `state` - Creates scheduler, owns the run/task lifecycle
+- `orchestrator` - Snapshots topology, identifies root nodes, unlocks downstream dependencies, publishes to query.model:v1 (owns the responsibilities of the former `graph` and `dependency-controller` services)
 - `executor-controller` - Deploys k8s jobs
 - `k8s-controller` - Monitors job status
-- `dependency-controller` - Unlocks downstream dependencies
-- `ui-service` - HTTP API verified to return correct scheduler/task data
+- `manifest-controller` - Parses dbt manifests (candidate + legacy paths)
+- `release-controller` - Owns the blue/green candidate-release lifecycle and `current_prod`
+- `ui-service` - HTTP API verified to return correct scheduler/task/release data
 
 ### DAG Layout
 
@@ -152,8 +153,8 @@ You should see:
 The E2E test uses a hybrid setup:
 
 **In docker-compose:**
-- PostgreSQL, Redis, Neo4j (data stores)
-- state, orchestrator, manifest-controller (services)
+- PostgreSQL, Redis, Neo4j (data stores), LocalStack (S3 — dbt manifests)
+- state, orchestrator, manifest-controller, release-controller (services)
 
 **In kind cluster (Kubernetes):**
 - executor-controller (Deployment)
@@ -166,15 +167,52 @@ Controllers in kind connect to docker-compose services via docker bridge network
 
 | File | Purpose |
 |------|---------|
-| `system_test.go` | `TestE2E_HappyPath_FullDAGExecution` |
+| `system_test.go` | `TestE2E_HappyPath_FullDAGExecution` — 6-node `ftable_*` DAG through every service |
 | `trigger_test.go` | `TestTriggerSchedule_SeedRunAndRerun` — trigger seed schedule via TriggerSchedule RPC, wait for completion, re-trigger |
-| `failure_test.go` | `TestE2E_FailurePath_NodeFailureDrainsSchedule` |
-| `schedule_catalog_test.go` | Catalog and schedule assertions |
+| `failure_test.go` | `TestE2E_FailurePath_RerunRebasesBothFailureSubtrees` — two parallel failing subtrees, then a rerun rebases both |
+| `rebase_test.go` | `TestRebaseFromFailedRun`, `TestRebaseAllInheritedFinalizes`, `TestRebaseFromCancelledRun`, `TestRebaseOfRebase` |
+| `single_node_run_test.go` | `TestSingleNodeRunLatest`, `TestSingleNodeRunStale`, `TestSingleNodeRunTargetNotFound` |
+| `cancel_test.go` | `TestCancelMidwayAndRetrigger` — cancel an in-flight schedule, then re-trigger |
+| `empty_dag_test.go` | `TestEmptyCronDAG_FinalisesAsFailed` — empty projection fails the run fast |
+| `dag_latest_snapshot_test.go` | `TestE2E_DAGLatestSnapshot` |
+| `topology_versioning_test.go` | `TestTopologyVersioning_MidRunIsolation` — lazy generation switch (in-flight runs immutable) |
+| `watchdog_termination_test.go` | `TestWatchdog_TerminatesStuckSchedule` |
+| `release_promote_test.go` | dbt blue/green release tests — see [Blue/Green Release Tests](#bluegreen-release-tests) |
+| `seed_topology_test.go` | `seedTopology` helper — publishes `release.promoted:v1` to establish the e2e DAG in Neo4j (the kept production path) |
 | `ui_http_test.go` | HTTP assertions against the ui-service (`verifyUIService`) |
 | `verify.go` | DAG-level assertions (executor jobs, k8s jobs, dependency unlocking, failure helpers) |
-| `clients.go` | gRPC, Redis, Postgres, Neo4j client setup |
+| `clients.go` | gRPC, Redis, Postgres, Neo4j, S3, and release-controller client setup |
 | `helpers.go` | `pollUntil`, k8s job helpers, `containsAll` |
 | `cleanup.go` | Removes all test data from every data store |
+
+## Blue/Green Release Tests
+
+`release_promote_test.go` drives the dbt blue/green release pipeline end-to-end via the production entry point — `POST /releases`, the exact request CI's `deploy.yml` issues. Validation runs **real `dbt --empty` jobs as K8s Jobs in kind**, exercising the full event chain:
+
+```
+POST /releases → release.requested:v1 → manifest-controller candidate parse
+→ manifest.loaded.candidate:v1 → release-controller derives the changed-node set
+→ validation.requested:v1 → executor/k8s run per-node validation jobs
+→ validation.node.completed:v1 → validation.completed:v1
+→ release-controller promotes → release.promoted:v1
+→ orchestrator swaps the Neo4j topology
+```
+
+| Test | What it verifies |
+|------|------------------|
+| `TestE2E_ReleasePromote_ValidatesAndSwapsTopology` | Full cutover. `current_prod` is pre-seeded with every candidate node **except** `rel_probe`, so the derived changed set is exactly `{rel_probe}` — a self-contained leaf that validates without touching production. Asserts promotion, the Neo4j topology swap, and the per-node dbt log URI surfaced through the UI BFF. |
+| `TestE2E_ReleasePromote_GatedIntraServiceUpstream` | A changed node with a changed **intra-service** upstream (`rel_probe_down` → `rel_probe_up`): the upstream builds into the candidate schema first (topological gating), the dependent validates against it, then the candidate schema is torn down. |
+| `TestE2E_ReleasePromote_GatedCrossServiceUpstream` | A clean **cross-service** chain (`xprobe_down`@service-2 → `xprobe_up`@service-3) validates self-contained — the changed node and its cross-service upstream are both built empty in the candidate schema. |
+| `TestE2E_ReleasePromote_BootstrapSkipsValidation` | `bootstrap:true` promotes directly, skipping validation, and seeds `current_prod`. |
+
+These tests read the dbt manifests that `setup.sh` uploads to LocalStack S3 and use the content-addressed image tags loaded into kind, so they need no setup beyond the standard blank-state harness. Each validation job is real dbt — allow up to ~10 minutes per test, and expect a cold kind run to be slower than a warm one.
+
+Run only the blue/green tests:
+
+```bash
+docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
+  go test -v -count=1 -timeout 25m -run 'TestE2E_ReleasePromote' /app/tests/e2e/...
+```
 
 ## Failure Path Test
 
