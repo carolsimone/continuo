@@ -67,7 +67,7 @@ type Release struct {
 	id                  string
 	status              Status
 	imageTags           map[string]string
-	manifestsURI        string
+	changedService      string
 	candidateTopology   Topology
 	validationNodeIDs   []string
 	perNodeResults      []NodeValidationResult
@@ -81,22 +81,26 @@ type Release struct {
 	bootstrap           bool
 }
 
-func New(id string, imageTags map[string]string, manifestsURI string, bootstrap bool, now time.Time) *Release {
+// New creates a new Release for a single-service delta. imageTags is initialised
+// with just the changed service's tag; it is overwritten with the full assembled
+// map in AdvanceQueue when the release transitions to Parsing (see
+// SetAssembledImageTags for the rationale).
+func New(id, changedService, imageTag string, bootstrap bool, now time.Time) *Release {
 	return &Release{
-		id:           id,
-		status:       StatusReceived,
-		imageTags:    imageTags,
-		manifestsURI: manifestsURI,
-		bootstrap:    bootstrap,
-		createdAt:    now,
-		transitions:  []Transition{{To: StatusReceived, At: now}},
+		id:             id,
+		status:         StatusReceived,
+		imageTags:      map[string]string{changedService: imageTag},
+		changedService: changedService,
+		bootstrap:      bootstrap,
+		createdAt:      now,
+		transitions:    []Transition{{To: StatusReceived, At: now}},
 	}
 }
 
 func (r *Release) ID() string                             { return r.id }
 func (r *Release) Status() Status                         { return r.status }
 func (r *Release) ImageTags() map[string]string           { return r.imageTags }
-func (r *Release) ManifestsURI() string                   { return r.manifestsURI }
+func (r *Release) ChangedService() string                 { return r.changedService }
 func (r *Release) IsBootstrap() bool                      { return r.bootstrap }
 func (r *Release) CandidateTopology() Topology            { return r.candidateTopology }
 func (r *Release) ValidationNodeIDs() []string            { return r.validationNodeIDs }
@@ -105,6 +109,17 @@ func (r *Release) FailingNodes() []string                 { return r.failingNode
 func (r *Release) PerNodeResults() []NodeValidationResult { return r.perNodeResults }
 func (r *Release) CreatedAt() time.Time                   { return r.createdAt }
 func (r *Release) Transitions() []Transition              { return r.transitions }
+
+// SetAssembledImageTags replaces the image-tags map with the fully assembled set
+// built from every service's current service_prod pointer. This is called in
+// AdvanceQueue (when a Received release transitions to Parsing) rather than at
+// receive time, because the other services' pointers can change as earlier-queued
+// releases are promoted. Reading them at advance-time guarantees we see the live
+// state for all OTHER services, not a stale snapshot from when this release was
+// first enqueued.
+func (r *Release) SetAssembledImageTags(tags map[string]string) {
+	r.imageTags = tags
+}
 
 // RecordValidationResults stores the per-node validation outcomes on the
 // aggregate. Called before the promote/reject branch so both paths persist them.
@@ -162,7 +177,7 @@ type RehydrateInput struct {
 	ID                string
 	Status            Status
 	ImageTags         map[string]string
-	ManifestsURI      string
+	ChangedService    string
 	CandidateTopology Topology
 	ValidationNodeIDs []string
 	PerNodeResults    []NodeValidationResult
@@ -180,7 +195,7 @@ func Rehydrate(in RehydrateInput) *Release {
 		id:                in.ID,
 		status:            in.Status,
 		imageTags:         in.ImageTags,
-		manifestsURI:      in.ManifestsURI,
+		changedService:    in.ChangedService,
 		candidateTopology: in.CandidateTopology,
 		validationNodeIDs: in.ValidationNodeIDs,
 		perNodeResults:    in.PerNodeResults,
