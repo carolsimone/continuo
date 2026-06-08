@@ -50,6 +50,11 @@ def main(argv: list[str] | None = None) -> int:
     p_upload.add_argument("--services-dir", default=None, help="Directory containing services")
     p_upload.add_argument("--target", default="localstack", help="Target profile name")
     p_upload.add_argument("--env", default=None, help="Override S3 env prefix")
+    p_upload.add_argument(
+        "--release-id",
+        default="",
+        help="Release ID for canonical S3 key <service>/<release_id>/manifest.json (required)",
+    )
 
     # -- load --
     p_load = subparsers.add_parser("load", help="Compile + upload (primary workflow)")
@@ -60,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     p_load.add_argument(
         "--release-id",
         default="",
-        help="Upload to per-release prefix releases/<id>/manifests/<service>/manifest_v1.json",
+        help="Release ID for canonical S3 key <service>/<release_id>/manifest.json (required)",
     )
 
     args = parser.parse_args(argv)
@@ -82,11 +87,18 @@ def main(argv: list[str] | None = None) -> int:
         target_config["env"] = args.env
 
     if args.command == "upload":
-        succeeded, failed = upload_services(service_dirs, target_config)
+        if not args.release_id:
+            logger.error("--release-id is required for the upload subcommand")
+            return 1
+        succeeded, failed = upload_services(service_dirs, target_config, release_id=args.release_id)
         logger.info("Upload done: %d succeeded, %d failed", len(succeeded), len(failed))
         return 1 if failed else 0
 
     if args.command == "load":
+        if not args.release_id:
+            logger.error("--release-id is required for the load subcommand")
+            return 1
+
         compiled_ok, compile_failed = compile_services(service_dirs)
 
         if not compiled_ok:
