@@ -70,6 +70,7 @@ func main() {
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    logger,
+		Bucket:    cfg.S3Bucket,
 	}
 
 	// Start outbox publisher — spawns its own goroutine internally and runs until
