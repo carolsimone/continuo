@@ -68,11 +68,15 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	if err != nil {
 		return fmt.Errorf("current prod: %w", err)
 	}
+	// Read the live service_prod pointers once: the same set drives both the
+	// activation guard and the manifest-set assembly below. Reading them now
+	// (when the release becomes active) reflects any promotion an earlier-queued
+	// release made meanwhile.
+	pointers, err := u.ServiceProdRepo().List(ctx)
+	if err != nil {
+		return fmt.Errorf("list service prod: %w", err)
+	}
 	if cp != nil && cp.ReleaseID() != "" {
-		pointers, err := u.ServiceProdRepo().List(ctx)
-		if err != nil {
-			return fmt.Errorf("list service prod: %w", err)
-		}
 		if missing := uncoveredProdServices(cp, pointers, next.ChangedService()); len(missing) > 0 {
 			d.Logger.Warn(
 				"release activation blocked: service_prod is missing pointers for live services; run seed-service-prod before accepting releases",
@@ -88,14 +92,8 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return fmt.Errorf("transition to parsing: %w", err)
 	}
 
-	// Assemble the full manifest-key set now that this release is becoming active.
-	// We read the other services' service_prod pointers at this moment so that any
-	// promotions from earlier-queued releases are already reflected.
 	imageTag := next.ImageTags()[next.ChangedService()]
-	set, err := AssembleManifestSet(ctx, u.ServiceProdRepo(), d.Bucket, next.ChangedService(), next.ID(), imageTag)
-	if err != nil {
-		return fmt.Errorf("assemble manifest set: %w", err)
-	}
+	set := AssembleManifestSet(pointers, d.Bucket, next.ChangedService(), next.ID(), imageTag)
 	next.SetAssembledImageTags(set.ImageTags)
 
 	if err := u.ReleaseRepo().Save(ctx, next); err != nil {

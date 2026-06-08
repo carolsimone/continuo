@@ -43,12 +43,17 @@ func SeedServiceProd(
 		}
 	}
 
+	// Validate every service has a manifest key BEFORE writing anything, so a
+	// missing key fails the whole seed atomically rather than leaving a partial
+	// set of pointers behind.
 	for _, svc := range orderSeen {
-		key, ok := existingKeys[svc]
-		if !ok {
+		if _, ok := existingKeys[svc]; !ok {
 			return 0, fmt.Errorf("no manifest S3 key provided for service %q", svc)
 		}
-		sp := release.NewServiceProd(svc, cp.ReleaseID(), key, entries[svc].imageTag, now)
+	}
+
+	for _, svc := range orderSeen {
+		sp := release.NewServiceProd(svc, cp.ReleaseID(), existingKeys[svc], entries[svc].imageTag, now)
 		if err := repo.Upsert(ctx, sp); err != nil {
 			return 0, fmt.Errorf("upsert service_prod for %q: %w", svc, err)
 		}

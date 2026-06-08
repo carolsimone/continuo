@@ -1,10 +1,7 @@
 package handlers
 
 import (
-	"context"
-
 	"github.com/carolsimone/continuo/release-controller/domain/release"
-	"github.com/carolsimone/continuo/release-controller/domain/repository"
 )
 
 // AssembledSet is the full manifest set for a single-service release.
@@ -15,12 +12,9 @@ type AssembledSet struct {
 
 // AssembleManifestSet builds the full manifest set for a single-service release:
 // the changed service's new manifest key + every OTHER service's stored pointer.
+// existing is the live set of service_prod pointers, read once by the caller.
 // The changed service's prior pointer (if present) is replaced, never duplicated.
-func AssembleManifestSet(ctx context.Context, repo repository.ServiceProdRepository, bucket, changedService, releaseID, imageTag string) (AssembledSet, error) {
-	existing, err := repo.List(ctx)
-	if err != nil {
-		return AssembledSet{}, err
-	}
+func AssembleManifestSet(existing []*release.ServiceProd, bucket, changedService, releaseID, imageTag string) AssembledSet {
 	keys := []release.ManifestKey{{Service: changedService, S3URI: CanonicalManifestKey(bucket, changedService, releaseID)}}
 	tags := map[string]string{changedService: imageTag}
 	for _, sp := range existing {
@@ -30,5 +24,5 @@ func AssembleManifestSet(ctx context.Context, repo repository.ServiceProdReposit
 		keys = append(keys, release.ManifestKey{Service: sp.ServiceName(), S3URI: sp.ManifestS3Key()})
 		tags[sp.ServiceName()] = sp.ImageTag()
 	}
-	return AssembledSet{ManifestKeys: keys, ImageTags: tags}, nil
+	return AssembledSet{ManifestKeys: keys, ImageTags: tags}
 }
