@@ -124,14 +124,15 @@ type nodeSummaryRow struct {
 	FlakyCount     int       `db:"flaky_count"`
 	LastStatus     string    `db:"last_status"`
 	LastRunAt      time.Time `db:"last_run_at"`
-	TotalCount     int       `db:"total_count"`
 }
 
 // ListNodes returns the node catalog: one summary per node that has run, with
 // stats aggregated over each node's most recent 50 runs. Filters by exact
 // service (when non-empty) and a case-insensitive substring on the fqn (when
-// non-empty), ordered by last_run_at DESC and paged by limit/offset. The second
-// return value is the total match count before paging.
+// non-empty), ordered by last_run_at DESC with (service, schema, table) identity
+// tiebreakers for deterministic paging, and paged by limit/offset. The second
+// return value is the total match count before paging, computed independently of
+// the page so an empty page still reports the true total.
 func (r *nodeRunRepository) ListNodes(
 	ctx context.Context,
 	search, serviceName string,
@@ -147,7 +148,11 @@ func (r *nodeRunRepository) ListNodes(
 		offset = 0
 	}
 
-	const query = `
+	// rankedWindowedCTE is shared verbatim by the count query and the page query
+	// so their filter and windowing can never drift. The search predicate escapes
+	// LIKE wildcards (\ % _) in $1 — backslash first — so literal underscores in
+	// dbt names (fct_orders) don't match an arbitrary character.
+	const rankedWindowedCTE = `
 		WITH ranked AS (
 			SELECT t.task_id, t.service_name, t.schema_name, t.table_name,
 			       t.retry_count, t.status AS run_status, s.created_at,
@@ -158,10 +163,24 @@ func (r *nodeRunRepository) ListNodes(
 			FROM task_tracker t
 			JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
 			WHERE ($1 = '' OR lower(t.service_name||'.'||t.schema_name||'.'||t.table_name)
-			                  LIKE '%'||lower($1)||'%')
+			                  LIKE '%' || replace(replace(replace(lower($1), '\', '\\'), '%', '\%'), '_', '\_') || '%' ESCAPE '\')
 			  AND ($2 = '' OR t.service_name = $2)
 		),
-		windowed AS ( SELECT * FROM ranked WHERE rn <= 50 ),
+		windowed AS ( SELECT * FROM ranked WHERE rn <= 50 )`
+
+	// total_count is computed independently of paging so an empty page (offset
+	// past the end) still reports the true match count.
+	countQuery := rankedWindowedCTE + `
+		SELECT COUNT(*) FROM (
+			SELECT 1 FROM windowed GROUP BY service_name, schema_name, table_name
+		) g`
+	var total int
+	if err := r.db.GetContext(ctx, &total, countQuery, search, serviceName); err != nil {
+		r.logger.Error("Failed to count nodes", "search", search, "service", serviceName, "error", err)
+		return nil, 0, fmt.Errorf("failed to count nodes: %w", err)
+	}
+
+	pageQuery := rankedWindowedCTE + `,
 		-- latest execution per task; DISTINCT ON is satisfied by idx_task_execution_task_id
 		latest_exec AS (
 			SELECT DISTINCT ON (te.task_id)
@@ -174,7 +193,7 @@ func (r *nodeRunRepository) ListNodes(
 			SELECT
 			  w.service_name, w.schema_name, w.table_name,
 			  COUNT(*) AS run_count,
-			  COUNT(*) FILTER (WHERE w.run_status IN ('succeeded','failed','cancelled')) AS terminal_count,
+			  COUNT(*) FILTER (WHERE w.run_status IN ('succeeded','failed','cancelled','skipped')) AS terminal_count,
 			  COUNT(*) FILTER (WHERE w.run_status = 'succeeded') AS succeeded_count,
 			  AVG(EXTRACT(EPOCH FROM (le.completed_at - le.started_at)))
 			     FILTER (WHERE le.completed_at IS NOT NULL AND le.started_at IS NOT NULL) AS avg_dur,
@@ -189,22 +208,16 @@ func (r *nodeRunRepository) ListNodes(
 			LEFT JOIN latest_exec le ON le.task_id = w.task_id
 			GROUP BY w.service_name, w.schema_name, w.table_name
 		)
-		SELECT *, COUNT(*) OVER() AS total_count
-		FROM agg
-		ORDER BY last_run_at DESC
-		LIMIT $3 OFFSET $4
-	`
+		SELECT * FROM agg
+		ORDER BY last_run_at DESC, service_name, schema_name, table_name
+		LIMIT $3 OFFSET $4`
 
 	rows := []nodeSummaryRow{}
-	if err := r.db.SelectContext(ctx, &rows, query, search, serviceName, limit, offset); err != nil {
+	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, limit, offset); err != nil {
 		r.logger.Error("Failed to list nodes", "search", search, "service", serviceName, "error", err)
 		return nil, 0, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	total := 0
-	if len(rows) > 0 {
-		total = rows[0].TotalCount
-	}
 	out := make([]*projection.NodeSummary, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, toNodeSummary(row))

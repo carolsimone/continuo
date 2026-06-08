@@ -369,3 +369,132 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 	}
 	assert.Len(t, seen, 3, "page1 and page2 must be disjoint and cover all 3 nodes")
 }
+
+// TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun seeds many nodes
+// under one scheduler so they share scheduler_tracker.created_at (identical
+// last_run_at). Paging must stay disjoint and complete.
+func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+
+	svc := "svc-tie-" + uuid.New().String()[:8]
+	sid := uuid.New()
+	require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
+		ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
+		CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+	}))
+	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+	// 5 distinct nodes all under the SAME scheduler => identical last_run_at
+	for i := 0; i < 5; i++ {
+		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
+			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
+			TableName: "t" + uuid.New().String()[:6], JobName: "j", Status: run.TaskStatusSucceeded,
+			MaxRetries: 3, ManifestVersion: "m", ImageTag: "v", CreatedAt: time.Now().Add(-time.Minute),
+		}))
+	}
+	seen := map[string]int{}
+	for off := 0; off < 5; off += 2 {
+		page, total, err := repo.ListNodes(ctx, "", svc, 2, off)
+		require.NoError(t, err)
+		assert.Equal(t, 5, total)
+		for _, n := range page {
+			seen[n.TableName]++
+		}
+	}
+	assert.Len(t, seen, 5, "all 5 tied-last_run nodes appear exactly once across pages")
+	for tbl, c := range seen {
+		assert.Equal(t, 1, c, "node %s appeared %d times", tbl, c)
+	}
+}
+
+// TestNodeRunRepository_ListNodes_SkippedCountsTerminal verifies skipped counts
+// as terminal: succeeded + skipped => 50% (not 100%).
+func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	svc := "svc-skip-" + uuid.New().String()[:8]
+	mk := func(taskStatus run.TaskStatus, ageMin int) {
+		sid := uuid.New()
+		require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
+			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
+			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute), InitializationStatus: "completed",
+		}))
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
+			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "n",
+			JobName: "j", Status: taskStatus, MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute),
+		}))
+	}
+	mk(run.TaskStatusSucceeded, 10)
+	mk(run.TaskStatusSkipped, 5)
+	nodes, _, err := repo.ListNodes(ctx, "", svc, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	assert.Equal(t, 50, nodes[0].SuccessRatePct, "succeeded+skipped => 1/2 = 50%")
+}
+
+// TestNodeRunRepository_ListNodes_EscapesUnderscore verifies the LIKE wildcard
+// '_' in search is treated literally, not matching an arbitrary character.
+func TestNodeRunRepository_ListNodes_EscapesUnderscore(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	svc := "svc-esc-" + uuid.New().String()[:8]
+	mk := func(table string) {
+		sid := uuid.New()
+		require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
+			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
+			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+		}))
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
+			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: table,
+			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+			CreatedAt: time.Now().Add(-time.Minute),
+		}))
+	}
+	mk("fct_orders")
+	mk("fctxorders")
+	hit, total, err := repo.ListNodes(ctx, "fct_orders", svc, 50, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "underscore is literal -> only fct_orders matches")
+	require.Len(t, hit, 1)
+	assert.Equal(t, "fct_orders", hit[0].TableName)
+}
+
+// TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal verifies an empty page
+// (offset beyond the end) still returns the true total_count.
+func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	svc := "svc-emp-" + uuid.New().String()[:8]
+	for i := 0; i < 3; i++ {
+		sid := uuid.New()
+		require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
+			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
+			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute), InitializationStatus: "completed",
+		}))
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
+			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
+			TableName: "t" + uuid.New().String()[:6], JobName: "j", Status: run.TaskStatusSucceeded,
+			MaxRetries: 3, ManifestVersion: "m", ImageTag: "v", CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
+		}))
+	}
+	page, total, err := repo.ListNodes(ctx, "", svc, 2, 5) // offset past the 3 rows
+	require.NoError(t, err)
+	assert.Empty(t, page)
+	assert.Equal(t, 3, total, "total_count must survive an empty page")
+}
