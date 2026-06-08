@@ -66,6 +66,9 @@ Create a `Received` release for the single submitted service (idempotent: an exi
 ### Manifest-set assembly (at activation, not receipt)
 Assembly happens when a release transitions to `Parsing`, not when it is received. Under the FIFO queue an earlier release may promote and change another service's pointer before this one activates, so the set must be read from live state at the moment of activation. The queue advance reads every other service's `service_prod` row and combines them with the changed service's new canonical key (`s3://<bucket>/<changed_service>/<release_id>/manifest.json`) and its submitted image tag. The changed service's prior pointer, if any, is replaced rather than duplicated. The assembled per-service image tags are persisted on the release; the resulting `manifest_keys` list — one `{service, s3_uri}` entry per service — is emitted in the `release.requested:v1` payload `{release_id, manifest_keys}`.
 
+### Activation guard
+Before a release activates, the queue advance verifies that every service live in the `current_prod` topology snapshot is covered by a `service_prod` pointer (or is this release's changed service). If a live service has no pointer, the release stays `Received`, nothing is emitted, and a warning naming the uncovered services is logged; a later queue advance retries automatically. This protects the transition from a fully-populated `current_prod` with an empty `service_prod` table: without coverage, assembly would omit the unpointered services and promotion would retire them. `service_prod` is populated from the existing `current_prod` snapshot by the `seed-service-prod` command (shipped in the service image), which records each service's existing manifest key verbatim and is idempotent.
+
 ### On `manifest.loaded.candidate:v1`
 ```
 status=failed → Reject(reason=parse_failed), emit release.rejected:v1, advance queue

@@ -145,6 +145,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 - **One service per release.** `POST /releases` accepts `{service, release_id, image_tag, bootstrap?}` — a delta for a single dbt service. The full per-service manifest set and image-tag map are assembled later, at activation, never at receipt.
 - **Assembly reads live `service_prod`.** When a release transitions to `Parsing`, the queue advance combines the changed service's new canonical manifest key with every other service's current `service_prod` pointer. Reading at activation (not receipt) reflects any promotion an earlier-queued release made meanwhile.
 - **Promotion refreshes the pointer.** Every promotion path (validation-passed, bootstrap, empty-diff) upserts the changed service's `service_prod` row (canonical key + image tag + release id) in the same transaction that updates `current_prod`.
+- **Activation requires full coverage.** A release does not activate while any service live in `current_prod` lacks a `service_prod` pointer (and is not the changed service); it stays queued until the pointers are seeded. This prevents a populated-`current_prod`/empty-`service_prod` state from assembling a partial topology and retiring the unpointered services on promotion.
 
 ## `ui-service`
 

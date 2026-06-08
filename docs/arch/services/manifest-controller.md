@@ -54,11 +54,19 @@ Build an S3 source scoped to that bucket + the explicit key list
 list_manifests() downloads exactly the listed keys (no S3 listing)
   No keys → publish status=ok with empty topology, ACK
 
-Pass 1 — Parse
+Pass 1 — Parse and validate against the declared service
   For each manifest file: parse_manifest(path, version, image_tag) → list[ManifestNode]
   Malformed manifest — invalid JSON, a missing top-level `nodes` key, or an
     invalid node shape (missing `schema`/`fqn`, empty `fqn`) → publish
     status=failed (error_class=MalformedManifest), ACK
+  Each manifest key declares the service it belongs to (manifest_keys[].service).
+  The manifest is validated against that declared service:
+    Zero model/seed nodes → publish status=failed (error_class=EmptyManifest), ACK
+    Any node whose service_name differs from the declared service →
+      publish status=failed (error_class=ServiceMismatch), ACK
+  This rejects an empty or wrong-service upload before it can enter the candidate
+  topology — without it, such a candidate would promote with the declared
+  service's nodes missing and silently retire that service.
 
 Pass 2 — Build registry (in memory only; no CSV persisted)
   Build lookup dict: (schema_name, table_name) → NodeRegistryEntry
@@ -77,7 +85,7 @@ Publish manifest.loaded.candidate:v1 status=ok with the topology, ACK
 
 The flow leaves `image_tag` empty by design (`release-controller` joins the per-service tags it assembled for the release onto the candidate topology); it builds its registry in memory and persists nothing; and it reports parse/resolve failures back as a `status=failed` business signal rather than failing silently.
 
-Failure-handling distinction: a parse or resolve failure that re-delivery cannot fix (malformed manifest JSON or node shape, unresolvable reference) is published as `status=failed` and the message is ACKed — replaying it would not help. A transient infrastructure failure (S3 read error, Redis publish error) propagates so the message is **not ACKed**; it stays in the group PEL and is retried by the reclaim sweep (see Consumer Reliability).
+Failure-handling distinction: a parse or resolve failure that re-delivery cannot fix (malformed manifest JSON or node shape, an empty or wrong-service manifest, an unresolvable reference) is published as `status=failed` and the message is ACKed — replaying it would not help. A transient infrastructure failure (S3 read error, Redis publish error) propagates so the message is **not ACKed**; it stays in the group PEL and is retried by the reclaim sweep (see Consumer Reliability).
 
 ### Dependency resolution rules (sqlglot)
 
