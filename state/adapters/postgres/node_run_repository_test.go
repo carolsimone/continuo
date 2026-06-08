@@ -362,4 +362,10 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 	page2, _, err := repo.ListNodes(ctx, "", svc, 2, 2)
 	require.NoError(t, err)
 	assert.Len(t, page2, 1)
+
+	seen := map[string]bool{}
+	for _, n := range append(page1, page2...) {
+		seen[n.TableName] = true
+	}
+	assert.Len(t, seen, 3, "page1 and page2 must be disjoint and cover all 3 nodes")
 }

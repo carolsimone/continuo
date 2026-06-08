@@ -149,43 +149,45 @@ func (r *nodeRunRepository) ListNodes(
 
 	const query = `
 		WITH ranked AS (
-			SELECT t.service_name, t.schema_name, t.table_name,
+			SELECT t.task_id, t.service_name, t.schema_name, t.table_name,
 			       t.retry_count, t.status AS run_status, s.created_at,
-			       le.started_at, le.completed_at,
 			       ROW_NUMBER() OVER (
 			         PARTITION BY t.service_name, t.schema_name, t.table_name
 			         ORDER BY s.created_at DESC
 			       ) AS rn
 			FROM task_tracker t
 			JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
-			LEFT JOIN LATERAL (
-			  SELECT te.started_at, te.completed_at
-			  FROM task_execution te
-			  WHERE te.task_id = t.task_id
-			  ORDER BY te.created_at DESC
-			  LIMIT 1
-			) le ON TRUE
-			WHERE ($2 = '' OR t.service_name = $2)
-			  AND ($1 = '' OR lower(t.service_name||'.'||t.schema_name||'.'||t.table_name)
+			WHERE ($1 = '' OR lower(t.service_name||'.'||t.schema_name||'.'||t.table_name)
 			                  LIKE '%'||lower($1)||'%')
+			  AND ($2 = '' OR t.service_name = $2)
 		),
 		windowed AS ( SELECT * FROM ranked WHERE rn <= 50 ),
+		-- latest execution per task; DISTINCT ON is satisfied by idx_task_execution_task_id
+		latest_exec AS (
+			SELECT DISTINCT ON (te.task_id)
+			       te.task_id, te.started_at, te.completed_at
+			FROM task_execution te
+			JOIN windowed w ON w.task_id = te.task_id
+			ORDER BY te.task_id, te.created_at DESC
+		),
 		agg AS (
 			SELECT
-			  service_name, schema_name, table_name,
+			  w.service_name, w.schema_name, w.table_name,
 			  COUNT(*) AS run_count,
-			  COUNT(*) FILTER (WHERE run_status IN ('succeeded','failed','cancelled')) AS terminal_count,
-			  COUNT(*) FILTER (WHERE run_status = 'succeeded') AS succeeded_count,
-			  AVG(EXTRACT(EPOCH FROM (completed_at - started_at)))
-			     FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL) AS avg_dur,
+			  COUNT(*) FILTER (WHERE w.run_status IN ('succeeded','failed','cancelled')) AS terminal_count,
+			  COUNT(*) FILTER (WHERE w.run_status = 'succeeded') AS succeeded_count,
+			  AVG(EXTRACT(EPOCH FROM (le.completed_at - le.started_at)))
+			     FILTER (WHERE le.completed_at IS NOT NULL AND le.started_at IS NOT NULL) AS avg_dur,
 			  PERCENTILE_CONT(0.95) WITHIN GROUP (
-			     ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at)))
-			     FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL) AS p95_dur,
-			  COUNT(*) FILTER (WHERE retry_count > 0) AS flaky_count,
-			  (ARRAY_AGG(run_status ORDER BY created_at DESC))[1] AS last_status,
-			  MAX(created_at) AS last_run_at
-			FROM windowed
-			GROUP BY service_name, schema_name, table_name
+			     ORDER BY EXTRACT(EPOCH FROM (le.completed_at - le.started_at)))
+			     FILTER (WHERE le.completed_at IS NOT NULL AND le.started_at IS NOT NULL) AS p95_dur,
+			  COUNT(*) FILTER (WHERE w.retry_count > 0) AS flaky_count,
+			  -- [1] = most-recent run_status
+			  (ARRAY_AGG(w.run_status ORDER BY w.created_at DESC))[1] AS last_status,
+			  MAX(w.created_at) AS last_run_at
+			FROM windowed w
+			LEFT JOIN latest_exec le ON le.task_id = w.task_id
+			GROUP BY w.service_name, w.schema_name, w.table_name
 		)
 		SELECT *, COUNT(*) OVER() AS total_count
 		FROM agg
