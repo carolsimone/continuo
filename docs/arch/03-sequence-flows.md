@@ -381,6 +381,104 @@ sequenceDiagram
 
 > Differences vs. Flow 4 (rerun): rebase reads against the **latest** topology, so new arrivals and topology drift land in the projection; rerun reads strictly against the source's pinned `:EXECUTES` set. Both share the same materialiser, the same `:Run` MERGE, and the same `run.entries.dispatched:v1` pipeline.
 
+## 11. dbt Blue/Green Release (Validate-Then-Promote)
+
+A candidate dbt release is parsed, every changed node is validated self-contained in an isolated schema, and production (Neo4j topology, image tags, schedule catalog) is swapped only if validation passes. `release-controller` owns the lifecycle and holds `current_prod` — the single source of truth for what is live. Releases run a FIFO queue: one release parses/validates at a time, and each terminal outcome advances the next.
+
+```mermaid
+sequenceDiagram
+  participant CI as CI deploy
+  participant S3 as S3
+  participant RC as release-controller
+  participant R as Redis
+  participant MC as manifest-controller
+  participant EC as executor-controller
+  participant KC as k8s-controller
+  participant OR as orchestrator
+  participant ST as state
+
+  Note over CI,RC: Phase 1 — submit
+  CI->>S3: upload releases/{id}/manifests/{service}/manifest_v{N}.json
+  CI->>RC: POST /releases {release_id, image_tags, manifests_uri, bootstrap?}
+  Note over RC: create Received release (idempotent on release_id)<br/>FIFO queue advance → Parsing<br/>release_controller_outbox INSERT for release.requested:v1
+  RC->>R: publish release.requested:v1 {release_id, manifests_uri}
+
+  Note over MC,RC: Phase 2 — candidate parse
+  R->>MC: consume release.requested:v1
+  MC->>S3: list + download per-service manifest (highest manifest_v{N}.json)
+  Note over MC: parse model/seed/snapshot nodes<br/>content_hash = dbt checksum (sha256 fallback, never empty)<br/>resolve upstreams via sqlglot (qualified refs only)<br/>candidate_sql = compiled SQL with known-node schema refs<br/>rewritten to _candidate_{release} (seeds → empty candidate_sql)
+  alt manifest malformed / unqualified table ref
+    MC->>R: publish manifest.loaded.candidate:v1 {status=failed, error_class}
+    R->>RC: consume manifest.loaded.candidate:v1 (failed)
+    Note over RC: Reject(parse_failed) → release.rejected:v1, advance queue
+  else parsed ok
+    MC->>R: publish manifest.loaded.candidate:v1 {status=ok, topology[]}
+    R->>RC: consume manifest.loaded.candidate:v1 (ok)
+    Note over RC: join per-service image_tags into candidate topology
+  end
+
+  Note over RC: Phase 3 — change detection + gate
+  alt bootstrap:true OR nothing to validate (in-set empty)
+    Note over RC: promote directly (skip validation)<br/>current_prod ← candidate topology, transition Promoted
+    RC->>R: publish release.promoted:v1
+  else has changed nodes
+    Note over RC: changed = content_hash diff vs current_prod snapshot<br/>(empty snapshot / new node ⇒ treated as changed)<br/>inSet = DescendantsClosure(changed) ∪ FullAncestorsClosure(inSet)<br/>(changed + downstream + full transitive upstream closure, cross-service)
+    alt an in-set node has a direct upstream absent from the candidate topology
+      Note over RC: Reject(unbuildable_cross_service_upstream)
+      RC->>R: publish release.rejected:v1
+    else buildable
+      Note over RC: transition Validating
+      RC->>R: publish validation.requested:v1<br/>{candidate_schema=_candidate_{id}, per node:<br/>node_type, image_tag, candidate_sql, upstream_node_ids}
+    end
+  end
+
+  Note over EC,KC: Phase 4 — self-contained validation (one empty-build Job per node, gated in dependency order)
+  R->>EC: consume validation.requested:v1
+  Note over EC: per node → executor_deployments (mode=validation)<br/>roots → pending, nodes with upstreams → blocked<br/>(inbound dedup is per-release)
+  loop dispatch pending rows, unblocking downstream as upstreams settle ok
+    Note over EC: model/snapshot → validation_runner.py:<br/>CREATE TABLE {candidate}.{table} AS (candidate_sql) WITH NO DATA<br/>seed → dbt seed --select {table} --empty
+    EC->>R: publish node.deployed:v1 (synthetic ids — routes by mode=validation label)
+    R->>KC: consume node.deployed:v1 / check.k8s:v1
+    Note over KC: poll Job, re-arm check.k8s:v1 until terminal
+    KC->>S3: upload runner/dbt pod log
+    KC->>R: publish validation.node.completed:v1 {release_id, node_id, outcome, dbt_log_uri}
+    R->>EC: consume validation.node.completed:v1
+    Note over EC: RecordOutcome, then gating — ok unblocks ready downstream,<br/>non-ok skips all reachable downstream
+  end
+  Note over EC: per-release advisory lock + emission sentinel (exactly-once):<br/>when no node remains pending/blocked/deployed → build aggregate
+  EC->>R: publish validation.completed:v1<br/>{per_node_results[{node_id, status, dbt_log_uri}], aggregate_status, candidate_schema}
+
+  Note over RC: Phase 5 — promote or reject
+  R->>RC: consume validation.completed:v1
+  alt aggregate_status=ok
+    Note over RC: current_prod ← candidate topology, transition Promoted
+    RC->>R: publish release.promoted:v1
+  else any node failed / missing
+    Note over RC: Reject(validation_failed) → release.rejected:v1
+  end
+  Note over RC: advance FIFO queue
+
+  Note over OR,ST: Phase 6 — production swap
+  R->>OR: consume release.promoted:v1
+  Note over OR: PromoteRelease (Neo4j, 1 tx) — retire-then-orphan-cleanup:<br/>idempotent if :Meta current_release already = release_id<br/>retire :Table not in release (keep :Run-[:EXECUTES] history)<br/>MERGE release nodes (node_type, image_tag, schedule_name), active=true<br/>rebuild :DEPENDS_ON, DETACH DELETE orphaned retired nodes<br/>MERGE :Meta current_release = release_id
+  OR->>OR: IncrementGeneration (topology_state, separate tx)<br/>SetServiceMetadata on :TopologyRoot
+  OR->>R: publish schedules.loaded:v1 {schedule_names, service_metadata, topology_generation}
+  R->>ST: consume schedules.loaded:v1
+  Note over ST: ScheduleCatalogHandler — Reconcile schedule_catalog (empty-list guard)
+  R->>EC: consume validation.completed:v1 (executor-validation-completed group)
+  Note over EC: drop the _candidate_{release} schema (teardown)
+```
+
+**Self-contained validation (zero model edits).** The validation build set is the changed nodes, their downstream descendants, and their *full transitive upstream closure across service boundaries*. `manifest-controller` emits a per-node `candidate_sql` — the compiled SQL with every known-node schema reference rewritten (via sqlglot) to the candidate schema; `executor-controller` builds every upstream as an empty table (`CREATE TABLE … WITH NO DATA`, seeds via `dbt seed --empty`) in `_candidate_<release>` in dependency order, then the changed node against them. Because the executed SQL's refs already point at the candidate schema, a model whose source still reads `FROM analytics.table_a` validates against the candidate copy — teams never template their schema names. Nothing in production is touched during validation, and the candidate schema is dropped after the aggregate result is consumed.
+
+**Gating and exactly-once aggregation.** Each node's `executor_deployments` row starts `blocked` if it has in-set upstreams; a node is dispatched only once all its upstreams have settled `ok` (their empty tables now exist). A non-`ok` terminal skips all reachable downstream nodes. When no node remains non-terminal, a per-release advisory lock plus an insert-once emission sentinel guarantee a single `validation.completed:v1` is produced even under redelivery or crash-retry. `aggregate_status` is `ok` iff every per-node status is `ok`.
+
+**Reject reasons.** A release ends in `Rejected` for one of three reasons, each also emitted as `release.rejected:v1` for observers: `parse_failed` (manifest malformed or an unqualified table reference), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology — i.e. not in the release at all), or `validation_failed` (one or more validation Jobs failed).
+
+**Bootstrap and empty-diff short-circuits.** A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes — the initial cutover (or a trusted re-baseline) against an empty or mismatched snapshot. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology. A release whose diff is empty (e.g. an image-tag-only bump) trivially passes the gate and promotes directly. All three promotion paths point `current_prod` at the candidate topology so the next release's change-detection diff is correct.
+
+**Promotion is a lazy generation switch.** `PromoteRelease` swaps the live `:Table` topology using retire-then-orphan-cleanup — retired nodes still referenced by a `:Run-[:EXECUTES]` edge are kept, preserving run history; only truly orphaned retired nodes are deleted. The handler never reads or writes `:Run` nodes or `EXECUTES` edges, so in-flight runs are unaffected: an existing run keeps its `topology_generation` and its edges keep their pinned `image_tag`. The next scheduled run's `Snapshot(LatestFullDAG)` reads `:TopologyRoot` at call time and picks up the new generation and image tags. See **Flow 7 (Topology Versioning — Lazy Generation Switch)** for the consumption-side detail. `node_type` is threaded through the promotion MERGE so promoted seeds are typed correctly and seed-backed schedules dispatch their `dbt seed` jobs without stalling.
+
 ## Why These Diagrams Are Not Enough On Their Own
 
 These diagrams show timing and ordering well, but they do not fully show:
