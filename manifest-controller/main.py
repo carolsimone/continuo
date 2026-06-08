@@ -67,20 +67,29 @@ def main() -> None:
             )
         # All entries must share a single bucket; derive it from the first URI and
         # assert the rest agree so misrouted multi-bucket payloads are caught early.
+        # Each entry must carry a non-empty "service" field; a missing or empty
+        # service is treated as a permanent malformed-payload error (not ACKed) so
+        # the service-mismatch/empty-manifest validation in the handler cannot be
+        # silently bypassed.
         buckets = []
-        plain_keys = []
+        keyed_pairs: list[tuple[str, str]] = []
         for entry in manifest_keys_raw:
+            svc = entry.get("service") if isinstance(entry, dict) else None
+            if not svc:
+                raise ValueError(
+                    "release.requested:v1 manifest_keys entry missing or empty 'service' field"
+                )
             bucket, key = parse_s3_uri(entry["s3_uri"])
             buckets.append(bucket)
             # parse_s3_uri appends a trailing slash to all non-empty paths; strip it
             # because object keys never end with "/" in S3.
-            plain_keys.append(key.rstrip("/"))
+            keyed_pairs.append((svc, key.rstrip("/")))
         if len(set(buckets)) > 1:
             raise ValueError(
                 f"release.requested:v1 manifest_keys span multiple buckets: {set(buckets)}"
             )
         shared_bucket = buckets[0] if buckets else S3_BUCKET
-        source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=plain_keys)
+        source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=keyed_pairs)
         # Cleanup is owned by CandidateManifestHandler.handle() via its own finally block.
         CandidateManifestHandler(source=source, publisher=candidate_publisher).handle(
             release_id=release_id,

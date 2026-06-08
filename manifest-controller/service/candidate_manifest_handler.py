@@ -52,7 +52,7 @@ class CandidateManifestHandler:
         all_nodes = []
         for mf in manifests:
             try:
-                all_nodes.extend(parse_manifest(mf.path, mf.version, mf.image_tag))
+                nodes = parse_manifest(mf.path, mf.version, mf.image_tag)
             except (json.JSONDecodeError, KeyError, IndexError) as exc:
                 # Invalid JSON, a missing top-level `nodes` key, or a node with a
                 # malformed dbt shape (missing schema/fqn, empty fqn) are all
@@ -65,6 +65,35 @@ class CandidateManifestHandler:
                     error_detail=f"{mf.path}: {exc!r}",
                 )
                 return
+
+            if mf.declared_service:
+                # Validate that the manifest actually belongs to the declared service.
+                # An empty manifest would silently retire all nodes for the declared
+                # service; a wrong-service manifest would pollute the topology with
+                # foreign nodes. Both are permanent failures (a re-upload is required).
+                if not nodes:
+                    self._publisher.publish_failed(
+                        release_id=release_id,
+                        error_class="EmptyManifest",
+                        error_detail=(
+                            f"{mf.declared_service}: manifest contains no model/seed nodes"
+                        ),
+                    )
+                    return
+
+                offending = {n.service_name for n in nodes if n.service_name != mf.declared_service}
+                if offending:
+                    self._publisher.publish_failed(
+                        release_id=release_id,
+                        error_class="ServiceMismatch",
+                        error_detail=(
+                            f"{mf.declared_service}: manifest contains nodes for "
+                            f"{sorted(offending)}"
+                        ),
+                    )
+                    return
+
+            all_nodes.extend(nodes)
 
         registry = NodeRegistry(entries=[
             NodeRegistryEntry(

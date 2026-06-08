@@ -104,8 +104,8 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     src = captured["source"]
     assert src.kwargs["bucket"] == "continuo"
     assert src.kwargs["keys"] == [
-        "service-1/rel-77/manifest.json",
-        "service-2/rel-77/manifest.json",
+        ("service-1", "service-1/rel-77/manifest.json"),
+        ("service-2", "service-2/rel-77/manifest.json"),
     ]
 
 
@@ -161,3 +161,24 @@ def test_main_candidate_handler_rejects_payload_missing_manifest_keys(monkeypatc
     import pytest
     with pytest.raises(ValueError, match="missing release_id or manifest_keys"):
         candidate_consumer.message_handler({b"payload": _json.dumps({"release_id": "x"}).encode()})
+
+
+def test_main_candidate_handler_rejects_manifest_key_missing_service_field(monkeypatch):
+    """An entry without a 'service' field is a permanent malformed-payload error."""
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    main.main()
+    candidate_consumer = next(
+        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
+    )
+    import json as _json
+    import pytest
+    payload = _json.dumps({
+        "release_id": "rel-x",
+        "manifest_keys": [
+            {"s3_uri": "s3://continuo/service-1/rel-x/manifest.json"},  # missing "service"
+        ],
+    })
+    with pytest.raises(ValueError, match="missing or empty 'service' field"):
+        candidate_consumer.message_handler({b"payload": payload.encode()})
