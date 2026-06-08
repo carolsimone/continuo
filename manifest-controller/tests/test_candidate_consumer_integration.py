@@ -13,7 +13,9 @@ def test_consume_once_dispatches_payload_and_acks():
         RELEASE_REQUESTED_V1.encode(),
         [(b"1700000000-0", {b"payload": json.dumps({
             "release_id": "rel-int",
-            "manifests_uri": "s3://continuo/releases/rel-int/manifests/",
+            "manifest_keys": [
+                {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-int/manifest.json"},
+            ],
         }).encode()})],
     )]
 
