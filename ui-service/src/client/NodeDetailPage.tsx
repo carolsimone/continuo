@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import type { NodeRun, NodeRunsResponse } from './types';
-import { kindLabel, computeNodeStats, formatDuration } from './node-helpers';
+import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
+import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './node-helpers';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
 
 function formatTime(iso: string | null): string {
@@ -64,13 +64,17 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
 }
 
 export default function NodeDetailPage() {
-  const { name, fqn } = useParams<{ name: string; fqn: string }>();
+  const { fqn } = useParams<{ fqn: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const fromMode: 'run' | 'latest' = (location.state as { from_mode?: 'run' | 'latest' } | null)?.from_mode === 'latest'
-    ? 'latest'
-    : 'run';
-  const backPath = fromMode === 'latest' ? `/schedule/${name}/latest` : `/schedule/${name}`;
+  const from = (location.state as { from?: NodeDetailFrom } | null)?.from;
+
+  let backLabel = '← Back to Nodes';
+  let backPath = '/?tab=nodes';
+  if (from?.type === 'schedule') {
+    backLabel = `← Back to ${from.name}`;
+    backPath = from.mode === 'latest' ? `/schedule/${from.name}/latest` : `/schedule/${from.name}`;
+  }
   const [runs, setRuns] = useState<NodeRun[]>([]);
   const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [runError, setRunError] = useState<string | null>(null);
@@ -137,7 +141,7 @@ export default function NodeDetailPage() {
 
       <header className="page-header">
         <button className="detail-back-link" onClick={() => navigate(backPath)}>
-          ← Back to {name}
+          {backLabel}
         </button>
         <div className="detail-scheduler-name">{fqn}</div>
       </header>
@@ -175,11 +179,11 @@ export default function NodeDetailPage() {
               <span className="section-header__count">{stats.total}</span>
             </div>
             <div className="section-header__sub">
-              {stats.successRatePct !== null
-                ? `${stats.successRatePct}% succeeded`
-                : 'no terminal runs'}
-              {' · '}
-              avg {formatDuration(stats.avgDurationSec)}
+              {stats.successRatePct !== null ? `${stats.successRatePct}% succeeded` : 'no terminal runs'}
+              {' · '}avg {formatDuration(stats.avgDurationSec)}
+              {' · '}p95 {formatDuration(stats.p95DurationSec)}
+              {' · '}{stats.flakyRatePct}% flaky
+              {stats.lastRunAt && <> {' · '}last {formatRelative(stats.lastRunAt)}</>}
             </div>
           </div>
           {runs.length === 0 ? (

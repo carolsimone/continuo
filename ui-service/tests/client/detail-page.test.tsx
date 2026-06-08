@@ -378,7 +378,7 @@ describe('DetailPage — Open node detail link', () => {
     fireEvent.click(nodeButton);
 
     const link = await screen.findByRole('link', { name: /open node detail/i });
-    expect(link.getAttribute('href')).toBe(`/schedule/${SCHED}/node/${SAMPLE_NODE_ID}`);
+    expect(link.getAttribute('href')).toBe(`/node/${SAMPLE_NODE_ID}`);
   });
 
   it('does NOT show the link when no node is selected', async () => {
