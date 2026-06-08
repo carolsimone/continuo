@@ -147,7 +147,7 @@ echo "Uploading per-service image-tag sidecars for e2e baseline..."
 for svc in "${DBT_SERVICES[@]}"; do
   svc_tag="${IMAGE_TAG}"
   docker exec dbt-compile-and-load \
-    python3 -c "
+    uv run python3 -c "
 import boto3, json, os
 client = boto3.client('s3',
   endpoint_url=os.environ.get('S3_ENDPOINT_URL','http://localstack:4566'),
