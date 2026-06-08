@@ -33,6 +33,16 @@ function durationSec(r: NodeRun): number | null {
   return ms / 1000;
 }
 
+// Linear-interpolation percentile matching Postgres PERCENTILE_CONT, so the
+// node-detail header agrees with the catalog list (which computes p95 in SQL).
+function percentileCont(sortedAsc: number[], p: number): number {
+  if (sortedAsc.length === 1) return sortedAsc[0];
+  const pos = p * (sortedAsc.length - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sortedAsc[lo] + (pos - lo) * (sortedAsc[hi] - sortedAsc[lo]);
+}
+
 export function computeNodeStats(runs: NodeRun[]): NodeStats {
   if (runs.length === 0) {
     return { total: 0, successRatePct: null, avgDurationSec: null,
@@ -50,7 +60,7 @@ export function computeNodeStats(runs: NodeRun[]): NodeStats {
 
   const durs = terminal.map(durationSec).filter((d): d is number => d !== null).sort((a, b) => a - b);
   const avgDurationSec = durs.length === 0 ? null : Math.round(durs.reduce((a, b) => a + b, 0) / durs.length);
-  const p95DurationSec = durs.length === 0 ? null : Math.round(durs[Math.ceil(0.95 * durs.length) - 1]);
+  const p95DurationSec = durs.length === 0 ? null : Math.round(percentileCont(durs, 0.95));
 
   const flakyRatePct = Math.round(runs.filter(r => r.retry_count > 0).length / runs.length * 100);
 

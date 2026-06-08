@@ -109,7 +109,7 @@ describe('computeNodeStats — extended fields', () => {
     const s = computeNodeStats(runs);
     expect(s.total).toBe(2);
     expect(s.successRatePct).toBe(50);
-    expect(s.p95DurationSec).toBe(30);
+    expect(s.p95DurationSec).toBe(29); // PERCENTILE_CONT interpolation: 10 + 0.95*20 = 29
     expect(s.flakyRatePct).toBe(50);
     expect(s.lastStatus).toBe('failed');             // most recent by created_at
     expect(s.lastRunAt).toBe('2026-06-08T11:30:00Z');
