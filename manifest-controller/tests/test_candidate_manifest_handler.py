@@ -205,3 +205,122 @@ def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
     handler.handle(release_id="rel-fail")
 
     source.cleanup.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# declared_service validation: EmptyManifest, ServiceMismatch, and happy path
+# ---------------------------------------------------------------------------
+
+def _make_source_with_declared(entries):
+    """Build a fake ManifestSource returning ManifestFiles with declared_service set.
+
+    entries is a list of (fixture_name, version, declared_service) triples.
+    """
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(FIXTURES / name), version=version, image_tag="", declared_service=declared)
+        for name, version, declared in entries
+    ]
+    return source
+
+
+def test_handle_publishes_failed_empty_manifest_for_declared_service(tmp_path):
+    """A manifest with zero qualifying nodes for a declared service is a permanent
+    failure — it would silently retire the entire service if promoted."""
+    empty = tmp_path / "empty_nodes.json"
+    empty.write_text('{"nodes": {}}')
+
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(empty), version="v1", image_tag="", declared_service="service-1")
+    ]
+    publisher = MagicMock()
+
+    handler = CandidateManifestHandler(source=source, publisher=publisher)
+    handler.handle(release_id="rel-empty-svc")  # must NOT raise
+
+    publisher.publish_failed.assert_called_once()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "EmptyManifest"
+    assert "service-1" in publisher.publish_failed.call_args.kwargs["error_detail"]
+    publisher.publish_ok.assert_not_called()
+
+
+def test_handle_publishes_failed_service_mismatch(tmp_path):
+    """A manifest whose nodes belong to a different service than declared triggers
+    a permanent ServiceMismatch failure."""
+    # Build a manifest whose node has fqn[0]="service-2" but it is declared as service-1.
+    mismatch = tmp_path / "mismatch.json"
+    mismatch.write_text(json.dumps({
+        "nodes": {
+            "model.service-2.orders": {
+                "unique_id": "model.service-2.orders",
+                "name": "orders",
+                "schema": "test_schema",
+                "fqn": ["service-2", "orders"],
+                "tags": ["daily"],
+                "resource_type": "model",
+                "config": {"meta": {"owner": "team-b", "criticality": "SECONDARY"}},
+                "compiled_code": "SELECT 1",
+                "checksum": {"name": "sha256", "checksum": "abc123"},
+            }
+        }
+    }))
+
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(mismatch), version="v1", image_tag="", declared_service="service-1")
+    ]
+    publisher = MagicMock()
+
+    handler = CandidateManifestHandler(source=source, publisher=publisher)
+    handler.handle(release_id="rel-mismatch")  # must NOT raise
+
+    publisher.publish_failed.assert_called_once()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "ServiceMismatch"
+    detail = publisher.publish_failed.call_args.kwargs["error_detail"]
+    assert "service-1" in detail
+    assert "service-2" in detail
+    publisher.publish_ok.assert_not_called()
+
+
+def test_handle_publishes_ok_matching_declared_service():
+    """A non-empty manifest whose nodes all match the declared service succeeds."""
+    source = _make_source_with_declared([
+        ("manifest_service1.json", "v1", "service-1"),
+        ("manifest_service2.json", "v2", "service-2"),
+    ])
+    publisher = MagicMock()
+
+    handler = CandidateManifestHandler(source=source, publisher=publisher)
+    handler.handle(release_id="rel-ok")
+
+    publisher.publish_ok.assert_called_once()
+    assert publisher.publish_ok.call_args.kwargs["release_id"] == "rel-ok"
+    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    assert len(topology) == 2
+    services = {n["service_name"] for n in topology}
+    assert services == {"service-1", "service-2"}
+    publisher.publish_failed.assert_not_called()
+
+
+def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_path):
+    """When declared_service is empty (legacy/non-per-service source), the
+    EmptyManifest and ServiceMismatch checks are skipped entirely."""
+    empty = tmp_path / "empty_nodes.json"
+    empty.write_text('{"nodes": {}}')
+
+    source = create_autospec(ManifestSource)
+    # declared_service="" — same file that triggers EmptyManifest when non-empty
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(empty), version="v1", image_tag="", declared_service="")
+    ]
+    publisher = MagicMock()
+
+    handler = CandidateManifestHandler(source=source, publisher=publisher)
+    handler.handle(release_id="rel-legacy")
+
+    # No service declared — falls through to publish_ok with an empty topology
+    # (the existing "no manifests found" path is bypassed because list_manifests
+    # returned one file; an empty node list is still valid for undeclared sources).
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_called_once()

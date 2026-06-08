@@ -21,7 +21,7 @@ func TestIntegration_ListReleasesPaginated(t *testing.T) {
 	ctx := context.Background()
 	for _, id := range []string{"rh1", "rh2", "rh3"} {
 		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-			ReleaseID: id, ImageTags: map[string]string{"service-1": "t"}, ManifestsURI: "u",
+			Service: "service-1", ReleaseID: id, ImageTag: "t",
 		}))
 	}
 	req := httptest.NewRequest(http.MethodGet, "/releases?limit=2", nil)
@@ -47,7 +47,7 @@ func TestIntegration_ListReleasesLimitFallback(t *testing.T) {
 	ctx := context.Background()
 	for _, id := range []string{"rl1", "rl2", "rl3"} {
 		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-			ReleaseID: id, ImageTags: map[string]string{"service-1": "t"}, ManifestsURI: "u",
+			Service: "service-1", ReleaseID: id, ImageTag: "t",
 		}))
 	}
 	for _, limit := range []string{"abc", "0", "-1", "999"} {
@@ -71,7 +71,7 @@ func TestIntegration_GetReleaseIncludesPerNode(t *testing.T) {
 
 	// Drive through the full failure path so per_node_results are persisted.
 	require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-		ReleaseID: "rd1", ImageTags: map[string]string{"service-1": "t"}, ManifestsURI: "u",
+		Service: "service-1", ReleaseID: "rd1", ImageTag: "t",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx, deps))
 	require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{

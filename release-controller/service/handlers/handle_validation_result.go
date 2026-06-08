@@ -38,7 +38,7 @@ type HandleValidationResultInput struct {
 // executor-controller.
 //
 // If every node passed: promotes the release to production, updates CurrentProd,
-// and emits release.promoted:v1.
+// upserts the changed service's service_prod pointer, and emits release.promoted:v1.
 // If any node failed: rejects the release and emits release.rejected:v1.
 func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationResultInput) error {
 	u := d.NewUoW()
@@ -103,11 +103,12 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 
 // promoteToProduction applies the promotion effects shared by the
 // validation-passed path and the nothing-to-validate short-circuit: it points
-// current_prod at this release's candidate topology, transitions the release to
-// Promoted, persists it, and writes the release.promoted:v1 outbox row. The
-// caller owns Begin/Commit and any telemetry. The release must already hold its
-// candidate topology (i.e. be in Validating).
-func promoteToProduction(ctx context.Context, u uow.UnitOfWork, r *release.Release, releaseID string, now time.Time) error {
+// current_prod at this release's candidate topology, upserts the changed
+// service's service_prod pointer, transitions the release to Promoted, persists
+// it, and writes the release.promoted:v1 outbox row. The caller owns
+// Begin/Commit and any telemetry. The release must already hold its candidate
+// topology (i.e. be in Validating).
+func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, now time.Time) error {
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
@@ -115,9 +116,23 @@ func promoteToProduction(ctx context.Context, u uow.UnitOfWork, r *release.Relea
 	// candidate_sql is transient, release-specific validation data; the promoted
 	// topology (current_prod and the release.promoted event) must not carry it.
 	promotedTopo := r.CandidateTopology().WithoutCandidateSQL()
-	cp.Update(releaseID, r.ManifestsURI(), promotedTopo, now)
+	cp.Update(releaseID, promotedTopo, now)
 	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
 		return fmt.Errorf("upsert current prod: %w", err)
+	}
+
+	// Upsert the changed service's production pointer so future releases can
+	// assemble this service's manifest key at their AdvanceQueue step.
+	changed := r.ChangedService()
+	sp := release.NewServiceProd(
+		changed,
+		releaseID,
+		CanonicalManifestKey(d.Bucket, changed, releaseID),
+		r.ImageTags()[changed],
+		now,
+	)
+	if err := u.ServiceProdRepo().Upsert(ctx, sp); err != nil {
+		return fmt.Errorf("upsert service_prod: %w", err)
 	}
 
 	if err := r.TransitionToPromoted(now); err != nil {
@@ -149,7 +164,7 @@ func promoteToProduction(ctx context.Context, u uow.UnitOfWork, r *release.Relea
 }
 
 func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, now time.Time) error {
-	if err := promoteToProduction(ctx, u, r, in.ReleaseID, now); err != nil {
+	if err := promoteToProduction(ctx, d, u, r, in.ReleaseID, now); err != nil {
 		return err
 	}
 

@@ -71,7 +71,8 @@ def test_main_consumer_group_correct(monkeypatch):
     assert consumer.group_name == MANIFEST_CONTROLLER_RELEASE_REQUESTED
 
 
-def test_main_candidate_handler_dispatches_with_release_id_and_uri(monkeypatch):
+def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
+    """handle_release_requested builds S3Source from manifest_keys list."""
     _common_monkeypatches(monkeypatch)
     captured = {}
 
@@ -92,14 +93,20 @@ def test_main_candidate_handler_dispatches_with_release_id_and_uri(monkeypatch):
     )
     payload = json.dumps({
         "release_id": "rel-77",
-        "manifests_uri": "s3://continuo/releases/rel-77/manifests/",
+        "manifest_keys": [
+            {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-77/manifest.json"},
+            {"service": "service-2", "s3_uri": "s3://continuo/service-2/rel-77/manifest.json"},
+        ],
     })
     candidate_consumer.message_handler({b"payload": payload.encode()})
 
     assert captured["release_id"] == "rel-77"
     src = captured["source"]
     assert src.kwargs["bucket"] == "continuo"
-    assert src.kwargs["prefix"] == "releases/rel-77/manifests/"
+    assert src.kwargs["keys"] == [
+        ("service-1", "service-1/rel-77/manifest.json"),
+        ("service-2", "service-2/rel-77/manifest.json"),
+    ]
 
 
 def test_main_candidate_handler_rejects_missing_payload(monkeypatch):
@@ -128,7 +135,7 @@ def test_main_candidate_handler_rejects_invalid_json_payload(monkeypatch):
         candidate_consumer.message_handler({b"payload": b"not json {{{"})
 
 
-def test_main_candidate_handler_rejects_payload_missing_fields(monkeypatch):
+def test_main_candidate_handler_rejects_payload_missing_release_id(monkeypatch):
     _common_monkeypatches(monkeypatch)
     monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
     monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
@@ -138,5 +145,40 @@ def test_main_candidate_handler_rejects_payload_missing_fields(monkeypatch):
     )
     import json as _json
     import pytest
-    with pytest.raises(ValueError, match="missing release_id or manifests_uri"):
+    with pytest.raises(ValueError, match="missing release_id or manifest_keys"):
+        candidate_consumer.message_handler({b"payload": _json.dumps({"manifest_keys": []}).encode()})
+
+
+def test_main_candidate_handler_rejects_payload_missing_manifest_keys(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    main.main()
+    candidate_consumer = next(
+        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
+    )
+    import json as _json
+    import pytest
+    with pytest.raises(ValueError, match="missing release_id or manifest_keys"):
         candidate_consumer.message_handler({b"payload": _json.dumps({"release_id": "x"}).encode()})
+
+
+def test_main_candidate_handler_rejects_manifest_key_missing_service_field(monkeypatch):
+    """An entry without a 'service' field is a permanent malformed-payload error."""
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    main.main()
+    candidate_consumer = next(
+        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
+    )
+    import json as _json
+    import pytest
+    payload = _json.dumps({
+        "release_id": "rel-x",
+        "manifest_keys": [
+            {"s3_uri": "s3://continuo/service-1/rel-x/manifest.json"},  # missing "service"
+        ],
+    })
+    with pytest.raises(ValueError, match="missing or empty 'service' field"):
+        candidate_consumer.message_handler({b"payload": payload.encode()})

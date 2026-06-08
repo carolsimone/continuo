@@ -23,8 +23,17 @@ import (
 
 // e2eS3Bucket is the LocalStack bucket dbt manifests are uploaded to in the e2e
 // environment (created by localstack/init/init-s3.sh, written by setup.sh's
-// `dbt_upload load --target localstack`).
+// `dbt_upload load --target localstack --release-id e2e-baseline`).
 const e2eS3Bucket = "continuo"
+
+// e2eBaselineReleaseID is the fixed release-id under which setup.sh uploads
+// all services' manifests. The canonical S3 key for each service is:
+//
+//	<service>/e2e-baseline/manifest.json
+//
+// Tests seed service_prod rows pointing at these keys for the unchanged services
+// so that release-controller assembly can reconstruct the full topology.
+const e2eBaselineReleaseID = "e2e-baseline"
 
 // probeUniqueID is the unique_id manifest-controller derives for the rel_probe
 // model (schema_name.table_name). rel_probe is a self-contained leaf
@@ -41,10 +50,11 @@ const probeUniqueID = "e2e_schema.rel_probe"
 //	validation.completed:v1 → release-controller promotes → release.promoted:v1
 //	→ orchestrator swaps the Neo4j topology.
 //
-// To keep validation bounded and deterministic the test pre-seeds current_prod
-// with every candidate node EXCEPT rel_probe, so the derived changed set is
-// exactly {rel_probe}: one known-good node that validates without touching any
-// production table. The release then promotes and the Neo4j swap is asserted.
+// The changed service is service-1 (which contains rel_probe). current_prod is
+// seeded with every node EXCEPT rel_probe, so the derived changed set is exactly
+// {rel_probe}: one known-good node that validates without touching any
+// production table. service_prod is seeded for the other services so that
+// assembly can reconstruct the full manifest list at advance-time.
 func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -61,25 +71,24 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rel-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s", releaseID)
+	changedService := "service-1"
+	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
 
-	// 1. Read the legacy manifests already in S3 (uploaded by setup.sh), build
-	//    the prod snapshot of every candidate node except rel_probe, and copy the
-	//    manifests into this release's per-service prefix for the candidate parse.
-	manifestKeys := listLatestManifestKeys(t, ctx, clients)
-	require.NotEmpty(t, manifestKeys,
-		"no manifests under s3://%s/local/manifest/ — setup.sh dbt upload must run first", e2eS3Bucket)
+	// 1. Read the baseline manifests from S3 (uploaded by setup.sh with
+	//    --release-id e2e-baseline). Build the prod snapshot of every node except
+	//    rel_probe so the derived changed set is exactly {rel_probe}.
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices,
+		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+
+	changedImageTag := allServices[changedService].imageTag
+	require.NotEmpty(t, changedImageTag,
+		"image_tag missing for %s — setup.sh must upload service_metadata.json", changedService)
 
 	var prodNodes []map[string]string
-	imageTags := map[string]string{}
 	probeFound := false
-	for service, key := range manifestKeys {
-		// The deployed image tag is content-addressed (built and loaded into kind
-		// by setup.sh); it lives in the per-service service_metadata.json sidecar.
-		// The validation Job pulls service:<tag>, so the POST body must carry the
-		// exact tag that kind has — not a hardcoded "latest".
-		imageTags[service] = readServiceImageTag(t, ctx, clients, service)
-		for _, n := range parseManifestNodes(t, getS3Object(t, ctx, clients, key)) {
+	for _, si := range allServices {
+		for _, n := range si.nodes {
 			if n.uniqueID == probeUniqueID {
 				probeFound = true
 				continue // exclude → rel_probe becomes the sole changed node
@@ -89,39 +98,41 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 				"content_hash": n.contentHash,
 			})
 		}
-		dst := fmt.Sprintf("releases/%s/manifests/%s/manifest_v1.json", releaseID, service)
-		copyS3Object(t, ctx, clients, key, dst)
 	}
 	require.True(t, probeFound,
 		"rel_probe not found in any manifest — is the model in service-1 and the image rebuilt?")
 	t.Logf("seeded prod snapshot with %d nodes (rel_probe excluded)", len(prodNodes))
 
-	// 2. Free the release queue from any prior run and seed current_prod with the
-	//    baseline-minus-probe snapshot, so the derived changed set is exactly the
-	//    rel_probe node — which builds into the candidate schema in isolation.
+	// 2. Copy the changed service's baseline manifest to the new release key so
+	//    manifest-controller can fetch it. Other services' manifests already live
+	//    at their e2e-baseline canonical keys — service_prod seeding points there.
+	copyS3Object(t, ctx, clients,
+		baselineManifestKey(changedService),
+		canonicalManifestObjectKey(changedService, releaseID),
+	)
+
+	// 3. Reset the queue, seed current_prod, and seed service_prod for all
+	//    other services (so assembly reconstructs the full topology).
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
-	// 3. POST /releases — the exact request CI's deploy.yml issues.
-	postRelease(t, clients, releaseID, imageTags,
-		fmt.Sprintf("s3://%s/releases/%s/manifests/", e2eS3Bucket, releaseID))
+	// 4. POST /releases with the single-service per-service body.
+	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
-	// 4. The derived validation set must be exactly the one changed node.
+	// 5. The derived validation set must be exactly the one changed node.
 	assertValidationRequestedNodes(t, ctx, clients, releaseID, []string{probeUniqueID})
 
-	// 5. A real dbt validation job runs for rel_probe; on success the release
+	// 6. A real dbt validation job runs for rel_probe; on success the release
 	//    promotes. A rejection fails the test immediately with the reason.
 	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
 
-	// 6. The orchestrator must have swapped the Neo4j topology to this release.
-	//    The swap is asynchronous relative to promotion: GET /releases reports
-	//    "promoted" the moment release-controller commits, but the topology swap
-	//    only lands after the release.promoted:v1 outbox row is published and the
-	//    orchestrator consumes it — so poll rather than asserting once.
+	// 7. The orchestrator must have swapped the Neo4j topology to this release.
+	//    The swap is asynchronous relative to promotion, so poll.
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
 
-	// The promoted release must surface in the history list and carry per-node
-	// validation results (with a dbt log URI) retrievable through the UI BFF.
+	// 8. The promoted release must surface in the history list and carry per-node
+	//    validation results (with a dbt log URI) retrievable through the UI BFF.
 	assertReleaseHistoryAndPerNodeLog(t, ctx, clients, releaseID, probeUniqueID)
 	t.Log("✅ release validated, promoted, and Neo4j topology swapped to the new release")
 }
@@ -153,10 +164,11 @@ const (
 // candidate schema first (topologically gated) and the dependent validates
 // against it; the release then promotes and the candidate schema is torn down.
 //
-// current_prod is seeded with every candidate node EXCEPT rel_probe_up and
-// rel_probe_down. The derived changed set is therefore exactly
-// {rel_probe_up, rel_probe_down} with the intra-service gating edge
-// rel_probe_down → rel_probe_up. Both validate cleanly with `dbt run --empty`.
+// Both rel_probe_up and rel_probe_down live in service-1. The test posts a
+// per-service release for service-1. current_prod is seeded with every candidate
+// node EXCEPT rel_probe_up and rel_probe_down. The derived changed set is
+// therefore exactly {rel_probe_up, rel_probe_down} with the intra-service
+// gating edge rel_probe_down → rel_probe_up.
 func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -173,24 +185,25 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rel-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s", releaseID)
+	changedService := "service-1"
+	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
 
-	// Build the prod snapshot of every candidate node except the rel_probe* chain
-	// so the derived changed set is exactly {rel_probe_up, rel_probe_down}.
 	excluded := map[string]bool{
 		probeUpUniqueID:   true,
 		probeDownUniqueID: true,
 	}
-	manifestKeys := listLatestManifestKeys(t, ctx, clients)
-	require.NotEmpty(t, manifestKeys,
-		"no manifests under s3://%s/local/manifest/ — setup.sh dbt upload must run first", e2eS3Bucket)
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices,
+		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+
+	changedImageTag := allServices[changedService].imageTag
+	require.NotEmpty(t, changedImageTag,
+		"image_tag missing for %s — setup.sh must upload service_metadata.json", changedService)
 
 	var prodNodes []map[string]string
-	imageTags := map[string]string{}
 	var upFound, downFound bool
-	for service, key := range manifestKeys {
-		imageTags[service] = readServiceImageTag(t, ctx, clients, service)
-		for _, n := range parseManifestNodes(t, getS3Object(t, ctx, clients, key)) {
+	for _, si := range allServices {
+		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case probeUpUniqueID:
 				upFound = true
@@ -198,15 +211,13 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 				downFound = true
 			}
 			if excluded[n.uniqueID] {
-				continue // keep these out of prod → they become the changed set
+				continue
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
 				"content_hash": n.contentHash,
 			})
 		}
-		dst := fmt.Sprintf("releases/%s/manifests/%s/manifest_v1.json", releaseID, service)
-		copyS3Object(t, ctx, clients, key, dst)
 	}
 	require.True(t, upFound,
 		"rel_probe_up not found in any manifest — is the model in service-1 and the image rebuilt + manifests re-uploaded?")
@@ -214,27 +225,24 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 		"rel_probe_down not found in any manifest — is the model in service-1 and the image rebuilt + manifests re-uploaded?")
 	t.Logf("seeded prod snapshot with %d nodes (rel_probe* chain excluded)", len(prodNodes))
 
+	copyS3Object(t, ctx, clients,
+		baselineManifestKey(changedService),
+		canonicalManifestObjectKey(changedService, releaseID),
+	)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
-	postRelease(t, clients, releaseID, imageTags,
-		fmt.Sprintf("s3://%s/releases/%s/manifests/", e2eS3Bucket, releaseID))
+	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
 	// The derived validation set must be exactly the intra-service chain, in
 	// topological order (upstream first).
 	assertValidationRequestedNodes(t, ctx, clients, releaseID,
 		[]string{probeUpUniqueID, probeDownUniqueID})
 
-	// The gated upstream builds into the candidate schema first, the dependent
-	// validates against it, and on success the release promotes.
 	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
-
-	// The orchestrator must swap the Neo4j topology to this release; assert on
-	// the dependent node so both chain members are present.
 	waitForTopologySwap(t, ctx, clients, releaseID, probeDownUniqueID, 2*time.Minute)
-
-	// After validation.completed:v1 the executor drops _candidate_<releaseID>
-	// from the dbt warehouse. Teardown is asynchronous, so poll.
 	assertCandidateSchemaDropped(t, ctx, clients, releaseID, 3*time.Minute)
 	t.Log("✅ gated intra-service upstream validated, release promoted, topology swapped, candidate schema dropped")
 }
@@ -243,12 +251,17 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 // validation: a changed node whose upstream lives in ANOTHER service and is NOT
 // materialized in prod still validates, because the upstream is built into the
 // candidate schema first (cross-service topological gating) and the dependent's
-// {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }} ref is redirected there via DBT_UPSTREAM_SCHEMA. The release
-// then promotes and the candidate schema is torn down.
+// {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }} ref is redirected there
+// via DBT_UPSTREAM_SCHEMA. The release then promotes and the candidate schema is
+// torn down.
 //
-// current_prod is seeded with every candidate node EXCEPT the xprobe pair, so the
-// derived changed set is exactly {xprobe_up, xprobe_down} with the cross-service
-// gating edge xprobe_down -> xprobe_up.
+// xprobe_down lives in service-2, xprobe_up lives in service-3. The test posts
+// a per-service release for service-2. Assembly attaches service-3's current
+// baseline manifest (via service_prod), so manifest-controller sees xprobe_up
+// as part of the candidate topology. current_prod is seeded with every node
+// EXCEPT the xprobe pair, so the derived changed set is exactly
+// {xprobe_up, xprobe_down} with the cross-service gating edge
+// xprobe_down -> xprobe_up.
 func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -265,22 +278,28 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rel-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s", releaseID)
+	// xprobe_down is in service-2; posting a release for service-2 causes
+	// assembly to attach service-3's manifest (which contains xprobe_up) from
+	// service_prod, exposing the cross-service gating edge.
+	changedService := "service-2"
+	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
 
 	excluded := map[string]bool{
 		xprobeUpUniqueID:   true,
 		xprobeDownUniqueID: true,
 	}
-	manifestKeys := listLatestManifestKeys(t, ctx, clients)
-	require.NotEmpty(t, manifestKeys,
-		"no manifests under s3://%s/local/manifest/ — setup.sh dbt upload must run first", e2eS3Bucket)
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices,
+		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+
+	changedImageTag := allServices[changedService].imageTag
+	require.NotEmpty(t, changedImageTag,
+		"image_tag missing for %s — setup.sh must upload service_metadata.json", changedService)
 
 	var prodNodes []map[string]string
-	imageTags := map[string]string{}
 	var upFound, downFound bool
-	for service, key := range manifestKeys {
-		imageTags[service] = readServiceImageTag(t, ctx, clients, service)
-		for _, n := range parseManifestNodes(t, getS3Object(t, ctx, clients, key)) {
+	for _, si := range allServices {
+		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case xprobeUpUniqueID:
 				upFound = true
@@ -295,8 +314,6 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 				"content_hash": n.contentHash,
 			})
 		}
-		dst := fmt.Sprintf("releases/%s/manifests/%s/manifest_v1.json", releaseID, service)
-		copyS3Object(t, ctx, clients, key, dst)
 	}
 	require.True(t, upFound,
 		"xprobe_up not found in any manifest — is the model in service-3 and the image rebuilt + manifests re-uploaded?")
@@ -304,11 +321,16 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 		"xprobe_down not found in any manifest — is the model in service-2 and the image rebuilt + manifests re-uploaded?")
 	t.Logf("seeded prod snapshot with %d nodes (xprobe pair excluded)", len(prodNodes))
 
+	copyS3Object(t, ctx, clients,
+		baselineManifestKey(changedService),
+		canonicalManifestObjectKey(changedService, releaseID),
+	)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
-	postRelease(t, clients, releaseID, imageTags,
-		fmt.Sprintf("s3://%s/releases/%s/manifests/", e2eS3Bucket, releaseID))
+	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
 	assertValidationRequestedNodes(t, ctx, clients, releaseID,
 		[]string{xprobeUpUniqueID, xprobeDownUniqueID})
@@ -319,31 +341,14 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 	t.Log("✅ gated CROSS-service upstream validated self-contained, promoted, candidate schema dropped")
 }
 
-// postReleaseBootstrap POSTs a release with bootstrap=true, which promotes
-// without validation even against an empty current_prod.
-func postReleaseBootstrap(t *testing.T, clients *testClients, releaseID string, imageTags map[string]string, manifestsURI string) {
-	t.Helper()
-	body, err := json.Marshal(map[string]any{
-		"release_id":    releaseID,
-		"image_tags":    imageTags,
-		"manifests_uri": manifestsURI,
-		"bootstrap":     true,
-	})
-	require.NoError(t, err)
-
-	resp, err := http.Post(clients.releaseBase+"/releases", "application/json", strings.NewReader(string(body)))
-	require.NoError(t, err, "POST /releases (bootstrap)")
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusAccepted, resp.StatusCode,
-		"POST /releases (bootstrap): expected 202, got %d: %s", resp.StatusCode, string(respBody))
-	t.Logf("POST /releases (bootstrap) accepted: %s", string(respBody))
-}
-
 // TestE2E_ReleasePromote_BootstrapSkipsValidation proves that a release posted
 // with bootstrap=true promotes directly against an empty current_prod without
 // dispatching any validation jobs. This covers the first-ever deploy scenario
 // where there is no production baseline to diff against.
+//
+// Both current_prod and service_prod are cleared to simulate a fresh environment.
+// A per-service bootstrap release is posted for service-1; it promotes immediately
+// and swaps the Neo4j topology.
 func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -359,31 +364,33 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-boot-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s", releaseID)
+	changedService := "service-1"
+	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
 
-	manifestKeys := listLatestManifestKeys(t, ctx, clients)
-	require.NotEmpty(t, manifestKeys,
-		"no manifests under s3://%s/local/manifest/ — setup.sh dbt upload must run first", e2eS3Bucket)
-	imageTags := map[string]string{}
-	for service, key := range manifestKeys {
-		imageTags[service] = readServiceImageTag(t, ctx, clients, service)
-		dst := fmt.Sprintf("releases/%s/manifests/%s/manifest_v1.json", releaseID, service)
-		copyS3Object(t, ctx, clients, key, dst)
-	}
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices,
+		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	// Empty current_prod: a non-bootstrap release would treat every node as
-	// changed and validate the whole topology (including the deliberately-broken
-	// failure-path fixtures), so it could not promote. Reset the queue and clear
-	// the current_prod row so this is a true from-scratch bootstrap.
+	changedImageTag := allServices[changedService].imageTag
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
+
+	copyS3Object(t, ctx, clients,
+		baselineManifestKey(changedService),
+		canonicalManifestObjectKey(changedService, releaseID),
+	)
+
+	// Empty current_prod and service_prod: a non-bootstrap release against an
+	// empty baseline would treat every node as changed and could not promote.
+	// A bootstrap release skips validation entirely.
 	resetReleaseControllerQueue(t, ctx, clients)
 	_, err := clients.releaseDB.ExecContext(ctx, "DELETE FROM current_prod")
 	require.NoError(t, err, "clear current_prod")
+	_, err = clients.releaseDB.ExecContext(ctx, "DELETE FROM service_prod")
+	require.NoError(t, err, "clear service_prod")
 
-	postReleaseBootstrap(t, clients, releaseID, imageTags,
-		fmt.Sprintf("s3://%s/releases/%s/manifests/", e2eS3Bucket, releaseID))
+	postRelease(t, clients, changedService, releaseID, changedImageTag, true)
 
-	// The bootstrap release must promote (no validation) and swap Neo4j topology:
-	// :Meta current_release flips to this release_id.
+	// The bootstrap release must promote (no validation) and swap Neo4j topology.
 	pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
 		return neo4jScalarString(ctx, clients,
 			`MATCH (m:Meta {key: 'current_release'}) RETURN m.release_id AS v`, nil) == releaseID, nil
@@ -392,6 +399,101 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 	// No validation Job is ever dispatched (bootstrap skips validation).
 	assertNoValidationJobsDispatched(t, ctx, clients, releaseID)
 	t.Log("✅ bootstrap release promoted without validation; topology swapped")
+}
+
+// TestE2E_ReleasePromote_PerServiceLeavesOthersIntact verifies the anti-amputation
+// guarantee: promoting a release for ONE service must not remove the other services'
+// nodes from the Neo4j topology. After promotion the topology must contain nodes
+// from both the changed service and the unchanged services.
+//
+// service_prod is seeded for all three services at the baseline; then a release is
+// posted for service-1 only (using rel_probe as the changed node). After promotion
+// the topology must still contain nodes that belong to service-2 and service-3.
+func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-rel-" + uuid.NewString()[:8]
+	changedService := "service-1"
+	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
+
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices,
+		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+
+	changedImageTag := allServices[changedService].imageTag
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
+
+	// Collect the service-2 and service-3 node IDs we expect to survive.
+	survivingServices := []string{"service-2", "service-3"}
+	var expectedSurvivingNodes []string
+	for _, svc := range survivingServices {
+		for _, n := range allServices[svc].nodes {
+			expectedSurvivingNodes = append(expectedSurvivingNodes, n.uniqueID)
+		}
+	}
+	require.NotEmpty(t, expectedSurvivingNodes,
+		"expected at least one service-2/3 node in baseline — setup.sh must have uploaded their manifests")
+
+	// Seed current_prod with ALL nodes except rel_probe (changed node for service-1).
+	var prodNodes []map[string]string
+	probeFound := false
+	for _, si := range allServices {
+		for _, n := range si.nodes {
+			if n.uniqueID == probeUniqueID {
+				probeFound = true
+				continue
+			}
+			prodNodes = append(prodNodes, map[string]string{
+				"unique_id":    n.uniqueID,
+				"content_hash": n.contentHash,
+			})
+		}
+	}
+	require.True(t, probeFound,
+		"rel_probe not found in baseline — service-1 manifests must include it")
+
+	copyS3Object(t, ctx, clients,
+		baselineManifestKey(changedService),
+		canonicalManifestObjectKey(changedService, releaseID),
+	)
+
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+
+	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+
+	// rel_probe is the only changed node — validate + promote.
+	assertValidationRequestedNodes(t, ctx, clients, releaseID, []string{probeUniqueID})
+	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
+	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
+
+	// Anti-amputation assertion: service-2 and service-3 nodes must still be
+	// present in the Neo4j topology with the new release stamped on them.
+	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{AccessMode: neo4jdriver.AccessModeRead})
+	defer session.Close(ctx)
+	for _, uid := range expectedSurvivingNodes {
+		res, err := session.Run(ctx,
+			`MATCH (t:Table {unique_id: $uid}) RETURN t.unique_id AS uid`,
+			map[string]any{"uid": uid})
+		require.NoError(t, err, "Neo4j query for node %s", uid)
+		require.True(t, res.Next(ctx),
+			"node %s from non-changed service must survive a service-1-only release (anti-amputation)", uid)
+	}
+	t.Logf("✅ per-service release for %s left %d service-2/3 nodes intact in Neo4j",
+		changedService, len(expectedSurvivingNodes))
 }
 
 // requireReleaseControllerHealthy verifies the release-controller HTTP API is
@@ -411,57 +513,77 @@ type manifestNode struct {
 	contentHash string
 }
 
-var manifestVersionRe = regexp.MustCompile(`^manifest_v(\d+)\.json$`)
+// serviceInfo bundles the parsed nodes and image tag for a single dbt service's
+// baseline manifest, as uploaded by setup.sh.
+type serviceInfo struct {
+	imageTag string
+	nodes    []manifestNode
+}
 
-// listLatestManifestKeys lists the legacy per-service manifests under
-// local/manifest/<service>/ and returns the highest manifest_v{N}.json key per
-// service (mirroring how S3Source resolves the newest version).
-func listLatestManifestKeys(t *testing.T, ctx context.Context, clients *testClients) map[string]string {
+// baselineManifestKey returns the S3 object key for a service's baseline manifest:
+//
+//	<service>/e2e-baseline/manifest.json
+func baselineManifestKey(service string) string {
+	return fmt.Sprintf("%s/%s/manifest.json", service, e2eBaselineReleaseID)
+}
+
+// canonicalManifestObjectKey returns the S3 object key for a per-release manifest:
+//
+//	<service>/<release_id>/manifest.json
+func canonicalManifestObjectKey(service, releaseID string) string {
+	return fmt.Sprintf("%s/%s/manifest.json", service, releaseID)
+}
+
+// canonicalManifestS3URI returns the full s3:// URI for a per-release manifest,
+// mirroring the CanonicalManifestKey convention in release-controller.
+func canonicalManifestS3URI(service, releaseID string) string {
+	return fmt.Sprintf("s3://%s/%s/%s/manifest.json", e2eS3Bucket, service, releaseID)
+}
+
+// baselineServices loads every service's baseline manifest and service_metadata.json
+// from S3 (written by setup.sh with --release-id e2e-baseline) and returns a map
+// keyed by service name. The map is used to seed current_prod topology snapshots
+// and service_prod rows.
+func baselineServices(t *testing.T, ctx context.Context, clients *testClients) map[string]serviceInfo {
 	t.Helper()
-	const prefix = "local/manifest/"
+	// Discover all services by listing objects under their baseline prefix.
 	out, err := clients.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(e2eS3Bucket),
-		Prefix: aws.String(prefix),
 	})
-	require.NoError(t, err, "list manifests in S3")
+	require.NoError(t, err, "list S3 objects for baseline discovery")
 
-	best := map[string]int{}
-	keys := map[string]string{}
+	services := map[string]serviceInfo{}
 	for _, obj := range out.Contents {
 		key := aws.ToString(obj.Key)
-		rest := strings.TrimPrefix(key, prefix)
-		parts := strings.Split(rest, "/")
-		if len(parts) != 2 { // expect <service>/<file>
+		// Match <service>/e2e-baseline/manifest.json
+		suffix := "/" + e2eBaselineReleaseID + "/manifest.json"
+		if !strings.HasSuffix(key, suffix) {
 			continue
 		}
-		service, file := parts[0], parts[1]
-		m := manifestVersionRe.FindStringSubmatch(file)
-		if m == nil {
-			continue
+		service := strings.TrimSuffix(key, suffix)
+		if strings.Contains(service, "/") {
+			continue // skip keys with extra path segments
 		}
-		var n int
-		fmt.Sscanf(m[1], "%d", &n)
-		if n > best[service] {
-			best[service] = n
-			keys[service] = key
-		}
+		nodes := parseManifestNodes(t, getS3Object(t, ctx, clients, key))
+		imageTag := readServiceImageTag(t, ctx, clients, service)
+		services[service] = serviceInfo{imageTag: imageTag, nodes: nodes}
 	}
-	return keys
+	return services
 }
 
 // readServiceImageTag reads the content-addressed image tag from a service's
-// service_metadata.json sidecar (written by the legacy dbt_upload path with the
-// IMAGE_TAG_PER_SERVICE tags that setup.sh also baked into the kind images).
+// service_metadata.json sidecar. setup.sh uploads it alongside each baseline
+// manifest at <service>/e2e-baseline/service_metadata.json.
 func readServiceImageTag(t *testing.T, ctx context.Context, clients *testClients, service string) string {
 	t.Helper()
-	key := fmt.Sprintf("local/manifest/%s/service_metadata.json", service)
+	key := fmt.Sprintf("%s/%s/service_metadata.json", service, e2eBaselineReleaseID)
 	var meta struct {
 		ImageTag string `json:"image_tag"`
 	}
 	require.NoError(t, json.Unmarshal(getS3Object(t, ctx, clients, key), &meta),
-		"parse service_metadata.json for %s", service)
+		"parse service_metadata.json for %s (key %s)", service, key)
 	require.NotEmpty(t, meta.ImageTag,
-		"service_metadata.json for %s has empty image_tag — validation Job would fail to pull", service)
+		"service_metadata.json for %s has empty image_tag — setup.sh must upload it alongside the manifest", service)
 	return meta.ImageTag
 }
 
@@ -536,34 +658,64 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 
 // seedCurrentProd writes the singleton current_prod row. Only unique_id and
 // content_hash matter for the change-detector; other Node fields default to
-// zero values on the release-controller side. release_id and manifests_uri are
-// reset to empty for a clean baseline: manifests_uri is a record-keeping column
-// (validation builds the candidate schema directly and never defers to a prior
-// manifest), so clearing it just stops a prior promoted release's value from
-// lingering across reused-stack runs.
+// zero values on the release-controller side. release_id is reset to empty for
+// a clean baseline so a prior promoted release's value does not linger across
+// reused-stack runs.
 func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, nodes []map[string]string) {
 	t.Helper()
 	topoJSON, err := json.Marshal(nodes)
 	require.NoError(t, err, "marshal current_prod snapshot")
 	_, err = clients.releaseDB.ExecContext(ctx,
-		`INSERT INTO current_prod (id, release_id, manifests_uri, topology_snapshot, updated_at)
-		 VALUES (1, '', '', $1, now())
+		`INSERT INTO current_prod (id, release_id, topology_snapshot, updated_at)
+		 VALUES (1, '', $1, now())
 		 ON CONFLICT (id) DO UPDATE SET
 		   release_id = EXCLUDED.release_id,
-		   manifests_uri = EXCLUDED.manifests_uri,
 		   topology_snapshot = EXCLUDED.topology_snapshot,
 		   updated_at = EXCLUDED.updated_at`,
 		topoJSON)
 	require.NoError(t, err, "seed current_prod")
 }
 
-// postRelease issues the POST /releases request that CI's deploy.yml fires.
-func postRelease(t *testing.T, clients *testClients, releaseID string, imageTags map[string]string, manifestsURI string) {
+// seedServiceProdExcept seeds the service_prod table with the baseline manifest
+// key and image_tag for every service in allServices EXCEPT changedService.
+// This gives release-controller assembly the other services' manifest pointers
+// at advance-time without re-uploading their manifests (they already live at
+// their e2e-baseline canonical keys).
+func seedServiceProdExcept(t *testing.T, ctx context.Context, clients *testClients, allServices map[string]serviceInfo, changedService string) {
+	t.Helper()
+	for svc, si := range allServices {
+		if svc == changedService {
+			continue
+		}
+		s3URI := canonicalManifestS3URI(svc, e2eBaselineReleaseID)
+		_, err := clients.releaseDB.ExecContext(ctx,
+			`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, updated_at)
+			 VALUES ($1, $2, $3, $4, now())
+			 ON CONFLICT (service_name) DO UPDATE SET
+			   release_id = EXCLUDED.release_id,
+			   manifest_s3_key = EXCLUDED.manifest_s3_key,
+			   image_tag = EXCLUDED.image_tag,
+			   updated_at = EXCLUDED.updated_at`,
+			svc, e2eBaselineReleaseID, s3URI, si.imageTag)
+		require.NoError(t, err, "seed service_prod for %s", svc)
+	}
+	// Ensure the changed service has NO row in service_prod so assembly
+	// derives a fresh canonical key from the new release_id.
+	_, err := clients.releaseDB.ExecContext(ctx,
+		`DELETE FROM service_prod WHERE service_name = $1`, changedService)
+	require.NoError(t, err, "clear service_prod row for changed service %s", changedService)
+}
+
+// postRelease issues the per-service POST /releases request. When bootstrap is
+// true the release promotes without validation, covering the first-ever deploy
+// scenario.
+func postRelease(t *testing.T, clients *testClients, service, releaseID, imageTag string, bootstrap bool) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"release_id":    releaseID,
-		"image_tags":    imageTags,
-		"manifests_uri": manifestsURI,
+		"service":    service,
+		"release_id": releaseID,
+		"image_tag":  imageTag,
+		"bootstrap":  bootstrap,
 	})
 	require.NoError(t, err)
 
@@ -694,7 +846,7 @@ func assertCandidateSchemaDropped(t *testing.T, ctx context.Context, clients *te
 }
 
 // assertNoValidationJobsDispatched confirms no mode=validation K8s Job was ever
-// created for releaseID. A rejected release never emits validation.requested:v1,
+// created for releaseID. A bootstrap release never emits validation.requested:v1,
 // so the executor never dispatches a job. A short grace window absorbs any
 // in-flight dispatch race before the final assertion.
 func assertNoValidationJobsDispatched(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
@@ -705,14 +857,14 @@ func assertNoValidationJobsDispatched(t *testing.T, ctx context.Context, clients
 		jobs, err := getK8sJobs(ctx, selector)
 		require.NoError(t, err, "list validation jobs for release %s", releaseID)
 		require.Empty(t, jobs.Items,
-			"expected no validation jobs for rejected release %s, found %d", releaseID, len(jobs.Items))
+			"expected no validation jobs for bootstrap release %s, found %d", releaseID, len(jobs.Items))
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(2 * time.Second):
 		}
 	}
-	t.Logf("✅ no validation jobs dispatched for rejected release %s", releaseID)
+	t.Logf("✅ no validation jobs dispatched for bootstrap release %s", releaseID)
 }
 
 // sanitizeReleaseSchemaSuffix mirrors release-controller's sanitizeSchemaSuffix:

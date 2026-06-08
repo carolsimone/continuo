@@ -79,7 +79,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
   `release.promoted:v1` and calls `ReleasePromotionRepository.PromoteRelease`
   to swap the Neo4j topology. `image_tag` arrives already populated:
   `manifest-controller` leaves it empty and `release-controller` joins the
-  per-service tags from the `POST /releases` body onto the topology before
+  per-service tags it assembled for the release onto the topology before
   promotion, so there is no orchestrator-side `image_tag` rejection.
 - **Dispatch watchdog.** Periodic loop terminates `is_running=true`
   schedules that have no task in `RUNNING` and no task progress within
@@ -128,6 +128,24 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Redis consumes | `release.requested:v1` |
 | Redis produces | `manifest.loaded.candidate:v1` |
 | Outbound gRPC calls | none |
+
+## `release-controller`
+
+| Category | Owned / used surface |
+|---|---|
+| Durable state | Postgres `releases` (per-candidate state, `changed_service`, assembled per-service `image_tags`, candidate topology, validation results, transitions), `current_prod` (singleton live `topology_snapshot` + promoted `release_id`), `service_prod` (one row per dbt service: live `manifest_s3_key` + `image_tag` + `release_id`), `message_processing`, `release_controller_outbox` |
+| HTTP server | `POST /releases` (single-service candidate), `GET /releases`, `GET /releases/{id}`, `GET /current-prod`, `GET /healthz` |
+| gRPC server methods owned | none |
+| Redis consumes | `manifest.loaded.candidate:v1`, `validation.completed:v1` |
+| Redis produces | `release.requested:v1`, `validation.requested:v1`, `release.promoted:v1`, `release.rejected:v1` |
+| Outbound gRPC calls | none |
+
+### Invariants
+
+- **One service per release.** `POST /releases` accepts `{service, release_id, image_tag, bootstrap?}` — a delta for a single dbt service. The full per-service manifest set and image-tag map are assembled later, at activation, never at receipt.
+- **Assembly reads live `service_prod`.** When a release transitions to `Parsing`, the queue advance combines the changed service's new canonical manifest key with every other service's current `service_prod` pointer. Reading at activation (not receipt) reflects any promotion an earlier-queued release made meanwhile.
+- **Promotion refreshes the pointer.** Every promotion path (validation-passed, bootstrap, empty-diff) upserts the changed service's `service_prod` row (canonical key + image tag + release id) in the same transaction that updates `current_prod`.
+- **Activation requires full coverage.** A release does not activate while any service live in `current_prod` lacks a `service_prod` pointer (and is not the changed service); it stays queued until the pointers are seeded. This prevents a populated-`current_prod`/empty-`service_prod` state from assembling a partial topology and retiring the unpointered services on promotion.
 
 ## `ui-service`
 

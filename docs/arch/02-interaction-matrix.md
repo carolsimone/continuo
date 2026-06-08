@@ -81,7 +81,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 
 | Service | Operation type | Concrete calls |
 |---|---|---|
-| `manifest-controller` | read | `list_objects_v2`, `download_file` (candidate `manifest.json` files under the per-release prefix), `get_object` (best-effort `service_metadata.json`) |
+| `manifest-controller` | read | `download_file` (the `manifest.json` files named in the `release.requested:v1` `manifest_keys` list; no S3 listing) |
 | `k8s-controller` | write | `PutObject` |
 | `ui-service` | read | `GetObject` — task-execution pod logs (proxied via `GET /api/task-executions/:id/logs`) and dbt validation logs (proxied via `GET /api/releases/log`) |
 
@@ -93,5 +93,6 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `orchestrator` | Neo4j `Table` (+ `image_tag`, `topology_generation`), `Run` (+ `topology_generation`, `service_metadata`), `DEPENDS_ON`, `EXECUTES` (+ `image_tag`); Neo4j `:TopologyRoot {id:'singleton'}`; Postgres `topology_state`, `message_processing`, `orchestrator_outbox` |
 | `executor-controller` | `executor_deployments`, `executor_outbox`, `message_processing`, `cancelled_schedules`, `validation_aggregates` |
 | `k8s-controller` | `k8s_outbox`, `message_processing` |
+| `release-controller` | `releases` (+ `changed_service`, assembled `image_tags`), `current_prod` (live `topology_snapshot`), `service_prod` (per-service live `manifest_s3_key` + `image_tag` + `release_id`), `release_controller_outbox`, `message_processing` |
 | `manifest-controller` | none |
 | `ui-service` | none |

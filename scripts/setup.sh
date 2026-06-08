@@ -136,8 +136,32 @@ done
 echo "Starting dbt-compile-and-load..."
 docker compose up -d dbt-compile-and-load
 echo "Compiling and uploading dbt manifests to localstack S3..."
-docker exec dbt-compile-and-load uv run python -m dbt_upload load --services-dir /app/services --target localstack
-echo "✓ dbt manifests compiled and uploaded to localstack S3"
+docker exec dbt-compile-and-load uv run python -m dbt_upload load --services-dir /app/services --target localstack --release-id e2e-baseline
+echo "✓ dbt manifests compiled and uploaded to localstack S3 (key: <service>/e2e-baseline/manifest.json)"
+
+# Upload per-service image-tag sidecars so e2e tests can resolve image_tag
+# from S3 without needing IMAGE_TAG_PER_SERVICE forwarded into the test
+# container. Each sidecar lands at <service>/e2e-baseline/service_metadata.json,
+# matching the readServiceImageTag helper in release_promote_test.go.
+echo "Uploading per-service image-tag sidecars for e2e baseline..."
+for svc in "${DBT_SERVICES[@]}"; do
+  svc_tag="${IMAGE_TAG}"
+  docker exec dbt-compile-and-load \
+    uv run python3 -c "
+import boto3, json, os
+client = boto3.client('s3',
+  endpoint_url=os.environ.get('S3_ENDPOINT_URL','http://localstack:4566'),
+  aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID','test'),
+  aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY','test'),
+  region_name=os.environ.get('AWS_DEFAULT_REGION','us-east-1'))
+client.put_object(
+  Bucket='continuo',
+  Key='${svc}/e2e-baseline/service_metadata.json',
+  Body=json.dumps({'image_tag':'${svc_tag}','manifest_version':'e2e-baseline'}).encode())
+print('uploaded ${svc}/e2e-baseline/service_metadata.json')
+"
+done
+echo "✓ per-service image-tag sidecars uploaded"
 
 # Materialize dbt seeds into e2e_schema. The e2e topology is seeded directly
 # into Neo4j (no manifest.loaded ingest), and the standing "seed" schedule is

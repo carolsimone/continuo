@@ -32,16 +32,18 @@ var _ ports.Clock = (*fakeClock)(nil)
 // and write through the same data, so handler tests can inspect accumulated
 // state after multiple handler calls — each of which obtains its own UoW.
 type fakeStore struct {
-	mu       sync.Mutex
-	releases map[string]*release.Release
-	order    []string // insertion order, oldest first; drives NextQueuedRelease FIFO
-	cp       *release.CurrentProd
-	entries  []*pkgoutbox.Entry
+	mu          sync.Mutex
+	releases    map[string]*release.Release
+	order       []string // insertion order, oldest first; drives NextQueuedRelease FIFO
+	cp          *release.CurrentProd
+	serviceProd map[string]*release.ServiceProd
+	entries     []*pkgoutbox.Entry
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		releases: map[string]*release.Release{},
+		releases:    map[string]*release.Release{},
+		serviceProd: map[string]*release.ServiceProd{},
 	}
 }
 
@@ -76,6 +78,23 @@ func (s *fakeStore) GetCurrentProd() *release.CurrentProd {
 	return s.cp
 }
 
+// SeedServiceProd installs a service_prod pointer directly so advance-queue
+// tests can assert that other services' manifest keys are picked up.
+func (s *fakeStore) SeedServiceProd(sp *release.ServiceProd) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.serviceProd[sp.ServiceName()] = sp
+}
+
+// GetServiceProd returns the service_prod pointer written for the given service
+// name, or nil if no upsert has been recorded yet. Used by handler tests to
+// assert the values written by promoteToProduction.
+func (s *fakeStore) GetServiceProd(serviceName string) *release.ServiceProd {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.serviceProd[serviceName]
+}
+
 // OutboxEntries returns a snapshot of all outbox entries written so far.
 func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
 	s.mu.Lock()
@@ -88,10 +107,10 @@ func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
 // --- fakeReleaseRepo ---
 
 type fakeReleaseRepo struct {
-	store             *fakeStore
-	lastCutoff        time.Time
-	lastKeepReleaseID string
-	deletedCount      int
+	store              *fakeStore
+	lastCutoff         time.Time
+	lastKeepReleaseIDs []string
+	deletedCount       int
 }
 
 // Get mirrors the Postgres ReleaseRepository contract: a missing release yields
@@ -145,9 +164,9 @@ func (f *fakeReleaseRepo) List(_ context.Context, _ repository.ListFilter) ([]*r
 
 // DeleteResolvedBefore records the call parameters and returns the configured
 // deletedCount so handler tests can assert on retention behaviour.
-func (f *fakeReleaseRepo) DeleteResolvedBefore(_ context.Context, cutoff time.Time, keepReleaseID string) (int, error) {
+func (f *fakeReleaseRepo) DeleteResolvedBefore(_ context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	f.lastCutoff = cutoff
-	f.lastKeepReleaseID = keepReleaseID
+	f.lastKeepReleaseIDs = keepReleaseIDs
 	return f.deletedCount, nil
 }
 
@@ -176,6 +195,37 @@ func (f *fakeCurrentProdRepo) Upsert(_ context.Context, cp *release.CurrentProd)
 }
 
 var _ repository.CurrentProdRepository = (*fakeCurrentProdRepo)(nil)
+
+// --- fakeServiceProdRepo ---
+
+type fakeServiceProdRepo struct {
+	store *fakeStore
+}
+
+func (f *fakeServiceProdRepo) List(_ context.Context) ([]*release.ServiceProd, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	out := make([]*release.ServiceProd, 0, len(f.store.serviceProd))
+	for _, sp := range f.store.serviceProd {
+		out = append(out, sp)
+	}
+	return out, nil
+}
+
+func (f *fakeServiceProdRepo) Get(_ context.Context, serviceName string) (*release.ServiceProd, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	return f.store.serviceProd[serviceName], nil
+}
+
+func (f *fakeServiceProdRepo) Upsert(_ context.Context, sp *release.ServiceProd) error {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	f.store.serviceProd[sp.ServiceName()] = sp
+	return nil
+}
+
+var _ repository.ServiceProdRepository = (*fakeServiceProdRepo)(nil)
 
 // --- fakeOutbox ---
 
@@ -242,6 +292,7 @@ var _ messageprocessing.Repository = (*fakeMessageProcessing)(nil)
 type fakeUoW struct {
 	releases *fakeReleaseRepo
 	cp       *fakeCurrentProdRepo
+	sp       *fakeServiceProdRepo
 	outbox   *fakeOutbox
 	msgProc  fakeMessageProcessing
 }
@@ -250,12 +301,14 @@ func newFakeUoW(store *fakeStore) *fakeUoW {
 	return &fakeUoW{
 		releases: &fakeReleaseRepo{store: store},
 		cp:       &fakeCurrentProdRepo{store: store},
+		sp:       &fakeServiceProdRepo{store: store},
 		outbox:   &fakeOutbox{store: store},
 	}
 }
 
 func (f *fakeUoW) ReleaseRepo() repository.ReleaseRepository           { return f.releases }
 func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository   { return f.cp }
+func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository   { return f.sp }
 func (f *fakeUoW) OutboxRepo() pkgoutbox.Repository                    { return f.outbox }
 func (f *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return f.msgProc }
 func (f *fakeUoW) Begin(_ context.Context) error                       { return nil }

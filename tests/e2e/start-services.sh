@@ -97,7 +97,8 @@ log_info "manifest-controller started"
 
 log_info "Compiling and uploading dbt manifests..."
 docker exec dbt-compile-and-load \
-  uv run python -m dbt_upload load --services-dir /app/services
-log_info "dbt manifests uploaded"
+  uv run python -m dbt_upload load --services-dir /app/services --release-id e2e-baseline
+log_info "dbt manifests uploaded to canonical keys (<service>/e2e-baseline/manifest.json)"
+log_info "NOTE: image-tag sidecars (<service>/e2e-baseline/service_metadata.json) are uploaded by setup.sh"
 
 log_info "All services started successfully!"

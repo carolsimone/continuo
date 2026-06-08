@@ -10,12 +10,11 @@ import (
 
 func TestNew_BootstrapFlag(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
-	tags := map[string]string{"svc-a": "sha-a"}
 
-	plain := release.New("r1", tags, "s3://b/r1/", false, now)
+	plain := release.New("r1", "svc-a", "sha-a", false, now)
 	assert.False(t, plain.IsBootstrap())
 
-	boot := release.New("r2", tags, "s3://b/r2/", true, now)
+	boot := release.New("r2", "svc-a", "sha-a", true, now)
 	assert.True(t, boot.IsBootstrap())
 }
 

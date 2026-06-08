@@ -32,13 +32,14 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
-	_, err = db.Exec("TRUNCATE releases, current_prod, release_controller_outbox, message_processing RESTART IDENTITY CASCADE")
+	_, err = db.Exec("TRUNCATE releases, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, slog.Default()) },
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.Default(),
+		Bucket:    "test-bucket",
 	}
 	srv := httpinfra.NewServer(deps, "0", slog.Default())
 	return srv, deps, db
@@ -50,9 +51,9 @@ func TestIntegration_HappyPath(t *testing.T) {
 
 	// 1. POST /releases
 	body, _ := json.Marshal(handlers.ReceiveCandidateInput{
-		ReleaseID:    "rA",
-		ImageTags:    map[string]string{"service-1": "sha-rA"},
-		ManifestsURI: "s3://b/r/rA/manifests/",
+		Service:   "service-1",
+		ReleaseID: "rA",
+		ImageTag:  "sha-rA",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/releases", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -100,7 +101,12 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cp))
 	assert.Equal(t, "rA", cp["current_prod_release_id"])
 
-	// 6. Outbox has 3 entries (release.requested + validation.requested + release.promoted)
+	// 6. service_prod must be upserted for service-1.
+	var spCount int
+	require.NoError(t, db.Get(&spCount, `SELECT count(*) FROM service_prod WHERE service_name = 'service-1'`))
+	assert.Equal(t, 1, spCount, "service_prod must have a row for the promoted service")
+
+	// 7. Outbox has 3 entries (release.requested + validation.requested + release.promoted)
 	var count int
 	require.NoError(t, db.Get(&count, `SELECT count(*) FROM release_controller_outbox`))
 	assert.Equal(t, 3, count)

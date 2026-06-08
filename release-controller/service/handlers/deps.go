@@ -17,4 +17,5 @@ type Deps struct {
 	Clock     ports.Clock
 	Telemetry ports.Telemetry
 	Logger    *slog.Logger
+	Bucket    string
 }

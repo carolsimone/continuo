@@ -12,8 +12,9 @@ Postgres (its own database). Tables:
 
 | Table | Purpose |
 |---|---|
-| `releases` | One row per candidate release: status, image tags, manifests URI, candidate topology, validation node ids, per-node results, transition history. |
-| `current_prod` | Singleton row: the promoted `release_id`, the `manifests_uri` that release was submitted with, and its `topology_snapshot` (the live topology). |
+| `releases` | One row per candidate release: status, the `changed_service` this delta belongs to, the per-service image tags assembled at activation, candidate topology, validation node ids, per-node results, transition history. |
+| `current_prod` | Singleton row: the promoted `release_id` and its `topology_snapshot` (the live topology). |
+| `service_prod` | One row per dbt service — the live per-service production pointer: `{service_name, release_id, manifest_s3_key, image_tag, updated_at}`. Records which manifest key and image tag are currently live for each service; the full production manifest set is reconstructed by collecting every service's pointer at activation time. |
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
 | `message_processing` | Inbound dedup ledger (`outbox_entry_id` / message id) for idempotent consumption. |
 
@@ -25,13 +26,13 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 
 | Route | Purpose |
 |---|---|
-| `POST /releases` | Accept a candidate release. Body: `{release_id, image_tags, manifests_uri, bootstrap?}`. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
-| `GET /releases/{id}` | Full release detail: `{release_id, status, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, manifests_uri, bootstrap}`. `per_node_results` is an array of `{node_id, status, dbt_log_uri, duration_ms}`. |
+| `POST /releases` | Accept a candidate release for a single dbt service. Body: `{service, release_id, image_tag, bootstrap?}`. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
+| `GET /releases/{id}` | Full release detail: `{release_id, status, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap}`. `per_node_results` is an array of `{node_id, status, dbt_log_uri, duration_ms}`. |
 | `GET /releases` | Paginated release history, newest-first. Query params: `status` (optional exact-match filter), `limit` (default 20; values that are unparseable, non-positive, or exceed 100 fall back to the default of 20), `cursor` (opaque keyset cursor). Response: `{"releases":[{release_id, status, created_at, resolved_at, node_count, bootstrap, reject_reason}], "next_cursor":"<opaque or empty>"}`. |
 | `GET /current-prod` | The current promoted release + topology snapshot. |
 | `GET /healthz` | Liveness. |
 
-`POST /releases` is the production entry point for a deploy: the CI deploy workflow uploads the per-release manifests to S3 (`releases/<id>/manifests/<service>/manifest_v1.json`) and posts the release here. It does not carry a changed-node list — release-controller derives it (see Processing Logic).
+`POST /releases` is the production entry point for a deploy: each team's CI uploads only its own service's compiled manifest to the canonical S3 key `s3://<bucket>/<service>/<release_id>/manifest.json` and posts a single-service candidate here. The request carries no manifest-key list — release-controller assembles the full per-service set at activation time from `service_prod` (see Processing Logic). It also carries no changed-node list — release-controller derives it.
 
 ### Redis consumer
 
@@ -46,7 +47,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 
 | Stream | Consumed by | Emitted when |
 |---|---|---|
-| `release.requested:v1` | manifest-controller | A release becomes active and needs its manifests parsed. |
+| `release.requested:v1` | manifest-controller | A release becomes active; carries the assembled `manifest_keys` set (the changed service plus every other service's current prod manifest) to parse. |
 | `validation.requested:v1` | executor-controller | A candidate has changed nodes to validate. |
 | `release.promoted:v1` | orchestrator | A release is promoted to production. |
 | `release.rejected:v1` | (observers) | A release fails parsing or validation. |
@@ -60,7 +61,13 @@ Calls no gRPC services.
 Releases run a FIFO queue: one release is active (parsing or validating) at a time; on each terminal outcome the queue advances the next queued release.
 
 ### On `POST /releases`
-Create a `Received` release (idempotent: an existing `release_id` is a no-op). The queue advance promotes the next `Received` release to `Parsing` and emits `release.requested:v1`.
+Create a `Received` release for the single submitted service (idempotent: an existing `release_id` is a no-op). The release records its `changed_service` and that service's `image_tag`. The queue advance promotes the next `Received` release to `Parsing`, assembles its full manifest set, and emits `release.requested:v1`.
+
+### Manifest-set assembly (at activation, not receipt)
+Assembly happens when a release transitions to `Parsing`, not when it is received. Under the FIFO queue an earlier release may promote and change another service's pointer before this one activates, so the set must be read from live state at the moment of activation. The queue advance reads every other service's `service_prod` row and combines them with the changed service's new canonical key (`s3://<bucket>/<changed_service>/<release_id>/manifest.json`) and its submitted image tag. The changed service's prior pointer, if any, is replaced rather than duplicated. The assembled per-service image tags are persisted on the release; the resulting `manifest_keys` list — one `{service, s3_uri}` entry per service — is emitted in the `release.requested:v1` payload `{release_id, manifest_keys}`.
+
+### Activation guard
+Before a release activates, the queue advance verifies that every service live in the `current_prod` topology snapshot is covered by a `service_prod` pointer (or is this release's changed service). If a live service has no pointer, the release stays `Received`, nothing is emitted, and a warning naming the uncovered services is logged; a later queue advance retries automatically. This protects the transition from a fully-populated `current_prod` with an empty `service_prod` table: without coverage, assembly would omit the unpointered services and promotion would retire them. `service_prod` is populated from the existing `current_prod` snapshot by the `seed-service-prod` command (shipped in the service image), which records each service's existing manifest key verbatim and is idempotent.
 
 ### On `manifest.loaded.candidate:v1`
 ```
@@ -68,7 +75,8 @@ status=failed → Reject(reason=parse_failed), emit release.rejected:v1, advance
 status=ok:
   join per-service image_tags into the candidate topology
   if release.bootstrap: promote directly, skipping validation
-      (record candidate topology, update current_prod, transition to Promoted,
+      (record candidate topology, update current_prod, upsert the changed
+       service's service_prod pointer, transition to Promoted,
        emit release.promoted:v1); advance queue, return
   load current_prod.topology_snapshot
   derive changed = candidate nodes whose content_hash differs from prod, or are new
@@ -92,13 +100,14 @@ A `bootstrap:true` release skips validation entirely: it records the candidate t
 ```
 all nodes ok and none missing → handleValidationOK:
    update current_prod to this release's candidate topology,
+   upsert the changed service's service_prod pointer (canonical key + image tag + release id),
    transition to Promoted, emit release.promoted:v1
 any node failed / missing / aggregate not ok → Reject(reason=validation_failed),
    emit release.rejected:v1
 advance queue
 ```
 
-Promotion is shared by the validation-passed path and the nothing-to-validate short-circuit: both point `current_prod` at the candidate topology, transition the release to `Promoted`, and emit `release.promoted:v1`. The candidate topology (carrying `content_hash` + joined `image_tag`) becomes the new snapshot, so the next release's change-detection diff is correct.
+Promotion is shared by the validation-passed path, the bootstrap short-circuit, and the nothing-to-validate short-circuit: all point `current_prod` at the candidate topology, upsert the changed service's `service_prod` pointer (its canonical manifest key, image tag, and this `release_id`), transition the release to `Promoted`, and emit `release.promoted:v1`. The candidate topology (carrying `content_hash` + joined `image_tag`) becomes the new snapshot, so the next release's change-detection diff is correct, and the refreshed pointer is what the next release for any other service assembles against.
 
 ## Consumer Reliability
 
@@ -115,7 +124,7 @@ Promotion is shared by the validation-passed path and the nothing-to-validate sh
 | Outbox publisher | Drains `release_controller_outbox` and XADDs each row to its stream. |
 | `manifest.loaded.candidate:v1` consumer | Dispatches to the parsed-manifest handler. |
 | `validation.completed:v1` consumer | Dispatches to the validation-result handler. |
-| Retention | Runs on the janitor interval (`RELEASE_JANITOR_INTERVAL`, default 24h). Deletes terminal releases (promoted, rejected, superseded) whose creation timestamp is older than `RELEASE_RETENTION_DAYS` (default 90 days). Never deletes the release referenced by `current_prod`. |
+| Retention | Runs on the janitor interval (`RELEASE_JANITOR_INTERVAL`, default 24h). Deletes terminal releases (promoted, rejected, superseded) whose creation timestamp is older than `RELEASE_RETENTION_DAYS` (default 90 days). Never deletes the release referenced by `current_prod` or by any `service_prod` pointer. |
 
 ## gRPC Callers
 

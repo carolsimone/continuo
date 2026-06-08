@@ -60,13 +60,36 @@ def main() -> None:
         except json.JSONDecodeError as exc:
             raise ValueError(f"release.requested:v1 payload not valid JSON: {exc}") from exc
         release_id = payload.get("release_id")
-        manifests_uri = payload.get("manifests_uri")
-        if not release_id or not manifests_uri:
+        manifest_keys_raw = payload.get("manifest_keys")
+        if not release_id or manifest_keys_raw is None:
             raise ValueError(
-                "release.requested:v1 payload missing release_id or manifests_uri",
+                "release.requested:v1 payload missing release_id or manifest_keys",
             )
-        bucket, prefix = parse_s3_uri(manifests_uri)
-        source = S3Source(bucket=bucket, env=S3_ENV, s3_client=s3_client, prefix=prefix)
+        # All entries must share a single bucket; derive it from the first URI and
+        # assert the rest agree so misrouted multi-bucket payloads are caught early.
+        # Each entry must carry a non-empty "service" field; a missing or empty
+        # service is treated as a permanent malformed-payload error (not ACKed) so
+        # the service-mismatch/empty-manifest validation in the handler cannot be
+        # silently bypassed.
+        buckets = []
+        keyed_pairs: list[tuple[str, str]] = []
+        for entry in manifest_keys_raw:
+            svc = entry.get("service") if isinstance(entry, dict) else None
+            if not svc:
+                raise ValueError(
+                    "release.requested:v1 manifest_keys entry missing or empty 'service' field"
+                )
+            bucket, key = parse_s3_uri(entry["s3_uri"])
+            buckets.append(bucket)
+            # parse_s3_uri appends a trailing slash to all non-empty paths; strip it
+            # because object keys never end with "/" in S3.
+            keyed_pairs.append((svc, key.rstrip("/")))
+        if len(set(buckets)) > 1:
+            raise ValueError(
+                f"release.requested:v1 manifest_keys span multiple buckets: {set(buckets)}"
+            )
+        shared_bucket = buckets[0] if buckets else S3_BUCKET
+        source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=keyed_pairs)
         # Cleanup is owned by CandidateManifestHandler.handle() via its own finally block.
         CandidateManifestHandler(source=source, publisher=candidate_publisher).handle(
             release_id=release_id,

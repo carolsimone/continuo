@@ -19,13 +19,13 @@ func (s *Server) handleGetRelease(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"release_id":          rel.ID(),
 		"status":              string(rel.Status()),
+		"changed_service":     rel.ChangedService(),
 		"transitions":         rel.Transitions(),
 		"validation_node_ids": rel.ValidationNodeIDs(),
 		"reject_reason":       rel.RejectReason(),
 		"failing_nodes":       rel.FailingNodes(),
 		"per_node_results":    rel.PerNodeResults(),
 		"image_tags":          rel.ImageTags(),
-		"manifests_uri":       rel.ManifestsURI(),
 		"bootstrap":           rel.IsBootstrap(),
 	})
 }

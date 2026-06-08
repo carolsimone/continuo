@@ -7,6 +7,7 @@ class ManifestFile:
     path: str
     version: str
     image_tag: str = ""
+    declared_service: str = ""
 
 
 @dataclass

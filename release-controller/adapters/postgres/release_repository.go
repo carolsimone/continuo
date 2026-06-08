@@ -41,7 +41,7 @@ type releaseRow struct {
 	ReleaseID         string         `db:"release_id"`
 	Status            string         `db:"status"`
 	ImageTagsJSON     []byte         `db:"image_tags"`
-	ManifestsURI      string         `db:"manifests_uri"`
+	ChangedService    string         `db:"changed_service"`
 	CandidateTopology []byte         `db:"candidate_topology"`
 	ValidationNodeIDs pq.StringArray `db:"validation_node_ids"`
 	RejectReason      sql.NullString `db:"reject_reason"`
@@ -56,7 +56,7 @@ type releaseRow struct {
 func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Release, error) {
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
-		`SELECT release_id, status, image_tags, manifests_uri,
+		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap
 		 FROM releases WHERE release_id = $1`, id)
@@ -74,7 +74,7 @@ func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Releas
 func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Release, error) {
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
-		`SELECT release_id, status, image_tags, manifests_uri,
+		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap
 		 FROM releases WHERE status = 'received'
@@ -93,7 +93,7 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release, error) {
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
-		`SELECT release_id, status, image_tags, manifests_uri,
+		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap
 		 FROM releases WHERE status IN ('parsing','validating')
@@ -108,8 +108,9 @@ func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release
 }
 
 // Save persists a Release using an upsert keyed on release_id. Immutable
-// fields (image_tags, manifests_uri, created_at) are only written on INSERT;
-// the ON CONFLICT clause updates the mutable fields.
+// fields (image_tags, changed_service, created_at) are only written on INSERT;
+// the ON CONFLICT clause updates the mutable fields. image_tags is also updated
+// on conflict because SetAssembledImageTags overwrites it at advance-time.
 func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) error {
 	imageTagsJSON, err := json.Marshal(rel.ImageTags())
 	if err != nil {
@@ -131,12 +132,13 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 
 	_, err = r.q.ExecContext(ctx,
 		`INSERT INTO releases (
-		   release_id, status, image_tags, manifests_uri,
+		   release_id, status, image_tags, changed_service,
 		   candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 		   per_node_results, created_at, transitions, bootstrap
 		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		 ON CONFLICT (release_id) DO UPDATE SET
 		   status = EXCLUDED.status,
+		   image_tags = EXCLUDED.image_tags,
 		   candidate_topology = EXCLUDED.candidate_topology,
 		   validation_node_ids = EXCLUDED.validation_node_ids,
 		   reject_reason = EXCLUDED.reject_reason,
@@ -144,7 +146,7 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		   per_node_results = EXCLUDED.per_node_results,
 		   transitions = EXCLUDED.transitions`,
 		rel.ID(), string(rel.Status()),
-		imageTagsJSON, rel.ManifestsURI(), topoJSON, pq.StringArray(rel.ValidationNodeIDs()),
+		imageTagsJSON, rel.ChangedService(), topoJSON, pq.StringArray(rel.ValidationNodeIDs()),
 		rejectReason, pq.StringArray(rel.FailingNodes()), perNodeJSON,
 		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap())
 	if err != nil {
@@ -183,7 +185,7 @@ func rowToRelease(row releaseRow) (*release.Release, error) {
 		ID:                row.ReleaseID,
 		Status:            release.Status(row.Status),
 		ImageTags:         imageTags,
-		ManifestsURI:      row.ManifestsURI,
+		ChangedService:    row.ChangedService,
 		CandidateTopology: topo,
 		ValidationNodeIDs: []string(row.ValidationNodeIDs),
 		RejectReason:      row.RejectReason.String,
@@ -220,7 +222,7 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 		where = "WHERE " + strings.Join(conds, " AND ")
 	}
 	args = append(args, limit+1)
-	query := fmt.Sprintf(`SELECT release_id, status, image_tags, manifests_uri,
+	query := fmt.Sprintf(`SELECT release_id, status, image_tags, changed_service,
 	        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 	        per_node_results, created_at, transitions, bootstrap
 	 FROM releases %s
@@ -260,14 +262,15 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 
 // DeleteResolvedBefore removes releases that are in a terminal state
 // (promoted, rejected, or superseded), were created before the given cutoff,
-// and are not the release identified by keepReleaseID. Returns the number of
-// rows deleted.
-func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff time.Time, keepReleaseID string) (int, error) {
+// and are not in the keepReleaseIDs set. An empty keepReleaseIDs slice means
+// no extra releases are preserved. Returns the number of rows deleted.
+func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	res, err := r.q.ExecContext(ctx,
 		`DELETE FROM releases
 		 WHERE status IN ('promoted','rejected','superseded')
 		   AND created_at < $1
-		   AND release_id <> $2`, cutoff, keepReleaseID)
+		   AND release_id <> ALL($2)`,
+		cutoff, pq.Array(keepReleaseIDs))
 	if err != nil {
 		return 0, fmt.Errorf("delete resolved releases: %w", err)
 	}
