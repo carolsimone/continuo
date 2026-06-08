@@ -45,17 +45,6 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    const fetch_ = () =>
-      fetch('/api/nodes?limit=1')
-        .then(r => r.json())
-        .then((data: { total_count?: number }) => setNodeTotal(data.total_count || 0))
-        .catch(() => {});
-    fetch_();
-    const id = setInterval(fetch_, 5000);
-    return () => clearInterval(id);
-  }, []);
-
   const tabSpecs = [
     { slug: 'runs', label: 'Runs', count: schedules.length },
     { slug: 'topology', label: 'Topology', count: topologies.length },
@@ -63,6 +52,15 @@ export default function DashboardPage() {
     { slug: 'nodes', label: 'Nodes', count: nodeTotal },
   ];
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
+
+  // Nodes-tab count badge: fetched on mount and whenever a tab is opened.
+  // No recurring poll — the full catalog aggregation must not run every 5s.
+  useEffect(() => {
+    fetch('/api/nodes?limit=1')
+      .then(r => r.json())
+      .then((data: { total_count?: number }) => setNodeTotal(data.total_count || 0))
+      .catch(() => {});
+  }, [activeTab]);
 
   return (
     <div className="page">
