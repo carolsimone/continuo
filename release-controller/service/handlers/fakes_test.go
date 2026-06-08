@@ -86,6 +86,15 @@ func (s *fakeStore) SeedServiceProd(sp *release.ServiceProd) {
 	s.serviceProd[sp.ServiceName()] = sp
 }
 
+// GetServiceProd returns the service_prod pointer written for the given service
+// name, or nil if no upsert has been recorded yet. Used by handler tests to
+// assert the values written by promoteToProduction.
+func (s *fakeStore) GetServiceProd(serviceName string) *release.ServiceProd {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.serviceProd[serviceName]
+}
+
 // OutboxEntries returns a snapshot of all outbox entries written so far.
 func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
 	s.mu.Lock()

@@ -30,6 +30,7 @@ type rejectedPayload struct {
 func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service:   "svc-a",
@@ -98,6 +99,13 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 
 	third := entries[2]
 	assert.Equal(t, streams.ReleasePromotedV1, third.StreamName)
+
+	// Assert the changed service's service_prod row carries the correct values.
+	sp := store.GetServiceProd("svc-a")
+	require.NotNil(t, sp)
+	assert.Equal(t, "rA", sp.ReleaseID())
+	assert.Equal(t, "s3://continuo/svc-a/rA/manifest.json", sp.ManifestS3Key())
+	assert.Equal(t, "sha-a", sp.ImageTag())
 }
 
 func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {

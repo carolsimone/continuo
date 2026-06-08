@@ -651,4 +651,12 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 2)
 	assert.Equal(t, streams.ReleasePromotedV1, entries[1].StreamName)
+
+	// Assert the changed service's service_prod row carries the correct values.
+	// Changed service is the lexically-first service ("svc-a", tag "sha-a").
+	sp := store.GetServiceProd("svc-a")
+	require.NotNil(t, sp)
+	assert.Equal(t, "rBoot", sp.ReleaseID())
+	assert.Equal(t, "s3://continuo/svc-a/rBoot/manifest.json", sp.ManifestS3Key())
+	assert.Equal(t, "sha-a", sp.ImageTag())
 }
