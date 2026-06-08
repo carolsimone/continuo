@@ -122,4 +122,13 @@ describe('computeNodeStats — extended fields', () => {
     expect(s.flakyRatePct).toBe(0);
     expect(s.lastStatus).toBeNull();
   });
+  it('counts skipped as a terminal non-success (matches server)', () => {
+    const runs = [
+      mkRunExt({ task_status: 'succeeded', retry_count: 0 }),
+      mkRunExt({ task_status: 'skipped', retry_count: 0, started_at: null, completed_at: null,
+              created_at: '2026-06-08T11:30:00Z' }),
+    ];
+    const s = computeNodeStats(runs);
+    expect(s.successRatePct).toBe(50); // 1 succeeded of 2 terminal (skipped counts)
+  });
 });

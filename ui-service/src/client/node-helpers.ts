@@ -23,7 +23,7 @@ export interface NodeStats {
 
 function isTerminal(r: NodeRun): boolean {
   const s = r.task_status;
-  return s === 'succeeded' || s === 'failed' || s === 'cancelled';
+  return s === 'succeeded' || s === 'failed' || s === 'cancelled' || s === 'skipped';
 }
 
 function durationSec(r: NodeRun): number | null {
