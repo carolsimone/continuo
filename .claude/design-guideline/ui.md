@@ -321,7 +321,7 @@ shows a single centered **Load more** button below the rows:
 ```
 
 ```css
-.nodes-loadmore { display: flex; justify-content: center; padding: 12px 0; }
+.nodes-loadmore { display: flex; justify-content: center; padding: 12px; }
 ```
 
 Rules:
