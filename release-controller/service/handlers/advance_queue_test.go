@@ -92,6 +92,63 @@ func TestAdvanceQueue_OtherServicesIncludedInManifestKeys(t *testing.T) {
 	}, r.ImageTags())
 }
 
+func TestAdvanceQueue_ProdSeeded_UncoveredService_BlocksActivation(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "bucket"
+
+	// current_prod lists three live services, but no service_prod pointers exist
+	// (the state right after an upgrade from the whole-snapshot model).
+	topology := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a"},
+		{UniqueID: "b", ServiceName: "svc-b"},
+		{UniqueID: "c", ServiceName: "svc-c"},
+	}
+	cp := release.NewCurrentProd()
+	cp.Update("rProd", topology, time.Unix(0, 0).UTC())
+	store.SeedCurrentProd(cp)
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "t",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	// svc-b and svc-c are uncovered, so the release stays Received and nothing
+	// is emitted; the operator must seed service_prod first.
+	r, _ := store.GetRelease("rA")
+	assert.Equal(t, release.StatusReceived, r.Status())
+	assert.Empty(t, outboxEntries(store))
+}
+
+func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "bucket"
+
+	topology := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a"},
+		{UniqueID: "b", ServiceName: "svc-b"},
+		{UniqueID: "c", ServiceName: "svc-c"},
+	}
+	cp := release.NewCurrentProd()
+	cp.Update("rProd", topology, time.Unix(0, 0).UTC())
+	store.SeedCurrentProd(cp)
+
+	// svc-b and svc-c are covered by pointers; svc-a is the changed service.
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", time.Unix(0, 0)))
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "t",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	r, _ := store.GetRelease("rA")
+	assert.Equal(t, release.StatusParsing, r.Status())
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 1)
+	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName)
+}
+
 func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
