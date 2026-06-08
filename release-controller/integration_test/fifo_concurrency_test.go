@@ -28,7 +28,7 @@ func TestIntegration_FIFO_SerializesConcurrentCandidates(t *testing.T) {
 			defer wg.Done()
 			id := fmt.Sprintf("r%02d", i)
 			_ = handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-				ReleaseID: id, ImageTags: map[string]string{"service-1": "sha-" + id}, ManifestsURI: "u",
+				Service: "service-1", ReleaseID: id, ImageTag: "sha-" + id,
 			})
 		}(i)
 	}

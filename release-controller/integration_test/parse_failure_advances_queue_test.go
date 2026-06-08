@@ -22,10 +22,10 @@ func TestIntegration_ParseRejection_AdvancesQueuedRelease(t *testing.T) {
 
 	// Post two candidates.
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID: "rA", ImageTags: map[string]string{"service-1": "sha-rA"}, ManifestsURI: "u",
+		Service: "service-1", ReleaseID: "rA", ImageTag: "sha-rA",
 	}))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID: "rB", ImageTags: map[string]string{"service-1": "sha-rB"}, ManifestsURI: "u",
+		Service: "service-1", ReleaseID: "rB", ImageTag: "sha-rB",
 	}))
 
 	// Advance: rA becomes Parsing; rB stays Received.
