@@ -170,6 +170,6 @@ This guarantees that every K8s Pod in a run uses the exact image tag that was cu
 
 ### Content-Addressed Image Tags
 
-Image tags reach the topology through the release path. The CI deploy workflow sends the per-service image tags in the `POST /releases` request body. `manifest-controller` parses the candidate manifests and leaves `image_tag` empty; `release-controller` joins the per-service tags from the request body onto the candidate topology before validation and carries them through `release.promoted:v1`. The orchestrator stamps those tags onto every `:Table` node and `EXECUTES` edge.
+Image tags reach the topology through the release path. Each team's CI sends its own service's image tag in the single-service `POST /releases` request body; `release-controller` records it and, when the release activates, assembles the full per-service tag map from the changed service's tag plus every other service's `service_prod` pointer. `manifest-controller` parses the candidate manifests and leaves `image_tag` empty; `release-controller` joins the assembled per-service tags onto the candidate topology before validation and carries them through `release.promoted:v1`. The orchestrator stamps those tags onto every `:Table` node and `EXECUTES` edge.
 
 `executor-controller` reads `image_tag` from `query.model:v1` stream fields and refuses to construct a K8s Pod if the tag is empty. There is no fallback to `"latest"`.

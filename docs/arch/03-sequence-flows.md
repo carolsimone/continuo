@@ -383,7 +383,7 @@ sequenceDiagram
 
 ## 11. dbt Blue/Green Release (Validate-Then-Promote)
 
-A candidate dbt release is parsed, every changed node is validated self-contained in an isolated schema, and production (Neo4j topology, image tags, schedule catalog) is swapped only if validation passes. `release-controller` owns the lifecycle and holds `current_prod` — the single source of truth for what is live. Releases run a FIFO queue: one release parses/validates at a time, and each terminal outcome advances the next.
+A candidate dbt release targets a single dbt service: that team's CI uploads only its own compiled manifest to the canonical S3 key `s3://<bucket>/<service>/<release_id>/manifest.json` and posts a one-service candidate. When the release becomes active, `release-controller` assembles the full manifest set by combining the changed service's new key with every other service's live `service_prod` pointer, parses the whole set, validates every changed node self-contained in an isolated schema, and swaps production (Neo4j topology, image tags, schedule catalog) only if validation passes. `release-controller` owns the lifecycle, holds `current_prod` (the live topology snapshot) and the `service_prod` pointer table (one row per service: its live manifest key + image tag + release id). Releases run a FIFO queue: one release parses/validates at a time, each terminal outcome advances the next, and each promotion refreshes the changed service's `service_prod` pointer.
 
 ```mermaid
 sequenceDiagram
@@ -397,15 +397,15 @@ sequenceDiagram
   participant OR as orchestrator
   participant ST as state
 
-  Note over CI,RC: Phase 1 — submit
-  CI->>S3: upload releases/{id}/manifests/{service}/manifest_v{N}.json
-  CI->>RC: POST /releases {release_id, image_tags, manifests_uri, bootstrap?}
-  Note over RC: create Received release (idempotent on release_id)<br/>FIFO queue advance → Parsing<br/>release_controller_outbox INSERT for release.requested:v1
-  RC->>R: publish release.requested:v1 {release_id, manifests_uri}
+  Note over CI,RC: Phase 1 — submit (one service per release)
+  CI->>S3: upload {service}/{release_id}/manifest.json (canonical key)
+  CI->>RC: POST /releases {service, release_id, image_tag, bootstrap?}
+  Note over RC: create Received release for this service (idempotent on release_id)<br/>FIFO queue advance → Parsing<br/>assemble manifest_keys from service_prod (changed service + every other<br/>service's live pointer); persist assembled image tags<br/>release_controller_outbox INSERT for release.requested:v1
+  RC->>R: publish release.requested:v1 {release_id, manifest_keys:[{service, s3_uri}]}
 
   Note over MC,RC: Phase 2 — candidate parse
   R->>MC: consume release.requested:v1
-  MC->>S3: list + download per-service manifest (highest manifest_v{N}.json)
+  MC->>S3: download each manifest named in manifest_keys (explicit key list)
   Note over MC: parse model/seed/snapshot nodes<br/>content_hash = dbt checksum (sha256 fallback, never empty)<br/>resolve upstreams via sqlglot (qualified refs only)<br/>candidate_sql = compiled SQL with known-node schema refs<br/>rewritten to _candidate_{release} (seeds → empty candidate_sql)
   alt manifest malformed / unqualified table ref
     MC->>R: publish manifest.loaded.candidate:v1 {status=failed, error_class}
@@ -419,7 +419,7 @@ sequenceDiagram
 
   Note over RC: Phase 3 — change detection + gate
   alt bootstrap:true OR nothing to validate (in-set empty)
-    Note over RC: promote directly (skip validation)<br/>current_prod ← candidate topology, transition Promoted
+    Note over RC: promote directly (skip validation)<br/>current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted
     RC->>R: publish release.promoted:v1
   else has changed nodes
     Note over RC: changed = content_hash diff vs current_prod snapshot<br/>(empty snapshot / new node ⇒ treated as changed)<br/>inSet = DescendantsClosure(changed) ∪ FullAncestorsClosure(inSet)<br/>(changed + downstream + full transitive upstream closure, cross-service)
@@ -451,7 +451,7 @@ sequenceDiagram
   Note over RC: Phase 5 — promote or reject
   R->>RC: consume validation.completed:v1
   alt aggregate_status=ok
-    Note over RC: current_prod ← candidate topology, transition Promoted
+    Note over RC: current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted
     RC->>R: publish release.promoted:v1
   else any node failed / missing
     Note over RC: Reject(validation_failed) → release.rejected:v1
@@ -475,7 +475,7 @@ sequenceDiagram
 
 **Reject reasons.** A release ends in `Rejected` for one of three reasons, each also emitted as `release.rejected:v1` for observers: `parse_failed` (manifest malformed or an unqualified table reference), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology — i.e. not in the release at all), or `validation_failed` (one or more validation Jobs failed).
 
-**Bootstrap and empty-diff short-circuits.** A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes — the initial cutover (or a trusted re-baseline) against an empty or mismatched snapshot. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology. A release whose diff is empty (e.g. an image-tag-only bump) trivially passes the gate and promotes directly. All three promotion paths point `current_prod` at the candidate topology so the next release's change-detection diff is correct.
+**Bootstrap and empty-diff short-circuits.** A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes — the initial cutover (or a trusted re-baseline) against an empty or mismatched snapshot. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology. A release whose diff is empty (e.g. an image-tag-only bump) trivially passes the gate and promotes directly. All three promotion paths point `current_prod` at the candidate topology and upsert the changed service's `service_prod` pointer, so the next release's change-detection diff is correct and any other service's next release assembles against the refreshed pointer.
 
 **Promotion is a lazy generation switch.** `PromoteRelease` swaps the live `:Table` topology using retire-then-orphan-cleanup — retired nodes still referenced by a `:Run-[:EXECUTES]` edge are kept, preserving run history; only truly orphaned retired nodes are deleted. The handler never reads or writes `:Run` nodes or `EXECUTES` edges, so in-flight runs are unaffected: an existing run keeps its `topology_generation` and its edges keep their pinned `image_tag`. The next scheduled run's `Snapshot(LatestFullDAG)` reads `:TopologyRoot` at call time and picks up the new generation and image tags. See **Flow 7 (Topology Versioning — Lazy Generation Switch)** for the consumption-side detail. `node_type` is threaded through the promotion MERGE so promoted seeds are typed correctly and seed-backed schedules dispatch their `dbt seed` jobs without stalling.
 
