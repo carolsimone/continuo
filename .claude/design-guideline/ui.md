@@ -305,6 +305,34 @@ Rules:
   `.nodes-error-full--visible`. Always also link out to the full log
   source.
 
+### Load more
+
+A paged table whose loaded row count is less than the server `total_count`
+shows a single centered **Load more** button below the rows:
+
+```jsx
+{loaded < total && (
+  <div className="nodes-loadmore">
+    <button type="button" className="btn btn--secondary" onClick={loadMore}>
+      Load more
+    </button>
+  </div>
+)}
+```
+
+```css
+.nodes-loadmore { display: flex; justify-content: center; padding: 12px 0; }
+```
+
+Rules:
+
+- Render the wrapper only while `loaded < total`. When all rows are
+  loaded the wrapper is absent — no disabled button, no "end of list"
+  message.
+- Use the existing `.btn .btn--secondary` — no new button class.
+- No full pagination controls (page numbers, prev/next). Incremental
+  append ("load more") is the only sanctioned pattern for this surface.
+
 ## Log block
 
 For showing fetched log or code text inline (e.g. a per-node dbt log on
