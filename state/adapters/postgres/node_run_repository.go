@@ -208,7 +208,9 @@ func (r *nodeRunRepository) ListNodes(
 			LEFT JOIN latest_exec le ON le.task_id = w.task_id
 			GROUP BY w.service_name, w.schema_name, w.table_name
 		)
-		SELECT * FROM agg
+		SELECT service_name, schema_name, table_name, run_count, terminal_count,
+		       succeeded_count, avg_dur, p95_dur, flaky_count, last_status, last_run_at
+		FROM agg
 		ORDER BY last_run_at DESC, service_name, schema_name, table_name
 		LIMIT $3 OFFSET $4`
 

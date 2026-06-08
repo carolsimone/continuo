@@ -51,6 +51,15 @@ describe('NodesCatalogPanel', () => {
     expect(await screen.findByText(/No node runs yet/i)).toBeInTheDocument();
   });
 
+  it('renders an error strip when the fetch fails', async () => {
+    fetchMock.mockResolvedValue({ ok: false, json: async () => ({ error: 'boom' }) });
+    const { container } = render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
+    expect(await screen.findByText(/Failed to load nodes/i)).toBeInTheDocument();
+    expect(container.querySelector('.info-strip--error')).toBeInTheDocument();
+    // empty-state must NOT show alongside an error
+    expect(screen.queryByText(/No node runs yet/i)).not.toBeInTheDocument();
+  });
+
   it('hides Load more when all rows are loaded', async () => {
     render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
     await screen.findByText('fct_orders');
