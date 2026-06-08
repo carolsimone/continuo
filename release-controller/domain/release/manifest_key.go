@@ -1,9 +1,10 @@
 package release
 
-// ManifestKey identifies one service's manifest file. A slice of ManifestKey
-// is carried by release.requested:v1 so manifest-controller knows exactly which
-// S3 objects to fetch when parsing the assembled topology for a release.
+// ManifestKey identifies one service's manifest file. A slice of ManifestKey is
+// assembled in memory for a release; the AdvanceQueue handler maps it onto a
+// boundary DTO to serialize the release.requested:v1 payload, so this domain
+// type carries no serialization tags.
 type ManifestKey struct {
-	Service string `json:"service"`
-	S3URI   string `json:"s3_uri"`
+	Service string
+	S3URI   string
 }
