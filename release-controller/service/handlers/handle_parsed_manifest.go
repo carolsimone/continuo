@@ -147,7 +147,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	// release would block the queue indefinitely. Promote directly instead — an
 	// empty candidate diff trivially passes the gate.
 	if len(validationIDs) == 0 {
-		if err := promoteToProduction(ctx, u, r, in.ReleaseID, now); err != nil {
+		if err := promoteToProduction(ctx, d, u, r, in.ReleaseID, now); err != nil {
 			return err
 		}
 		if err := u.Commit(); err != nil {
@@ -220,7 +220,7 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release
 	if err := r.TransitionToValidating(topo, nil, now); err != nil {
 		return fmt.Errorf("transition to validating (bootstrap): %w", err)
 	}
-	if err := promoteToProduction(ctx, u, r, releaseID, now); err != nil {
+	if err := promoteToProduction(ctx, d, u, r, releaseID, now); err != nil {
 		return err
 	}
 	if err := u.Commit(); err != nil {

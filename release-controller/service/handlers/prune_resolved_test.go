@@ -22,7 +22,7 @@ func TestPruneResolvedReleases_PassesCutoffAndKeepID(t *testing.T) {
 	// Use a dedicated store for this test so we can seed current_prod and
 	// inspect the fakeReleaseRepo fields after the call.
 	store := newFakeStore()
-	store.SeedCurrentProd(release.RehydrateCurrentProd("live-1", "s3://bucket/live-1/", release.Topology{}, now))
+	store.SeedCurrentProd(release.RehydrateCurrentProd("live-1", release.Topology{}, now))
 
 	// Capture the fakeReleaseRepo that the handler will obtain so we can
 	// assert on the recorded cutoff and keepReleaseID.

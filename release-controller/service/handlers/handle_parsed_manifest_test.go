@@ -16,27 +16,56 @@ import (
 
 // seedToParsing advances a release from Received to Parsing via ReceiveCandidate + AdvanceQueue.
 // Returns the deps and fakeStore for further assertions or handler calls.
+// seedToParsing advances a release from Received to Parsing via ReceiveCandidate + AdvanceQueue.
+// imageTags must have exactly one entry: {changedService: imageTag}. Returns the deps and fakeStore.
 func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
+	if len(imageTags) != 1 {
+		t.Fatal("seedToParsing: imageTags must have exactly one entry {service: tag}")
+	}
+	var svc, tag string
+	for s, tg := range imageTags {
+		svc, tag = s, tg
+	}
 	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID:    releaseID,
-		ImageTags:    imageTags,
-		ManifestsURI: "s3://continuo/releases/" + releaseID + "/manifests/",
+		Service:   svc,
+		ReleaseID: releaseID,
+		ImageTag:  tag,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	return deps, store
 }
 
 // seedToParsingBootstrap is seedToParsing for a bootstrap release.
+// imageTags may have multiple entries when the test topology has cross-service nodes;
+// only the first entry is used as the changed service, others are pre-seeded as service_prod.
 func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	// Pick a stable "changed service" for bootstrap (use lexically-first service).
+	var changedSvc, changedTag string
+	for s, tg := range imageTags {
+		if changedSvc == "" || s < changedSvc {
+			changedSvc, changedTag = s, tg
+		}
+	}
+	// Pre-seed other services so AdvanceQueue can assemble the full image-tag map.
+	for s, tg := range imageTags {
+		if s == changedSvc {
+			continue
+		}
+		store.SeedServiceProd(release.NewServiceProd(s, releaseID+"-prev", "s3://continuo/"+s+"/prev/manifest.json", tg, time.Unix(0, 0)))
+	}
+
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID:    releaseID,
-		ImageTags:    imageTags,
-		ManifestsURI: "s3://continuo/releases/" + releaseID + "/manifests/",
-		Bootstrap:    true,
+		Service:   changedSvc,
+		ReleaseID: releaseID,
+		ImageTag:  changedTag,
+		Bootstrap: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	return deps, store
@@ -179,7 +208,7 @@ func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	// Prod: a (hash h_a), b (hash h_b, downstream of a), c (hash h_c, isolated).
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 		{UniqueID: "c", ServiceName: "svc-a", ContentHash: "h_c"},
@@ -235,7 +264,7 @@ func findEntry(t *testing.T, store *fakeStore, stream string) *pkgoutbox.Entry {
 func TestHandleParsedManifest_OK_ChangedNodePullsDownstream(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 	}, time.Unix(50, 0).UTC()))
@@ -286,7 +315,7 @@ func TestHandleParsedManifest_OK_BootstrapValidatesAllNodes(t *testing.T) {
 // error, leaving no validation.completed and blocking the queue forever.
 func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 	}, time.Unix(50, 0).UTC()))
@@ -370,7 +399,7 @@ func TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode(t *testing.T) 
 	// Seed prod with c2 (unchanged hash) so only c1 is in the changed set. c2 is a
 	// downstream of c1 (so it is pulled into the validation closure), and c2
 	// references "ghost_upstream", which is absent from the candidate topology.
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
 		{UniqueID: "c2", ServiceName: "svc-a", ContentHash: "h_c2"},
 	}, time.Unix(50, 0).UTC()))
 
@@ -397,7 +426,15 @@ func TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode(t *testing.T) 
 // topology is NOT rejected. Under self-contained validation the upstream is
 // built into the candidate schema, so the reference is resolvable.
 func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
-	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a", "svc-b": "sha-b"})
+	// svc-a is the changed service. svc-b has a pre-existing service_prod pointer
+	// so AdvanceQueue assembles both image tags. Seed service_prod BEFORE AdvanceQueue.
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "sha-b", time.Unix(0, 0)))
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	// a2 (svc-a) is new and depends on b_up (svc-b). b_up is present in the
 	// candidate topology — it is buildable and must not cause a rejection.
@@ -543,16 +580,21 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	// Two-service topology with all upstreams present in the candidate topology
 	// (no dangling references). This tests that image tags from the Release are
 	// joined into the stored candidate topology correctly.
-	imageTags := map[string]string{
-		"svc-a": "tag-alpha",
-		"svc-b": "tag-beta",
-	}
-	deps, store := seedToParsing(t, "rA", imageTags)
+	// svc-a is the changed service; svc-b already has a service_prod pointer so
+	// its tag is assembled into the release's image_tags at AdvanceQueue time.
+	// Seed service_prod BEFORE AdvanceQueue so the assembly picks it up.
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", time.Unix(0, 0)))
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-alpha",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	// Seed prod with "a" (unchanged hash) so "a" is not in the changed set; "b"
 	// is the only changed node and its upstream "a" is present in the candidate
 	// topology, so no unbuildable-upstream rejection fires.
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", "s3://continuo/releases/prev/manifests/", release.Topology{
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 	}, time.Unix(50, 0).UTC()))
 
