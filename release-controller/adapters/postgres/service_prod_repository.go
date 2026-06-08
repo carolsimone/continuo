@@ -62,13 +62,7 @@ func (r *ServiceProdRepository) List(ctx context.Context) ([]*release.ServicePro
 // Get returns the production pointer for the named service. When no row exists
 // for that service, (nil, nil) is returned — not an error.
 func (r *ServiceProdRepository) Get(ctx context.Context, serviceName string) (*release.ServiceProd, error) {
-	var row struct {
-		ServiceName   string    `db:"service_name"`
-		ReleaseID     string    `db:"release_id"`
-		ManifestS3Key string    `db:"manifest_s3_key"`
-		ImageTag      string    `db:"image_tag"`
-		UpdatedAt     time.Time `db:"updated_at"`
-	}
+	var row serviceProdRow
 	err := r.q.GetContext(ctx, &row,
 		`SELECT service_name, release_id, manifest_s3_key, image_tag, updated_at
 		   FROM service_prod
