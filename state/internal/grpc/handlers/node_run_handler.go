@@ -67,6 +67,48 @@ func (h *NodeRunHandler) ListNodeRuns(
 	return &statev1.ListNodeRunsResponse{Runs: out}, nil
 }
 
+// ListNodes returns the node catalog. limit defaults to 50 and is clamped to
+// 200; offset below 0 becomes 0. search/service_name are optional filters.
+func (h *NodeRunHandler) ListNodes(
+	ctx context.Context,
+	req *statev1.ListNodesRequest,
+) (*statev1.ListNodesResponse, error) {
+	limit := int(req.Limit)
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := int(req.Offset)
+	if offset < 0 {
+		offset = 0
+	}
+
+	rows, total, err := h.repo.ListNodes(ctx, req.Search, req.ServiceName, limit, offset)
+	if err != nil {
+		h.logger.Error("ListNodes repo error", "search", req.Search, "service", req.ServiceName, "error", err)
+		return nil, status.Errorf(codes.Internal, "ListNodes: %v", err)
+	}
+
+	out := make([]*statev1.NodeSummary, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, &statev1.NodeSummary{
+			ServiceName:    r.ServiceName,
+			SchemaName:     r.SchemaName,
+			TableName:      r.TableName,
+			RunCount:       int32(r.RunCount),
+			SuccessRatePct: int32(r.SuccessRatePct),
+			AvgDurationSec: int32(r.AvgDurationSec),
+			P95DurationSec: int32(r.P95DurationSec),
+			FlakyRatePct:   int32(r.FlakyRatePct),
+			LastStatus:     r.LastStatus,
+			LastRunAt:      r.LastRunAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return &statev1.ListNodesResponse{Nodes: out, TotalCount: int32(total)}, nil
+}
+
 func timePtrToRFC(t *time.Time) string {
 	if t == nil {
 		return ""
