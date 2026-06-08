@@ -14,6 +14,11 @@ import (
 // release.requested:v1 into the outbox — but only if no release is already
 // active (Parsing or Validating). Safe to call repeatedly; it is a no-op when
 // the queue is empty or when a release is already in flight.
+//
+// Assembly of the full manifest-key set happens here (Parsing transition), not
+// at receive time. The other services' service_prod pointers can change as
+// earlier-queued releases are promoted, so we must read them at the moment this
+// release becomes active to guarantee we see the live state for all services.
 func AdvanceQueue(ctx context.Context, d *Deps) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -49,13 +54,36 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	if err := next.TransitionToParsing(now); err != nil {
 		return fmt.Errorf("transition to parsing: %w", err)
 	}
+
+	// Assemble the full manifest-key set now that this release is becoming active.
+	// We read the other services' service_prod pointers at this moment so that any
+	// promotions from earlier-queued releases are already reflected.
+	imageTag := next.ImageTags()[next.ChangedService()]
+	set, err := AssembleManifestSet(ctx, u.ServiceProdRepo(), d.Bucket, next.ChangedService(), next.ID(), imageTag)
+	if err != nil {
+		return fmt.Errorf("assemble manifest set: %w", err)
+	}
+	next.SetAssembledImageTags(set.ImageTags)
+
 	if err := u.ReleaseRepo().Save(ctx, next); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
-	payload, err := json.Marshal(map[string]string{
-		"release_id":    next.ID(),
-		"manifests_uri": next.ManifestsURI(),
+	type manifestKeyDTO struct {
+		Service string `json:"service"`
+		S3URI   string `json:"s3_uri"`
+	}
+	type releaseRequestedPayload struct {
+		ReleaseID    string           `json:"release_id"`
+		ManifestKeys []manifestKeyDTO `json:"manifest_keys"`
+	}
+	keys := make([]manifestKeyDTO, len(set.ManifestKeys))
+	for i, k := range set.ManifestKeys {
+		keys[i] = manifestKeyDTO{Service: k.Service, S3URI: k.S3URI}
+	}
+	payload, err := json.Marshal(releaseRequestedPayload{
+		ReleaseID:    next.ID(),
+		ManifestKeys: keys,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

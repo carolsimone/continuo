@@ -9,27 +9,27 @@ import (
 )
 
 // ReceiveCandidateInput carries the fields required to register a new release
-// candidate. ReleaseID, ImageTags, and ManifestsURI are mandatory; Bootstrap is
+// candidate. Service, ReleaseID, and ImageTag are mandatory; Bootstrap is
 // optional (defaults false) and, when true, promotes the release without
-// validation. The changed-node set is not supplied by the caller —
-// release-controller derives it later from the content_hash diff against the
-// current prod topology in HandleParsedManifest.
+// validation. The manifest-key assembly and image-tag collection for other
+// services happen later in AdvanceQueue, not here, so that we always read the
+// live service_prod pointers at the moment this release becomes active.
 type ReceiveCandidateInput struct {
-	ReleaseID    string            `json:"release_id"`
-	ImageTags    map[string]string `json:"image_tags"`
-	ManifestsURI string            `json:"manifests_uri"`
-	Bootstrap    bool              `json:"bootstrap"`
+	Service   string `json:"service"`
+	ReleaseID string `json:"release_id"`
+	ImageTag  string `json:"image_tag"`
+	Bootstrap bool   `json:"bootstrap"`
 }
 
 func (i ReceiveCandidateInput) validate() error {
 	if i.ReleaseID == "" {
 		return errors.New("release_id is required")
 	}
-	if len(i.ImageTags) == 0 {
-		return errors.New("image_tags must be non-empty")
+	if i.Service == "" {
+		return errors.New("service is required")
 	}
-	if i.ManifestsURI == "" {
-		return errors.New("manifests_uri is required")
+	if i.ImageTag == "" {
+		return errors.New("image_tag is required")
 	}
 	return nil
 }
@@ -52,7 +52,7 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return u.Commit()
 	}
 
-	r := release.New(in.ReleaseID, in.ImageTags, in.ManifestsURI, in.Bootstrap, d.Clock.Now())
+	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, d.Clock.Now())
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}

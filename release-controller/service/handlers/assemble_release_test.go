@@ -56,7 +56,7 @@ func TestAssembleManifestSet_ReplacesChangedServiceAndMergesOthers(t *testing.T)
 	assert.Len(t, result.ManifestKeys, 2, "changed service's OLD pointer must not be duplicated")
 
 	// The changed service gets the fresh canonical key; the other keeps its stored key.
-	require.ElementsMatch(t, []handlers.ManifestKey{
+	require.ElementsMatch(t, []release.ManifestKey{
 		{Service: "service-1", S3URI: "k1"},
 		{Service: "service-2", S3URI: "s3://my-bucket/service-2/rNEW/manifest.json"},
 	}, result.ManifestKeys)
@@ -76,7 +76,7 @@ func TestAssembleManifestSet_NoExistingServices(t *testing.T) {
 		"bucket", "svc-a", "r1", "img-1",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, []handlers.ManifestKey{
+	assert.Equal(t, []release.ManifestKey{
 		{Service: "svc-a", S3URI: "s3://bucket/svc-a/r1/manifest.json"},
 	}, result.ManifestKeys)
 	assert.Equal(t, map[string]string{"svc-a": "img-1"}, result.ImageTags)

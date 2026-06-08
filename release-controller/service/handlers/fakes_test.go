@@ -78,6 +78,14 @@ func (s *fakeStore) GetCurrentProd() *release.CurrentProd {
 	return s.cp
 }
 
+// SeedServiceProd installs a service_prod pointer directly so advance-queue
+// tests can assert that other services' manifest keys are picked up.
+func (s *fakeStore) SeedServiceProd(sp *release.ServiceProd) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.serviceProd[sp.ServiceName()] = sp
+}
+
 // OutboxEntries returns a snapshot of all outbox entries written so far.
 func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
 	s.mu.Lock()

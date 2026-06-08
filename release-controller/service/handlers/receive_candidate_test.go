@@ -14,22 +14,24 @@ import (
 func TestReceiveCandidate_PersistsAsReceived(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	input := handlers.ReceiveCandidateInput{
-		ReleaseID:    "sha-abc",
-		ImageTags:    map[string]string{"service-1": "sha-abc"},
-		ManifestsURI: "s3://b/releases/sha-abc/manifests/",
+		Service:   "service-1",
+		ReleaseID: "sha-abc",
+		ImageTag:  "sha-abc",
 	}
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusReceived, r.Status())
+	assert.Equal(t, "service-1", r.ChangedService())
+	assert.Equal(t, map[string]string{"service-1": "sha-abc"}, r.ImageTags())
 }
 
 func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	input := handlers.ReceiveCandidateInput{
-		ReleaseID:    "sha-abc",
-		ImageTags:    map[string]string{"s": "sha-abc"},
-		ManifestsURI: "s3://x",
+		Service:   "svc",
+		ReleaseID: "sha-abc",
+		ImageTag:  "sha-abc",
 	}
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
@@ -41,9 +43,29 @@ func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
 func TestReceiveCandidate_RejectsEmptyReleaseID(t *testing.T) {
 	deps, _ := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID:    "",
-		ImageTags:    map[string]string{"s": "t"},
-		ManifestsURI: "s3://x",
+		Service:   "svc",
+		ReleaseID: "",
+		ImageTag:  "t",
+	})
+	assert.Error(t, err)
+}
+
+func TestReceiveCandidate_RejectsEmptyService(t *testing.T) {
+	deps, _ := newDeps(time.Unix(100, 0).UTC())
+	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service:   "",
+		ReleaseID: "sha-abc",
+		ImageTag:  "t",
+	})
+	assert.Error(t, err)
+}
+
+func TestReceiveCandidate_RejectsEmptyImageTag(t *testing.T) {
+	deps, _ := newDeps(time.Unix(100, 0).UTC())
+	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service:   "svc",
+		ReleaseID: "sha-abc",
+		ImageTag:  "",
 	})
 	assert.Error(t, err)
 }
@@ -51,10 +73,10 @@ func TestReceiveCandidate_RejectsEmptyReleaseID(t *testing.T) {
 func TestReceiveCandidate_PersistsBootstrapFlag(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		ReleaseID:    "rBoot",
-		ImageTags:    map[string]string{"svc-a": "sha-a"},
-		ManifestsURI: "s3://continuo/releases/rBoot/manifests/",
-		Bootstrap:    true,
+		Service:   "svc-a",
+		ReleaseID: "rBoot",
+		ImageTag:  "sha-a",
+		Bootstrap: true,
 	}))
 	r, err := store.GetRelease("rBoot")
 	require.NoError(t, err)
