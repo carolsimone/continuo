@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
+	"time"
 
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/jmoiron/sqlx"
@@ -26,12 +28,15 @@ import (
 // NodeRunRepository reads per-node run history.
 type NodeRunRepository interface {
 	List(ctx context.Context, serviceName, schemaName, tableName string, limit int) ([]*projection.NodeRun, error)
+	ListNodes(ctx context.Context, search, serviceName string, limit, offset int) ([]*projection.NodeSummary, int, error)
 }
 
 type nodeRunRepository struct {
 	db     *sqlx.DB
 	logger *slog.Logger
 }
+
+var _ NodeRunRepository = (*nodeRunRepository)(nil)
 
 // NewNodeRunRepository constructs a NodeRunRepository backed by Postgres.
 func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
@@ -105,4 +110,133 @@ func (r *nodeRunRepository) List(
 		return nil, fmt.Errorf("failed to list node runs: %w", err)
 	}
 	return rows, nil
+}
+
+type nodeSummaryRow struct {
+	ServiceName    string    `db:"service_name"`
+	SchemaName     string    `db:"schema_name"`
+	TableName      string    `db:"table_name"`
+	RunCount       int       `db:"run_count"`
+	TerminalCount  int       `db:"terminal_count"`
+	SucceededCount int       `db:"succeeded_count"`
+	AvgDur         *float64  `db:"avg_dur"`
+	P95Dur         *float64  `db:"p95_dur"`
+	FlakyCount     int       `db:"flaky_count"`
+	LastStatus     string    `db:"last_status"`
+	LastRunAt      time.Time `db:"last_run_at"`
+	TotalCount     int       `db:"total_count"`
+}
+
+// ListNodes returns the node catalog: one summary per node that has run, with
+// stats aggregated over each node's most recent 50 runs. Filters by exact
+// service (when non-empty) and a case-insensitive substring on the fqn (when
+// non-empty), ordered by last_run_at DESC and paged by limit/offset. The second
+// return value is the total match count before paging.
+func (r *nodeRunRepository) ListNodes(
+	ctx context.Context,
+	search, serviceName string,
+	limit, offset int,
+) ([]*projection.NodeSummary, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	const query = `
+		WITH ranked AS (
+			SELECT t.service_name, t.schema_name, t.table_name,
+			       t.retry_count, t.status AS run_status, s.created_at,
+			       le.started_at, le.completed_at,
+			       ROW_NUMBER() OVER (
+			         PARTITION BY t.service_name, t.schema_name, t.table_name
+			         ORDER BY s.created_at DESC
+			       ) AS rn
+			FROM task_tracker t
+			JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+			LEFT JOIN LATERAL (
+			  SELECT te.started_at, te.completed_at
+			  FROM task_execution te
+			  WHERE te.task_id = t.task_id
+			  ORDER BY te.created_at DESC
+			  LIMIT 1
+			) le ON TRUE
+			WHERE ($2 = '' OR t.service_name = $2)
+			  AND ($1 = '' OR lower(t.service_name||'.'||t.schema_name||'.'||t.table_name)
+			                  LIKE '%'||lower($1)||'%')
+		),
+		windowed AS ( SELECT * FROM ranked WHERE rn <= 50 ),
+		agg AS (
+			SELECT
+			  service_name, schema_name, table_name,
+			  COUNT(*) AS run_count,
+			  COUNT(*) FILTER (WHERE run_status IN ('succeeded','failed','cancelled')) AS terminal_count,
+			  COUNT(*) FILTER (WHERE run_status = 'succeeded') AS succeeded_count,
+			  AVG(EXTRACT(EPOCH FROM (completed_at - started_at)))
+			     FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL) AS avg_dur,
+			  PERCENTILE_CONT(0.95) WITHIN GROUP (
+			     ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at)))
+			     FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL) AS p95_dur,
+			  COUNT(*) FILTER (WHERE retry_count > 0) AS flaky_count,
+			  (ARRAY_AGG(run_status ORDER BY created_at DESC))[1] AS last_status,
+			  MAX(created_at) AS last_run_at
+			FROM windowed
+			GROUP BY service_name, schema_name, table_name
+		)
+		SELECT *, COUNT(*) OVER() AS total_count
+		FROM agg
+		ORDER BY last_run_at DESC
+		LIMIT $3 OFFSET $4
+	`
+
+	rows := []nodeSummaryRow{}
+	if err := r.db.SelectContext(ctx, &rows, query, search, serviceName, limit, offset); err != nil {
+		r.logger.Error("Failed to list nodes", "search", search, "service", serviceName, "error", err)
+		return nil, 0, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	total := 0
+	if len(rows) > 0 {
+		total = rows[0].TotalCount
+	}
+	out := make([]*projection.NodeSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toNodeSummary(row))
+	}
+	return out, total, nil
+}
+
+func toNodeSummary(row nodeSummaryRow) *projection.NodeSummary {
+	successPct := -1
+	if row.TerminalCount > 0 {
+		successPct = int(math.Round(float64(row.SucceededCount) / float64(row.TerminalCount) * 100))
+	}
+	avgSec := -1
+	if row.AvgDur != nil {
+		avgSec = int(math.Round(*row.AvgDur))
+	}
+	p95Sec := -1
+	if row.P95Dur != nil {
+		p95Sec = int(math.Round(*row.P95Dur))
+	}
+	flakyPct := 0
+	if row.RunCount > 0 {
+		flakyPct = int(math.Round(float64(row.FlakyCount) / float64(row.RunCount) * 100))
+	}
+	return &projection.NodeSummary{
+		ServiceName:    row.ServiceName,
+		SchemaName:     row.SchemaName,
+		TableName:      row.TableName,
+		RunCount:       row.RunCount,
+		SuccessRatePct: successPct,
+		AvgDurationSec: avgSec,
+		P95DurationSec: p95Sec,
+		FlakyRatePct:   flakyPct,
+		LastStatus:     row.LastStatus,
+		LastRunAt:      row.LastRunAt,
+	}
 }
