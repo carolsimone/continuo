@@ -4,6 +4,7 @@ import SchedulerCard from './SchedulerCard';
 import SnapshotTile from './SnapshotTile';
 import Tabs, { useActiveTab } from './Tabs';
 import ReleasesPanel from './ReleasesPanel';
+import NodesCatalogPanel from './NodesCatalogPanel';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -11,6 +12,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [topologies, setTopologies] = useState<ScheduleTopologySummary[]>([]);
   const [topologiesError, setTopologiesError] = useState<string | null>(null);
+  const [nodeTotal, setNodeTotal] = useState(0);
 
   useEffect(() => {
     const fetch_ = () =>
@@ -43,10 +45,22 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    const fetch_ = () =>
+      fetch('/api/nodes?limit=1')
+        .then(r => r.json())
+        .then((data: { total_count?: number }) => setNodeTotal(data.total_count || 0))
+        .catch(() => {});
+    fetch_();
+    const id = setInterval(fetch_, 5000);
+    return () => clearInterval(id);
+  }, []);
+
   const tabSpecs = [
     { slug: 'runs', label: 'Runs', count: schedules.length },
     { slug: 'topology', label: 'Topology', count: topologies.length },
     { slug: 'releases', label: 'Releases' },
+    { slug: 'nodes', label: 'Nodes', count: nodeTotal },
   ];
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
 
@@ -96,6 +110,7 @@ export default function DashboardPage() {
           </>
         )}
         {activeTab === 'releases' && <ReleasesPanel />}
+        {activeTab === 'nodes' && <NodesCatalogPanel />}
       </main>
     </div>
   );
