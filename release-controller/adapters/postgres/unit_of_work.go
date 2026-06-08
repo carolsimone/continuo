@@ -48,6 +48,12 @@ func (u *UnitOfWork) CurrentProdRepo() repository.CurrentProdRepository {
 	return NewCurrentProdRepository(u.queryer())
 }
 
+// ServiceProdRepo returns the per-service production pointer repository bound
+// to the current queryer.
+func (u *UnitOfWork) ServiceProdRepo() repository.ServiceProdRepository {
+	return NewServiceProdRepository(u.queryer())
+}
+
 // OutboxRepo returns the outbox repository for the release_controller_outbox
 // table. When a transaction is active the repository operates inside it, so
 // outbox writes are atomic with the rest of the handler's changes.

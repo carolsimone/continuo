@@ -14,6 +14,7 @@ import (
 type UnitOfWork interface {
 	ReleaseRepo() repository.ReleaseRepository
 	CurrentProdRepo() repository.CurrentProdRepository
+	ServiceProdRepo() repository.ServiceProdRepository
 	OutboxRepo() pkgoutbox.Repository
 	MessageProcessingRepo() messageprocessing.Repository
 	Begin(ctx context.Context) error
