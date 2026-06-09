@@ -41,6 +41,10 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
+	// This CLI is consumed by an LLM via the `describe` catalog; cobra's
+	// auto-generated shell-completion command is not part of that surface and
+	// carries none of the documentation metadata the catalog standard requires.
+	root.CompletionOptions.DisableDefaultCmd = true
 	root.PersistentFlags().StringVar(&flagEndpoint, "endpoint", "", "gRPC address of the state service (env: CONTINUO_STATE_ADDR)")
 	root.PersistentFlags().StringVar(&flagOrchestratorEndpoint, "orchestrator-endpoint", "", "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)")
 	root.PersistentFlags().StringVar(&flagTimeout, "timeout", "", "gRPC deadline (env: CONTINUO_TIMEOUT)")
@@ -57,6 +61,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	}
 
 	root.AddCommand(schedule.NewCommand(cfg, stdout, stderr))
+	root.AddCommand(NewDescribeCommand(cfg, stdout, stderr))
 
 	root.SetArgs(args)
 	root.SetOut(stdout)
