@@ -111,14 +111,24 @@ func toDescribeCmd(root, c *cobra.Command) describeCmd {
 		Examples: parseExamples(c.Example),
 		Flags:    []describeFlag{},
 	}
-	c.Flags().VisitAll(func(f *pflag.Flag) {
+	// Surface the command's full flag surface: local flags plus persistent
+	// flags inherited from ancestors (e.g. the global --endpoint/--timeout/--human
+	// on the root). c.Flags() alone omits inherited flags on an unexecuted command.
+	seen := map[string]bool{}
+	addFlag := func(f *pflag.Flag) {
+		if seen[f.Name] {
+			return
+		}
+		seen[f.Name] = true
 		dc.Flags = append(dc.Flags, describeFlag{
 			Name:      f.Name,
 			Shorthand: f.Shorthand,
 			Usage:     f.Usage,
 			Default:   f.DefValue,
 		})
-	})
+	}
+	c.LocalFlags().VisitAll(addFlag)
+	c.InheritedFlags().VisitAll(addFlag)
 	if v, ok := c.Annotations["output_schema"]; ok && json.Valid([]byte(v)) {
 		dc.OutputSchema = json.RawMessage(v)
 	}

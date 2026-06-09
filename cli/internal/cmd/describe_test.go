@@ -91,6 +91,15 @@ func TestDescribe_CommandContentIsAccurate(t *testing.T) {
 	var codes []int
 	require.NoError(t, json.Unmarshal(status.ExitCodes, &codes))
 	assert.Contains(t, codes, 3) // not_found
+
+	// The global persistent flags must be discoverable on each command.
+	flagNames := map[string]bool{}
+	for _, f := range status.Flags {
+		flagNames[f.Name] = true
+	}
+	for _, want := range []string{"human", "endpoint", "timeout"} {
+		assert.True(t, flagNames[want], "expected global flag --%s in the catalog flag list", want)
+	}
 }
 
 func TestDescribe_HumanModeWritesSummaryToStderr(t *testing.T) {
