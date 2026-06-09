@@ -15,6 +15,7 @@ import (
 type StateClient interface {
 	TriggerSchedule(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error)
 	ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error)
+	ListTasks(ctx context.Context, scheduleID string, status statev1.TaskStatus, pageSize, pageOffset int32) (*statev1.ListTasksResponse, error)
 	Close() error
 }
 
@@ -39,6 +40,15 @@ func (c *stateGRPCClient) TriggerSchedule(ctx context.Context, scheduleName stri
 
 func (c *stateGRPCClient) ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error) {
 	return c.api.ListAllSchedules(ctx, &statev1.ListAllSchedulesRequest{})
+}
+
+func (c *stateGRPCClient) ListTasks(ctx context.Context, scheduleID string, taskStatus statev1.TaskStatus, pageSize, pageOffset int32) (*statev1.ListTasksResponse, error) {
+	return c.api.ListTasks(ctx, &statev1.ListTasksRequest{
+		ScheduleId: scheduleID,
+		Status:     taskStatus,
+		PageSize:   pageSize,
+		PageOffset: pageOffset,
+	})
 }
 
 func (c *stateGRPCClient) Close() error { return c.conn.Close() }

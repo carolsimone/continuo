@@ -34,6 +34,10 @@ func (f *fakeStateList) ListAllSchedules(_ context.Context) (*statev1.ListAllSch
 	return f.resp, f.err
 }
 
+func (f *fakeStateList) ListTasks(_ context.Context, _ string, _ statev1.TaskStatus, _, _ int32) (*statev1.ListTasksResponse, error) {
+	panic("ListTasks should not be called in list tests")
+}
+
 func (f *fakeStateList) Close() error { return nil }
 
 // runList invokes the list command end-to-end with the provided fake client.

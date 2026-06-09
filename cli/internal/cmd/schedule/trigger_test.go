@@ -35,6 +35,10 @@ func (f *fakeState) ListAllSchedules(_ context.Context) (*statev1.ListAllSchedul
 	return nil, nil
 }
 
+func (f *fakeState) ListTasks(_ context.Context, _ string, _ statev1.TaskStatus, _, _ int32) (*statev1.ListTasksResponse, error) {
+	panic("ListTasks should not be called in trigger tests")
+}
+
 // run invokes the trigger command end-to-end with the provided fake client and args.
 // It captures stdout/stderr and returns the exit code.
 func run(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
