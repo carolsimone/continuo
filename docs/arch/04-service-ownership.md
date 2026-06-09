@@ -156,3 +156,15 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Redis consumes | none |
 | Redis produces | none |
 | Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
+
+## `continuo CLI`
+
+A standalone command-line client, invoked by humans and LLM agents rather than run as a Docker Compose service. It owns no storage and constructs no Redis client; it reaches the system exclusively through public gRPC.
+
+| Category | Owned / used surface |
+|---|---|
+| Durable state | none |
+| gRPC server methods owned | none |
+| Redis consumes | none |
+| Redis produces | none |
+| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `TriggerSchedule`; `orchestrator`: `GetScheduleGraph` |
