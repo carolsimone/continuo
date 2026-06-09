@@ -15,14 +15,14 @@ type describeFlagJSON struct {
 	Default string `json:"default"`
 }
 type describeCommandJSON struct {
-	Path         string            `json:"path"`
-	Short        string            `json:"short"`
-	Long         string            `json:"long"`
-	Args         []string          `json:"args"`
+	Path         string             `json:"path"`
+	Short        string             `json:"short"`
+	Long         string             `json:"long"`
+	Args         []string           `json:"args"`
 	Flags        []describeFlagJSON `json:"flags"`
-	Examples     []string          `json:"examples"`
-	OutputSchema json.RawMessage   `json:"output_schema"`
-	ExitCodes    json.RawMessage   `json:"exit_codes"`
+	Examples     []string           `json:"examples"`
+	OutputSchema json.RawMessage    `json:"output_schema"`
+	ExitCodes    json.RawMessage    `json:"exit_codes"`
 }
 type describePayloadJSON struct {
 	Commands []describeCommandJSON `json:"commands"`

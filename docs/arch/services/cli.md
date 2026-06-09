@@ -33,6 +33,7 @@ None.
 | `--orchestrator-endpoint` | `CONTINUO_ORCHESTRATOR_ADDR` | gRPC address of the `orchestrator` service |
 | `--timeout` | `CONTINUO_TIMEOUT` | gRPC deadline applied to each call |
 | `--human` | — | emit human text on stderr instead of JSON on stdout |
+| `--json` | — | forward-compatibility no-op; JSON is the default output |
 
 ## Commands and the RPC each consumes
 

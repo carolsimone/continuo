@@ -219,13 +219,13 @@ func TestList_ZeroLastRunAtOmittedFromJSON(t *testing.T) {
 		resp: &statev1.ListAllSchedulesResponse{
 			Schedules: []*statev1.ScheduleSummary{
 				{
-					ScheduleName:  "daily_ingest",
+					ScheduleName:   "daily_ingest",
 					CronExpression: "0 3 * * *",
-					Timezone:      "UTC",
-					IsRunning:     false,
-					LastRunId:     "",
-					LastRunStatus: "",
-					LastRunAt:     nil, // zero / never run
+					Timezone:       "UTC",
+					IsRunning:      false,
+					LastRunId:      "",
+					LastRunStatus:  "",
+					LastRunAt:      nil, // zero / never run
 				},
 			},
 		},
