@@ -128,8 +128,8 @@ type nodeSummaryRow struct {
 
 // ListNodes returns the node catalog: one summary per node that has run, with
 // stats aggregated over each node's most recent 50 runs. Filters by exact
-// service (when non-empty) and a case-insensitive substring on the fqn (when
-// non-empty), ordered by last_run_at DESC with (service, schema, table) identity
+// service (when non-empty) and a case-insensitive exact match on the table name
+// (when non-empty), ordered by last_run_at DESC with (service, schema, table) identity
 // tiebreakers for deterministic paging, and paged by limit/offset. The second
 // return value is the total match count before paging, computed independently of
 // the page so an empty page still reports the true total.
@@ -149,9 +149,9 @@ func (r *nodeRunRepository) ListNodes(
 	}
 
 	// rankedWindowedCTE is shared verbatim by the count query and the page query
-	// so their filter and windowing can never drift. The search predicate escapes
-	// LIKE wildcards (\ % _) in $1 — backslash first — so literal underscores in
-	// dbt names (fct_orders) don't match an arbitrary character.
+	// so their filter and windowing can never drift. $1 is a case-insensitive
+	// EXACT match on the table name (not a substring): searching "table_2" returns
+	// only "table_2", never "ftable_2" or "table_2_v2". Service is filtered via $2.
 	const rankedWindowedCTE = `
 		WITH ranked AS (
 			SELECT t.task_id, t.service_name, t.schema_name, t.table_name,
@@ -162,8 +162,7 @@ func (r *nodeRunRepository) ListNodes(
 			       ) AS rn
 			FROM task_tracker t
 			JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
-			WHERE ($1 = '' OR lower(t.service_name||'.'||t.schema_name||'.'||t.table_name)
-			                  LIKE '%' || replace(replace(replace(lower($1), '\', '\\'), '%', '\%'), '_', '\_') || '%' ESCAPE '\')
+			WHERE ($1 = '' OR lower(t.table_name) = lower($1))
 			  AND ($2 = '' OR t.service_name = $2)
 		),
 		windowed AS ( SELECT * FROM ranked WHERE rn <= 50 )`

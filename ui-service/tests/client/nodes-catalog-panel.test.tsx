@@ -32,6 +32,15 @@ describe('NodesCatalogPanel', () => {
     expect(screen.getByText(/service-1 · an/)).toBeInTheDocument();
   });
 
+  it('offers the loaded node names as datalist autocomplete options', async () => {
+    const { container } = render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
+    await screen.findByText('fct_orders');
+    const opts = Array.from(container.querySelectorAll('#node-name-options option'))
+      .map(o => (o as HTMLOptionElement).value);
+    expect(opts).toContain('fct_orders');
+    expect(opts).toContain('dim_products');
+  });
+
   it('navigates to /node/:fqn on row click', async () => {
     render(
       <MemoryRouter initialEntries={['/']}>
@@ -88,7 +97,7 @@ describe('NodesCatalogPanel', () => {
     render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
     await vi.advanceTimersByTimeAsync(250);                                     // fire mount debounce → call 1 (pending)
 
-    fireEvent.change(screen.getByPlaceholderText(/search node/i), { target: { value: 'x' } });
+    fireEvent.change(screen.getByPlaceholderText(/table name/i), { target: { value: 'x' } });
     await vi.advanceTimersByTimeAsync(250);                                     // fire call 2 → resolves pageNew
     expect(screen.getByText('NEW_NODE')).toBeInTheDocument();
 

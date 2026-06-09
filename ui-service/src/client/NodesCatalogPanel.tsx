@@ -21,6 +21,7 @@ export default function NodesCatalogPanel() {
   const [nodes, setNodes] = useState<NodeSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [nameOptions, setNameOptions] = useState<string[]>([]);
   const offsetRef = useRef(0);
   const genRef = useRef(0);
 
@@ -41,6 +42,12 @@ export default function NodesCatalogPanel() {
       setTotal(data.total_count || 0);
       offsetRef.current = offset;
       setNodes(prev => (append ? [...prev, ...(data.nodes || [])] : (data.nodes || [])));
+      // Keep the autocomplete list complete while the user filters by exact name:
+      // only refresh it on unfiltered (search-empty) loads. Bounded to the first
+      // page of names — fine at current catalog sizes.
+      if (!search) {
+        setNameOptions(Array.from(new Set((data.nodes || []).map(n => n.table_name))).sort());
+      }
     } catch {
       if (myGen !== genRef.current) return;
       setError('Failed to load nodes');
@@ -70,9 +77,12 @@ export default function NodesCatalogPanel() {
 
       <div className="form-field">
         <label htmlFor="node-search">Filter</label>
-        <input id="node-search" className="node-search-input"
-               placeholder="search node… e.g. customers"
+        <input id="node-search" className="node-search-input" list="node-name-options"
+               placeholder="exact table name… e.g. customers"
                value={search} onChange={e => setSearch(e.target.value)} />
+        <datalist id="node-name-options">
+          {nameOptions.map(name => <option key={name} value={name} />)}
+        </datalist>
         <label htmlFor="node-service">Service</label>
         <select id="node-service" value={service} onChange={e => setService(e.target.value)}>
           <option value="">all</option>
