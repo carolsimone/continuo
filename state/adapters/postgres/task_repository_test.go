@@ -31,34 +31,6 @@ func createTask(t *testing.T, repo postgres.TaskTrackerRepository, scheduleID uu
 	return task
 }
 
-func TestTaskRepository_UpdateTx_UpdatesStatusAndRetryCount(t *testing.T) {
-	db := newTestDB(t)
-	// Need a scheduler record first for FK constraint
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	scheduler := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduler.ScheduleID)
-
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	task := createTask(t, taskRepo, scheduler.ScheduleID)
-	defer db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-
-	task.Status = run.TaskStatusPending
-	task.RetryCount = 0
-
-	err = taskRepo.UpdateTx(context.Background(), tx, task)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
-
-	updated, err := taskRepo.GetByID(context.Background(), task.TaskID)
-	require.NoError(t, err)
-	assert.Equal(t, run.TaskStatusPending, updated.Status)
-	assert.Equal(t, 0, updated.RetryCount)
-}
-
 func TestTaskRepository_HasRetryableFailedTaskTx(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())

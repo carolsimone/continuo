@@ -22,24 +22,15 @@ type TaskTrackerRepository interface {
 	Delete(ctx context.Context, taskID uuid.UUID) error
 	ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error)
 	List(ctx context.Context, filters TaskFilters) ([]*TaskTracker, int, error)
-	// New: tx-accepting variant for atomic HTTP handler
-	UpdateTx(ctx context.Context, tx *sqlx.Tx, task *TaskTracker) error
 	// BulkCreateTx inserts multiple task_tracker rows within a transaction (ON CONFLICT DO NOTHING).
 	BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskTracker) error
 	// ListAllByScheduleID returns all task rows for a schedule (no pagination, no status filter).
 	ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*TaskTracker, error)
-	// ResetTasksTx sets the given tasks to PENDING and returns the number of rows actually
-	// modified (already-PENDING rows are excluded from the count).
-	ResetTasksTx(ctx context.Context, tx *sqlx.Tx, ids []uuid.UUID) (int32, error)
 	// SetStatusAndAttemptTx writes status and retry_count for the given task,
 	// leaving a cancelled row untouched. Returns rows affected.
 	SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error)
 	// ExistsTx reports whether a task_tracker row with the given task_id exists.
 	ExistsTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (bool, error)
-	// GetStatusTx returns the current status of the task_tracker row, or
-	// empty string if the row does not exist. Read-only; used by the
-	// ResetTask path to validate the caller-authorized transition.
-	GetStatusTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (string, error)
 	// LoadStatusAndAttemptTx returns the current status (empty string if the row
 	// does not exist) and stored retry_count, locking the row FOR UPDATE so
 	// concurrent task.status.updated deliveries for the same task serialize.
@@ -260,27 +251,6 @@ func (r *taskTrackerRepository) Delete(ctx context.Context, taskID uuid.UUID) er
 	return nil
 }
 
-// UpdateTx updates task status and retry count within an existing transaction.
-func (r *taskTrackerRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, task *TaskTracker) error {
-	query := `
-		UPDATE task_tracker
-		SET status = :status,
-			retry_count = :retry_count,
-			cancelled_at = :cancelled_at,
-			cancelled_by = :cancelled_by
-		WHERE task_id = :task_id
-	`
-	result, err := tx.NamedExecContext(ctx, query, task)
-	if err != nil {
-		return fmt.Errorf("failed to update task_tracker: %w", err)
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 // ListByScheduleID retrieves all tasks for a specific schedule with optional status filter
 func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error) {
 	whereClauses := []string{"schedule_id = :schedule_id"}
@@ -409,30 +379,11 @@ func (r *taskTrackerRepository) SetStatusAndAttemptTx(ctx context.Context, tx *s
 	return int32(n), nil
 }
 
-// GetStatusTx returns the current status of the task_tracker row for the
-// given task_id, or empty string when no row exists. The empty-string
-// fallback preserves the prior inline behavior in the task.status.updated
-// handler which silently treated missing rows as "no previous status".
-func (r *taskTrackerRepository) GetStatusTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (string, error) {
-	var status string
-	err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(status, '') FROM task_tracker WHERE task_id = $1`,
-		taskID,
-	).Scan(&status)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("get task status for task_id %s: %w", taskID, err)
-	}
-	return status, nil
-}
-
 // LoadStatusAndAttemptTx returns the current status and retry_count of the
 // task_tracker row for the given task_id, taking a FOR UPDATE row lock so
 // concurrent task.status.updated deliveries for the same task serialize within
-// their transactions. A missing row yields ("", 0, nil), mirroring GetStatusTx's
-// lenient missing-row handling so the aggregate can disambiguate replay vs.
+// their transactions. A missing row yields ("", 0, nil) — a lenient
+// missing-row handling so the aggregate can disambiguate replay vs.
 // not-yet-projected via its Exists fallback.
 func (r *taskTrackerRepository) LoadStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (string, int32, error) {
 	var (
@@ -512,36 +463,6 @@ func (r *taskTrackerRepository) HasNonSucceededTask(ctx context.Context, schedul
 		return false, fmt.Errorf("HasNonSucceededTask: %w", err)
 	}
 	return exists, nil
-}
-
-// ResetTasksTx moves the given tasks to PENDING and returns the number of rows
-// actually modified (already-PENDING rows are excluded).
-func (r *taskTrackerRepository) ResetTasksTx(ctx context.Context, tx *sqlx.Tx, ids []uuid.UUID) (int32, error) {
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids)+1)
-	args[0] = string(run.TaskStatusPending)
-	for i, id := range ids {
-		placeholders[i] = fmt.Sprintf("$%d", i+2)
-		args[i+1] = id // bind as uuid.UUID so the PK index is used
-	}
-	query := fmt.Sprintf(`
-		UPDATE task_tracker
-		SET status = $1
-		WHERE task_id IN (%s) AND status != $1
-	`, strings.Join(placeholders, ", "))
-
-	res, err := tx.ExecContext(ctx, query, args...)
-	if err != nil {
-		return 0, fmt.Errorf("reset tasks: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	return int32(n), nil
 }
 
 // BulkCancelByScheduleIDTx sets status='cancelled' for all pending/running tasks

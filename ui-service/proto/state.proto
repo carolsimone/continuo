@@ -29,8 +29,6 @@ service StateService {
   rpc GetTaskByScheduleAndNode(GetTaskByScheduleAndNodeRequest) returns (TaskResponse);
   rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
-  // ResetTask unconditionally resets a task to PENDING with retry_count=0.
-  rpc ResetTask(ResetTaskRequest) returns (TaskResponse);
 
   // GetSchedulerInitStatus returns initialization_status for a scheduler.
   // Used by orchestrator to guard premature finalization during re-run.
@@ -320,10 +318,6 @@ message CancelScheduleRequest {
 
 message CancelScheduleResponse {
   string schedule_id = 1;  // schedule_id of the cancelled run
-}
-
-message ResetTaskRequest {
-  string task_id = 1;
 }
 
 message GetSchedulerInitStatusRequest {

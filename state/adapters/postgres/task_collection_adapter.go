@@ -22,21 +22,6 @@ func NewTaskCollectionAdapter(repo TaskTrackerRepository, tx *sqlx.Tx) *TaskColl
 	return &TaskCollectionAdapter{repo: repo, tx: tx}
 }
 
-func (a *TaskCollectionAdapter) GetStatus(ctx context.Context, taskID uuid.UUID) (run.TaskStatus, bool, error) {
-	s, err := a.repo.GetStatusTx(ctx, a.tx, taskID)
-	if err != nil {
-		return "", false, err
-	}
-	if s == "" {
-		return "", false, nil
-	}
-	parsed, err := run.ParseTaskStatus(s)
-	if err != nil {
-		return "", true, err
-	}
-	return parsed, true, nil
-}
-
 func (a *TaskCollectionAdapter) LoadStatusAndAttempt(ctx context.Context, taskID uuid.UUID) (run.TaskStatus, int32, bool, error) {
 	s, retryCount, err := a.repo.LoadStatusAndAttemptTx(ctx, a.tx, taskID)
 	if err != nil {
@@ -127,26 +112,6 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 func (a *TaskCollectionAdapter) BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string) (int, error) {
 	n, err := a.repo.BulkCancelByScheduleIDTx(ctx, a.tx, runID, cancelledBy)
 	return int(n), err
-}
-
-func (a *TaskCollectionAdapter) Update(ctx context.Context, t run.Task) error {
-	return a.repo.UpdateTx(ctx, a.tx, &TaskTracker{
-		TaskID:              t.TaskID,
-		ScheduleID:          t.ScheduleID,
-		CreatedAt:           t.CreatedAt,
-		ServiceName:         t.ServiceName,
-		SchemaName:          t.SchemaName,
-		TableName:           t.TableName,
-		JobName:             t.JobName,
-		Status:              t.Status,
-		RetryCount:          t.RetryCount,
-		MaxRetries:          t.MaxRetries,
-		CancelledAt:         t.CancelledAt,
-		CancelledBy:         t.CancelledBy,
-		ManifestVersion:     t.ManifestVersion,
-		ImageTag:            t.ImageTag,
-		InheritedFromTaskID: t.InheritedFromTaskID,
-	})
 }
 
 // Compile-time interface assertion.

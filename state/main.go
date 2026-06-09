@@ -256,7 +256,7 @@ func main() {
 
 	// Initialize gRPC handlers
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
-	taskHandler := handlers.NewTaskHandler(taskRepo, uowFactory, logger)
+	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
 	rerunUC := svchandlers.NewTriggerRerunHandler(logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, uowFactory, logger)
