@@ -53,6 +53,30 @@ func NewGraphCommand(factory OrchestratorClientFactory, cfg *config.Config, stdo
 	cmd := &cobra.Command{
 		Use:   "graph <schedule-name>",
 		Short: "Show the dependency graph for the named schedule",
+		Long: `Show the dependency graph for the named schedule.
+
+Use when the user wants the topology (nodes and edges) of a schedule.
+
+Arguments:
+  <schedule-name>  The schedule whose graph to fetch.
+
+Output (stdout, JSON):
+  {"schedule_name":string,
+   "nodes":[{"table_name":string,"schema_name":string,"service_name":string,
+             "owner":string,"criticality":string,"node_type":string,
+             "status":string,"last_updated_at":string,"created_at":string}],
+   "edges":[{"from_node_id":string,"to_node_id":string}]}
+
+Errors:
+  usage      (exit 2)  wrong number of arguments
+  not_found  (exit 3)  schedule has no graph
+  unavailable(exit 5)  the orchestrator service is unreachable
+  internal   (exit 6)  unexpected server error`,
+		Example: "  continuo schedule graph daily-revenue",
+		Annotations: map[string]string{
+			"output_schema": `{"schedule_name":"string","nodes":"array","edges":"array"}`,
+			"exit_codes":    `[0,2,3,5,6]`,
+		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return output.NewUsageError("graph requires exactly one argument: <schedule-name>")

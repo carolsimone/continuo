@@ -20,6 +20,27 @@ func NewTriggerCommand(factory StateClientFactory, cfg *config.Config, stdout, s
 	cmd := &cobra.Command{
 		Use:   "trigger <schedule-name>",
 		Short: "Trigger a new run of the named schedule",
+		Long: `Trigger a new run of the named schedule.
+
+Use when the user asks to start, run, or kick off a schedule now.
+
+Arguments:
+  <schedule-name>  The schedule to trigger.
+
+Output (stdout, JSON):
+  {"schedule_id":string,"schedule_name":string,"triggered_at":string}
+
+Errors:
+  usage      (exit 2)  wrong number of arguments
+  not_found  (exit 3)  schedule not in the catalog
+  conflict   (exit 4)  a run is already active for this schedule
+  unavailable(exit 5)  the state service is unreachable
+  internal   (exit 6)  unexpected server error`,
+		Example: "  continuo schedule trigger daily-revenue",
+		Annotations: map[string]string{
+			"output_schema": `{"schedule_id":"string","schedule_name":"string","triggered_at":"string"}`,
+			"exit_codes":    `[0,2,3,4,5,6]`,
+		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return output.NewUsageError("trigger requires exactly one argument: <schedule-name>")

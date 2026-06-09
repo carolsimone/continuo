@@ -38,7 +38,27 @@ func NewListCommand(factory StateClientFactory, cfg *config.Config, stdout, stde
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all schedules and their last-run status",
-		Args:  cobra.NoArgs,
+		Long: `List all schedules and their last-run status.
+
+Use when the user wants to see which schedules exist or the outcome of each
+schedule's most recent run.
+
+Arguments: none.
+
+Output (stdout, JSON):
+  {"schedules":[{"schedule_name":string,"cron_expression":string,
+   "description":string,"timezone":string,"is_running":bool,
+   "last_run_id":string,"last_run_status":string,"last_run_at":string}]}
+
+Errors:
+  unavailable(exit 5)  the state service is unreachable
+  internal   (exit 6)  unexpected server error`,
+		Example: "  continuo schedule list",
+		Annotations: map[string]string{
+			"output_schema": `{"schedules":"array"}`,
+			"exit_codes":    `[0,5,6]`,
+		},
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
