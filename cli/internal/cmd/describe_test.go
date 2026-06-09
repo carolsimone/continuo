@@ -59,3 +59,44 @@ func TestDescribe_EveryCommandMeetsTheDocumentationStandard(t *testing.T) {
 		assert.True(t, json.Valid(c.ExitCodes), "command %q exit_codes not valid JSON", c.Path)
 	}
 }
+
+func findCmd(t *testing.T, p describePayloadJSON, path string) describeCommandJSON {
+	t.Helper()
+	for _, c := range p.Commands {
+		if c.Path == path {
+			return c
+		}
+	}
+	t.Fatalf("command %q not found in catalog", path)
+	return describeCommandJSON{}
+}
+
+func TestDescribe_CommandContentIsAccurate(t *testing.T) {
+	p := runDescribe(t)
+
+	status := findCmd(t, p, "schedule status")
+	assert.Equal(t, []string{"<schedule-name>"}, status.Args)
+	require.NotEmpty(t, status.Examples)
+	assert.Contains(t, status.Examples[0], "continuo schedule status")
+
+	// output_schema is real nested JSON (not an escaped string) with the documented keys.
+	var schema map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(status.OutputSchema, &schema))
+	for _, k := range []string{"schedule_name", "run_id", "is_running", "last_run_status", "nodes"} {
+		_, ok := schema[k]
+		assert.True(t, ok, "status output_schema missing key %q", k)
+	}
+
+	// exit_codes is a real JSON array.
+	var codes []int
+	require.NoError(t, json.Unmarshal(status.ExitCodes, &codes))
+	assert.Contains(t, codes, 3) // not_found
+}
+
+func TestDescribe_HumanModeWritesSummaryToStderr(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	exit := executeWith([]string{"--human", "describe"}, &out, &errBuf)
+	require.Equal(t, 0, exit)
+	assert.Empty(t, out.String(), "human mode must not write JSON to stdout")
+	assert.Contains(t, errBuf.String(), "schedule status", "human summary should list commands on stderr")
+}

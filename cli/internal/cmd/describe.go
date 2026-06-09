@@ -79,15 +79,15 @@ Errors: none under normal use (exit 0).`,
 }
 
 // collectCommands walks the tree and returns every runnable command, sorted by path.
-// Cobra's auto-generated framework commands (help, completion) and their subtrees
-// are skipped: they carry no documentation standard and are not part of the
-// LLM-facing CLI surface. Real commands are NOT filtered by annotation presence,
+// Cobra's auto-generated framework commands (help, completion) and any hidden commands
+// and their subtrees are skipped: they carry no documentation standard and are not part
+// of the LLM-facing CLI surface. Real commands are NOT filtered by annotation presence,
 // so the documentation-standard test can still catch an undocumented first-class command.
 func collectCommands(root *cobra.Command) []describeCmd {
 	out := []describeCmd{}
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		if c.Name() == "help" || c.Name() == "completion" {
+		if c.Name() == "help" || c.Name() == "completion" || c.Hidden {
 			return
 		}
 		if c.Runnable() {
