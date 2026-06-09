@@ -164,3 +164,26 @@ export interface ReleaseDetail {
   manifests_uri: string;
   bootstrap: boolean;
 }
+
+export interface NodeSummary {
+  service_name: string;
+  schema_name: string;
+  table_name: string;
+  run_count: number;
+  success_rate_pct: number | null;
+  avg_duration_sec: number | null;
+  p95_duration_sec: number | null;
+  flaky_rate_pct: number;
+  last_status: string | null;
+  last_run_at: string | null;
+}
+
+export interface NodesResponse {
+  total_count: number;
+  nodes: NodeSummary[];
+}
+
+// Where the user arrived at /node/:fqn from — drives the back link.
+export type NodeDetailFrom =
+  | { type: 'schedule'; name: string; mode: 'run' | 'latest' }
+  | { type: 'nodes' };

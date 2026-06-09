@@ -203,6 +203,7 @@ body {
 .pill--pending,   .pill-sm--pending   { background: #f1f5f9; color: #64748b; }
 .pill--cancelled, .pill-sm--cancelled { background: #f8fafc; color: #94a3b8; }
 .pill--current,   .pill-sm--current   { background: #ede9fe; color: #6d28d9; }
+.pill-sm--skipped { background: #e2e8f0; color: #475569; }
 
 /* ---- Card ---- */
 .detail-card {
@@ -902,3 +903,8 @@ body {
   color: #6b7280;
   margin-top: 2px;
 }
+
+/* ---- NodesCatalogPanel: load-more footer and search input ---- */
+.nodes-loadmore { display: flex; justify-content: center; padding: 12px; }
+.node-search-input { font: 500 12px/1.4 inherit; padding: 4px 8px;
+  border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #374151; min-width: 220px; }

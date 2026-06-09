@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import NodeDetailPage from '../../src/client/NodeDetailPage';
+import type { NodeDetailFrom } from '../../src/client/types';
 
 const mockFetch = vi.fn();
 beforeEach(() => {
@@ -15,15 +16,14 @@ function jsonResp(body: unknown, status = 200) {
   return Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body } as Response);
 }
 
-function renderPage(state?: { from_mode?: 'run' | 'latest' }) {
+function renderPage(from?: NodeDetailFrom) {
   return render(
-    <MemoryRouter
-      initialEntries={[{ pathname: '/schedule/daily/node/svc.schema.tbl', state: state ?? null }]}
-    >
+    <MemoryRouter initialEntries={[{ pathname: '/node/svc.schema.tbl', state: from ? { from } : null }]}>
       <Routes>
+        <Route path="/" element={<div>NODES TAB</div>} />
         <Route path="/schedule/:name" element={<div>RUN MODE</div>} />
         <Route path="/schedule/:name/latest" element={<div>LATEST MODE</div>} />
-        <Route path="/schedule/:name/node/:fqn" element={<NodeDetailPage />} />
+        <Route path="/node/:fqn" element={<NodeDetailPage />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -254,39 +254,39 @@ describe('NodeDetailPage — foundations', () => {
 });
 
 describe('NodeDetailPage back link', () => {
-  it('returns to /schedule/:name when location.state.from_mode is "run"', async () => {
+  it('returns to the schedule (run mode) when from = schedule/run', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('/runs')) return jsonResp({ runs: [] });
       return jsonResp({});
     });
-    renderPage({ from_mode: 'run' });
+    renderPage({ type: 'schedule', name: 'daily', mode: 'run' });
     const back = await screen.findByRole('button', { name: /back to daily/i });
     fireEvent.click(back);
     await waitFor(() => expect(screen.getByText('RUN MODE')).toBeInTheDocument());
   });
 
-  it('returns to /schedule/:name/latest when location.state.from_mode is "latest"', async () => {
+  it('returns to the schedule (latest mode) when from = schedule/latest', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('/runs')) return jsonResp({ runs: [] });
       return jsonResp({});
     });
-    renderPage({ from_mode: 'latest' });
+    renderPage({ type: 'schedule', name: 'daily', mode: 'latest' });
     const back = await screen.findByRole('button', { name: /back to daily/i });
     fireEvent.click(back);
     await waitFor(() => expect(screen.getByText('LATEST MODE')).toBeInTheDocument());
   });
 
-  it('defaults to /schedule/:name when location.state is null (deep link)', async () => {
+  it('defaults to the Nodes tab on a deep link with no state', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('/runs')) return jsonResp({ runs: [] });
       return jsonResp({});
     });
     renderPage();
-    const back = await screen.findByRole('button', { name: /back to daily/i });
+    const back = await screen.findByRole('button', { name: /back to nodes/i });
     fireEvent.click(back);
-    await waitFor(() => expect(screen.getByText('RUN MODE')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('NODES TAB')).toBeInTheDocument());
   });
 });

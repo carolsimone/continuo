@@ -74,6 +74,13 @@ service StateService {
   // capped server-side at 50 (0 uses the default of 50).
   rpc ListNodeRuns(ListNodeRunsRequest) returns (ListNodeRunsResponse);
 
+  // ListNodes returns the node catalog: one summary row per node that has run,
+  // with stats aggregated over each node's most recent 50 runs. Supports a
+  // case-insensitive substring `search` on "service.schema.table", an exact
+  // `service_name` filter, and limit/offset paging. `total_count` reports the
+  // full match count (before paging).
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+
   // TaskExecution operations
   rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
@@ -379,4 +386,29 @@ message NodeRun {
   string completed_at     = 12; // RFC3339, "" if not finished
   string error_message    = 13; // "" when none
   string log_s3_key       = 14; // "" when none
+}
+
+message ListNodesRequest {
+  string search       = 1;  // case-insensitive substring on "service.schema.table"; "" = no filter
+  string service_name = 2;  // exact service filter; "" = all services
+  int32  limit        = 3;  // page size; 0 -> default 50, clamped to max 200
+  int32  offset       = 4;  // page offset; default 0
+}
+
+message ListNodesResponse {
+  repeated NodeSummary nodes = 1;
+  int32 total_count          = 2;  // total nodes matching the filter, ignoring limit/offset
+}
+
+message NodeSummary {
+  string service_name     = 1;
+  string schema_name      = 2;
+  string table_name       = 3;
+  int32  run_count        = 4;   // task instances in the stats window (<= 50)
+  int32  success_rate_pct = 5;   // -1 when no terminal runs in window
+  int32  avg_duration_sec = 6;   // -1 when no measurable run
+  int32  p95_duration_sec = 7;   // -1 when no measurable run
+  int32  flaky_rate_pct   = 8;   // % of window runs with retry_count > 0; 0 when none
+  string last_status      = 9;   // succeeded|failed|running|cancelled|pending
+  string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
 }

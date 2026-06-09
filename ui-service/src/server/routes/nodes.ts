@@ -18,6 +18,42 @@ function grpcToHttpStatus(code: number): number {
 export function createNodesRouter(stateClient: GrpcClient) {
   const router = Router();
 
+  // GET /api/nodes?search=&service=&limit=&offset= — node catalog (paged)
+  router.get('/', (req, res) => {
+    const nullIfNeg = (n: any): number | null => {
+      const v = Number(n ?? -1);
+      return v < 0 ? null : v;
+    };
+    const intOrDefault = (raw: any, def: number, min: number): number => {
+      const n = parseInt(String(raw), 10);
+      return Number.isNaN(n) || n < min ? def : n;
+    };
+    const q = {
+      search: typeof req.query.search === 'string' ? req.query.search : '',
+      service_name: typeof req.query.service === 'string' ? req.query.service : '',
+      limit: intOrDefault(req.query.limit, 50, 1),
+      offset: intOrDefault(req.query.offset, 0, 0),
+    };
+    stateClient.listNodes(q, (err: any, response: any) => {
+      if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+      res.json({
+        total_count: Number(response.total_count ?? 0),
+        nodes: (response.nodes || []).map((r: any) => ({
+          service_name:     r.service_name,
+          schema_name:      r.schema_name,
+          table_name:       r.table_name,
+          run_count:        Number(r.run_count ?? 0),
+          success_rate_pct: nullIfNeg(r.success_rate_pct),
+          avg_duration_sec: nullIfNeg(r.avg_duration_sec),
+          p95_duration_sec: nullIfNeg(r.p95_duration_sec),
+          flaky_rate_pct:   Number(r.flaky_rate_pct ?? 0),
+          last_status:      r.last_status || null,
+          last_run_at:      r.last_run_at || null,
+        })),
+      });
+    });
+  });
+
   // GET /api/nodes/:service/:schema/:table/runs — last 50 raw runs on this node
   router.get('/:service/:schema/:table/runs', (req, res) => {
     stateClient.listNodeRuns(

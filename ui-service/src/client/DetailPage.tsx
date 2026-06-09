@@ -637,12 +637,12 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
                     {selectedNodeId && name && (
                       <a
                         className="dag-focus-open-link"
-                        href={`/schedule/${encodeURIComponent(name)}/node/${encodeURIComponent(selectedNodeId)}`}
+                        href={`/node/${encodeURIComponent(selectedNodeId)}`}
                         onClick={e => {
                           e.preventDefault();
                           navigate(
-                            `/schedule/${encodeURIComponent(name)}/node/${encodeURIComponent(selectedNodeId)}`,
-                            { state: { from_mode: mode === 'latest' ? 'latest' : 'run' } },
+                            `/node/${encodeURIComponent(selectedNodeId)}`,
+                            { state: { from: { type: 'schedule', name, mode: mode === 'latest' ? 'latest' : 'run' } } },
                           );
                         }}
                       >

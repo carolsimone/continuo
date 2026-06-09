@@ -6,10 +6,12 @@ import { createNodesRouter } from '../../src/server/routes/nodes';
 
 const mockListNodeRuns = vi.fn();
 const mockTriggerSingleNodeRun = vi.fn();
+const mockListNodes = vi.fn();
 
 const mockStateClient = {
   listNodeRuns: mockListNodeRuns,
   triggerSingleNodeRun: mockTriggerSingleNodeRun,
+  listNodes: mockListNodes,
 };
 
 function makeApp() {
@@ -23,6 +25,7 @@ describe('nodes router', () => {
   beforeEach(() => {
     mockListNodeRuns.mockReset();
     mockTriggerSingleNodeRun.mockReset();
+    mockListNodes.mockReset();
   });
 
   it('GET /:svc/:schema/:table/runs returns parsed rows', async () => {
@@ -91,6 +94,63 @@ describe('nodes router', () => {
       }),
       expect.any(Function),
     );
+  });
+
+  it('GET / returns mapped catalog with total_count and -1 -> null', async () => {
+    mockListNodes.mockImplementation((_req, cb) =>
+      cb(null, {
+        total_count: 2,
+        nodes: [
+          {
+            service_name: 'svc', schema_name: 'an', table_name: 'fct',
+            run_count: 48, success_rate_pct: -1, avg_duration_sec: -1,
+            p95_duration_sec: 21, flaky_rate_pct: 4,
+            last_status: 'succeeded', last_run_at: '2026-06-08T10:00:00Z',
+          },
+          {
+            service_name: 'svc', schema_name: 'an', table_name: 'dim',
+            run_count: 10, success_rate_pct: 90, avg_duration_sec: 5,
+            p95_duration_sec: 9, flaky_rate_pct: 0,
+            last_status: '', last_run_at: '',
+          },
+        ],
+      }),
+    );
+
+    const res = await request(makeApp()).get('/api/nodes?search=f&service=svc&limit=25&offset=0');
+    expect(res.status).toBe(200);
+    expect(res.body.total_count).toBe(2);
+    expect(res.body.nodes).toHaveLength(2);
+    expect(res.body.nodes[0].success_rate_pct).toBeNull(); // -1 -> null
+    expect(res.body.nodes[0].avg_duration_sec).toBeNull();
+    expect(res.body.nodes[0].p95_duration_sec).toBe(21);
+    expect(res.body.nodes[0].flaky_rate_pct).toBe(4);
+    expect(res.body.nodes[1].last_status).toBeNull();      // '' -> null
+    expect(res.body.nodes[1].last_run_at).toBeNull();
+    expect(mockListNodes).toHaveBeenCalledWith(
+      { search: 'f', service_name: 'svc', limit: 25, offset: 0 },
+      expect.any(Function),
+    );
+  });
+
+  it('GET / defaults missing/invalid query params', async () => {
+    mockListNodes.mockImplementation((_req, cb) => cb(null, { total_count: 0, nodes: [] }));
+    const res = await request(makeApp()).get('/api/nodes');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ total_count: 0, nodes: [] });
+    expect(mockListNodes).toHaveBeenCalledWith(
+      { search: '', service_name: '', limit: 50, offset: 0 },
+      expect.any(Function),
+    );
+  });
+
+  it('GET / maps a gRPC error to its HTTP status', async () => {
+    mockListNodes.mockImplementation((_req, cb) =>
+      cb({ code: grpc.status.INVALID_ARGUMENT, message: 'bad' }),
+    );
+    const res = await request(makeApp()).get('/api/nodes?limit=abc');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('bad');
   });
 
   it('maps gRPC NOT_FOUND to HTTP 404', async () => {

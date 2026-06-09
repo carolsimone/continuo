@@ -90,6 +90,9 @@ describe('DashboardPage — tabs', () => {
           }),
         });
       }
+      if (url.startsWith('/api/nodes')) {
+        return Promise.resolve({ ok: true, json: async () => ({ total_count: 3 }) });
+      }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     });
   });
@@ -121,9 +124,10 @@ describe('DashboardPage — tabs', () => {
     renderAt(['/']);
     await waitFor(() => {
       const counts = document.querySelectorAll('.tabs__count');
-      expect(counts).toHaveLength(2);
-      expect(counts[0].textContent).toBe('2');
-      expect(counts[1].textContent).toBe('1');
+      expect(counts).toHaveLength(3);
+      expect(counts[0].textContent).toBe('2');  // Runs
+      expect(counts[1].textContent).toBe('1');  // Topology
+      expect(counts[2].textContent).toBe('3');  // Nodes
     });
   });
 
