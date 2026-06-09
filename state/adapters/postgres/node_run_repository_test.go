@@ -482,6 +482,48 @@ func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 	assert.Equal(t, "fct_orders", hitCI[0].TableName)
 }
 
+// TestNodeRunRepository_ListNodeNames returns distinct table names (deduped
+// across schemas), service-filtered, sorted ascending.
+func TestNodeRunRepository_ListNodeNames(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+
+	svcA := "svc-names-a-" + uuid.New().String()[:8]
+	svcB := "svc-names-b-" + uuid.New().String()[:8]
+	mk := func(svc, schema, table string) {
+		sid := uuid.New()
+		require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
+			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
+			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+		}))
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
+			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
+			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+			CreatedAt: time.Now().Add(-time.Minute),
+		}))
+	}
+	// svcA: orders + customers (customers in two schemas -> dedup to one)
+	mk(svcA, "an", "orders")
+	mk(svcA, "an", "customers")
+	mk(svcA, "marts", "customers")
+	// svcB: revenue
+	mk(svcB, "an", "revenue")
+
+	// service filter -> only svcA names, deduped + sorted
+	namesA, err := repo.ListNodeNames(ctx, svcA)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"customers", "orders"}, namesA)
+
+	// filtering by svcB keeps the assertion deterministic in a shared DB
+	namesB, err := repo.ListNodeNames(ctx, svcB)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"revenue"}, namesB)
+}
+
 // TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal verifies an empty page
 // (offset beyond the end) still returns the true total_count.
 func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {

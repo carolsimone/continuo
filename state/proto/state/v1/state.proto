@@ -81,6 +81,11 @@ service StateService {
   // full match count (before paging).
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
 
+  // ListNodeNames returns the distinct table names of nodes that have run,
+  // optionally filtered by service. Powers the Nodes-tab search autocomplete
+  // (the complete name list, independent of the paginated catalog).
+  rpc ListNodeNames(ListNodeNamesRequest) returns (ListNodeNamesResponse);
+
   // TaskExecution operations
   rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
@@ -411,4 +416,12 @@ message NodeSummary {
   int32  flaky_rate_pct   = 8;   // % of window runs with retry_count > 0; 0 when none
   string last_status      = 9;   // succeeded|failed|running|cancelled|pending
   string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
+}
+
+message ListNodeNamesRequest {
+  string service_name = 1;  // exact service filter; "" = all services
+}
+
+message ListNodeNamesResponse {
+  repeated string table_names = 1;  // distinct, sorted ascending
 }

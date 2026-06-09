@@ -29,6 +29,7 @@ import (
 type NodeRunRepository interface {
 	List(ctx context.Context, serviceName, schemaName, tableName string, limit int) ([]*projection.NodeRun, error)
 	ListNodes(ctx context.Context, search, serviceName string, limit, offset int) ([]*projection.NodeSummary, int, error)
+	ListNodeNames(ctx context.Context, serviceName string) ([]string, error)
 }
 
 type nodeRunRepository struct {
@@ -224,6 +225,23 @@ func (r *nodeRunRepository) ListNodes(
 		out = append(out, toNodeSummary(row))
 	}
 	return out, total, nil
+}
+
+// ListNodeNames returns the distinct table names of nodes that have run,
+// filtered by exact service when serviceName is non-empty, sorted ascending.
+// A cheap DISTINCT (no window/aggregation) — it feeds the search autocomplete.
+func (r *nodeRunRepository) ListNodeNames(ctx context.Context, serviceName string) ([]string, error) {
+	const query = `
+		SELECT DISTINCT table_name
+		FROM task_tracker
+		WHERE ($1 = '' OR service_name = $1)
+		ORDER BY table_name`
+	names := []string{}
+	if err := r.db.SelectContext(ctx, &names, query, serviceName); err != nil {
+		r.logger.Error("Failed to list node names", "service", serviceName, "error", err)
+		return nil, fmt.Errorf("failed to list node names: %w", err)
+	}
+	return names, nil
 }
 
 func toNodeSummary(row nodeSummaryRow) *projection.NodeSummary {
