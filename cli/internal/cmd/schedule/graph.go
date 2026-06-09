@@ -66,10 +66,11 @@ Output (stdout, JSON):
              "owner":string,"criticality":string,"node_type":string,
              "status":string,"last_updated_at":string,"created_at":string}],
    "edges":[{"from_node_id":string,"to_node_id":string}]}
+  owner, last_updated_at, and created_at are omitted when empty.
 
 Errors:
   usage      (exit 2)  wrong number of arguments
-  not_found  (exit 3)  schedule has no graph
+  not_found  (exit 3)  no schedule/graph found for that name
   unavailable(exit 5)  the orchestrator service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule graph daily-revenue",

@@ -49,6 +49,7 @@ Output (stdout, JSON):
   {"schedules":[{"schedule_name":string,"cron_expression":string,
    "description":string,"timezone":string,"is_running":bool,
    "last_run_id":string,"last_run_status":string,"last_run_at":string}]}
+  description and last_run_at are omitted when empty (e.g. never run).
 
 Errors:
   unavailable(exit 5)  the state service is unreachable
