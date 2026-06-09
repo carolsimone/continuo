@@ -30,3 +30,14 @@ vet:
 
 clean:
 	rm -rf bin/
+
+# Regenerate gRPC stubs from the vendored public .proto contracts under proto/.
+# Never generates from a service's source tree — the CLI is a pure client.
+# Requires protoc + protoc-gen-go + protoc-gen-go-grpc on PATH.
+.PHONY: proto
+proto:
+	protoc \
+	  --go_out=. --go_opt=paths=source_relative \
+	  --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+	  proto/state/v1/state.proto \
+	  proto/orchestrator/v1/orchestrator.proto

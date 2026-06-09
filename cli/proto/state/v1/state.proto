@@ -1,0 +1,427 @@
+syntax = "proto3";
+
+package state.v1;
+
+option go_package = "github.com/carolsimone/continuo/cli/proto/state/v1;statev1";
+
+import "google/protobuf/timestamp.proto";
+
+// StateService provides state tracking for schedulers and tasks
+service StateService {
+  // Scheduler operations
+  rpc CreateScheduler(CreateSchedulerRequest) returns (SchedulerResponse);
+  rpc GetScheduler(GetSchedulerRequest) returns (SchedulerResponse);
+  rpc CancelScheduler(CancelSchedulerRequest) returns (SchedulerResponse);
+
+  // Trigger operations
+  rpc ActivateSchedule(ActivateScheduleRequest) returns (ActivateScheduleResponse);
+
+  // Schedule catalog operations
+  rpc ListAllSchedules(ListAllSchedulesRequest) returns (ListAllSchedulesResponse);
+  rpc TriggerSchedule(TriggerScheduleRequest) returns (TriggerScheduleResponse);
+  // CancelSchedule cancels the active run of a named schedule.
+  // Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
+  rpc CancelSchedule(CancelScheduleRequest) returns (CancelScheduleResponse);
+
+  // Task operations
+  rpc CreateTask(CreateTaskRequest) returns (TaskResponse);
+  rpc GetTask(GetTaskRequest) returns (TaskResponse);
+  rpc GetTaskByScheduleAndNode(GetTaskByScheduleAndNodeRequest) returns (TaskResponse);
+  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  // ResetTask unconditionally resets a task to PENDING with retry_count=0.
+  rpc ResetTask(ResetTaskRequest) returns (TaskResponse);
+
+  // GetSchedulerInitStatus returns initialization_status for a scheduler.
+  // Used by orchestrator to guard premature finalization during re-run.
+  rpc GetSchedulerInitStatus(GetSchedulerInitStatusRequest) returns (GetSchedulerInitStatusResponse);
+
+  // TriggerRerun atomically resets the scheduler + target task and enqueues a
+  // trigger.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+  rpc TriggerRerun(TriggerRerunRequest) returns (TriggerRerunResponse);
+
+  // TriggerSingleNodeRun creates a synthesised single-node run that
+  // executes exactly one task with no downstream pickup. Two modes,
+  // selected via the `metadata_source` field on the request:
+  //   - "latest" (default): metadata pair from latest topology
+  //   - "snapshot_of_run" (stale): metadata pair from the source run's
+  //     :EXECUTES edge; requires `source_run_id`
+  // Errors:
+  //   INVALID_ARGUMENT — empty/malformed identity, unknown metadata_source,
+  //                      "snapshot_of_run" without source_run_id, "latest"
+  //                      with non-empty source_run_id.
+  //   NOT_FOUND — "snapshot_of_run" + source_run_id has no scheduler_tracker
+  //               row, or no task_tracker row matching the identity.
+  //   FAILED_PRECONDITION — "snapshot_of_run" + source run not terminal.
+  rpc TriggerSingleNodeRun(TriggerSingleNodeRunRequest)
+      returns (TriggerSingleNodeRunResponse);
+
+  // TriggerRebase creates a new run on the source's schedule that re-executes
+  // everything that didn't succeed in the source (failed/cancelled/skipped),
+  // descendants of those, plus new arrivals from the latest topology.
+  // SUCCEEDED tasks from the source are inherited at their pinned metadata.
+  // The new run reuses the source's schedule_name (umbrella §4 — Option A).
+  // Errors:
+  //   INVALID_ARGUMENT — empty or malformed source_run_id.
+  //   NOT_FOUND — source_run_id doesn't exist in scheduler_tracker.
+  //   FAILED_PRECONDITION — source not in {FAILED, CANCELLED}; OR source has
+  //                         zero non-SUCCEEDED tasks; OR an active run already
+  //                         exists on the source's schedule_name.
+  rpc TriggerRebase(TriggerRebaseRequest) returns (TriggerRebaseResponse);
+
+  // ListNodeRuns returns the most recent task instances for a node, ordered by
+  // scheduler_tracker.created_at DESC. Identity fields are required; limit is
+  // capped server-side at 50 (0 uses the default of 50).
+  rpc ListNodeRuns(ListNodeRunsRequest) returns (ListNodeRunsResponse);
+
+  // ListNodes returns the node catalog: one summary row per node that has run,
+  // with stats aggregated over each node's most recent 50 runs. Supports a
+  // case-insensitive substring `search` on "service.schema.table", an exact
+  // `service_name` filter, and limit/offset paging. `total_count` reports the
+  // full match count (before paging).
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+
+  // ListNodeNames returns the distinct table names of nodes that have run,
+  // optionally filtered by service. Powers the Nodes-tab search autocomplete
+  // (the complete name list, independent of the paginated catalog).
+  rpc ListNodeNames(ListNodeNamesRequest) returns (ListNodeNamesResponse);
+
+  // TaskExecution operations
+  rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
+  rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum SchedulerStatus {
+  SCHEDULER_STATUS_UNSPECIFIED = 0;
+  SCHEDULER_STATUS_PENDING = 1;
+  SCHEDULER_STATUS_RUNNING = 2;
+  SCHEDULER_STATUS_SUCCEEDED = 3;
+  SCHEDULER_STATUS_FAILED = 4;
+  SCHEDULER_STATUS_CANCELLED = 5;
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING = 1;
+  TASK_STATUS_RUNNING = 2;
+  TASK_STATUS_SUCCEEDED = 3;
+  TASK_STATUS_FAILED = 4;
+  TASK_STATUS_CANCELLED = 5;
+  TASK_STATUS_SKIPPED = 6;
+}
+
+// ============================================================================
+// DOMAIN MESSAGES
+// ============================================================================
+
+message Scheduler {
+  string schedule_id = 1;
+  string schedule_name = 2;
+  SchedulerStatus status = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp started_at = 5;
+  google.protobuf.Timestamp completed_at = 6;
+  google.protobuf.Timestamp last_heartbeat_at = 7;
+  google.protobuf.Timestamp cancelled_at = 8;
+  string cancelled_by = 9;
+  string cancellation_reason = 10;
+  string initialization_status = 11;  // 'pending', 'in_progress', 'completed', 'failed'
+}
+
+message Task {
+  string task_id = 1;
+  string schedule_id = 2;
+  google.protobuf.Timestamp created_at = 3;
+  string service_name = 4;
+  string schema_name = 5;
+  string table_name = 6;
+  string job_name = 7;  // K8s job identifier (computed from service-schema-table)
+  TaskStatus status = 8;
+  int32 retry_count = 9;
+  int32 max_retries = 10;
+  google.protobuf.Timestamp cancelled_at = 11;
+  string cancelled_by = 12;
+}
+
+message TaskExecution {
+  string id = 1;
+  string task_id = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp completed_at = 5;
+  double execution_time_seconds = 6;
+  string executor_id = 7;
+  string k8s_job_name = 8;
+  string error_message = 9;
+  google.protobuf.Timestamp cancelled_at = 10;
+  string cancelled_by = 11;
+  string cancellation_reason = 12;
+  string log_s3_key = 13;              // S3 object key for full pod log; empty if upload failed
+}
+
+// ============================================================================
+// SCHEDULER REQUESTS/RESPONSES
+// ============================================================================
+
+message CreateSchedulerRequest {
+  string schedule_id = 1;              // Optional: client can provide UUID
+  string schedule_name = 2;            // Required
+  SchedulerStatus status = 3;          // Optional: defaults to PENDING
+}
+
+message GetSchedulerRequest {
+  string schedule_id = 1;              // Required
+}
+
+message CancelSchedulerRequest {
+  string schedule_id = 1;              // Required
+  string cancelled_by = 2;             // Optional
+  string cancellation_reason = 3;      // Optional
+}
+
+message SchedulerResponse {
+  Scheduler scheduler = 1;
+}
+
+// ============================================================================
+// TASK REQUESTS/RESPONSES
+// ============================================================================
+
+message CreateTaskRequest {
+  string task_id = 1;                  // Required: application-generated UUID
+  string schedule_id = 2;              // Required
+  string service_name = 3;             // Required
+  string schema_name = 4;              // Required
+  string table_name = 5;               // Required
+  int32 max_retries = 6;               // Required
+  TaskStatus status = 7;               // Optional: defaults to PENDING
+}
+
+message GetTaskRequest {
+  string task_id = 1;                  // Required
+}
+
+message GetTaskByScheduleAndNodeRequest {
+  string schedule_id = 1;              // Required
+  string service_name = 2;             // Required
+  string schema_name = 3;              // Required
+  string table_name = 4;               // Required
+}
+
+message DeleteTaskRequest {
+  string task_id = 1;                  // Required
+}
+
+message DeleteTaskResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ListTasksRequest {
+  string schedule_id = 1;              // Required
+  TaskStatus status = 2;               // Optional filter
+  int32 page_size = 3;                 // Pagination (default 50)
+  int32 page_offset = 4;               // Pagination offset
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+  int32 total_count = 2;
+}
+
+message TaskResponse {
+  Task task = 1;
+}
+
+// ============================================================================
+// TASK EXECUTION REQUESTS/RESPONSES
+// ============================================================================
+
+message GetTaskExecutionRequest {
+  string id = 1;                                    // Required: execution ID
+}
+
+message TaskExecutionResponse {
+  TaskExecution task_execution = 1;
+}
+
+// ============================================================================
+// LIST TASK EXECUTIONS BY SCHEDULE
+// ============================================================================
+
+message ListTaskExecutionsRequest {
+  string schedule_id = 1;  // Required
+  int32  page_size   = 2;  // UI hardcodes 500
+  int32  page_offset = 3;
+}
+
+message ListTaskExecutionsResponse {
+  repeated TaskExecution task_executions = 1;
+  int32 total_count = 2;
+}
+
+// ============================================================================
+// TRIGGER REQUESTS/RESPONSES
+// ============================================================================
+
+message ActivateScheduleRequest {
+  string schedule_name = 1;  // Required: name of the schedule to activate
+}
+
+message ActivateScheduleResponse {
+  string schedule_id = 1;   // UUID of the created scheduler_tracker record
+                             // Empty string if a run was already active (no-op)
+}
+
+// ============================================================================
+// SCHEDULE CATALOG REQUESTS/RESPONSES
+// ============================================================================
+
+message ListAllSchedulesRequest {}
+
+// ScheduleSummary merges catalog data, last-run data, and cron config.
+// last_run_status uses lowercase strings ("succeeded", "failed", "cancelled")
+// matching the domain model — intentionally not the SchedulerStatus enum
+// to decouple this message from scheduler_tracker internals.
+message ScheduleSummary {
+  string schedule_name   = 1;
+  string cron_expression = 2;  // empty if not in schedules.yaml
+  string description     = 3;  // from schedules.yaml; empty if not found
+  string timezone        = 4;  // top-level timezone from schedules.yaml
+  bool   is_running      = 5;
+  google.protobuf.Timestamp last_run_at = 6;  // null if never run
+  string last_run_status = 7;  // "succeeded"/"failed"/"cancelled"; empty if never run
+  string last_run_id = 8;  // schedule_id of most recent run; empty string if never run
+}
+
+message ListAllSchedulesResponse {
+  repeated ScheduleSummary schedules = 1;
+}
+
+message TriggerScheduleRequest {
+  string schedule_name = 1;
+}
+
+// schedule_id is always non-empty on success.
+// Errors: NOT_FOUND (schedule not in catalog), FAILED_PRECONDITION (already running).
+message TriggerScheduleResponse {
+  string schedule_id = 1;
+}
+
+message CancelScheduleRequest {
+  string schedule_name       = 1;  // Required
+  string cancelled_by        = 2;  // Optional
+  string cancellation_reason = 3;  // Optional
+}
+
+message CancelScheduleResponse {
+  string schedule_id = 1;  // schedule_id of the cancelled run
+}
+
+message ResetTaskRequest {
+  string task_id = 1;
+}
+
+message GetSchedulerInitStatusRequest {
+  string schedule_id = 1;
+}
+
+message GetSchedulerInitStatusResponse {
+  string initialization_status = 1;
+}
+
+message TriggerRerunRequest {
+  string source_run_id = 1;  // schedule_id of the failed/cancelled run to rerun
+}
+
+message TriggerRerunResponse {
+  string run_id        = 1;  // schedule_id of the new rerun run
+  string schedule_name = 2;  // copied verbatim from source's schedule_name
+}
+
+message TriggerSingleNodeRunRequest {
+  string service_name    = 1;  // Required
+  string schema_name     = 2;  // Required
+  string table_name      = 3;  // Required
+  string metadata_source = 4;  // Required: "latest" | "snapshot_of_run"
+  string source_run_id   = 5;  // Required iff metadata_source == "snapshot_of_run"
+}
+
+message TriggerSingleNodeRunResponse {
+  string run_id        = 1;  // synthesized scheduler_tracker.schedule_id (uuid)
+  string schedule_name = 2;  // "single-node-run-<short-uuid>"
+}
+
+message TriggerRebaseRequest {
+  string source_run_id = 1;  // schedule_id of the failed/cancelled run to rebase from
+}
+
+message TriggerRebaseResponse {
+  string run_id        = 1;  // schedule_id of the new rebase run
+  string schedule_name = 2;  // copied verbatim from source's schedule_name
+}
+
+message ListNodeRunsRequest {
+  string service_name = 1;
+  string schema_name  = 2;
+  string table_name   = 3;
+  int32  limit        = 4;  // 0 → server default 50; max 50
+}
+
+message ListNodeRunsResponse {
+  repeated NodeRun runs = 1;
+}
+
+message NodeRun {
+  string run_id           = 1;
+  string schedule_name    = 2;
+  string kind             = 3;  // cron | trigger | rerun | rebase | single_node_run
+  string terminal_status  = 4;  // "" while in flight
+  string task_id          = 5;
+  string task_status      = 6;  // pending | running | succeeded | failed | cancelled
+  int32  retry_count      = 7;
+  string image_tag        = 8;
+  string manifest_version = 9;
+  string created_at       = 10; // RFC3339
+  string started_at       = 11; // RFC3339, "" if no execution yet
+  string completed_at     = 12; // RFC3339, "" if not finished
+  string error_message    = 13; // "" when none
+  string log_s3_key       = 14; // "" when none
+}
+
+message ListNodesRequest {
+  string search       = 1;  // case-insensitive substring on "service.schema.table"; "" = no filter
+  string service_name = 2;  // exact service filter; "" = all services
+  int32  limit        = 3;  // page size; 0 -> default 50, clamped to max 200
+  int32  offset       = 4;  // page offset; default 0
+}
+
+message ListNodesResponse {
+  repeated NodeSummary nodes = 1;
+  int32 total_count          = 2;  // total nodes matching the filter, ignoring limit/offset
+}
+
+message NodeSummary {
+  string service_name     = 1;
+  string schema_name      = 2;
+  string table_name       = 3;
+  int32  run_count        = 4;   // task instances in the stats window (<= 50)
+  int32  success_rate_pct = 5;   // -1 when no terminal runs in window
+  int32  avg_duration_sec = 6;   // -1 when no measurable run
+  int32  p95_duration_sec = 7;   // -1 when no measurable run
+  int32  flaky_rate_pct   = 8;   // % of window runs with retry_count > 0; 0 when none
+  string last_status      = 9;   // succeeded|failed|running|cancelled|pending
+  string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
+}
+
+message ListNodeNamesRequest {
+  string service_name = 1;  // exact service filter; "" = all services
+}
+
+message ListNodeNamesResponse {
+  repeated string table_names = 1;  // distinct, sorted ascending
+}

@@ -19,9 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OrchestratorQuery_GetScheduleGraph_FullMethodName = "/orchestrator.v1.OrchestratorQuery/GetScheduleGraph"
-	OrchestratorQuery_ListRuns_FullMethodName         = "/orchestrator.v1.OrchestratorQuery/ListRuns"
-	OrchestratorQuery_GetRunGraph_FullMethodName      = "/orchestrator.v1.OrchestratorQuery/GetRunGraph"
+	OrchestratorQuery_GetScheduleGraph_FullMethodName       = "/orchestrator.v1.OrchestratorQuery/GetScheduleGraph"
+	OrchestratorQuery_ListRuns_FullMethodName               = "/orchestrator.v1.OrchestratorQuery/ListRuns"
+	OrchestratorQuery_GetRunGraph_FullMethodName            = "/orchestrator.v1.OrchestratorQuery/GetRunGraph"
+	OrchestratorQuery_ListActiveRunDrifts_FullMethodName    = "/orchestrator.v1.OrchestratorQuery/ListActiveRunDrifts"
+	OrchestratorQuery_ListScheduleTopologies_FullMethodName = "/orchestrator.v1.OrchestratorQuery/ListScheduleTopologies"
 )
 
 // OrchestratorQueryClient is the client API for OrchestratorQuery service.
@@ -31,6 +33,8 @@ type OrchestratorQueryClient interface {
 	GetScheduleGraph(ctx context.Context, in *GetScheduleGraphRequest, opts ...grpc.CallOption) (*GetScheduleGraphResponse, error)
 	ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error)
 	GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error)
+	ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error)
+	ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error)
 }
 
 type orchestratorQueryClient struct {
@@ -71,6 +75,26 @@ func (c *orchestratorQueryClient) GetRunGraph(ctx context.Context, in *GetRunGra
 	return out, nil
 }
 
+func (c *orchestratorQueryClient) ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListActiveRunDriftsResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_ListActiveRunDrifts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorQueryClient) ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListScheduleTopologiesResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_ListScheduleTopologies_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrchestratorQueryServer is the server API for OrchestratorQuery service.
 // All implementations must embed UnimplementedOrchestratorQueryServer
 // for forward compatibility.
@@ -78,6 +102,8 @@ type OrchestratorQueryServer interface {
 	GetScheduleGraph(context.Context, *GetScheduleGraphRequest) (*GetScheduleGraphResponse, error)
 	ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error)
 	GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error)
+	ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error)
+	ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error)
 	mustEmbedUnimplementedOrchestratorQueryServer()
 }
 
@@ -96,6 +122,12 @@ func (UnimplementedOrchestratorQueryServer) ListRuns(context.Context, *ListRunsR
 }
 func (UnimplementedOrchestratorQueryServer) GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetRunGraph not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListActiveRunDrifts not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListScheduleTopologies not implemented")
 }
 func (UnimplementedOrchestratorQueryServer) mustEmbedUnimplementedOrchestratorQueryServer() {}
 func (UnimplementedOrchestratorQueryServer) testEmbeddedByValue()                           {}
@@ -172,6 +204,42 @@ func _OrchestratorQuery_GetRunGraph_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorQuery_ListActiveRunDrifts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListActiveRunDriftsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).ListActiveRunDrifts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_ListActiveRunDrifts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).ListActiveRunDrifts(ctx, req.(*ListActiveRunDriftsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorQuery_ListScheduleTopologies_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListScheduleTopologiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).ListScheduleTopologies(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_ListScheduleTopologies_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).ListScheduleTopologies(ctx, req.(*ListScheduleTopologiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrchestratorQuery_ServiceDesc is the grpc.ServiceDesc for OrchestratorQuery service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -190,6 +258,14 @@ var OrchestratorQuery_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRunGraph",
 			Handler:    _OrchestratorQuery_GetRunGraph_Handler,
+		},
+		{
+			MethodName: "ListActiveRunDrifts",
+			Handler:    _OrchestratorQuery_ListActiveRunDrifts_Handler,
+		},
+		{
+			MethodName: "ListScheduleTopologies",
+			Handler:    _OrchestratorQuery_ListScheduleTopologies_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
