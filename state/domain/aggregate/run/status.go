@@ -76,7 +76,12 @@ func ParseTaskStatus(s string) (TaskStatus, error) {
 type CallerID string
 
 const (
-	CallerStartupController  CallerID = "startup-controller"
+	// CallerRerunReset owns the vestigial failed→pending reset transition.
+	// No live caller exercises it: reruns mint a new Run (kind=rerun) via the
+	// orchestrator rather than resetting existing tasks, and the ResetTask gRPC
+	// path it authorizes has no client. Retained only to keep the transition
+	// table total; slated for removal with the orphaned ResetTask vertical.
+	CallerRerunReset         CallerID = "rerun-reset"
 	CallerExecutorController CallerID = "executor-controller"
 	CallerK8sController      CallerID = "k8s-controller"
 )
@@ -143,7 +148,7 @@ type taskTransition struct {
 // the from→to pair is unknown) or ErrUnauthorizedTransition (when the pair is
 // allowed but the requesting caller does not own it).
 var allowedTaskTransitions = []taskTransition{
-	{TaskStatusFailed, TaskStatusPending, CallerStartupController},
+	{TaskStatusFailed, TaskStatusPending, CallerRerunReset},
 	{TaskStatusPending, TaskStatusRunning, CallerExecutorController},
 	{TaskStatusFailed, TaskStatusRunning, CallerExecutorController},
 	{TaskStatusRunning, TaskStatusSucceeded, CallerK8sController},

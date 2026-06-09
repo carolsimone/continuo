@@ -63,7 +63,7 @@ e2e-setup:  ## Provision K8s test environment for E2E testing
 .PHONY: e2e-test
 e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-services already done)
 	@echo "Running E2E tests..."
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller go test -v -count=1 -timeout 10m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 25m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 .PHONY: e2e-cleanup
@@ -101,7 +101,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-state flyway-startup flyway-executor flyway-orchestrator flyway-k8s; do \
+	@for svc in flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -110,5 +110,5 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Building dbt-base image (required for e2e-setup)..."
 	@DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 	@$(MAKE) e2e-setup
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 startup-controller go test -v -count=1 -timeout 10m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 25m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup

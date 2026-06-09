@@ -11,13 +11,13 @@ import (
 )
 
 func TestCallerFromContext_Success(t *testing.T) {
-	md := metadata.Pairs("x-caller-id", "startup-controller")
+	md := metadata.Pairs("x-caller-id", "rerun-reset")
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 
 	caller, err := callerFromContext(ctx)
 
 	require.NoError(t, err)
-	assert.Equal(t, run.CallerStartupController, caller)
+	assert.Equal(t, run.CallerRerunReset, caller)
 }
 
 func TestCallerFromContext_NoMetadata(t *testing.T) {
