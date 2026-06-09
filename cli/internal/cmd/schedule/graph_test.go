@@ -251,9 +251,12 @@ func TestGraph_CriticalityStripping(t *testing.T) {
 func TestGraph_MissingArgumentExits2(t *testing.T) {
 	fake := &fakeOrchestrator{}
 
-	_, _, exit := runGraph(t, fake, []string{}, false)
+	stdout, _, exit := runGraph(t, fake, []string{}, false)
 
 	assert.Equal(t, 2, exit)
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
 }
 
 func TestGraph_NotFoundExits3(t *testing.T) {

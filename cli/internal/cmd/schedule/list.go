@@ -57,9 +57,14 @@ Errors:
 		Example: "  continuo schedule list",
 		Annotations: map[string]string{
 			"output_schema": `{"schedules":"array"}`,
-			"exit_codes":    `[0,5,6]`,
+			"exit_codes":    `[0,2,5,6]`,
 		},
-		Args: cobra.NoArgs,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("list takes no arguments"))
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()

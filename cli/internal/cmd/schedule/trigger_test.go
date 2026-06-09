@@ -117,9 +117,12 @@ func TestTrigger_UnavailableExits5(t *testing.T) {
 func TestTrigger_MissingArgumentExits2(t *testing.T) {
 	fake := &fakeState{}
 
-	_, _, exit := run(t, fake, []string{}, false)
+	stdout, _, exit := run(t, fake, []string{}, false)
 
 	assert.Equal(t, 2, exit)
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
 }
 
 func TestTrigger_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {

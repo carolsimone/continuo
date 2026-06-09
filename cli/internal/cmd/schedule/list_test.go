@@ -338,3 +338,14 @@ func TestList_FactoryErrorEmitsJSONAndExits(t *testing.T) {
 	require.True(t, errors.As(err, &cliErr))
 	assert.Equal(t, 5, cliErr.ExitCode())
 }
+
+func TestList_ExtraArgEmitsUsageEnvelopeExits2(t *testing.T) {
+	fake := &fakeStateList{resp: &statev1.ListAllSchedulesResponse{}}
+
+	stdout, _, exit := runList(t, fake, []string{"extra"}, false)
+
+	assert.Equal(t, 2, exit)
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
+}

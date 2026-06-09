@@ -109,3 +109,17 @@ func TestDescribe_HumanModeWritesSummaryToStderr(t *testing.T) {
 	assert.Empty(t, out.String(), "human mode must not write JSON to stdout")
 	assert.Contains(t, errBuf.String(), "schedule status", "human summary should list commands on stderr")
 }
+
+func TestDescribe_ExtraArgEmitsUsageEnvelopeExits2(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	exit := executeWith([]string{"describe", "extra"}, &out, &errBuf)
+	require.Equal(t, 2, exit)
+
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+	assert.Equal(t, "usage", env.Error.Code)
+}

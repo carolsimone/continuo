@@ -43,7 +43,7 @@ Errors:
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return output.NewUsageError("trigger requires exactly one argument: <schedule-name>")
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("trigger requires exactly one argument: <schedule-name>"))
 			}
 			return nil
 		},
@@ -78,6 +78,14 @@ Errors:
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
 	return cmd
+}
+
+// humanOutput reports whether --human is set, read directly from the command's
+// flags. Argument validators run before PersistentPreRunE populates cfg, so a
+// pre-RunE usage error cannot rely on cfg.Human and must read the flag itself.
+func humanOutput(cmd *cobra.Command) bool {
+	v, _ := cmd.Flags().GetBool("human")
+	return v
 }
 
 // emit returns the CLIError so the caller sees it via cmd.Execute(), and also

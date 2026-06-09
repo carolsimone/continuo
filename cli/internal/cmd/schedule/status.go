@@ -63,24 +63,26 @@ Errors:
 			"output_schema": `{"schedule_name":"string","run_id":"string","is_running":"bool","last_run_status":"string","nodes":"array"}`,
 			"exit_codes":    `[0,2,3,5,6]`,
 		},
-		Args: func(_ *cobra.Command, args []string) error {
+		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return output.NewUsageError("status requires exactly one argument: <schedule-name>")
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("status requires exactly one argument: <schedule-name>"))
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scheduleName := args[0]
-			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
-			defer cancel()
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(cmd.Context(), cfg.StateEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 			defer c.Close()
 
-			schedules, err := c.ListAllSchedules(ctx)
+			// Each RPC gets its own --timeout deadline, matching the documented
+			// per-call contract.
+			listCtx, cancelList := context.WithTimeout(cmd.Context(), cfg.Timeout)
+			schedules, err := c.ListAllSchedules(listCtx)
+			cancelList()
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -114,7 +116,9 @@ Errors:
 
 			// Page through every task row of the latest run.
 			for offset := int32(0); ; offset += statusPageSize {
-				resp, err := c.ListTasks(ctx, match.GetLastRunId(), statev1.TaskStatus_TASK_STATUS_UNSPECIFIED, statusPageSize, offset)
+				pageCtx, cancelPage := context.WithTimeout(cmd.Context(), cfg.Timeout)
+				resp, err := c.ListTasks(pageCtx, match.GetLastRunId(), statev1.TaskStatus_TASK_STATUS_UNSPECIFIED, statusPageSize, offset)
+				cancelPage()
 				if err != nil {
 					return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 				}

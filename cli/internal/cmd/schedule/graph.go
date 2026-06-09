@@ -80,7 +80,7 @@ Errors:
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return output.NewUsageError("graph requires exactly one argument: <schedule-name>")
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("graph requires exactly one argument: <schedule-name>"))
 			}
 			return nil
 		},

@@ -53,13 +53,27 @@ Output (stdout, JSON):
    "flags":[{"name":string,"shorthand":string,"usage":string,"default":string}],
    "examples":[string],"output_schema":object,"exit_codes":[number]}]}
 
-Errors: none under normal use (exit 0).`,
+Errors:
+  usage (exit 2)  unexpected arguments`,
 		Example: "  continuo describe",
 		Annotations: map[string]string{
 			"output_schema": `{"commands":"array"}`,
-			"exit_codes":    `[0]`,
+			"exit_codes":    `[0,2]`,
 		},
-		Args: cobra.NoArgs,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				e := output.NewUsageError("describe takes no arguments")
+				// Args validation runs before cfg is populated, so read --human directly.
+				human, _ := cmd.Flags().GetBool("human")
+				if human {
+					_ = output.HumanError(stderr, e)
+				} else {
+					_ = output.EmitError(stdout, e)
+				}
+				return e
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			payload := describePayload{Commands: collectCommands(cmd.Root())}
 			if cfg.Human {

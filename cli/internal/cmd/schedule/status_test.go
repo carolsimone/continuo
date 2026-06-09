@@ -25,15 +25,23 @@ type fakeStateStatus struct {
 	pages         []*statev1.ListTasksResponse // returned in order, one per ListTasks call
 	listErr       error
 	listTasksCall int
+
+	// Per-call deadline capture: each RPC records whether its context carried a
+	// deadline, so tests can assert the documented per-call --timeout contract.
+	listAllHadDeadline bool
+	listTasksDeadlines []bool
 }
 
 func (f *fakeStateStatus) TriggerSchedule(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerSchedule should not be called in status tests")
 }
-func (f *fakeStateStatus) ListAllSchedules(_ context.Context) (*statev1.ListAllSchedulesResponse, error) {
+func (f *fakeStateStatus) ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error) {
+	_, f.listAllHadDeadline = ctx.Deadline()
 	return f.schedules, f.schedulesErr
 }
-func (f *fakeStateStatus) ListTasks(_ context.Context, _ string, _ statev1.TaskStatus, _, _ int32) (*statev1.ListTasksResponse, error) {
+func (f *fakeStateStatus) ListTasks(ctx context.Context, _ string, _ statev1.TaskStatus, _, _ int32) (*statev1.ListTasksResponse, error) {
+	_, hasDeadline := ctx.Deadline()
+	f.listTasksDeadlines = append(f.listTasksDeadlines, hasDeadline)
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -179,8 +187,40 @@ func TestStatus_ListTasksRPCErrorExits5(t *testing.T) {
 
 func TestStatus_WrongArgCountExits2(t *testing.T) {
 	fake := &fakeStateStatus{}
-	_, _, exit := runStatus(t, fake, []string{}, false)
+	stdout, _, exit := runStatus(t, fake, []string{}, false)
 	assert.Equal(t, 2, exit)
+
+	// A usage error must still emit the machine-readable envelope on stdout,
+	// even though it is detected before RunE.
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
+}
+
+func TestStatus_AppliesPerCallDeadline(t *testing.T) {
+	page1 := &statev1.ListTasksResponse{TotalCount: 3, Tasks: []*statev1.Task{
+		{ServiceName: "s", SchemaName: "x", TableName: "a", Status: statev1.TaskStatus_TASK_STATUS_SUCCEEDED},
+		{ServiceName: "s", SchemaName: "x", TableName: "b", Status: statev1.TaskStatus_TASK_STATUS_FAILED},
+	}}
+	page2 := &statev1.ListTasksResponse{TotalCount: 3, Tasks: []*statev1.Task{
+		{ServiceName: "s", SchemaName: "x", TableName: "c", Status: statev1.TaskStatus_TASK_STATUS_SUCCEEDED},
+	}}
+	fake := &fakeStateStatus{
+		schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
+			{ScheduleName: "daily", LastRunId: "run-1"},
+		}},
+		pages: []*statev1.ListTasksResponse{page1, page2},
+	}
+
+	_, _, exit := runStatus(t, fake, []string{"daily"}, false)
+
+	require.Equal(t, 0, exit)
+	// The schedule lookup and every ListTasks page each carry their own deadline.
+	assert.True(t, fake.listAllHadDeadline, "ListAllSchedules ctx should carry a deadline")
+	require.Len(t, fake.listTasksDeadlines, 2)
+	for i, hasDeadline := range fake.listTasksDeadlines {
+		assert.True(t, hasDeadline, "ListTasks page %d ctx should carry its own deadline", i)
+	}
 }
 
 // TestStatus_OutputSchemaMatchesEmittedKeys is the drift control: the declared
