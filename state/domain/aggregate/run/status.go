@@ -72,20 +72,6 @@ func ParseTaskStatus(s string) (TaskStatus, error) {
 	return t, nil
 }
 
-// CallerID identifies which service is performing a task state transition.
-type CallerID string
-
-const (
-	// CallerRerunReset owns the vestigial failed→pending reset transition.
-	// No live caller exercises it: reruns mint a new Run (kind=rerun) via the
-	// orchestrator rather than resetting existing tasks, and the ResetTask gRPC
-	// path it authorizes has no client. Retained only to keep the transition
-	// table total; slated for removal with the orphaned ResetTask vertical.
-	CallerRerunReset         CallerID = "rerun-reset"
-	CallerExecutorController CallerID = "executor-controller"
-	CallerK8sController      CallerID = "k8s-controller"
-)
-
 // Kind discriminates run kinds. Wire-stable string values, matches the CHECK
 // constraint on scheduler_tracker.kind.
 type Kind string
@@ -133,39 +119,8 @@ type NodeID struct {
 
 // Transition errors returned by the aggregate's status mutation methods.
 var (
-	ErrInvalidTransition      = errors.New("invalid state transition")
-	ErrUnauthorizedTransition = errors.New("unauthorized state transition")
+	ErrInvalidTransition = errors.New("invalid state transition")
 )
-
-type taskTransition struct {
-	from  TaskStatus
-	to    TaskStatus
-	owner CallerID
-}
-
-// allowedTaskTransitions enumerates the (from,to,owner) triples permitted on
-// a task. Any transition outside this table yields ErrInvalidTransition (when
-// the from→to pair is unknown) or ErrUnauthorizedTransition (when the pair is
-// allowed but the requesting caller does not own it).
-var allowedTaskTransitions = []taskTransition{
-	{TaskStatusFailed, TaskStatusPending, CallerRerunReset},
-	{TaskStatusPending, TaskStatusRunning, CallerExecutorController},
-	{TaskStatusFailed, TaskStatusRunning, CallerExecutorController},
-	{TaskStatusRunning, TaskStatusSucceeded, CallerK8sController},
-	{TaskStatusRunning, TaskStatusFailed, CallerK8sController},
-}
-
-// canTaskTransition is a pure-domain check used by Run.ResetTaskToPending and
-// other in-aggregate mutators. It returns (ok, ownerOK) so callers can return
-// the appropriate error variant.
-func canTaskTransition(from, to TaskStatus, caller CallerID) (allowed, ownerOK bool) {
-	for _, tr := range allowedTaskTransitions {
-		if tr.from == from && tr.to == to {
-			return true, tr.owner == caller
-		}
-	}
-	return false, false
-}
 
 type schedulerTransition struct {
 	from SchedulerStatus

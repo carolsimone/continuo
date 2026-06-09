@@ -15,11 +15,6 @@ import (
 // Write methods are targeted SQL operations the aggregate orchestrates
 // inside its own method bodies.
 type TaskCollection interface {
-	// GetStatus returns the current status of a single task. The second
-	// return is false when the row does not exist; err is non-nil only
-	// for genuine I/O failures.
-	GetStatus(ctx context.Context, taskID uuid.UUID) (status TaskStatus, exists bool, err error)
-
 	// LoadStatusAndAttempt returns the current status and stored retry_count
 	// (the attempt number) of a single task, locking the row FOR UPDATE so
 	// concurrent task.status.updated deliveries for the same task serialize.
@@ -61,8 +56,4 @@ type TaskCollection interface {
 	// BulkCancel marks every non-terminal task of the given run as
 	// CANCELLED, stamping cancelled_by. Returns the number of rows updated.
 	BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string) (rowsAffected int, err error)
-
-	// Update persists the mutated fields of one Task. Used by the
-	// ResetTaskToPending path.
-	Update(ctx context.Context, t Task) error
 }

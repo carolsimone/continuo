@@ -1,6 +1,6 @@
 # State Machine: Task & Scheduler Transition Flow and Service Ownership
 
-Source of truth: `state/domain/aggregate/run/` (`status.go` transition tables, `run.go` aggregate methods)
+Source of truth: `state/domain/aggregate/run/` (`run.go` aggregate methods; `status.go` scheduler transition table)
 
 ---
 
@@ -10,8 +10,8 @@ Source of truth: `state/domain/aggregate/run/` (`status.go` transition tables, `
 
 ```
 pending → running → succeeded
-       ↗         ↘ failed → pending  (reset-to-pending; vestigial — see note)
-  failed                  → running  (direct re-run via executor-controller)
+                 ↘ failed → running   (direct re-run via executor-controller)
+       ↘ skipped                       (cascade-skip when an upstream node fails)
 ```
 
 | State | Description |
@@ -23,36 +23,30 @@ pending → running → succeeded
 | `cancelled` | Task was cancelled (terminal; handled outside the transition table) |
 | `skipped` | Task was cascade-skipped because an upstream node failed (terminal; set by `orchestrator` via `task.status.updated:v1`, never executed) |
 
-### Allowed Transitions
+### Transitions
 
-| From | To | Owner | Trigger |
+| From | To | Produced by | Trigger |
 |---|---|---|---|
-| `failed` | `pending` | — (vestigial) | Reset-to-pending. Retained in the transition table but exercised by no live caller: reruns mint a new `Run` (`kind=rerun`) via the `orchestrator` rather than resetting existing tasks. |
 | `pending` | `running` | `executor-controller` | Task picked up from the dependency-resolved queue |
-| `failed` | `running` | `executor-controller` | Direct re-run of a failed task (skips reset-to-pending) |
+| `failed` | `running` | `executor-controller` | Direct re-run of a failed task |
 | `running` | `succeeded` | `k8s-controller` | Kubernetes job completes successfully |
 | `running` | `failed` | `k8s-controller` | Kubernetes job errors or times out |
 | `pending` | `skipped` | `orchestrator` | Upstream node failed; the run aggregate cascade-skips the still-pending downstream and emits `task.status.updated:v1` (`"skipped"`) |
 
-### Service Ownership
+Each transition is produced by exactly one service — the producer of the
+corresponding `task.status.updated:v1` event (or, for `skipped`, the
+orchestrator cascade). There is no caller-authorization table on task
+transitions: `state` applies whatever status the producer reports, ordered by
+attempt number, via `Run.RecordTaskStatus`.
 
-Each transition is exclusively owned by one service. An attempt by the wrong caller returns `ErrUnauthorizedTransition`.
+### Application
 
-#### `executor-controller`
-- `pending → running`: picks up a pending task and begins execution.
-- `failed → running`: re-executes a failed task directly (bypasses reset-to-pending for immediate retry).
-
-#### `k8s-controller`
-- `running → succeeded`: marks the task complete after the Kubernetes job finishes successfully.
-- `running → failed`: marks the task failed after the Kubernetes job errors or times out.
-
-### Enforcement
-
-`canTaskTransition(from, to TaskStatus, caller CallerID)` in `state/domain/aggregate/run/status.go` (used by `Run.ResetTaskToPending`):
-
-- `ErrInvalidTransition` — the `(from, to)` pair is not in the allowed set.
-- `ErrUnauthorizedTransition` — the pair exists but this caller does not own it.
-- Status is **only mutated on success**.
+Task status is applied by `Run.RecordTaskStatus` in
+`state/domain/aggregate/run/run.go`, which consumes `task.status.updated:v1`
+and orders updates by attempt (`retry_count`) so the projection is independent
+of delivery order — see **Attempt-monotonic status updates** below. There is no
+per-transition `(from, to, owner)` table; status is a straight, attempt-ordered
+projection of the events the executor and k8s controllers emit.
 
 ### Notes
 

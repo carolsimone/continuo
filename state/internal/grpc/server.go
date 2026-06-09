@@ -154,11 +154,6 @@ func (s *Server) ListTasks(ctx context.Context, req *statev1.ListTasksRequest) (
 	return s.taskHandler.ListTasks(ctx, req)
 }
 
-// ResetTask delegates to task handler
-func (s *Server) ResetTask(ctx context.Context, req *statev1.ResetTaskRequest) (*statev1.TaskResponse, error) {
-	return s.taskHandler.ResetTask(ctx, req)
-}
-
 // GetSchedulerInitStatus delegates to scheduler handler
 func (s *Server) GetSchedulerInitStatus(ctx context.Context, req *statev1.GetSchedulerInitStatusRequest) (*statev1.GetSchedulerInitStatusResponse, error) {
 	return s.schedulerHandler.GetSchedulerInitStatus(ctx, req)
