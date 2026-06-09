@@ -42,12 +42,6 @@ export default function NodesCatalogPanel() {
       setTotal(data.total_count || 0);
       offsetRef.current = offset;
       setNodes(prev => (append ? [...prev, ...(data.nodes || [])] : (data.nodes || [])));
-      // Keep the autocomplete list complete while the user filters by exact name:
-      // only refresh it on unfiltered (search-empty) loads. Bounded to the first
-      // page of names — fine at current catalog sizes.
-      if (!search) {
-        setNameOptions(Array.from(new Set((data.nodes || []).map(n => n.table_name))).sort());
-      }
     } catch {
       if (myGen !== genRef.current) return;
       setError('Failed to load nodes');
@@ -67,6 +61,17 @@ export default function NodesCatalogPanel() {
     }, 10000);
     return () => clearInterval(id);
   }, [fetchPage]);
+
+  // Autocomplete: the COMPLETE distinct-name list, independent of the paginated
+  // catalog. Refetched on mount and on service change (not on search/paging).
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (service) params.set('service', service);
+    fetch(`/api/nodes/names?${params.toString()}`)
+      .then(r => (r.ok ? r.json() : { names: [] }))
+      .then((d: { names?: string[] }) => setNameOptions(d.names || []))
+      .catch(() => { /* autocomplete is best-effort */ });
+  }, [service]);
 
   const services = Array.from(new Set(nodes.map(n => n.service_name))).sort();
   const canLoadMore = nodes.length < total;

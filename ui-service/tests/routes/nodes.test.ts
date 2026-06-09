@@ -7,11 +7,13 @@ import { createNodesRouter } from '../../src/server/routes/nodes';
 const mockListNodeRuns = vi.fn();
 const mockTriggerSingleNodeRun = vi.fn();
 const mockListNodes = vi.fn();
+const mockListNodeNames = vi.fn();
 
 const mockStateClient = {
   listNodeRuns: mockListNodeRuns,
   triggerSingleNodeRun: mockTriggerSingleNodeRun,
   listNodes: mockListNodes,
+  listNodeNames: mockListNodeNames,
 };
 
 function makeApp() {
@@ -26,6 +28,7 @@ describe('nodes router', () => {
     mockListNodeRuns.mockReset();
     mockTriggerSingleNodeRun.mockReset();
     mockListNodes.mockReset();
+    mockListNodeNames.mockReset();
   });
 
   it('GET /:svc/:schema/:table/runs returns parsed rows', async () => {
@@ -164,5 +167,13 @@ describe('nodes router', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.error).toContain('source run missing');
+  });
+
+  it('GET /names returns distinct node names', async () => {
+    mockListNodeNames.mockImplementation((_req, cb) => cb(null, { table_names: ['customers', 'orders'] }));
+    const res = await request(makeApp()).get('/api/nodes/names?service=svc');
+    expect(res.status).toBe(200);
+    expect(res.body.names).toEqual(['customers', 'orders']);
+    expect(mockListNodeNames).toHaveBeenCalledWith({ service_name: 'svc' }, expect.any(Function));
   });
 });
