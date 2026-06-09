@@ -291,7 +291,7 @@ func TestResetTask_NotFound(t *testing.T) {
 	repo := newStubTaskRepo()
 	h := NewTaskHandler(repo, noopUoWFactory(), newTestLogger())
 
-	_, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
+	_, err := h.ResetTask(ctxWithCaller(run.CallerRerunReset), &statev1.ResetTaskRequest{
 		TaskId: uuid.NewString(),
 	})
 
@@ -300,7 +300,7 @@ func TestResetTask_NotFound(t *testing.T) {
 	assert.Equal(t, codes.NotFound, st.Code())
 }
 
-func TestResetTask_HappyPath_FailedToStartupController(t *testing.T) {
+func TestResetTask_HappyPath_FailedToPending(t *testing.T) {
 	repo := newStubTaskRepo()
 	task := makeTask(repo, run.TaskStatusFailed, 3)
 
@@ -311,7 +311,7 @@ func TestResetTask_HappyPath_FailedToStartupController(t *testing.T) {
 
 	h := NewTaskHandler(repo, factory, newTestLogger())
 
-	resp, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
+	resp, err := h.ResetTask(ctxWithCaller(run.CallerRerunReset), &statev1.ResetTaskRequest{
 		TaskId: task.TaskID.String(),
 	})
 
@@ -352,7 +352,7 @@ func TestResetTask_RunIsTerminal_ReturnsFailedPrecondition(t *testing.T) {
 
 	h := NewTaskHandler(repo, factory, newTestLogger())
 
-	_, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
+	_, err := h.ResetTask(ctxWithCaller(run.CallerRerunReset), &statev1.ResetTaskRequest{
 		TaskId: task.TaskID.String(),
 	})
 
@@ -373,7 +373,7 @@ func TestResetTask_InvalidTransition_ReturnsFailedPrecondition(t *testing.T) {
 
 	h := NewTaskHandler(repo, factory, newTestLogger())
 
-	_, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
+	_, err := h.ResetTask(ctxWithCaller(run.CallerRerunReset), &statev1.ResetTaskRequest{
 		TaskId: task.TaskID.String(),
 	})
 
@@ -384,7 +384,7 @@ func TestResetTask_InvalidTransition_ReturnsFailedPrecondition(t *testing.T) {
 
 func TestResetTask_UnauthorizedCaller_ReturnsPermissionDenied(t *testing.T) {
 	// executor-controller is not authorized to reset tasks (failed→pending is
-	// owned by startup-controller only).
+	// owned by CallerRerunReset only).
 	repo := newStubTaskRepo()
 	task := makeTask(repo, run.TaskStatusFailed, 2)
 
@@ -417,7 +417,7 @@ func TestResetTask_TaskNotFoundInAggregate_ReturnsNotFound(t *testing.T) {
 
 	h := NewTaskHandler(repo, factory, newTestLogger())
 
-	_, err := h.ResetTask(ctxWithCaller(run.CallerStartupController), &statev1.ResetTaskRequest{
+	_, err := h.ResetTask(ctxWithCaller(run.CallerRerunReset), &statev1.ResetTaskRequest{
 		TaskId: task.TaskID.String(),
 	})
 

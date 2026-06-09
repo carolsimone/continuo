@@ -1,6 +1,6 @@
 # State Machine: Task & Scheduler Transition Flow and Service Ownership
 
-Source of truth: `state/domain/model/model.go`
+Source of truth: `state/domain/aggregate/run/` (`status.go` transition tables, `run.go` aggregate methods)
 
 ---
 
@@ -10,7 +10,7 @@ Source of truth: `state/domain/model/model.go`
 
 ```
 pending → running → succeeded
-       ↗         ↘ failed → pending  (retry via startup-controller)
+       ↗         ↘ failed → pending  (reset-to-pending; vestigial — see note)
   failed                  → running  (direct re-run via executor-controller)
 ```
 
@@ -27,7 +27,7 @@ pending → running → succeeded
 
 | From | To | Owner | Trigger |
 |---|---|---|---|
-| `failed` | `pending` | `startup-controller` | Rerun command — resets a failed task before re-queuing |
+| `failed` | `pending` | — (vestigial) | Reset-to-pending. Retained in the transition table but exercised by no live caller: reruns mint a new `Run` (`kind=rerun`) via the `orchestrator` rather than resetting existing tasks. |
 | `pending` | `running` | `executor-controller` | Task picked up from the dependency-resolved queue |
 | `failed` | `running` | `executor-controller` | Direct re-run of a failed task (skips reset-to-pending) |
 | `running` | `succeeded` | `k8s-controller` | Kubernetes job completes successfully |
@@ -37,9 +37,6 @@ pending → running → succeeded
 ### Service Ownership
 
 Each transition is exclusively owned by one service. An attempt by the wrong caller returns `ErrUnauthorizedTransition`.
-
-#### `startup-controller`
-- `failed → pending`: resets a failed task to pending on a rerun, before re-queuing it for execution.
 
 #### `executor-controller`
 - `pending → running`: picks up a pending task and begins execution.
@@ -51,7 +48,7 @@ Each transition is exclusively owned by one service. An attempt by the wrong cal
 
 ### Enforcement
 
-`TaskTracker.Transition(caller CallerID, to TaskStatus) error` in `state/domain/model/model.go`:
+`canTaskTransition(from, to TaskStatus, caller CallerID)` in `state/domain/aggregate/run/status.go` (used by `Run.ResetTaskToPending`):
 
 - `ErrInvalidTransition` — the `(from, to)` pair is not in the allowed set.
 - `ErrUnauthorizedTransition` — the pair exists but this caller does not own it.
@@ -89,9 +86,9 @@ The decision lives entirely in the aggregate; the repository supplies the prior 
 | Field | Purpose | Managed by |
 |---|---|---|
 | `status` | Scheduler lifecycle (`pending / running / succeeded / failed / cancelled`) | `UpdateScheduler` gRPC + `CancelScheduler` |
-| `initialization_status` | Graph loading progress (`pending / in_progress / completed / failed`) | `UpdateSchedulerInitStatus` gRPC |
+| `initialization_status` | DAG-projection progress (`pending / in_progress / completed / failed`) | `state` (internal, on `run.entries.dispatched:v1`) |
 
-These are separate concerns. `initialization_status` tracks whether `startup-controller` has finished loading the DAG into the graph — it is **not** part of the lifecycle state machine. However, it has one side effect on `status`: when `initialization_status` reaches `"completed"`, the `state` service internally triggers `status: pending → running`. This is the only coupling between the two fields.
+These are separate concerns. `initialization_status` tracks whether the `orchestrator` has projected the run's DAG and dispatched its task entries — it is **not** part of the lifecycle state machine. However, it has one side effect on `status`: when `initialization_status` reaches `"completed"`, the `state` service internally triggers `status: pending → running`. This is the only coupling between the two fields.
 
 ---
 
@@ -116,7 +113,7 @@ These are separate concerns. `initialization_status` tracks whether `startup-con
 
 | From | To | Owner | Trigger |
 |---|---|---|---|
-| `pending` | `running` | `state` service (internal) | Side effect of `initialization_status` reaching `"completed"` — see below |
+| `pending` | `running` | `state` service (internal) | Side effect of `initialization_status` reaching `"completed"` when the dispatched projection is accepted — see below |
 | `running` | `succeeded` | `state` service (internal) | `TaskStatusUpdatedHandler` finalises `scheduler_tracker` when `terminal_task_count` reaches `total_task_count` with no `failed` task |
 | `running` | `failed` | `state` service (internal) | `TaskStatusUpdatedHandler` finalises `scheduler_tracker` when `terminal_task_count` reaches `total_task_count` with at least one `failed` task |
 | `pending` or `running` | `cancelled` | `CancelScheduler` endpoint | `repo.Cancel()` — separate path, not through `Transition()` |
@@ -124,7 +121,7 @@ These are separate concerns. `initialization_status` tracks whether `startup-con
 #### Service Ownership
 
 **`state` service**
-- `pending → running`: never called directly by any external service. Fires automatically inside `UpdateSchedulerInitStatus` when `initialization_status` is set to `"completed"` and `status` is still `pending`.
+- `pending → running`: never called directly by any external service. Fires inside the `Run` aggregate's `AcceptDispatch` (`state/domain/aggregate/run/run.go`) when `state` consumes `run.entries.dispatched:v1`: the same method sets `initialization_status = "completed"` and, if not all dispatched tasks are already terminal, transitions `status: pending → running`.
 
 **`state` service (internal, via `TaskStatusUpdatedHandler`)**
 - `running → succeeded`: when `terminal_task_count == total_task_count` and no task is in `failed`.
@@ -134,7 +131,7 @@ In both cases the same SQL transaction writes a `run.finalized:v1` outbox row. T
 
 #### Enforcement
 
-`SchedulerTracker.Transition(to SchedulerStatus) error` in `state/domain/model/model.go`:
+`SchedulerTracker.Transition(to SchedulerStatus) error` in `state/domain/aggregate/run/run.go`:
 
 - `ErrInvalidTransition` — the `(from, to)` pair is not allowed.
 - Status is **only mutated on success**.
@@ -146,7 +143,7 @@ In both cases the same SQL transaction writes a `run.finalized:v1` outbox row. T
 
 ### `initialization_status` — Graph Loading Progress
 
-Tracks whether `startup-controller` has finished loading the DAG. Managed exclusively via the `UpdateSchedulerInitStatus` gRPC call. Not part of the lifecycle state machine.
+Tracks whether the run's DAG has been projected and its task entries dispatched. Managed internally by `state` when it consumes `run.entries.dispatched:v1` from the `orchestrator`. Not part of the lifecycle state machine.
 
 ```
 pending → in_progress → completed
@@ -156,15 +153,15 @@ pending → in_progress → completed
 | Value | Description |
 |---|---|
 | `pending` | Scheduler created; initialization not yet started |
-| `in_progress` | `startup-controller` is loading the graph |
-| `completed` | Graph loaded; triggers `status: pending → running` as a side effect |
-| `failed` | Graph loading failed |
+| `in_progress` | Run created; awaiting the orchestrator's dispatched projection |
+| `completed` | Projection accepted and child tasks created; triggers `status: pending → running` as a side effect |
+| `failed` | Projection / dispatch failed |
 
-**Owner:** `startup-controller` only.
-- Sets `"in_progress"` at the start of graph initialization.
-- Sets `"completed"` after all nodes and tasks are loaded and the local transaction is committed.
+**Owner:** `state` (internal) only.
+- Created with `"in_progress"` when the run is minted.
+- Sets `"completed"` inside `Run.AcceptDispatch` after the dispatched task entries are bulk-created and the local transaction is committed.
 
-**Side effect on `status`:** When `UpdateSchedulerInitStatus("completed")` is called, the `state` service checks `if status == pending` and calls `SchedulerTracker.Transition(running)` internally. This is the only place `pending → running` is ever triggered.
+**Side effect on `status`:** Within the same `AcceptDispatch` transaction, when `initialization_status` reaches `"completed"` and `status` is still `pending`, `state` transitions `SchedulerTracker` to `running` (or straight to a terminal outcome if every dispatched task is already terminal). This is the only place `pending → running` is ever triggered.
 
 ---
 
@@ -172,4 +169,3 @@ pending → in_progress → completed
 
 - `CreateScheduler` always creates with `status = pending` and `initialization_status = pending` (both omitted from the request; state service defaults).
 - `cancelled` is not in the `Transition()` table. Cancellation goes through `repo.Cancel()` which enforces its own terminal-state guard (`ErrNotCancellable`).
-- `startup-controller` never writes `status` directly — only `initialization_status`.

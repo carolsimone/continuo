@@ -19,8 +19,6 @@ Legend:
 | `ui-service` | `-` | `-` | `-` | `RW` | `R` | `R` | `-` | `R` | `-` |
 | `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` | `-` |
 
-> `startup-controller` has been removed. Its responsibilities were absorbed into `orchestrator`.
-
 > `continuo CLI` is an external consumer (not a Docker Compose service). It is invoked by humans or LLM agents and makes direct gRPC calls to `state` (port 50051) and `orchestrator` (port 50052). It produces no Redis events and holds no durable state.
 
 ## Redis Stream Matrix
