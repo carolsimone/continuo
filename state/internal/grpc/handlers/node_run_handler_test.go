@@ -27,6 +27,11 @@ type fakeNodeRunRepo struct {
 	gotService    string
 	gotNodeLimit  int
 	gotNodeOffset int
+
+	// node-names (ListNodeNames) capture + canned return
+	nodeNames      []string
+	nodeNamesErr   error
+	gotNamesService string
 }
 
 func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _ string, limit int) ([]*projection.NodeRun, error) {
@@ -43,6 +48,11 @@ func (f *fakeNodeRunRepo) ListNodes(_ context.Context, search, service string, l
 		return nil, 0, f.nodeErr
 	}
 	return f.nodeRows, f.nodeTotal, nil
+}
+
+func (f *fakeNodeRunRepo) ListNodeNames(_ context.Context, service string) ([]string, error) {
+	f.gotNamesService = service
+	return f.nodeNames, f.nodeNamesErr
 }
 
 func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
@@ -157,5 +167,20 @@ func TestNodeRunHandler_ListNodes_ClampsLimitTo200(t *testing.T) {
 	}
 	if repo.gotNodeLimit != 200 {
 		t.Errorf("limit passed = %d, want 200 (clamp)", repo.gotNodeLimit)
+	}
+}
+
+func TestNodeRunHandler_ListNodeNames(t *testing.T) {
+	repo := &fakeNodeRunRepo{nodeNames: []string{"customers", "orders"}}
+	h := NewNodeRunHandler(repo, nil)
+	resp, err := h.ListNodeNames(context.Background(), &statev1.ListNodeNamesRequest{ServiceName: "svc"})
+	if err != nil {
+		t.Fatalf("ListNodeNames: %v", err)
+	}
+	if repo.gotNamesService != "svc" {
+		t.Errorf("service not forwarded: %q", repo.gotNamesService)
+	}
+	if len(resp.TableNames) != 2 || resp.TableNames[0] != "customers" {
+		t.Errorf("TableNames = %v", resp.TableNames)
 	}
 }

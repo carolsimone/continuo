@@ -54,6 +54,15 @@ export function createNodesRouter(stateClient: GrpcClient) {
     });
   });
 
+  // GET /api/nodes/names?service= — distinct node table names for search autocomplete
+  router.get('/names', (req, res) => {
+    const service = typeof req.query.service === 'string' ? req.query.service : '';
+    stateClient.listNodeNames({ service_name: service }, (err: any, response: any) => {
+      if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+      res.json({ names: response.table_names || [] });
+    });
+  });
+
   // GET /api/nodes/:service/:schema/:table/runs — last 50 raw runs on this node
   router.get('/:service/:schema/:table/runs', (req, res) => {
     stateClient.listNodeRuns(

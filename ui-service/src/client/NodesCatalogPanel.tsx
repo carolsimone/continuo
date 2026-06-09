@@ -21,6 +21,7 @@ export default function NodesCatalogPanel() {
   const [nodes, setNodes] = useState<NodeSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [nameOptions, setNameOptions] = useState<string[]>([]);
   const offsetRef = useRef(0);
   const genRef = useRef(0);
 
@@ -61,6 +62,17 @@ export default function NodesCatalogPanel() {
     return () => clearInterval(id);
   }, [fetchPage]);
 
+  // Autocomplete: the COMPLETE distinct-name list, independent of the paginated
+  // catalog. Refetched on mount and on service change (not on search/paging).
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (service) params.set('service', service);
+    fetch(`/api/nodes/names?${params.toString()}`)
+      .then(r => (r.ok ? r.json() : { names: [] }))
+      .then((d: { names?: string[] }) => setNameOptions(d.names || []))
+      .catch(() => { /* autocomplete is best-effort */ });
+  }, [service]);
+
   const services = Array.from(new Set(nodes.map(n => n.service_name))).sort();
   const canLoadMore = nodes.length < total;
 
@@ -70,9 +82,12 @@ export default function NodesCatalogPanel() {
 
       <div className="form-field">
         <label htmlFor="node-search">Filter</label>
-        <input id="node-search" className="node-search-input"
-               placeholder="search node… e.g. customers"
+        <input id="node-search" className="node-search-input" list="node-name-options"
+               placeholder="exact table name… e.g. customers"
                value={search} onChange={e => setSearch(e.target.value)} />
+        <datalist id="node-name-options">
+          {nameOptions.map(name => <option key={name} value={name} />)}
+        </datalist>
         <label htmlFor="node-service">Service</label>
         <select id="node-service" value={service} onChange={e => setService(e.target.value)}>
           <option value="">all</option>

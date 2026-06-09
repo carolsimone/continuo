@@ -19,7 +19,12 @@ const page = {
 const fetchMock = vi.fn();
 beforeEach(() => {
   fetchMock.mockReset();
-  fetchMock.mockResolvedValue({ ok: true, json: async () => page });
+  fetchMock.mockImplementation((url: any) => {
+    if (String(url).includes('/api/nodes/names')) {
+      return Promise.resolve({ ok: true, json: async () => ({ names: ['dim_products', 'fct_orders', 'rpt_revenue'] }) });
+    }
+    return Promise.resolve({ ok: true, json: async () => page });
+  });
   vi.stubGlobal('fetch', fetchMock);
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -30,6 +35,16 @@ describe('NodesCatalogPanel', () => {
     expect(await screen.findByText('fct_orders')).toBeInTheDocument();
     expect(screen.getByText('dim_products')).toBeInTheDocument();
     expect(screen.getByText(/service-1 · an/)).toBeInTheDocument();
+  });
+
+  it('offers the complete distinct-name list as datalist options (independent of the paged catalog)', async () => {
+    const { container } = render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
+    await screen.findByText('fct_orders');
+    const opts = Array.from(container.querySelectorAll('#node-name-options option'))
+      .map(o => (o as HTMLOptionElement).value);
+    expect(opts).toContain('fct_orders');
+    expect(opts).toContain('dim_products');
+    expect(opts).toContain('rpt_revenue'); // from /names, NOT present in the catalog page
   });
 
   it('navigates to /node/:fqn on row click', async () => {
@@ -46,13 +61,23 @@ describe('NodesCatalogPanel', () => {
   });
 
   it('shows empty state when there are no nodes', async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ total_count: 0, nodes: [] }) });
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/api/nodes/names')) {
+        return Promise.resolve({ ok: true, json: async () => ({ names: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ total_count: 0, nodes: [] }) });
+    });
     render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
     expect(await screen.findByText(/No node runs yet/i)).toBeInTheDocument();
   });
 
   it('renders an error strip when the fetch fails', async () => {
-    fetchMock.mockResolvedValue({ ok: false, json: async () => ({ error: 'boom' }) });
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/api/nodes/names')) {
+        return Promise.resolve({ ok: true, json: async () => ({ names: [] }) });
+      }
+      return Promise.resolve({ ok: false, json: async () => ({ error: 'boom' }) });
+    });
     const { container } = render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
     expect(await screen.findByText(/Failed to load nodes/i)).toBeInTheDocument();
     expect(container.querySelector('.info-strip--error')).toBeInTheDocument();
@@ -68,8 +93,6 @@ describe('NodesCatalogPanel', () => {
 
   it('ignores a stale response that resolves after a newer one', async () => {
     vi.useFakeTimers();
-    fetchMock.mockReset();
-
     let resolveStale!: (v: any) => void;
     const stalePromise = new Promise(r => { resolveStale = r; });
     const pageNew = { total_count: 1, nodes: [
@@ -80,15 +103,20 @@ describe('NodesCatalogPanel', () => {
       { service_name: 'svc', schema_name: 'an', table_name: 'STALE_NODE',
         run_count: 1, success_rate_pct: 0, avg_duration_sec: 1, p95_duration_sec: 1,
         flaky_rate_pct: 0, last_status: 'failed', last_run_at: '2026-06-08T10:00:00Z' } ] };
-
-    fetchMock
-      .mockReturnValueOnce(stalePromise)                                        // call 1 (mount) — deferred
-      .mockResolvedValueOnce({ ok: true, json: async () => pageNew });          // call 2 (after search)
-
+    let catalogCall = 0;
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/api/nodes/names')) {
+        return Promise.resolve({ ok: true, json: async () => ({ names: [] }) });
+      }
+      catalogCall += 1;
+      if (catalogCall === 1) return stalePromise;                       // mount catalog page — deferred
+      return Promise.resolve({ ok: true, json: async () => pageNew });  // post-search catalog page
+    });
     render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
     await vi.advanceTimersByTimeAsync(250);                                     // fire mount debounce → call 1 (pending)
 
-    fireEvent.change(screen.getByPlaceholderText(/search node/i), { target: { value: 'x' } });
+    fireEvent.change(screen.getByPlaceholderText(/table name/i), { target: { value: 'x' } });
     await vi.advanceTimersByTimeAsync(250);                                     // fire call 2 → resolves pageNew
     expect(screen.getByText('NEW_NODE')).toBeInTheDocument();
 

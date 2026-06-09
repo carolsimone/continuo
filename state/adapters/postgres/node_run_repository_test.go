@@ -228,7 +228,7 @@ func ptrTime(t time.Time) *time.Time { return &t }
 
 // TestNodeRunRepository_ListNodes_AggregatesAndFilters seeds two nodes under the
 // same service and asserts the catalog aggregates, ordering (newest last_run_at
-// first), the service filter, and the search substring filter.
+// first), the service filter, and the exact table-name search filter.
 func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -293,7 +293,7 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	assert.Equal(t, 0, total2)
 	assert.Empty(t, none)
 
-	hit, total3, err := repo.ListNodes(ctx, "fct_ord", svc, 50, 0)
+	hit, total3, err := repo.ListNodes(ctx, "fct_orders", svc, 50, 0) // exact table-name match
 	require.NoError(t, err)
 	assert.Equal(t, 1, total3)
 	require.Len(t, hit, 1)
@@ -440,15 +440,17 @@ func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 	assert.Equal(t, 50, nodes[0].SuccessRatePct, "succeeded+skipped => 1/2 = 50%")
 }
 
-// TestNodeRunRepository_ListNodes_EscapesUnderscore verifies the LIKE wildcard
-// '_' in search is treated literally, not matching an arbitrary character.
-func TestNodeRunRepository_ListNodes_EscapesUnderscore(t *testing.T) {
+// TestNodeRunRepository_ListNodes_ExactTableMatch verifies the search term is an
+// EXACT (case-insensitive) match on the table name: "fct_orders" returns only
+// "fct_orders", never a substring sibling ("fctxorders") or a suffixed variant
+// ("fct_orders_v2").
+func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, discardLogger())
-	svc := "svc-esc-" + uuid.New().String()[:8]
+	svc := "svc-exact-" + uuid.New().String()[:8]
 	mk := func(table string) {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
@@ -463,12 +465,63 @@ func TestNodeRunRepository_ListNodes_EscapesUnderscore(t *testing.T) {
 		}))
 	}
 	mk("fct_orders")
-	mk("fctxorders")
+	mk("fctxorders")    // substring sibling — must NOT match
+	mk("fct_orders_v2") // suffixed variant — must NOT match
+
 	hit, total, err := repo.ListNodes(ctx, "fct_orders", svc, 50, 0)
 	require.NoError(t, err)
-	assert.Equal(t, 1, total, "underscore is literal -> only fct_orders matches")
+	assert.Equal(t, 1, total, "exact match -> only fct_orders, not fctxorders or fct_orders_v2")
 	require.Len(t, hit, 1)
 	assert.Equal(t, "fct_orders", hit[0].TableName)
+
+	// match is case-insensitive
+	hitCI, totalCI, err := repo.ListNodes(ctx, "FCT_ORDERS", svc, 50, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, totalCI)
+	require.Len(t, hitCI, 1)
+	assert.Equal(t, "fct_orders", hitCI[0].TableName)
+}
+
+// TestNodeRunRepository_ListNodeNames returns distinct table names (deduped
+// across schemas), service-filtered, sorted ascending.
+func TestNodeRunRepository_ListNodeNames(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+
+	svcA := "svc-names-a-" + uuid.New().String()[:8]
+	svcB := "svc-names-b-" + uuid.New().String()[:8]
+	mk := func(svc, schema, table string) {
+		sid := uuid.New()
+		require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
+			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
+			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+		}))
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
+			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
+			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+			CreatedAt: time.Now().Add(-time.Minute),
+		}))
+	}
+	// svcA: orders + customers (customers in two schemas -> dedup to one)
+	mk(svcA, "an", "orders")
+	mk(svcA, "an", "customers")
+	mk(svcA, "marts", "customers")
+	// svcB: revenue
+	mk(svcB, "an", "revenue")
+
+	// service filter -> only svcA names, deduped + sorted
+	namesA, err := repo.ListNodeNames(ctx, svcA)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"customers", "orders"}, namesA)
+
+	// filtering by svcB keeps the assertion deterministic in a shared DB
+	namesB, err := repo.ListNodeNames(ctx, svcB)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"revenue"}, namesB)
 }
 
 // TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal verifies an empty page

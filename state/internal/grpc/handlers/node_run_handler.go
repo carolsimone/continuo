@@ -109,6 +109,16 @@ func (h *NodeRunHandler) ListNodes(
 	return &statev1.ListNodesResponse{Nodes: out, TotalCount: int32(total)}, nil
 }
 
+// ListNodeNames returns distinct node table names for the search autocomplete.
+func (h *NodeRunHandler) ListNodeNames(ctx context.Context, req *statev1.ListNodeNamesRequest) (*statev1.ListNodeNamesResponse, error) {
+	names, err := h.repo.ListNodeNames(ctx, req.ServiceName)
+	if err != nil {
+		h.logger.Error("ListNodeNames repo error", "service", req.ServiceName, "error", err)
+		return nil, status.Errorf(codes.Internal, "ListNodeNames: %v", err)
+	}
+	return &statev1.ListNodeNamesResponse{TableNames: names}, nil
+}
+
 func timePtrToRFC(t *time.Time) string {
 	if t == nil {
 		return ""
