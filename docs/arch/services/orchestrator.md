@@ -134,6 +134,8 @@ All ports the service layer depends on for adapter-replaceable storage live in `
 
 One narrow exception is allowed to import adapter packages directly: `service/handlers/release_promoted_handler_integration_test.go` wires the real Postgres and Neo4j adapters against a live database. Production handlers and unit-test fakes hold only `repository.*` types. The `UnitOfWork` interface is declared in `service/uow/uow.go`; its concrete implementation (`PostgresUnitOfWork`) lives in `adapters/postgres/unit_of_work.go`.
 
+The orchestrator wires one long-lived `PostgresUnitOfWork` instance per consumer and reuses it for every inbound message. `Commit` and `Rollback` therefore clear the transaction state unconditionally — including when the underlying commit fails — so a single failed commit cannot wedge the consumer. A handler's deferred `Rollback` runs after a failed `Commit` and finds the transaction already finished; `sql.ErrTxDone` is treated as a successful no-op there, and the next `Begin` on the same instance starts cleanly.
+
 Read-side ports specific to the CQRS query path (`RunReader`, `TopologyStateReader`) are defined where they are consumed — `service/queries/run_query_service.go` — and intentionally not promoted into `domain/repository/`.
 
 ## Background loops
