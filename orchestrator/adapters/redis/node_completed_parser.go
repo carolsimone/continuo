@@ -83,3 +83,30 @@ func requireUUID(msg goredis.XMessage, field string) (uuid.UUID, error) {
 	}
 	return id, nil
 }
+
+// requireUUIDField validates that a required field is a non-empty, well-formed
+// UUID and returns it in its original string form. The trigger handler inputs
+// keep these identifiers as strings, but they are UUID-valued and the downstream
+// handlers uuid.Parse them; validating here ensures a malformed UUID is rejected
+// as poison (events.ErrPermanent) at the parser instead of being retried forever
+// by the handler's plain parse error.
+func requireUUIDField(msg goredis.XMessage, field string) (string, error) {
+	raw, err := requireString(msg, field)
+	if err != nil {
+		return "", err
+	}
+	if err := validUUIDValue(msg.ID, field, raw); err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+// validUUIDValue parses an already-extracted UUID string (e.g. an optional field
+// validated for presence elsewhere), returning an events.ErrPermanent-wrapped
+// error on a malformed value.
+func validUUIDValue(msgID, field, raw string) error {
+	if _, err := uuid.Parse(raw); err != nil {
+		return fmt.Errorf("%w: message %s field %q is not a valid UUID %q: %v", events.ErrPermanent, msgID, field, raw, err)
+	}
+	return nil
+}

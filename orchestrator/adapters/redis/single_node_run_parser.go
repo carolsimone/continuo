@@ -15,7 +15,7 @@ import (
 // other value is rejected. Every violation is an events.ErrPermanent-wrapped
 // error so the consumer ACKs the poison message instead of retrying it.
 func ParseSingleNodeRun(msg goredis.XMessage) (model.SingleNodeRunInput, error) {
-	scheduleID, err := requireString(msg, "schedule_id")
+	scheduleID, err := requireUUIDField(msg, "schedule_id")
 	if err != nil {
 		return model.SingleNodeRunInput{}, err
 	}
@@ -46,6 +46,9 @@ func ParseSingleNodeRun(msg goredis.XMessage) (model.SingleNodeRunInput, error) 
 	case "snapshot_of_run":
 		if sourceRunID == "" {
 			return model.SingleNodeRunInput{}, fmt.Errorf("%w: message %s metadata_source=snapshot_of_run requires source_run_id", events.ErrPermanent, msg.ID)
+		}
+		if err := validUUIDValue(msg.ID, "source_run_id", sourceRunID); err != nil {
+			return model.SingleNodeRunInput{}, err
 		}
 	default:
 		return model.SingleNodeRunInput{}, fmt.Errorf("%w: message %s has invalid metadata_source %q (want 'latest' or 'snapshot_of_run')", events.ErrPermanent, msg.ID, metadataSource)

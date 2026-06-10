@@ -85,6 +85,13 @@ done
 export IMAGE_TAG_PER_SERVICE="$PER_SERVICE"
 echo "Exported IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE}"
 
+# Write the per-service image tags to the bind-mounted tests/e2e/.image-tags file
+# (immutable setup metadata). The e2e rebuilds the release-controller service_prod
+# baseline from this before each consumer, so a prior test's mutation of
+# service_prod cannot break a later read. Replaces the obsolete S3 image-tag sidecar.
+printf '%s' "$PER_SERVICE" > tests/e2e/.image-tags
+echo "Wrote per-service image tags to tests/e2e/.image-tags"
+
 # continuo-executor-controller and continuo-k8s-controller are already built by
 # 'docker compose build' above with the correct tags, so no need to rebuild them here.
 
@@ -190,27 +197,3 @@ echo "Kubeconfig created at: kubeconfig/kubeconfig.yaml"
 
 echo "Starting docker-compose in background..."
 docker compose up -d
-
-# Seed the release-controller service_prod pointer table with the per-service
-# image tags so the e2e resolves image_tag from the production source of truth
-# (replacing the obsolete service_metadata.json S3 sidecar). This runs last
-# because the service_prod table is created by the release-controller migrations
-# that flyway-release applies during the compose up above.
-echo "Waiting for the service_prod table (release-controller migrations)..."
-for _ in $(seq 1 60); do
-  if docker compose exec -T postgres psql -tAc "SELECT to_regclass('public.service_prod')" \
-       -U continuo_svc -d continuo_release 2>/dev/null | grep -q service_prod; then
-    break
-  fi
-  sleep 2
-done
-echo "Seeding service_prod with baseline image tags..."
-for svc in "${DBT_SERVICES[@]}"; do
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U continuo_svc -d continuo_release -c \
-    "INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, updated_at)
-     VALUES ('${svc}', 'e2e-baseline', 's3://continuo/${svc}/e2e-baseline/manifest.json', '${IMAGE_TAG}', now())
-     ON CONFLICT (service_name) DO UPDATE SET
-       release_id = EXCLUDED.release_id, manifest_s3_key = EXCLUDED.manifest_s3_key,
-       image_tag = EXCLUDED.image_tag, updated_at = EXCLUDED.updated_at;"
-done
-echo "✓ service_prod seeded with baseline image tags"

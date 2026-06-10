@@ -82,7 +82,7 @@ func seedTopology(t *testing.T, ctx context.Context, clients *testClients) {
 
 	// A prior blue/green test may have mutated service_prod; re-establish the
 	// baseline pointers before reading each service's image tag.
-	restoreBaselineServiceProd(t, ctx, clients)
+	seedBaselineServiceProd(t, ctx, clients)
 
 	imageTags := map[string]string{}
 	for _, svc := range []string{"service-1", "service-2", "service-3"} {

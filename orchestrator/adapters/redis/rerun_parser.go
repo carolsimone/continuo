@@ -11,7 +11,7 @@ import (
 // RunID is the schedule_id of the new run (the Snapshot target); SourceRunID is
 // the source run's schedule_id read by the SourcePinnedDAG selector.
 func ParseRerun(msg goredis.XMessage) (model.RerunInput, error) {
-	scheduleID, err := requireString(msg, "schedule_id")
+	scheduleID, err := requireUUIDField(msg, "schedule_id")
 	if err != nil {
 		return model.RerunInput{}, err
 	}
@@ -19,7 +19,7 @@ func ParseRerun(msg goredis.XMessage) (model.RerunInput, error) {
 	if err != nil {
 		return model.RerunInput{}, err
 	}
-	sourceRunID, err := requireString(msg, "source_run_id")
+	sourceRunID, err := requireUUIDField(msg, "source_run_id")
 	if err != nil {
 		return model.RerunInput{}, err
 	}

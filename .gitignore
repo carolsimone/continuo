@@ -72,3 +72,6 @@ deploy/infra/values.secret.yaml
 
 .rtk/*
 .venv
+
+# e2e per-service image tags (written by setup.sh / provision-k8s-test-env.sh)
+tests/e2e/.image-tags

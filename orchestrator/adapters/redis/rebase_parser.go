@@ -11,7 +11,7 @@ import (
 // RunID is the new run's schedule_id; SourceRunID is the failed/cancelled
 // source run whose :EXECUTES set the RebasePartition selector reads.
 func ParseRebase(msg goredis.XMessage) (model.RebaseInput, error) {
-	scheduleID, err := requireString(msg, "schedule_id")
+	scheduleID, err := requireUUIDField(msg, "schedule_id")
 	if err != nil {
 		return model.RebaseInput{}, err
 	}
@@ -19,7 +19,7 @@ func ParseRebase(msg goredis.XMessage) (model.RebaseInput, error) {
 	if err != nil {
 		return model.RebaseInput{}, err
 	}
-	sourceRunID, err := requireString(msg, "source_run_id")
+	sourceRunID, err := requireUUIDField(msg, "source_run_id")
 	if err != nil {
 		return model.RebaseInput{}, err
 	}

@@ -548,7 +548,7 @@ func baselineServices(t *testing.T, ctx context.Context, clients *testClients) m
 	t.Helper()
 	// Re-establish the per-service image pointers a prior blue/green test may
 	// have mutated, so readServiceImageTag below sees the full baseline.
-	restoreBaselineServiceProd(t, ctx, clients)
+	seedBaselineServiceProd(t, ctx, clients)
 	// Discover all services by listing objects under their baseline prefix.
 	out, err := clients.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(e2eS3Bucket),

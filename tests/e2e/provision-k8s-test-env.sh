@@ -70,13 +70,12 @@ kind load docker-image continuo-k8s-controller:latest --name continuo || {
 }
 
 # Build each dbt service image, tag it by its own content digest (never :latest),
-# load that tag into kind, and seed the release-controller service_prod pointer
-# table with it. service_prod is the production source of truth the e2e reads for
-# image_tag (replacing the obsolete service_metadata.json S3 sidecar); the kind
-# image must be loaded under exactly this tag because the executor composes the
-# dbt job image as service-<n>:<image_tag>. These baseline rows represent "what is
-# already in prod"; the blue/green tests overwrite them per test.
-log_info "Building + loading + seeding dbt service images (content-hash tags)..."
+# and load that tag into kind. The executor composes the dbt job image as
+# service-<n>:<image_tag>, so the kind image must be loaded under exactly the tag
+# the e2e seeds into service_prod. The per-service tags are written to the
+# bind-mounted tests/e2e/.image-tags file (immutable setup metadata); the e2e
+# rebuilds the service_prod baseline from it before each consumer.
+log_info "Building + loading dbt service images (content-hash tags)..."
 DBT_PER_SERVICE=""
 for svc in service-1 service-2 service-3; do
   DOCKER_BUILDKIT=1 docker build -f "dbt/services/${svc}/Dockerfile.local" -t "${svc}:build-tmp" "dbt/services/${svc}/" \
@@ -87,17 +86,10 @@ for svc in service-1 service-2 service-3; do
   log_info "  ${svc} -> ${svc}:${tag}"
   kind load docker-image "${svc}:${tag}" --name continuo \
     || { log_error "Failed to load ${svc} into kind"; exit 1; }
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U continuo_svc -d continuo_release -c \
-    "INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, updated_at)
-     VALUES ('${svc}', 'e2e-baseline', 's3://continuo/${svc}/e2e-baseline/manifest.json', '${tag}', now())
-     ON CONFLICT (service_name) DO UPDATE SET
-       release_id = EXCLUDED.release_id, manifest_s3_key = EXCLUDED.manifest_s3_key,
-       image_tag = EXCLUDED.image_tag, updated_at = EXCLUDED.updated_at;" \
-    || { log_error "failed to seed service_prod for ${svc}"; exit 1; }
   DBT_PER_SERVICE="${DBT_PER_SERVICE:+${DBT_PER_SERVICE},}${svc}=${tag}"
 done
-export IMAGE_TAG_PER_SERVICE="$DBT_PER_SERVICE"
-log_info "IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE}"
+printf '%s' "$DBT_PER_SERVICE" > "${REPO_ROOT}/tests/e2e/.image-tags"
+log_info "Wrote per-service image tags to tests/e2e/.image-tags: ${DBT_PER_SERVICE}"
 
 log_info "Images built and loaded successfully"
 
