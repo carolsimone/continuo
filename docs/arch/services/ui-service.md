@@ -15,7 +15,7 @@ It provides:
 - rebase triggering: proxies `POST /api/schedulers/:id/rebase` to the `TriggerRebase` gRPC method on `state`
 - single-node run triggering: proxies `POST /api/nodes/:service/:schema/:table/run` to the `TriggerSingleNodeRun` gRPC method on `state`
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`
-- a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): a WebSocket (WS) endpoint that exposes a read-only Large Language Model (LLM) agent; the agent is hard-limited to read-only `continuo` CLI (Command-Line Interface) subcommands and can inspect schedule status, task status, and dependency graphs
+- a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): a WebSocket (WS) endpoint that exposes a Large Language Model (LLM) agent which inspects schedule status, task status, and dependency graphs via the `continuo` CLI (Command-Line Interface); mutating commands are blocked by a deny-list, and the endpoint is gated off outside local development
 
 It owns no storage and constructs no Redis client.
 
@@ -33,7 +33,7 @@ Each incoming WebSocket connection receives one dedicated headless `claude` subp
 claude -p --input-format stream-json --output-format stream-json --verbose
 ```
 
-The tool allowlist passed to `claude` is restricted to the read-only command surface: `Bash(continuo schedule status:*)`, `Bash(continuo schedule list:*)`, `Bash(continuo schedule graph:*)`, and `Bash(continuo describe:*)`. The mutating `continuo schedule trigger` is excluded from the allowlist — a hard constraint enforced by Claude Code, not only the system prompt. The system prompt additionally instructs read-only behavior as defense in depth. The agent inspects the system by shelling out to the `continuo` CLI, which in turn reads `state` and `orchestrator` over gRPC (Remote Procedure Call). The `claude` process itself has no direct gRPC or Redis connections.
+Read-only behavior is enforced by a deny-list, not the allow-list. In headless `claude -p` mode the `--allowedTools` list does not act as a default-deny — tool calls are auto-approved — so the intended read surface (`Bash(continuo schedule status:*)`, `Bash(continuo schedule list:*)`, `Bash(continuo schedule graph:*)`, `Bash(continuo describe:*)`) is documentation of intent rather than a boundary. The boundary is `--disallowedTools`, which Claude Code does honor: `Bash(continuo schedule trigger:*)` is denied, so the mutating command cannot run. The system prompt additionally instructs read-only behavior as defense in depth. This is best-effort confinement for local development only: the subprocess is not sandboxed against arbitrary shell, so it runs with the developer's privileges. That, together with the absence of authentication, is why the endpoint is gated off outside local development. The agent inspects the system by shelling out to the `continuo` CLI, which in turn reads `state` and `orchestrator` over gRPC (Remote Procedure Call). The `claude` process itself has no direct gRPC or Redis connections.
 
 The spawned `claude` process (and the `continuo` CLI it invokes) receive `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` in their environment, mapped from the ui-service server's `STATE_GRPC_ADDR` and `ORCHESTRATOR_GRPC_ADDR`, so the CLI reaches the same `state` and `orchestrator` gRPC endpoints the ui-service uses.
 
@@ -62,7 +62,7 @@ One subprocess is created per WebSocket connection. The bridge captures the Clau
 
 ### Scope and constraints
 
-The tool allowlist hard-limits the agent to four read-only `continuo` subcommands; no tool outside those four entries can be invoked. The `continuo` CLI commands surfaced are:
+A deny-list (`--disallowedTools`) blocks the mutating `continuo schedule trigger`; the agent is steered to the read-only surface below by the system prompt and the documented allow-list. The `continuo` CLI commands surfaced are:
 
 | Command | Data read |
 |---|---|
