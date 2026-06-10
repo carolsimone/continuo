@@ -78,6 +78,16 @@ func main() {
 		return neo4jClient.Close(ctx)
 	})
 
+	// Apply Neo4j constraints and indexes before any consumer or gRPC server
+	// starts, so the first message never races a full label scan. Idempotent
+	// (IF NOT EXISTS) and fatal on failure — serving traffic against an
+	// unindexed/unconstrained graph is not acceptable.
+	if err := neo4jinfra.InitSchema(ctx, neo4jClient, logger); err != nil {
+		logger.Error("Failed to initialize Neo4j schema", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Neo4j schema initialized")
+
 	// 2. PostgreSQL client (for outbox / message processing)
 	pgDB, err := postgres.NewPostgresClient(
 		cfg.Postgres.Host,

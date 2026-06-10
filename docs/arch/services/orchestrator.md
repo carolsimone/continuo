@@ -40,6 +40,29 @@ Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run sna
 | `failed_count` | int | Number of `:EXECUTES` edges that transitioned to `FAILED` directly (cascade-skipped nodes do not count). Drives the aggregate's terminal-status decision when `terminal_count == total_nodes` so finalisation works even when the failed node is outside the currently loaded subgraph. |
 | `version` | int | Optimistic-concurrency token. Incremented on every aggregate mutation (`CompleteNode`); `AggregateRepository.Save` compares against `COALESCE(run.version, 0)` and returns `ErrVersionConflict` on mismatch. |
 
+#### Schema (constraints + indexes)
+
+`adapters/neo4j/schema.go` (`InitSchema`) applies the following DDL at startup, before any consumer or the gRPC server begins serving. Every statement uses `IF NOT EXISTS`, so it is idempotent and restart-safe; a failure aborts startup (the service refuses to serve traffic against an unindexed graph).
+
+| Object | Type | Backs |
+|---|---|---|
+| `run_id_unique` | constraint, `:Run(run_id)` unique | Every `MATCH (:Run {run_id})` lookup — rehydrate, snapshot writer, all query-repository reads (one per `node.updated:v1`). Guarantees a single `:Run` per `run_id`. |
+| `table_uid_unique` | constraint, `:Table(unique_id)` unique | The `MERGE (:Table {unique_id})` upsert in the release-promotion swap; prevents concurrent promotions from minting duplicate `:Table` nodes. |
+| `table_fqn` | index, `:Table(service_name, schema_name, table_name)` | The snapshot writer's `:EXECUTES` match and every fully-qualified descendant/single-table reader. |
+| `table_schedule` | index, `:Table(schedule_name)` | `LoadLatestSourceDAG` and schedule-graph scans of `MATCH (:Table {schedule_name})`. |
+| `run_schedule` | index, `:Run(schedule_name)` | `ListRuns` (`MATCH (:Run {schedule_name})`). |
+
+`table_uid_unique` will refuse to create if duplicate `:Table {unique_id}` nodes already exist. Before first rollout against an existing graph, collapse duplicates with:
+
+```cypher
+MATCH (t:Table)
+WHERE t.unique_id IS NOT NULL
+WITH t.unique_id AS uid, collect(t) AS nodes
+WHERE size(nodes) > 1
+UNWIND nodes[1..] AS dup
+DETACH DELETE dup
+```
+
 ### Run aggregate (`orchestrator/domain/run`)
 
 The write-side of node-completion processing is the `Run` aggregate root. It owns `RunID`, `ScheduleName`, `Status`, the counters above (`TotalNodes`, `TerminalCount`, `Version`), and an operation-scoped `map[NodeKey]*RunNode` subgraph. Methods:
