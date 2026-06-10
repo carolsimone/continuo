@@ -16,6 +16,7 @@ export class ClaudeProcess extends EventEmitter {
   private child: ChildProcess;
   private rl: readline.Interface | null = null;
   private stderr = '';
+  private terminated = false;
 
   constructor(opts: ClaudeProcessOptions = {}) {
     super();
@@ -31,7 +32,10 @@ export class ClaudeProcess extends EventEmitter {
     ];
     if (opts.sessionId) args.push('--resume', opts.sessionId);
 
-    this.child = spawnFn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const env = { ...process.env };
+    if (process.env.STATE_GRPC_ADDR) env.CONTINUO_STATE_ADDR = process.env.STATE_GRPC_ADDR;
+    if (process.env.ORCHESTRATOR_GRPC_ADDR) env.CONTINUO_ORCHESTRATOR_ADDR = process.env.ORCHESTRATOR_GRPC_ADDR;
+    this.child = spawnFn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], env });
 
     if (this.child.stdout) {
       this.rl = readline.createInterface({ input: this.child.stdout });
@@ -46,6 +50,7 @@ export class ClaudeProcess extends EventEmitter {
     }
     this.child.on('error', (err: Error) => {
       this.emitMessage({ type: 'error', code: 'agent_unavailable', message: err.message });
+      this.signalExit(null);
     });
     this.child.on('exit', (code) => {
       if (code && code !== 0) {
@@ -55,12 +60,18 @@ export class ClaudeProcess extends EventEmitter {
           message: this.stderr.trim() || `claude exited with code ${code}`,
         });
       }
-      this.emit('exit', code);
+      this.signalExit(code);
     });
   }
 
   private emitMessage(msg: ServerMessage): void {
     this.emit('message', msg);
+  }
+
+  private signalExit(code: number | null): void {
+    if (this.terminated) return;
+    this.terminated = true;
+    this.emit('exit', code);
   }
 
   send(text: string): void {

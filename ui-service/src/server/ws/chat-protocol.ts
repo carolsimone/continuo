@@ -9,7 +9,15 @@ export type ClientMessage =
   | { type: 'user_message'; text: string }
   | { type: 'new_chat' };
 
-export const ALLOWED_TOOLS = 'Bash(continuo:*)';
+// Read-only command surface, hard-enforced by Claude Code's tool allowlist.
+// Comma-separated because each pattern contains spaces. The mutating
+// `continuo schedule trigger` is intentionally excluded.
+export const ALLOWED_TOOLS = [
+  'Bash(continuo schedule status:*)',
+  'Bash(continuo schedule list:*)',
+  'Bash(continuo schedule graph:*)',
+  'Bash(continuo describe:*)',
+].join(',');
 
 export const SYSTEM_PROMPT = [
   'You answer questions about continuo schedules for an end user.',

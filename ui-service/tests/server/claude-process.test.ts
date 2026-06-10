@@ -22,7 +22,11 @@ describe('ClaudeProcess', () => {
     const [bin, args] = spawnFn.mock.calls[0];
     expect(bin).toBe('claude');
     expect(args).toEqual(expect.arrayContaining(['-p', '--input-format', 'stream-json', '--output-format', 'stream-json']));
-    expect(args).toEqual(expect.arrayContaining(['--allowedTools', 'Bash(continuo:*)']));
+    expect(args).toContain('--allowedTools');
+    const allow = args[args.indexOf('--allowedTools') + 1];
+    expect(allow).toContain('Bash(continuo schedule status:*)');
+    expect(allow).not.toContain('trigger');
+    expect(allow).not.toBe('Bash(continuo:*)');
     expect(args).not.toContain('--resume');
   });
 
@@ -91,6 +95,24 @@ describe('ClaudeProcess', () => {
     expect(messages).toEqual([]);
   });
 
+  it('maps STATE_GRPC_ADDR / ORCHESTRATOR_GRPC_ADDR to the CLI env vars', () => {
+    const prevState = process.env.STATE_GRPC_ADDR;
+    const prevOrch = process.env.ORCHESTRATOR_GRPC_ADDR;
+    process.env.STATE_GRPC_ADDR = 'state:50051';
+    process.env.ORCHESTRATOR_GRPC_ADDR = 'orchestrator:50052';
+    try {
+      const child = makeFakeChild();
+      const spawnFn = vi.fn().mockReturnValue(child);
+      new ClaudeProcess({ spawnFn: spawnFn as any });
+      const opts = spawnFn.mock.calls[0][2];
+      expect(opts.env.CONTINUO_STATE_ADDR).toBe('state:50051');
+      expect(opts.env.CONTINUO_ORCHESTRATOR_ADDR).toBe('orchestrator:50052');
+    } finally {
+      if (prevState === undefined) delete process.env.STATE_GRPC_ADDR; else process.env.STATE_GRPC_ADDR = prevState;
+      if (prevOrch === undefined) delete process.env.ORCHESTRATOR_GRPC_ADDR; else process.env.ORCHESTRATOR_GRPC_ADDR = prevOrch;
+    }
+  });
+
   it('emits an exit event after a spawn error', async () => {
     const child = makeFakeChild();
     const proc = new ClaudeProcess({ spawnFn: (() => child) as any });
@@ -98,7 +120,6 @@ describe('ClaudeProcess', () => {
     proc.on('message', () => events.push('message'));
     proc.on('exit', () => events.push('exit'));
     child.emit('error', new Error('ENOENT claude'));
-    child.emit('exit', null);
     await tick();
     expect(events).toEqual(['message', 'exit']);
   });
