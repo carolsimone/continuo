@@ -1,0 +1,69 @@
+export type ServerMessage =
+  | { type: 'session'; sessionId: string }
+  | { type: 'tool'; command: string }
+  | { type: 'text'; text: string }
+  | { type: 'final'; text: string }
+  | { type: 'error'; code: string; message: string };
+
+export type ClientMessage =
+  | { type: 'user_message'; text: string }
+  | { type: 'new_chat' };
+
+export const ALLOWED_TOOLS = 'Bash(continuo:*)';
+
+export const SYSTEM_PROMPT = [
+  'You answer questions about continuo schedules for an end user.',
+  'Discover the available commands by running "continuo describe".',
+  'Use only the continuo CLI to gather facts.',
+  'Reply concisely in plain language; never show raw JSON.',
+  'Do not run mutating commands such as "continuo schedule trigger".',
+].join(' ');
+
+export function classifyClaudeLine(line: string): ServerMessage[] {
+  const trimmed = line.trim();
+  if (!trimmed) return [];
+  let obj: any;
+  try {
+    obj = JSON.parse(trimmed);
+  } catch {
+    return [];
+  }
+  if (!obj || typeof obj !== 'object') return [];
+
+  switch (obj.type) {
+    case 'system':
+      if (obj.subtype === 'init' && typeof obj.session_id === 'string') {
+        return [{ type: 'session', sessionId: obj.session_id }];
+      }
+      return [];
+    case 'assistant': {
+      const content = obj.message?.content;
+      if (!Array.isArray(content)) return [];
+      const out: ServerMessage[] = [];
+      for (const block of content) {
+        if (block?.type === 'text' && typeof block.text === 'string') {
+          out.push({ type: 'text', text: block.text });
+        } else if (block?.type === 'tool_use' && block?.input?.command) {
+          out.push({ type: 'tool', command: String(block.input.command) });
+        }
+      }
+      return out;
+    }
+    case 'result':
+      if (obj.is_error) {
+        return [{ type: 'error', code: 'agent_failed', message: String(obj.result ?? 'agent error') }];
+      }
+      if (typeof obj.result === 'string') {
+        return [{ type: 'final', text: obj.result }];
+      }
+      return [];
+    default:
+      return [];
+  }
+}
+
+export function encodeUserTurn(text: string): string {
+  return (
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n'
+  );
+}
