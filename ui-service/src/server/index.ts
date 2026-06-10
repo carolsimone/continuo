@@ -1,8 +1,10 @@
+import http from 'http';
 import path from 'path';
 import express from 'express';
 import { createGrpcClient } from './grpc-client';
 import { createGrpcGraphClient } from './grpc-graph-client';
 import { createApp } from './app';
+import { attachChatWebSocket } from './ws/chat';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
 const STATE_GRPC_ADDR = process.env.STATE_GRPC_ADDR || 'localhost:50051';
@@ -22,6 +24,8 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
+attachChatWebSocket(server);
+server.listen(PORT, () => {
   console.log(`Continuo UI running on http://localhost:${PORT}`);
 });
