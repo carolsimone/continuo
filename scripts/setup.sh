@@ -139,29 +139,10 @@ echo "Compiling and uploading dbt manifests to localstack S3..."
 docker exec dbt-compile-and-load uv run python -m dbt_upload load --services-dir /app/services --target localstack --release-id e2e-baseline
 echo "✓ dbt manifests compiled and uploaded to localstack S3 (key: <service>/e2e-baseline/manifest.json)"
 
-# Upload per-service image-tag sidecars so e2e tests can resolve image_tag
-# from S3 without needing IMAGE_TAG_PER_SERVICE forwarded into the test
-# container. Each sidecar lands at <service>/e2e-baseline/service_metadata.json,
-# matching the readServiceImageTag helper in release_promote_test.go.
-echo "Uploading per-service image-tag sidecars for e2e baseline..."
-for svc in "${DBT_SERVICES[@]}"; do
-  svc_tag="${IMAGE_TAG}"
-  docker exec dbt-compile-and-load \
-    uv run python3 -c "
-import boto3, json, os
-client = boto3.client('s3',
-  endpoint_url=os.environ.get('S3_ENDPOINT_URL','http://localstack:4566'),
-  aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID','test'),
-  aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY','test'),
-  region_name=os.environ.get('AWS_DEFAULT_REGION','us-east-1'))
-client.put_object(
-  Bucket='continuo',
-  Key='${svc}/e2e-baseline/service_metadata.json',
-  Body=json.dumps({'image_tag':'${svc_tag}','manifest_version':'e2e-baseline'}).encode())
-print('uploaded ${svc}/e2e-baseline/service_metadata.json')
-"
-done
-echo "✓ per-service image-tag sidecars uploaded"
+# Per-service image tags are seeded into the release-controller service_prod
+# pointer table at the end of this script (after the final compose up runs the
+# release-controller migrations). The e2e reads image_tag from service_prod — the
+# production source of truth — so no S3 image-tag sidecar is needed.
 
 # Materialize dbt seeds into e2e_schema. The e2e topology is seeded directly
 # into Neo4j (no manifest.loaded ingest), and the standing "seed" schedule is
@@ -209,3 +190,27 @@ echo "Kubeconfig created at: kubeconfig/kubeconfig.yaml"
 
 echo "Starting docker-compose in background..."
 docker compose up -d
+
+# Seed the release-controller service_prod pointer table with the per-service
+# image tags so the e2e resolves image_tag from the production source of truth
+# (replacing the obsolete service_metadata.json S3 sidecar). This runs last
+# because the service_prod table is created by the release-controller migrations
+# that flyway-release applies during the compose up above.
+echo "Waiting for the service_prod table (release-controller migrations)..."
+for _ in $(seq 1 60); do
+  if docker compose exec -T postgres psql -tAc "SELECT to_regclass('public.service_prod')" \
+       -U continuo_svc -d continuo_release 2>/dev/null | grep -q service_prod; then
+    break
+  fi
+  sleep 2
+done
+echo "Seeding service_prod with baseline image tags..."
+for svc in "${DBT_SERVICES[@]}"; do
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U continuo_svc -d continuo_release -c \
+    "INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, updated_at)
+     VALUES ('${svc}', 'e2e-baseline', 's3://continuo/${svc}/e2e-baseline/manifest.json', '${IMAGE_TAG}', now())
+     ON CONFLICT (service_name) DO UPDATE SET
+       release_id = EXCLUDED.release_id, manifest_s3_key = EXCLUDED.manifest_s3_key,
+       image_tag = EXCLUDED.image_tag, updated_at = EXCLUDED.updated_at;"
+done
+echo "✓ service_prod seeded with baseline image tags"
