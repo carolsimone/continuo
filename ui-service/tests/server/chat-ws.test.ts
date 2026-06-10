@@ -125,4 +125,46 @@ describe('attachChatWebSocket', () => {
     expect(procs[1].send).toHaveBeenCalledWith('again');
     client.close();
   });
+
+  it('relays a crash error and respawns resuming the session on the next message', async () => {
+    const procs: FakeProcess[] = [];
+    const seen: (string | undefined)[] = [];
+    server = createServer();
+    attachChatWebSocket(server, {
+      createProcess: (sid) => { seen.push(sid); const p = new FakeProcess(); procs.push(p); return p as any; },
+    });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    await new Promise((r) => client.on('open', r));
+    const received: any[] = [];
+    client.on('message', (d) => received.push(JSON.parse(d.toString())));
+
+    procs[0].emit('message', { type: 'session', sessionId: 'sess-9' });
+    procs[0].emit('message', { type: 'error', code: 'agent_failed', message: 'kaboom' });
+    procs[0].emit('exit', 1);
+    await tick();
+    expect(received).toContainEqual({ type: 'error', code: 'agent_failed', message: 'kaboom' });
+
+    client.send(JSON.stringify({ type: 'user_message', text: 'retry' }));
+    await tick();
+    expect(procs.length).toBe(2);
+    expect(seen[1]).toBe('sess-9');
+    expect(procs[1].send).toHaveBeenCalledWith('retry');
+    client.close();
+  });
+
+  it('relays agent_unavailable to the client', async () => {
+    const fake = new FakeProcess();
+    server = createServer();
+    attachChatWebSocket(server, { createProcess: () => fake as any });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    await new Promise((r) => client.on('open', r));
+    const received: any[] = [];
+    client.on('message', (d) => received.push(JSON.parse(d.toString())));
+    fake.emit('message', { type: 'error', code: 'agent_unavailable', message: 'spawn claude ENOENT' });
+    await tick();
+    expect(received).toContainEqual({ type: 'error', code: 'agent_unavailable', message: 'spawn claude ENOENT' });
+    client.close();
+  });
 });

@@ -34,4 +34,18 @@ describe('chat-state reducer', () => {
     const s = applyServerMessage(initialChatState, { type: 'error', code: 'agent_failed', message: 'boom' });
     expect(s.items).toContainEqual({ kind: 'error', message: 'boom' });
   });
+
+  it('opens a second assistant bubble when text follows a tool, final replacing only the last', () => {
+    let s = appendUserText(initialChatState, 'q');
+    s = applyServerMessage(s, { type: 'text', text: 'Looking' });
+    s = applyServerMessage(s, { type: 'tool', command: 'continuo schedule list' });
+    s = applyServerMessage(s, { type: 'text', text: 'Working' });
+    s = applyServerMessage(s, { type: 'final', text: 'Done' });
+    expect(s.items).toEqual([
+      { kind: 'user', text: 'q' },
+      { kind: 'assistant', text: 'Looking', done: false },
+      { kind: 'tool', command: 'continuo schedule list' },
+      { kind: 'assistant', text: 'Done', done: true },
+    ]);
+  });
 });

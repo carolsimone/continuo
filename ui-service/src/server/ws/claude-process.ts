@@ -41,7 +41,7 @@ export class ClaudeProcess extends EventEmitter {
     }
     if (this.child.stderr) {
       this.child.stderr.on('data', (chunk) => {
-        this.stderr += chunk.toString();
+        this.stderr = (this.stderr + chunk.toString()).slice(-4000);
       });
     }
     this.child.on('error', (err: Error) => {

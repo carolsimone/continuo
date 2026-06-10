@@ -31,7 +31,7 @@ It owns no storage and constructs no Redis client.
 claude -p --input-format stream-json --output-format stream-json --verbose
 ```
 
-It is confined to the `continuo` CLI via the tool allowlist `Bash(continuo:*)` and is restricted to read-only operations by its system prompt. The agent inspects the system by shelling out to the `continuo` CLI, which in turn reads `state` and `orchestrator` over gRPC (Remote Procedure Call). The `claude` process itself has no direct gRPC or Redis connections.
+It is confined to the `continuo` CLI via the tool allowlist `Bash(continuo:*)` (hard constraint: no tool outside the `continuo` binary can be invoked), and is steered toward read-only operations by its system prompt (soft constraint: the prompt instructs the agent not to run mutating commands such as `continuo schedule trigger`). The agent inspects the system by shelling out to the `continuo` CLI, which in turn reads `state` and `orchestrator` over gRPC (Remote Procedure Call). The `claude` process itself has no direct gRPC or Redis connections.
 
 ### Process lifetime and session continuity
 
@@ -43,24 +43,22 @@ One subprocess is created per WebSocket connection and kept alive for the durati
 
 | `type` | Payload | Meaning |
 |---|---|---|
-| `user_message` | `{ content: string }` | User turn to relay to the `claude` subprocess |
-| `new_chat` | — | Reset the current conversation and start a new one |
+| `user_message` | `{ "text": string }` | User turn to relay to the `claude` subprocess |
+| `new_chat` | `{}` | Reset the current conversation and start a new one |
 
 **Server → client messages** (JSON over WebSocket):
 
 | `type` | Payload | Meaning |
 |---|---|---|
-| `session` | `{ session_id: string }` | Captured Claude session ID; sent once after the first response |
-| `tool` | `{ tool: string, input: object }` | Tool call in flight (for UI progress indication) |
-| `text` | `{ content: string }` | Streaming text delta from the assistant |
-| `final` | `{ content: string }` | Complete assistant response for the current turn |
-| `error` | `{ message: string }` | Bridge or subprocess error |
-
-Output rendered to the user is text/Markdown, streamed token-by-token via `text` events and confirmed as complete by `final`.
+| `session` | `{ "sessionId": string }` | Captured Claude session ID; sent once after the first response |
+| `tool` | `{ "command": string }` | Tool call in flight (for UI progress indication) |
+| `text` | `{ "text": string }` | Assistant text for the current turn (emitted at whole-message granularity, not token-by-token) |
+| `final` | `{ "text": string }` | Complete assistant response, marking the turn as done |
+| `error` | `{ "code": string, "message": string }` | Bridge or subprocess error |
 
 ### Scope and constraints
 
-The agent is read-only. The only `continuo` CLI commands available through the tool allowlist are:
+The tool allowlist `Bash(continuo:*)` hard-limits the agent to the `continuo` binary; mutating commands (e.g. `continuo schedule trigger`) are excluded by the system prompt. The `continuo` CLI commands surfaced in practice are:
 
 | Command | Data read |
 |---|---|
