@@ -17,7 +17,7 @@ sequenceDiagram
   Note right of R: payload — runner_id, schedule_name, service_metadata, kind='cron', source_run_id=''
 
   R->>OR: consume scheduler.started v1
-  Note over OR: HandleSchedulerStartedHandler.Handle (1 tx)<br/>Snapshot(LatestFullDAG) in Neo4j — Run + EXECUTES with pre-assigned task UUIDs<br/>GetScheduleInitNodes — AllNodes, RootNodes, SeedNodes
+  Note over OR: HandleSchedulerStartedHandler.Handle (1 tx)<br/>Snapshot(LatestFullDAG) in Neo4j — Run + EXECUTES with pre-assigned task UUIDs<br/>frontier (ReadyToDispatch: seeds-first-else-roots) computed by the selector — no second Neo4j read
   alt Snapshot returns ErrEmptyProjection (zero :Table nodes for this schedule)
     OR->>R: publish run.entries.dispatch_failed:v1 (reason=empty_projection)
     R->>ST: consume run.entries.dispatch_failed:v1

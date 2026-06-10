@@ -1,8 +1,6 @@
 package neo4jinfra
 
 import (
-	"context"
-
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -19,22 +17,6 @@ func safeString(v interface{}) string {
 func recordValue(record *neo4j.Record, key string) interface{} {
 	value, _ := record.Get(key)
 	return value
-}
-
-// collectNodes drains a Neo4j result cursor into a []*domain.TableNode slice.
-func collectNodes(ctx context.Context, result neo4j.ResultWithContext) ([]*domain.TableNode, error) {
-	var nodes []*domain.TableNode
-	for result.Next(ctx) {
-		node, err := recordToTableNode(result.Record())
-		if err != nil {
-			return nil, err
-		}
-		nodes = append(nodes, node)
-	}
-	if err := result.Err(); err != nil {
-		return nil, err
-	}
-	return nodes, nil
 }
 
 // recordToTableNode converts a Neo4j record to a domain.TableNode.

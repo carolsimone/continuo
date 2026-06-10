@@ -81,7 +81,7 @@ Domain events live in `orchestrator/domain/run/events.go`:
 Ports (`orchestrator/domain/run/ports.go`):
 
 - `AggregateRepository` (write-side) — `Rehydrate(ctx, runID, scope) (*Run, error)` reconstitutes an operation-scoped subgraph; `Save(ctx, *Run) error` persists node statuses, `total_nodes`/`terminal_count`/`failed_count`/`version`, and `:Run.terminal_status`/`completed_at` when finalised. `Save` checks `Version` against the loaded value (with `COALESCE(run.version, 0)` to admit legacy in-flight runs) and returns `ErrVersionConflict` on mismatch; the handler retries from `Rehydrate`. `terminal_status`/`completed_at` are first-writer-wins so state's authoritative `run.finalized:v1` projection cannot be overwritten by a later aggregate save.
-- `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns(ctx, scheduleName, limit, offset) ([]*RunSummary, total int, err)`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`.
+- `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns(ctx, scheduleName, limit, offset) ([]*RunSummary, total int, err)`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`.
 - `ListScheduleTopologies` is wired through the adapter-internal `ScheduleAndRunListReader` seam in `orchestrator/adapters/grpc/handlers.go`, satisfied by the same `OrchestratorQueryRepository`. It is not part of the domain port surface because no application/handler code consumes it — only the gRPC adapter.
 
 `Scope` is a sealed interface with two variants that the adapter uses to scope the Cypher read:
@@ -92,15 +92,15 @@ Ports (`orchestrator/domain/run/ports.go`):
 | `ScopeNodeCompletion{Key, Status}` | `Status="FAILED"` → target + full transitive downstream; `Status="SUCCEEDED"`/`SKIPPED` → target + immediate downstream + each downstream's upstreams. |
 
 Adapter implementations:
-- `orchestrator/adapters/neo4j/run_aggregate_repository.go` — `RunAggregateRepository` implements `AggregateRepository`. Also owns `DeleteExpiredRuns` for the sweeper.
-- `orchestrator/adapters/neo4j/orchestrator_query_repository.go` — `OrchestratorQueryRepository` implements `RunQueryPort`, including `GetScheduleInitNodes` used by `HandleSchedulerStarted` to identify root and seed nodes.
+- `orchestrator/adapters/neo4j/run_aggregate_repository.go` — `RunAggregateRepository` implements `AggregateRepository`. Also owns `DeleteExpiredRuns` for the sweeper. `Save` persists all loaded node statuses in a single `UNWIND` round trip, keyed on the full `(service_name, schema_name, table_name)` identity so two services sharing `schema.table` in one run keep distinct `:EXECUTES.status`.
+- `orchestrator/adapters/neo4j/orchestrator_query_repository.go` — `OrchestratorQueryRepository` implements `RunQueryPort`.
 
 ### Snapshot — domain ports, adapters, and application service
 
 The snapshot pipeline follows a strict layered model:
 
 **Domain ports** (`orchestrator/domain/snapshot/ports.go`):
-- `TopologyReader` — read-only port for snapshot selectors; implementations live in the Neo4j adapter and are bound to a single Neo4j `ManagedTransaction`.
+- `TopologyReader` — read-only port for snapshot selectors; implementations live in the Neo4j adapter and are bound to a single Neo4j `ManagedTransaction`. Descendant walks are **batched**: `DescendantsInLatestTopologyBatch`, `DescendantsInSourceRunBatch`, `ImmediateDescendantsInLatestTopologyBatch`, and `ImmediateDescendantsInSourceRunBatch` each take a slice of start FQNs and return a `map[FQN][]FQN` from one `UNWIND` round trip, so a selector pass over R seed nodes issues O(1) reads instead of R.
 - `SnapshotWriter` — write-only port; `WriteRunAndExecutesEdges` MERGEs the `:Run` node (with the metadata-source rule from the table above) and creates one `:EXECUTES` edge per projection entry.
 - `TxRunner` — opens a single Neo4j write transaction and hands the caller a paired `TopologyReader` + `SnapshotWriter` scoped to that tx. The caller's `fn` commits on `nil`, rolls back on error.
 
@@ -124,12 +124,12 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 
 | Selector | Used by | Source of topology | Per-task projection |
 |---|---|---|---|
-| `LatestFullDAG` | `HandleSchedulerStarted` (cron / trigger) | latest `:Table`s for the schedule + upstream dbt-seeds | every task PENDING with the latest `image_tag` + `manifest_version` |
+| `LatestFullDAG` | `HandleSchedulerStarted` (cron / trigger) | latest `:Table`s for the schedule + upstream dbt-seeds | every task PENDING with the latest `image_tag` + `manifest_version`; `ReadyToDispatch` marks the dispatch frontier (nodes with no in-DAG upstream — seeds first, else roots), computed from one batched immediate-descendants read |
 | `SourcePinnedDAG` | `HandleRerun` | source `:Run`'s `:EXECUTES` set | non-SUCCEEDED source tasks + their descendants within the source's pinned `:EXECUTES` set → rebased PENDING with **source's** pinned `(image_tag, manifest_version)`; everything else → InitialStatus preserved from source with `inherited_from_task_id` pointing at the source's executed `task_id` (root-resolved) |
 | `SingleNode` | `HandleSingleNodeRun` | exactly one node | latest mode reads metadata from `:TopologyRoot` + the `:Table`; `snapshot_of_run` mode reads metadata from the source `:Run`'s `:EXECUTES` edge for that node |
 | `RebasePartition` | `HandleRebase` | rebase set ∪ inherit set against latest `:Table`s | rebased rows = PENDING with **latest** metadata; inherited rows = SUCCEEDED with **source's** pinned metadata + root-resolved `inherited_from_task_id` (always points at the lineage-root executed `task_id` — chain depth ≤ 1 even for rebase-of-rebase) |
 
-**Dispatch frontier.** Each PENDING projection row carries `ReadyToDispatch`. A rebased node is on the frontier (`ReadyToDispatch = true`) unless it has an **immediate** (one-hop) rebased upstream — i.e. it is a direct in-run dependent of another rebased node. The selectors compute this from immediate `DEPENDS_ON` edges (`ImmediateDescendantsIn{LatestTopology,SourceRun}`), deliberately *not* transitive descendants: the run aggregate only unblocks/cascade-skips along immediate in-run edges, so a node blocked via a transitive-only path (its connecting node absent from the run) would never be reached and would stall PENDING forever. `DispatchDerivedRun` emits a `query.model:v1` for the frontier rows only. Blocked rebased rows wait for the run aggregate: as a frontier node completes, `CompleteNode` emits `NodeUnblocked` for newly-ready downstream nodes (→ `query.model:v1`) or cascade-skips them when the upstream fails. This mirrors the fresh-run roots-only dispatch and ensures a re-pended SKIPPED node does not run until its upstream succeeds — and is skipped again if it re-fails.
+**Dispatch frontier.** Each PENDING projection row carries `ReadyToDispatch`, computed identically across all paths (cron `LatestFullDAG`, rerun `SourcePinnedDAG`, rebase `RebasePartition`). A PENDING node is on the frontier (`ReadyToDispatch = true`) unless it has an **immediate** (one-hop) PENDING/rebased upstream in the run — i.e. it is a direct in-run dependent of another not-yet-satisfied node. For the cron path this is exactly seeds-first-else-roots: seeds have no upstream and dispatch immediately, roots that depend on a seed wait. The selectors compute this from immediate `DEPENDS_ON` edges (`ImmediateDescendantsIn{LatestTopology,SourceRun}Batch`), deliberately *not* transitive descendants: the run aggregate only unblocks/cascade-skips along immediate in-run edges, so a node blocked via a transitive-only path (its connecting node absent from the run) would never be reached and would stall PENDING forever. `DispatchDerivedRun` emits a `query.model:v1` for the frontier rows only. Blocked rebased rows wait for the run aggregate: as a frontier node completes, `CompleteNode` emits `NodeUnblocked` for newly-ready downstream nodes (→ `query.model:v1`) or cascade-skips them when the upstream fails. This mirrors the fresh-run roots-only dispatch and ensures a re-pended SKIPPED node does not run until its upstream succeeds — and is skipped again if it re-fails.
 
 ### Postgres (`continuo_orchestrator`)
 
@@ -174,7 +174,7 @@ Goroutines started in `main.go` run for the process lifetime:
 
 | Stream | Group | Handler |
 |---|---|---|
-| `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — runs `Snapshot(LatestFullDAG)`, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` + `query.model:v1` for seed/root nodes |
+| `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — runs `Snapshot(LatestFullDAG)`, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` + `query.model:v1` for the dispatch frontier (`ReadyToDispatch` rows: seeds first, else roots) |
 | `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes (SUCCEEDED → `query.model:v1` for newly-ready nodes; FAILED → cascade-skip downstream + emit `task.status.updated:v1` for skipped tasks) |
 | `release.promoted:v1` | `orchestrator-release-promoted` | `ReleasePromotedHandler` — swaps the `:Table` topology via `ReleasePromotionRepository.PromoteRelease`, increments `topology_generation`, writes `:TopologyRoot` service_metadata, then emits `schedules.loaded:v1` |
 | `trigger.rerun:v1` | `orchestrator_rerun` | `HandleRerun` — runs `Snapshot(SourcePinnedDAG{})` against the **new** `:Run` minted by state's `TriggerRerun`, projecting the source's pinned DAG with non-SUCCEEDED tasks + their descendants as rebased PENDING and the rest as inherited at source's stored status; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only |
@@ -205,7 +205,7 @@ Each consumer is wired as a `parser → handler` binding under `adapters/redis/`
 |---|---|
 | `query.model:v1` | One message per newly-ready downstream node after a SUCCEEDED node is processed; for rerun/rebase only the rebased rows on the **dispatch frontier** get an initial `query.model:v1` (a rebased row whose upstream is itself rebased waits until that upstream completes; inherited rows are already SUCCEEDED at dispatch and never enter the executor pipeline) |
 | `schedules.loaded:v1` | Produced by `ReleasePromotedHandler` after a successful topology swap (schedule names list + service_metadata + topology_generation) |
-| `run.entries.dispatched:v1` | Produced by every `Snapshot`-driven handler (`HandleSchedulerStarted`, `HandleRerun`, `HandleRebase`, `HandleSingleNodeRun`) after the projection is materialised. Carries all task entries with pre-assigned UUIDs, root/seed node lists, plus per-task `Status` (defaults `"pending"`, `"succeeded"` for inherited rows) and `InheritedFromTaskID` (empty for non-inherited; root-resolved source `task_id` for inherited). Each `DispatchedTask` stamps `MaxRetries = pkg/events.DefaultTaskMaxRetries (= 2)` so state's `task_tracker.max_retries` matches the k8s retry budget. |
+| `run.entries.dispatched:v1` | Produced by every `Snapshot`-driven handler (`HandleSchedulerStarted`, `HandleRerun`, `HandleRebase`, `HandleSingleNodeRun`) after the projection is materialised. Carries all task entries with pre-assigned UUIDs, plus per-task `Status` (defaults `"pending"`, `"succeeded"` for inherited rows) and `InheritedFromTaskID` (empty for non-inherited; root-resolved source `task_id` for inherited). Each `DispatchedTask` stamps `MaxRetries = pkg/events.DefaultTaskMaxRetries (= 2)` so state's `task_tracker.max_retries` matches the k8s retry budget. |
 | `run.entries.dispatch_failed:v1` | Produced by `HandleSingleNodeRunHandler` on `snapshot.ErrTargetNotFound`, and by `HandleSingleNodeRunHandler`, `HandleRerunHandler`, `HandleRebaseHandler`, and `HandleSchedulerStartedHandler` on `snapshot.ErrEmptyProjection`. Symmetric counterpart of `run.entries.dispatched:v1`: same `scheduler_tracker` target, opposite outcome. State row-locks the row, marks status=`failed`, emits `run.finalized:v1`. |
 
 ### No gRPC calls to `state`
@@ -219,8 +219,8 @@ Orchestrator no longer calls `state` gRPC for any internal writes. All state mut
 1. Parses `scheduler.started:v1` into `SchedulerStartedCmd{ ScheduleID, ScheduleName, Kind, SourceRunID }`.
 2. Creates a `Run` node in Neo4j via `snapshotService.Snapshot(ctx, Params{...})` with selector `LatestFullDAG`, stamping `:Run.kind`, `:Run.source_run_id` (when non-nil), and copying `topology_generation` + `service_metadata` from `:TopologyRoot` (since `source_run_id` is empty for cron/trigger).
 3. `SnapshotWriter.WriteRunAndExecutesEdges` creates `EXECUTES` edges (all initially PENDING) with pre-assigned task UUIDs stored on the edge.
-4. Identifies root and seed nodes.
-5. Produces `run.entries.dispatched:v1` via outbox with: `run_id`, `schedule_name`, `manifest_versions`, full task entry list (each with `task_id`, node coordinates, `node_type`, `service_name`, `Status="pending"`, `InheritedFromTaskID=""`).
+4. Produces `run.entries.dispatched:v1` via outbox with: `run_id`, `schedule_name`, `manifest_versions`, full task entry list (each with `task_id`, node coordinates, `node_type`, `service_name`, `Status="pending"`, `InheritedFromTaskID=""`).
+5. Dispatches the initial frontier — every projection row the `LatestFullDAG` selector marked `ReadyToDispatch` (no in-DAG upstream: seeds first, else roots) gets a `query.model:v1`. This frontier is computed by the selector from the DAG edges in one batched read; the handler does **not** issue a second Neo4j query for root/seed classification. The run aggregate dispatches the rest via `NodeUnblocked` as upstreams complete.
 
 `state` consumes `run.entries.dispatched:v1` to create task rows, set `total_task_count`, and mark the run as initialized.
 

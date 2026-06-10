@@ -228,19 +228,33 @@ func (r *RunAggregateRepository) Save(ctx context.Context, agg *domainRun.Run) e
 		return fmt.Errorf("Save: consume version result: %w", err)
 	}
 
+	// Persist every loaded node's status in a single round trip: one UNWIND over
+	// the dirty set rather than one Cypher statement per node. The match keys on
+	// the full (service_name, schema_name, table_name) identity so the status
+	// lands on the correct :EXECUTES edge even when two services share a
+	// schema.table name within the same run.
+	nodeParams := make([]map[string]interface{}, 0, len(agg.Nodes()))
 	for _, n := range agg.Nodes() {
-		_, err := tx.Run(ctx, `
-            MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table)
-            WHERE t.schema_name = $schema_name AND t.table_name = $table_name
-            SET e.status = $status
-        `, map[string]interface{}{
-			"run_id":      agg.RunID,
-			"schema_name": n.Key.SchemaName,
-			"table_name":  n.Key.TableName,
-			"status":      n.Status,
+		nodeParams = append(nodeParams, map[string]interface{}{
+			"service": n.Key.ServiceName,
+			"schema":  n.Key.SchemaName,
+			"table":   n.Key.TableName,
+			"status":  n.Status,
 		})
-		if err != nil {
-			return fmt.Errorf("Save: update node %s.%s: %w", n.Key.SchemaName, n.Key.TableName, err)
+	}
+	if len(nodeParams) > 0 {
+		if _, err := tx.Run(ctx, `
+            UNWIND $nodes AS n
+            MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table)
+            WHERE t.service_name = n.service
+              AND t.schema_name  = n.schema
+              AND t.table_name   = n.table
+            SET e.status = n.status
+        `, map[string]interface{}{
+			"run_id": agg.RunID,
+			"nodes":  nodeParams,
+		}); err != nil {
+			return fmt.Errorf("Save: update node statuses: %w", err)
 		}
 	}
 

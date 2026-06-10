@@ -17,29 +17,34 @@ type TopologyReader interface {
 	// by SourcePinnedDAG and RebasePartition.
 	LoadSourceTasks(ctx context.Context, sourceRunID string) (map[FQN]SourceTaskRow, error)
 
-	// DescendantsInLatestTopology walks DEPENDS_ON in :Table space (not restricted
-	// to any source run) and returns transitive descendants of the start FQN.
-	// Inactive :Table nodes are excluded. Used by RebasePartition.
-	DescendantsInLatestTopology(ctx context.Context, start FQN) ([]FQN, error)
+	// DescendantsInLatestTopologyBatch returns, for each start FQN, its transitive
+	// DEPENDS_ON descendants in :Table space (not restricted to any source run).
+	// Inactive :Table nodes are excluded. One Cypher round trip for the whole
+	// batch (UNWIND over the starts). Every start appears as a key, mapping to a
+	// possibly-empty slice. Used by RebasePartition.
+	DescendantsInLatestTopologyBatch(ctx context.Context, starts []FQN) (map[FQN][]FQN, error)
 
-	// DescendantsInSourceRun walks DEPENDS_ON (in :Table space) and restricts the
-	// result to nodes that are also in the source run's :EXECUTES set — preserves
-	// source's pinned topology even if latest has drifted. Used by SourcePinnedDAG.
-	DescendantsInSourceRun(ctx context.Context, sourceRunID string, start FQN) ([]FQN, error)
+	// DescendantsInSourceRunBatch returns, for each start FQN, its transitive
+	// DEPENDS_ON descendants restricted to the source run's :EXECUTES set —
+	// preserving source's pinned topology even if latest has drifted. One Cypher
+	// round trip for the whole batch. Used by SourcePinnedDAG.
+	DescendantsInSourceRunBatch(ctx context.Context, sourceRunID string, starts []FQN) (map[FQN][]FQN, error)
 
-	// ImmediateDescendantsInLatestTopology returns the one-hop DEPENDS_ON
-	// dependents of start (nodes that directly depend on start) among active
-	// :Table nodes. Used to compute the rebase dispatch frontier: blocking must
-	// follow only immediate edges, because the run aggregate unblocks/cascades
-	// along immediate in-run edges — a node blocked via a transitive-only path
-	// would never be reached. Mirrors DescendantsInLatestTopology but one hop.
-	ImmediateDescendantsInLatestTopology(ctx context.Context, start FQN) ([]FQN, error)
+	// ImmediateDescendantsInLatestTopologyBatch returns, for each start FQN, its
+	// one-hop DEPENDS_ON dependents (nodes that directly depend on start) among
+	// active :Table nodes. Used to compute the rebase dispatch frontier: blocking
+	// must follow only immediate edges, because the run aggregate
+	// unblocks/cascades along immediate in-run edges — a node blocked via a
+	// transitive-only path would never be reached. One Cypher round trip for the
+	// whole batch.
+	ImmediateDescendantsInLatestTopologyBatch(ctx context.Context, starts []FQN) (map[FQN][]FQN, error)
 
-	// ImmediateDescendantsInSourceRun returns the one-hop DEPENDS_ON dependents
-	// of start restricted to the source run's :EXECUTES set. The source-run
-	// counterpart of ImmediateDescendantsInLatestTopology, used by
-	// SourcePinnedDAG to compute the dispatch frontier.
-	ImmediateDescendantsInSourceRun(ctx context.Context, sourceRunID string, start FQN) ([]FQN, error)
+	// ImmediateDescendantsInSourceRunBatch returns, for each start FQN, its
+	// one-hop DEPENDS_ON dependents restricted to the source run's :EXECUTES set.
+	// The source-run counterpart of ImmediateDescendantsInLatestTopologyBatch,
+	// used by SourcePinnedDAG to compute the dispatch frontier. One Cypher round
+	// trip for the whole batch.
+	ImmediateDescendantsInSourceRunBatch(ctx context.Context, sourceRunID string, starts []FQN) (map[FQN][]FQN, error)
 
 	// LoadSingleLatestTable returns the latest :Table row for one FQN. The bool
 	// is false (with no error) when the table doesn't exist or is inactive.

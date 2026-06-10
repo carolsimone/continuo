@@ -303,6 +303,45 @@ func TestRunAggregateRepository_Save_PersistsNodeStatusesAndCounters(t *testing.
 	assert.Equal(t, "PENDING", nB.Status, "B must remain PENDING")
 }
 
+// TestRunAggregateRepository_Save_DiscriminatesByServiceName guards the
+// EXECUTES-identity fix: two :Table nodes that share schema.table but belong to
+// different services must each carry their own :EXECUTES.status. The batched
+// Save keys on (service_name, schema_name, table_name), so completing the
+// svc-1 node must not leak its status onto the svc-2 node's edge.
+func TestRunAggregateRepository_Save_DiscriminatesByServiceName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestAggRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-%s", t.Name())
+	seedRun(t, ctx, client, runID, 2, 0, 0,
+		[]seededNode{
+			{"public", "shared", "svc-1", "PENDING"},
+			{"public", "shared", "svc-2", "PENDING"},
+		},
+		nil,
+	)
+
+	k1 := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "shared"}
+	agg, err := repo.Rehydrate(ctx, runID, domainRun.ScopeFull{})
+	require.NoError(t, err)
+	_, err = agg.CompleteNode(k1, "SUCCEEDED")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, agg))
+
+	reloaded, err := repo.Rehydrate(ctx, runID, domainRun.ScopeFull{})
+	require.NoError(t, err)
+	n1 := nodeByKey(reloaded, k1)
+	n2 := nodeByKey(reloaded, domainRun.NodeKey{ServiceName: "svc-2", SchemaName: "public", TableName: "shared"})
+	require.NotNil(t, n1)
+	require.NotNil(t, n2)
+	assert.Equal(t, "SUCCEEDED", n1.Status, "svc-1's edge must be updated")
+	assert.Equal(t, "PENDING", n2.Status, "svc-2's edge must NOT be touched (different service)")
+}
+
 func TestRunAggregateRepository_Save_StaleVersion_ReturnsErrVersionConflict(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")

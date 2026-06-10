@@ -25,6 +25,13 @@ type fakeTopologyReader struct {
 	DescendantsSourceErr   error
 	SingleLatestErr        error
 	SingleFromSourceRunErr error
+
+	// Per-method call counters let tests assert that a selector pass issues a
+	// single batched reader call rather than one per FQN.
+	DescendantsLatestCalls    int
+	DescendantsSourceCalls    int
+	ImmDescendantsLatestCalls int
+	ImmDescendantsSourceCalls int
 }
 
 func (f *fakeTopologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName string) (map[snapshot.FQN]snapshot.LatestTableRow, error) {
@@ -47,38 +54,56 @@ func (f *fakeTopologyReader) LoadSourceTasks(ctx context.Context, sourceRunID st
 	return map[snapshot.FQN]snapshot.SourceTaskRow{}, nil
 }
 
-func (f *fakeTopologyReader) DescendantsInLatestTopology(ctx context.Context, start snapshot.FQN) ([]snapshot.FQN, error) {
+func (f *fakeTopologyReader) DescendantsInLatestTopologyBatch(ctx context.Context, starts []snapshot.FQN) (map[snapshot.FQN][]snapshot.FQN, error) {
+	f.DescendantsLatestCalls++
 	if f.DescendantsLatestErr != nil {
 		return nil, f.DescendantsLatestErr
 	}
-	return f.DescendantsLatest[start], nil
+	out := make(map[snapshot.FQN][]snapshot.FQN, len(starts))
+	for _, s := range starts {
+		out[s] = f.DescendantsLatest[s]
+	}
+	return out, nil
 }
 
-func (f *fakeTopologyReader) DescendantsInSourceRun(ctx context.Context, sourceRunID string, start snapshot.FQN) ([]snapshot.FQN, error) {
+func (f *fakeTopologyReader) DescendantsInSourceRunBatch(ctx context.Context, sourceRunID string, starts []snapshot.FQN) (map[snapshot.FQN][]snapshot.FQN, error) {
+	f.DescendantsSourceCalls++
 	if f.DescendantsSourceErr != nil {
 		return nil, f.DescendantsSourceErr
 	}
+	out := make(map[snapshot.FQN][]snapshot.FQN, len(starts))
 	if m, ok := f.DescendantsSource[sourceRunID]; ok {
-		return m[start], nil
+		for _, s := range starts {
+			out[s] = m[s]
+		}
 	}
-	return nil, nil
+	return out, nil
 }
 
-func (f *fakeTopologyReader) ImmediateDescendantsInLatestTopology(ctx context.Context, start snapshot.FQN) ([]snapshot.FQN, error) {
+func (f *fakeTopologyReader) ImmediateDescendantsInLatestTopologyBatch(ctx context.Context, starts []snapshot.FQN) (map[snapshot.FQN][]snapshot.FQN, error) {
+	f.ImmDescendantsLatestCalls++
 	if f.DescendantsLatestErr != nil {
 		return nil, f.DescendantsLatestErr
 	}
-	return f.ImmDescendantsLatest[start], nil
+	out := make(map[snapshot.FQN][]snapshot.FQN, len(starts))
+	for _, s := range starts {
+		out[s] = f.ImmDescendantsLatest[s]
+	}
+	return out, nil
 }
 
-func (f *fakeTopologyReader) ImmediateDescendantsInSourceRun(ctx context.Context, sourceRunID string, start snapshot.FQN) ([]snapshot.FQN, error) {
+func (f *fakeTopologyReader) ImmediateDescendantsInSourceRunBatch(ctx context.Context, sourceRunID string, starts []snapshot.FQN) (map[snapshot.FQN][]snapshot.FQN, error) {
+	f.ImmDescendantsSourceCalls++
 	if f.DescendantsSourceErr != nil {
 		return nil, f.DescendantsSourceErr
 	}
+	out := make(map[snapshot.FQN][]snapshot.FQN, len(starts))
 	if m, ok := f.ImmDescendantsSource[sourceRunID]; ok {
-		return m[start], nil
+		for _, s := range starts {
+			out[s] = m[s]
+		}
 	}
-	return nil, nil
+	return out, nil
 }
 
 func (f *fakeTopologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot.FQN) (snapshot.LatestTableRow, bool, error) {

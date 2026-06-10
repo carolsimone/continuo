@@ -14,7 +14,6 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	"github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
@@ -28,7 +27,6 @@ import (
 // state's RunEntriesDispatchFailedHandler to finalise the run as failed.
 type HandleSchedulerStartedHandler struct {
 	uow         uow.UnitOfWork
-	runQueries  run.RunQueryPort
 	snapshotSvc SnapshotService
 	logger      *slog.Logger
 }
@@ -36,13 +34,11 @@ type HandleSchedulerStartedHandler struct {
 // NewHandleSchedulerStartedHandler creates a new HandleSchedulerStartedHandler.
 func NewHandleSchedulerStartedHandler(
 	u uow.UnitOfWork,
-	runQueries run.RunQueryPort,
 	snapshotSvc SnapshotService,
 	logger *slog.Logger,
 ) *HandleSchedulerStartedHandler {
 	return &HandleSchedulerStartedHandler{
 		uow:         u,
-		runQueries:  runQueries,
 		snapshotSvc: snapshotSvc,
 		logger:      logger,
 	}
@@ -105,14 +101,6 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		return fmt.Errorf("failed to snapshot graph: %w", err)
 	}
 
-	// Get root/seed dispatch ordering for the schedule. The AllNodes data is
-	// redundant with the projection above; we ignore it. Only RootNodes/SeedNodes
-	// are used (seeds dispatch first, otherwise roots).
-	initNodes, err := h.runQueries.GetScheduleInitNodes(ctx, evt.ScheduleName, evt.ScheduleID.String())
-	if err != nil {
-		return fmt.Errorf("failed to get schedule init nodes: %w", err)
-	}
-
 	// Build and write run.entries.dispatched:v1 outbox entry from the projection.
 	dispatchedPayload, err := h.buildRunEntriesDispatchedPayload(evt, projection)
 	if err != nil {
@@ -134,42 +122,45 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		return fmt.Errorf("failed to write run.entries.dispatched outbox entry: %w", err)
 	}
 
-	// Determine which nodes to dispatch first: seeds take priority over roots.
-	dispatchNodes := initNodes.SeedNodes
-	if len(dispatchNodes) == 0 {
-		dispatchNodes = initNodes.RootNodes
-	}
-
-	// Dispatch each seed/root node as a query.model:v1 outbox entry.
-	for _, node := range dispatchNodes {
-		nodeType, err := pkgModel.ParseNodeType(node.NodeType)
-		if err != nil {
-			h.logger.Error("Skipping dispatch node with invalid node_type",
-				"table", node.TableName, "node_type", node.NodeType, "error", err)
+	// Dispatch the run's initial frontier: every PENDING projection entry the
+	// selector marked ReadyToDispatch (no in-DAG upstream to wait on). This is
+	// the seeds-first-else-roots ordering, computed by LatestFullDAG from the
+	// DAG edges — no second Neo4j read. The run aggregate dispatches the rest via
+	// NodeUnblocked as their upstreams complete.
+	dispatchedCount := 0
+	for _, task := range projection {
+		if task.InitialStatus != "PENDING" || !task.ReadyToDispatch {
 			continue
 		}
 
-		jobName, err := pkgDomain.ComputeJobName(node.ServiceName, node.SchemaName, node.TableName, evt.ScheduleID.String())
+		nodeType, err := pkgModel.ParseNodeType(task.NodeType)
 		if err != nil {
-			return fmt.Errorf("failed to compute job_name for %s.%s: %w", node.SchemaName, node.TableName, err)
+			h.logger.Error("Skipping dispatch node with invalid node_type",
+				"table", task.TableName, "node_type", task.NodeType, "error", err)
+			continue
+		}
+
+		jobName, err := pkgDomain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, evt.ScheduleID.String())
+		if err != nil {
+			return fmt.Errorf("failed to compute job_name for %s.%s: %w", task.SchemaName, task.TableName, err)
 		}
 
 		nodeEvt := domain.NodeReadyForExecution{
 			ScheduleID:      evt.ScheduleID.String(),
-			ScheduleName:    node.ScheduleName,
-			ServiceName:     node.ServiceName,
-			SchemaName:      node.SchemaName,
-			TableName:       node.TableName,
-			TaskID:          node.TaskID,
+			ScheduleName:    task.ScheduleName,
+			ServiceName:     task.ServiceName,
+			SchemaName:      task.SchemaName,
+			TableName:       task.TableName,
+			TaskID:          task.TaskID.String(),
 			JobName:         jobName,
 			NodeType:        string(nodeType),
-			ManifestVersion: node.ManifestVersion,
-			ImageTag:        node.ImageTag,
+			ManifestVersion: task.ManifestVersion,
+			ImageTag:        task.ImageTag,
 		}
 
 		evtPayload, err := json.Marshal(nodeEvt)
 		if err != nil {
-			return fmt.Errorf("failed to marshal NodeReadyForExecution for %s.%s: %w", node.SchemaName, node.TableName, err)
+			return fmt.Errorf("failed to marshal NodeReadyForExecution for %s.%s: %w", task.SchemaName, task.TableName, err)
 		}
 
 		outboxEntry := &pkgoutbox.Entry{
@@ -184,13 +175,14 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 			MaxRetries:          3,
 		}
 		if err := h.uow.OutboxRepo().Create(ctx, outboxEntry); err != nil {
-			return fmt.Errorf("failed to write query.model outbox entry for %s.%s: %w", node.SchemaName, node.TableName, err)
+			return fmt.Errorf("failed to write query.model outbox entry for %s.%s: %w", task.SchemaName, task.TableName, err)
 		}
+		dispatchedCount++
 
 		h.logger.Debug("Dispatched initial node",
-			"table", node.TableName,
-			"schema", node.SchemaName,
-			"task_id", node.TaskID,
+			"table", task.TableName,
+			"schema", task.SchemaName,
+			"task_id", task.TaskID,
 		)
 	}
 
@@ -207,7 +199,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 	h.logger.Info("Scheduler started processing finished",
 		"schedule_id", evt.ScheduleID,
 		"schedule_name", evt.ScheduleName,
-		"dispatched_count", len(dispatchNodes),
+		"dispatched_count", dispatchedCount,
 	)
 
 	return nil
