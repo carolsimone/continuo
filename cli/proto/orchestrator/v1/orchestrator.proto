@@ -1,0 +1,96 @@
+syntax = "proto3";
+package orchestrator.v1;
+option go_package = "github.com/carolsimone/continuo/cli/proto/orchestrator/v1;orchestratorv1";
+import "google/protobuf/timestamp.proto";
+
+service OrchestratorQuery {
+  rpc GetScheduleGraph(GetScheduleGraphRequest) returns (GetScheduleGraphResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc GetRunGraph(GetRunGraphRequest) returns (GetRunGraphResponse);
+  rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
+  rpc ListScheduleTopologies(ListScheduleTopologiesRequest)
+      returns (ListScheduleTopologiesResponse);
+}
+
+message TableNode {
+  string table_name = 1;
+  string schema_name = 2;
+  string service_name = 3;
+  string owner = 4;
+  string schedule_name = 5;
+  Criticality criticality = 6;
+  google.protobuf.Timestamp last_updated_at = 7;
+  google.protobuf.Timestamp created_at = 8;
+  string node_type = 9;
+  string status = 10;
+}
+
+enum Criticality {
+  CRITICALITY_UNSPECIFIED = 0;
+  CRITICALITY_REGULATORY = 1;
+  CRITICALITY_CORE = 2;
+  CRITICALITY_SECONDARY = 3;
+}
+
+message GraphEdge {
+  string from_node_id = 1;
+  string to_node_id = 2;
+}
+
+message GetScheduleGraphRequest { string schedule_name = 1; }
+message GetScheduleGraphResponse {
+  repeated TableNode nodes              = 1;
+  repeated GraphEdge edges              = 2;
+  // topology_generation is :TopologyRoot.topology_generation at query time.
+  // Returns 0 when the singleton is missing or the property is unset; consumers
+  // MUST treat 0 as "generation unknown", not "generation zero".
+  int64 topology_generation             = 3;
+}
+
+message ListRunsRequest { string schedule_name = 1; }
+message ListRunsResponse { repeated RunSummary runs = 1; }
+message RunSummary {
+  string run_id = 1;
+  string schedule_name = 2;
+  string terminal_status = 3;
+  string created_at = 4;
+  string completed_at = 5;
+}
+
+message GetRunGraphRequest { string run_id = 1; }
+message GetRunGraphResponse {
+  repeated TableNode nodes = 1;
+  repeated GraphEdge edges = 2;
+  // run_topology_generation is the value stamped on the :Run node at
+  // SnapshotGraph time (orchestrator/adapters/neo4j/run_repository.go:91-99).
+  // Returns 0 when the run does not exist or pre-dates topology tracking;
+  // consumers MUST treat 0 as "drift unknown", not "no drift".
+  int64 run_topology_generation = 3;
+  // latest_topology_generation is the orchestrator's current
+  // topology_state.topology_generation (Postgres singleton).
+  int64 latest_topology_generation = 4;
+}
+
+message ListActiveRunDriftsRequest {}
+message ListActiveRunDriftsResponse {
+  // latest_topology_generation matches the value in GetRunGraphResponse.
+  int64 latest_topology_generation = 1;
+  repeated ActiveRunDrift active_runs = 2;
+}
+message ActiveRunDrift {
+  string schedule_name = 1;
+  string run_id = 2;
+  int64 run_topology_generation = 3;
+}
+
+message ListScheduleTopologiesRequest {}
+
+message ListScheduleTopologiesResponse {
+  repeated ScheduleTopologySummary schedules = 1;
+}
+
+message ScheduleTopologySummary {
+  string schedule_name                       = 1;
+  int32  node_count                          = 2;
+  google.protobuf.Timestamp last_updated_at  = 3;
+}

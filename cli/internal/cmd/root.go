@@ -57,6 +57,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	}
 
 	root.AddCommand(schedule.NewCommand(cfg, stdout, stderr))
+	root.AddCommand(NewDescribeCommand(cfg, stdout, stderr))
 
 	root.SetArgs(args)
 	root.SetOut(stdout)

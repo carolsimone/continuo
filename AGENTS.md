@@ -8,6 +8,15 @@ Service at the moment are:
 * `k8s-controller`
 * `manifest-controller` — Python 3.12/uv service (not Go); consumes `update.graph:v1` Redis Stream events, batch-loads all dbt manifest.json files from `/manifests` (mounted from `dbt/services/`), resolves cross-service upstream deps via sqlglot, and publishes topology to `manifest.loaded:v1` for the orchestrator. Run tests with `docker exec manifest-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.
 
+# CLI (`cli/`)
+The `continuo` CLI is a standalone client of the system, intended primarily for the LLM chat to call. It is a separate Go module (`github.com/carolsimone/continuo/cli`), deliberately kept outside the parent `go.work`, and emits machine-readable JSON to stdout (human text to stderr).
+
+Hard constraint: the CLI may consume services **only through their public gRPC interfaces**. It must never import or reuse any backend internal implementation — no `state/*`, `orchestrator/*`, `pkg/*`, or any domain/service/adapter package. Its only dependencies are cobra, grpc, protobuf, and the generated stubs of the public `.proto` contracts vendored under `cli/proto/`. New behavior composes public RPCs client-side; it does not reach into service internals, and even at gen-time the stubs are regenerated from the vendored `.proto` copy, never from a service's source tree.
+
+LLM-friendliness is a requirement, not a nicety. The CLI is consumed primarily by an LLM, so it must be self-describing:
+- Every command MUST populate `Short`, a full `Long` (purpose phrased as user intent → arguments → stdout JSON shape → the `CLIError` codes / exit codes it can return), at least one `Example`, and a clear `Usage` on every flag. Machine-readable extras go in cobra `Annotations`: `output_schema` (success-payload field names + types) and `exit_codes`.
+- `continuo describe` emits a machine-readable catalog of every command, **derived** from the cobra tree (never a hand-maintained manifest). Adding a command means it appears in `describe` automatically; a test enforces that every command carries a non-empty `Long` and an `Example`, and that each `output_schema` matches the JSON the command actually emits.
+
 # Architecture
 This repository follows an event-driven, DDD-oriented architecture using Clean Architecture boundaries.
 Domain code must stay independent of infrastructure concerns. Databases, Redis, gRPC, Kubernetes, S3, framework code, and serialization details belong in adapters. Application and domain code should depend on ports/interfaces, not concrete infrastructure implementations.

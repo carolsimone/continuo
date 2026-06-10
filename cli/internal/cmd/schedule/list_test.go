@@ -34,6 +34,10 @@ func (f *fakeStateList) ListAllSchedules(_ context.Context) (*statev1.ListAllSch
 	return f.resp, f.err
 }
 
+func (f *fakeStateList) ListTasks(_ context.Context, _ string, _ statev1.TaskStatus, _, _ int32) (*statev1.ListTasksResponse, error) {
+	panic("ListTasks should not be called in list tests")
+}
+
 func (f *fakeStateList) Close() error { return nil }
 
 // runList invokes the list command end-to-end with the provided fake client.
@@ -215,13 +219,13 @@ func TestList_ZeroLastRunAtOmittedFromJSON(t *testing.T) {
 		resp: &statev1.ListAllSchedulesResponse{
 			Schedules: []*statev1.ScheduleSummary{
 				{
-					ScheduleName:  "daily_ingest",
+					ScheduleName:   "daily_ingest",
 					CronExpression: "0 3 * * *",
-					Timezone:      "UTC",
-					IsRunning:     false,
-					LastRunId:     "",
-					LastRunStatus: "",
-					LastRunAt:     nil, // zero / never run
+					Timezone:       "UTC",
+					IsRunning:      false,
+					LastRunId:      "",
+					LastRunStatus:  "",
+					LastRunAt:      nil, // zero / never run
 				},
 			},
 		},
@@ -333,4 +337,15 @@ func TestList_FactoryErrorEmitsJSONAndExits(t *testing.T) {
 	var cliErr output.CLIError
 	require.True(t, errors.As(err, &cliErr))
 	assert.Equal(t, 5, cliErr.ExitCode())
+}
+
+func TestList_ExtraArgEmitsUsageEnvelopeExits2(t *testing.T) {
+	fake := &fakeStateList{resp: &statev1.ListAllSchedulesResponse{}}
+
+	stdout, _, exit := runList(t, fake, []string{"extra"}, false)
+
+	assert.Equal(t, 2, exit)
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
 }

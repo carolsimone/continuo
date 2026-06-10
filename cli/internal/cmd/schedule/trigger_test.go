@@ -35,6 +35,10 @@ func (f *fakeState) ListAllSchedules(_ context.Context) (*statev1.ListAllSchedul
 	return nil, nil
 }
 
+func (f *fakeState) ListTasks(_ context.Context, _ string, _ statev1.TaskStatus, _, _ int32) (*statev1.ListTasksResponse, error) {
+	panic("ListTasks should not be called in trigger tests")
+}
+
 // run invokes the trigger command end-to-end with the provided fake client and args.
 // It captures stdout/stderr and returns the exit code.
 func run(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
@@ -113,9 +117,12 @@ func TestTrigger_UnavailableExits5(t *testing.T) {
 func TestTrigger_MissingArgumentExits2(t *testing.T) {
 	fake := &fakeState{}
 
-	_, _, exit := run(t, fake, []string{}, false)
+	stdout, _, exit := run(t, fake, []string{}, false)
 
 	assert.Equal(t, 2, exit)
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
 }
 
 func TestTrigger_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {

@@ -36,6 +36,9 @@ const (
 	StateService_TriggerRerun_FullMethodName             = "/state.v1.StateService/TriggerRerun"
 	StateService_TriggerSingleNodeRun_FullMethodName     = "/state.v1.StateService/TriggerSingleNodeRun"
 	StateService_TriggerRebase_FullMethodName            = "/state.v1.StateService/TriggerRebase"
+	StateService_ListNodeRuns_FullMethodName             = "/state.v1.StateService/ListNodeRuns"
+	StateService_ListNodes_FullMethodName                = "/state.v1.StateService/ListNodes"
+	StateService_ListNodeNames_FullMethodName            = "/state.v1.StateService/ListNodeNames"
 	StateService_GetTaskExecution_FullMethodName         = "/state.v1.StateService/GetTaskExecution"
 	StateService_ListTaskExecutions_FullMethodName       = "/state.v1.StateService/ListTaskExecutions"
 )
@@ -101,6 +104,20 @@ type StateServiceClient interface {
 	//	                      zero non-SUCCEEDED tasks; OR an active run already
 	//	                      exists on the source's schedule_name.
 	TriggerRebase(ctx context.Context, in *TriggerRebaseRequest, opts ...grpc.CallOption) (*TriggerRebaseResponse, error)
+	// ListNodeRuns returns the most recent task instances for a node, ordered by
+	// scheduler_tracker.created_at DESC. Identity fields are required; limit is
+	// capped server-side at 50 (0 uses the default of 50).
+	ListNodeRuns(ctx context.Context, in *ListNodeRunsRequest, opts ...grpc.CallOption) (*ListNodeRunsResponse, error)
+	// ListNodes returns the node catalog: one summary row per node that has run,
+	// with stats aggregated over each node's most recent 50 runs. Supports a
+	// case-insensitive substring `search` on "service.schema.table", an exact
+	// `service_name` filter, and limit/offset paging. `total_count` reports the
+	// full match count (before paging).
+	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
+	// ListNodeNames returns the distinct table names of nodes that have run,
+	// optionally filtered by service. Powers the Nodes-tab search autocomplete
+	// (the complete name list, independent of the paginated catalog).
+	ListNodeNames(ctx context.Context, in *ListNodeNamesRequest, opts ...grpc.CallOption) (*ListNodeNamesResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error)
 	ListTaskExecutions(ctx context.Context, in *ListTaskExecutionsRequest, opts ...grpc.CallOption) (*ListTaskExecutionsResponse, error)
@@ -284,6 +301,36 @@ func (c *stateServiceClient) TriggerRebase(ctx context.Context, in *TriggerRebas
 	return out, nil
 }
 
+func (c *stateServiceClient) ListNodeRuns(ctx context.Context, in *ListNodeRunsRequest, opts ...grpc.CallOption) (*ListNodeRunsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListNodeRunsResponse)
+	err := c.cc.Invoke(ctx, StateService_ListNodeRuns_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListNodesResponse)
+	err := c.cc.Invoke(ctx, StateService_ListNodes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) ListNodeNames(ctx context.Context, in *ListNodeNamesRequest, opts ...grpc.CallOption) (*ListNodeNamesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListNodeNamesResponse)
+	err := c.cc.Invoke(ctx, StateService_ListNodeNames_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *stateServiceClient) GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TaskExecutionResponse)
@@ -365,6 +412,20 @@ type StateServiceServer interface {
 	//	                      zero non-SUCCEEDED tasks; OR an active run already
 	//	                      exists on the source's schedule_name.
 	TriggerRebase(context.Context, *TriggerRebaseRequest) (*TriggerRebaseResponse, error)
+	// ListNodeRuns returns the most recent task instances for a node, ordered by
+	// scheduler_tracker.created_at DESC. Identity fields are required; limit is
+	// capped server-side at 50 (0 uses the default of 50).
+	ListNodeRuns(context.Context, *ListNodeRunsRequest) (*ListNodeRunsResponse, error)
+	// ListNodes returns the node catalog: one summary row per node that has run,
+	// with stats aggregated over each node's most recent 50 runs. Supports a
+	// case-insensitive substring `search` on "service.schema.table", an exact
+	// `service_name` filter, and limit/offset paging. `total_count` reports the
+	// full match count (before paging).
+	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
+	// ListNodeNames returns the distinct table names of nodes that have run,
+	// optionally filtered by service. Powers the Nodes-tab search autocomplete
+	// (the complete name list, independent of the paginated catalog).
+	ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error)
 	ListTaskExecutions(context.Context, *ListTaskExecutionsRequest) (*ListTaskExecutionsResponse, error)
@@ -428,6 +489,15 @@ func (UnimplementedStateServiceServer) TriggerSingleNodeRun(context.Context, *Tr
 }
 func (UnimplementedStateServiceServer) TriggerRebase(context.Context, *TriggerRebaseRequest) (*TriggerRebaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TriggerRebase not implemented")
+}
+func (UnimplementedStateServiceServer) ListNodeRuns(context.Context, *ListNodeRunsRequest) (*ListNodeRunsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListNodeRuns not implemented")
+}
+func (UnimplementedStateServiceServer) ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListNodes not implemented")
+}
+func (UnimplementedStateServiceServer) ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListNodeNames not implemented")
 }
 func (UnimplementedStateServiceServer) GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTaskExecution not implemented")
@@ -762,6 +832,60 @@ func _StateService_TriggerRebase_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_ListNodeRuns_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNodeRunsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListNodeRuns(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListNodeRuns_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListNodeRuns(ctx, req.(*ListNodeRunsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_ListNodes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNodesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListNodes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListNodes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListNodes(ctx, req.(*ListNodesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_ListNodeNames_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNodeNamesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListNodeNames(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListNodeNames_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListNodeNames(ctx, req.(*ListNodeNamesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StateService_GetTaskExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTaskExecutionRequest)
 	if err := dec(in); err != nil {
@@ -872,6 +996,18 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TriggerRebase",
 			Handler:    _StateService_TriggerRebase_Handler,
+		},
+		{
+			MethodName: "ListNodeRuns",
+			Handler:    _StateService_ListNodeRuns_Handler,
+		},
+		{
+			MethodName: "ListNodes",
+			Handler:    _StateService_ListNodes_Handler,
+		},
+		{
+			MethodName: "ListNodeNames",
+			Handler:    _StateService_ListNodeNames_Handler,
 		},
 		{
 			MethodName: "GetTaskExecution",

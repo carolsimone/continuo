@@ -59,7 +59,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | Caller | Methods used |
 |---|---|
 | `ui-service` | `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule` |
-| `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
+| `continuo CLI` | `ListAllSchedules`, `ListTasks`, `TriggerSchedule` |
 | `orchestrator` (watchdog) | `ListAllSchedules`, `ListTasks`, `CancelSchedule` |
 
 ### Calls to `orchestrator`

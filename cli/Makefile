@@ -30,3 +30,20 @@ vet:
 
 clean:
 	rm -rf bin/
+
+# Regenerate gRPC stubs from the vendored public .proto contracts under proto/.
+# Never generates from a service's source tree — the CLI is a pure client.
+# Prerequisites on PATH:
+#   - protoc, installed WITH its bundled well-known-type includes
+#     (Homebrew, apt protobuf-compiler, or an official release zip that
+#     includes the include/ dir) so google/protobuf/timestamp.proto resolves.
+#   - protoc-gen-go and protoc-gen-go-grpc.
+# The committed stubs were generated with protoc-gen-go / protoc-gen-go-grpc
+# current as of this commit; a newer plugin pair may produce header churn.
+.PHONY: proto
+proto:
+	protoc \
+	  --go_out=. --go_opt=paths=source_relative \
+	  --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+	  proto/state/v1/state.proto \
+	  proto/orchestrator/v1/orchestrator.proto
