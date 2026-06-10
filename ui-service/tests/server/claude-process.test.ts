@@ -77,4 +77,29 @@ describe('ClaudeProcess', () => {
     await tick();
     expect(messages).toContainEqual({ type: 'error', code: 'agent_unavailable', message: 'ENOENT claude' });
   });
+
+  it('emits exit with code 0 and no error message on clean exit', async () => {
+    const child = makeFakeChild();
+    const proc = new ClaudeProcess({ spawnFn: (() => child) as any });
+    const messages: any[] = [];
+    let exitCode: number | null | undefined;
+    proc.on('message', (m) => messages.push(m));
+    proc.on('exit', (code) => { exitCode = code; });
+    child.emit('exit', 0);
+    await tick();
+    expect(exitCode).toBe(0);
+    expect(messages).toEqual([]);
+  });
+
+  it('emits an exit event after a spawn error', async () => {
+    const child = makeFakeChild();
+    const proc = new ClaudeProcess({ spawnFn: (() => child) as any });
+    const events: string[] = [];
+    proc.on('message', () => events.push('message'));
+    proc.on('exit', () => events.push('exit'));
+    child.emit('error', new Error('ENOENT claude'));
+    child.emit('exit', null);
+    await tick();
+    expect(events).toEqual(['message', 'exit']);
+  });
 });

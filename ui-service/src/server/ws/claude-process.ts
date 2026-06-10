@@ -14,6 +14,7 @@ export interface ClaudeProcessOptions {
 
 export class ClaudeProcess extends EventEmitter {
   private child: ChildProcess;
+  private rl: readline.Interface | null = null;
   private stderr = '';
 
   constructor(opts: ClaudeProcessOptions = {}) {
@@ -33,8 +34,8 @@ export class ClaudeProcess extends EventEmitter {
     this.child = spawnFn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 
     if (this.child.stdout) {
-      const rl = readline.createInterface({ input: this.child.stdout });
-      rl.on('line', (line) => {
+      this.rl = readline.createInterface({ input: this.child.stdout });
+      this.rl.on('line', (line) => {
         for (const msg of classifyClaudeLine(line)) this.emit('message', msg);
       });
     }
@@ -67,6 +68,7 @@ export class ClaudeProcess extends EventEmitter {
   }
 
   kill(): void {
+    this.rl?.close();
     this.child.kill();
   }
 }
