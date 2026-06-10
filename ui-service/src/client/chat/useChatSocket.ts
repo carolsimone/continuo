@@ -20,19 +20,41 @@ export function useChatSocket(): ChatSocket {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem(SESSION_KEY);
-    const qs = stored ? `?sessionId=${encodeURIComponent(stored)}` : '';
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${window.location.host}/ws/chat${qs}`);
-    wsRef.current = ws;
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data) as ServerMessage;
-      if (msg.type === 'session') sessionStorage.setItem(SESSION_KEY, msg.sessionId);
-      setState((s) => applyServerMessage(s, msg));
+    let unmounted = false;
+    let retry = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let ws: WebSocket;
+
+    function connect() {
+      const stored = sessionStorage.getItem(SESSION_KEY);
+      const qs = stored ? `?sessionId=${encodeURIComponent(stored)}` : '';
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${window.location.host}/ws/chat${qs}`);
+      wsRef.current = ws;
+      ws.onopen = () => {
+        retry = 0;
+        setConnected(true);
+      };
+      ws.onclose = () => {
+        setConnected(false);
+        if (unmounted) return;
+        const delay = Math.min(1000 * 2 ** retry, 15000);
+        retry += 1;
+        timer = setTimeout(connect, delay);
+      };
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data) as ServerMessage;
+        if (msg.type === 'session') sessionStorage.setItem(SESSION_KEY, msg.sessionId);
+        setState((s) => applyServerMessage(s, msg));
+      };
+    }
+
+    connect();
+    return () => {
+      unmounted = true;
+      if (timer) clearTimeout(timer);
+      ws.close();
     };
-    return () => ws.close();
   }, []);
 
   const send = useCallback((text: string) => {
