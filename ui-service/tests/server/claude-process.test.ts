@@ -27,6 +27,10 @@ describe('ClaudeProcess', () => {
     expect(allow).toContain('Bash(continuo schedule status:*)');
     expect(allow).not.toContain('trigger');
     expect(allow).not.toBe('Bash(continuo:*)');
+    // The deny-list is the real enforcement boundary in headless mode: trigger is blocked.
+    expect(args).toContain('--disallowedTools');
+    const deny = args[args.indexOf('--disallowedTools') + 1];
+    expect(deny).toContain('Bash(continuo schedule trigger:*)');
     expect(args).not.toContain('--resume');
   });
 

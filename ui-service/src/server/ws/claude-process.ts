@@ -2,7 +2,7 @@ import { spawn as nodeSpawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import readline from 'readline';
-import { ALLOWED_TOOLS, SYSTEM_PROMPT, classifyClaudeLine, encodeUserTurn, ServerMessage } from './chat-protocol';
+import { ALLOWED_TOOLS, DISALLOWED_TOOLS, SYSTEM_PROMPT, classifyClaudeLine, encodeUserTurn, ServerMessage } from './chat-protocol';
 
 export type SpawnFn = typeof nodeSpawn;
 
@@ -28,6 +28,7 @@ export class ClaudeProcess extends EventEmitter {
       '--output-format', 'stream-json',
       '--verbose',
       '--allowedTools', ALLOWED_TOOLS,
+      '--disallowedTools', DISALLOWED_TOOLS,
       '--append-system-prompt', SYSTEM_PROMPT,
     ];
     if (opts.sessionId) args.push('--resume', opts.sessionId);

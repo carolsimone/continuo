@@ -9,15 +9,22 @@ export type ClientMessage =
   | { type: 'user_message'; text: string }
   | { type: 'new_chat' };
 
-// Read-only command surface, hard-enforced by Claude Code's tool allowlist.
-// Comma-separated because each pattern contains spaces. The mutating
-// `continuo schedule trigger` is intentionally excluded.
+// Intended read-only command surface. In headless `claude -p` mode the allowlist
+// does NOT act as a default-deny (tool calls are auto-approved), so this documents
+// intent and front-runs any future stricter matching — it is not the enforcement
+// boundary. Comma-separated because each pattern contains spaces.
 export const ALLOWED_TOOLS = [
   'Bash(continuo schedule status:*)',
   'Bash(continuo schedule list:*)',
   'Bash(continuo schedule graph:*)',
   'Bash(continuo describe:*)',
 ].join(',');
+
+// The actual enforcement boundary: a deny-list. In headless mode `--disallowedTools`
+// is honored (a matching command is denied), so mutating verbs are blocked here.
+// This is best-effort confinement for the local skeleton — it does not sandbox
+// arbitrary shell, which is why the bridge is gated off outside local development.
+export const DISALLOWED_TOOLS = ['Bash(continuo schedule trigger:*)'].join(',');
 
 export const SYSTEM_PROMPT = [
   'You answer questions about continuo schedules for an end user.',
