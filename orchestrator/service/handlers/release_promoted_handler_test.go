@@ -161,10 +161,10 @@ func TestReleasePromoted_HappyPath_PromotesAndEmitsSchedulesLoaded(t *testing.T)
 	// service_metadata with manifest_version=release_id and correct image_tags,
 	// and topology_generation present.
 	var payload struct {
-		EventID             string                       `json:"event_id"`
-		ScheduleNames       []string                     `json:"schedule_names"`
-		ServiceMetadata     map[string]map[string]string `json:"service_metadata"`
-		TopologyGeneration  int64                        `json:"topology_generation"`
+		EventID            string                       `json:"event_id"`
+		ScheduleNames      []string                     `json:"schedule_names"`
+		ServiceMetadata    map[string]map[string]string `json:"service_metadata"`
+		TopologyGeneration int64                        `json:"topology_generation"`
 	}
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, expectedEventID("rA"), payload.EventID, "event_id must be deterministic")
@@ -395,7 +395,7 @@ func TestReleasePromoted_TopologyRootUpdatedAfterPromotion(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	topoRepo := &fakeTopologyRepository{}
 	topoState := &fakeTopologyStateRepository{generation: 41} // IncrementGeneration → 42
-	promRepo := &fakeReleasePromotionRepository{}              // returns changed=true
+	promRepo := &fakeReleasePromotionRepository{}             // returns changed=true
 	h := newReleasePromotedHandler(uow, topoRepo, topoState, promRepo)
 
 	in := twoNodeInput()

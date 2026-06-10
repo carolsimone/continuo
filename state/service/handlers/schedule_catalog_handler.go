@@ -45,7 +45,7 @@ func (h *ScheduleCatalogHandler) Handle(
 	if err != nil {
 		return fmt.Errorf("load catalog: %w", err)
 	}
-	if _, err := c.Reconcile(evt.ScheduleNames, broadcastServiceMetadata(evt.ScheduleNames, evt.ServiceMetadata), u.Clock().Now()); err != nil {
+	if err := c.Reconcile(evt.ScheduleNames, broadcastServiceMetadata(evt.ScheduleNames, evt.ServiceMetadata), u.Clock().Now()); err != nil {
 		if errors.Is(err, catalog.ErrEmptyReconciliation) {
 			h.logger.Error("schedules.loaded: empty schedule_names list — refusing to nuke catalog")
 			return errors.Join(pkgevents.ErrPermanent, err)

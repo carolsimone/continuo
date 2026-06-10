@@ -18,8 +18,6 @@ const (
 	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
 	// NodeUpdatedV1 — Node state transitions; orchestrator updates its projections.
 	NodeUpdatedV1 = "node.updated:v1"
-	// InitializeRunV1 — Trigger to initialize a new run.
-	InitializeRunV1 = "initialize.run:v1"
 	// TriggerRerunV1 — User-initiated rerun trigger.
 	TriggerRerunV1 = "trigger.rerun:v1"
 	// TriggerRebaseV1 — User-initiated rebase trigger.
@@ -28,10 +26,6 @@ const (
 	TriggerSingleNodeRunV1 = "trigger.single_node_run:v1"
 	// RunFinalizedV1 — Run finalization (success, failure, or cancellation) emitted by state; consumed for projections.
 	RunFinalizedV1 = "run.finalized:v1"
-	// RunInitializedV1 — Run graph snapshot emitted by orchestrator after initializing a new run.
-	RunInitializedV1 = "run.initialized:v1"
-	// RerunReadyV1 — Rerun-ready signal emitted by orchestrator when a rerun is prepared.
-	RerunReadyV1 = "rerun.ready:v1"
 	// QueryModelV1 — Tasks dispatched by orchestrator for the executor pool.
 	QueryModelV1 = "query.model:v1"
 	// RetryTaskV1 — Retry trigger for tasks; produced by k8s-controller, consumed by executor.
@@ -76,8 +70,6 @@ const (
 	StateTaskExecutionRecorded = "state-task-execution-recorded"
 	// OrchestratorNodeUpdated — orchestrator consumer group on node.updated:v1.
 	OrchestratorNodeUpdated = "orchestrator-node-updated"
-	// OrchestratorInitializeRun — orchestrator consumer group on initialize.run:v1.
-	OrchestratorInitializeRun = "orchestrator-initialize-run"
 	// OrchestratorRerun — orchestrator consumer group on trigger.rerun:v1.
 	OrchestratorRerun = "orchestrator-rerun"
 	// OrchestratorRebase — orchestrator consumer group on trigger.rebase:v1.
@@ -86,8 +78,6 @@ const (
 	OrchestratorSingleNodeRun = "orchestrator-single-node-run"
 	// OrchestratorRunFinalized — orchestrator consumer group on run.finalized:v1.
 	OrchestratorRunFinalized = "orchestrator-run-finalized"
-	// StateRunInitialized — state consumer group on run.initialized:v1.
-	StateRunInitialized = "state-run-initialized"
 	// ExecutorQueryModel — executor-controller consumer group on query.model:v1.
 	ExecutorQueryModel = "executor-query-model"
 	// ExecutorRetry — executor-controller consumer group on retry.task:v1.

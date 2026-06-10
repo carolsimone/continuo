@@ -3,7 +3,7 @@ This is a monorepo with multiple microservices.
 
 Service at the moment are:
 * `state`
-* `orchestrator` — merged replacement for the former `graph` and `dependency-controller` services. Owns Neo4j topology and run projections, Postgres outbox/dedup. Consumes `node.updated:v1`, `manifest.loaded:v1`, `initialize.run:v1`. Produces `query.model:v1`, `schedules.loaded:v1`, `run.initialized:v1`, `rerun.ready:v1`. Serves gRPC `OrchestratorQuery` for UI reads.
+* `orchestrator` — merged replacement for the former `graph` and `dependency-controller` services. Owns Neo4j topology and run projections, Postgres outbox/dedup. Consumes `node.updated:v1`, `manifest.loaded:v1`, `scheduler.started:v1`, `release.promoted:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1`. Produces `query.model:v1`, `schedules.loaded:v1`. Serves gRPC `OrchestratorQuery` for UI reads.
 * `executor-controller`
 * `k8s-controller`
 * `manifest-controller` — Python 3.12/uv service (not Go); consumes `update.graph:v1` Redis Stream events, batch-loads all dbt manifest.json files from `/manifests` (mounted from `dbt/services/`), resolves cross-service upstream deps via sqlglot, and publishes topology to `manifest.loaded:v1` for the orchestrator. Run tests with `docker exec manifest-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.

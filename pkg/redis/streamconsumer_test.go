@@ -66,7 +66,7 @@ func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 	// just long enough to process the single message then cancel.
 	runCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	go consumer.Start(runCtx) //nolint:errcheck
+	go consumer.Start(runCtx)   //nolint:errcheck
 	time.Sleep(2 * time.Second) // let the consumer read and fail once
 
 	// The handler was called but returned an error, so the message must still be
@@ -349,7 +349,7 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 		redis.WithReclaimMinIdle(0))
 	aCtx, aCancel := context.WithTimeout(ctx, 4*time.Second)
 	defer aCancel()
-	go a.Start(aCtx) //nolint:errcheck
+	go a.Start(aCtx)            //nolint:errcheck
 	time.Sleep(3 * time.Second) // long enough for one retry budget to exhaust
 
 	// Confirm the message is in the PEL with a small idle time.

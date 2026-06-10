@@ -61,7 +61,7 @@ func Load(v *pkgconfig.Validator) Config {
 		},
 
 		GRPCPort: envInt("GRPC_PORT", 50052),
-		HTTPPort:      envInt("HTTP_PORT", 8087),
+		HTTPPort: envInt("HTTP_PORT", 8087),
 
 		RunHistoryRetentionDays:   envInt("RUN_HISTORY_RETENTION_DAYS", 7),
 		RunSweeperIntervalMinutes: envInt("RUN_SWEEPER_INTERVAL_MINUTES", 60),

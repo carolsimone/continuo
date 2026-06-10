@@ -18,14 +18,10 @@ type TaskTrackerRepository interface {
 	Create(ctx context.Context, task *TaskTracker) error
 	GetByID(ctx context.Context, taskID uuid.UUID) (*TaskTracker, error)
 	GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*TaskTracker, error)
-	Update(ctx context.Context, task *TaskTracker) error
 	Delete(ctx context.Context, taskID uuid.UUID) error
 	ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error)
-	List(ctx context.Context, filters TaskFilters) ([]*TaskTracker, int, error)
 	// BulkCreateTx inserts multiple task_tracker rows within a transaction (ON CONFLICT DO NOTHING).
 	BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskTracker) error
-	// ListAllByScheduleID returns all task rows for a schedule (no pagination, no status filter).
-	ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*TaskTracker, error)
 	// SetStatusAndAttemptTx writes status and retry_count for the given task,
 	// leaving a cancelled row untouched. Returns rows affected.
 	SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error)
@@ -42,19 +38,12 @@ type TaskTrackerRepository interface {
 	// status = 'failed' AND retry_count < max_retries (i.e. k8s will retry it).
 	HasRetryableFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
 	// HasNonSucceededTask returns true iff at least one task for the given schedule_id
-	// has a status other than 'succeeded'. Used by rebase eligibility (PR2).
+	// has a status other than 'succeeded'. Used by rebase eligibility: a source run is
+	// visible as a rebase candidate iff it is terminal AND has ≥1 non-succeeded task.
 	HasNonSucceededTask(ctx context.Context, scheduleID uuid.UUID) (bool, error)
 	// BulkCancelByScheduleIDTx sets status='cancelled' for all pending/running tasks
 	// in a schedule. Returns the number of rows updated.
 	BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string) (int64, error)
-}
-
-// TaskFilters defines query filters for List operation
-type TaskFilters struct {
-	ScheduleID *uuid.UUID
-	Status     *run.TaskStatus
-	Limit      int
-	Offset     int
 }
 
 type taskTrackerRepository struct {
@@ -186,43 +175,6 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 	return &task, nil
 }
 
-// Update updates task status, retry count, and cancellation fields
-func (r *taskTrackerRepository) Update(ctx context.Context, task *TaskTracker) error {
-	query := `
-		UPDATE task_tracker
-		SET status = :status,
-			retry_count = :retry_count,
-			cancelled_at = :cancelled_at,
-			cancelled_by = :cancelled_by
-		WHERE task_id = :task_id
-	`
-
-	result, err := r.db.NamedExecContext(ctx, query, task)
-	if err != nil {
-		r.logger.Error("Failed to update task_tracker",
-			"task_id", task.TaskID,
-			"error", err,
-		)
-		return fmt.Errorf("failed to update task_tracker: %w", err)
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		r.logger.Debug("Task tracker not found for update",
-			"task_id", task.TaskID,
-		)
-		return ErrNotFound
-	}
-
-	r.logger.Info("Updated task_tracker",
-		"task_id", task.TaskID,
-		"status", task.Status,
-		"retry_count", task.RetryCount,
-	)
-
-	return nil
-}
-
 // Delete removes a task_tracker record from the database
 func (r *taskTrackerRepository) Delete(ctx context.Context, taskID uuid.UUID) error {
 	query := `DELETE FROM task_tracker WHERE task_id = $1`
@@ -340,23 +292,6 @@ func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, t
 	return nil
 }
 
-// ListAllByScheduleID returns all task_tracker rows for a schedule without pagination.
-func (r *taskTrackerRepository) ListAllByScheduleID(ctx context.Context, scheduleID uuid.UUID) ([]*TaskTracker, error) {
-	var tasks []*TaskTracker
-	err := r.db.SelectContext(ctx, &tasks, `
-		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       manifest_version, image_tag, inherited_from_task_id
-		FROM task_tracker
-		WHERE schedule_id = $1
-		ORDER BY created_at ASC
-	`, scheduleID)
-	if err != nil {
-		return nil, fmt.Errorf("list all tasks by schedule_id: %w", err)
-	}
-	return tasks, nil
-}
-
 // SetStatusAndAttemptTx writes status and retry_count for the given task,
 // leaving a cancelled row untouched. Returns rows affected (0 if the task is
 // cancelled or the row is missing; use ExistsTx to distinguish). It applies no
@@ -450,8 +385,9 @@ func (r *taskTrackerRepository) HasRetryableFailedTaskTx(ctx context.Context, tx
 }
 
 // HasNonSucceededTask returns true iff at least one task_tracker row for the given
-// schedule_id has a status other than 'succeeded'. Used by rebase eligibility (PR2 §10
-// UI rule): "visible iff source run is terminal AND has ≥1 non-SUCCEEDED task".
+// schedule_id has a status other than 'succeeded'. Used by rebase eligibility: a
+// source run is visible as a rebase candidate iff it is terminal AND has ≥1
+// non-succeeded task.
 func (r *taskTrackerRepository) HasNonSucceededTask(ctx context.Context, scheduleID uuid.UUID) (bool, error) {
 	var exists bool
 	err := r.db.GetContext(ctx, &exists, `
@@ -484,80 +420,4 @@ func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx
 		return 0, fmt.Errorf("failed to get rows affected after bulk cancel: %w", err)
 	}
 	return n, nil
-}
-
-// List queries tasks with flexible filters and pagination
-func (r *taskTrackerRepository) List(ctx context.Context, filters TaskFilters) ([]*TaskTracker, int, error) {
-	// Build dynamic WHERE clause
-	whereClauses := []string{}
-	args := map[string]interface{}{}
-
-	if filters.ScheduleID != nil {
-		whereClauses = append(whereClauses, "schedule_id = :schedule_id")
-		args["schedule_id"] = *filters.ScheduleID
-	}
-
-	if filters.Status != nil {
-		whereClauses = append(whereClauses, "status = :status")
-		args["status"] = *filters.Status
-	}
-
-	whereClause := ""
-	if len(whereClauses) > 0 {
-		whereClause = "WHERE " + strings.Join(whereClauses, " AND ")
-	}
-
-	// Count total matching records
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM task_tracker %s", whereClause)
-	var total int
-
-	if len(args) > 0 {
-		countStmt, err := r.db.PrepareNamedContext(ctx, countQuery)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to prepare count query: %w", err)
-		}
-		defer countStmt.Close()
-
-		if err := countStmt.GetContext(ctx, &total, args); err != nil {
-			return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
-		}
-	} else {
-		if err := r.db.GetContext(ctx, &total, countQuery); err != nil {
-			return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
-		}
-	}
-
-	// Fetch paginated results
-	args["limit"] = filters.Limit
-	args["offset"] = filters.Offset
-
-	query := fmt.Sprintf(`
-		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       manifest_version, image_tag, inherited_from_task_id
-		FROM task_tracker
-		%s
-		ORDER BY created_at DESC
-		LIMIT :limit OFFSET :offset
-	`, whereClause)
-
-	stmt, err := r.db.PrepareNamedContext(ctx, query)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to prepare query: %w", err)
-	}
-	defer stmt.Close()
-
-	var tasks []*TaskTracker
-	if err := stmt.SelectContext(ctx, &tasks, args); err != nil {
-		r.logger.Error("Failed to list tasks", "error", err)
-		return nil, 0, fmt.Errorf("failed to list tasks: %w", err)
-	}
-
-	r.logger.Debug("Listed tasks",
-		"count", len(tasks),
-		"total", total,
-		"filters", filters,
-	)
-
-	return tasks, total, nil
 }

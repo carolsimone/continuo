@@ -41,7 +41,7 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, snapshotSvc SnapshotService
 //  4. Parse cmd.SourceRunID → *uuid.UUID (nil if empty).
 //  5. Call snapshotSvc.Snapshot with a SingleNode selector.
 //     - ErrTargetNotFound or ErrEmptyProjection: emit run.entries.dispatch_failed:v1,
-//       mark dedup completed, commit, return nil.
+//     mark dedup completed, commit, return nil.
 //     - Other errors: return wrapped error (triggers retry).
 //  6. Emit run.entries.dispatched:v1.
 //  7. Emit query.model:v1 with NodeReadyForExecution payload.

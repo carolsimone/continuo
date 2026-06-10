@@ -10,6 +10,8 @@ import (
 )
 
 // NewRunFinalizedBinding wires ParseRunFinalized into the RunFinalizedHandler.
+// A parse failure is permanent (events.ErrPermanent): the binding logs and
+// returns the error so the consumer ACKs and drops the poison message.
 func NewRunFinalizedBinding(
 	handler *handlers.RunFinalizedHandler,
 	logger *slog.Logger,
@@ -19,7 +21,7 @@ func NewRunFinalizedBinding(
 		if err != nil {
 			logger.Error("run.finalized: parse failure — discarding",
 				"message_id", msg.ID, "error", err)
-			return nil // permanent error: ACK by returning nil
+			return err
 		}
 		return handler.Handle(ctx, evt)
 	}

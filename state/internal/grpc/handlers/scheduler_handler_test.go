@@ -12,11 +12,11 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
+	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -97,34 +97,17 @@ func (s *stubSchedulerRepo) Create(_ context.Context, _ *postgres.SchedulerTrack
 func (s *stubSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
 	return s.getByIDResult, s.getByIDErr
 }
-func (s *stubSchedulerRepo) Update(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
-func (s *stubSchedulerRepo) Cancel(_ context.Context, _ uuid.UUID, _, _ string) error {
-	return s.cancelErr
-}
-
 func (s *stubSchedulerRepo) GetActiveScheduler(_ context.Context, _ string) (*postgres.SchedulerTracker, error) {
 	return s.getActiveResult, s.getActiveErr
 }
-func (s *stubSchedulerRepo) List(_ context.Context, _ postgres.SchedulerFilters) ([]*postgres.SchedulerTracker, int, error) {
-	return nil, 0, nil
-}
 func (s *stubSchedulerRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
 	return s.hasActive, nil
-}
-func (s *stubSchedulerRepo) UpdateInitializationStatus(_ context.Context, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (s *stubSchedulerRepo) ResetInProgressInitializations(_ context.Context) (int, error) {
-	return 0, nil
 }
 func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context) (map[string]postgres.LastRunData, error) {
 	if s.lastRunData != nil {
 		return s.lastRunData, nil
 	}
 	return map[string]postgres.LastRunData{}, nil
-}
-func (s *stubSchedulerRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
-	return nil
 }
 func (s *stubSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
@@ -759,28 +742,14 @@ func (f *fakeSchedulerRepo) Create(_ context.Context, _ *postgres.SchedulerTrack
 func (f *fakeSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
 	return f.tracker, nil
 }
-func (f *fakeSchedulerRepo) Update(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
-func (f *fakeSchedulerRepo) Cancel(_ context.Context, _ uuid.UUID, _, _ string) error  { return nil }
 func (f *fakeSchedulerRepo) GetActiveScheduler(_ context.Context, _ string) (*postgres.SchedulerTracker, error) {
 	return nil, nil
-}
-func (f *fakeSchedulerRepo) List(_ context.Context, _ postgres.SchedulerFilters) ([]*postgres.SchedulerTracker, int, error) {
-	return nil, 0, nil
 }
 func (f *fakeSchedulerRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }
-func (f *fakeSchedulerRepo) UpdateInitializationStatus(_ context.Context, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (f *fakeSchedulerRepo) ResetInProgressInitializations(_ context.Context) (int, error) {
-	return 0, nil
-}
 func (f *fakeSchedulerRepo) GetLastRunPerSchedule(_ context.Context) (map[string]postgres.LastRunData, error) {
 	return map[string]postgres.LastRunData{}, nil
-}
-func (f *fakeSchedulerRepo) UpdateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
-	return nil
 }
 func (f *fakeSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil

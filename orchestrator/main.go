@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	orchpublisher "github.com/carolsimone/continuo/orchestrator/adapters/publisher"
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
 	"github.com/carolsimone/continuo/orchestrator/config"
-	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/internal/lifecycle"
 	"github.com/carolsimone/continuo/orchestrator/internal/reconciler"
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
@@ -25,12 +23,10 @@ import (
 	snapshotsvc "github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
-	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
-	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -140,7 +136,6 @@ func main() {
 	// consumers process messages concurrently — the second Begin() sees inTx=true
 	// and the message is never ACKed, getting stuck in the PEL forever.
 	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
-	initializeRunHandler := handlers.NewInitializeRunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), runAggRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), queryRepo, snapshotService, logger)
 	handleRerunHandler := handlers.NewHandleRerunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
@@ -265,149 +260,48 @@ func main() {
 	// INITIALIZE REDIS CONSUMERS
 	// ========================================================================
 
-	// Consumer 1: node.updated:v1 -> HandleNodeCompleted
-	nodeUpdatedHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		cmd := domainModel.NodeCompletedInput{
-			TaskID:       uuid.MustParse(msg.Values["task_id"].(string)),
-			ScheduleID:   uuid.MustParse(msg.Values["schedule_id"].(string)),
-			ScheduleName: msg.Values["schedule_name"].(string),
-			ServiceName:  msg.Values["service_name"].(string),
-			SchemaName:   msg.Values["schema_name"].(string),
-			TableName:    msg.Values["table_name"].(string),
-			Status:       msg.Values["status"].(string),
-		}
-		return handleNodeCompletedHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
-	}
+	// node.updated:v1 -> HandleNodeCompleted
 	nodeUpdatedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		streams.NodeUpdatedV1,
 		streams.OrchestratorNodeUpdated,
-		nodeUpdatedHandler,
+		redis.NewNodeCompletedBinding(handleNodeCompletedHandler, logger),
 		logger,
 	)
 
-	// Consumer 3: initialize.run:v1 -> InitializeRun
-	initRunHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		scheduleName, _ := msg.Values["schedule_name"].(string)
-		runID, _ := msg.Values["run_id"].(string)
-		cmd := domainModel.InitializeRunInput{
-			ScheduleName: scheduleName,
-			RunID:        runID,
-		}
-		return initializeRunHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
-	}
-	initRunConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.InitializeRunV1,
-		streams.OrchestratorInitializeRun,
-		initRunHandler,
-		logger,
-	)
-
-	// Consumer 4: scheduler.started:v1 -> HandleSchedulerStarted
-	schedulerStartedHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		evt, err := redis.ParseSchedulerStartedEvent(msg.Values)
-		if err != nil {
-			return fmt.Errorf("scheduler.started message %s: %w", msg.ID, err)
-		}
-		return handleSchedulerStartedHandler.Handle(ctx, evt, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
-	}
+	// scheduler.started:v1 -> HandleSchedulerStarted
 	schedulerStartedConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		streams.SchedulerStartedV1,
 		streams.OrchestratorSchedulerStarted,
-		schedulerStartedHandler,
+		redis.NewSchedulerStartedBinding(handleSchedulerStartedHandler, logger),
 		logger,
 	)
 
-	// Consumer 5: trigger.rerun:v1 -> HandleRerun
-	rerunHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		scheduleID, _ := msg.Values["schedule_id"].(string)
-		scheduleName, _ := msg.Values["schedule_name"].(string)
-		sourceRunID, _ := msg.Values["source_run_id"].(string)
-		if scheduleID == "" || scheduleName == "" || sourceRunID == "" {
-			return fmt.Errorf("missing required fields in rerun message %s", msg.ID)
-		}
-		cmd := domainModel.RerunInput{
-			RunID:        scheduleID,
-			ScheduleName: scheduleName,
-			SourceRunID:  sourceRunID,
-		}
-		return handleRerunHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
-	}
+	// trigger.rerun:v1 -> HandleRerun
 	rerunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		streams.TriggerRerunV1,
 		streams.OrchestratorRerun,
-		rerunHandler,
+		redis.NewRerunBinding(handleRerunHandler, logger),
 		logger,
 	)
 
-	// Consumer 8: trigger.rebase:v1 -> HandleRebase
-	rebaseHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		scheduleID, _ := msg.Values["schedule_id"].(string)
-		scheduleName, _ := msg.Values["schedule_name"].(string)
-		sourceRunID, _ := msg.Values["source_run_id"].(string)
-		if scheduleID == "" || scheduleName == "" || sourceRunID == "" {
-			return fmt.Errorf("missing required fields in rebase message %s", msg.ID)
-		}
-		cmd := domainModel.RebaseInput{
-			RunID:        scheduleID,
-			ScheduleName: scheduleName,
-			SourceRunID:  sourceRunID,
-		}
-		return handleRebaseHandler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
-	}
+	// trigger.rebase:v1 -> HandleRebase
 	rebaseConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		streams.TriggerRebaseV1,
 		streams.OrchestratorRebase,
-		rebaseHandler,
+		redis.NewRebaseBinding(handleRebaseHandler, logger),
 		logger,
 	)
 
-	// Consumer 7: trigger.single_node_run:v1 -> HandleSingleNodeRun
-	singleNodeRunHandler := func(ctx context.Context, msg goredis.XMessage) error {
-		scheduleID, _ := msg.Values["schedule_id"].(string)
-		scheduleName, _ := msg.Values["schedule_name"].(string)
-		schemaName, _ := msg.Values["schema_name"].(string)
-		tableName, _ := msg.Values["table_name"].(string)
-		serviceName, _ := msg.Values["service_name"].(string)
-		metadataSource, _ := msg.Values["metadata_source"].(string)
-		sourceRunID, _ := msg.Values["source_run_id"].(string)
-
-		if scheduleID == "" || scheduleName == "" || schemaName == "" || tableName == "" || serviceName == "" {
-			return fmt.Errorf("missing required fields in single_node_run message %s", msg.ID)
-		}
-		switch metadataSource {
-		case "latest":
-			if sourceRunID != "" {
-				return fmt.Errorf("source_run_id must be empty when metadata_source=latest in message %s", msg.ID)
-			}
-		case "snapshot_of_run":
-			if sourceRunID == "" {
-				return fmt.Errorf("source_run_id required when metadata_source=snapshot_of_run in message %s", msg.ID)
-			}
-		default:
-			return fmt.Errorf("invalid metadata_source %q in message %s", metadataSource, msg.ID)
-		}
-
-		req := domainModel.SingleNodeRunInput{
-			RunID:          scheduleID,
-			ScheduleName:   scheduleName,
-			ServiceName:    serviceName,
-			SchemaName:     schemaName,
-			TableName:      tableName,
-			MetadataSource: metadataSource,
-			SourceRunID:    sourceRunID,
-		}
-		return handleSingleNodeRunHandler.Handle(ctx, req, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
-	}
+	// trigger.single_node_run:v1 -> HandleSingleNodeRun
 	singleNodeRunConsumer := pkgredis.NewStreamConsumer(
 		redisClient,
 		streams.TriggerSingleNodeRunV1,
 		streams.OrchestratorSingleNodeRun,
-		singleNodeRunHandler,
+		redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger),
 		logger,
 	)
 
@@ -445,12 +339,6 @@ func main() {
 	go func() {
 		if err := nodeUpdatedConsumer.Start(ctx); err != nil {
 			logger.Error("Node updated consumer error", "error", err)
-		}
-	}()
-
-	go func() {
-		if err := initRunConsumer.Start(ctx); err != nil {
-			logger.Error("Initialize run consumer error", "error", err)
 		}
 	}()
 

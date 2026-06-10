@@ -9,7 +9,8 @@ import (
 )
 
 // snapshotWriter implements snapshot.SnapshotWriter against a Neo4j managed
-// transaction. The Cypher is identical to today's domain/snapshot.Materialise.
+// transaction: it writes the :Run node and one :EXECUTES edge per projection
+// entry produced by the domain snapshot selectors.
 type snapshotWriter struct {
 	tx neo4j.ManagedTransaction
 }

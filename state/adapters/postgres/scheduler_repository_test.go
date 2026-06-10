@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -20,7 +21,7 @@ import (
 
 func newTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
-	db, err := database.GetPostgresConnection()
+	db, err := database.NewConnection(pkgconfig.LoadPostgres(&pkgconfig.Validator{}))
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	return db
@@ -42,30 +43,6 @@ func createScheduler(t *testing.T, repo postgres.SchedulerTrackerRepository, sch
 	err := repo.Create(context.Background(), tracker)
 	require.NoError(t, err)
 	return tracker
-}
-
-func TestSchedulerRepository_UpdateTx_UpdatesStatusAndTimestamps(t *testing.T) {
-	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-
-	tracker := createScheduler(t, repo, "test-schedule-"+uuid.New().String())
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", tracker.ScheduleID)
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-
-	now := time.Now()
-	tracker.Status = run.SchedulerStatusSucceeded
-	tracker.LastHeartbeatAt = &now
-
-	err = repo.UpdateTx(context.Background(), tx, tracker)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
-
-	updated, err := repo.GetByID(context.Background(), tracker.ScheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, run.SchedulerStatusSucceeded, updated.Status)
 }
 
 func TestSchedulerRepository_UpdateInitializationStatusTx_UpdatesStatus(t *testing.T) {
@@ -209,22 +186,6 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, "cron", gotDefault.Kind)
 	assert.Nil(t, gotDefault.SourceRunID)
-
-	// UpdateTx round-trip: flip kind to "rerun" and persist via UpdateTx.
-	tx, err := db.BeginTxx(ctx, nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-	defaultTracker.Kind = "rerun"
-	flippedSource := uuid.New()
-	defaultTracker.SourceRunID = &flippedSource
-	require.NoError(t, repo.UpdateTx(ctx, tx, defaultTracker))
-	require.NoError(t, tx.Commit())
-
-	afterUpdate, err := repo.GetByID(ctx, defaultTracker.ScheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, "rerun", afterUpdate.Kind)
-	require.NotNil(t, afterUpdate.SourceRunID)
-	assert.Equal(t, flippedSource, *afterUpdate.SourceRunID)
 }
 
 func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {

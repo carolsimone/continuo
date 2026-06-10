@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"testing"
 
-	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 )
 
 func TestDispatchFailedReason(t *testing.T) {

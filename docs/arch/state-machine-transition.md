@@ -1,6 +1,6 @@
 # State Machine: Task & Scheduler Transition Flow and Service Ownership
 
-Source of truth: `state/domain/aggregate/run/` (`run.go` aggregate methods; `status.go` scheduler transition table)
+Source of truth: `state/domain/aggregate/run/` (`run.go` aggregate methods; `status.go` status constants and `IsTerminal`)
 
 ---
 
@@ -110,7 +110,7 @@ These are separate concerns. `initialization_status` tracks whether the `orchest
 | `pending` | `running` | `state` service (internal) | Side effect of `initialization_status` reaching `"completed"` when the dispatched projection is accepted — see below |
 | `running` | `succeeded` | `state` service (internal) | `TaskStatusUpdatedHandler` finalises `scheduler_tracker` when `terminal_task_count` reaches `total_task_count` with no `failed` task |
 | `running` | `failed` | `state` service (internal) | `TaskStatusUpdatedHandler` finalises `scheduler_tracker` when `terminal_task_count` reaches `total_task_count` with at least one `failed` task |
-| `pending` or `running` | `cancelled` | `CancelScheduler` endpoint | `repo.Cancel()` — separate path, not through `Transition()` |
+| `pending` or `running` | `cancelled` | `CancelScheduler` endpoint | `Run.Cancel()` — separate cancellation path, guarded by `IsTerminal()` |
 
 #### Service Ownership
 
@@ -125,13 +125,20 @@ In both cases the same SQL transaction writes a `run.finalized:v1` outbox row. T
 
 #### Enforcement
 
-`SchedulerTracker.Transition(to SchedulerStatus) error` in `state/domain/aggregate/run/run.go`:
+Scheduler `status` is mutated directly inside the `Run` aggregate methods in
+`state/domain/aggregate/run/run.go`; there is no separate transition-table or
+`Transition()` method. Each writing method guards itself against illegal moves:
 
-- `ErrInvalidTransition` — the `(from, to)` pair is not allowed.
-- Status is **only mutated on success**.
-- No caller-ID check (unlike `TaskTracker`): each transition direction has exactly one owner by design.
+- `AcceptDispatch` returns early via `IsTerminal()` before setting `running`
+  (or the success/failure outcome when every dispatched task is already
+  terminal), so a terminal run is never reopened.
+- `finalizeIfComplete` only finalises when `status == running`, so the
+  `running → succeeded`/`failed` move happens exactly once.
+- `Cancel` is guarded by `IsTerminal()` (returns `ErrAlreadyTerminal`) so an
+  already-finished run cannot be cancelled.
 
-`UpdateScheduler` gRPC handler returns `codes.FailedPrecondition` on `ErrInvalidTransition`.
+Each transition direction has exactly one owner by design, so no caller-ID check
+is needed (unlike `TaskTracker`).
 
 ---
 

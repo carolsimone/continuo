@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
@@ -17,29 +16,20 @@ import (
 // existing tuned SchedulerTrackerRepository methods. SaveRun consults
 // run.Run.Changes() to dispatch column-by-column.
 type RunRepositoryAdapter struct {
-	db        *sqlx.DB
 	tx        *sqlx.Tx
 	schedRepo SchedulerTrackerRepository
-	taskRepo  TaskTrackerRepository
-	logger    *slog.Logger
 }
 
-// NewRunRepository constructs the adapter bound to tx. Read methods use db;
+// NewRunRepository constructs the adapter bound to tx.
 // LoadRunForUpdate/SaveRun run inside tx (which may be nil outside a
 // transaction, in which case those write methods return an error).
 func NewRunRepository(
-	db *sqlx.DB,
 	tx *sqlx.Tx,
 	schedRepo SchedulerTrackerRepository,
-	taskRepo TaskTrackerRepository,
-	logger *slog.Logger,
 ) *RunRepositoryAdapter {
 	return &RunRepositoryAdapter{
-		db:        db,
 		tx:        tx,
 		schedRepo: schedRepo,
-		taskRepo:  taskRepo,
-		logger:    logger,
 	}
 }
 

@@ -19,6 +19,6 @@ CREATE INDEX idx_scheduler_tracker_source_run_id ON scheduler_tracker (source_ru
     WHERE source_run_id IS NOT NULL;
 
 COMMENT ON COLUMN scheduler_tracker.kind IS
-    'Run discriminator. Allowed: cron, trigger, rerun, rebase, single_node_run. Written at activation time. The rerun handler may flip kind from ''cron'' to ''rerun'' on TriggerRerun; all other paths treat it as immutable after write.';
+    'Run discriminator. Allowed: cron, trigger, rerun, rebase, single_node_run. Written once at activation time and immutable thereafter; a rerun/rebase mints a new row with its own kind rather than mutating the source.';
 COMMENT ON COLUMN scheduler_tracker.source_run_id IS
     'Lineage pointer to the run this one derives from (rerun, rebase, stale-mode single_node_run). NULL for cron/trigger. Not a foreign key — orphans are fine.';

@@ -27,16 +27,24 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 	switch s.MetadataSource {
 	case "latest":
 		row, ok, err := r.LoadSingleLatestTable(ctx, fqn)
-		if err != nil { return nil, fmt.Errorf("SingleNode latest: %w", err) }
-		if !ok { return nil, ErrTargetNotFound }
+		if err != nil {
+			return nil, fmt.Errorf("SingleNode latest: %w", err)
+		}
+		if !ok {
+			return nil, ErrTargetNotFound
+		}
 		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil
 	case "snapshot_of_run":
 		if p.SourceRunID == nil {
 			return nil, fmt.Errorf("SingleNode: snapshot_of_run mode requires SourceRunID")
 		}
 		row, ok, err := r.LoadSingleTableFromSourceRun(ctx, p.SourceRunID.String(), fqn)
-		if err != nil { return nil, fmt.Errorf("SingleNode stale: %w", err) }
-		if !ok { return nil, ErrTargetNotFound }
+		if err != nil {
+			return nil, fmt.Errorf("SingleNode stale: %w", err)
+		}
+		if !ok {
+			return nil, ErrTargetNotFound
+		}
 		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil
 	default:
 		return nil, fmt.Errorf("SingleNode: invalid MetadataSource %q (want 'latest' or 'snapshot_of_run')", s.MetadataSource)

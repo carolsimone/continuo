@@ -12,15 +12,6 @@ import (
 // persisted via SaveCatalog after Reconcile.
 type ScheduleCatalog struct {
 	entries map[string]Entry
-	changes catalogChanges
-	events  []DomainEvent
-}
-
-type catalogChanges struct {
-	added       []string
-	removed     []string
-	reactivated []string
-	metadata    map[string]map[string]run.ServiceMetadata // name → service → meta
 }
 
 // Hydrate constructs a ScheduleCatalog from persisted rows. Used by the
@@ -48,34 +39,32 @@ func (c *ScheduleCatalog) Names() []string {
 	return out
 }
 
-// Reconcile applies a schedules.loaded:v1 payload. See package errors for the
-// empty-list guard.
+// Reconcile applies a schedules.loaded:v1 payload, mutating the in-memory
+// entry set: absent names are added, previously-removed names are reactivated,
+// and active names no longer present are soft-deleted (RemovedAt stamped with
+// now). See package errors for the empty-list guard.
 func (c *ScheduleCatalog) Reconcile(
 	presentNames []string,
 	serviceMetadata map[string]map[string]run.ServiceMetadata,
 	now time.Time,
-) ([]DomainEvent, error) {
+) error {
 	if len(presentNames) == 0 {
-		return nil, ErrEmptyReconciliation
+		return ErrEmptyReconciliation
 	}
-	c.changes = catalogChanges{metadata: map[string]map[string]run.ServiceMetadata{}}
 	present := map[string]bool{}
 	for _, name := range presentNames {
 		present[name] = true
 		existing, ok := c.entries[name]
 		if !ok {
 			c.entries[name] = Entry{ScheduleName: name, ServiceMetadata: cloneSvcMeta(serviceMetadata[name])}
-			c.changes.added = append(c.changes.added, name)
 		} else if !existing.IsActive() {
 			existing.RemovedAt = nil
 			existing.ServiceMetadata = cloneSvcMeta(serviceMetadata[name])
 			c.entries[name] = existing
-			c.changes.reactivated = append(c.changes.reactivated, name)
 		} else {
 			existing.ServiceMetadata = cloneSvcMeta(serviceMetadata[name])
 			c.entries[name] = existing
 		}
-		c.changes.metadata[name] = cloneSvcMeta(serviceMetadata[name])
 	}
 	for name, entry := range c.entries {
 		if present[name] || !entry.IsActive() {
@@ -84,30 +73,8 @@ func (c *ScheduleCatalog) Reconcile(
 		removed := now
 		entry.RemovedAt = &removed
 		c.entries[name] = entry
-		c.changes.removed = append(c.changes.removed, name)
 	}
-	sort.Strings(c.changes.added)
-	sort.Strings(c.changes.removed)
-	sort.Strings(c.changes.reactivated)
-
-	evt := CatalogReconciled{
-		Added:       c.changes.added,
-		Removed:     c.changes.removed,
-		Reactivated: c.changes.reactivated,
-	}
-	c.events = append(c.events, evt)
-	return []DomainEvent{evt}, nil
-}
-
-// Changes returns the changeset for the repository adapter.
-func (c *ScheduleCatalog) Changes() catalogChanges { return c.changes }
-func (c *ScheduleCatalog) ResetChanges()           { c.changes = catalogChanges{} }
-
-// PullEvents matches the Run aggregate's API.
-func (c *ScheduleCatalog) PullEvents() []DomainEvent {
-	out := c.events
-	c.events = nil
-	return out
+	return nil
 }
 
 func cloneSvcMeta(m map[string]run.ServiceMetadata) map[string]run.ServiceMetadata {

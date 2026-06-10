@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"testing"
 
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	ports "github.com/carolsimone/continuo/state/service/ports"
-	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
-	"github.com/carolsimone/continuo/state/service/uow"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	ports "github.com/carolsimone/continuo/state/service/ports"
+	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,7 @@ type rebaseFixture struct {
 
 func setupRebaseFixture(t *testing.T) *rebaseFixture {
 	t.Helper()
-	db, err := database.GetPostgresConnection()
+	db, err := database.NewConnection(pkgconfig.LoadPostgres(&pkgconfig.Validator{}))
 	if err != nil {
 		t.Skip("no test DB available:", err)
 	}

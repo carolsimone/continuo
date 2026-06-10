@@ -47,10 +47,9 @@ func (a *CatalogRepositoryAdapter) LoadCatalogForUpdate(ctx context.Context) (*c
 	return a.GetCatalog(ctx)
 }
 
-// SaveCatalog persists the catalog's changeset inside the caller's
-// transaction: active entries are upserted with per-schedule service metadata,
-// and entries that are no longer active are soft-deleted. ResetChanges is
-// called after a successful write.
+// SaveCatalog persists the full active set of the catalog inside the caller's
+// transaction: every active entry is upserted with its per-schedule service
+// metadata, and any row not in that active set is soft-deleted.
 func (a *CatalogRepositoryAdapter) SaveCatalog(ctx context.Context, c *catalog.ScheduleCatalog) error {
 	if a.tx == nil {
 		return fmt.Errorf("SaveCatalog requires an active transaction")
@@ -76,7 +75,6 @@ func (a *CatalogRepositoryAdapter) SaveCatalog(ctx context.Context, c *catalog.S
 	if err := a.repo.SoftDeleteAbsentTx(ctx, a.tx, present); err != nil {
 		return err
 	}
-	c.ResetChanges()
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,4 +60,5 @@ func TestParseSchedulerStartedEvent_InvalidRunnerID(t *testing.T) {
 	}
 	_, err := redis.ParseSchedulerStartedEvent(msg)
 	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
 }

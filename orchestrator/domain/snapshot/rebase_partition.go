@@ -23,10 +23,14 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 	}
 
 	source, err := r.LoadSourceTasks(ctx, p.SourceRunID.String())
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	latest, err := r.LoadLatestSourceDAG(ctx, p.ScheduleName)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	// Pass 1: seed rebase_set with non-SUCCEEDED source tasks that still exist in latest.
 	rebaseFQNs := map[FQN]struct{}{}
@@ -40,7 +44,9 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 	// Pass 2: for each seeded FQN, add its descendants in LATEST topology.
 	for f := range rebaseFQNs {
 		descendants, err := r.DescendantsInLatestTopology(ctx, f)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		for _, d := range descendants {
 			if _, exists := latest[d]; exists {
 				rebaseFQNs[d] = struct{}{}
@@ -96,7 +102,9 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		}
 		if st, ok := source[f]; ok && st.Status == "SUCCEEDED" {
 			root := st.TaskID
-			if st.InheritedFromRoot != nil { root = *st.InheritedFromRoot }
+			if st.InheritedFromRoot != nil {
+				root = *st.InheritedFromRoot
+			}
 			projection = append(projection, TaskProjection{
 				TaskID:              uuid.New(),
 				ServiceName:         f.Service,

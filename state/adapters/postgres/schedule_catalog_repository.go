@@ -22,18 +22,13 @@ type ScheduleCatalogRow struct {
 
 // ScheduleCatalogRepository manages the schedule_catalog table.
 type ScheduleCatalogRepository interface {
-	// UpsertAll inserts or reactivates all names in the list using its own
-	// internal transaction. On conflict: sets last_seen_at=now(), removed_at=NULL.
-	// serviceMetadata is a flat map of service_name → ServiceMetadata applied to
-	// all schedules in the batch.
-	UpsertAll(ctx context.Context, names []string, serviceMetadata map[string]run.ServiceMetadata) error
-	// UpsertAllTx is the tx-bound variant of UpsertAll for callers that manage
-	// their own transaction. serviceMetadata is keyed by schedule_name; each
-	// inner map holds service_name → ServiceMetadata for that schedule.
+	// UpsertAllTx inserts or reactivates all names in the list within the
+	// caller's transaction. On conflict: sets last_seen_at=now(),
+	// removed_at=NULL. serviceMetadata is keyed by schedule_name; each inner map
+	// holds service_name → ServiceMetadata for that schedule.
 	UpsertAllTx(ctx context.Context, tx *sqlx.Tx, names []string, serviceMetadata map[string]map[string]run.ServiceMetadata) error
-	// SoftDeleteAbsent soft-deletes any active row whose name is not in names.
-	SoftDeleteAbsent(ctx context.Context, names []string) error
-	// SoftDeleteAbsentTx is the tx-bound variant of SoftDeleteAbsent.
+	// SoftDeleteAbsentTx soft-deletes any active row whose name is not in names,
+	// within the caller's transaction.
 	SoftDeleteAbsentTx(ctx context.Context, tx *sqlx.Tx, names []string) error
 	// ListActive returns all schedule_names with removed_at IS NULL.
 	ListActive(ctx context.Context) ([]string, error)
@@ -53,63 +48,6 @@ type scheduleCatalogRepository struct {
 // NewScheduleCatalogRepository creates a new ScheduleCatalogRepository.
 func NewScheduleCatalogRepository(db *sqlx.DB, logger *slog.Logger) ScheduleCatalogRepository {
 	return &scheduleCatalogRepository{db: db, logger: logger}
-}
-
-func (r *scheduleCatalogRepository) UpsertAll(ctx context.Context, names []string, serviceMetadata map[string]run.ServiceMetadata) error {
-	if len(names) == 0 {
-		return nil
-	}
-	metaJSON, err := json.Marshal(serviceMetadata)
-	if err != nil {
-		return fmt.Errorf("marshal service_metadata: %w", err)
-	}
-	now := time.Now()
-	tx, err := r.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin upsert transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	for _, name := range names {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
-			VALUES ($1, $2, $2, NULL, $3)
-			ON CONFLICT (schedule_name) DO UPDATE
-			  SET last_seen_at = $2,
-			      removed_at = NULL,
-			      service_metadata = $3
-		`, name, now, metaJSON)
-		if err != nil {
-			return fmt.Errorf("upsert schedule_catalog %q: %w", name, err)
-		}
-	}
-	return tx.Commit()
-}
-
-func (r *scheduleCatalogRepository) SoftDeleteAbsent(ctx context.Context, names []string) error {
-	now := time.Now()
-	if len(names) == 0 {
-		// Soft-delete everything active
-		_, err := r.db.ExecContext(ctx,
-			`UPDATE schedule_catalog SET removed_at = $1 WHERE removed_at IS NULL`,
-			now,
-		)
-		if err != nil {
-			return fmt.Errorf("soft-delete all active schedules: %w", err)
-		}
-		return nil
-	}
-	// Soft-delete rows not in the provided list
-	query, args, err := sqlx.In(
-		`UPDATE schedule_catalog SET removed_at = ? WHERE removed_at IS NULL AND schedule_name NOT IN (?)`,
-		now, names,
-	)
-	if err != nil {
-		return fmt.Errorf("build SoftDeleteAbsent query: %w", err)
-	}
-	query = r.db.Rebind(query)
-	_, err = r.db.ExecContext(ctx, query, args...)
-	return err
 }
 
 func (r *scheduleCatalogRepository) ListActive(ctx context.Context) ([]string, error) {

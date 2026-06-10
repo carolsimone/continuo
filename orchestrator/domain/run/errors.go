@@ -9,7 +9,7 @@ var (
 	ErrNodeAlreadyTerminal = errors.New("run: node is already in a terminal status")
 
 	// ErrNodeNotInScope is returned when the target node is absent from the
-	// loaded subgraph. This indicates a mismatched LoadHint in the adapter.
+	// loaded subgraph — the node is not part of the run's projected :EXECUTES set.
 	ErrNodeNotInScope = errors.New("run: node not found in loaded subgraph")
 
 	// ErrVersionConflict is returned by AggregateRepository.Save when the

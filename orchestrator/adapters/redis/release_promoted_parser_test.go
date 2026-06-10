@@ -3,6 +3,7 @@ package redis
 import (
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -34,18 +35,21 @@ func TestParseReleasePromoted_MissingPayloadField(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{}}
 	_, err := ParseReleasePromoted(msg)
 	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
 func TestParseReleasePromoted_BadJSON(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": "not-json"}}
 	_, err := ParseReleasePromoted(msg)
 	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
 func TestParseReleasePromoted_EmptyReleaseID(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": `{"release_id":"","topology":[]}`}}
 	_, err := ParseReleasePromoted(msg)
 	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
 func TestParseReleasePromoted_NilTopology(t *testing.T) {
@@ -53,6 +57,7 @@ func TestParseReleasePromoted_NilTopology(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": `{"release_id":"rel-1"}`}}
 	_, err := ParseReleasePromoted(msg)
 	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
 // TestExtractOutboxEntryID_FromReleasePromotedMessage verifies that

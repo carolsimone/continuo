@@ -3,6 +3,7 @@ package redis
 import (
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/events"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +25,7 @@ func TestParseRunFinalized_MissingScheduleID(t *testing.T) {
 		"status": "success",
 	}})
 	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
 }
 
 func TestParseRunFinalized_MissingStatus(t *testing.T) {
@@ -31,4 +33,5 @@ func TestParseRunFinalized_MissingStatus(t *testing.T) {
 		"schedule_id": "abc-123",
 	}})
 	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
 }

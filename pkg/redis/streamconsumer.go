@@ -86,6 +86,28 @@ var transientRetryBackoffs = []time.Duration{
 	2 * time.Second,
 }
 
+// safeInvoke calls the handler with panic recovery. A panicking handler would
+// otherwise unwind through the consumer loop and kill the process; on restart
+// the same message is re-delivered from the PEL and panics again — a permanent
+// crash loop from one poison message. safeInvoke converts a recovered panic
+// into a plain (non-permanent) error so the message stays in the PEL and is
+// retried on the next sweep, exactly like any transient failure. The parser
+// layer is the primary poison defense (it returns ErrPermanent before any
+// panic can happen); this recover is defense in depth for future handlers.
+func (c *StreamConsumer) safeInvoke(ctx context.Context, msg goredis.XMessage) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error("Handler panicked — recovered to keep the consumer alive",
+				"stream", c.streamName,
+				"message_id", msg.ID,
+				"panic", r,
+			)
+			err = fmt.Errorf("handler panic: %v", r)
+		}
+	}()
+	return c.handler(ctx, msg)
+}
+
 // invokeWithRetry calls the handler with bounded retries on transient errors.
 // ErrPermanent short-circuits the loop; context cancellation aborts it. The
 // final error (or nil) is returned to the caller, which decides whether to
@@ -106,7 +128,7 @@ func (c *StreamConsumer) invokeWithRetry(ctx context.Context, msg goredis.XMessa
 				"previous_error", err,
 			)
 		}
-		err = c.handler(ctx, msg)
+		err = c.safeInvoke(ctx, msg)
 		if err == nil || errors.Is(err, events.ErrPermanent) {
 			return err
 		}
@@ -197,7 +219,7 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 		}
 
 		for _, msg := range msgs {
-			if err := c.handler(ctx, msg); err != nil {
+			if err := c.safeInvoke(ctx, msg); err != nil {
 				if errors.Is(err, events.ErrPermanent) {
 					c.logger.Error("Permanent handler error — ACKing to drop from PEL",
 						"message_id", msg.ID,
