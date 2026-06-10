@@ -66,6 +66,10 @@ type SchedulerTrackerRepository interface {
 	UpdateStatusTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
 	// FinalizeRunTx sets status and completed_at = NOW() for terminal-state transitions.
 	FinalizeRunTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
+	// UpdateRunRowTx applies every dirty scheduler_tracker column named in fields
+	// as a single UPDATE statement within an existing transaction. Callers must
+	// hold a SELECT ... FOR UPDATE lock on the row (LoadRunForUpdate provides it).
+	UpdateRunRowTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, fields RunRowUpdate) error
 	// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row for the given id
 	// using SELECT ... FOR UPDATE. Must be called within a transaction.
 	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*SchedulerTracker, error)
@@ -459,6 +463,77 @@ func (r *schedulerTrackerRepository) FinalizeRunTx(ctx context.Context, tx *sqlx
 	)
 	if err != nil {
 		return fmt.Errorf("finalize scheduler_tracker status: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// RunRowUpdate carries the scheduler_tracker columns a SaveRun must persist in
+// one statement. Each pointer field is nil when the corresponding column is not
+// dirty; a non-nil pointer means "write this value". This lets the repository
+// build a single UPDATE over a fixed column allowlist while keeping the dirty
+// decision in the calling adapter.
+type RunRowUpdate struct {
+	Status               *string
+	InitializationStatus *string
+	TotalTaskCount       *int32
+	TerminalTaskCount    *int32
+	StartedAt            *time.Time
+	// CompletedAtNow, when true, sets completed_at = NOW() (terminal transition).
+	CompletedAtNow bool
+}
+
+// UpdateRunRowTx applies every dirty column in fields as a single parameterised
+// UPDATE. Column names come from a fixed allowlist (never interpolated values),
+// and values are bound as parameters. Returns ErrNotFound when the row is
+// absent. A no-op fields set (nothing dirty) returns nil without touching the DB.
+func (r *schedulerTrackerRepository) UpdateRunRowTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, fields RunRowUpdate) error {
+	setClauses := make([]string, 0, 6)
+	args := make([]any, 0, 7)
+
+	add := func(column string, value any) {
+		args = append(args, value)
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+
+	if fields.Status != nil {
+		add("status", *fields.Status)
+	}
+	if fields.InitializationStatus != nil {
+		add("initialization_status", *fields.InitializationStatus)
+	}
+	if fields.TotalTaskCount != nil {
+		add("total_task_count", *fields.TotalTaskCount)
+	}
+	if fields.TerminalTaskCount != nil {
+		add("terminal_task_count", *fields.TerminalTaskCount)
+	}
+	if fields.StartedAt != nil {
+		add("started_at", *fields.StartedAt)
+	}
+	if fields.CompletedAtNow {
+		setClauses = append(setClauses, "completed_at = NOW()")
+	}
+
+	if len(setClauses) == 0 {
+		return nil
+	}
+
+	args = append(args, id)
+	query := fmt.Sprintf(
+		`UPDATE scheduler_tracker SET %s WHERE schedule_id = $%d`,
+		strings.Join(setClauses, ", "), len(args),
+	)
+
+	res, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update scheduler_tracker run row: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
