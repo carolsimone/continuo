@@ -62,4 +62,67 @@ describe('attachChatWebSocket', () => {
     expect(procs[0].kill).toHaveBeenCalled();
     client.close();
   });
+
+  it('kills the process when the socket closes', async () => {
+    const fake = new FakeProcess();
+    server = createServer();
+    attachChatWebSocket(server, { createProcess: () => fake as any });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    await new Promise((r) => client.on('open', r));
+    client.close();
+    await tick();
+    expect(fake.kill).toHaveBeenCalled();
+  });
+
+  it('ignores malformed JSON and keeps serving later messages', async () => {
+    const fake = new FakeProcess();
+    server = createServer();
+    attachChatWebSocket(server, { createProcess: () => fake as any });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    await new Promise((r) => client.on('open', r));
+    client.send('not json');
+    client.send(JSON.stringify({ type: 'user_message', text: 'hi' }));
+    await tick();
+    expect(fake.send).toHaveBeenCalledWith('hi');
+    client.close();
+  });
+
+  it('passes the sessionId query param to the process factory', async () => {
+    const seen: (string | undefined)[] = [];
+    server = createServer();
+    attachChatWebSocket(server, {
+      createProcess: (sid) => { seen.push(sid); return new FakeProcess() as any; },
+    });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat?sessionId=abc`);
+    await new Promise((r) => client.on('open', r));
+    await tick();
+    expect(seen).toContain('abc');
+    client.close();
+  });
+
+  it('respawns resuming the session after the process exits, on the next message', async () => {
+    const procs: FakeProcess[] = [];
+    const seen: (string | undefined)[] = [];
+    server = createServer();
+    attachChatWebSocket(server, {
+      createProcess: (sid) => { seen.push(sid); const p = new FakeProcess(); procs.push(p); return p as any; },
+    });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    await new Promise((r) => client.on('open', r));
+
+    procs[0].emit('message', { type: 'session', sessionId: 'sess-1' });
+    procs[0].emit('exit', 0);
+    await tick();
+
+    client.send(JSON.stringify({ type: 'user_message', text: 'again' }));
+    await tick();
+    expect(procs.length).toBe(2);
+    expect(seen[1]).toBe('sess-1');
+    expect(procs[1].send).toHaveBeenCalledWith('again');
+    client.close();
+  });
 });
