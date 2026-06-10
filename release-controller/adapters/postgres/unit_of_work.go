@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -102,7 +104,9 @@ func (u *UnitOfWork) Commit() error {
 }
 
 // Rollback rolls back the current transaction. Calling Rollback when no
-// transaction is in progress is a no-op.
+// transaction is in progress is a no-op. A deferred Rollback that runs after a
+// failed Commit finds the transaction already finished; sql.ErrTxDone is
+// treated as a successful no-op so that case does not surface an error.
 func (u *UnitOfWork) Rollback() error {
 	if !u.inTx || u.tx == nil {
 		return nil
@@ -110,7 +114,7 @@ func (u *UnitOfWork) Rollback() error {
 	err := u.tx.Rollback()
 	u.tx = nil
 	u.inTx = false
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrTxDone) {
 		return fmt.Errorf("rollback: %w", err)
 	}
 	return nil
