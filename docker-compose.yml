@@ -474,13 +474,14 @@ services:
       - DBT_POSTGRES_DB=continuo_dbt
       - DBT_POSTGRES_USER=continuo_svc
       - DBT_POSTGRES_PASSWORD=continuo
-      # Default to :latest for all 3 services so the local docker-compose / e2e
-      # flow writes service_metadata.json sidecars without requiring the user
-      # to set IMAGE_TAG_PER_SERVICE explicitly. Override via the host env to
-      # mirror a real CI run (e.g. IMAGE_TAG_PER_SERVICE=service-1=abc123,...).
-      # Without this the manifest-controller's A1 publish-boundary validator
-      # rejects every batch because image_tag is empty (commit 6485729).
-      - IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE:-service-1=latest,service-2=latest,service-3=latest}
+      # Per-service image tags recorded in compiled manifests. The e2e resolves
+      # the dbt job image_tag from the release-controller service_prod table (seeded
+      # by setup.sh / provision-k8s-test-env.sh with the real content-hash tags), so
+      # this value only satisfies the manifest-controller's A1 publish-boundary
+      # validator, which rejects a batch whose image_tag is empty. setup.sh exports
+      # the real per-service tags before `docker compose up`; the placeholder default
+      # only keeps a bare `docker compose up` from tripping the validator.
+      - IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE:-service-1=e2e-local,service-2=e2e-local,service-3=e2e-local}
     volumes:
       - ./dbt/services:/app/services
 

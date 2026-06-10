@@ -18,12 +18,22 @@ func TestLatestFullDAG_BuildsProjectionFromLatestRows(t *testing.T) {
 		},
 	}
 	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})
-	if err != nil { t.Fatal(err) }
-	if len(got) != 2 { t.Fatalf("len=%d, want 2: %+v", len(got), got) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len=%d, want 2: %+v", len(got), got)
+	}
 	for _, p := range got {
-		if p.InitialStatus != "PENDING" { t.Errorf("status=%q", p.InitialStatus) }
-		if p.MaxRetries == 0 { t.Errorf("MaxRetries=0, want default") }
-		if p.TaskID.String() == "" { t.Errorf("TaskID empty") }
+		if p.InitialStatus != "PENDING" {
+			t.Errorf("status=%q", p.InitialStatus)
+		}
+		if p.MaxRetries == 0 {
+			t.Errorf("MaxRetries=0, want default")
+		}
+		if p.TaskID.String() == "" {
+			t.Errorf("TaskID empty")
+		}
 		fqn := snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName, ScheduleName: p.ScheduleName}
 		want := r.LatestDAG[fqn]
 		if p.ScheduleName != want.ScheduleName || p.NodeType != want.NodeType ||
@@ -37,14 +47,20 @@ func TestLatestFullDAG_ReaderErrorPropagates(t *testing.T) {
 	want := errors.New("boom")
 	r := &fakeTopologyReader{LatestDAGErr: want}
 	_, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})
-	if !errors.Is(err, want) { t.Fatalf("got %v, want errors.Is %v", err, want) }
+	if !errors.Is(err, want) {
+		t.Fatalf("got %v, want errors.Is %v", err, want)
+	}
 }
 
 func TestLatestFullDAG_EmptyDAGReturnsEmptyProjection(t *testing.T) {
 	r := &fakeTopologyReader{}
 	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})
-	if err != nil { t.Fatal(err) }
-	if len(got) != 0 { t.Fatalf("want empty, got %d", len(got)) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("want empty, got %d", len(got))
+	}
 }
 
 // Regression test for P2: cross-schedule :Table duplicates with the same
@@ -61,10 +77,16 @@ func TestLatestFullDAG_CrossScheduleDuplicates_AreDistinct(t *testing.T) {
 		},
 	}
 	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})
-	if err != nil { t.Fatal(err) }
-	if len(got) != 2 { t.Fatalf("want 2 distinct projections, got %d: %+v", len(got), got) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 distinct projections, got %d: %+v", len(got), got)
+	}
 	schedules := map[string]bool{}
-	for _, p := range got { schedules[p.ScheduleName] = true }
+	for _, p := range got {
+		schedules[p.ScheduleName] = true
+	}
 	if !schedules["x"] || !schedules["y"] {
 		t.Fatalf("want both schedules x and y, got %+v", schedules)
 	}

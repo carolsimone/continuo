@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	grpcadapter "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
+	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/stretchr/testify/assert"

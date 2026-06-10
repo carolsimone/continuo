@@ -75,15 +75,6 @@ streams:
         group: orchestrator-node-updated
         const: OrchestratorNodeUpdated
 
-  - name: initialize.run:v1
-    const: InitializeRunV1
-    description: Trigger to initialize a new run.
-    producers: [state]
-    consumers:
-      - service: orchestrator
-        group: orchestrator-initialize-run
-        const: OrchestratorInitializeRun
-
   - name: trigger.rerun:v1
     const: TriggerRerunV1
     description: User-initiated rerun trigger.
@@ -121,21 +112,6 @@ streams:
         const: OrchestratorRunFinalized
 
   # ---------------- orchestrator-produced streams ----------------
-
-  - name: run.initialized:v1
-    const: RunInitializedV1
-    description: Run graph snapshot emitted by orchestrator after initializing a new run.
-    producers: [orchestrator]
-    consumers:
-      - service: state
-        group: state-run-initialized
-        const: StateRunInitialized
-
-  - name: rerun.ready:v1
-    const: RerunReadyV1
-    description: Rerun-ready signal emitted by orchestrator when a rerun is prepared.
-    producers: [orchestrator]
-    consumers: []
 
   - name: query.model:v1
     const: QueryModelV1

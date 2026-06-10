@@ -93,7 +93,7 @@ The snapshot pipeline follows a strict layered model:
 
 **Handler interface** (`orchestrator/service/handlers/deps.go`):
 - `handlers.SnapshotService` is a narrow handler-local interface `{ Snapshot(ctx, snapshot.Params) ([]snapshot.TaskProjection, error) }`, satisfied by `*snapshotsvc.Service`. Defined here so handler tests can substitute a fake.
-- Five handlers receive a `SnapshotService`: `InitializeRunHandler`, `HandleSchedulerStartedHandler`, `HandleRerunHandler`, `HandleRebaseHandler`, `HandleSingleNodeRunHandler`. `HandleNodeCompleted` does not snapshot.
+- Four handlers receive a `SnapshotService`: `HandleSchedulerStartedHandler`, `HandleRerunHandler`, `HandleRebaseHandler`, `HandleSingleNodeRunHandler`. `HandleNodeCompleted` does not snapshot.
 
 The `Params` struct (defined in `orchestrator/domain/snapshot/`) carries `RunID`, `ScheduleName`, `Kind`, `SourceRunID`, plus a `Selector` interface that decides which tasks land in the projection and with which `(initial_status, image_tag, manifest_version, inherited_from_task_id?)`.
 
@@ -154,8 +154,9 @@ Three goroutines started in `main.go` run for the process lifetime:
 | `release.promoted:v1` | `orchestrator-release-promoted` | `ReleasePromotedHandler` — swaps the `:Table` topology via `ReleasePromotionRepository.PromoteRelease`, increments `topology_generation`, writes `:TopologyRoot` service_metadata, then emits `schedules.loaded:v1` |
 | `trigger.rerun:v1` | `orchestrator_rerun` | `HandleRerun` — runs `Snapshot(SourcePinnedDAG{})` against the **new** `:Run` minted by state's `TriggerRerun`, projecting the source's pinned DAG with non-SUCCEEDED tasks + their descendants as rebased PENDING and the rest as inherited at source's stored status; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only |
 | `trigger.rebase:v1` | `orchestrator-rebase` | `HandleRebaseHandler` — runs `Snapshot(RebasePartition)` against the new `:Run`; projects rebase_set ∪ inherit_set against the latest topology; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only |
-| `initialize.run:v1` | `orchestrator_initialize_run` | `InitializeRunHandler` — secondary entry point (no active producer); runs `Snapshot(LatestFullDAG)` + dispatch, same shape as `HandleSchedulerStarted` |
 | `trigger.single_node_run:v1` | `orchestrator_single_node_run` | `HandleSingleNodeRunHandler` — runs `Snapshot(SingleNode)` and dispatches the one task; see details below |
+
+Each consumer is wired as a `parser → handler` binding under `adapters/redis/`: the parser extracts and validates the message's scalar fields defensively and returns an `events.ErrPermanent`-wrapped error on any malformed field (missing/non-string value, bad UUID, or cross-field rule violation), which the stream consumer ACKs and drops so a single poison message cannot crash-loop the process.
 
 ### gRPC server — `OrchestratorQuery` (port 50052)
 
@@ -298,7 +299,6 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 | Redis consumer (`trigger.rerun:v1`) | Reads and dispatches to HandleRerun handler |
 | Redis consumer (`trigger.rebase:v1`) | Reads and dispatches to HandleRebase handler |
 | Redis consumer (`trigger.single_node_run:v1`) | Reads and dispatches to HandleSingleNodeRunHandler |
-| Redis consumer (`initialize.run:v1`) | Secondary entry path; runs `Snapshot(LatestFullDAG)` + dispatch. No active producer. |
 | Redis consumer (`run.finalized:v1`) | Projects state's terminal outcome (succeeded, failed, or cancelled) onto Neo4j `:Run.completed_at` / `terminal_status`. Covers runs that produce no `node.updated:v1` traffic (full-inherited rebases, cancelled runs). |
 | Outbox processor (`pkg/outbox.Processor`) | Polls `orchestrator_outbox` for pending entries; publishes each row to its `stream_name` via `orchestrator/adapters/publisher.OutboxPublisher` |
 | RunSweeper | Periodically deletes expired `Run` nodes (and their `EXECUTES` edges) older than `retention_days` |

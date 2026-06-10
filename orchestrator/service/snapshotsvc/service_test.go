@@ -26,10 +26,10 @@ func (f *fakeTxRunner) Run(ctx context.Context, fn func(snapshot.TopologyReader,
 }
 
 type fakeWriter struct {
-	called     bool
-	gotParams  snapshot.Params
-	gotProj    []snapshot.TaskProjection
-	err        error
+	called    bool
+	gotParams snapshot.Params
+	gotProj   []snapshot.TaskProjection
+	err       error
 }
 
 func (w *fakeWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapshot.Params, proj []snapshot.TaskProjection) error {
@@ -81,9 +81,15 @@ func TestService_HappyPath_WriterCalledWithProjection(t *testing.T) {
 		RunID: uuid.New().String(), ScheduleName: "x", Kind: "cron",
 		Selector: stubSelector{projection: want},
 	})
-	if err != nil { t.Fatal(err) }
-	if !w.called { t.Error("writer not called") }
-	if len(got) != 1 || got[0].TableName != "t" { t.Errorf("got %+v", got) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.called {
+		t.Error("writer not called")
+	}
+	if len(got) != 1 || got[0].TableName != "t" {
+		t.Errorf("got %+v", got)
+	}
 }
 
 func TestService_EmptyProjection_ReturnsErrEmptyProjection_WriterNotCalled(t *testing.T) {
@@ -92,8 +98,12 @@ func TestService_EmptyProjection_ReturnsErrEmptyProjection_WriterNotCalled(t *te
 	_, err := svc.Snapshot(context.Background(), snapshot.Params{
 		Selector: stubSelector{projection: nil},
 	})
-	if !errors.Is(err, snapshot.ErrEmptyProjection) { t.Fatalf("got %v", err) }
-	if w.called { t.Error("writer should not be called on empty projection") }
+	if !errors.Is(err, snapshot.ErrEmptyProjection) {
+		t.Fatalf("got %v", err)
+	}
+	if w.called {
+		t.Error("writer should not be called on empty projection")
+	}
 }
 
 func TestService_SelectorError_Propagates(t *testing.T) {
@@ -102,7 +112,9 @@ func TestService_SelectorError_Propagates(t *testing.T) {
 	_, err := svc.Snapshot(context.Background(), snapshot.Params{
 		Selector: stubSelector{err: want},
 	})
-	if !errors.Is(err, want) { t.Fatalf("got %v", err) }
+	if !errors.Is(err, want) {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func TestService_TargetNotFound_PropagatesUnchanged(t *testing.T) {
@@ -110,7 +122,9 @@ func TestService_TargetNotFound_PropagatesUnchanged(t *testing.T) {
 	_, err := svc.Snapshot(context.Background(), snapshot.Params{
 		Selector: stubSelector{err: snapshot.ErrTargetNotFound},
 	})
-	if !errors.Is(err, snapshot.ErrTargetNotFound) { t.Fatalf("got %v", err) }
+	if !errors.Is(err, snapshot.ErrTargetNotFound) {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func TestService_WriterError_Propagates(t *testing.T) {
@@ -121,7 +135,9 @@ func TestService_WriterError_Propagates(t *testing.T) {
 		RunID:    uuid.New().String(),
 		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
 	})
-	if !errors.Is(err, want) { t.Fatalf("got %v", err) }
+	if !errors.Is(err, want) {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func TestService_CancelledSchedule_StampsCancelledOnParams(t *testing.T) {
@@ -131,9 +147,15 @@ func TestService_CancelledSchedule_StampsCancelledOnParams(t *testing.T) {
 		RunID:    uuid.New().String(),
 		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
 	})
-	if err != nil { t.Fatal(err) }
-	if !w.called { t.Fatal("writer not called") }
-	if !w.gotParams.Cancelled { t.Error("expected Params.Cancelled=true for a cancelled schedule") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.called {
+		t.Fatal("writer not called")
+	}
+	if !w.gotParams.Cancelled {
+		t.Error("expected Params.Cancelled=true for a cancelled schedule")
+	}
 }
 
 func TestService_NotCancelled_LeavesCancelledFalse(t *testing.T) {
@@ -143,8 +165,12 @@ func TestService_NotCancelled_LeavesCancelledFalse(t *testing.T) {
 		RunID:    uuid.New().String(),
 		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
 	})
-	if err != nil { t.Fatal(err) }
-	if w.gotParams.Cancelled { t.Error("expected Params.Cancelled=false for a non-cancelled schedule") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.gotParams.Cancelled {
+		t.Error("expected Params.Cancelled=false for a non-cancelled schedule")
+	}
 }
 
 func TestService_CancelledRepoError_Propagates_WriterNotCalled(t *testing.T) {
@@ -155,6 +181,10 @@ func TestService_CancelledRepoError_Propagates_WriterNotCalled(t *testing.T) {
 		RunID:    uuid.New().String(),
 		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
 	})
-	if !errors.Is(err, want) { t.Fatalf("got %v", err) }
-	if w.called { t.Error("writer must not be called when the cancelled-guard read fails") }
+	if !errors.Is(err, want) {
+		t.Fatalf("got %v", err)
+	}
+	if w.called {
+		t.Error("writer must not be called when the cancelled-guard read fails")
+	}
 }

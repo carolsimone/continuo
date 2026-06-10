@@ -73,12 +73,16 @@ type promotedNode struct {
 // (release.promoted is post-validation), so it can seed any topology, including
 // the intentionally-failing ftable_* DAGs whose runs fail at execution time.
 //
-// Per-service image_tag is read from the service_metadata.json sidecars in S3 so
-// the seeded nodes carry the content-addressed tag the kind images actually have.
-// Seed *data* (e2e_schema.seed_table_*) is materialized separately by setup.sh's
-// `dbt seed` step; this only establishes the topology graph.
+// Per-service image_tag is read from the release-controller service_prod table
+// so the seeded nodes carry the content-addressed tag the kind images actually
+// have. Seed *data* (e2e_schema.seed_table_*) is materialized separately by
+// setup.sh's `dbt seed` step; this only establishes the topology graph.
 func seedTopology(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
+
+	// A prior blue/green test may have mutated service_prod; re-establish the
+	// baseline pointers before reading each service's image tag.
+	seedBaselineServiceProd(t, ctx, clients)
 
 	imageTags := map[string]string{}
 	for _, svc := range []string{"service-1", "service-2", "service-3"} {

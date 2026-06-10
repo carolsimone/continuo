@@ -10,8 +10,9 @@ import (
 )
 
 // NewScheduleCancelledBinding wires ParseScheduleCancelled into the
-// ScheduleCancelledHandler. Parse failures are silently ACKed (logged at
-// error level), matching orchestrator's existing convention.
+// ScheduleCancelledHandler. A parse failure is permanent (events.ErrPermanent):
+// the binding logs and returns the error so the consumer ACKs and drops the
+// poison message.
 func NewScheduleCancelledBinding(
 	handler *handlers.ScheduleCancelledHandler,
 	logger *slog.Logger,
@@ -21,7 +22,7 @@ func NewScheduleCancelledBinding(
 		if err != nil {
 			logger.Error("schedule.cancelled: parse failure — discarding",
 				"message_id", msg.ID, "error", err)
-			return nil // permanent error: ACK by returning nil (orchestrator convention)
+			return err
 		}
 		return handler.Handle(ctx, evt)
 	}

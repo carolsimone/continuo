@@ -12,8 +12,9 @@ import (
 )
 
 // NewReleasePromotedBinding wires ParseReleasePromoted into the
-// ReleasePromotedHandler. Parse failures are permanently ACKed (logged at
-// error level), matching orchestrator's existing convention.
+// ReleasePromotedHandler. A parse failure is permanent (events.ErrPermanent):
+// the binding logs and returns the error so the consumer ACKs and drops the
+// poison message.
 //
 // outbox_entry_id is extracted from the message fields and threaded to the
 // handler so the dedup layer can catch re-XADDs of the same upstream outbox
@@ -27,7 +28,7 @@ func NewReleasePromotedBinding(
 		if err != nil {
 			logger.Error("release.promoted: parse failure — discarding",
 				"message_id", msg.ID, "error", err)
-			return nil // permanent error: ACK by returning nil (orchestrator convention)
+			return err
 		}
 		in := model.PromoteReleaseInput{
 			ReleaseID: evt.ReleaseID,

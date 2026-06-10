@@ -60,26 +60,36 @@ docker build -f k8s-controller/Dockerfile.dev -t continuo-k8s-controller:latest 
 log_info "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/ || { log_error "failed to build dbt-base"; exit 1; }
 
-log_info "Building dbt service images..."
-DOCKER_BUILDKIT=1 docker build -f dbt/services/service-1/Dockerfile.local -t service-1:latest dbt/services/service-1/ || { log_error "failed to build service-1"; exit 1; }
-DOCKER_BUILDKIT=1 docker build -f dbt/services/service-2/Dockerfile.local -t service-2:latest dbt/services/service-2/ || { log_error "failed to build service-2"; exit 1; }
-DOCKER_BUILDKIT=1 docker build -f dbt/services/service-3/Dockerfile.local -t service-3:latest dbt/services/service-3/ || { log_error "failed to build service-3"; exit 1; }
-
-log_info "Load images into k8s/kind..."
-
+log_info "Loading controller images into kind..."
 kind load docker-image continuo-executor-controller:latest --name continuo || {
   log_error "Failed to load executor-controller image into kind"
   exit 1
 }
-
 kind load docker-image continuo-k8s-controller:latest --name continuo || {
   log_error "Failed to load k8s-controller image into kind"
 }
 
-log_info "Loading dbt service images into kind..."
-kind load docker-image service-1:latest --name continuo || { log_error "Failed to load service-1 into kind"; exit 1; }
-kind load docker-image service-2:latest --name continuo || { log_error "Failed to load service-2 into kind"; exit 1; }
-kind load docker-image service-3:latest --name continuo || { log_error "Failed to load service-3 into kind"; exit 1; }
+# Build each dbt service image, tag it by its own content digest (never :latest),
+# and load that tag into kind. The executor composes the dbt job image as
+# service-<n>:<image_tag>, so the kind image must be loaded under exactly the tag
+# the e2e seeds into service_prod. The per-service tags are written to the
+# bind-mounted tests/e2e/.image-tags file (immutable setup metadata); the e2e
+# rebuilds the service_prod baseline from it before each consumer.
+log_info "Building + loading dbt service images (content-hash tags)..."
+DBT_PER_SERVICE=""
+for svc in service-1 service-2 service-3; do
+  DOCKER_BUILDKIT=1 docker build -f "dbt/services/${svc}/Dockerfile.local" -t "${svc}:build-tmp" "dbt/services/${svc}/" \
+    || { log_error "failed to build ${svc}"; exit 1; }
+  img_id="$(docker image inspect --format '{{.Id}}' "${svc}:build-tmp")"
+  tag="${img_id#sha256:}"; tag="${tag:0:12}"
+  docker tag "${svc}:build-tmp" "${svc}:${tag}"
+  log_info "  ${svc} -> ${svc}:${tag}"
+  kind load docker-image "${svc}:${tag}" --name continuo \
+    || { log_error "Failed to load ${svc} into kind"; exit 1; }
+  DBT_PER_SERVICE="${DBT_PER_SERVICE:+${DBT_PER_SERVICE},}${svc}=${tag}"
+done
+printf '%s' "$DBT_PER_SERVICE" > "${REPO_ROOT}/tests/e2e/.image-tags"
+log_info "Wrote per-service image tags to tests/e2e/.image-tags: ${DBT_PER_SERVICE}"
 
 log_info "Images built and loaded successfully"
 

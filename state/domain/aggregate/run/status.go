@@ -1,7 +1,6 @@
 package run
 
 import (
-	"errors"
 	"fmt"
 )
 
@@ -115,32 +114,4 @@ type NodeID struct {
 	ServiceName string
 	SchemaName  string
 	TableName   string
-}
-
-// Transition errors returned by the aggregate's status mutation methods.
-var (
-	ErrInvalidTransition = errors.New("invalid state transition")
-)
-
-type schedulerTransition struct {
-	from SchedulerStatus
-	to   SchedulerStatus
-}
-
-// allowedSchedulerTransitions enumerates the non-cancel scheduler transitions.
-// Cancel is a separate, always-permitted path on a non-terminal Run; see
-// Run.Cancel.
-var allowedSchedulerTransitions = []schedulerTransition{
-	{SchedulerStatusPending, SchedulerStatusRunning},
-	{SchedulerStatusRunning, SchedulerStatusSucceeded},
-	{SchedulerStatusRunning, SchedulerStatusFailed},
-}
-
-func canSchedulerTransition(from, to SchedulerStatus) bool {
-	for _, tr := range allowedSchedulerTransitions {
-		if tr.from == from && tr.to == to {
-			return true
-		}
-	}
-	return false
 }

@@ -83,7 +83,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 
 	changedImageTag := allServices[changedService].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must upload service_metadata.json", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
 
 	var prodNodes []map[string]string
 	probeFound := false
@@ -198,7 +198,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 
 	changedImageTag := allServices[changedService].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must upload service_metadata.json", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
@@ -294,7 +294,7 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 
 	changedImageTag := allServices[changedService].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must upload service_metadata.json", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
@@ -540,12 +540,15 @@ func canonicalManifestS3URI(service, releaseID string) string {
 	return fmt.Sprintf("s3://%s/%s/%s/manifest.json", e2eS3Bucket, service, releaseID)
 }
 
-// baselineServices loads every service's baseline manifest and service_metadata.json
-// from S3 (written by setup.sh with --release-id e2e-baseline) and returns a map
-// keyed by service name. The map is used to seed current_prod topology snapshots
-// and service_prod rows.
+// baselineServices loads every service's baseline manifest from S3 (written by
+// setup.sh with --release-id e2e-baseline) and its current image tag from the
+// release-controller service_prod table, returning a map keyed by service name.
+// The map is used to seed current_prod topology snapshots and service_prod rows.
 func baselineServices(t *testing.T, ctx context.Context, clients *testClients) map[string]serviceInfo {
 	t.Helper()
+	// Re-establish the per-service image pointers a prior blue/green test may
+	// have mutated, so readServiceImageTag below sees the full baseline.
+	seedBaselineServiceProd(t, ctx, clients)
 	// Discover all services by listing objects under their baseline prefix.
 	out, err := clients.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(e2eS3Bucket),
@@ -571,20 +574,23 @@ func baselineServices(t *testing.T, ctx context.Context, clients *testClients) m
 	return services
 }
 
-// readServiceImageTag reads the content-addressed image tag from a service's
-// service_metadata.json sidecar. setup.sh uploads it alongside each baseline
-// manifest at <service>/e2e-baseline/service_metadata.json.
+// readServiceImageTag resolves a dbt service's image tag from the
+// release-controller's service_prod pointer table (DB continuo_release) — the
+// production source of truth for each service's current image. setup.sh /
+// provision-k8s-test-env.sh seed one service_prod row per service with the real
+// content-addressed tag the kind dbt images are loaded under. The executor
+// composes the dbt job image as service-<n>:<image_tag>, so this tag must match
+// the kind image exactly.
 func readServiceImageTag(t *testing.T, ctx context.Context, clients *testClients, service string) string {
 	t.Helper()
-	key := fmt.Sprintf("%s/%s/service_metadata.json", service, e2eBaselineReleaseID)
-	var meta struct {
-		ImageTag string `json:"image_tag"`
-	}
-	require.NoError(t, json.Unmarshal(getS3Object(t, ctx, clients, key), &meta),
-		"parse service_metadata.json for %s (key %s)", service, key)
-	require.NotEmpty(t, meta.ImageTag,
-		"service_metadata.json for %s has empty image_tag — setup.sh must upload it alongside the manifest", service)
-	return meta.ImageTag
+	var tag string
+	err := clients.releaseDB.QueryRowContext(ctx,
+		`SELECT image_tag FROM service_prod WHERE service_name = $1`, service).Scan(&tag)
+	require.NoError(t, err,
+		"read service_prod.image_tag for %s — setup.sh must seed service_prod before e2e", service)
+	require.NotEmpty(t, tag,
+		"service_prod.image_tag is empty for %s — setup.sh seeded an empty tag", service)
+	return tag
 }
 
 // getS3Object downloads an object body from the e2e bucket.

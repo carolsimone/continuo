@@ -240,69 +240,6 @@ func TestSchedulerTrackerRepository_Create_WithNullableFields(t *testing.T) {
 // schedule_catalog is created by db/migration/state/V*.sql, which setupPostgres
 // applies via ApplyMigrations — these tests just consume it.
 
-func TestScheduleCatalogRepository_UpsertAll_Insert(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-
-	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
-	ctx := context.Background()
-	serviceMetadata := map[string]run.ServiceMetadata{
-		"svc-a": {ManifestVersion: "v3", ImageTag: "sha256:aaa"},
-		"svc-b": {ManifestVersion: "v5", ImageTag: "sha256:bbb"},
-	}
-
-	err := repo.UpsertAll(ctx, []string{"daily", "hourly"}, serviceMetadata)
-	require.NoError(t, err)
-
-	active, err := repo.ListActive(ctx)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"daily", "hourly"}, active)
-
-	meta, err := repo.GetServiceMetadata(ctx, "daily")
-	require.NoError(t, err)
-	assert.Equal(t, serviceMetadata, meta)
-}
-
-func TestScheduleCatalogRepository_UpsertAll_ReactivatesRemoved(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-
-	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
-	ctx := context.Background()
-
-	// Insert and then soft-delete "daily"
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
-	require.NoError(t, repo.SoftDeleteAbsent(ctx, []string{})) // delete all
-
-	// Upsert again — should reactivate
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v2", ImageTag: ""}}))
-
-	active, err := repo.ListActive(ctx)
-	require.NoError(t, err)
-	assert.Contains(t, active, "daily")
-
-	meta, err := repo.GetServiceMetadata(ctx, "daily")
-	require.NoError(t, err)
-	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v2", ImageTag: ""}}, meta)
-}
-
-func TestScheduleCatalogRepository_SoftDeleteAbsent(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-
-	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
-	ctx := context.Background()
-
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily", "hourly", "weekly"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
-	// Payload now only contains daily and hourly — weekly should be soft-deleted
-	require.NoError(t, repo.SoftDeleteAbsent(ctx, []string{"daily", "hourly"}))
-
-	active, err := repo.ListActive(ctx)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"daily", "hourly"}, active)
-	assert.NotContains(t, active, "weekly")
-}
-
 func TestScheduleCatalogRepository_ExistsActive(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -310,7 +247,7 @@ func TestScheduleCatalogRepository_ExistsActive(t *testing.T) {
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
+	seedCatalog(t, db, repo, []string{"daily"})
 
 	exists, err := repo.ExistsActive(ctx, "daily")
 	require.NoError(t, err)
@@ -321,6 +258,34 @@ func TestScheduleCatalogRepository_ExistsActive(t *testing.T) {
 	assert.False(t, exists)
 }
 
+// seedCatalog upserts the given schedule names as active rows via the tx-bound
+// UpsertAllTx, committing in its own transaction. Used to set up catalog state
+// for tests that exercise read-side methods.
+func seedCatalog(t *testing.T, db *sqlx.DB, repo postgres.ScheduleCatalogRepository, names []string) {
+	t.Helper()
+	ctx := context.Background()
+	meta := make(map[string]map[string]run.ServiceMetadata, len(names))
+	for _, n := range names {
+		meta[n] = map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}
+	}
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, repo.UpsertAllTx(ctx, tx, names, meta))
+	require.NoError(t, tx.Commit())
+}
+
+// softDeleteAllCatalog soft-deletes every active catalog row via the tx-bound
+// SoftDeleteAbsentTx with an empty present-set, committing in its own
+// transaction.
+func softDeleteAllCatalog(t *testing.T, db *sqlx.DB, repo postgres.ScheduleCatalogRepository) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, repo.SoftDeleteAbsentTx(ctx, tx, []string{}))
+	require.NoError(t, tx.Commit())
+}
+
 func TestScheduleCatalogRepository_ExistsActive_SoftDeletedReturnsFalse(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -328,8 +293,8 @@ func TestScheduleCatalogRepository_ExistsActive_SoftDeletedReturnsFalse(t *testi
 	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertAll(ctx, []string{"daily"}, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}))
-	require.NoError(t, repo.SoftDeleteAbsent(ctx, []string{}))
+	seedCatalog(t, db, repo, []string{"daily"})
+	softDeleteAllCatalog(t, db, repo)
 
 	exists, err := repo.ExistsActive(ctx, "daily")
 	require.NoError(t, err)
@@ -442,37 +407,13 @@ func TestSchedulerTrackerRepository_GetActiveScheduler(t *testing.T) {
 			InitializationStatus: "pending",
 		}
 		require.NoError(t, repo.Create(ctx, tracker))
-		require.NoError(t, repo.Cancel(ctx, schedID, "test", ""))
+		tx, err := db.BeginTxx(ctx, nil)
+		require.NoError(t, err)
+		require.NoError(t, repo.CancelTx(ctx, tx, schedID, "test", ""))
+		require.NoError(t, tx.Commit())
 
 		result, err := repo.GetActiveScheduler(ctx, "post-cancel")
 		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
-}
-
-func TestSchedulerTrackerRepository_Cancel_AlreadyTerminal(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	repo := postgres.NewSchedulerTrackerRepository(db, logger)
-	ctx := context.Background()
-
-	schedID := uuid.New()
-	tracker := &postgres.SchedulerTracker{
-		ScheduleID:           schedID,
-		ScheduleName:         "already-terminal",
-		Status:               run.SchedulerStatusRunning,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
-	}
-	require.NoError(t, repo.Create(ctx, tracker))
-
-	// First cancel succeeds
-	require.NoError(t, repo.Cancel(ctx, schedID, "user", ""))
-
-	// Second cancel returns ErrNotCancellable
-	err := repo.Cancel(ctx, schedID, "user", "")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, postgres.ErrNotCancellable)
 }

@@ -27,11 +27,3 @@ func NewConnection(pg pkgconfig.PostgresConfig) (*sqlx.DB, error) {
 	}
 	return db, nil
 }
-
-// GetPostgresConnection creates a PostgreSQL connection by reading env vars directly.
-// It does NOT use the service Validator, so missing vars are not caught at startup.
-// Prefer NewConnection with a pkgconfig.PostgresConfig loaded via LoadPostgres(v) instead.
-func GetPostgresConnection() (*sqlx.DB, error) {
-	v := &pkgconfig.Validator{}
-	return NewConnection(pkgconfig.LoadPostgres(v))
-}

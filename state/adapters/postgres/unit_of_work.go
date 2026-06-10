@@ -95,7 +95,7 @@ func (u *PostgresUnitOfWork) Rollback() error {
 // Run returns a RunRepository bound to the current transaction. Read methods
 // use the autocommit db; LoadRunForUpdate/SaveRun run inside u.tx.
 func (u *PostgresUnitOfWork) Run() repository.RunRepository {
-	return NewRunRepository(u.db, u.tx, u.schedulerRepo, u.taskRepo, u.logger)
+	return NewRunRepository(u.tx, u.schedulerRepo)
 }
 
 // Catalog returns a ScheduleCatalogRepository bound to the current transaction.

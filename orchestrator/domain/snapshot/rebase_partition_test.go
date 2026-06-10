@@ -19,9 +19,9 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 	r := &fakeTopologyReader{
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {
-				a: {TaskID: uuid.New(), Status: "FAILED",    ScheduleName: "x", NodeType: "dbt-model"},
+				a: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
 				b: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"},
-				c: {TaskID: rootC,        Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"},
+				c: {TaskID: rootC, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"},
 			},
 		},
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
@@ -33,23 +33,35 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 		ImmDescendantsLatest: map[snapshot.FQN][]snapshot.FQN{a: {b}},
 	}
 	got, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, ScheduleName: "x"})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	by := map[snapshot.FQN]snapshot.TaskProjection{}
 	for _, p := range got {
 		by[snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName, ScheduleName: p.ScheduleName}] = p
 	}
-	if by[a].InitialStatus != "PENDING" { t.Errorf("a: %+v", by[a]) }
-	if by[b].InitialStatus != "PENDING" { t.Errorf("b (descendant of failed a): %+v", by[b]) }
+	if by[a].InitialStatus != "PENDING" {
+		t.Errorf("a: %+v", by[a])
+	}
+	if by[b].InitialStatus != "PENDING" {
+		t.Errorf("b (descendant of failed a): %+v", by[b])
+	}
 	if by[c].InitialStatus != "SUCCEEDED" || by[c].InheritedFromTaskID == nil || *by[c].InheritedFromTaskID != rootC {
 		t.Errorf("c (inherit, root forward): %+v", by[c])
 	}
 	// Rebased rows pinned to LATEST metadata.
-	if by[a].ImageTag != "v2" { t.Errorf("a should pin to latest, got %q", by[a].ImageTag) }
+	if by[a].ImageTag != "v2" {
+		t.Errorf("a should pin to latest, got %q", by[a].ImageTag)
+	}
 	// Dispatch frontier: a (its upstreams inherited) dispatches now; b waits
 	// behind its immediate rebased upstream a.
-	if !by[a].ReadyToDispatch { t.Errorf("a must be on the dispatch frontier") }
-	if by[b].ReadyToDispatch { t.Errorf("b must be blocked behind immediate rebased upstream a") }
+	if !by[a].ReadyToDispatch {
+		t.Errorf("a must be on the dispatch frontier")
+	}
+	if by[b].ReadyToDispatch {
+		t.Errorf("b must be blocked behind immediate rebased upstream a")
+	}
 }
 
 func TestRebasePartition_NewArrivals_AreRebased(t *testing.T) {
@@ -66,7 +78,9 @@ func TestRebasePartition_NewArrivals_AreRebased(t *testing.T) {
 		},
 	}
 	got, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, ScheduleName: "x"})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, p := range got {
 		if p.TableName == "new" && p.InitialStatus != "PENDING" {
 			t.Errorf("new arrival should be PENDING: %+v", p)
@@ -84,18 +98,24 @@ func TestRebasePartition_DroppedSourceRowsExcluded(t *testing.T) {
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{}, // dropped from latest
 	}
 	_, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, ScheduleName: "x"})
-	if !errors.Is(err, snapshot.ErrEmptyProjection) { t.Fatalf("want ErrEmptyProjection, got %v", err) }
+	if !errors.Is(err, snapshot.ErrEmptyProjection) {
+		t.Fatalf("want ErrEmptyProjection, got %v", err)
+	}
 }
 
 func TestRebasePartition_NoSourceRunID_Errors(t *testing.T) {
 	r := &fakeTopologyReader{}
 	_, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})
-	if err == nil { t.Fatal("expected error") }
+	if err == nil {
+		t.Fatal("expected error")
+	}
 }
 
 func TestRebasePartition_NoScheduleName_Errors(t *testing.T) {
 	srcID := uuid.New()
 	r := &fakeTopologyReader{}
 	_, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
-	if err == nil { t.Fatal("expected error") }
+	if err == nil {
+		t.Fatal("expected error")
+	}
 }

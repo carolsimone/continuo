@@ -1,15 +1,15 @@
 // Package snapshot defines the unified Snapshot routine that produces a :Run
 // node in Neo4j with one :EXECUTES edge per task in the projection.
 //
-// Three concrete shapes are supported via Selector strategies:
+// Four concrete shapes are supported via Selector strategies:
 //   - LatestFullDAG    — cron / trigger
-//   - SingleNode       — Feature 4 (single-node-run)
+//   - SingleNode       — single-node run
 //   - SourcePinnedDAG  — rerun from failed/cancelled
-//   - RebasePartition  — Feature 2 (rebase from failed/cancelled)
+//   - RebasePartition  — rebase from failed/cancelled
 //
-// The plan/materialise split puts all selection logic in pure-Go code that's
-// unit-testable against an in-memory TopologyReader, and confines the write
-// path to one kind-agnostic Cypher tx in the adapter.
+// The selection logic is pure Go, unit-testable against an in-memory
+// TopologyReader; the write path is confined to one kind-agnostic Cypher
+// transaction in the adapter (snapshot.SnapshotWriter).
 package snapshot
 
 import (

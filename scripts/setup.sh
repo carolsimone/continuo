@@ -85,6 +85,13 @@ done
 export IMAGE_TAG_PER_SERVICE="$PER_SERVICE"
 echo "Exported IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE}"
 
+# Write the per-service image tags to the bind-mounted tests/e2e/.image-tags file
+# (immutable setup metadata). The e2e rebuilds the release-controller service_prod
+# baseline from this before each consumer, so a prior test's mutation of
+# service_prod cannot break a later read. Replaces the obsolete S3 image-tag sidecar.
+printf '%s' "$PER_SERVICE" > tests/e2e/.image-tags
+echo "Wrote per-service image tags to tests/e2e/.image-tags"
+
 # continuo-executor-controller and continuo-k8s-controller are already built by
 # 'docker compose build' above with the correct tags, so no need to rebuild them here.
 
@@ -139,29 +146,10 @@ echo "Compiling and uploading dbt manifests to localstack S3..."
 docker exec dbt-compile-and-load uv run python -m dbt_upload load --services-dir /app/services --target localstack --release-id e2e-baseline
 echo "✓ dbt manifests compiled and uploaded to localstack S3 (key: <service>/e2e-baseline/manifest.json)"
 
-# Upload per-service image-tag sidecars so e2e tests can resolve image_tag
-# from S3 without needing IMAGE_TAG_PER_SERVICE forwarded into the test
-# container. Each sidecar lands at <service>/e2e-baseline/service_metadata.json,
-# matching the readServiceImageTag helper in release_promote_test.go.
-echo "Uploading per-service image-tag sidecars for e2e baseline..."
-for svc in "${DBT_SERVICES[@]}"; do
-  svc_tag="${IMAGE_TAG}"
-  docker exec dbt-compile-and-load \
-    uv run python3 -c "
-import boto3, json, os
-client = boto3.client('s3',
-  endpoint_url=os.environ.get('S3_ENDPOINT_URL','http://localstack:4566'),
-  aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID','test'),
-  aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY','test'),
-  region_name=os.environ.get('AWS_DEFAULT_REGION','us-east-1'))
-client.put_object(
-  Bucket='continuo',
-  Key='${svc}/e2e-baseline/service_metadata.json',
-  Body=json.dumps({'image_tag':'${svc_tag}','manifest_version':'e2e-baseline'}).encode())
-print('uploaded ${svc}/e2e-baseline/service_metadata.json')
-"
-done
-echo "✓ per-service image-tag sidecars uploaded"
+# Per-service image tags are seeded into the release-controller service_prod
+# pointer table at the end of this script (after the final compose up runs the
+# release-controller migrations). The e2e reads image_tag from service_prod — the
+# production source of truth — so no S3 image-tag sidecar is needed.
 
 # Materialize dbt seeds into e2e_schema. The e2e topology is seeded directly
 # into Neo4j (no manifest.loaded ingest), and the standing "seed" schedule is

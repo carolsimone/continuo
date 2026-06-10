@@ -183,7 +183,7 @@ func (r *topologyReader) DescendantsInSourceRun(ctx context.Context, sourceRunID
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
 		"source_run_id": sourceRunID,
 		"svc":           start.Service, "schema": start.Schema, "tbl": start.Table,
-		"sched":         start.ScheduleName,
+		"sched": start.ScheduleName,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("topology_reader: DescendantsInSourceRun: %w", err)
@@ -233,7 +233,7 @@ func (r *topologyReader) ImmediateDescendantsInSourceRun(ctx context.Context, so
 	return r.queryFQNs(ctx, "ImmediateDescendantsInSourceRun", q, map[string]interface{}{
 		"source_run_id": sourceRunID,
 		"svc":           start.Service, "schema": start.Schema, "tbl": start.Table,
-		"sched":         start.ScheduleName,
+		"sched": start.ScheduleName,
 	})
 }
 
@@ -308,7 +308,7 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
 		"source_run_id": sourceRunID,
 		"svc":           fqn.Service, "schema": fqn.Schema, "tbl": fqn.Table,
-		"sched":         fqn.ScheduleName,
+		"sched": fqn.ScheduleName,
 	})
 	if err != nil {
 		return snapshot.LatestTableRow{}, false, fmt.Errorf("topology_reader: LoadSingleTableFromSourceRun: %w", err)

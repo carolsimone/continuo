@@ -32,7 +32,7 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 		{TaskID: pendingID, ServiceName: "svc", SchemaName: "s", TableName: "tgt",
 			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "PENDING",
 			ReadyToDispatch: true,
-			ImageTag: "v1", ManifestVersion: "m1", MaxRetries: pkgEvents.DefaultTaskMaxRetries},
+			ImageTag:        "v1", ManifestVersion: "m1", MaxRetries: pkgEvents.DefaultTaskMaxRetries},
 		{TaskID: inheritedID, ServiceName: "svc", SchemaName: "s", TableName: "ok",
 			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "SUCCEEDED",
 			ImageTag: "v1", ManifestVersion: "m1", InheritedFromTaskID: &inheritedRoot},

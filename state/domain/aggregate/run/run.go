@@ -37,7 +37,6 @@ type Run struct {
 	serviceMetadata map[string]ServiceMetadata
 
 	changes changeSet
-	events  []DomainEvent
 }
 
 // changeSet records which scheduler_tracker columns were mutated since the
@@ -124,7 +123,6 @@ func NewPendingRun(
 	}
 	r.changes.created = true
 	evt := RunStarted{ID: id, Name: scheduleName, K: kind, SourceID: sourceRunID, ServiceMetadata: metadata}
-	r.events = append(r.events, evt)
 	return r, evt, nil
 }
 
@@ -161,7 +159,6 @@ func NewDerivedRun(
 	} else {
 		evt = RebaseRequested{ID: id, Name: scheduleName, SourceID: sourceRunID}
 	}
-	r.events = append(r.events, evt)
 	return r, evt, nil
 }
 
@@ -193,7 +190,6 @@ func NewSingleNodeRun(
 		ID: id, Name: scheduleName, Target: target,
 		MetadataSource: metadataSource, SourceID: sourceRunID,
 	}
-	r.events = append(r.events, evt)
 	return r, evt, nil
 }
 
@@ -232,16 +228,6 @@ func (r *Run) IsActive() bool {
 // ============================================================================
 // Change tracking exposed to the repository adapter
 // ============================================================================
-
-// PullEvents returns the events recorded during this load-mutate cycle and
-// clears the internal buffer. The application service calls this after Save
-// and before OutboxPublisher.Append. Safe to call multiple times; subsequent
-// calls return empty until a new mutation records something.
-func (r *Run) PullEvents() []DomainEvent {
-	evts := r.events
-	r.events = nil
-	return evts
-}
 
 // Changes returns the changeSet for the repository adapter. The Save method
 // reads it to choose tuned SQL. After SaveRun completes, the adapter resets
@@ -344,7 +330,6 @@ func (r *Run) AcceptDispatch(
 		r.changes.statusDirty = true
 		r.changes.completedDirty = true
 		evt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: outcome}
-		r.events = append(r.events, evt)
 		return []DomainEvent{evt}, nil
 	}
 
@@ -394,7 +379,6 @@ func (r *Run) Cancel(
 
 	cancelledEvt := RunCancelled{ID: r.scheduleID, Name: r.scheduleName, By: by, CancellationReason: reason}
 	finalizedEvt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: SchedulerStatusCancelled}
-	r.events = append(r.events, cancelledEvt, finalizedEvt)
 	return []DomainEvent{cancelledEvt, finalizedEvt}, nil
 }
 
@@ -585,7 +569,6 @@ func (r *Run) MarkDispatchFailed(reason string, now time.Time) ([]DomainEvent, e
 	}
 	evts := r.finalize(SchedulerStatusFailed, now)
 	side := RunDispatchFailed{ID: r.scheduleID, Name: r.scheduleName, Reason: reason}
-	r.events = append(r.events, side)
 	return append(evts, side), nil
 }
 
@@ -596,7 +579,6 @@ func (r *Run) finalize(outcome SchedulerStatus, now time.Time) []DomainEvent {
 	r.changes.statusDirty = true
 	r.changes.completedDirty = true
 	evt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: outcome}
-	r.events = append(r.events, evt)
 	return []DomainEvent{evt}
 }
 

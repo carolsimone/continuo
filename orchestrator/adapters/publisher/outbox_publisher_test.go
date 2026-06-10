@@ -94,9 +94,6 @@ func TestOutboxPublisher_CascadeTaskSkipped(t *testing.T) {
 
 func TestOutboxPublisher_GenericPayloadCases(t *testing.T) {
 	for _, evtType := range []string{
-		"topology_ingested",
-		"run_initialized",
-		"rerun_ready",
 		"run_entries_dispatched",
 		"run_entries_dispatch_failed",
 		"release_promoted",

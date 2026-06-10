@@ -28,14 +28,9 @@ var (
 type SchedulerTrackerRepository interface {
 	Create(ctx context.Context, tracker *SchedulerTracker) error
 	GetByID(ctx context.Context, scheduleID uuid.UUID) (*SchedulerTracker, error)
-	Update(ctx context.Context, tracker *SchedulerTracker) error
-	Cancel(ctx context.Context, scheduleID uuid.UUID, cancelledBy, reason string) error
 	// CancelTx cancels a scheduler within an existing transaction.
 	CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string) error
-	List(ctx context.Context, filters SchedulerFilters) ([]*SchedulerTracker, int, error)
 	HasActiveSchedule(ctx context.Context, scheduleName string) (bool, error)
-	UpdateInitializationStatus(ctx context.Context, scheduleID uuid.UUID, status string) error
-	ResetInProgressInitializations(ctx context.Context) (int, error)
 	// GetLastRunPerSchedule returns the most recent scheduler_tracker row per schedule name.
 	// Only returns schedules that have at least one run.
 	GetLastRunPerSchedule(ctx context.Context) (map[string]LastRunData, error)
@@ -43,7 +38,6 @@ type SchedulerTrackerRepository interface {
 	// Returns nil, nil when no active run exists (never returns ErrNotFound).
 	GetActiveScheduler(ctx context.Context, scheduleName string) (*SchedulerTracker, error)
 	// New: tx-accepting variants for atomic HTTP handler
-	UpdateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error
 	UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status string) error
 	CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error
 	// Task count helpers for event-driven run finalization
@@ -65,14 +59,6 @@ type LastRunData struct {
 	Status       run.SchedulerStatus
 	CreatedAt    time.Time
 	IsRunning    bool
-}
-
-// SchedulerFilters defines query filters for List operation
-type SchedulerFilters struct {
-	Status       *run.SchedulerStatus
-	ScheduleName *string
-	Limit        int
-	Offset       int
 }
 
 type schedulerTrackerRepository struct {
@@ -227,85 +213,6 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 	return &tracker, nil
 }
 
-// Update updates scheduler status and timestamps
-func (r *schedulerTrackerRepository) Update(ctx context.Context, tracker *SchedulerTracker) error {
-	query := `
-		UPDATE scheduler_tracker
-		SET status = :status,
-			started_at = :started_at,
-			completed_at = :completed_at,
-			last_heartbeat_at = :last_heartbeat_at
-		WHERE schedule_id = :schedule_id
-	`
-
-	result, err := r.db.NamedExecContext(ctx, query, tracker)
-	if err != nil {
-		r.logger.Error("Failed to update scheduler_tracker",
-			"schedule_id", tracker.ScheduleID,
-			"error", err,
-		)
-		return fmt.Errorf("failed to update scheduler_tracker: %w", err)
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		r.logger.Debug("Scheduler tracker not found for update",
-			"schedule_id", tracker.ScheduleID,
-		)
-		return ErrNotFound
-	}
-
-	r.logger.Info("Updated scheduler_tracker",
-		"schedule_id", tracker.ScheduleID,
-		"status", tracker.Status,
-	)
-
-	return nil
-}
-
-// Cancel marks a scheduler as cancelled with audit information
-func (r *schedulerTrackerRepository) Cancel(ctx context.Context, scheduleID uuid.UUID, cancelledBy, reason string) error {
-	query := `
-		UPDATE scheduler_tracker
-		SET status = $1,
-			cancelled_at = $2,
-			cancelled_by = $3,
-			cancellation_reason = $4
-		WHERE schedule_id = $5
-		  AND status NOT IN ('succeeded', 'failed', 'cancelled')
-	`
-
-	result, err := r.db.ExecContext(ctx, query,
-		run.SchedulerStatusCancelled,
-		time.Now(),
-		cancelledBy,
-		reason,
-		scheduleID,
-	)
-	if err != nil {
-		r.logger.Error("Failed to cancel scheduler",
-			"schedule_id", scheduleID,
-			"error", err,
-		)
-		return fmt.Errorf("failed to cancel scheduler: %w", err)
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		r.logger.Warn("Scheduler not found or already in terminal state",
-			"schedule_id", scheduleID,
-		)
-		return ErrNotCancellable
-	}
-
-	r.logger.Info("Cancelled scheduler",
-		"schedule_id", scheduleID,
-		"cancelled_by", cancelledBy,
-	)
-
-	return nil
-}
-
 // CancelTx cancels a scheduler within an existing transaction.
 // Cancellation is terminal, so both cancelled_at and completed_at are stamped
 // with the same timestamp.
@@ -328,87 +235,6 @@ func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, 
 		return ErrNotCancellable
 	}
 	return nil
-}
-
-// List queries schedulers with filters and pagination
-func (r *schedulerTrackerRepository) List(ctx context.Context, filters SchedulerFilters) ([]*SchedulerTracker, int, error) {
-	// Build dynamic WHERE clause
-	whereClauses := []string{}
-	args := map[string]interface{}{}
-
-	if filters.Status != nil {
-		whereClauses = append(whereClauses, "status = :status")
-		args["status"] = *filters.Status
-	}
-
-	if filters.ScheduleName != nil {
-		whereClauses = append(whereClauses, "schedule_name ILIKE :schedule_name")
-		args["schedule_name"] = "%" + *filters.ScheduleName + "%"
-	}
-
-	whereClause := ""
-	if len(whereClauses) > 0 {
-		whereClause = "WHERE " + strings.Join(whereClauses, " AND ")
-	}
-
-	// Count total matching records
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM scheduler_tracker %s", whereClause)
-	var total int
-
-	if len(args) > 0 {
-		countStmt, err := r.db.PrepareNamedContext(ctx, countQuery)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to prepare count query: %w", err)
-		}
-		defer countStmt.Close()
-
-		if err := countStmt.GetContext(ctx, &total, args); err != nil {
-			return nil, 0, fmt.Errorf("failed to count schedulers: %w", err)
-		}
-	} else {
-		if err := r.db.GetContext(ctx, &total, countQuery); err != nil {
-			return nil, 0, fmt.Errorf("failed to count schedulers: %w", err)
-		}
-	}
-
-	// Fetch paginated results
-	args["limit"] = filters.Limit
-	args["offset"] = filters.Offset
-
-	query := fmt.Sprintf(`
-		SELECT schedule_id, schedule_name, status, created_at, started_at,
-		       completed_at, last_heartbeat_at, cancelled_at, cancelled_by,
-		       cancellation_reason, initialization_status, service_metadata,
-		       total_task_count, terminal_task_count,
-		       kind, source_run_id
-		FROM scheduler_tracker
-		%s
-		ORDER BY created_at DESC
-		LIMIT :limit OFFSET :offset
-	`, whereClause)
-
-	stmt, err := r.db.PrepareNamedContext(ctx, query)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to prepare query: %w", err)
-	}
-	defer stmt.Close()
-
-	var trackers []*SchedulerTracker
-	if err := stmt.SelectContext(ctx, &trackers, args); err != nil {
-		r.logger.Error("Failed to list schedulers", "error", err)
-		return nil, 0, fmt.Errorf("failed to list schedulers: %w", err)
-	}
-	for _, tracker := range trackers {
-		tracker.ServiceMetadata = tracker.GetServiceMetadata()
-	}
-
-	r.logger.Debug("Listed schedulers",
-		"count", len(trackers),
-		"total", total,
-		"filters", filters,
-	)
-
-	return trackers, total, nil
 }
 
 // HasActiveSchedule checks if there's a running or pending schedule with the given name
@@ -440,66 +266,6 @@ func (r *schedulerTrackerRepository) HasActiveSchedule(ctx context.Context, sche
 	)
 
 	return exists, nil
-}
-
-// UpdateInitializationStatus updates the initialization_status for a specific schedule
-func (r *schedulerTrackerRepository) UpdateInitializationStatus(ctx context.Context, scheduleID uuid.UUID, status string) error {
-	query := `
-		UPDATE scheduler_tracker
-		SET initialization_status = $1
-		WHERE schedule_id = $2
-	`
-
-	result, err := r.db.ExecContext(ctx, query, status, scheduleID)
-	if err != nil {
-		r.logger.Error("Failed to update initialization_status",
-			"schedule_id", scheduleID,
-			"status", status,
-			"error", err,
-		)
-		return fmt.Errorf("failed to update initialization_status: %w", err)
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		r.logger.Debug("Scheduler tracker not found for initialization_status update",
-			"schedule_id", scheduleID,
-		)
-		return ErrNotFound
-	}
-
-	r.logger.Info("Updated initialization_status",
-		"schedule_id", scheduleID,
-		"status", status,
-	)
-
-	return nil
-}
-
-// ResetInProgressInitializations resets all 'in_progress' initialization statuses to 'pending'
-// This is used for crash recovery on service startup
-func (r *schedulerTrackerRepository) ResetInProgressInitializations(ctx context.Context) (int, error) {
-	query := `
-		UPDATE scheduler_tracker
-		SET initialization_status = 'pending'
-		WHERE initialization_status = 'in_progress'
-	`
-
-	result, err := r.db.ExecContext(ctx, query)
-	if err != nil {
-		r.logger.Error("Failed to reset in_progress initializations", "error", err)
-		return 0, fmt.Errorf("failed to reset in_progress initializations: %w", err)
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows > 0 {
-		r.logger.Warn("Reset in_progress initializations",
-			"count", rows,
-			"reason", "service startup recovery",
-		)
-	}
-
-	return int(rows), nil
 }
 
 // GetActiveScheduler returns the most recently created PENDING or RUNNING run for the given schedule name.
@@ -542,36 +308,6 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 	)
 
 	return &tracker, nil
-}
-
-// UpdateTx updates scheduler status, timestamps, kind, and source_run_id within an existing transaction.
-func (r *schedulerTrackerRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error {
-	result, err := tx.ExecContext(ctx, `
-		UPDATE scheduler_tracker
-		SET status            = $2,
-			started_at        = $3,
-			completed_at      = $4,
-			last_heartbeat_at = $5,
-			kind              = $6,
-			source_run_id     = $7
-		WHERE schedule_id = $1
-	`,
-		tracker.ScheduleID,
-		tracker.Status,
-		tracker.StartedAt,
-		tracker.CompletedAt,
-		tracker.LastHeartbeatAt,
-		kindWithDefault(tracker.Kind),
-		tracker.SourceRunID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update scheduler_tracker: %w", err)
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 // UpdateInitializationStatusTx updates initialization_status within an existing transaction.
