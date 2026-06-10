@@ -43,8 +43,8 @@ export function classifyClaudeLine(line: string): ServerMessage[] {
       for (const block of content) {
         if (block?.type === 'text' && typeof block.text === 'string') {
           out.push({ type: 'text', text: block.text });
-        } else if (block?.type === 'tool_use' && block?.input?.command) {
-          out.push({ type: 'tool', command: String(block.input.command) });
+        } else if (block?.type === 'tool_use' && typeof block?.input?.command === 'string') {
+          out.push({ type: 'tool', command: block.input.command });
         }
       }
       return out;
@@ -53,10 +53,7 @@ export function classifyClaudeLine(line: string): ServerMessage[] {
       if (obj.is_error) {
         return [{ type: 'error', code: 'agent_failed', message: String(obj.result ?? 'agent error') }];
       }
-      if (typeof obj.result === 'string') {
-        return [{ type: 'final', text: obj.result }];
-      }
-      return [];
+      return [{ type: 'final', text: obj.result != null ? String(obj.result) : '' }];
     default:
       return [];
   }

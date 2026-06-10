@@ -35,6 +35,29 @@ describe('classifyClaudeLine', () => {
     expect(classifyClaudeLine('not json')).toEqual([]);
     expect(classifyClaudeLine(JSON.stringify({ type: 'user', message: {} }))).toEqual([]);
   });
+
+  it('maps a mixed text + tool_use assistant message to both in order', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { content: [
+        { type: 'text', text: 'checking…' },
+        { type: 'tool_use', name: 'Bash', input: { command: 'continuo schedule list' } },
+      ] },
+    });
+    expect(classifyClaudeLine(line)).toEqual([
+      { type: 'text', text: 'checking…' },
+      { type: 'tool', command: 'continuo schedule list' },
+    ]);
+  });
+
+  it('ignores a non-init system event', () => {
+    expect(classifyClaudeLine(JSON.stringify({ type: 'system', subtype: 'tools_used' }))).toEqual([]);
+  });
+
+  it('emits an empty final when a success result has no result text', () => {
+    const line = JSON.stringify({ type: 'result', is_error: false, result: null });
+    expect(classifyClaudeLine(line)).toEqual([{ type: 'final', text: '' }]);
+  });
 });
 
 describe('encodeUserTurn', () => {
