@@ -65,6 +65,13 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 	if ch.IsCreated() {
 		tr := dehydrateRun(rn)
 		if err := r.schedRepo.CreateTx(ctx, r.tx, tr); err != nil {
+			// The partial unique index uq_scheduler_tracker_active_per_schedule is
+			// the DB-level backstop for the activation TOCTOU: a concurrent
+			// activation that passed the HasActiveSchedule pre-check loses the
+			// INSERT race here and gets the same domain error as the check-first path.
+			if errors.Is(err, ErrActiveScheduleConflict) {
+				return run.ErrScheduleHasActiveRun
+			}
 			return fmt.Errorf("create scheduler_tracker: %w", err)
 		}
 		rn.ResetChanges()

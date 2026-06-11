@@ -57,12 +57,28 @@ func (r *Reconciler) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			r.tick(ctx)
+			tickCtx, cancel := context.WithTimeout(ctx, r.tickTimeout())
+			r.tick(tickCtx)
+			cancel()
 		case <-ctx.Done():
 			r.logger.Info("Reconciler stopped")
 			return
 		}
 	}
+}
+
+// tickTimeout bounds a single sweep so a slow state service never stalls the
+// reconcile loop across ticks. It is the interval less a small margin, capped
+// so the deadline is always positive.
+func (r *Reconciler) tickTimeout() time.Duration {
+	d := r.interval - time.Second
+	if d <= 0 {
+		d = r.interval
+	}
+	if d <= 0 {
+		d = 5 * time.Second
+	}
+	return d
 }
 
 // tick finalizes every active :Run that state already considers terminal.

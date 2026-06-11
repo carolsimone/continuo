@@ -79,6 +79,13 @@ func (h *ActivateScheduleHandler) Handle(
 		return uuid.Nil, 0, err
 	}
 	if err := u.Run().SaveRun(ctx, newRun); err != nil {
+		// A concurrent activation that passed the IsScheduleAvailable pre-check
+		// loses the partial-unique-index race on insert. Treat it identically to
+		// the check-first active-run outcome so the gRPC caller maps it to the
+		// same response (cron skip / manual FailedPrecondition).
+		if errors.Is(err, run.ErrScheduleHasActiveRun) {
+			return uuid.Nil, OutcomeSkippedActive, nil
+		}
 		return uuid.Nil, 0, fmt.Errorf("save: %w", err)
 	}
 	if err := u.Outbox().Append(ctx, []run.DomainEvent{evt}, uuid.Nil); err != nil {

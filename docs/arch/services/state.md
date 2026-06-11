@@ -47,6 +47,15 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 | `image_tag` | `character varying(255)` NOT NULL DEFAULT `''` | Per-task audit pair to `manifest_version`. Pinned at task creation by `task_repository.Create` from the upstream event payload; never mutated. Migration: V16. |
 | `inherited_from_task_id` | `uuid` NULL | Lineage pointer for rebase-projected rows. `NULL` = a real execution (cron/trigger/rerun/rebased/single-node). Non-NULL = projected inherit from a rebase parent run; the row was never executed in this run, only carried forward from a SUCCEEDED ancestor. **Resolve-to-root semantics:** the value always points to the ROOT executed `task_id` — chain depth is bounded at 1 forever, including rebase-of-rebase (the projector resolves transitively at write time). Not a foreign key — the referenced row may eventually be sweep-deleted; orphan inherits are tolerated by readers. Migration: V17. |
 
+### `scheduler_tracker` indexes for schedule_name access
+
+| Index | Definition | Purpose |
+|---|---|---|
+| `uq_scheduler_tracker_active_per_schedule` | UNIQUE `(schedule_name) WHERE status IN ('pending','running')` | Partial unique index enforcing one active run per schedule. The DB-level backstop for the activation check-then-act race; a violating insert (SQLSTATE 23505) is mapped to `run.ErrScheduleHasActiveRun`. Migration: V25. |
+| `idx_scheduler_tracker_schedule_name_created` | `(schedule_name, created_at DESC)` | Serves the active-run lookups (`HasActiveSchedule`, `GetActiveScheduler`) and the `DISTINCT ON (schedule_name) … ORDER BY schedule_name, created_at DESC` last-run scan behind `ListAllSchedules` / `ListStuckCandidates`. Migration: V25. |
+
+> Pre-flight for V25: existing data must contain no `schedule_name` with more than one row in `status IN ('pending','running')`, or the unique index creation fails. The migration file documents the verification query.
+
 ### Run kind values
 
 The `scheduler_tracker.kind` enum (also surfaced as the `kind` field on `:Run` in Neo4j and in the `scheduler.started:v1` outbox payload) discriminates run semantics:
@@ -71,8 +80,13 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 | `TriggerSchedule` | Yes (NotFound if absent) | Yes (FailedPrecondition if active) | Yes — transactional via `ScheduleActivationService` |
 | `CancelSchedule` | No | Looks up active run | No — direct cancel via `scheduler_tracker` |
 | `ListAllSchedules` | Reads catalog | — | No |
+| `ListStuckCandidates` | No | — | No — read-only, one indexed query |
 
 > **`ActivateSchedule` vs `TriggerSchedule`**: Both go through `ScheduleActivationService` (transactional outbox) and both require the schedule to exist in `schedule_catalog` (NotFound if absent). The key difference is the concurrent-run guard: `TriggerSchedule` returns `FailedPrecondition` if a run is active; `ActivateSchedule` silently skips (idempotent for the cron loop). `ActivateSchedule` is used by the cron loop and e2e tests; `TriggerSchedule` is the UI-exposed manual trigger.
+
+> **One active run per schedule (TOCTOU backstop)**: the "at most one active run per schedule_name" invariant is enforced by the partial unique index `uq_scheduler_tracker_active_per_schedule ON scheduler_tracker (schedule_name) WHERE status IN ('pending','running')`. The activation handlers (`ActivateSchedule`, `TriggerRerun`, `TriggerRebase`) keep a friendly pre-check (`HasActiveSchedule`) on the autocommit connection for the fast path, but the index is the source of truth: two concurrent activations can both pass the pre-check, and the loser's `INSERT` fails with SQLSTATE 23505, which the repository maps to `run.ErrScheduleHasActiveRun` — so the loser gets the same outcome (cron skip / manual `FailedPrecondition`) as the check-first path.
+
+> **`ListStuckCandidates`**: returns the active (`pending|running`) runs whose dispatch has silently stalled — at least one task, no task in `running`, and the most recent task's `created_at` strictly older than the request `cutoff`. It is a single server-side aggregation over `scheduler_tracker ⋈ task_tracker` (not paged), consumed by the orchestrator dispatch watchdog. Empty `cutoff` is `InvalidArgument`.
 
 #### Scheduler run reads
 

@@ -9,9 +9,9 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -407,6 +407,29 @@ func (h *SchedulerHandler) ListAllSchedules(
 	}
 
 	return &statev1.ListAllSchedulesResponse{Schedules: summaries}, nil
+}
+
+// ListStuckCandidates returns active runs whose dispatch has silently stalled
+// (no RUNNING task, most recent task older than cutoff). One indexed query.
+func (h *SchedulerHandler) ListStuckCandidates(
+	ctx context.Context,
+	req *statev1.ListStuckCandidatesRequest,
+) (*statev1.ListStuckCandidatesResponse, error) {
+	if req.GetCutoff() == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "cutoff is required")
+	}
+	candidates, err := h.repo.ListStuckCandidates(ctx, req.GetCutoff().AsTime())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list stuck candidates: %v", err)
+	}
+	out := make([]*statev1.StuckCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		out = append(out, &statev1.StuckCandidate{
+			ScheduleName: c.ScheduleName,
+			ScheduleId:   c.ScheduleID.String(),
+		})
+	}
+	return &statev1.ListStuckCandidatesResponse{Candidates: out}, nil
 }
 
 // TriggerSchedule manually triggers a schedule run. Returns FailedPrecondition
