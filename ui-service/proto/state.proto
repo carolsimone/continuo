@@ -261,8 +261,10 @@ message TaskExecutionResponse {
 
 message ListTaskExecutionsRequest {
   string schedule_id = 1;  // Required
-  int32  page_size   = 2;  // UI hardcodes 500
-  int32  page_offset = 3;
+  // page_size bounds the rows returned. Server clamps to [1, 200]; 0 (unset)
+  // defaults to 50.
+  int32  page_size   = 2;
+  int32  page_offset = 3;  // Negative values are treated as 0.
 }
 
 message ListTaskExecutionsResponse {
