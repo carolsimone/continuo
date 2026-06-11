@@ -23,6 +23,14 @@ service StateService {
   // Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
   rpc CancelSchedule(CancelScheduleRequest) returns (CancelScheduleResponse);
 
+  // ListStuckCandidates returns the active (pending|running) runs whose dispatch
+  // has silently stalled: the run has no task in TASK_STATUS_RUNNING and the most
+  // recent task's created_at is strictly older than `cutoff`. Runs with zero tasks
+  // are excluded — they have not started, so they are not stuck. This is a single
+  // indexed server-side query that replaces the watchdog's per-schedule ListTasks
+  // fan-out and the 50-task paging blind spot. Empty `cutoff` is INVALID_ARGUMENT.
+  rpc ListStuckCandidates(ListStuckCandidatesRequest) returns (ListStuckCandidatesResponse);
+
   // Task operations
   rpc CreateTask(CreateTaskRequest) returns (TaskResponse);
   rpc GetTask(GetTaskRequest) returns (TaskResponse);
@@ -318,6 +326,23 @@ message CancelScheduleRequest {
 
 message CancelScheduleResponse {
   string schedule_id = 1;  // schedule_id of the cancelled run
+}
+
+message ListStuckCandidatesRequest {
+  // Tasks created at or after this instant count as recent progress; a run is a
+  // stuck candidate only when its most recent task predates this cutoff and no
+  // task is RUNNING. Required.
+  google.protobuf.Timestamp cutoff = 1;
+}
+
+// StuckCandidate identifies one active run the watchdog should consider cancelling.
+message StuckCandidate {
+  string schedule_name = 1;  // the schedule whose active run is stuck
+  string schedule_id   = 2;  // schedule_id (run id) of the active run
+}
+
+message ListStuckCandidatesResponse {
+  repeated StuckCandidate candidates = 1;
 }
 
 message GetSchedulerInitStatusRequest {
