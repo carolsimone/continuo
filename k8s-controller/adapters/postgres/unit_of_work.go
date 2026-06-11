@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -59,30 +61,37 @@ func (u *PostgresUnitOfWork) Begin(ctx context.Context) error {
 	return nil
 }
 
-// Commit commits the active transaction.
+// Commit commits the active transaction. The transaction state is cleared
+// unconditionally, even when the commit fails, so a single failed commit never
+// wedges this long-lived instance: the next Begin starts cleanly.
 func (u *PostgresUnitOfWork) Commit() error {
 	if !u.inTx || u.tx == nil {
 		return fmt.Errorf("no transaction in progress")
 	}
-	if err := u.tx.Commit(); err != nil {
+	tx := u.tx
+	u.tx = nil
+	u.inTx = false
+	if err := tx.Commit(); err != nil {
 		u.logger.Error("Failed to commit transaction", "error", err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	u.tx = nil
-	u.inTx = false
 	return nil
 }
 
-// Rollback rolls back the active transaction, if any.
+// Rollback rolls back the active transaction, if any. The transaction state is
+// cleared unconditionally. A handler's deferred Rollback that runs after a
+// failed Commit finds the transaction already finished; sql.ErrTxDone is
+// treated as a successful no-op so that case does not surface a spurious error.
 func (u *PostgresUnitOfWork) Rollback() error {
 	if !u.inTx || u.tx == nil {
 		return nil
 	}
-	if err := u.tx.Rollback(); err != nil {
+	tx := u.tx
+	u.tx = nil
+	u.inTx = false
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 		u.logger.Error("Failed to rollback transaction", "error", err)
 		return fmt.Errorf("failed to rollback transaction: %w", err)
 	}
-	u.tx = nil
-	u.inTx = false
 	return nil
 }

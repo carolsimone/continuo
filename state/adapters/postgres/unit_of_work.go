@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -71,25 +73,34 @@ func (u *PostgresUnitOfWork) Begin(ctx context.Context) error {
 	return nil
 }
 
+// Commit commits the current transaction. The transaction state is cleared
+// unconditionally, even when the commit fails, so a failed commit never wedges
+// the instance: the next Begin starts cleanly.
 func (u *PostgresUnitOfWork) Commit() error {
 	if u.tx == nil {
 		return fmt.Errorf("no transaction in progress")
 	}
-	err := u.tx.Commit()
+	tx := u.tx
 	u.tx = nil
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit tx: %w", err)
 	}
 	return nil
 }
 
+// Rollback rolls back the current transaction. A deferred Rollback that runs
+// after a failed Commit finds the transaction already finished; sql.ErrTxDone
+// is treated as a successful no-op so that case does not surface an error.
 func (u *PostgresUnitOfWork) Rollback() error {
 	if u.tx == nil {
 		return nil
 	}
-	err := u.tx.Rollback()
+	tx := u.tx
 	u.tx = nil
-	return err
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		return err
+	}
+	return nil
 }
 
 // Run returns a RunRepository bound to the current transaction. Read methods

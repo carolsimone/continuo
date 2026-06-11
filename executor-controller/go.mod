@@ -3,6 +3,7 @@ module github.com/carolsimone/continuo/executor-controller
 go 1.25.1
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/carolsimone/continuo/pkg v0.0.0
 	github.com/google/uuid v1.6.0
