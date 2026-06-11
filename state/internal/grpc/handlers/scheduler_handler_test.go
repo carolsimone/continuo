@@ -139,6 +139,9 @@ func (s *stubSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ 
 func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
+func (s *stubSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ postgres.RunRowUpdate) error {
+	return nil
+}
 func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string) error {
 	return s.cancelErr
 }
@@ -806,6 +809,9 @@ func (f *fakeSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ 
 	return f.tracker, nil
 }
 func (f *fakeSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (f *fakeSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ postgres.RunRowUpdate) error {
 	return nil
 }
 func (f *fakeSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string) error {

@@ -78,24 +78,10 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 		return nil
 	}
 
-	if ch.IsInitStatusDirty() {
-		if err := r.schedRepo.UpdateInitializationStatusTx(ctx, r.tx, rn.ScheduleID(), string(rn.InitializationStatus())); err != nil {
-			return fmt.Errorf("update init_status: %w", err)
-		}
-	}
-	if ch.IsTotalTaskCountDirty() {
-		total := rn.TotalTaskCount()
-		if total.Valid {
-			if err := r.schedRepo.SetTotalTaskCountTx(ctx, r.tx, rn.ScheduleID(), total.Int32); err != nil {
-				return fmt.Errorf("set total: %w", err)
-			}
-		}
-	}
-	if ch.IsTerminalTaskCountDirty() {
-		if err := r.schedRepo.SetTerminalTaskCountTx(ctx, r.tx, rn.ScheduleID(), rn.TerminalTaskCount()); err != nil {
-			return fmt.Errorf("set terminal: %w", err)
-		}
-	}
+	// Cancellation is a guarded terminal transition (WHERE status NOT IN
+	// terminal, mapped to ErrAlreadyTerminal). It writes cancelled_at,
+	// completed_at, cancelled_by, cancellation_reason and status together, so it
+	// stays on its own dedicated statement rather than the consolidated UPDATE.
 	if ch.IsCancelDirty() {
 		by := ""
 		reason := ""
@@ -111,14 +97,43 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 			}
 			return fmt.Errorf("cancel: %w", err)
 		}
-	} else if ch.IsCompletedDirty() {
-		if err := r.schedRepo.FinalizeRunTx(ctx, r.tx, rn.ScheduleID(), string(rn.Status())); err != nil {
-			return fmt.Errorf("finalize: %w", err)
+		rn.ResetChanges()
+		return nil
+	}
+
+	// Every other dirty column is collected into a single UPDATE so SaveRun
+	// issues one round trip for the run row it already holds FOR UPDATE.
+	var fields RunRowUpdate
+	if ch.IsInitStatusDirty() {
+		v := string(rn.InitializationStatus())
+		fields.InitializationStatus = &v
+	}
+	if ch.IsTotalTaskCountDirty() {
+		if total := rn.TotalTaskCount(); total.Valid {
+			v := total.Int32
+			fields.TotalTaskCount = &v
 		}
-	} else if ch.IsStatusDirty() {
-		if err := r.schedRepo.UpdateStatusTx(ctx, r.tx, rn.ScheduleID(), string(rn.Status())); err != nil {
-			return fmt.Errorf("update status: %w", err)
+	}
+	if ch.IsTerminalTaskCountDirty() {
+		v := rn.TerminalTaskCount()
+		fields.TerminalTaskCount = &v
+	}
+	if ch.IsStartedDirty() {
+		if started := rn.StartedAt(); started != nil {
+			fields.StartedAt = started
 		}
+	}
+	if ch.IsStatusDirty() {
+		v := string(rn.Status())
+		fields.Status = &v
+	}
+	// A completed transition stamps completed_at = NOW() alongside the new status.
+	if ch.IsCompletedDirty() {
+		fields.CompletedAtNow = true
+	}
+
+	if err := r.schedRepo.UpdateRunRowTx(ctx, r.tx, rn.ScheduleID(), fields); err != nil {
+		return fmt.Errorf("update run row: %w", err)
 	}
 
 	rn.ResetChanges()

@@ -51,7 +51,6 @@ type changeSet struct {
 	cancelDirty            bool
 	startedDirty           bool
 	completedDirty         bool
-	heartbeatDirty         bool
 }
 
 // HydrateRun rebuilds a Run from persisted scheduler_tracker columns. Used by
@@ -245,7 +244,6 @@ func (c changeSet) IsTerminalTaskCountDirty() bool { return c.terminalTaskCountD
 func (c changeSet) IsCancelDirty() bool            { return c.cancelDirty }
 func (c changeSet) IsStartedDirty() bool           { return c.startedDirty }
 func (c changeSet) IsCompletedDirty() bool         { return c.completedDirty }
-func (c changeSet) IsHeartbeatDirty() bool         { return c.heartbeatDirty }
 
 // AcceptDispatch consumes the run.entries.dispatched:v1 projection. The
 // projection IS the full child set (no prior tasks exist), so the aggregate

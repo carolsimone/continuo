@@ -294,6 +294,10 @@ A cancelled task is never overwritten (the write is a no-op and leaves the count
 
 `repository.RunRepository.SaveRun` (implemented by `postgres.RunRepositoryAdapter`) writes the updated `scheduler_tracker` row; the handler then appends any emitted finalization event to `state_outbox` through `ports.OutboxPublisher.Append` — all within the same Postgres transaction opened by the binding's `UnitOfWork`.
 
+`SaveRun` collects every dirty column reported by the aggregate's change set (`status`, `initialization_status`, `total_task_count`, `terminal_task_count`, `started_at`, and `completed_at`) into a single parameterised `UPDATE scheduler_tracker SET … WHERE schedule_id = $n` issued by `UpdateRunRowTx`. Because the run row is already held under `SELECT … FOR UPDATE` by `LoadRunForUpdate`, this is one round-trip per save. The column list is a fixed allowlist driven by the change-set flags; values are always bound as parameters. Cancellation is the one exception: it persists through the guarded `CancelTx` statement (`WHERE status NOT IN (terminal)`, mapped to `ErrAlreadyTerminal`), which writes `status`, `cancelled_at`, `completed_at`, `cancelled_by`, and `cancellation_reason` together.
+
+`started_at` is stamped when the run transitions PENDING→RUNNING (a non-terminal dispatch in `AcceptDispatch`) and persisted on that save. Runs that auto-rollup directly to a terminal status at dispatch time never enter RUNNING, so their `started_at` stays NULL while `completed_at` is set — the `valid_timestamps` CHECK tolerates a NULL `started_at`.
+
 ### Auto-rollup at dispatch time
 
 `RunEntriesDispatchedHandler` honours per-task `Status` in the dispatched payload. When the orchestrator's projection contains tasks that are already terminal at dispatch time (typically `SUCCEEDED` inherits in a rebase or rerun snapshot), `task_tracker` rows are inserted at that terminal status — the executor pipeline never touches them.
