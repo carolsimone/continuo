@@ -42,12 +42,16 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		}
 	}
 	// Pass 2: for each seeded FQN, add its descendants in LATEST topology.
-	for f := range rebaseFQNs {
-		descendants, err := r.DescendantsInLatestTopology(ctx, f)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range descendants {
+	// Snapshot the seeds first: one batched reader call resolves every seed's
+	// descendants, avoiding the map-mutation-during-range hazard of growing
+	// rebaseFQNs while iterating it.
+	pass2Seeds := fqnKeys(rebaseFQNs)
+	descBySeed, err := r.DescendantsInLatestTopologyBatch(ctx, pass2Seeds)
+	if err != nil {
+		return nil, err
+	}
+	for _, seed := range pass2Seeds {
+		for _, d := range descBySeed[seed] {
 			if _, exists := latest[d]; exists {
 				rebaseFQNs[d] = struct{}{}
 			}
@@ -69,12 +73,13 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 	// every rebased node (not just the Pass-1 seeds) also catches chains made
 	// purely of new arrivals.
 	blockedFQNs := map[FQN]struct{}{}
-	for f := range rebaseFQNs {
-		deps, err := r.ImmediateDescendantsInLatestTopology(ctx, f)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range deps {
+	frontierSeeds := fqnKeys(rebaseFQNs)
+	immBySeed, err := r.ImmediateDescendantsInLatestTopologyBatch(ctx, frontierSeeds)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range frontierSeeds {
+		for _, d := range immBySeed[f] {
 			if _, isRebased := rebaseFQNs[d]; isRebased {
 				blockedFQNs[d] = struct{}{}
 			}

@@ -137,127 +137,168 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 	return out, nil
 }
 
-func (r *topologyReader) DescendantsInLatestTopology(ctx context.Context, start snapshot.FQN) ([]snapshot.FQN, error) {
-	// Empty ScheduleName means "any schedule" (callers like SingleNode don't know it).
+func (r *topologyReader) DescendantsInLatestTopologyBatch(ctx context.Context, starts []snapshot.FQN) (map[snapshot.FQN][]snapshot.FQN, error) {
+	// Transitive (`*1..`) DEPENDS_ON descendants in active :Table space, one row
+	// per start with its descendants collected. Empty ScheduleName on a start
+	// means "any schedule".
 	const q = `
-		MATCH (start:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
-		WHERE ($sched = '' OR start.schedule_name = $sched) AND COALESCE(start.active, true)
-		MATCH (d:Table)-[:DEPENDS_ON*1..]->(start)
+		UNWIND $starts AS s
+		OPTIONAL MATCH (start:Table {service_name: s.svc, schema_name: s.schema, table_name: s.tbl})
+		WHERE (s.sched = '' OR start.schedule_name = s.sched) AND COALESCE(start.active, true)
+		OPTIONAL MATCH (d:Table)-[:DEPENDS_ON*1..]->(start)
 		WHERE COALESCE(d.active, true)
-		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl,
-		                d.schedule_name AS schedule_name
+		WITH s, collect(DISTINCT d) AS ds
+		RETURN s AS start,
+		       [d IN ds WHERE d IS NOT NULL |
+		            {svc: d.service_name, schema: d.schema_name, tbl: d.table_name,
+		             schedule_name: d.schedule_name}] AS descendants
 	`
-	result, err := r.tx.Run(ctx, q, map[string]interface{}{
-		"svc": start.Service, "schema": start.Schema, "tbl": start.Table,
-		"sched": start.ScheduleName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("topology_reader: DescendantsInLatestTopology: %w", err)
-	}
-	var out []snapshot.FQN
-	for result.Next(ctx) {
-		rec := result.Record()
-		out = append(out, snapshot.FQN{
-			Service:      stringField(rec, "svc"),
-			Schema:       stringField(rec, "schema"),
-			Table:        stringField(rec, "tbl"),
-			ScheduleName: stringField(rec, "schedule_name"),
-		})
-	}
-	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("topology_reader: DescendantsInLatestTopology result: %w", err)
-	}
-	return out, nil
+	return r.queryDescendantsBatch(ctx, "DescendantsInLatestTopologyBatch", q, starts, nil)
 }
 
-func (r *topologyReader) DescendantsInSourceRun(ctx context.Context, sourceRunID string, start snapshot.FQN) ([]snapshot.FQN, error) {
-	// Empty ScheduleName means "any schedule" (callers like SingleNode don't know it).
+func (r *topologyReader) DescendantsInSourceRunBatch(ctx context.Context, sourceRunID string, starts []snapshot.FQN) (map[snapshot.FQN][]snapshot.FQN, error) {
+	// Transitive DEPENDS_ON descendants restricted to the source run's :EXECUTES
+	// set, one row per start with its descendants collected.
 	const q = `
-		MATCH (start:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
-		WHERE ($sched = '' OR start.schedule_name = $sched)
-		MATCH (d:Table)-[:DEPENDS_ON*1..]->(start)
-		MATCH (sr:Run {run_id: $source_run_id})-[:EXECUTES]->(d)
-		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl,
-		                d.schedule_name AS schedule_name
+		UNWIND $starts AS s
+		OPTIONAL MATCH (start:Table {service_name: s.svc, schema_name: s.schema, table_name: s.tbl})
+		WHERE (s.sched = '' OR start.schedule_name = s.sched)
+		OPTIONAL MATCH (d:Table)-[:DEPENDS_ON*1..]->(start)
+		WHERE EXISTS { MATCH (:Run {run_id: $source_run_id})-[:EXECUTES]->(d) }
+		WITH s, collect(DISTINCT d) AS ds
+		RETURN s AS start,
+		       [d IN ds WHERE d IS NOT NULL |
+		            {svc: d.service_name, schema: d.schema_name, tbl: d.table_name,
+		             schedule_name: d.schedule_name}] AS descendants
 	`
-	result, err := r.tx.Run(ctx, q, map[string]interface{}{
-		"source_run_id": sourceRunID,
-		"svc":           start.Service, "schema": start.Schema, "tbl": start.Table,
-		"sched": start.ScheduleName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("topology_reader: DescendantsInSourceRun: %w", err)
-	}
-	var out []snapshot.FQN
-	for result.Next(ctx) {
-		rec := result.Record()
-		out = append(out, snapshot.FQN{
-			Service:      stringField(rec, "svc"),
-			Schema:       stringField(rec, "schema"),
-			Table:        stringField(rec, "tbl"),
-			ScheduleName: stringField(rec, "schedule_name"),
-		})
-	}
-	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("topology_reader: DescendantsInSourceRun result: %w", err)
-	}
-	return out, nil
+	return r.queryDescendantsBatch(ctx, "DescendantsInSourceRunBatch", q, starts,
+		map[string]interface{}{"source_run_id": sourceRunID})
 }
 
-func (r *topologyReader) ImmediateDescendantsInLatestTopology(ctx context.Context, start snapshot.FQN) ([]snapshot.FQN, error) {
-	// One DEPENDS_ON hop (no `*1..`): direct dependents only.
+func (r *topologyReader) ImmediateDescendantsInLatestTopologyBatch(ctx context.Context, starts []snapshot.FQN) (map[snapshot.FQN][]snapshot.FQN, error) {
+	// One DEPENDS_ON hop (no `*1..`): direct dependents only, in active :Table space.
 	const q = `
-		MATCH (start:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
-		WHERE ($sched = '' OR start.schedule_name = $sched) AND COALESCE(start.active, true)
-		MATCH (d:Table)-[:DEPENDS_ON]->(start)
+		UNWIND $starts AS s
+		OPTIONAL MATCH (start:Table {service_name: s.svc, schema_name: s.schema, table_name: s.tbl})
+		WHERE (s.sched = '' OR start.schedule_name = s.sched) AND COALESCE(start.active, true)
+		OPTIONAL MATCH (d:Table)-[:DEPENDS_ON]->(start)
 		WHERE COALESCE(d.active, true)
-		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl,
-		                d.schedule_name AS schedule_name
+		WITH s, collect(DISTINCT d) AS ds
+		RETURN s AS start,
+		       [d IN ds WHERE d IS NOT NULL |
+		            {svc: d.service_name, schema: d.schema_name, tbl: d.table_name,
+		             schedule_name: d.schedule_name}] AS descendants
 	`
-	return r.queryFQNs(ctx, "ImmediateDescendantsInLatestTopology", q, map[string]interface{}{
-		"svc": start.Service, "schema": start.Schema, "tbl": start.Table,
-		"sched": start.ScheduleName,
-	})
+	return r.queryDescendantsBatch(ctx, "ImmediateDescendantsInLatestTopologyBatch", q, starts, nil)
 }
 
-func (r *topologyReader) ImmediateDescendantsInSourceRun(ctx context.Context, sourceRunID string, start snapshot.FQN) ([]snapshot.FQN, error) {
+func (r *topologyReader) ImmediateDescendantsInSourceRunBatch(ctx context.Context, sourceRunID string, starts []snapshot.FQN) (map[snapshot.FQN][]snapshot.FQN, error) {
 	// One DEPENDS_ON hop restricted to the source run's :EXECUTES set.
 	const q = `
-		MATCH (start:Table {service_name: $svc, schema_name: $schema, table_name: $tbl})
-		WHERE ($sched = '' OR start.schedule_name = $sched)
-		MATCH (d:Table)-[:DEPENDS_ON]->(start)
-		MATCH (sr:Run {run_id: $source_run_id})-[:EXECUTES]->(d)
-		RETURN DISTINCT d.service_name AS svc, d.schema_name AS schema, d.table_name AS tbl,
-		                d.schedule_name AS schedule_name
+		UNWIND $starts AS s
+		OPTIONAL MATCH (start:Table {service_name: s.svc, schema_name: s.schema, table_name: s.tbl})
+		WHERE (s.sched = '' OR start.schedule_name = s.sched)
+		OPTIONAL MATCH (d:Table)-[:DEPENDS_ON]->(start)
+		WHERE EXISTS { MATCH (:Run {run_id: $source_run_id})-[:EXECUTES]->(d) }
+		WITH s, collect(DISTINCT d) AS ds
+		RETURN s AS start,
+		       [d IN ds WHERE d IS NOT NULL |
+		            {svc: d.service_name, schema: d.schema_name, tbl: d.table_name,
+		             schedule_name: d.schedule_name}] AS descendants
 	`
-	return r.queryFQNs(ctx, "ImmediateDescendantsInSourceRun", q, map[string]interface{}{
-		"source_run_id": sourceRunID,
-		"svc":           start.Service, "schema": start.Schema, "tbl": start.Table,
-		"sched": start.ScheduleName,
-	})
+	return r.queryDescendantsBatch(ctx, "ImmediateDescendantsInSourceRunBatch", q, starts,
+		map[string]interface{}{"source_run_id": sourceRunID})
 }
 
-// queryFQNs runs a Cypher query whose rows expose svc/schema/tbl/schedule_name
-// and collects them into FQNs. Shared by the descendant/immediate readers.
-func (r *topologyReader) queryFQNs(ctx context.Context, label, q string, params map[string]interface{}) ([]snapshot.FQN, error) {
+// queryDescendantsBatch runs a batched descendant query that returns one row per
+// start FQN (echoed back as `start`) plus a `descendants` list. It builds the
+// $starts parameter from the input slice and keys the result map by the original
+// start FQN. Every start in the input appears in the output (with a possibly-nil
+// slice) so callers never see a missing key. extraParams carries query-specific
+// bindings such as source_run_id.
+func (r *topologyReader) queryDescendantsBatch(
+	ctx context.Context,
+	label, q string,
+	starts []snapshot.FQN,
+	extraParams map[string]interface{},
+) (map[snapshot.FQN][]snapshot.FQN, error) {
+	out := make(map[snapshot.FQN][]snapshot.FQN, len(starts))
+	if len(starts) == 0 {
+		return out, nil
+	}
+	startParams := make([]map[string]interface{}, 0, len(starts))
+	for _, s := range starts {
+		startParams = append(startParams, map[string]interface{}{
+			"svc": s.Service, "schema": s.Schema, "tbl": s.Table, "sched": s.ScheduleName,
+		})
+		out[s] = nil // ensure every start is a key even with no descendants
+	}
+	params := map[string]interface{}{"starts": startParams}
+	for k, v := range extraParams {
+		params[k] = v
+	}
+
 	result, err := r.tx.Run(ctx, q, params)
 	if err != nil {
 		return nil, fmt.Errorf("topology_reader: %s: %w", label, err)
 	}
-	var out []snapshot.FQN
 	for result.Next(ctx) {
 		rec := result.Record()
-		out = append(out, snapshot.FQN{
-			Service:      stringField(rec, "svc"),
-			Schema:       stringField(rec, "schema"),
-			Table:        stringField(rec, "tbl"),
-			ScheduleName: stringField(rec, "schedule_name"),
-		})
+		start, ok := fqnFromMap(recordMap(rec, "start"))
+		if !ok {
+			continue
+		}
+		descRaw, _ := rec.Get("descendants")
+		descList, _ := descRaw.([]interface{})
+		var descendants []snapshot.FQN
+		for _, item := range descList {
+			if f, ok := fqnFromMap(item); ok {
+				descendants = append(descendants, f)
+			}
+		}
+		out[start] = descendants
 	}
 	if err := result.Err(); err != nil {
 		return nil, fmt.Errorf("topology_reader: %s result: %w", label, err)
 	}
 	return out, nil
+}
+
+// recordMap extracts a map field from a Neo4j record (used for the echoed-back
+// `start` parameter, which the driver returns as a map[string]interface{}).
+func recordMap(rec *neo4j.Record, k string) interface{} {
+	v, _ := rec.Get(k)
+	return v
+}
+
+// fqnFromMap builds an FQN from a map carrying svc/schema/tbl/schedule_name (or
+// the echoed start's svc/schema/tbl/sched). Returns false when the value is not
+// a map.
+func fqnFromMap(raw interface{}) (snapshot.FQN, bool) {
+	m, ok := raw.(map[string]interface{})
+	if !ok {
+		return snapshot.FQN{}, false
+	}
+	sched := mapString(m, "schedule_name")
+	if sched == "" {
+		sched = mapString(m, "sched")
+	}
+	return snapshot.FQN{
+		Service:      mapString(m, "svc"),
+		Schema:       mapString(m, "schema"),
+		Table:        mapString(m, "tbl"),
+		ScheduleName: sched,
+	}, true
+}
+
+// mapString reads a string-typed map value, returning "" for nil/non-string.
+func mapString(m map[string]interface{}, k string) string {
+	if v, ok := m[k]; ok && v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot.FQN) (snapshot.LatestTableRow, bool, error) {

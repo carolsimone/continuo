@@ -313,12 +313,12 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 	)
 }
 
-// ── DescendantsInLatestTopology ───────────────────────────────────────────────
+// ── DescendantsInLatestTopologyBatch ──────────────────────────────────────────
 
-func TestTopologyReader_DescendantsInLatestTopology_ActiveFilter(t *testing.T) {
+func TestTopologyReader_DescendantsInLatestTopologyBatch_ActiveFilter(t *testing.T) {
 	// Topology: c --DEPENDS_ON--> b --DEPENDS_ON--> a
 	// d --DEPENDS_ON--> a but d is inactive.
-	// DescendantsInLatestTopology(a) should return [b, c] but NOT d.
+	// DescendantsInLatestTopologyBatch([a]) should map a -> [b, c] but NOT d.
 	sched := "test-tr-dlt-" + uuid.New().String()[:8]
 
 	withTopologyReader(t,
@@ -346,11 +346,12 @@ func TestTopologyReader_DescendantsInLatestTopology_ActiveFilter(t *testing.T) {
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
 			start := snapshot.FQN{Service: "svc", Schema: "s", Table: "a"}
-			got, err := r.DescendantsInLatestTopology(ctx, start)
+			byStart, err := r.DescendantsInLatestTopologyBatch(ctx, []snapshot.FQN{start})
 			require.NoError(t, err)
+			require.Contains(t, byStart, start, "start must be a key in the batch result")
 
 			tables := make(map[string]bool)
-			for _, f := range got {
+			for _, f := range byStart[start] {
 				tables[f.Table] = true
 			}
 			assert.True(t, tables["b"], "b should be a descendant")
@@ -362,12 +363,12 @@ func TestTopologyReader_DescendantsInLatestTopology_ActiveFilter(t *testing.T) {
 	)
 }
 
-// ── DescendantsInSourceRun ────────────────────────────────────────────────────
+// ── DescendantsInSourceRunBatch ───────────────────────────────────────────────
 
-func TestTopologyReader_DescendantsInSourceRun_FilteredToSourceExecutes(t *testing.T) {
+func TestTopologyReader_DescendantsInSourceRunBatch_FilteredToSourceExecutes(t *testing.T) {
 	// Topology: c --DEPENDS_ON--> b --DEPENDS_ON--> a
 	// Source run has edges for a and b but NOT c.
-	// DescendantsInSourceRun(a) should return only [b].
+	// DescendantsInSourceRunBatch([a]) should map a -> only [b].
 	sched := "test-tr-dsr-" + uuid.New().String()[:8]
 	runID := uuid.New().String()
 
@@ -399,11 +400,12 @@ func TestTopologyReader_DescendantsInSourceRun_FilteredToSourceExecutes(t *testi
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
 			start := snapshot.FQN{Service: "svc", Schema: "s", Table: "a"}
-			got, err := r.DescendantsInSourceRun(ctx, runID, start)
+			byStart, err := r.DescendantsInSourceRunBatch(ctx, runID, []snapshot.FQN{start})
 			require.NoError(t, err)
+			require.Contains(t, byStart, start, "start must be a key in the batch result")
 
 			tables := make(map[string]bool)
-			for _, f := range got {
+			for _, f := range byStart[start] {
 				tables[f.Table] = true
 			}
 			assert.True(t, tables["b"], "b is in source run and is a descendant")

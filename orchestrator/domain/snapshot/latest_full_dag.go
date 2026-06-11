@@ -12,6 +12,13 @@ import (
 // in the schedule plus their upstream dependencies (typically dbt-seeds in
 // other schedules). All projected tasks are PENDING and pinned to (image_tag,
 // manifest_version) from the latest :Table topology at snapshot time.
+//
+// It also classifies the dispatch frontier on each task's ReadyToDispatch flag:
+// a node is ready when it has no in-DAG upstream (nothing in the DAG depends on
+// it being produced first). This is exactly the seeds-first-else-roots ordering
+// — seeds have no upstream and dispatch first; roots that depend on a seed wait
+// for it, while roots with no upstream at all dispatch immediately. The run
+// aggregate dispatches the rest via NodeUnblocked as upstreams complete.
 type LatestFullDAG struct{}
 
 func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params) ([]TaskProjection, error) {
@@ -19,8 +26,32 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 	if err != nil {
 		return nil, fmt.Errorf("LatestFullDAG: %w", err)
 	}
+
+	// Compute the dispatch frontier. A node is blocked when it is the immediate
+	// dependent of another node in this DAG; the frontier is everything not
+	// blocked. One batched reader call resolves every node's immediate dependents.
+	starts := make([]FQN, 0, len(rows))
+	inDAG := make(map[FQN]struct{}, len(rows))
+	for f := range rows {
+		starts = append(starts, f)
+		inDAG[f] = struct{}{}
+	}
+	immBySeed, err := r.ImmediateDescendantsInLatestTopologyBatch(ctx, starts)
+	if err != nil {
+		return nil, fmt.Errorf("LatestFullDAG: frontier: %w", err)
+	}
+	blocked := make(map[FQN]struct{})
+	for _, f := range starts {
+		for _, d := range immBySeed[f] {
+			if _, ok := inDAG[d]; ok {
+				blocked[d] = struct{}{}
+			}
+		}
+	}
+
 	projection := make([]TaskProjection, 0, len(rows))
 	for f, row := range rows {
+		_, isBlocked := blocked[f]
 		projection = append(projection, TaskProjection{
 			TaskID:          uuid.New(),
 			ServiceName:     f.Service,
@@ -32,6 +63,7 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 			ImageTag:        row.ImageTag,
 			ManifestVersion: row.ManifestVersion,
 			MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+			ReadyToDispatch: !isBlocked,
 		})
 	}
 	return projection, nil

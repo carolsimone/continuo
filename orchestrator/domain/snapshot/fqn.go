@@ -10,3 +10,14 @@ type FQN struct {
 	Table        string
 	ScheduleName string
 }
+
+// fqnKeys returns the keys of an FQN set as a slice. Selectors snapshot the
+// current rebase set before a batched reader call so they can grow the set from
+// the result without mutating the map they are iterating.
+func fqnKeys(set map[FQN]struct{}) []FQN {
+	out := make([]FQN, 0, len(set))
+	for f := range set {
+		out = append(out, f)
+	}
+	return out
+}

@@ -53,17 +53,14 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 
 	// Pass 2: grow the rebase set with all transitive descendants WITHIN the
 	// source's pinned :EXECUTES set. Snapshot the keys first so the iteration is
-	// stable.
-	seeds := make([]FQN, 0, len(rebaseFQNs))
-	for f := range rebaseFQNs {
-		seeds = append(seeds, f)
+	// stable, then resolve every seed's descendants in one batched reader call.
+	seeds := fqnKeys(rebaseFQNs)
+	descBySeed, err := r.DescendantsInSourceRunBatch(ctx, p.SourceRunID.String(), seeds)
+	if err != nil {
+		return nil, err
 	}
 	for _, seed := range seeds {
-		descendants, err := r.DescendantsInSourceRun(ctx, p.SourceRunID.String(), seed)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range descendants {
+		for _, d := range descBySeed[seed] {
 			if _, ok := source[d]; ok {
 				rebaseFQNs[d] = struct{}{}
 			}
@@ -77,12 +74,13 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 	// node blocked via a transitive-only path (its connecting node absent from
 	// the run) would never be reached and would stay PENDING forever.
 	blockedFQNs := map[FQN]struct{}{}
-	for f := range rebaseFQNs {
-		deps, err := r.ImmediateDescendantsInSourceRun(ctx, p.SourceRunID.String(), f)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range deps {
+	frontierSeeds := fqnKeys(rebaseFQNs)
+	immBySeed, err := r.ImmediateDescendantsInSourceRunBatch(ctx, p.SourceRunID.String(), frontierSeeds)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range frontierSeeds {
+		for _, d := range immBySeed[f] {
 			if _, isRebased := rebaseFQNs[d]; isRebased {
 				blockedFQNs[d] = struct{}{}
 			}

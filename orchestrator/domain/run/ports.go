@@ -44,5 +44,4 @@ type RunQueryPort interface {
 	GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error)
 	GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error)
 	ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error)
-	GetScheduleInitNodes(ctx context.Context, scheduleName, runID string) (*ScheduleInitNodes, error)
 }

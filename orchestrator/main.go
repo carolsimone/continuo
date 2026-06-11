@@ -78,6 +78,16 @@ func main() {
 		return neo4jClient.Close(ctx)
 	})
 
+	// Apply Neo4j constraints and indexes before any consumer or gRPC server
+	// starts, so the first message never races a full label scan. Idempotent
+	// (IF NOT EXISTS) and fatal on failure — serving traffic against an
+	// unindexed/unconstrained graph is not acceptable.
+	if err := neo4jinfra.InitSchema(ctx, neo4jClient, logger); err != nil {
+		logger.Error("Failed to initialize Neo4j schema", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Neo4j schema initialized")
+
 	// 2. PostgreSQL client (for outbox / message processing)
 	pgDB, err := postgres.NewPostgresClient(
 		cfg.Postgres.Host,
@@ -138,7 +148,7 @@ func main() {
 	// and the message is never ACKed, getting stuck in the PEL forever.
 	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
 	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), runAggRepo, cancelledSchedulesRepo, logger)
-	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), queryRepo, snapshotService, logger)
+	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 	handleRerunHandler := handlers.NewHandleRerunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 	handleRebaseHandler := handlers.NewHandleRebaseHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
