@@ -188,9 +188,9 @@ func (r *RunAggregateRepository) Save(ctx context.Context, agg *domainRun.Run) e
 	// Normalize to the canonical lowercase terminal_status at the write boundary
 	// so Save, FinalizeRun, and the snapshot writer all stamp the same form. The
 	// in-memory aggregate vocabulary is uppercase; the stored projection the UI
-	// reads is lowercase. CanonicalTerminalStatus returns "" for non-terminal
+	// reads is lowercase. storedTerminalStatus returns "" for non-terminal
 	// statuses, which the CASE below treats as "do not stamp".
-	terminalStatus := agg.Status.CanonicalTerminalStatus()
+	terminalStatus := storedTerminalStatus(agg.Status)
 
 	// COALESCE(run.version, 0) lets in-flight :Run nodes created before this
 	// patch (no version property) match expected_version=0 on the first save.
@@ -399,8 +399,8 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 	rebuilt.TerminalCount = terminalCount
 	rebuilt.FailedCount = failedCount
 	rebuilt.Version = version
-	if terminalStatus != "" {
-		rebuilt.Status = domainRun.RunStatus(terminalStatus)
+	if s := runStatusFromStored(terminalStatus); s != "" {
+		rebuilt.Status = s
 	} else if terminalCount > 0 {
 		rebuilt.Status = domainRun.RunStatusInProgress
 	}
