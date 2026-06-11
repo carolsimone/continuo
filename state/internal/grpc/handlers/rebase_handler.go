@@ -22,21 +22,22 @@ import (
 // The orchestrator (via trigger.rebase:v1 outbox fanout) is responsible for
 // partitioning and projecting inherited tasks.
 type RebaseHandler struct {
-	useCase    *svchandlers.TriggerRebaseHandler
+	useCase    *svchandlers.TriggerDerivedRunHandler
 	uowFactory func() uow.UnitOfWork
 	logger     *slog.Logger
 }
 
 // NewRebaseHandler creates a new RebaseHandler.
 func NewRebaseHandler(
-	useCase *svchandlers.TriggerRebaseHandler,
+	useCase *svchandlers.TriggerDerivedRunHandler,
 	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,
 ) *RebaseHandler {
 	return &RebaseHandler{useCase: useCase, uowFactory: uowFactory, logger: logger}
 }
 
-// TriggerRebase validates the request and delegates to TriggerRebaseHandler.
+// TriggerRebase validates the request and delegates to the rebase-configured
+// TriggerDerivedRunHandler use case.
 func (h *RebaseHandler) TriggerRebase(ctx context.Context, req *statev1.TriggerRebaseRequest) (*statev1.TriggerRebaseResponse, error) {
 	h.logger.Info("TriggerRebase called", "source_run_id", req.SourceRunId)
 

@@ -4,17 +4,18 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// NewRebaseBinding wires ParseRebase into the HandleRebaseHandler. Parse
+// NewRebaseBinding wires ParseRebase into the shared DerivedRunHandler. Parse
 // failures are permanent (events.ErrPermanent): the binding logs and returns
 // the error so the consumer ACKs and drops the poison message.
 func NewRebaseBinding(
-	handler *handlers.HandleRebaseHandler,
+	handler *handlers.DerivedRunHandler,
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
@@ -24,6 +25,10 @@ func NewRebaseBinding(
 				"message_id", msg.ID, "error", err)
 			return err
 		}
-		return handler.Handle(ctx, cmd, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
+		return handler.Handle(ctx, model.DerivedRunInput{
+			RunID:        cmd.RunID,
+			ScheduleName: cmd.ScheduleName,
+			SourceRunID:  cmd.SourceRunID,
+		}, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 }

@@ -180,85 +180,53 @@ func main() {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
 
-	// Schedule catalog consumer (consumes schedules.loaded:v1). The
-	// StreamConsumer drives the parser+dedup+UoW binding declared in the
-	// redis adapter. Lifecycle is tied to ctx — the lifecycle manager
-	// cancels ctx on shutdown, which exits Start cleanly.
-	catalogHandler := svchandlers.NewScheduleCatalogHandler(logger)
-	catalogBinding := redis.NewScheduleCatalogBinding(uowFactory, catalogHandler, logger)
-	catalogConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.SchedulesLoadedV1,
-		streams.StateScheduleCatalog,
-		catalogBinding,
-		logger,
-	)
-	logger.Info("Schedule catalog consumer initialized")
-	runConsumer("schedule_catalog", catalogConsumer)
-
-	// run.entries.dispatched:v1 consumer. The StreamConsumer drives the
-	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
-	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
-	// exits Start cleanly.
-	runEntriesDispatchedHandler := svchandlers.NewRunEntriesDispatchedHandler(logger)
-	runEntriesDispatchedBinding := redis.NewRunEntriesDispatchedBinding(uowFactory, runEntriesDispatchedHandler, logger)
-	runEntriesDispatchedConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.RunEntriesDispatchedV1,
-		streams.StateRunEntriesDispatched,
-		runEntriesDispatchedBinding,
-		logger,
-	)
-	logger.Info("Run entries dispatched consumer initialized")
-	runConsumer("run_entries_dispatched", runEntriesDispatchedConsumer)
-
-	// run.entries.dispatch_failed:v1 consumer. The StreamConsumer drives the
-	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
-	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
-	// exits Start cleanly.
-	runEntriesDispatchFailedHandler := svchandlers.NewRunEntriesDispatchFailedHandler(logger)
-	runEntriesDispatchFailedBinding := redis.NewRunEntriesDispatchFailedBinding(uowFactory, runEntriesDispatchFailedHandler, logger)
-	runEntriesDispatchFailedConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.RunEntriesDispatchFailedV1,
-		streams.StateRunEntriesDispatchFailed,
-		runEntriesDispatchFailedBinding,
-		logger,
-	)
-	logger.Info("Run entries dispatch failed consumer initialized")
-	runConsumer("run_entries_dispatch_failed", runEntriesDispatchFailedConsumer)
-
-	// task.status.updated:v1 consumer. The StreamConsumer drives the
-	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
-	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
-	// exits Start cleanly.
-	taskStatusUpdatedHandler := svchandlers.NewTaskStatusUpdatedHandler(logger)
-	taskStatusUpdatedBinding := redis.NewTaskStatusUpdatedBinding(uowFactory, taskStatusUpdatedHandler, logger)
-	taskStatusUpdatedConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.TaskStatusUpdatedV1,
-		streams.StateTaskStatusUpdated,
-		taskStatusUpdatedBinding,
-		logger,
-	)
-	logger.Info("Task status updated consumer initialized")
-	runConsumer("task_status_updated", taskStatusUpdatedConsumer)
-
-	// task.execution.recorded:v1 consumer. The StreamConsumer drives the
-	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
-	// tied to ctx — the lifecycle manager cancels ctx on shutdown, which
-	// exits Start cleanly.
-	taskExecutionRecordedHandler := svchandlers.NewTaskExecutionRecordedHandler(logger)
-	taskExecutionRecordedBinding := redis.NewTaskExecutionRecordedBinding(uowFactory, taskExecutionRecordedHandler, logger)
-	taskExecutionRecordedConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.TaskExecutionRecordedV1,
-		streams.StateTaskExecutionRecorded,
-		taskExecutionRecordedBinding,
-		logger,
-	)
-	logger.Info("Task execution recorded consumer initialized")
-	runConsumer("task_execution_recorded", taskExecutionRecordedConsumer)
+	// Every state consumer is the same shape: a domain handler wrapped by a
+	// redis binding (parser + dedup + UoW transaction), driven by a
+	// StreamConsumer on its (stream, group). They are declared in one table and
+	// started uniformly via runConsumer below; consumer lifecycle is tied to
+	// ctx — the lifecycle manager cancels ctx on shutdown, which exits each
+	// Start cleanly. Stream/group names always come from pkg/streams constants.
+	consumers := []struct {
+		name    string
+		stream  string
+		group   string
+		binding pkgredis.MessageHandler
+	}{
+		{
+			name:    "schedule_catalog",
+			stream:  streams.SchedulesLoadedV1,
+			group:   streams.StateScheduleCatalog,
+			binding: redis.NewScheduleCatalogBinding(uowFactory, svchandlers.NewScheduleCatalogHandler(logger), logger),
+		},
+		{
+			name:    "run_entries_dispatched",
+			stream:  streams.RunEntriesDispatchedV1,
+			group:   streams.StateRunEntriesDispatched,
+			binding: redis.NewRunEntriesDispatchedBinding(uowFactory, svchandlers.NewRunEntriesDispatchedHandler(logger), logger),
+		},
+		{
+			name:    "run_entries_dispatch_failed",
+			stream:  streams.RunEntriesDispatchFailedV1,
+			group:   streams.StateRunEntriesDispatchFailed,
+			binding: redis.NewRunEntriesDispatchFailedBinding(uowFactory, svchandlers.NewRunEntriesDispatchFailedHandler(logger), logger),
+		},
+		{
+			name:    "task_status_updated",
+			stream:  streams.TaskStatusUpdatedV1,
+			group:   streams.StateTaskStatusUpdated,
+			binding: redis.NewTaskStatusUpdatedBinding(uowFactory, svchandlers.NewTaskStatusUpdatedHandler(logger), logger),
+		},
+		{
+			name:    "task_execution_recorded",
+			stream:  streams.TaskExecutionRecordedV1,
+			group:   streams.StateTaskExecutionRecorded,
+			binding: redis.NewTaskExecutionRecordedBinding(uowFactory, svchandlers.NewTaskExecutionRecordedHandler(logger), logger),
+		},
+	}
+	for _, c := range consumers {
+		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))
+		logger.Info("Stream consumer initialized", "consumer", c.name)
+	}
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.
 	activateHandler := svchandlers.NewActivateScheduleHandler(logger)

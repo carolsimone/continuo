@@ -616,23 +616,23 @@ func ResetComputeJobNameFn() {
 // must be in a non-SUCCEEDED state. The aggregate orchestrates the predicate
 // call itself; application services do not pre-query.
 func (r *Run) CanBeRerunSource(ctx context.Context, tasks TaskCollection) error {
-	if r.status != SchedulerStatusFailed && r.status != SchedulerStatusCancelled {
-		return ErrSourceMustBeTerminallyFailedOrCancelled
-	}
-	has, err := tasks.HasNonSucceeded(ctx, r.scheduleID)
-	if err != nil {
-		return fmt.Errorf("has non-succeeded: %w", err)
-	}
-	if !has {
-		return ErrNothingToRerun
-	}
-	return nil
+	return r.canBeDerivedSource(ctx, tasks, ErrNothingToRerun)
 }
 
 // CanBeRebaseSource shares semantics with CanBeRerunSource — same status set,
 // same "at least one non-SUCCEEDED" requirement. Returns ErrNothingToRebase
 // to give the gRPC adapter a stable error variant for the rebase code path.
 func (r *Run) CanBeRebaseSource(ctx context.Context, tasks TaskCollection) error {
+	return r.canBeDerivedSource(ctx, tasks, ErrNothingToRebase)
+}
+
+// canBeDerivedSource is the shared eligibility predicate behind
+// CanBeRerunSource and CanBeRebaseSource: the source must be terminally
+// FAILED or CANCELLED and carry at least one non-SUCCEEDED task. nothingErr
+// is the kind-specific sentinel (ErrNothingToRerun / ErrNothingToRebase)
+// returned when no non-SUCCEEDED task exists, so callers can tell the two
+// trigger paths apart.
+func (r *Run) canBeDerivedSource(ctx context.Context, tasks TaskCollection, nothingErr error) error {
 	if r.status != SchedulerStatusFailed && r.status != SchedulerStatusCancelled {
 		return ErrSourceMustBeTerminallyFailedOrCancelled
 	}
@@ -641,7 +641,7 @@ func (r *Run) CanBeRebaseSource(ctx context.Context, tasks TaskCollection) error
 		return fmt.Errorf("has non-succeeded: %w", err)
 	}
 	if !has {
-		return ErrNothingToRebase
+		return nothingErr
 	}
 	return nil
 }

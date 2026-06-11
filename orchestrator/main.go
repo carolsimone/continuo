@@ -331,89 +331,41 @@ func main() {
 	// INITIALIZE REDIS CONSUMERS
 	// ========================================================================
 
-	// node.updated:v1 -> HandleNodeCompleted
-	nodeUpdatedConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.NodeUpdatedV1,
-		streams.OrchestratorNodeUpdated,
-		redis.NewNodeCompletedBinding(handleNodeCompletedHandler, logger),
-		logger,
-	)
-
-	// scheduler.started:v1 -> HandleSchedulerStarted
-	schedulerStartedConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.SchedulerStartedV1,
-		streams.OrchestratorSchedulerStarted,
-		redis.NewSchedulerStartedBinding(handleSchedulerStartedHandler, logger),
-		logger,
-	)
-
-	// trigger.rerun:v1 -> HandleRerun
-	rerunConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.TriggerRerunV1,
-		streams.OrchestratorRerun,
-		redis.NewRerunBinding(handleRerunHandler, logger),
-		logger,
-	)
-
-	// trigger.rebase:v1 -> HandleRebase
-	rebaseConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.TriggerRebaseV1,
-		streams.OrchestratorRebase,
-		redis.NewRebaseBinding(handleRebaseHandler, logger),
-		logger,
-	)
-
-	// trigger.single_node_run:v1 -> HandleSingleNodeRun
-	singleNodeRunConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.TriggerSingleNodeRunV1,
-		streams.OrchestratorSingleNodeRun,
-		redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger),
-		logger,
-	)
-
-	// Consumer: run.finalized:v1 — projects state's terminal scheduler outcome
-	// onto Neo4j :Run.completed_at / terminal_status. Covers edge cases where
-	// the aggregate's internal finalization path is not exercised (e.g.
+	// run.finalized:v1 projects state's terminal scheduler outcome onto Neo4j
+	// :Run.completed_at / terminal_status. Covers edge cases where the
+	// aggregate's internal finalization path is not exercised (e.g.
 	// full-inherited rebases that produce no node.updated:v1 traffic).
 	runFinalizedHandler := handlers.NewRunFinalizedHandler(runAggRepo, logger)
-	runFinalizedBinding := redis.NewRunFinalizedBinding(runFinalizedHandler, logger)
-	runFinalizedConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.RunFinalizedV1,
-		streams.OrchestratorRunFinalized,
-		runFinalizedBinding,
-		logger,
-	)
 
-	// Consumer: release.promoted:v1 — atomically replaces the Neo4j topology
-	// when release-controller promotes a candidate release to production, then
-	// emits schedules.loaded:v1 so state can refresh its schedule projections.
-	// The consumer is dormant until release-controller emits its first
+	// release.promoted:v1 atomically replaces the Neo4j topology when
+	// release-controller promotes a candidate release to production, then emits
+	// schedules.loaded:v1 so state can refresh its schedule projections. The
+	// consumer is dormant until release-controller emits its first
 	// release.promoted:v1 event in production.
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
 	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, topologyRepo, topologyStateRepo, logger)
-	releasePromotedBinding := redis.NewReleasePromotedBinding(releasePromotedHandler, logger)
-	releasePromotedConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.ReleasePromotedV1,
-		streams.OrchestratorReleasePromoted,
-		releasePromotedBinding,
-		logger,
-	)
 
-	// Start all consumers as tracked goroutines with liveness registration.
-	runConsumer("node_updated", nodeUpdatedConsumer)
-	runConsumer("scheduler_started", schedulerStartedConsumer)
-	runConsumer("rerun", rerunConsumer)
-	runConsumer("rebase", rebaseConsumer)
-	runConsumer("single_node_run", singleNodeRunConsumer)
-	runConsumer("run_finalized", runFinalizedConsumer)
-	runConsumer("release_promoted", releasePromotedConsumer)
+	// Every orchestrator consumer is the same shape: a domain handler wrapped
+	// by a redis binding, driven by a StreamConsumer on its (stream, group).
+	// They are declared in one table and started uniformly via runConsumer;
+	// stream/group names always come from pkg/streams constants.
+	consumers := []struct {
+		name    string
+		stream  string
+		group   string
+		binding pkgredis.MessageHandler
+	}{
+		{"node_updated", streams.NodeUpdatedV1, streams.OrchestratorNodeUpdated, redis.NewNodeCompletedBinding(handleNodeCompletedHandler, logger)},
+		{"scheduler_started", streams.SchedulerStartedV1, streams.OrchestratorSchedulerStarted, redis.NewSchedulerStartedBinding(handleSchedulerStartedHandler, logger)},
+		{"rerun", streams.TriggerRerunV1, streams.OrchestratorRerun, redis.NewRerunBinding(handleRerunHandler, logger)},
+		{"rebase", streams.TriggerRebaseV1, streams.OrchestratorRebase, redis.NewRebaseBinding(handleRebaseHandler, logger)},
+		{"single_node_run", streams.TriggerSingleNodeRunV1, streams.OrchestratorSingleNodeRun, redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger)},
+		{"run_finalized", streams.RunFinalizedV1, streams.OrchestratorRunFinalized, redis.NewRunFinalizedBinding(runFinalizedHandler, logger)},
+		{"release_promoted", streams.ReleasePromotedV1, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger)},
+	}
+	for _, c := range consumers {
+		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))
+	}
 
 	// ========================================================================
 	// START gRPC SERVER

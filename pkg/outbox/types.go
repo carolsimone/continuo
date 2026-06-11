@@ -6,6 +6,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// DefaultMaxRetries is the retry budget applied to an outbox Entry that is
+// created without an explicit MaxRetries. The processor drops an entry to
+// "failed" once RetryCount reaches MaxRetries (see processor.go), so this
+// bounds how many times a transiently-failing publish is re-attempted before
+// it is parked for inspection.
+const DefaultMaxRetries = 3
+
 // Entry is the canonical transactional-outbox row, shared across all services.
 // Each service owns its own physical <service>_outbox table; this struct is the
 // shared Go contract that every per-service table conforms to.

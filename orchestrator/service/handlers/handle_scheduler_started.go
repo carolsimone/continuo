@@ -143,7 +143,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		Payload:             dispatchedPayload,
 		StreamName:          streams.RunEntriesDispatchedV1,
 		Status:              "pending",
-		MaxRetries:          3,
+		MaxRetries:          pkgoutbox.DefaultMaxRetries,
 	}
 	if err := h.uow.OutboxRepo().Create(ctx, entriesDispatchedEntry); err != nil {
 		return fmt.Errorf("failed to write run.entries.dispatched outbox entry: %w", err)
@@ -199,7 +199,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 			Payload:             evtPayload,
 			StreamName:          streams.QueryModelV1,
 			Status:              "pending",
-			MaxRetries:          3,
+			MaxRetries:          pkgoutbox.DefaultMaxRetries,
 		}
 		if err := h.uow.OutboxRepo().Create(ctx, outboxEntry); err != nil {
 			return fmt.Errorf("failed to write query.model outbox entry for %s.%s: %w", task.SchemaName, task.TableName, err)
