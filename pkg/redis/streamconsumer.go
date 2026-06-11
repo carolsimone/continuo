@@ -39,6 +39,11 @@ type StreamConsumer struct {
 	// same worker lane. An empty/absent value hashes to a stable lane so order
 	// is never violated, only parallelism is forgone for that message.
 	aggregateKeyField string
+
+	// ackFn acknowledges a single resolved message. It defaults to ackOne (a
+	// real XACK) and is a seam so the lane-scheduling logic can be unit-tested
+	// without a live Redis connection.
+	ackFn func(ctx context.Context, id string)
 }
 
 // ConsumerOption tunes optional behaviour on a StreamConsumer.
@@ -112,6 +117,7 @@ func NewStreamConsumer(
 		reclaimMinIdle: defaultReclaimMinIdle,
 		workerCount:    1,
 	}
+	c.ackFn = c.ackOne
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -126,6 +132,14 @@ func NewStreamConsumer(
 // errors are retried in-process by invokeWithRetry before falling through to
 // the PEL, so this interval no longer bounds same-instance retry latency.
 const reclaimInterval = 2 * time.Minute
+
+// staleConsumerIdle is how long a zero-pending consumer must have been idle
+// before cleanupStaleConsumers deletes its registry entry. A live consumer
+// re-reads at most every read block, so anything idle this long with nothing
+// pending is a consumer left behind by a replaced pod (a Kubernetes rollout
+// gives each new pod a fresh hostname, hence a new consumer name). Set well
+// above the reclaim interval so a peer mid-sweep is never mistaken for dead.
+const staleConsumerIdle = 2 * reclaimInterval
 
 // transientRetryBackoffs is the inline retry schedule applied to non-permanent
 // handler errors before the consumer gives up and leaves the message un-ACKed
@@ -201,10 +215,12 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 	)
 
 	// Reclaim pending messages left by previous consumer instances that
-	// crashed before ACKing (crash recovery).
+	// crashed before ACKing (crash recovery), then delete the now-drained
+	// registry entries those instances left behind.
 	if err := c.reclaimPending(ctx); err != nil {
 		c.logger.Error("Failed to reclaim pending messages", "stream", c.streamName, "error", err)
 	}
+	c.cleanupStaleConsumers(ctx, staleConsumerIdle)
 
 	reclaimTicker := time.NewTicker(reclaimInterval)
 	defer reclaimTicker.Stop()
@@ -217,6 +233,7 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 			if err := c.reclaimPending(ctx); err != nil {
 				c.logger.Error("Periodic reclaim pending failed", "stream", c.streamName, "error", err)
 			}
+			c.cleanupStaleConsumers(ctx, staleConsumerIdle)
 		default:
 			if err := c.readAndProcess(ctx); err != nil {
 				c.logger.Error("Error in read loop", "error", err)
@@ -302,6 +319,43 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 	}
 }
 
+// cleanupStaleConsumers deletes consumer-group registry entries left by previous
+// process incarnations. XAUTOCLAIM moves an old consumer's pending entries to
+// this one but never removes the now-empty consumer, so without this the
+// registry would grow one dead entry per pod replacement (each rollout/reschedule
+// gives the new pod a fresh hostname, hence a new consumer name). A consumer is
+// deleted only when it is not this one, has no pending entries (its work is
+// fully drained or already reclaimed), and has been idle longer than minIdle —
+// the idle gate keeps a freshly-registered peer that has not yet read from being
+// reaped. Deleting a live peer that is momentarily empty is harmless: it
+// re-registers on its next read. Failures are logged and skipped; cleanup is
+// best-effort housekeeping, never on the message-processing critical path.
+func (c *StreamConsumer) cleanupStaleConsumers(ctx context.Context, minIdle time.Duration) {
+	consumers, err := c.client.XInfoConsumers(ctx, c.streamName, c.consumerGroup).Result()
+	if err != nil {
+		c.logger.Warn("Could not list consumers for cleanup", "stream", c.streamName, "error", err)
+		return
+	}
+	for _, cons := range consumers {
+		if cons.Name == c.consumerName || cons.Pending > 0 || cons.Idle < minIdle {
+			continue
+		}
+		if err := c.client.XGroupDelConsumer(ctx, c.streamName, c.consumerGroup, cons.Name).Err(); err != nil {
+			c.logger.Warn("Failed to delete stale consumer",
+				"stream", c.streamName,
+				"consumer", cons.Name,
+				"error", err,
+			)
+			continue
+		}
+		c.logger.Info("Removed drained stale consumer",
+			"stream", c.streamName,
+			"consumer", cons.Name,
+			"idle", cons.Idle,
+		)
+	}
+}
+
 func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 	streams, err := c.client.XReadGroup(ctx, &goredis.XReadGroupArgs{
 		Group:    c.consumerGroup,
@@ -322,40 +376,37 @@ func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 	}
 
 	for _, stream := range streams {
-		var ackIDs []string
 		if c.workerCount <= 1 {
-			ackIDs = c.processSerial(ctx, stream.Messages)
+			c.processSerial(ctx, stream.Messages)
 		} else {
-			ackIDs = c.processSharded(ctx, stream.Messages)
+			c.processSharded(ctx, stream.Messages)
 		}
-		c.ackBatch(ctx, ackIDs)
 	}
 
 	return nil
 }
 
 // processSerial runs the handler over the batch one message at a time in stream
-// order and returns the IDs that must be ACKed. This is the workerCount==1 path
-// and is behaviourally identical to the original strictly-serial loop.
-func (c *StreamConsumer) processSerial(ctx context.Context, msgs []goredis.XMessage) []string {
-	var ackIDs []string
+// order, ACKing each message the moment it resolves. This is the workerCount==1
+// path and is behaviourally identical to the original strictly-serial loop.
+func (c *StreamConsumer) processSerial(ctx context.Context, msgs []goredis.XMessage) {
 	for _, msg := range msgs {
-		if c.shouldAck(ctx, msg) {
-			ackIDs = append(ackIDs, msg.ID)
-		}
+		c.processOne(ctx, msg)
 	}
-	return ackIDs
 }
 
 // processSharded fans the batch across workerCount lanes keyed by the aggregate
 // key so messages for one aggregate stay strictly ordered (same key → same lane
 // → processed in arrival order) while distinct aggregates run in parallel. Each
-// lane drains its messages in order; the batch is fully processed before this
-// returns, so the read loop never runs ahead of completed work and the existing
-// ack-after-success / PEL semantics are preserved. Returns the IDs to ACK.
-func (c *StreamConsumer) processSharded(ctx context.Context, msgs []goredis.XMessage) []string {
+// lane drains its messages in order and ACKs each one as it resolves, so a
+// finished message is removed from the PEL immediately rather than waiting for
+// the slowest lane — a stuck lane can never hold another lane's committed work
+// in the PEL long enough for a peer's reclaim sweep to reprocess it. The batch
+// is still fully processed before this returns, so the read loop never runs
+// ahead of completed work.
+func (c *StreamConsumer) processSharded(ctx context.Context, msgs []goredis.XMessage) {
 	if len(msgs) == 0 {
-		return nil
+		return
 	}
 
 	lanes := make([][]goredis.XMessage, c.workerCount)
@@ -364,34 +415,23 @@ func (c *StreamConsumer) processSharded(ctx context.Context, msgs []goredis.XMes
 		lanes[lane] = append(lanes[lane], msg)
 	}
 
-	results := make([][]string, c.workerCount)
-	done := make(chan int, c.workerCount)
+	done := make(chan struct{}, c.workerCount)
 	active := 0
 	for i := range lanes {
 		if len(lanes[i]) == 0 {
 			continue
 		}
 		active++
-		go func(idx int) {
-			var laneAcks []string
-			for _, msg := range lanes[idx] {
-				if c.shouldAck(ctx, msg) {
-					laneAcks = append(laneAcks, msg.ID)
-				}
+		go func(laneMsgs []goredis.XMessage) {
+			for _, msg := range laneMsgs {
+				c.processOne(ctx, msg)
 			}
-			results[idx] = laneAcks
-			done <- idx
-		}(i)
+			done <- struct{}{}
+		}(lanes[i])
 	}
 	for ; active > 0; active-- {
 		<-done
 	}
-
-	var ackIDs []string
-	for _, laneAcks := range results {
-		ackIDs = append(ackIDs, laneAcks...)
-	}
-	return ackIDs
 }
 
 // laneFor maps a message to a worker lane in [0, workerCount). All messages that
@@ -404,6 +444,30 @@ func (c *StreamConsumer) laneFor(msg goredis.XMessage) int {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(key))
 	return int(h.Sum32() % uint32(c.workerCount))
+}
+
+// processOne runs the read-path handler for one message and ACKs it as soon as
+// it resolves to an ACK-able state. ACKing per message (rather than once per
+// batch) is what preserves ack-after-success under the worker pool: a completed
+// message leaves the PEL immediately, so a slow sibling — or a stuck lane when
+// workerCount>1 — can never keep finished work pending long enough for another
+// replica's reclaim sweep to pick it up again.
+func (c *StreamConsumer) processOne(ctx context.Context, msg goredis.XMessage) {
+	if c.shouldAck(ctx, msg) {
+		c.ackFn(ctx, msg.ID)
+	}
+}
+
+// ackOne acknowledges a single message, logging on failure. A failed XACK is
+// non-fatal: the message stays in the PEL and the reclaim sweep redelivers it.
+func (c *StreamConsumer) ackOne(ctx context.Context, id string) {
+	if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, id).Err(); err != nil {
+		c.logger.Error("Failed to ACK message",
+			"stream", c.streamName,
+			"message_id", id,
+			"error", err,
+		)
+	}
 }
 
 // shouldAck runs the read-path handler (with inline retry) for one message and
@@ -426,10 +490,12 @@ func (c *StreamConsumer) shouldAck(ctx context.Context, msg goredis.XMessage) bo
 	return false // no-ACK; PEL sweep remains the safety net
 }
 
-// ackBatch acknowledges all the given message IDs in a single pipelined round
-// trip instead of one XACK per message. ack-after-success semantics are
-// unchanged: only IDs that the handler resolved (success or permanent drop) are
-// passed in, so a transiently-failed message is never acked here.
+// ackBatch acknowledges a page of reclaimed message IDs in a single pipelined
+// round trip. Only IDs the handler resolved (success or permanent drop) are
+// passed in, so a transiently-failed reclaimed message is never acked here. The
+// read path acks per message (processOne); reclaimed entries are already past
+// their idle gate and processed single-shot within one sweep, so a per-page ack
+// carries none of the read path's hold-finished-work-in-PEL risk.
 func (c *StreamConsumer) ackBatch(ctx context.Context, ids []string) {
 	if len(ids) == 0 {
 		return

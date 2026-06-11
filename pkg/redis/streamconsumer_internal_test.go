@@ -23,7 +23,22 @@ func testConsumer(handler MessageHandler) *StreamConsumer {
 		logger:      slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 		handler:     handler,
 		workerCount: 1,
+		// No-op ack by default (no live Redis). Tests asserting ack behaviour
+		// override this with a recorder.
+		ackFn: func(context.Context, string) {},
 	}
+}
+
+// ackRecorder returns an ackFn that records acknowledged message IDs and the
+// recorded slice. Safe for concurrent lanes.
+func ackRecorder() (func(context.Context, string), *[]string, *sync.Mutex) {
+	var mu sync.Mutex
+	var acked []string
+	return func(_ context.Context, id string) {
+		mu.Lock()
+		acked = append(acked, id)
+		mu.Unlock()
+	}, &acked, &mu
 }
 
 func msgWithKey(id, keyField, keyVal string) goredis.XMessage {
@@ -120,6 +135,8 @@ func TestProcessSharded_PerAggregateOrdering(t *testing.T) {
 	})
 	c.workerCount = 4
 	c.aggregateKeyField = "schedule_id"
+	ack, acked, ackMu := ackRecorder()
+	c.ackFn = ack
 
 	var msgs []goredis.XMessage
 	want := map[string][]string{}
@@ -131,8 +148,11 @@ func TestProcessSharded_PerAggregateOrdering(t *testing.T) {
 		}
 	}
 
-	ackIDs := c.processSharded(context.Background(), msgs)
-	require.Len(t, ackIDs, len(msgs), "every successfully-handled message must be acked")
+	c.processSharded(context.Background(), msgs)
+
+	ackMu.Lock()
+	require.Len(t, *acked, len(msgs), "every successfully-handled message must be acked")
+	ackMu.Unlock()
 
 	for key, order := range want {
 		assert.Equal(t, order, seen[key], "messages for %s must be processed in arrival order", key)
@@ -158,6 +178,8 @@ func TestProcessSharded_DistinctKeysRunInParallel(t *testing.T) {
 	})
 	c.workerCount = keys
 	c.aggregateKeyField = "schedule_id"
+	ack, acked, ackMu := ackRecorder()
+	c.ackFn = ack
 
 	// Different keys are guaranteed distinct lanes here because we pick keys that
 	// hash to different lanes; if they collided the barrier would deadlock, so we
@@ -172,8 +194,8 @@ func TestProcessSharded_DistinctKeysRunInParallel(t *testing.T) {
 		{ID: "b-0", Values: map[string]interface{}{"schedule_id": keyB}},
 	}
 
-	done := make(chan []string, 1)
-	go func() { done <- c.processSharded(context.Background(), msgs) }()
+	done := make(chan struct{}, 1)
+	go func() { c.processSharded(context.Background(), msgs); done <- struct{}{} }()
 
 	// If processing were serial, started.Wait would block forever (the first
 	// handler holds on <-release before the second starts).
@@ -187,8 +209,10 @@ func TestProcessSharded_DistinctKeysRunInParallel(t *testing.T) {
 	close(release)
 
 	select {
-	case ack := <-done:
-		assert.ElementsMatch(t, []string{"a-0", "b-0"}, ack)
+	case <-done:
+		ackMu.Lock()
+		assert.ElementsMatch(t, []string{"a-0", "b-0"}, *acked)
+		ackMu.Unlock()
 	case <-time.After(2 * time.Second):
 		t.Fatal("processSharded did not complete")
 	}
@@ -208,10 +232,14 @@ func TestProcessSerial_AckSelectivity(t *testing.T) {
 			return errors.New("transient")
 		}
 	})
+	ack, acked, ackMu := ackRecorder()
+	c.ackFn = ack
 	msgs := []goredis.XMessage{{ID: "ok-0"}, {ID: "perm-0"}, {ID: "trans-0"}}
-	ackIDs := c.processSerial(context.Background(), msgs)
-	assert.ElementsMatch(t, []string{"ok-0", "perm-0"}, ackIDs,
+	c.processSerial(context.Background(), msgs)
+	ackMu.Lock()
+	assert.ElementsMatch(t, []string{"ok-0", "perm-0"}, *acked,
 		"success and permanent acked; transient left in PEL")
+	ackMu.Unlock()
 }
 
 // TestConsumerName_StablePerHost: the derived consumer name must be stable
