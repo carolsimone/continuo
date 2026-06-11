@@ -391,11 +391,11 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 	assert.True(t, found, "message must remain in PEL — gated reclaim must not steal it")
 }
 
-// TestStreamConsumer_TransientError_RetriedInProcess_ThenACKed: handler fails
-// the first two attempts and succeeds on the third. With in-process retry
-// the message is ACKed in the same Start() invocation, so the PEL ends empty
-// and the handler is called at least 3 times.
-func TestStreamConsumer_TransientError_RetriedInProcess_ThenACKed(t *testing.T) {
+// TestStreamConsumer_TransientError_RecoversWithinBudget_ThenACKed: handler
+// fails once with a transient error and succeeds on the single in-process
+// retry. The message is ACKed in the same Start() invocation — no reclaim
+// sweep needed — so the PEL ends empty and the handler is called twice.
+func TestStreamConsumer_TransientError_RecoversWithinBudget_ThenACKed(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
 	defer rc.Close()
@@ -414,8 +414,7 @@ func TestStreamConsumer_TransientError_RetriedInProcess_ThenACKed(t *testing.T) 
 
 	var called atomic.Int32
 	handler := func(_ context.Context, _ goredis.XMessage) error {
-		n := called.Add(1)
-		if n < 3 {
+		if called.Add(1) < 2 {
 			return errors.New("transient blip")
 		}
 		return nil
@@ -424,14 +423,16 @@ func TestStreamConsumer_TransientError_RetriedInProcess_ThenACKed(t *testing.T) 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
 
-	// Budget: 0 + 100ms + 500ms + 2s = ~2.6s, plus read-loop overhead.
+	// Budget: 0 + 100ms — one quick in-process retry. A transient blip that
+	// clears on the retry is ACKed before the consumer moves on; failures that
+	// outlast the budget are parked to the PEL (see ExhaustedRetries).
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	go consumer.Start(runCtx) //nolint:errcheck
-	time.Sleep(3500 * time.Millisecond)
+	time.Sleep(1500 * time.Millisecond)
 
-	assert.GreaterOrEqual(t, called.Load(), int32(3),
-		"handler must be retried in-process until it succeeds")
+	assert.GreaterOrEqual(t, called.Load(), int32(2),
+		"transient blip must be retried in-process and then succeed")
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
 		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
@@ -513,8 +514,8 @@ func TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL(t *testing.T)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
 
-	// Long enough for one full retry budget (~2.6s) but short enough not to
-	// pick up a second cycle from periodic reclaim (2 min).
+	// Long enough for the full in-process retry budget (~100ms) but short
+	// enough not to pick up a second cycle from periodic reclaim (2 min).
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	go consumer.Start(runCtx) //nolint:errcheck
