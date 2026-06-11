@@ -17,6 +17,12 @@ type Config struct {
 
 	// Scheduler
 	SchedulesConfigPath string
+
+	// Retention sweeper — purges processed outbox rows and terminal
+	// message_processing dedup rows older than the retention window. Both knobs
+	// have safe defaults so no configuration is required.
+	RetentionDays             int
+	RetentionSweepIntervalMin int
 }
 
 // Load reads configuration from environment variables.
@@ -29,6 +35,9 @@ func Load(v *pkgconfig.Validator) Config {
 		GRPCPort:            envInt("GRPC_PORT", 50051),
 		HealthPort:          env("HEALTH_PORT", "8082"),
 		SchedulesConfigPath: env("SCHEDULES_CONFIG_PATH", "/etc/continuo/schedules.yaml"),
+
+		RetentionDays:             envInt("RETENTION_DAYS", 7),
+		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
 	}
 }
 

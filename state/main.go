@@ -22,6 +22,7 @@ import (
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -103,13 +104,34 @@ func main() {
 		outboxPub,
 		nil, // no terminal-failure hook for state
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: 500 * time.Millisecond, BatchSize: 10},
+		pkgoutbox.ProcessorConfig{Tick: 500 * time.Millisecond, BatchSize: 100},
 	)
 	go func() {
 		if err := outboxProc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("Outbox processor exited", "error", err)
 		}
 	}()
+
+	// Retention sweeper — keeps the two unbounded-growth tables in check:
+	// processed state_outbox rows and terminal message_processing dedup rows
+	// (the latter retains a full payload per consumed message). Both are pruned
+	// past the retention window on the same timer using DB-clock cutoffs.
+	mpPruner := pkgmessageprocessing.NewPruner(db, logger)
+	retentionSweeper := pkgoutbox.NewRetentionSweeper(
+		[]pkgoutbox.RetentionTarget{
+			pkgoutbox.OutboxRetentionTarget(db, "state_outbox", logger),
+			{
+				Name:  "message_processing",
+				Prune: mpPruner.DeleteTerminalOlderThan,
+			},
+		},
+		pkgoutbox.RetentionConfig{
+			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
+			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
+		},
+		logger,
+	)
+	go retentionSweeper.Run(ctx)
 
 	clk := ports.SystemClock{}
 

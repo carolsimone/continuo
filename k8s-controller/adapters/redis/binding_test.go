@@ -59,6 +59,9 @@ func (alwaysDupMPRepo) GetByID(context.Context, uuid.UUID) (*messageprocessing.M
 	return &messageprocessing.MessageProcessing{State: "completed"}, nil
 }
 func (alwaysDupMPRepo) UpdateState(context.Context, uuid.UUID, string) error { return nil }
+func (alwaysDupMPRepo) DeleteTerminalOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
 
 type dupUoW struct {
 	commits   int

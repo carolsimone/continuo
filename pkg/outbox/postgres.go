@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // outboxRow is the adapter-internal scan struct.
@@ -154,8 +155,11 @@ func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]
 }
 
 func (r *postgresRepository) MarkProcessed(ctx context.Context, id uuid.UUID) error {
-	query := fmt.Sprintf(`UPDATE %s SET status = 'processed', processed_at = $1 WHERE id = $2`, r.tableName)
-	result, err := r.exec.ExecContext(ctx, query, time.Now(), id)
+	// processed_at is stamped from the DB clock (NOW()) so retention cutoffs,
+	// which also use NOW(), compare like-for-like and are immune to host/DB
+	// clock skew.
+	query := fmt.Sprintf(`UPDATE %s SET status = 'processed', processed_at = NOW() WHERE id = $1`, r.tableName)
+	result, err := r.exec.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("mark processed in %s: %w", r.tableName, err)
 	}
@@ -164,6 +168,46 @@ func (r *postgresRepository) MarkProcessed(ctx context.Context, id uuid.UUID) er
 		return fmt.Errorf("outbox entry %s not found in %s", id, r.tableName)
 	}
 	return nil
+}
+
+func (r *postgresRepository) MarkProcessedBatch(ctx context.Context, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	// One UPDATE for the whole successful subset of a batch instead of one per
+	// row. processed_at uses the DB clock (NOW()) so it lines up with the
+	// retention sweeper's NOW()-based cutoff. pq.Array binds the UUID slice to
+	// the ANY($1) array parameter.
+	query := fmt.Sprintf(`UPDATE %s SET status = 'processed', processed_at = NOW() WHERE id = ANY($1)`, r.tableName)
+	if _, err := r.exec.ExecContext(ctx, query, pq.Array(ids)); err != nil {
+		return fmt.Errorf("mark processed batch in %s: %w", r.tableName, err)
+	}
+	return nil
+}
+
+func (r *postgresRepository) DeleteProcessedOlderThan(ctx context.Context, retention time.Duration, limit int) (int64, error) {
+	// Bounded delete: a CTE selects up to limit eligible ids (status='processed'
+	// and processed_at older than NOW()-retention) and the outer DELETE removes
+	// exactly those. The LIMIT keeps each statement's lock footprint small so a
+	// large backlog drains over several iterations without holding a long lock.
+	// The retention window is evaluated against the DB clock to avoid host/DB
+	// skew. make_interval takes whole seconds from the Go duration.
+	query := fmt.Sprintf(`
+		WITH expired AS (
+			SELECT id FROM %s
+			WHERE status = 'processed'
+			  AND processed_at < NOW() - make_interval(secs => $1)
+			ORDER BY processed_at ASC
+			LIMIT $2
+		)
+		DELETE FROM %s WHERE id IN (SELECT id FROM expired)
+	`, r.tableName, r.tableName)
+	result, err := r.exec.ExecContext(ctx, query, retention.Seconds(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("delete processed older than in %s: %w", r.tableName, err)
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
 }
 
 func (r *postgresRepository) MarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error {

@@ -184,8 +184,9 @@ func (r *fakeOutboxRepo) Create(_ context.Context, e *outbox.Entry) error {
 func (r *fakeOutboxRepo) GetPendingBatch(context.Context, int) ([]*outbox.Entry, error) {
 	return nil, nil
 }
-func (r *fakeOutboxRepo) MarkProcessed(context.Context, uuid.UUID) error      { return nil }
-func (r *fakeOutboxRepo) MarkFailed(context.Context, uuid.UUID, string) error { return nil }
+func (r *fakeOutboxRepo) MarkProcessed(context.Context, uuid.UUID) error        { return nil }
+func (r *fakeOutboxRepo) MarkProcessedBatch(context.Context, []uuid.UUID) error { return nil }
+func (r *fakeOutboxRepo) MarkFailed(context.Context, uuid.UUID, string) error   { return nil }
 func (r *fakeOutboxRepo) IncrementRetry(context.Context, uuid.UUID) error     { return nil }
 
 type fakeAggRepo struct {

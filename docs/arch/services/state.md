@@ -206,6 +206,15 @@ Transient handler errors (e.g. `task_tracker` row not found because `RunEntriesD
 
 All Redis publishes go through `state_outbox` → background `pkg/outbox.Processor`. The outbox entry and the state mutation are committed in the same transaction, guaranteeing at-least-once delivery.
 
+The processor polls every 500ms and claims up to 100 pending rows per batch (`FOR UPDATE SKIP LOCKED`). Within one batch it pipelines all XADDs over a single Redis connection (`OutboxPublisher.PublishBatch`) and flips the whole successful subset to `processed` in one `UPDATE … WHERE id = ANY(...)`; only the failed subset takes per-row retry/fail handling. After a full batch the processor immediately drains the next batch before sleeping to the next tick, so a burst of thousands of pending rows clears within seconds rather than one batch per tick. Per-aggregate FIFO is preserved because the pipeline issues XADDs in the batch's SELECT order over one connection.
+
+Each XADD caps its stream at `MaxLen 10000` (approximate, `~`), bounding Redis memory for streams a consumer group may lag on. **Caveat:** approximate trimming can drop the oldest entries before a slow consumer group reads them; 10000 is the accepted bound, matching the orchestrator's publisher.
+
+A retention sweeper (`pkg/outbox.RetentionSweeper`, default hourly, `RETENTION_SWEEP_INTERVAL_MINUTES`) prunes two otherwise-unbounded tables using DB-clock cutoffs:
+- `state_outbox` rows with `status='processed'` older than the retention window (`RETENTION_DAYS`, default 7).
+- `message_processing` dedup rows in a terminal state (`completed`/`acked`) older than the same window; `processing` rows are never purged so an in-flight or stuck message keeps its dedup guard.
+Each delete is bounded by a per-statement `LIMIT` loop to keep lock footprints small. All knobs have safe defaults, so no configuration is required.
+
 #### `scheduler.started:v1`
 
 Emitted on: `ActivateSchedule` / `TriggerSchedule` (both paths)

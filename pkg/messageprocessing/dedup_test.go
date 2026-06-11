@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	mp "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/google/uuid"
@@ -86,6 +87,10 @@ func (f *fakeRepo) GetByID(_ context.Context, id uuid.UUID) (*mp.MessageProcessi
 
 func (f *fakeRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
+}
+
+func (f *fakeRepo) DeleteTerminalOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+	return 0, nil
 }
 
 func newLogger() *slog.Logger {

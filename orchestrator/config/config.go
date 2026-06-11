@@ -34,6 +34,12 @@ type Config struct {
 	CancelledSchedulesTTLHours         int
 	CancelledSchedulesSweepIntervalMin int
 
+	// Retention sweeper — purges processed orchestrator_outbox rows and terminal
+	// message_processing dedup rows older than the retention window. Both knobs
+	// have safe defaults so no configuration is required.
+	RetentionDays             int
+	RetentionSweepIntervalMin int
+
 	// State gRPC endpoint (host:port). Reuses the established
 	// STATE_GRPC_ADDR convention exposed globally by the Helm
 	// configmap (deploy/app/templates/configmap.yaml), so every
@@ -70,6 +76,9 @@ func Load(v *pkgconfig.Validator) Config {
 
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
+
+		RetentionDays:             envInt("RETENTION_DAYS", 7),
+		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
 
 		StateGRPCAddr: v.Require("STATE_GRPC_ADDR"),
 

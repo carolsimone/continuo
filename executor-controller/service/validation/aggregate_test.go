@@ -66,8 +66,9 @@ func (c *captureOutbox) Create(_ context.Context, e *outbox.Entry) error {
 func (c *captureOutbox) GetPendingBatch(context.Context, int) ([]*outbox.Entry, error) {
 	return nil, nil
 }
-func (c *captureOutbox) MarkProcessed(context.Context, uuid.UUID) error      { return nil }
-func (c *captureOutbox) MarkFailed(context.Context, uuid.UUID, string) error { return nil }
+func (c *captureOutbox) MarkProcessed(context.Context, uuid.UUID) error        { return nil }
+func (c *captureOutbox) MarkProcessedBatch(context.Context, []uuid.UUID) error { return nil }
+func (c *captureOutbox) MarkFailed(context.Context, uuid.UUID, string) error   { return nil }
 func (c *captureOutbox) IncrementRetry(context.Context, uuid.UUID) error     { return nil }
 
 var _ outbox.Repository = (*captureOutbox)(nil)

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
@@ -34,6 +35,9 @@ func (f *fakeOutboxRepository) GetPendingBatch(ctx context.Context, limit int) (
 	return nil, nil
 }
 func (f *fakeOutboxRepository) MarkProcessed(ctx context.Context, id uuid.UUID) error { return nil }
+func (f *fakeOutboxRepository) MarkProcessedBatch(ctx context.Context, ids []uuid.UUID) error {
+	return nil
+}
 func (f *fakeOutboxRepository) MarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error {
 	return nil
 }
@@ -90,6 +94,10 @@ func (f *fakeMessageProcessingRepository) UpdateState(ctx context.Context, id uu
 		}
 	}
 	return nil
+}
+
+func (f *fakeMessageProcessingRepository) DeleteTerminalOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+	return 0, nil
 }
 
 // fakeUnitOfWork is a no-op UnitOfWork backed by the in-memory outbox and

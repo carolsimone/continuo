@@ -131,6 +131,33 @@ func (r *postgresRepository) GetByID(
 	return fromRow(&rr), nil
 }
 
+func (r *postgresRepository) DeleteTerminalOlderThan(
+	ctx context.Context, retention time.Duration, limit int,
+) (int64, error) {
+	// Bounded delete of terminal dedup rows. A subquery picks up to limit
+	// eligible ids (state in the terminal set and updated_at older than
+	// NOW()-retention) and the outer DELETE removes exactly those, keeping each
+	// statement's lock footprint small. 'processing' rows are excluded so an
+	// in-flight (or stuck) message keeps its dedup guard. The cutoff uses the DB
+	// clock (NOW()) to avoid host/DB skew; make_interval takes whole seconds.
+	query := `
+		DELETE FROM message_processing
+		WHERE id IN (
+			SELECT id FROM message_processing
+			WHERE state IN ('completed', 'acked')
+			  AND updated_at < NOW() - make_interval(secs => $1)
+			ORDER BY updated_at ASC
+			LIMIT $2
+		)
+	`
+	result, err := r.exec.ExecContext(ctx, query, retention.Seconds(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("delete terminal message_processing older than: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
+}
+
 func (r *postgresRepository) UpdateState(
 	ctx context.Context, id uuid.UUID, state string,
 ) error {

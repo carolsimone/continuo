@@ -249,7 +249,8 @@ func (f *fakeOutbox) GetPendingBatch(_ context.Context, _ int) ([]*pkgoutbox.Ent
 	return nil, nil
 }
 
-func (f *fakeOutbox) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
+func (f *fakeOutbox) MarkProcessed(_ context.Context, _ uuid.UUID) error        { return nil }
+func (f *fakeOutbox) MarkProcessedBatch(_ context.Context, _ []uuid.UUID) error { return nil }
 func (f *fakeOutbox) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
@@ -278,6 +279,10 @@ func (fakeMessageProcessing) GetByID(_ context.Context, _ uuid.UUID) (*messagepr
 
 func (fakeMessageProcessing) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
+}
+
+func (fakeMessageProcessing) DeleteTerminalOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+	return 0, nil
 }
 
 var _ messageprocessing.Repository = (*fakeMessageProcessing)(nil)

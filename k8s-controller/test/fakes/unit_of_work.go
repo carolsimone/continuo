@@ -2,6 +2,7 @@ package fakes
 
 import (
 	"context"
+	"time"
 
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -90,6 +91,15 @@ func (f *FakeOutboxRepository) MarkProcessed(ctx context.Context, id uuid.UUID) 
 	return nil
 }
 
+func (f *FakeOutboxRepository) MarkProcessedBatch(ctx context.Context, ids []uuid.UUID) error {
+	for _, id := range ids {
+		if err := f.MarkProcessed(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (f *FakeOutboxRepository) MarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error {
 	f.MarkFailedCallCount++
 	if f.MarkFailedFunc != nil {
@@ -173,4 +183,8 @@ func (f *FakeMessageProcessingRepository) UpdateState(ctx context.Context, id uu
 		return f.UpdateStateFunc(ctx, id, state)
 	}
 	return nil
+}
+
+func (f *FakeMessageProcessingRepository) DeleteTerminalOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+	return 0, nil
 }

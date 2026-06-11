@@ -58,6 +58,10 @@ func (r *countingOutboxRepo) MarkProcessed(ctx context.Context, id uuid.UUID) er
 	return r.real.MarkProcessed(ctx, id)
 }
 
+func (r *countingOutboxRepo) MarkProcessedBatch(ctx context.Context, ids []uuid.UUID) error {
+	return r.real.MarkProcessedBatch(ctx, ids)
+}
+
 func (r *countingOutboxRepo) MarkFailed(ctx context.Context, id uuid.UUID, msg string) error {
 	return r.real.MarkFailed(ctx, id, msg)
 }

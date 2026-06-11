@@ -2,6 +2,7 @@ package messageprocessing
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -24,4 +25,11 @@ type Repository interface {
 	// would miss the second case.
 	GetByID(ctx context.Context, id uuid.UUID) (*MessageProcessing, error)
 	UpdateState(ctx context.Context, id uuid.UUID, state string) error
+	// DeleteTerminalOlderThan purges dedup rows that have reached a terminal
+	// state ('completed' or 'acked') and whose updated_at is older than the
+	// retention window, computed from the DB clock (NOW() - retention). At most
+	// limit rows are deleted per call so a caller can run a bounded LIMIT loop;
+	// it returns the number of rows deleted. Rows still in 'processing' are never
+	// purged — an in-flight or stuck message must keep its dedup guard.
+	DeleteTerminalOlderThan(ctx context.Context, retention time.Duration, limit int) (int64, error)
 }
