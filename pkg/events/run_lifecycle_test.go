@@ -9,4 +9,7 @@ func TestDispatchFailedReason_WireValues(t *testing.T) {
 	if got := string(DispatchFailedReasonEmptyProjection); got != "empty_projection" {
 		t.Fatalf("DispatchFailedReasonEmptyProjection = %q, want %q", got, "empty_projection")
 	}
+	if got := string(DispatchFailedReasonInvalidNodeType); got != "invalid_node_type" {
+		t.Fatalf("DispatchFailedReasonInvalidNodeType = %q, want %q", got, "invalid_node_type")
+	}
 }

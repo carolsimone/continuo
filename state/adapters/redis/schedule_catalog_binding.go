@@ -9,6 +9,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
@@ -18,7 +19,7 @@ import (
 // scheduleCatalogStreamName is the wire-stable name of the Redis stream
 // whose messages this binding handles. It is also the value stored in the
 // message_processing.stream_name column for dedup rows.
-const scheduleCatalogStreamName = "schedules.loaded:v1"
+const scheduleCatalogStreamName = streams.SchedulesLoadedV1
 
 // NewScheduleCatalogBinding returns a pkg/redis.MessageHandler that turns
 // each schedules.loaded:v1 message into a typed event, runs dedup, and

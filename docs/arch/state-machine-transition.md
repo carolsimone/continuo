@@ -168,5 +168,5 @@ pending → in_progress → completed
 
 ### Notes
 
-- `CreateScheduler` always creates with `status = pending` and `initialization_status = pending` (both omitted from the request; state service defaults).
+- A new run is always minted through the `Run` aggregate (`ActivateSchedule` for cron, `TriggerSchedule` for manual, `TriggerRerun`/`TriggerRebase`/`TriggerSingleNodeRun` for derived runs) with `status = pending` and `initialization_status = in_progress`. There is no direct row-insert RPC.
 - `cancelled` is not in the `Transition()` table. Cancellation goes through `repo.Cancel()` which enforces its own terminal-state guard (`ErrNotCancellable`).

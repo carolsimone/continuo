@@ -92,7 +92,9 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, run.SchedulerStatusPending, got.Status)
 	assert.Equal(t, "pending", got.InitializationStatus)
-	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, got.GetServiceMetadata())
+	gotMeta, metaErr := got.GetServiceMetadata()
+	require.NoError(t, metaErr)
+	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, gotMeta)
 }
 
 func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {

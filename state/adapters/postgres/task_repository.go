@@ -18,7 +18,6 @@ type TaskTrackerRepository interface {
 	Create(ctx context.Context, task *TaskTracker) error
 	GetByID(ctx context.Context, taskID uuid.UUID) (*TaskTracker, error)
 	GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*TaskTracker, error)
-	Delete(ctx context.Context, taskID uuid.UUID) error
 	ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error)
 	// BulkCreateTx inserts multiple task_tracker rows within a transaction (ON CONFLICT DO NOTHING).
 	BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskTracker) error
@@ -173,34 +172,6 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 	)
 
 	return &task, nil
-}
-
-// Delete removes a task_tracker record from the database
-func (r *taskTrackerRepository) Delete(ctx context.Context, taskID uuid.UUID) error {
-	query := `DELETE FROM task_tracker WHERE task_id = $1`
-
-	result, err := r.db.ExecContext(ctx, query, taskID)
-	if err != nil {
-		r.logger.Error("Failed to delete task_tracker",
-			"task_id", taskID,
-			"error", err,
-		)
-		return fmt.Errorf("failed to delete task_tracker: %w", err)
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		r.logger.Debug("Task tracker not found for delete",
-			"task_id", taskID,
-		)
-		return ErrNotFound
-	}
-
-	r.logger.Info("Deleted task_tracker",
-		"task_id", taskID,
-	)
-
-	return nil
 }
 
 // ListByScheduleID retrieves all tasks for a specific schedule with optional status filter

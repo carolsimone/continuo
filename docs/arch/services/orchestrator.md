@@ -237,7 +237,7 @@ the lifecycle completion channel, so there is no fixed sleep.
 | `query.model:v1` | One message per newly-ready downstream node after a SUCCEEDED node is processed; for rerun/rebase only the rebased rows on the **dispatch frontier** get an initial `query.model:v1` (a rebased row whose upstream is itself rebased waits until that upstream completes; inherited rows are already SUCCEEDED at dispatch and never enter the executor pipeline) |
 | `schedules.loaded:v1` | Produced by `ReleasePromotedHandler` after a successful topology swap (schedule names list + service_metadata + topology_generation) |
 | `run.entries.dispatched:v1` | Produced by every `Snapshot`-driven handler (`HandleSchedulerStarted`, `HandleRerun`, `HandleRebase`, `HandleSingleNodeRun`) after the projection is materialised. Carries all task entries with pre-assigned UUIDs, plus per-task `Status` (defaults `"pending"`, `"succeeded"` for inherited rows) and `InheritedFromTaskID` (empty for non-inherited; root-resolved source `task_id` for inherited). Each `DispatchedTask` stamps `MaxRetries = pkg/events.DefaultTaskMaxRetries (= 2)` so state's `task_tracker.max_retries` matches the k8s retry budget. |
-| `run.entries.dispatch_failed:v1` | Produced by `HandleSingleNodeRunHandler` on `snapshot.ErrTargetNotFound`, and by `HandleSingleNodeRunHandler`, `HandleRerunHandler`, `HandleRebaseHandler`, and `HandleSchedulerStartedHandler` on `snapshot.ErrEmptyProjection`. Symmetric counterpart of `run.entries.dispatched:v1`: same `scheduler_tracker` target, opposite outcome. State row-locks the row, marks status=`failed`, emits `run.finalized:v1`. |
+| `run.entries.dispatch_failed:v1` | Produced by `HandleSingleNodeRunHandler` on `snapshot.ErrTargetNotFound` (`reason=target_not_found`); by `HandleSingleNodeRunHandler`, `HandleRerunHandler`, `HandleRebaseHandler`, and `HandleSchedulerStartedHandler` on `snapshot.ErrEmptyProjection` (`reason=empty_projection`); and by `HandleSchedulerStartedHandler` and `HandleNodeCompletedHandler` when a dispatch-frontier or unblocked node carries an unparseable `node_type` (`reason=invalid_node_type` — a permanent defect, so the run fails fast rather than stalling until the watchdog cancels it). Symmetric counterpart of `run.entries.dispatched:v1`: same `scheduler_tracker` target, opposite outcome. State row-locks the row, marks status=`failed`, emits `run.finalized:v1`. |
 
 ### No gRPC calls to `state`
 
@@ -256,6 +256,8 @@ Orchestrator no longer calls `state` gRPC for any internal writes. All state mut
 `state` consumes `run.entries.dispatched:v1` to create task rows, set `total_task_count`, and mark the run as initialized.
 
 When `Snapshot(LatestFullDAG)` returns `snapshot.ErrEmptyProjection` (a schedule whose topology has zero active `:Table` nodes), the handler emits `run.entries.dispatch_failed:v1` with `reason=empty_projection` and the run finalises as `failed`.
+
+Before writing the dispatched entry, the handler validates the `node_type` of every seed/root dispatch node. An unparseable `node_type` is a permanent topology defect (the node could never be dispatched), so the handler emits `run.entries.dispatch_failed:v1` with `reason=invalid_node_type` instead of the dispatched entry, and the run finalises as `failed`. `HandleNodeCompletedHandler` applies the same fail-fast rule when completing a node unblocks a downstream node whose `node_type` is unparseable.
 
 ### On `release.promoted:v1` — ReleasePromotedHandler
 

@@ -3,6 +3,7 @@ package postgres
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -36,21 +37,24 @@ type SchedulerTracker struct {
 // GetServiceMetadata returns the decoded ServiceMetadata map. ServiceMetadata
 // is preferred when already populated (e.g. after a previous decode or an
 // explicit assignment). Otherwise ServiceMetadataRaw is decoded on the fly.
-func (s *SchedulerTracker) GetServiceMetadata() map[string]run.ServiceMetadata {
+// A malformed service_metadata JSONB is surfaced as an error rather than
+// silently coerced to an empty map, which would erase a run's per-service
+// pinning and corrupt downstream dispatch.
+func (s *SchedulerTracker) GetServiceMetadata() (map[string]run.ServiceMetadata, error) {
 	if len(s.ServiceMetadata) > 0 {
-		return s.ServiceMetadata
+		return s.ServiceMetadata, nil
 	}
 	if len(s.ServiceMetadataRaw) == 0 {
-		return map[string]run.ServiceMetadata{}
+		return map[string]run.ServiceMetadata{}, nil
 	}
 	var meta map[string]run.ServiceMetadata
 	if err := json.Unmarshal(s.ServiceMetadataRaw, &meta); err != nil {
-		return map[string]run.ServiceMetadata{}
+		return nil, fmt.Errorf("decode service_metadata for schedule_id %s: %w", s.ScheduleID, err)
 	}
 	if meta == nil {
-		return map[string]run.ServiceMetadata{}
+		return map[string]run.ServiceMetadata{}, nil
 	}
-	return meta
+	return meta, nil
 }
 
 // TaskTracker is the storage row carrier for the task_tracker table.

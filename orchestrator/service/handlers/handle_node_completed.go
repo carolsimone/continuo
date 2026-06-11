@@ -9,6 +9,7 @@ import (
 
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -20,6 +21,13 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
+
+// errDispatchFailedEmitted is an internal sentinel that writeOutboxEntries
+// returns when it has already emitted a run.entries.dispatch_failed:v1 entry for
+// a permanent defect (e.g. an unblocked node with an invalid node_type). The
+// caller must stop writing further entries, mark the message completed, and
+// commit so the dispatch_failed entry is published and the run finalizes FAILED.
+var errDispatchFailedEmitted = errors.New("dispatch_failed already emitted")
 
 // HandleNodeCompletedHandler processes node-completed messages using the Run aggregate.
 type HandleNodeCompletedHandler struct {
@@ -113,7 +121,7 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainModel
 				if derr != nil {
 					return fmt.Errorf("EffectsForTerminal: %w", derr)
 				}
-				if werr := h.writeOutboxEntries(ctx, cmd, msgProcessingID, redoEvents); werr != nil {
+				if werr := h.writeOutboxEntries(ctx, cmd, msgProcessingID, redoEvents); werr != nil && !errors.Is(werr, errDispatchFailedEmitted) {
 					return werr
 				}
 				if uerr := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); uerr != nil {
@@ -133,6 +141,11 @@ func (h *HandleNodeCompletedHandler) Handle(ctx context.Context, cmd domainModel
 		}
 
 		if err := h.writeOutboxEntries(ctx, cmd, msgProcessingID, events); err != nil {
+			if errors.Is(err, errDispatchFailedEmitted) {
+				// A permanent defect failed the run; the dispatch_failed entry is
+				// in this tx. Stop emitting further entries and commit below.
+				break
+			}
 			return err
 		}
 		break
@@ -183,9 +196,22 @@ func (h *HandleNodeCompletedHandler) writeNodeUnblockedEntry(
 ) error {
 	nodeType, err := pkgModel.ParseNodeType(e.NodeType)
 	if err != nil {
-		h.logger.Error("Skipping unblocked node with invalid node_type",
+		// An unblocked node with an unparseable node_type can never be
+		// dispatched: dropping it silently would stall the run forever. This is
+		// a permanent topology defect, so fail the run fast via
+		// run.entries.dispatch_failed:v1 and signal the caller to stop emitting
+		// further entries for this delivery.
+		h.logger.Error("Unblocked node has invalid node_type — failing run",
 			"table", e.Key.TableName, "node_type", e.NodeType, "error", err)
-		return nil
+		if ferr := EmitDispatchFailed(ctx, h.uow, h.logger, DispatchFailedParams{
+			RunID:               cmd.ScheduleID.String(),
+			ScheduleName:        e.ScheduleName,
+			MessageProcessingID: msgProcessingID,
+			Reason:              pkgEvents.DispatchFailedReasonInvalidNodeType,
+		}); ferr != nil {
+			return ferr
+		}
+		return errDispatchFailedEmitted
 	}
 
 	jobName, err := pkgDomain.ComputeJobName(e.Key.ServiceName, e.Key.SchemaName, e.Key.TableName, cmd.ScheduleID.String())
@@ -272,6 +298,6 @@ func (h *HandleNodeCompletedHandler) handleDedup(
 ) (uuid.UUID, bool, error) {
 	return messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, "node.updated:v1", payload, outboxEntryID,
+		messageID, streams.NodeUpdatedV1, payload, outboxEntryID,
 	)
 }

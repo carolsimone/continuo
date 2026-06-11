@@ -71,6 +71,7 @@ type fakeTaskCollection struct {
 	hasNonSucc    bool
 	byNode        map[run.NodeID]run.Task
 	updateApplied map[uuid.UUID]int
+	loadErr       error
 }
 
 func newFakeTaskCollection() *fakeTaskCollection {
@@ -88,6 +89,9 @@ func (f *fakeTaskCollection) GetStatus(_ context.Context, id uuid.UUID) (run.Tas
 	return s, ok, nil
 }
 func (f *fakeTaskCollection) LoadStatusAndAttempt(_ context.Context, id uuid.UUID) (run.TaskStatus, int32, bool, error) {
+	if f.loadErr != nil {
+		return "", 0, false, f.loadErr
+	}
 	s, ok := f.statuses[id]
 	return s, f.attempts[id], ok, nil
 }
@@ -408,6 +412,51 @@ func TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded(t *testing.T) {
 	}
 	if got := tc.statuses[id1]; got != run.TaskStatusSucceeded {
 		t.Fatalf("status must not regress: got %s want succeeded", got)
+	}
+}
+
+// TestRecordTaskStatus_PropagatesLoadError verifies that a transient failure of
+// the FOR-UPDATE status read is surfaced as an error rather than swallowed.
+// A swallowed read error used to fall through to the "newer attempt — adopt it"
+// branch, which would overwrite the already-recorded terminal with a stale
+// delivery and corrupt finalization arithmetic. The aggregate must instead make
+// no state change so the consumer redelivers.
+func TestRecordTaskStatus_PropagatesLoadError(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1, id2 := uuid.New(), uuid.New()
+	r := runningRunWithProjection(t, tc, id1, id2)
+
+	// Record a real terminal for id1 first.
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0); err != nil {
+		t.Fatalf("succeeded: %v", err)
+	}
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("after SUCCEEDED terminal: got %d want 1", r.TerminalTaskCount())
+	}
+
+	// Now the FOR-UPDATE read fails transiently while a stale RUNNING for the
+	// same attempt arrives.
+	tc.loadErr = errors.New("read replica unavailable")
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0)
+	if err == nil {
+		t.Fatalf("expected the load error to propagate, got nil")
+	}
+	if len(events) != 0 {
+		t.Fatalf("no events expected on a propagated read error, got %d", len(events))
+	}
+
+	// No state change: the terminal slot stays filled, the recorded status is
+	// untouched, and no write was applied for id1 by this call.
+	tc.loadErr = nil
+	if r.TerminalTaskCount() != 1 {
+		t.Fatalf("terminal_task_count must be unchanged: got %d want 1", r.TerminalTaskCount())
+	}
+	if got := tc.statuses[id1]; got != run.TaskStatusSucceeded {
+		t.Fatalf("status must not regress: got %s want succeeded", got)
+	}
+	if r.IsTerminal() {
+		t.Fatalf("run must not have finalized off a failed read")
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	goredis "github.com/redis/go-redis/v9"
@@ -17,7 +18,7 @@ import (
 // runEntriesDispatchedStreamName is the wire-stable name of the Redis stream
 // whose messages this binding handles. It is also the value stored in the
 // message_processing.stream_name column for dedup rows.
-const runEntriesDispatchedStreamName = "run.entries.dispatched:v1"
+const runEntriesDispatchedStreamName = streams.RunEntriesDispatchedV1
 
 // NewRunEntriesDispatchedBinding returns a pkg/redis.MessageHandler that
 // parses each run.entries.dispatched:v1 message, runs dedup, and invokes

@@ -3,9 +3,7 @@ package handlers
 import (
 	"context"
 	"log/slog"
-	"time"
 
-	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
@@ -27,77 +25,6 @@ func NewTaskHandler(repo postgres.TaskTrackerRepository, logger *slog.Logger) *T
 		repo:   repo,
 		logger: logger,
 	}
-}
-
-// CreateTask creates a new task
-func (h *TaskHandler) CreateTask(ctx context.Context, req *statev1.CreateTaskRequest) (*statev1.TaskResponse, error) {
-	h.logger.Info("Creating task",
-		"task_id", req.TaskId,
-		"schedule_id", req.ScheduleId,
-		"table", req.TableName,
-	)
-
-	// Validate required fields
-	if req.TaskId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "task_id is required (application-generated)")
-	}
-
-	if req.ScheduleId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
-	}
-
-	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "service_name, schema_name, and table_name are required")
-	}
-
-	// Parse UUIDs
-	taskID, err := uuid.Parse(req.TaskId)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format: %v", err)
-	}
-
-	scheduleID, err := uuid.Parse(req.ScheduleId)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format: %v", err)
-	}
-
-	// Convert proto status to domain model (default to pending if not specified)
-	domainStatus := protoToDomainTaskStatus(req.Status)
-	if req.Status == statev1.TaskStatus_TASK_STATUS_UNSPECIFIED {
-		domainStatus = run.TaskStatusPending
-	}
-
-	// Compute k8s-compliant job_name from service/schema/table + schedule_id suffix
-	jobName, err := pkgDomain.ComputeJobName(req.ServiceName, req.SchemaName, req.TableName, req.ScheduleId)
-	if err != nil {
-		h.logger.Error("failed to compute job_name", "error", err)
-		return nil, status.Errorf(codes.InvalidArgument, "invalid service/schema/table names: %v", err)
-	}
-
-	task := &postgres.TaskTracker{
-		TaskID:      taskID,
-		ScheduleID:  scheduleID,
-		CreatedAt:   time.Now(),
-		ServiceName: req.ServiceName,
-		SchemaName:  req.SchemaName,
-		TableName:   req.TableName,
-		JobName:     jobName,
-		Status:      domainStatus,
-		RetryCount:  0,
-		MaxRetries:  int(req.MaxRetries),
-	}
-
-	if err := h.repo.Create(ctx, task); err != nil {
-		if err == postgres.ErrDuplicateKey {
-			return nil, status.Errorf(codes.AlreadyExists, "task with id %s already exists", taskID)
-		}
-		h.logger.Error("Failed to create task", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to create task")
-	}
-
-	return &statev1.TaskResponse{
-		Task: domainToProtoTask(task),
-	}, nil
 }
 
 // GetTask retrieves a task by ID
@@ -161,33 +88,6 @@ func (h *TaskHandler) GetTaskByScheduleAndNode(ctx context.Context, req *statev1
 
 	return &statev1.TaskResponse{
 		Task: domainToProtoTask(task),
-	}, nil
-}
-
-// DeleteTask deletes a task
-func (h *TaskHandler) DeleteTask(ctx context.Context, req *statev1.DeleteTaskRequest) (*statev1.DeleteTaskResponse, error) {
-	h.logger.Info("Deleting task", "task_id", req.TaskId)
-
-	if req.TaskId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")
-	}
-
-	taskID, err := uuid.Parse(req.TaskId)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
-	}
-
-	if err := h.repo.Delete(ctx, taskID); err != nil {
-		if err == postgres.ErrNotFound {
-			return nil, status.Errorf(codes.NotFound, "task not found")
-		}
-		h.logger.Error("Failed to delete task", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to delete task")
-	}
-
-	return &statev1.DeleteTaskResponse{
-		Success: true,
-		Message: "Task deleted successfully",
 	}, nil
 }
 

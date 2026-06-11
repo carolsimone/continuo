@@ -105,7 +105,11 @@ func NewSchedulerTrackerRepository(db *sqlx.DB, logger *slog.Logger) SchedulerTr
 
 // Create inserts a new scheduler_tracker record into the database
 func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *SchedulerTracker) error {
-	metaJSON, err := json.Marshal(tracker.GetServiceMetadata())
+	meta, err := tracker.GetServiceMetadata()
+	if err != nil {
+		return err
+	}
+	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("marshal service_metadata: %w", err)
 	}
@@ -170,7 +174,11 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 
 // CreateTx inserts a new scheduler_tracker record within an existing transaction.
 func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error {
-	metaJSON, err := json.Marshal(tracker.GetServiceMetadata())
+	meta, err := tracker.GetServiceMetadata()
+	if err != nil {
+		return err
+	}
+	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("marshal service_metadata: %w", err)
 	}
@@ -240,7 +248,11 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 		)
 		return nil, fmt.Errorf("failed to get scheduler_tracker: %w", err)
 	}
-	tracker.ServiceMetadata = tracker.GetServiceMetadata()
+	meta, metaErr := tracker.GetServiceMetadata()
+	if metaErr != nil {
+		return nil, metaErr
+	}
+	tracker.ServiceMetadata = meta
 
 	r.logger.Debug("Retrieved scheduler_tracker",
 		"schedule_id", scheduleID,
@@ -337,7 +349,11 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 		)
 		return nil, fmt.Errorf("failed to get active scheduler: %w", err)
 	}
-	tracker.ServiceMetadata = tracker.GetServiceMetadata()
+	meta, metaErr := tracker.GetServiceMetadata()
+	if metaErr != nil {
+		return nil, metaErr
+	}
+	tracker.ServiceMetadata = meta
 
 	r.logger.Debug("Found active scheduler",
 		"schedule_name", scheduleName,
@@ -432,7 +448,11 @@ func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx 
 		}
 		return nil, fmt.Errorf("get scheduler_tracker for update: %w", err)
 	}
-	tracker.ServiceMetadata = tracker.GetServiceMetadata()
+	meta, metaErr := tracker.GetServiceMetadata()
+	if metaErr != nil {
+		return nil, metaErr
+	}
+	tracker.ServiceMetadata = meta
 	return &tracker, nil
 }
 

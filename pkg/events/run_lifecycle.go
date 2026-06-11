@@ -33,16 +33,18 @@ type RunEntriesDispatched struct {
 }
 
 // DispatchFailedReason is the closed set of reasons emitted with
-// run.entries.dispatch_failed:v1. Each value corresponds 1:1 to a
-// snapshot package sentinel; adding a new reason requires adding a new
-// sentinel as well. The orchestrator's dispatchFailedReason mapper
-// (orchestrator/service/handlers/dispatch_failed.go) is the single
-// point of truth for the error → reason mapping.
+// run.entries.dispatch_failed:v1. Most values correspond 1:1 to a snapshot
+// package sentinel, mapped by the orchestrator's dispatchFailedReason mapper
+// (orchestrator/service/handlers/dispatch_failed.go). InvalidNodeType is the
+// exception: it is raised directly when a dispatch node carries an unparseable
+// node_type, a permanent data defect that no retry can fix, so the run must
+// fail fast rather than sit until the watchdog cancels it.
 type DispatchFailedReason string
 
 const (
 	DispatchFailedReasonTargetNotFound  DispatchFailedReason = "target_not_found"
 	DispatchFailedReasonEmptyProjection DispatchFailedReason = "empty_projection"
+	DispatchFailedReasonInvalidNodeType DispatchFailedReason = "invalid_node_type"
 )
 
 // RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1

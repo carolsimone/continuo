@@ -412,12 +412,13 @@ func (r *Run) RecordTaskStatus(
 	}
 	prev, prevAttempt, exists, err := tasks.LoadStatusAndAttempt(ctx, taskID)
 	if err != nil {
-		// Mirror the legacy lenient behaviour: treat read failure as
-		// "no previous status" and let the branches below disambiguate
-		// replay vs. missing-row.
-		prev = ""
-		prevAttempt = 0
-		exists = false
+		// LoadStatusAndAttempt locks the row FOR UPDATE; a failure here is a
+		// transient I/O error, not "no prior status". Swallowing it would let
+		// the newer-attempt branch below adopt this delivery and overwrite a
+		// newer terminal already recorded for the task, defeating the
+		// attempt-monotonic guard. Propagate so the consumer redelivers once
+		// the read recovers.
+		return nil, fmt.Errorf("load task status and attempt: %w", err)
 	}
 
 	// Guard: if the row is not present, return a transient error so the
@@ -430,7 +431,9 @@ func (r *Run) RecordTaskStatus(
 		if !present {
 			return nil, ErrTaskRowNotProjected
 		}
-		// Row exists (GetStatusAndAttempt may have errored); proceed with empty prev.
+		// Row reported absent by the status read but present on re-check
+		// (a concurrent insert landed between the two reads); proceed with
+		// empty prev so the new-attempt branch adopts it.
 	}
 
 	prevKnown := prev != ""
