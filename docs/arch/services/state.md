@@ -82,7 +82,7 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 | `ListAllSchedules` | Reads catalog | — | No |
 | `ListStuckCandidates` | No | — | No — read-only, one indexed query |
 
-> **`ActivateSchedule` vs `TriggerSchedule`**: Both go through `ScheduleActivationService` (transactional outbox) and both require the schedule to exist in `schedule_catalog` (NotFound if absent). The key difference is the concurrent-run guard: `TriggerSchedule` returns `FailedPrecondition` if a run is active; `ActivateSchedule` silently skips (idempotent for the cron loop). `ActivateSchedule` is used by the cron loop and e2e tests; `TriggerSchedule` is the UI-exposed manual trigger.
+> **`ActivateSchedule` vs `TriggerSchedule`**: Both go through `ScheduleActivationService` (transactional outbox) and both require the schedule to exist in `schedule_catalog` (NotFound if absent). The key differences are the concurrent-run guard and the run kind: `TriggerSchedule` returns `FailedPrecondition` if a run is active and stamps `scheduler_tracker.kind = 'trigger'`; `ActivateSchedule` silently skips (idempotent for the cron loop) and stamps `kind = 'cron'`. `ActivateSchedule` is used by the cron loop and e2e tests; `TriggerSchedule` is the UI-exposed manual trigger.
 
 > **One active run per schedule (TOCTOU backstop)**: the "at most one active run per schedule_name" invariant is enforced by the partial unique index `uq_scheduler_tracker_active_per_schedule ON scheduler_tracker (schedule_name) WHERE status IN ('pending','running')`. The activation handlers (`ActivateSchedule`, `TriggerRerun`, `TriggerRebase`) keep a friendly pre-check (`HasActiveSchedule`) on the autocommit connection for the fast path, but the index is the source of truth: two concurrent activations can both pass the pre-check, and the loser's `INSERT` fails with SQLSTATE 23505, which the repository maps to `run.ErrScheduleHasActiveRun` — so the loser gets the same outcome (cron skip / manual `FailedPrecondition`) as the check-first path.
 
@@ -92,7 +92,6 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 
 | Method | Description |
 |---|---|
-| `CreateScheduler` | Create a tracker row directly (used internally and in tests) |
 | `GetScheduler` | Fetch a run by UUID |
 | `CancelScheduler` | Cancel a run by UUID |
 | `GetSchedulerInitStatus` | Read `initialization_status` for a run |
@@ -103,7 +102,6 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 |---|---|
 | `GetTask` | Fetch by UUID |
 | `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema_name, table_name)` |
-| `DeleteTask` | Delete a task row |
 | `ListTasks` | Paginated list with filters |
 | `ListNodeRuns` | Read-only query returning the most recent task instances that executed on a given node, ordered by `scheduler_tracker.created_at DESC`. See `ListNodeRuns` detail below. |
 | `TriggerRerun` | Mint a new `scheduler_tracker` row (`kind='rerun'`, `source_run_id=src`) on the source's schedule + write `trigger.rerun:v1` outbox entry. Same eligibility as `TriggerRebase`: source FAILED/CANCELLED, has ≥1 non-SUCCEEDED task, no active run on `schedule_name`. Backed by the shared `synthesise_derived_run.go` helper. Returns `run_id` + `schedule_name`. |
@@ -298,7 +296,7 @@ Effect: signals downstream consumers that the run is complete; the orchestrator 
 
 All finalization logic is owned by the `run.Run` aggregate. `TaskStatusUpdatedHandler` loads the `Run` through the `repository.RunRepository` port (`LoadRunForUpdate`), calls `Run.RecordTaskStatus(taskID, newStatus, caller)`, and persists the result via `SaveRun`.
 
-`Run.RecordTaskStatus` orders updates by attempt (`retry_count`), making the projection independent of the order in which the producers' messages are processed (see `docs/arch/state-machine-transition.md` for the producer invariant). It loads the prior status and stored attempt under a `FOR UPDATE` row lock, then:
+`Run.RecordTaskStatus` orders updates by attempt (`retry_count`), making the projection independent of the order in which the producers' messages are processed (see `docs/arch/state-machine-transition.md` for the producer invariant). It loads the prior status and stored attempt under a `FOR UPDATE` row lock. A failure of that locked read is propagated as a transient error — never coerced to "no prior status" — so the consumer redelivers; coercing it would let a stale delivery be adopted as a newer attempt and overwrite an already-recorded terminal. After a successful read it then:
 
 1. **Older attempt** (`retry_count < ` stored): superseded — ignored. Covers both a stale RUNNING and a stale terminal from an attempt the projection has already moved past.
 2. **Same attempt** (`retry_count == ` stored):

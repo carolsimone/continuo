@@ -192,8 +192,8 @@ func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName
 			ScheduleName:   safeString(recordValue(record, "schedule_name")),
 			TerminalStatus: safeString(recordValue(record, "terminal_status")),
 		}
-		summary.CreatedAt = parseNeo4jTimestamp(safeString(recordValue(record, "created_at")))
-		summary.CompletedAt = parseNeo4jTimestamp(safeString(recordValue(record, "completed_at")))
+		summary.CreatedAt = r.parseNeo4jTimestamp("created_at", safeString(recordValue(record, "created_at")))
+		summary.CompletedAt = r.parseNeo4jTimestamp("completed_at", safeString(recordValue(record, "completed_at")))
 		runs = append(runs, summary)
 	}
 	if err := result.Err(); err != nil {
@@ -389,16 +389,20 @@ func (r *OrchestratorQueryRepository) ListScheduleTopologies(ctx context.Context
 	return out, nil
 }
 
-// parseNeo4jTimestamp parses a Neo4j datetime string into a time.Time.
-func parseNeo4jTimestamp(value string) time.Time {
+// parseNeo4jTimestamp parses a Neo4j RFC3339Nano datetime string into a
+// time.Time. An empty value maps to the zero time silently (the field was
+// never set); a non-empty but unparseable value is logged before falling back
+// to the zero time, so corrupt timestamps surface in the logs instead of
+// vanishing.
+func (r *OrchestratorQueryRepository) parseNeo4jTimestamp(field, value string) time.Time {
 	if value == "" {
 		return time.Time{}
 	}
-	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
-		return ts
+	ts, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		r.logger.Warn("Unparseable Neo4j timestamp — using zero time",
+			"field", field, "value", value, "error", err)
+		return time.Time{}
 	}
-	if ts, err := time.Parse("2006-01-02T15:04:05.999999999Z07:00", value); err == nil {
-		return ts
-	}
-	return time.Time{}
+	return ts
 }

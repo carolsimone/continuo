@@ -101,6 +101,33 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		return fmt.Errorf("failed to snapshot graph: %w", err)
 	}
 
+	// Validate the dispatch frontier's node_types up front. An unparseable
+	// node_type is a permanent topology defect that no retry can fix: the node
+	// would never be dispatched and the run would sit until the watchdog cancels
+	// it (reported misleadingly as 'cancelled'). Fail the run fast via
+	// run.entries.dispatch_failed:v1 before writing any dispatched entry.
+	for _, task := range projection {
+		if task.InitialStatus != "PENDING" || !task.ReadyToDispatch {
+			continue
+		}
+		if _, err := pkgModel.ParseNodeType(task.NodeType); err != nil {
+			h.logger.Error("Dispatch node has invalid node_type — failing run",
+				"table", task.TableName, "node_type", task.NodeType, "error", err)
+			if ferr := EmitDispatchFailed(ctx, h.uow, h.logger, DispatchFailedParams{
+				RunID:               evt.ScheduleID.String(),
+				ScheduleName:        evt.ScheduleName,
+				MessageProcessingID: msgProcessingID,
+				Reason:              pkgevents.DispatchFailedReasonInvalidNodeType,
+			}); ferr != nil {
+				return ferr
+			}
+			if cerr := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); cerr != nil {
+				return fmt.Errorf("mark completed after invalid_node_type: %w", cerr)
+			}
+			return h.uow.Commit()
+		}
+	}
+
 	// Build and write run.entries.dispatched:v1 outbox entry from the projection.
 	dispatchedPayload, err := h.buildRunEntriesDispatchedPayload(evt, projection)
 	if err != nil {
@@ -135,9 +162,9 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 
 		nodeType, err := pkgModel.ParseNodeType(task.NodeType)
 		if err != nil {
-			h.logger.Error("Skipping dispatch node with invalid node_type",
-				"table", task.TableName, "node_type", task.NodeType, "error", err)
-			continue
+			// node_type was validated up front; reaching here means the projection
+			// changed under us — fail rather than silently skip.
+			return fmt.Errorf("parse node_type for %s.%s: %w", task.SchemaName, task.TableName, err)
 		}
 
 		jobName, err := pkgDomain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, evt.ScheduleID.String())
@@ -217,7 +244,7 @@ func (h *HandleSchedulerStartedHandler) dedup(
 ) (uuid.UUID, bool, error) {
 	return messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, "scheduler.started:v1", messagePayload, outboxEntryID,
+		messageID, streams.SchedulerStartedV1, messagePayload, outboxEntryID,
 	)
 }
 

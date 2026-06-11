@@ -537,66 +537,6 @@ func (x *TaskExecution) GetLogS3Key() string {
 	return ""
 }
 
-type CreateSchedulerRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ScheduleId    string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`       // Optional: client can provide UUID
-	ScheduleName  string                 `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // Required
-	Status        SchedulerStatus        `protobuf:"varint,3,opt,name=status,proto3,enum=state.v1.SchedulerStatus" json:"status,omitempty"`  // Optional: defaults to PENDING
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *CreateSchedulerRequest) Reset() {
-	*x = CreateSchedulerRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CreateSchedulerRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CreateSchedulerRequest) ProtoMessage() {}
-
-func (x *CreateSchedulerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CreateSchedulerRequest.ProtoReflect.Descriptor instead.
-func (*CreateSchedulerRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *CreateSchedulerRequest) GetScheduleId() string {
-	if x != nil {
-		return x.ScheduleId
-	}
-	return ""
-}
-
-func (x *CreateSchedulerRequest) GetScheduleName() string {
-	if x != nil {
-		return x.ScheduleName
-	}
-	return ""
-}
-
-func (x *CreateSchedulerRequest) GetStatus() SchedulerStatus {
-	if x != nil {
-		return x.Status
-	}
-	return SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED
-}
-
 type GetSchedulerRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleId    string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"` // Required
@@ -606,7 +546,7 @@ type GetSchedulerRequest struct {
 
 func (x *GetSchedulerRequest) Reset() {
 	*x = GetSchedulerRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[4]
+	mi := &file_proto_state_v1_state_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -618,7 +558,7 @@ func (x *GetSchedulerRequest) String() string {
 func (*GetSchedulerRequest) ProtoMessage() {}
 
 func (x *GetSchedulerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[4]
+	mi := &file_proto_state_v1_state_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -631,7 +571,7 @@ func (x *GetSchedulerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSchedulerRequest.ProtoReflect.Descriptor instead.
 func (*GetSchedulerRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{4}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *GetSchedulerRequest) GetScheduleId() string {
@@ -652,7 +592,7 @@ type CancelSchedulerRequest struct {
 
 func (x *CancelSchedulerRequest) Reset() {
 	*x = CancelSchedulerRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[5]
+	mi := &file_proto_state_v1_state_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -664,7 +604,7 @@ func (x *CancelSchedulerRequest) String() string {
 func (*CancelSchedulerRequest) ProtoMessage() {}
 
 func (x *CancelSchedulerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[5]
+	mi := &file_proto_state_v1_state_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -677,7 +617,7 @@ func (x *CancelSchedulerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelSchedulerRequest.ProtoReflect.Descriptor instead.
 func (*CancelSchedulerRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{5}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CancelSchedulerRequest) GetScheduleId() string {
@@ -710,7 +650,7 @@ type SchedulerResponse struct {
 
 func (x *SchedulerResponse) Reset() {
 	*x = SchedulerResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[6]
+	mi := &file_proto_state_v1_state_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -722,7 +662,7 @@ func (x *SchedulerResponse) String() string {
 func (*SchedulerResponse) ProtoMessage() {}
 
 func (x *SchedulerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[6]
+	mi := &file_proto_state_v1_state_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -735,7 +675,7 @@ func (x *SchedulerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SchedulerResponse.ProtoReflect.Descriptor instead.
 func (*SchedulerResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{6}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SchedulerResponse) GetScheduler() *Scheduler {
@@ -743,98 +683,6 @@ func (x *SchedulerResponse) GetScheduler() *Scheduler {
 		return x.Scheduler
 	}
 	return nil
-}
-
-type CreateTaskRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                // Required: application-generated UUID
-	ScheduleId    string                 `protobuf:"bytes,2,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`    // Required
-	ServiceName   string                 `protobuf:"bytes,3,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // Required
-	SchemaName    string                 `protobuf:"bytes,4,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`    // Required
-	TableName     string                 `protobuf:"bytes,5,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`       // Required
-	MaxRetries    int32                  `protobuf:"varint,6,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`   // Required
-	Status        TaskStatus             `protobuf:"varint,7,opt,name=status,proto3,enum=state.v1.TaskStatus" json:"status,omitempty"`    // Optional: defaults to PENDING
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *CreateTaskRequest) Reset() {
-	*x = CreateTaskRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[7]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CreateTaskRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CreateTaskRequest) ProtoMessage() {}
-
-func (x *CreateTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[7]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CreateTaskRequest.ProtoReflect.Descriptor instead.
-func (*CreateTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{7}
-}
-
-func (x *CreateTaskRequest) GetTaskId() string {
-	if x != nil {
-		return x.TaskId
-	}
-	return ""
-}
-
-func (x *CreateTaskRequest) GetScheduleId() string {
-	if x != nil {
-		return x.ScheduleId
-	}
-	return ""
-}
-
-func (x *CreateTaskRequest) GetServiceName() string {
-	if x != nil {
-		return x.ServiceName
-	}
-	return ""
-}
-
-func (x *CreateTaskRequest) GetSchemaName() string {
-	if x != nil {
-		return x.SchemaName
-	}
-	return ""
-}
-
-func (x *CreateTaskRequest) GetTableName() string {
-	if x != nil {
-		return x.TableName
-	}
-	return ""
-}
-
-func (x *CreateTaskRequest) GetMaxRetries() int32 {
-	if x != nil {
-		return x.MaxRetries
-	}
-	return 0
-}
-
-func (x *CreateTaskRequest) GetStatus() TaskStatus {
-	if x != nil {
-		return x.Status
-	}
-	return TaskStatus_TASK_STATUS_UNSPECIFIED
 }
 
 type GetTaskRequest struct {
@@ -846,7 +694,7 @@ type GetTaskRequest struct {
 
 func (x *GetTaskRequest) Reset() {
 	*x = GetTaskRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[8]
+	mi := &file_proto_state_v1_state_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -858,7 +706,7 @@ func (x *GetTaskRequest) String() string {
 func (*GetTaskRequest) ProtoMessage() {}
 
 func (x *GetTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[8]
+	mi := &file_proto_state_v1_state_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -871,7 +719,7 @@ func (x *GetTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{8}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetTaskRequest) GetTaskId() string {
@@ -893,7 +741,7 @@ type GetTaskByScheduleAndNodeRequest struct {
 
 func (x *GetTaskByScheduleAndNodeRequest) Reset() {
 	*x = GetTaskByScheduleAndNodeRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[9]
+	mi := &file_proto_state_v1_state_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -905,7 +753,7 @@ func (x *GetTaskByScheduleAndNodeRequest) String() string {
 func (*GetTaskByScheduleAndNodeRequest) ProtoMessage() {}
 
 func (x *GetTaskByScheduleAndNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[9]
+	mi := &file_proto_state_v1_state_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -918,7 +766,7 @@ func (x *GetTaskByScheduleAndNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskByScheduleAndNodeRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskByScheduleAndNodeRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{9}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetTaskByScheduleAndNodeRequest) GetScheduleId() string {
@@ -949,102 +797,6 @@ func (x *GetTaskByScheduleAndNodeRequest) GetTableName() string {
 	return ""
 }
 
-type DeleteTaskRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"` // Required
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *DeleteTaskRequest) Reset() {
-	*x = DeleteTaskRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *DeleteTaskRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DeleteTaskRequest) ProtoMessage() {}
-
-func (x *DeleteTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use DeleteTaskRequest.ProtoReflect.Descriptor instead.
-func (*DeleteTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *DeleteTaskRequest) GetTaskId() string {
-	if x != nil {
-		return x.TaskId
-	}
-	return ""
-}
-
-type DeleteTaskResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *DeleteTaskResponse) Reset() {
-	*x = DeleteTaskResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[11]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *DeleteTaskResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DeleteTaskResponse) ProtoMessage() {}
-
-func (x *DeleteTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[11]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use DeleteTaskResponse.ProtoReflect.Descriptor instead.
-func (*DeleteTaskResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{11}
-}
-
-func (x *DeleteTaskResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-func (x *DeleteTaskResponse) GetMessage() string {
-	if x != nil {
-		return x.Message
-	}
-	return ""
-}
-
 type ListTasksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleId    string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`  // Required
@@ -1057,7 +809,7 @@ type ListTasksRequest struct {
 
 func (x *ListTasksRequest) Reset() {
 	*x = ListTasksRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[12]
+	mi := &file_proto_state_v1_state_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1069,7 +821,7 @@ func (x *ListTasksRequest) String() string {
 func (*ListTasksRequest) ProtoMessage() {}
 
 func (x *ListTasksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[12]
+	mi := &file_proto_state_v1_state_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1082,7 +834,7 @@ func (x *ListTasksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTasksRequest.ProtoReflect.Descriptor instead.
 func (*ListTasksRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{12}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListTasksRequest) GetScheduleId() string {
@@ -1123,7 +875,7 @@ type ListTasksResponse struct {
 
 func (x *ListTasksResponse) Reset() {
 	*x = ListTasksResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[13]
+	mi := &file_proto_state_v1_state_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1135,7 +887,7 @@ func (x *ListTasksResponse) String() string {
 func (*ListTasksResponse) ProtoMessage() {}
 
 func (x *ListTasksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[13]
+	mi := &file_proto_state_v1_state_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1148,7 +900,7 @@ func (x *ListTasksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTasksResponse.ProtoReflect.Descriptor instead.
 func (*ListTasksResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{13}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ListTasksResponse) GetTasks() []*Task {
@@ -1174,7 +926,7 @@ type TaskResponse struct {
 
 func (x *TaskResponse) Reset() {
 	*x = TaskResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[14]
+	mi := &file_proto_state_v1_state_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1186,7 +938,7 @@ func (x *TaskResponse) String() string {
 func (*TaskResponse) ProtoMessage() {}
 
 func (x *TaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[14]
+	mi := &file_proto_state_v1_state_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1199,7 +951,7 @@ func (x *TaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskResponse.ProtoReflect.Descriptor instead.
 func (*TaskResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{14}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *TaskResponse) GetTask() *Task {
@@ -1218,7 +970,7 @@ type GetTaskExecutionRequest struct {
 
 func (x *GetTaskExecutionRequest) Reset() {
 	*x = GetTaskExecutionRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[15]
+	mi := &file_proto_state_v1_state_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1230,7 +982,7 @@ func (x *GetTaskExecutionRequest) String() string {
 func (*GetTaskExecutionRequest) ProtoMessage() {}
 
 func (x *GetTaskExecutionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[15]
+	mi := &file_proto_state_v1_state_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1243,7 +995,7 @@ func (x *GetTaskExecutionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskExecutionRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskExecutionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{15}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetTaskExecutionRequest) GetId() string {
@@ -1262,7 +1014,7 @@ type TaskExecutionResponse struct {
 
 func (x *TaskExecutionResponse) Reset() {
 	*x = TaskExecutionResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[16]
+	mi := &file_proto_state_v1_state_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1274,7 +1026,7 @@ func (x *TaskExecutionResponse) String() string {
 func (*TaskExecutionResponse) ProtoMessage() {}
 
 func (x *TaskExecutionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[16]
+	mi := &file_proto_state_v1_state_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1287,7 +1039,7 @@ func (x *TaskExecutionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskExecutionResponse.ProtoReflect.Descriptor instead.
 func (*TaskExecutionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{16}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *TaskExecutionResponse) GetTaskExecution() *TaskExecution {
@@ -1308,7 +1060,7 @@ type ListTaskExecutionsRequest struct {
 
 func (x *ListTaskExecutionsRequest) Reset() {
 	*x = ListTaskExecutionsRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[17]
+	mi := &file_proto_state_v1_state_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1320,7 +1072,7 @@ func (x *ListTaskExecutionsRequest) String() string {
 func (*ListTaskExecutionsRequest) ProtoMessage() {}
 
 func (x *ListTaskExecutionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[17]
+	mi := &file_proto_state_v1_state_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1333,7 +1085,7 @@ func (x *ListTaskExecutionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTaskExecutionsRequest.ProtoReflect.Descriptor instead.
 func (*ListTaskExecutionsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{17}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListTaskExecutionsRequest) GetScheduleId() string {
@@ -1367,7 +1119,7 @@ type ListTaskExecutionsResponse struct {
 
 func (x *ListTaskExecutionsResponse) Reset() {
 	*x = ListTaskExecutionsResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[18]
+	mi := &file_proto_state_v1_state_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1379,7 +1131,7 @@ func (x *ListTaskExecutionsResponse) String() string {
 func (*ListTaskExecutionsResponse) ProtoMessage() {}
 
 func (x *ListTaskExecutionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[18]
+	mi := &file_proto_state_v1_state_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1392,7 +1144,7 @@ func (x *ListTaskExecutionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTaskExecutionsResponse.ProtoReflect.Descriptor instead.
 func (*ListTaskExecutionsResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{18}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListTaskExecutionsResponse) GetTaskExecutions() []*TaskExecution {
@@ -1418,7 +1170,7 @@ type ActivateScheduleRequest struct {
 
 func (x *ActivateScheduleRequest) Reset() {
 	*x = ActivateScheduleRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[19]
+	mi := &file_proto_state_v1_state_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1430,7 +1182,7 @@ func (x *ActivateScheduleRequest) String() string {
 func (*ActivateScheduleRequest) ProtoMessage() {}
 
 func (x *ActivateScheduleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[19]
+	mi := &file_proto_state_v1_state_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1443,7 +1195,7 @@ func (x *ActivateScheduleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateScheduleRequest.ProtoReflect.Descriptor instead.
 func (*ActivateScheduleRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{19}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ActivateScheduleRequest) GetScheduleName() string {
@@ -1462,7 +1214,7 @@ type ActivateScheduleResponse struct {
 
 func (x *ActivateScheduleResponse) Reset() {
 	*x = ActivateScheduleResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[20]
+	mi := &file_proto_state_v1_state_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1474,7 +1226,7 @@ func (x *ActivateScheduleResponse) String() string {
 func (*ActivateScheduleResponse) ProtoMessage() {}
 
 func (x *ActivateScheduleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[20]
+	mi := &file_proto_state_v1_state_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1487,7 +1239,7 @@ func (x *ActivateScheduleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateScheduleResponse.ProtoReflect.Descriptor instead.
 func (*ActivateScheduleResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{20}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ActivateScheduleResponse) GetScheduleId() string {
@@ -1505,7 +1257,7 @@ type ListAllSchedulesRequest struct {
 
 func (x *ListAllSchedulesRequest) Reset() {
 	*x = ListAllSchedulesRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[21]
+	mi := &file_proto_state_v1_state_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1517,7 +1269,7 @@ func (x *ListAllSchedulesRequest) String() string {
 func (*ListAllSchedulesRequest) ProtoMessage() {}
 
 func (x *ListAllSchedulesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[21]
+	mi := &file_proto_state_v1_state_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1530,7 +1282,7 @@ func (x *ListAllSchedulesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAllSchedulesRequest.ProtoReflect.Descriptor instead.
 func (*ListAllSchedulesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{21}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{17}
 }
 
 // ScheduleSummary merges catalog data, last-run data, and cron config.
@@ -1553,7 +1305,7 @@ type ScheduleSummary struct {
 
 func (x *ScheduleSummary) Reset() {
 	*x = ScheduleSummary{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[22]
+	mi := &file_proto_state_v1_state_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1565,7 +1317,7 @@ func (x *ScheduleSummary) String() string {
 func (*ScheduleSummary) ProtoMessage() {}
 
 func (x *ScheduleSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[22]
+	mi := &file_proto_state_v1_state_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1578,7 +1330,7 @@ func (x *ScheduleSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScheduleSummary.ProtoReflect.Descriptor instead.
 func (*ScheduleSummary) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{22}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ScheduleSummary) GetScheduleName() string {
@@ -1646,7 +1398,7 @@ type ListAllSchedulesResponse struct {
 
 func (x *ListAllSchedulesResponse) Reset() {
 	*x = ListAllSchedulesResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[23]
+	mi := &file_proto_state_v1_state_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1658,7 +1410,7 @@ func (x *ListAllSchedulesResponse) String() string {
 func (*ListAllSchedulesResponse) ProtoMessage() {}
 
 func (x *ListAllSchedulesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[23]
+	mi := &file_proto_state_v1_state_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1671,7 +1423,7 @@ func (x *ListAllSchedulesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAllSchedulesResponse.ProtoReflect.Descriptor instead.
 func (*ListAllSchedulesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{23}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListAllSchedulesResponse) GetSchedules() []*ScheduleSummary {
@@ -1690,7 +1442,7 @@ type TriggerScheduleRequest struct {
 
 func (x *TriggerScheduleRequest) Reset() {
 	*x = TriggerScheduleRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[24]
+	mi := &file_proto_state_v1_state_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1702,7 +1454,7 @@ func (x *TriggerScheduleRequest) String() string {
 func (*TriggerScheduleRequest) ProtoMessage() {}
 
 func (x *TriggerScheduleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[24]
+	mi := &file_proto_state_v1_state_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1715,7 +1467,7 @@ func (x *TriggerScheduleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerScheduleRequest.ProtoReflect.Descriptor instead.
 func (*TriggerScheduleRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{24}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *TriggerScheduleRequest) GetScheduleName() string {
@@ -1736,7 +1488,7 @@ type TriggerScheduleResponse struct {
 
 func (x *TriggerScheduleResponse) Reset() {
 	*x = TriggerScheduleResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[25]
+	mi := &file_proto_state_v1_state_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1748,7 +1500,7 @@ func (x *TriggerScheduleResponse) String() string {
 func (*TriggerScheduleResponse) ProtoMessage() {}
 
 func (x *TriggerScheduleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[25]
+	mi := &file_proto_state_v1_state_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1761,7 +1513,7 @@ func (x *TriggerScheduleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerScheduleResponse.ProtoReflect.Descriptor instead.
 func (*TriggerScheduleResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{25}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *TriggerScheduleResponse) GetScheduleId() string {
@@ -1782,7 +1534,7 @@ type CancelScheduleRequest struct {
 
 func (x *CancelScheduleRequest) Reset() {
 	*x = CancelScheduleRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[26]
+	mi := &file_proto_state_v1_state_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1794,7 +1546,7 @@ func (x *CancelScheduleRequest) String() string {
 func (*CancelScheduleRequest) ProtoMessage() {}
 
 func (x *CancelScheduleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[26]
+	mi := &file_proto_state_v1_state_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1807,7 +1559,7 @@ func (x *CancelScheduleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelScheduleRequest.ProtoReflect.Descriptor instead.
 func (*CancelScheduleRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{26}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *CancelScheduleRequest) GetScheduleName() string {
@@ -1840,7 +1592,7 @@ type CancelScheduleResponse struct {
 
 func (x *CancelScheduleResponse) Reset() {
 	*x = CancelScheduleResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[27]
+	mi := &file_proto_state_v1_state_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1852,7 +1604,7 @@ func (x *CancelScheduleResponse) String() string {
 func (*CancelScheduleResponse) ProtoMessage() {}
 
 func (x *CancelScheduleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[27]
+	mi := &file_proto_state_v1_state_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1865,7 +1617,7 @@ func (x *CancelScheduleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelScheduleResponse.ProtoReflect.Descriptor instead.
 func (*CancelScheduleResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{27}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *CancelScheduleResponse) GetScheduleId() string {
@@ -1884,7 +1636,7 @@ type ResetTaskRequest struct {
 
 func (x *ResetTaskRequest) Reset() {
 	*x = ResetTaskRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[28]
+	mi := &file_proto_state_v1_state_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1896,7 +1648,7 @@ func (x *ResetTaskRequest) String() string {
 func (*ResetTaskRequest) ProtoMessage() {}
 
 func (x *ResetTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[28]
+	mi := &file_proto_state_v1_state_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1909,7 +1661,7 @@ func (x *ResetTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetTaskRequest.ProtoReflect.Descriptor instead.
 func (*ResetTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{28}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ResetTaskRequest) GetTaskId() string {
@@ -1928,7 +1680,7 @@ type GetSchedulerInitStatusRequest struct {
 
 func (x *GetSchedulerInitStatusRequest) Reset() {
 	*x = GetSchedulerInitStatusRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[29]
+	mi := &file_proto_state_v1_state_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1940,7 +1692,7 @@ func (x *GetSchedulerInitStatusRequest) String() string {
 func (*GetSchedulerInitStatusRequest) ProtoMessage() {}
 
 func (x *GetSchedulerInitStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[29]
+	mi := &file_proto_state_v1_state_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1953,7 +1705,7 @@ func (x *GetSchedulerInitStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSchedulerInitStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetSchedulerInitStatusRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{29}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetSchedulerInitStatusRequest) GetScheduleId() string {
@@ -1972,7 +1724,7 @@ type GetSchedulerInitStatusResponse struct {
 
 func (x *GetSchedulerInitStatusResponse) Reset() {
 	*x = GetSchedulerInitStatusResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[30]
+	mi := &file_proto_state_v1_state_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1984,7 +1736,7 @@ func (x *GetSchedulerInitStatusResponse) String() string {
 func (*GetSchedulerInitStatusResponse) ProtoMessage() {}
 
 func (x *GetSchedulerInitStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[30]
+	mi := &file_proto_state_v1_state_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1997,7 +1749,7 @@ func (x *GetSchedulerInitStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSchedulerInitStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetSchedulerInitStatusResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{30}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetSchedulerInitStatusResponse) GetInitializationStatus() string {
@@ -2016,7 +1768,7 @@ type TriggerRerunRequest struct {
 
 func (x *TriggerRerunRequest) Reset() {
 	*x = TriggerRerunRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[31]
+	mi := &file_proto_state_v1_state_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2028,7 +1780,7 @@ func (x *TriggerRerunRequest) String() string {
 func (*TriggerRerunRequest) ProtoMessage() {}
 
 func (x *TriggerRerunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[31]
+	mi := &file_proto_state_v1_state_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2041,7 +1793,7 @@ func (x *TriggerRerunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerRerunRequest.ProtoReflect.Descriptor instead.
 func (*TriggerRerunRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{31}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *TriggerRerunRequest) GetSourceRunId() string {
@@ -2061,7 +1813,7 @@ type TriggerRerunResponse struct {
 
 func (x *TriggerRerunResponse) Reset() {
 	*x = TriggerRerunResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[32]
+	mi := &file_proto_state_v1_state_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2073,7 +1825,7 @@ func (x *TriggerRerunResponse) String() string {
 func (*TriggerRerunResponse) ProtoMessage() {}
 
 func (x *TriggerRerunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[32]
+	mi := &file_proto_state_v1_state_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2086,7 +1838,7 @@ func (x *TriggerRerunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerRerunResponse.ProtoReflect.Descriptor instead.
 func (*TriggerRerunResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{32}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *TriggerRerunResponse) GetRunId() string {
@@ -2116,7 +1868,7 @@ type TriggerSingleNodeRunRequest struct {
 
 func (x *TriggerSingleNodeRunRequest) Reset() {
 	*x = TriggerSingleNodeRunRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[33]
+	mi := &file_proto_state_v1_state_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2128,7 +1880,7 @@ func (x *TriggerSingleNodeRunRequest) String() string {
 func (*TriggerSingleNodeRunRequest) ProtoMessage() {}
 
 func (x *TriggerSingleNodeRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[33]
+	mi := &file_proto_state_v1_state_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2141,7 +1893,7 @@ func (x *TriggerSingleNodeRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerSingleNodeRunRequest.ProtoReflect.Descriptor instead.
 func (*TriggerSingleNodeRunRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{33}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *TriggerSingleNodeRunRequest) GetServiceName() string {
@@ -2189,7 +1941,7 @@ type TriggerSingleNodeRunResponse struct {
 
 func (x *TriggerSingleNodeRunResponse) Reset() {
 	*x = TriggerSingleNodeRunResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[34]
+	mi := &file_proto_state_v1_state_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2201,7 +1953,7 @@ func (x *TriggerSingleNodeRunResponse) String() string {
 func (*TriggerSingleNodeRunResponse) ProtoMessage() {}
 
 func (x *TriggerSingleNodeRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[34]
+	mi := &file_proto_state_v1_state_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2214,7 +1966,7 @@ func (x *TriggerSingleNodeRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerSingleNodeRunResponse.ProtoReflect.Descriptor instead.
 func (*TriggerSingleNodeRunResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{34}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *TriggerSingleNodeRunResponse) GetRunId() string {
@@ -2240,7 +1992,7 @@ type TriggerRebaseRequest struct {
 
 func (x *TriggerRebaseRequest) Reset() {
 	*x = TriggerRebaseRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[35]
+	mi := &file_proto_state_v1_state_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2252,7 +2004,7 @@ func (x *TriggerRebaseRequest) String() string {
 func (*TriggerRebaseRequest) ProtoMessage() {}
 
 func (x *TriggerRebaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[35]
+	mi := &file_proto_state_v1_state_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2265,7 +2017,7 @@ func (x *TriggerRebaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerRebaseRequest.ProtoReflect.Descriptor instead.
 func (*TriggerRebaseRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{35}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *TriggerRebaseRequest) GetSourceRunId() string {
@@ -2285,7 +2037,7 @@ type TriggerRebaseResponse struct {
 
 func (x *TriggerRebaseResponse) Reset() {
 	*x = TriggerRebaseResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[36]
+	mi := &file_proto_state_v1_state_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2297,7 +2049,7 @@ func (x *TriggerRebaseResponse) String() string {
 func (*TriggerRebaseResponse) ProtoMessage() {}
 
 func (x *TriggerRebaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[36]
+	mi := &file_proto_state_v1_state_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2310,7 +2062,7 @@ func (x *TriggerRebaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerRebaseResponse.ProtoReflect.Descriptor instead.
 func (*TriggerRebaseResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{36}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *TriggerRebaseResponse) GetRunId() string {
@@ -2339,7 +2091,7 @@ type ListNodeRunsRequest struct {
 
 func (x *ListNodeRunsRequest) Reset() {
 	*x = ListNodeRunsRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[37]
+	mi := &file_proto_state_v1_state_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2351,7 +2103,7 @@ func (x *ListNodeRunsRequest) String() string {
 func (*ListNodeRunsRequest) ProtoMessage() {}
 
 func (x *ListNodeRunsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[37]
+	mi := &file_proto_state_v1_state_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2364,7 +2116,7 @@ func (x *ListNodeRunsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodeRunsRequest.ProtoReflect.Descriptor instead.
 func (*ListNodeRunsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{37}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ListNodeRunsRequest) GetServiceName() string {
@@ -2404,7 +2156,7 @@ type ListNodeRunsResponse struct {
 
 func (x *ListNodeRunsResponse) Reset() {
 	*x = ListNodeRunsResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[38]
+	mi := &file_proto_state_v1_state_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2416,7 +2168,7 @@ func (x *ListNodeRunsResponse) String() string {
 func (*ListNodeRunsResponse) ProtoMessage() {}
 
 func (x *ListNodeRunsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[38]
+	mi := &file_proto_state_v1_state_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2429,7 +2181,7 @@ func (x *ListNodeRunsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodeRunsResponse.ProtoReflect.Descriptor instead.
 func (*ListNodeRunsResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{38}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ListNodeRunsResponse) GetRuns() []*NodeRun {
@@ -2461,7 +2213,7 @@ type NodeRun struct {
 
 func (x *NodeRun) Reset() {
 	*x = NodeRun{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[39]
+	mi := &file_proto_state_v1_state_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2473,7 +2225,7 @@ func (x *NodeRun) String() string {
 func (*NodeRun) ProtoMessage() {}
 
 func (x *NodeRun) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[39]
+	mi := &file_proto_state_v1_state_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2486,7 +2238,7 @@ func (x *NodeRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeRun.ProtoReflect.Descriptor instead.
 func (*NodeRun) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{39}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *NodeRun) GetRunId() string {
@@ -2599,7 +2351,7 @@ type ListNodesRequest struct {
 
 func (x *ListNodesRequest) Reset() {
 	*x = ListNodesRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[40]
+	mi := &file_proto_state_v1_state_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2611,7 +2363,7 @@ func (x *ListNodesRequest) String() string {
 func (*ListNodesRequest) ProtoMessage() {}
 
 func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[40]
+	mi := &file_proto_state_v1_state_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2624,7 +2376,7 @@ func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesRequest.ProtoReflect.Descriptor instead.
 func (*ListNodesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{40}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ListNodesRequest) GetSearch() string {
@@ -2665,7 +2417,7 @@ type ListNodesResponse struct {
 
 func (x *ListNodesResponse) Reset() {
 	*x = ListNodesResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[41]
+	mi := &file_proto_state_v1_state_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2677,7 +2429,7 @@ func (x *ListNodesResponse) String() string {
 func (*ListNodesResponse) ProtoMessage() {}
 
 func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[41]
+	mi := &file_proto_state_v1_state_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2690,7 +2442,7 @@ func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesResponse.ProtoReflect.Descriptor instead.
 func (*ListNodesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{41}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ListNodesResponse) GetNodes() []*NodeSummary {
@@ -2725,7 +2477,7 @@ type NodeSummary struct {
 
 func (x *NodeSummary) Reset() {
 	*x = NodeSummary{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[42]
+	mi := &file_proto_state_v1_state_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2737,7 +2489,7 @@ func (x *NodeSummary) String() string {
 func (*NodeSummary) ProtoMessage() {}
 
 func (x *NodeSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[42]
+	mi := &file_proto_state_v1_state_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2750,7 +2502,7 @@ func (x *NodeSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeSummary.ProtoReflect.Descriptor instead.
 func (*NodeSummary) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{42}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *NodeSummary) GetServiceName() string {
@@ -2832,7 +2584,7 @@ type ListNodeNamesRequest struct {
 
 func (x *ListNodeNamesRequest) Reset() {
 	*x = ListNodeNamesRequest{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[43]
+	mi := &file_proto_state_v1_state_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2844,7 +2596,7 @@ func (x *ListNodeNamesRequest) String() string {
 func (*ListNodeNamesRequest) ProtoMessage() {}
 
 func (x *ListNodeNamesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[43]
+	mi := &file_proto_state_v1_state_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2857,7 +2609,7 @@ func (x *ListNodeNamesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodeNamesRequest.ProtoReflect.Descriptor instead.
 func (*ListNodeNamesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{43}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ListNodeNamesRequest) GetServiceName() string {
@@ -2876,7 +2628,7 @@ type ListNodeNamesResponse struct {
 
 func (x *ListNodeNamesResponse) Reset() {
 	*x = ListNodeNamesResponse{}
-	mi := &file_proto_state_v1_state_proto_msgTypes[44]
+	mi := &file_proto_state_v1_state_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2888,7 +2640,7 @@ func (x *ListNodeNamesResponse) String() string {
 func (*ListNodeNamesResponse) ProtoMessage() {}
 
 func (x *ListNodeNamesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_state_v1_state_proto_msgTypes[44]
+	mi := &file_proto_state_v1_state_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2901,7 +2653,7 @@ func (x *ListNodeNamesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodeNamesResponse.ProtoReflect.Descriptor instead.
 func (*ListNodeNamesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{44}
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ListNodeNamesResponse) GetTableNames() []string {
@@ -2971,12 +2723,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\fcancelled_by\x18\v \x01(\tR\vcancelledBy\x12/\n" +
 	"\x13cancellation_reason\x18\f \x01(\tR\x12cancellationReason\x12\x1c\n" +
 	"\n" +
-	"log_s3_key\x18\r \x01(\tR\blogS3Key\"\x91\x01\n" +
-	"\x16CreateSchedulerRequest\x12\x1f\n" +
-	"\vschedule_id\x18\x01 \x01(\tR\n" +
-	"scheduleId\x12#\n" +
-	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\x121\n" +
-	"\x06status\x18\x03 \x01(\x0e2\x19.state.v1.SchedulerStatusR\x06status\"6\n" +
+	"log_s3_key\x18\r \x01(\tR\blogS3Key\"6\n" +
 	"\x13GetSchedulerRequest\x12\x1f\n" +
 	"\vschedule_id\x18\x01 \x01(\tR\n" +
 	"scheduleId\"\x8d\x01\n" +
@@ -2986,19 +2733,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\fcancelled_by\x18\x02 \x01(\tR\vcancelledBy\x12/\n" +
 	"\x13cancellation_reason\x18\x03 \x01(\tR\x12cancellationReason\"F\n" +
 	"\x11SchedulerResponse\x121\n" +
-	"\tscheduler\x18\x01 \x01(\v2\x13.state.v1.SchedulerR\tscheduler\"\xff\x01\n" +
-	"\x11CreateTaskRequest\x12\x17\n" +
-	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1f\n" +
-	"\vschedule_id\x18\x02 \x01(\tR\n" +
-	"scheduleId\x12!\n" +
-	"\fservice_name\x18\x03 \x01(\tR\vserviceName\x12\x1f\n" +
-	"\vschema_name\x18\x04 \x01(\tR\n" +
-	"schemaName\x12\x1d\n" +
-	"\n" +
-	"table_name\x18\x05 \x01(\tR\ttableName\x12\x1f\n" +
-	"\vmax_retries\x18\x06 \x01(\x05R\n" +
-	"maxRetries\x12,\n" +
-	"\x06status\x18\a \x01(\x0e2\x14.state.v1.TaskStatusR\x06status\")\n" +
+	"\tscheduler\x18\x01 \x01(\v2\x13.state.v1.SchedulerR\tscheduler\")\n" +
 	"\x0eGetTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\"\xa5\x01\n" +
 	"\x1fGetTaskByScheduleAndNodeRequest\x12\x1f\n" +
@@ -3008,12 +2743,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\vschema_name\x18\x03 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
-	"table_name\x18\x04 \x01(\tR\ttableName\",\n" +
-	"\x11DeleteTaskRequest\x12\x17\n" +
-	"\atask_id\x18\x01 \x01(\tR\x06taskId\"H\n" +
-	"\x12DeleteTaskResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x9f\x01\n" +
+	"table_name\x18\x04 \x01(\tR\ttableName\"\x9f\x01\n" +
 	"\x10ListTasksRequest\x12\x1f\n" +
 	"\vschedule_id\x18\x01 \x01(\tR\n" +
 	"scheduleId\x12,\n" +
@@ -3173,21 +2903,16 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x15TASK_STATUS_SUCCEEDED\x10\x03\x12\x16\n" +
 	"\x12TASK_STATUS_FAILED\x10\x04\x12\x19\n" +
 	"\x15TASK_STATUS_CANCELLED\x10\x05\x12\x17\n" +
-	"\x13TASK_STATUS_SKIPPED\x10\x062\xa5\x0e\n" +
-	"\fStateService\x12P\n" +
-	"\x0fCreateScheduler\x12 .state.v1.CreateSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12J\n" +
+	"\x13TASK_STATUS_SKIPPED\x10\x062\xc7\f\n" +
+	"\fStateService\x12J\n" +
 	"\fGetScheduler\x12\x1d.state.v1.GetSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12P\n" +
 	"\x0fCancelScheduler\x12 .state.v1.CancelSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12Y\n" +
 	"\x10ActivateSchedule\x12!.state.v1.ActivateScheduleRequest\x1a\".state.v1.ActivateScheduleResponse\x12Y\n" +
 	"\x10ListAllSchedules\x12!.state.v1.ListAllSchedulesRequest\x1a\".state.v1.ListAllSchedulesResponse\x12V\n" +
 	"\x0fTriggerSchedule\x12 .state.v1.TriggerScheduleRequest\x1a!.state.v1.TriggerScheduleResponse\x12S\n" +
-	"\x0eCancelSchedule\x12\x1f.state.v1.CancelScheduleRequest\x1a .state.v1.CancelScheduleResponse\x12A\n" +
-	"\n" +
-	"CreateTask\x12\x1b.state.v1.CreateTaskRequest\x1a\x16.state.v1.TaskResponse\x12;\n" +
+	"\x0eCancelSchedule\x12\x1f.state.v1.CancelScheduleRequest\x1a .state.v1.CancelScheduleResponse\x12;\n" +
 	"\aGetTask\x12\x18.state.v1.GetTaskRequest\x1a\x16.state.v1.TaskResponse\x12]\n" +
-	"\x18GetTaskByScheduleAndNode\x12).state.v1.GetTaskByScheduleAndNodeRequest\x1a\x16.state.v1.TaskResponse\x12G\n" +
-	"\n" +
-	"DeleteTask\x12\x1b.state.v1.DeleteTaskRequest\x1a\x1c.state.v1.DeleteTaskResponse\x12D\n" +
+	"\x18GetTaskByScheduleAndNode\x12).state.v1.GetTaskByScheduleAndNodeRequest\x1a\x16.state.v1.TaskResponse\x12D\n" +
 	"\tListTasks\x12\x1a.state.v1.ListTasksRequest\x1a\x1b.state.v1.ListTasksResponse\x12?\n" +
 	"\tResetTask\x12\x1a.state.v1.ResetTaskRequest\x1a\x16.state.v1.TaskResponse\x12k\n" +
 	"\x16GetSchedulerInitStatus\x12'.state.v1.GetSchedulerInitStatusRequest\x1a(.state.v1.GetSchedulerInitStatusResponse\x12M\n" +
@@ -3213,132 +2938,120 @@ func file_proto_state_v1_state_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_state_v1_state_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_state_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_proto_state_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
 var file_proto_state_v1_state_proto_goTypes = []any{
 	(SchedulerStatus)(0),                    // 0: state.v1.SchedulerStatus
 	(TaskStatus)(0),                         // 1: state.v1.TaskStatus
 	(*Scheduler)(nil),                       // 2: state.v1.Scheduler
 	(*Task)(nil),                            // 3: state.v1.Task
 	(*TaskExecution)(nil),                   // 4: state.v1.TaskExecution
-	(*CreateSchedulerRequest)(nil),          // 5: state.v1.CreateSchedulerRequest
-	(*GetSchedulerRequest)(nil),             // 6: state.v1.GetSchedulerRequest
-	(*CancelSchedulerRequest)(nil),          // 7: state.v1.CancelSchedulerRequest
-	(*SchedulerResponse)(nil),               // 8: state.v1.SchedulerResponse
-	(*CreateTaskRequest)(nil),               // 9: state.v1.CreateTaskRequest
-	(*GetTaskRequest)(nil),                  // 10: state.v1.GetTaskRequest
-	(*GetTaskByScheduleAndNodeRequest)(nil), // 11: state.v1.GetTaskByScheduleAndNodeRequest
-	(*DeleteTaskRequest)(nil),               // 12: state.v1.DeleteTaskRequest
-	(*DeleteTaskResponse)(nil),              // 13: state.v1.DeleteTaskResponse
-	(*ListTasksRequest)(nil),                // 14: state.v1.ListTasksRequest
-	(*ListTasksResponse)(nil),               // 15: state.v1.ListTasksResponse
-	(*TaskResponse)(nil),                    // 16: state.v1.TaskResponse
-	(*GetTaskExecutionRequest)(nil),         // 17: state.v1.GetTaskExecutionRequest
-	(*TaskExecutionResponse)(nil),           // 18: state.v1.TaskExecutionResponse
-	(*ListTaskExecutionsRequest)(nil),       // 19: state.v1.ListTaskExecutionsRequest
-	(*ListTaskExecutionsResponse)(nil),      // 20: state.v1.ListTaskExecutionsResponse
-	(*ActivateScheduleRequest)(nil),         // 21: state.v1.ActivateScheduleRequest
-	(*ActivateScheduleResponse)(nil),        // 22: state.v1.ActivateScheduleResponse
-	(*ListAllSchedulesRequest)(nil),         // 23: state.v1.ListAllSchedulesRequest
-	(*ScheduleSummary)(nil),                 // 24: state.v1.ScheduleSummary
-	(*ListAllSchedulesResponse)(nil),        // 25: state.v1.ListAllSchedulesResponse
-	(*TriggerScheduleRequest)(nil),          // 26: state.v1.TriggerScheduleRequest
-	(*TriggerScheduleResponse)(nil),         // 27: state.v1.TriggerScheduleResponse
-	(*CancelScheduleRequest)(nil),           // 28: state.v1.CancelScheduleRequest
-	(*CancelScheduleResponse)(nil),          // 29: state.v1.CancelScheduleResponse
-	(*ResetTaskRequest)(nil),                // 30: state.v1.ResetTaskRequest
-	(*GetSchedulerInitStatusRequest)(nil),   // 31: state.v1.GetSchedulerInitStatusRequest
-	(*GetSchedulerInitStatusResponse)(nil),  // 32: state.v1.GetSchedulerInitStatusResponse
-	(*TriggerRerunRequest)(nil),             // 33: state.v1.TriggerRerunRequest
-	(*TriggerRerunResponse)(nil),            // 34: state.v1.TriggerRerunResponse
-	(*TriggerSingleNodeRunRequest)(nil),     // 35: state.v1.TriggerSingleNodeRunRequest
-	(*TriggerSingleNodeRunResponse)(nil),    // 36: state.v1.TriggerSingleNodeRunResponse
-	(*TriggerRebaseRequest)(nil),            // 37: state.v1.TriggerRebaseRequest
-	(*TriggerRebaseResponse)(nil),           // 38: state.v1.TriggerRebaseResponse
-	(*ListNodeRunsRequest)(nil),             // 39: state.v1.ListNodeRunsRequest
-	(*ListNodeRunsResponse)(nil),            // 40: state.v1.ListNodeRunsResponse
-	(*NodeRun)(nil),                         // 41: state.v1.NodeRun
-	(*ListNodesRequest)(nil),                // 42: state.v1.ListNodesRequest
-	(*ListNodesResponse)(nil),               // 43: state.v1.ListNodesResponse
-	(*NodeSummary)(nil),                     // 44: state.v1.NodeSummary
-	(*ListNodeNamesRequest)(nil),            // 45: state.v1.ListNodeNamesRequest
-	(*ListNodeNamesResponse)(nil),           // 46: state.v1.ListNodeNamesResponse
-	(*timestamppb.Timestamp)(nil),           // 47: google.protobuf.Timestamp
+	(*GetSchedulerRequest)(nil),             // 5: state.v1.GetSchedulerRequest
+	(*CancelSchedulerRequest)(nil),          // 6: state.v1.CancelSchedulerRequest
+	(*SchedulerResponse)(nil),               // 7: state.v1.SchedulerResponse
+	(*GetTaskRequest)(nil),                  // 8: state.v1.GetTaskRequest
+	(*GetTaskByScheduleAndNodeRequest)(nil), // 9: state.v1.GetTaskByScheduleAndNodeRequest
+	(*ListTasksRequest)(nil),                // 10: state.v1.ListTasksRequest
+	(*ListTasksResponse)(nil),               // 11: state.v1.ListTasksResponse
+	(*TaskResponse)(nil),                    // 12: state.v1.TaskResponse
+	(*GetTaskExecutionRequest)(nil),         // 13: state.v1.GetTaskExecutionRequest
+	(*TaskExecutionResponse)(nil),           // 14: state.v1.TaskExecutionResponse
+	(*ListTaskExecutionsRequest)(nil),       // 15: state.v1.ListTaskExecutionsRequest
+	(*ListTaskExecutionsResponse)(nil),      // 16: state.v1.ListTaskExecutionsResponse
+	(*ActivateScheduleRequest)(nil),         // 17: state.v1.ActivateScheduleRequest
+	(*ActivateScheduleResponse)(nil),        // 18: state.v1.ActivateScheduleResponse
+	(*ListAllSchedulesRequest)(nil),         // 19: state.v1.ListAllSchedulesRequest
+	(*ScheduleSummary)(nil),                 // 20: state.v1.ScheduleSummary
+	(*ListAllSchedulesResponse)(nil),        // 21: state.v1.ListAllSchedulesResponse
+	(*TriggerScheduleRequest)(nil),          // 22: state.v1.TriggerScheduleRequest
+	(*TriggerScheduleResponse)(nil),         // 23: state.v1.TriggerScheduleResponse
+	(*CancelScheduleRequest)(nil),           // 24: state.v1.CancelScheduleRequest
+	(*CancelScheduleResponse)(nil),          // 25: state.v1.CancelScheduleResponse
+	(*ResetTaskRequest)(nil),                // 26: state.v1.ResetTaskRequest
+	(*GetSchedulerInitStatusRequest)(nil),   // 27: state.v1.GetSchedulerInitStatusRequest
+	(*GetSchedulerInitStatusResponse)(nil),  // 28: state.v1.GetSchedulerInitStatusResponse
+	(*TriggerRerunRequest)(nil),             // 29: state.v1.TriggerRerunRequest
+	(*TriggerRerunResponse)(nil),            // 30: state.v1.TriggerRerunResponse
+	(*TriggerSingleNodeRunRequest)(nil),     // 31: state.v1.TriggerSingleNodeRunRequest
+	(*TriggerSingleNodeRunResponse)(nil),    // 32: state.v1.TriggerSingleNodeRunResponse
+	(*TriggerRebaseRequest)(nil),            // 33: state.v1.TriggerRebaseRequest
+	(*TriggerRebaseResponse)(nil),           // 34: state.v1.TriggerRebaseResponse
+	(*ListNodeRunsRequest)(nil),             // 35: state.v1.ListNodeRunsRequest
+	(*ListNodeRunsResponse)(nil),            // 36: state.v1.ListNodeRunsResponse
+	(*NodeRun)(nil),                         // 37: state.v1.NodeRun
+	(*ListNodesRequest)(nil),                // 38: state.v1.ListNodesRequest
+	(*ListNodesResponse)(nil),               // 39: state.v1.ListNodesResponse
+	(*NodeSummary)(nil),                     // 40: state.v1.NodeSummary
+	(*ListNodeNamesRequest)(nil),            // 41: state.v1.ListNodeNamesRequest
+	(*ListNodeNamesResponse)(nil),           // 42: state.v1.ListNodeNamesResponse
+	(*timestamppb.Timestamp)(nil),           // 43: google.protobuf.Timestamp
 }
 var file_proto_state_v1_state_proto_depIdxs = []int32{
 	0,  // 0: state.v1.Scheduler.status:type_name -> state.v1.SchedulerStatus
-	47, // 1: state.v1.Scheduler.created_at:type_name -> google.protobuf.Timestamp
-	47, // 2: state.v1.Scheduler.started_at:type_name -> google.protobuf.Timestamp
-	47, // 3: state.v1.Scheduler.completed_at:type_name -> google.protobuf.Timestamp
-	47, // 4: state.v1.Scheduler.last_heartbeat_at:type_name -> google.protobuf.Timestamp
-	47, // 5: state.v1.Scheduler.cancelled_at:type_name -> google.protobuf.Timestamp
-	47, // 6: state.v1.Task.created_at:type_name -> google.protobuf.Timestamp
+	43, // 1: state.v1.Scheduler.created_at:type_name -> google.protobuf.Timestamp
+	43, // 2: state.v1.Scheduler.started_at:type_name -> google.protobuf.Timestamp
+	43, // 3: state.v1.Scheduler.completed_at:type_name -> google.protobuf.Timestamp
+	43, // 4: state.v1.Scheduler.last_heartbeat_at:type_name -> google.protobuf.Timestamp
+	43, // 5: state.v1.Scheduler.cancelled_at:type_name -> google.protobuf.Timestamp
+	43, // 6: state.v1.Task.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 7: state.v1.Task.status:type_name -> state.v1.TaskStatus
-	47, // 8: state.v1.Task.cancelled_at:type_name -> google.protobuf.Timestamp
-	47, // 9: state.v1.TaskExecution.created_at:type_name -> google.protobuf.Timestamp
-	47, // 10: state.v1.TaskExecution.started_at:type_name -> google.protobuf.Timestamp
-	47, // 11: state.v1.TaskExecution.completed_at:type_name -> google.protobuf.Timestamp
-	47, // 12: state.v1.TaskExecution.cancelled_at:type_name -> google.protobuf.Timestamp
-	0,  // 13: state.v1.CreateSchedulerRequest.status:type_name -> state.v1.SchedulerStatus
-	2,  // 14: state.v1.SchedulerResponse.scheduler:type_name -> state.v1.Scheduler
-	1,  // 15: state.v1.CreateTaskRequest.status:type_name -> state.v1.TaskStatus
-	1,  // 16: state.v1.ListTasksRequest.status:type_name -> state.v1.TaskStatus
-	3,  // 17: state.v1.ListTasksResponse.tasks:type_name -> state.v1.Task
-	3,  // 18: state.v1.TaskResponse.task:type_name -> state.v1.Task
-	4,  // 19: state.v1.TaskExecutionResponse.task_execution:type_name -> state.v1.TaskExecution
-	4,  // 20: state.v1.ListTaskExecutionsResponse.task_executions:type_name -> state.v1.TaskExecution
-	47, // 21: state.v1.ScheduleSummary.last_run_at:type_name -> google.protobuf.Timestamp
-	24, // 22: state.v1.ListAllSchedulesResponse.schedules:type_name -> state.v1.ScheduleSummary
-	41, // 23: state.v1.ListNodeRunsResponse.runs:type_name -> state.v1.NodeRun
-	44, // 24: state.v1.ListNodesResponse.nodes:type_name -> state.v1.NodeSummary
-	5,  // 25: state.v1.StateService.CreateScheduler:input_type -> state.v1.CreateSchedulerRequest
-	6,  // 26: state.v1.StateService.GetScheduler:input_type -> state.v1.GetSchedulerRequest
-	7,  // 27: state.v1.StateService.CancelScheduler:input_type -> state.v1.CancelSchedulerRequest
-	21, // 28: state.v1.StateService.ActivateSchedule:input_type -> state.v1.ActivateScheduleRequest
-	23, // 29: state.v1.StateService.ListAllSchedules:input_type -> state.v1.ListAllSchedulesRequest
-	26, // 30: state.v1.StateService.TriggerSchedule:input_type -> state.v1.TriggerScheduleRequest
-	28, // 31: state.v1.StateService.CancelSchedule:input_type -> state.v1.CancelScheduleRequest
-	9,  // 32: state.v1.StateService.CreateTask:input_type -> state.v1.CreateTaskRequest
-	10, // 33: state.v1.StateService.GetTask:input_type -> state.v1.GetTaskRequest
-	11, // 34: state.v1.StateService.GetTaskByScheduleAndNode:input_type -> state.v1.GetTaskByScheduleAndNodeRequest
-	12, // 35: state.v1.StateService.DeleteTask:input_type -> state.v1.DeleteTaskRequest
-	14, // 36: state.v1.StateService.ListTasks:input_type -> state.v1.ListTasksRequest
-	30, // 37: state.v1.StateService.ResetTask:input_type -> state.v1.ResetTaskRequest
-	31, // 38: state.v1.StateService.GetSchedulerInitStatus:input_type -> state.v1.GetSchedulerInitStatusRequest
-	33, // 39: state.v1.StateService.TriggerRerun:input_type -> state.v1.TriggerRerunRequest
-	35, // 40: state.v1.StateService.TriggerSingleNodeRun:input_type -> state.v1.TriggerSingleNodeRunRequest
-	37, // 41: state.v1.StateService.TriggerRebase:input_type -> state.v1.TriggerRebaseRequest
-	39, // 42: state.v1.StateService.ListNodeRuns:input_type -> state.v1.ListNodeRunsRequest
-	42, // 43: state.v1.StateService.ListNodes:input_type -> state.v1.ListNodesRequest
-	45, // 44: state.v1.StateService.ListNodeNames:input_type -> state.v1.ListNodeNamesRequest
-	17, // 45: state.v1.StateService.GetTaskExecution:input_type -> state.v1.GetTaskExecutionRequest
-	19, // 46: state.v1.StateService.ListTaskExecutions:input_type -> state.v1.ListTaskExecutionsRequest
-	8,  // 47: state.v1.StateService.CreateScheduler:output_type -> state.v1.SchedulerResponse
-	8,  // 48: state.v1.StateService.GetScheduler:output_type -> state.v1.SchedulerResponse
-	8,  // 49: state.v1.StateService.CancelScheduler:output_type -> state.v1.SchedulerResponse
-	22, // 50: state.v1.StateService.ActivateSchedule:output_type -> state.v1.ActivateScheduleResponse
-	25, // 51: state.v1.StateService.ListAllSchedules:output_type -> state.v1.ListAllSchedulesResponse
-	27, // 52: state.v1.StateService.TriggerSchedule:output_type -> state.v1.TriggerScheduleResponse
-	29, // 53: state.v1.StateService.CancelSchedule:output_type -> state.v1.CancelScheduleResponse
-	16, // 54: state.v1.StateService.CreateTask:output_type -> state.v1.TaskResponse
-	16, // 55: state.v1.StateService.GetTask:output_type -> state.v1.TaskResponse
-	16, // 56: state.v1.StateService.GetTaskByScheduleAndNode:output_type -> state.v1.TaskResponse
-	13, // 57: state.v1.StateService.DeleteTask:output_type -> state.v1.DeleteTaskResponse
-	15, // 58: state.v1.StateService.ListTasks:output_type -> state.v1.ListTasksResponse
-	16, // 59: state.v1.StateService.ResetTask:output_type -> state.v1.TaskResponse
-	32, // 60: state.v1.StateService.GetSchedulerInitStatus:output_type -> state.v1.GetSchedulerInitStatusResponse
-	34, // 61: state.v1.StateService.TriggerRerun:output_type -> state.v1.TriggerRerunResponse
-	36, // 62: state.v1.StateService.TriggerSingleNodeRun:output_type -> state.v1.TriggerSingleNodeRunResponse
-	38, // 63: state.v1.StateService.TriggerRebase:output_type -> state.v1.TriggerRebaseResponse
-	40, // 64: state.v1.StateService.ListNodeRuns:output_type -> state.v1.ListNodeRunsResponse
-	43, // 65: state.v1.StateService.ListNodes:output_type -> state.v1.ListNodesResponse
-	46, // 66: state.v1.StateService.ListNodeNames:output_type -> state.v1.ListNodeNamesResponse
-	18, // 67: state.v1.StateService.GetTaskExecution:output_type -> state.v1.TaskExecutionResponse
-	20, // 68: state.v1.StateService.ListTaskExecutions:output_type -> state.v1.ListTaskExecutionsResponse
-	47, // [47:69] is the sub-list for method output_type
-	25, // [25:47] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	43, // 8: state.v1.Task.cancelled_at:type_name -> google.protobuf.Timestamp
+	43, // 9: state.v1.TaskExecution.created_at:type_name -> google.protobuf.Timestamp
+	43, // 10: state.v1.TaskExecution.started_at:type_name -> google.protobuf.Timestamp
+	43, // 11: state.v1.TaskExecution.completed_at:type_name -> google.protobuf.Timestamp
+	43, // 12: state.v1.TaskExecution.cancelled_at:type_name -> google.protobuf.Timestamp
+	2,  // 13: state.v1.SchedulerResponse.scheduler:type_name -> state.v1.Scheduler
+	1,  // 14: state.v1.ListTasksRequest.status:type_name -> state.v1.TaskStatus
+	3,  // 15: state.v1.ListTasksResponse.tasks:type_name -> state.v1.Task
+	3,  // 16: state.v1.TaskResponse.task:type_name -> state.v1.Task
+	4,  // 17: state.v1.TaskExecutionResponse.task_execution:type_name -> state.v1.TaskExecution
+	4,  // 18: state.v1.ListTaskExecutionsResponse.task_executions:type_name -> state.v1.TaskExecution
+	43, // 19: state.v1.ScheduleSummary.last_run_at:type_name -> google.protobuf.Timestamp
+	20, // 20: state.v1.ListAllSchedulesResponse.schedules:type_name -> state.v1.ScheduleSummary
+	37, // 21: state.v1.ListNodeRunsResponse.runs:type_name -> state.v1.NodeRun
+	40, // 22: state.v1.ListNodesResponse.nodes:type_name -> state.v1.NodeSummary
+	5,  // 23: state.v1.StateService.GetScheduler:input_type -> state.v1.GetSchedulerRequest
+	6,  // 24: state.v1.StateService.CancelScheduler:input_type -> state.v1.CancelSchedulerRequest
+	17, // 25: state.v1.StateService.ActivateSchedule:input_type -> state.v1.ActivateScheduleRequest
+	19, // 26: state.v1.StateService.ListAllSchedules:input_type -> state.v1.ListAllSchedulesRequest
+	22, // 27: state.v1.StateService.TriggerSchedule:input_type -> state.v1.TriggerScheduleRequest
+	24, // 28: state.v1.StateService.CancelSchedule:input_type -> state.v1.CancelScheduleRequest
+	8,  // 29: state.v1.StateService.GetTask:input_type -> state.v1.GetTaskRequest
+	9,  // 30: state.v1.StateService.GetTaskByScheduleAndNode:input_type -> state.v1.GetTaskByScheduleAndNodeRequest
+	10, // 31: state.v1.StateService.ListTasks:input_type -> state.v1.ListTasksRequest
+	26, // 32: state.v1.StateService.ResetTask:input_type -> state.v1.ResetTaskRequest
+	27, // 33: state.v1.StateService.GetSchedulerInitStatus:input_type -> state.v1.GetSchedulerInitStatusRequest
+	29, // 34: state.v1.StateService.TriggerRerun:input_type -> state.v1.TriggerRerunRequest
+	31, // 35: state.v1.StateService.TriggerSingleNodeRun:input_type -> state.v1.TriggerSingleNodeRunRequest
+	33, // 36: state.v1.StateService.TriggerRebase:input_type -> state.v1.TriggerRebaseRequest
+	35, // 37: state.v1.StateService.ListNodeRuns:input_type -> state.v1.ListNodeRunsRequest
+	38, // 38: state.v1.StateService.ListNodes:input_type -> state.v1.ListNodesRequest
+	41, // 39: state.v1.StateService.ListNodeNames:input_type -> state.v1.ListNodeNamesRequest
+	13, // 40: state.v1.StateService.GetTaskExecution:input_type -> state.v1.GetTaskExecutionRequest
+	15, // 41: state.v1.StateService.ListTaskExecutions:input_type -> state.v1.ListTaskExecutionsRequest
+	7,  // 42: state.v1.StateService.GetScheduler:output_type -> state.v1.SchedulerResponse
+	7,  // 43: state.v1.StateService.CancelScheduler:output_type -> state.v1.SchedulerResponse
+	18, // 44: state.v1.StateService.ActivateSchedule:output_type -> state.v1.ActivateScheduleResponse
+	21, // 45: state.v1.StateService.ListAllSchedules:output_type -> state.v1.ListAllSchedulesResponse
+	23, // 46: state.v1.StateService.TriggerSchedule:output_type -> state.v1.TriggerScheduleResponse
+	25, // 47: state.v1.StateService.CancelSchedule:output_type -> state.v1.CancelScheduleResponse
+	12, // 48: state.v1.StateService.GetTask:output_type -> state.v1.TaskResponse
+	12, // 49: state.v1.StateService.GetTaskByScheduleAndNode:output_type -> state.v1.TaskResponse
+	11, // 50: state.v1.StateService.ListTasks:output_type -> state.v1.ListTasksResponse
+	12, // 51: state.v1.StateService.ResetTask:output_type -> state.v1.TaskResponse
+	28, // 52: state.v1.StateService.GetSchedulerInitStatus:output_type -> state.v1.GetSchedulerInitStatusResponse
+	30, // 53: state.v1.StateService.TriggerRerun:output_type -> state.v1.TriggerRerunResponse
+	32, // 54: state.v1.StateService.TriggerSingleNodeRun:output_type -> state.v1.TriggerSingleNodeRunResponse
+	34, // 55: state.v1.StateService.TriggerRebase:output_type -> state.v1.TriggerRebaseResponse
+	36, // 56: state.v1.StateService.ListNodeRuns:output_type -> state.v1.ListNodeRunsResponse
+	39, // 57: state.v1.StateService.ListNodes:output_type -> state.v1.ListNodesResponse
+	42, // 58: state.v1.StateService.ListNodeNames:output_type -> state.v1.ListNodeNamesResponse
+	14, // 59: state.v1.StateService.GetTaskExecution:output_type -> state.v1.TaskExecutionResponse
+	16, // 60: state.v1.StateService.ListTaskExecutions:output_type -> state.v1.ListTaskExecutionsResponse
+	42, // [42:61] is the sub-list for method output_type
+	23, // [23:42] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_proto_state_v1_state_proto_init() }
@@ -3352,7 +3065,7 @@ func file_proto_state_v1_state_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_state_v1_state_proto_rawDesc), len(file_proto_state_v1_state_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   45,
+			NumMessages:   41,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

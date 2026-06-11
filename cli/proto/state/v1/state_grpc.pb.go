@@ -19,17 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	StateService_CreateScheduler_FullMethodName          = "/state.v1.StateService/CreateScheduler"
 	StateService_GetScheduler_FullMethodName             = "/state.v1.StateService/GetScheduler"
 	StateService_CancelScheduler_FullMethodName          = "/state.v1.StateService/CancelScheduler"
 	StateService_ActivateSchedule_FullMethodName         = "/state.v1.StateService/ActivateSchedule"
 	StateService_ListAllSchedules_FullMethodName         = "/state.v1.StateService/ListAllSchedules"
 	StateService_TriggerSchedule_FullMethodName          = "/state.v1.StateService/TriggerSchedule"
 	StateService_CancelSchedule_FullMethodName           = "/state.v1.StateService/CancelSchedule"
-	StateService_CreateTask_FullMethodName               = "/state.v1.StateService/CreateTask"
 	StateService_GetTask_FullMethodName                  = "/state.v1.StateService/GetTask"
 	StateService_GetTaskByScheduleAndNode_FullMethodName = "/state.v1.StateService/GetTaskByScheduleAndNode"
-	StateService_DeleteTask_FullMethodName               = "/state.v1.StateService/DeleteTask"
 	StateService_ListTasks_FullMethodName                = "/state.v1.StateService/ListTasks"
 	StateService_ResetTask_FullMethodName                = "/state.v1.StateService/ResetTask"
 	StateService_GetSchedulerInitStatus_FullMethodName   = "/state.v1.StateService/GetSchedulerInitStatus"
@@ -50,7 +47,6 @@ const (
 // StateService provides state tracking for schedulers and tasks
 type StateServiceClient interface {
 	// Scheduler operations
-	CreateScheduler(ctx context.Context, in *CreateSchedulerRequest, opts ...grpc.CallOption) (*SchedulerResponse, error)
 	GetScheduler(ctx context.Context, in *GetSchedulerRequest, opts ...grpc.CallOption) (*SchedulerResponse, error)
 	CancelScheduler(ctx context.Context, in *CancelSchedulerRequest, opts ...grpc.CallOption) (*SchedulerResponse, error)
 	// Trigger operations
@@ -62,10 +58,8 @@ type StateServiceClient interface {
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(ctx context.Context, in *CancelScheduleRequest, opts ...grpc.CallOption) (*CancelScheduleResponse, error)
 	// Task operations
-	CreateTask(ctx context.Context, in *CreateTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	GetTaskByScheduleAndNode(ctx context.Context, in *GetTaskByScheduleAndNodeRequest, opts ...grpc.CallOption) (*TaskResponse, error)
-	DeleteTask(ctx context.Context, in *DeleteTaskRequest, opts ...grpc.CallOption) (*DeleteTaskResponse, error)
 	ListTasks(ctx context.Context, in *ListTasksRequest, opts ...grpc.CallOption) (*ListTasksResponse, error)
 	// ResetTask unconditionally resets a task to PENDING with retry_count=0.
 	ResetTask(ctx context.Context, in *ResetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
@@ -131,16 +125,6 @@ func NewStateServiceClient(cc grpc.ClientConnInterface) StateServiceClient {
 	return &stateServiceClient{cc}
 }
 
-func (c *stateServiceClient) CreateScheduler(ctx context.Context, in *CreateSchedulerRequest, opts ...grpc.CallOption) (*SchedulerResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SchedulerResponse)
-	err := c.cc.Invoke(ctx, StateService_CreateScheduler_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *stateServiceClient) GetScheduler(ctx context.Context, in *GetSchedulerRequest, opts ...grpc.CallOption) (*SchedulerResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SchedulerResponse)
@@ -201,16 +185,6 @@ func (c *stateServiceClient) CancelSchedule(ctx context.Context, in *CancelSched
 	return out, nil
 }
 
-func (c *stateServiceClient) CreateTask(ctx context.Context, in *CreateTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TaskResponse)
-	err := c.cc.Invoke(ctx, StateService_CreateTask_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *stateServiceClient) GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TaskResponse)
@@ -225,16 +199,6 @@ func (c *stateServiceClient) GetTaskByScheduleAndNode(ctx context.Context, in *G
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TaskResponse)
 	err := c.cc.Invoke(ctx, StateService_GetTaskByScheduleAndNode_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *stateServiceClient) DeleteTask(ctx context.Context, in *DeleteTaskRequest, opts ...grpc.CallOption) (*DeleteTaskResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DeleteTaskResponse)
-	err := c.cc.Invoke(ctx, StateService_DeleteTask_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +322,6 @@ func (c *stateServiceClient) ListTaskExecutions(ctx context.Context, in *ListTas
 // StateService provides state tracking for schedulers and tasks
 type StateServiceServer interface {
 	// Scheduler operations
-	CreateScheduler(context.Context, *CreateSchedulerRequest) (*SchedulerResponse, error)
 	GetScheduler(context.Context, *GetSchedulerRequest) (*SchedulerResponse, error)
 	CancelScheduler(context.Context, *CancelSchedulerRequest) (*SchedulerResponse, error)
 	// Trigger operations
@@ -370,10 +333,8 @@ type StateServiceServer interface {
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(context.Context, *CancelScheduleRequest) (*CancelScheduleResponse, error)
 	// Task operations
-	CreateTask(context.Context, *CreateTaskRequest) (*TaskResponse, error)
 	GetTask(context.Context, *GetTaskRequest) (*TaskResponse, error)
 	GetTaskByScheduleAndNode(context.Context, *GetTaskByScheduleAndNodeRequest) (*TaskResponse, error)
-	DeleteTask(context.Context, *DeleteTaskRequest) (*DeleteTaskResponse, error)
 	ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error)
 	// ResetTask unconditionally resets a task to PENDING with retry_count=0.
 	ResetTask(context.Context, *ResetTaskRequest) (*TaskResponse, error)
@@ -439,9 +400,6 @@ type StateServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedStateServiceServer struct{}
 
-func (UnimplementedStateServiceServer) CreateScheduler(context.Context, *CreateSchedulerRequest) (*SchedulerResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method CreateScheduler not implemented")
-}
 func (UnimplementedStateServiceServer) GetScheduler(context.Context, *GetSchedulerRequest) (*SchedulerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetScheduler not implemented")
 }
@@ -460,17 +418,11 @@ func (UnimplementedStateServiceServer) TriggerSchedule(context.Context, *Trigger
 func (UnimplementedStateServiceServer) CancelSchedule(context.Context, *CancelScheduleRequest) (*CancelScheduleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelSchedule not implemented")
 }
-func (UnimplementedStateServiceServer) CreateTask(context.Context, *CreateTaskRequest) (*TaskResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method CreateTask not implemented")
-}
 func (UnimplementedStateServiceServer) GetTask(context.Context, *GetTaskRequest) (*TaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTask not implemented")
 }
 func (UnimplementedStateServiceServer) GetTaskByScheduleAndNode(context.Context, *GetTaskByScheduleAndNodeRequest) (*TaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTaskByScheduleAndNode not implemented")
-}
-func (UnimplementedStateServiceServer) DeleteTask(context.Context, *DeleteTaskRequest) (*DeleteTaskResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method DeleteTask not implemented")
 }
 func (UnimplementedStateServiceServer) ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListTasks not implemented")
@@ -524,24 +476,6 @@ func RegisterStateServiceServer(s grpc.ServiceRegistrar, srv StateServiceServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&StateService_ServiceDesc, srv)
-}
-
-func _StateService_CreateScheduler_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateSchedulerRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StateServiceServer).CreateScheduler(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StateService_CreateScheduler_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StateServiceServer).CreateScheduler(ctx, req.(*CreateSchedulerRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _StateService_GetScheduler_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -652,24 +586,6 @@ func _StateService_CancelSchedule_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _StateService_CreateTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateTaskRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StateServiceServer).CreateTask(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StateService_CreateTask_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StateServiceServer).CreateTask(ctx, req.(*CreateTaskRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _StateService_GetTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTaskRequest)
 	if err := dec(in); err != nil {
@@ -702,24 +618,6 @@ func _StateService_GetTaskByScheduleAndNode_Handler(srv interface{}, ctx context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(StateServiceServer).GetTaskByScheduleAndNode(ctx, req.(*GetTaskByScheduleAndNodeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _StateService_DeleteTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteTaskRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StateServiceServer).DeleteTask(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StateService_DeleteTask_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StateServiceServer).DeleteTask(ctx, req.(*DeleteTaskRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -930,10 +828,6 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*StateServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "CreateScheduler",
-			Handler:    _StateService_CreateScheduler_Handler,
-		},
-		{
 			MethodName: "GetScheduler",
 			Handler:    _StateService_GetScheduler_Handler,
 		},
@@ -958,20 +852,12 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _StateService_CancelSchedule_Handler,
 		},
 		{
-			MethodName: "CreateTask",
-			Handler:    _StateService_CreateTask_Handler,
-		},
-		{
 			MethodName: "GetTask",
 			Handler:    _StateService_GetTask_Handler,
 		},
 		{
 			MethodName: "GetTaskByScheduleAndNode",
 			Handler:    _StateService_GetTaskByScheduleAndNode_Handler,
-		},
-		{
-			MethodName: "DeleteTask",
-			Handler:    _StateService_DeleteTask_Handler,
 		},
 		{
 			MethodName: "ListTasks",

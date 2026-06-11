@@ -37,7 +37,7 @@ func NewHandleSingleNodeRunHandler(u uow.UnitOfWork, snapshotSvc SnapshotService
 // It runs the dedup→snapshot→outbox flow:
 //  1. Marshal cmd for dedup record.
 //  2. Begin transaction; defer Rollback.
-//  3. Dedup on messageID with stream "trigger.single_node_run:v1".
+//  3. Dedup on messageID with the streams.TriggerSingleNodeRunV1 stream.
 //  4. Parse cmd.SourceRunID → *uuid.UUID (nil if empty).
 //  5. Call snapshotSvc.Snapshot with a SingleNode selector.
 //     - ErrTargetNotFound or ErrEmptyProjection: emit run.entries.dispatch_failed:v1,
@@ -230,6 +230,6 @@ func (h *HandleSingleNodeRunHandler) dedup(
 ) (uuid.UUID, bool, error) {
 	return messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, "trigger.single_node_run:v1", payload, outboxEntryID,
+		messageID, streams.TriggerSingleNodeRunV1, payload, outboxEntryID,
 	)
 }

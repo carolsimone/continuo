@@ -32,6 +32,7 @@ var (
 	stateClient statev1.StateServiceClient
 	stateConn   *grpc.ClientConn
 	stateServer *grpcserver.Server
+	stateDB     *sqlx.DB
 )
 
 // TestMain sets up a real PostgreSQL testcontainer and a live gRPC state server,
@@ -107,6 +108,7 @@ func TestMain(m *testing.M) {
 		logger.Error("Failed to apply migrations", "error", err)
 		os.Exit(1)
 	}
+	stateDB = db
 
 	// ---- Build repositories ----
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
@@ -170,14 +172,18 @@ func TestStateService(t *testing.T) {
 	t.Run("CancelSchedule/success", func(t *testing.T) {
 		ctx := context.Background()
 
-		// Create a RUNNING scheduler (explicit status bypasses PENDING default)
-		schedID := uuid.NewString()
-		_, err := stateClient.CreateScheduler(ctx, &statev1.CreateSchedulerRequest{
-			ScheduleId:   schedID,
+		// Activate a run through the aggregate path: seed the catalog, then
+		// manually trigger the schedule. TriggerSchedule mints a PENDING Run via
+		// the Run aggregate (kind='trigger'), which CancelSchedule then cancels.
+		seedActiveSchedule(t, "daily-cancel-success")
+		trigResp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
 			ScheduleName: "daily-cancel-success",
-			Status:       statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING,
 		})
 		require.NoError(t, err)
+		schedID := trigResp.ScheduleId
+
+		// A manual trigger must persist kind='trigger', not 'cron'.
+		assert.Equal(t, "trigger", schedulerKind(t, schedID))
 
 		// Cancel it by name
 		resp, err := stateClient.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
@@ -209,5 +215,42 @@ func TestStateService(t *testing.T) {
 		st, _ := status.FromError(err)
 		assert.Equal(t, codes.FailedPrecondition, st.Code())
 	})
+
+	t.Run("TriggerSchedule/persists_kind_trigger", func(t *testing.T) {
+		ctx := context.Background()
+
+		seedActiveSchedule(t, "daily-trigger-kind")
+		resp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+			ScheduleName: "daily-trigger-kind",
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, resp.ScheduleId)
+
+		// A manual trigger is a distinct run kind from a cron activation.
+		assert.Equal(t, "trigger", schedulerKind(t, resp.ScheduleId))
+	})
+}
+
+// seedActiveSchedule inserts an active schedule_catalog row so that
+// ActivateSchedule / TriggerSchedule pass their catalog-existence pre-condition.
+func seedActiveSchedule(t *testing.T, scheduleName string) {
+	t.Helper()
+	_, err := stateDB.ExecContext(context.Background(), `
+		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
+		VALUES ($1, now(), now(), NULL, '{}'::jsonb)
+		ON CONFLICT (schedule_name) DO UPDATE SET removed_at = NULL, last_seen_at = now()
+	`, scheduleName)
+	require.NoError(t, err)
+}
+
+// schedulerKind reads the persisted kind discriminator for a run directly from
+// scheduler_tracker, bypassing the proto surface (which does not expose kind).
+func schedulerKind(t *testing.T, scheduleID string) string {
+	t.Helper()
+	var kind string
+	err := stateDB.GetContext(context.Background(), &kind,
+		`SELECT kind FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+	require.NoError(t, err)
+	return kind
 }
 

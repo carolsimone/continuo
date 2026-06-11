@@ -9,7 +9,6 @@ import "google/protobuf/timestamp.proto";
 // StateService provides state tracking for schedulers and tasks
 service StateService {
   // Scheduler operations
-  rpc CreateScheduler(CreateSchedulerRequest) returns (SchedulerResponse);
   rpc GetScheduler(GetSchedulerRequest) returns (SchedulerResponse);
   rpc CancelScheduler(CancelSchedulerRequest) returns (SchedulerResponse);
 
@@ -32,10 +31,8 @@ service StateService {
   rpc ListStuckCandidates(ListStuckCandidatesRequest) returns (ListStuckCandidatesResponse);
 
   // Task operations
-  rpc CreateTask(CreateTaskRequest) returns (TaskResponse);
   rpc GetTask(GetTaskRequest) returns (TaskResponse);
   rpc GetTaskByScheduleAndNode(GetTaskByScheduleAndNodeRequest) returns (TaskResponse);
-  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
 
   // GetSchedulerInitStatus returns initialization_status for a scheduler.
@@ -173,12 +170,6 @@ message TaskExecution {
 // SCHEDULER REQUESTS/RESPONSES
 // ============================================================================
 
-message CreateSchedulerRequest {
-  string schedule_id = 1;              // Optional: client can provide UUID
-  string schedule_name = 2;            // Required
-  SchedulerStatus status = 3;          // Optional: defaults to PENDING
-}
-
 message GetSchedulerRequest {
   string schedule_id = 1;              // Required
 }
@@ -197,16 +188,6 @@ message SchedulerResponse {
 // TASK REQUESTS/RESPONSES
 // ============================================================================
 
-message CreateTaskRequest {
-  string task_id = 1;                  // Required: application-generated UUID
-  string schedule_id = 2;              // Required
-  string service_name = 3;             // Required
-  string schema_name = 4;              // Required
-  string table_name = 5;               // Required
-  int32 max_retries = 6;               // Required
-  TaskStatus status = 7;               // Optional: defaults to PENDING
-}
-
 message GetTaskRequest {
   string task_id = 1;                  // Required
 }
@@ -216,15 +197,6 @@ message GetTaskByScheduleAndNodeRequest {
   string service_name = 2;             // Required
   string schema_name = 3;              // Required
   string table_name = 4;               // Required
-}
-
-message DeleteTaskRequest {
-  string task_id = 1;                  // Required
-}
-
-message DeleteTaskResponse {
-  bool success = 1;
-  string message = 2;
 }
 
 message ListTasksRequest {

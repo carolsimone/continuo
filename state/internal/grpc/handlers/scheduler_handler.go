@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -45,51 +44,6 @@ func NewSchedulerHandler(
 		uowFactory:      uowFactory,
 		logger:          logger,
 	}
-}
-
-// CreateScheduler creates a new scheduler.
-func (h *SchedulerHandler) CreateScheduler(ctx context.Context, req *statev1.CreateSchedulerRequest) (*statev1.SchedulerResponse, error) {
-	h.logger.Info("Creating scheduler", "schedule_name", req.ScheduleName)
-
-	var scheduleID uuid.UUID
-	var err error
-	if req.ScheduleId != "" {
-		scheduleID, err = uuid.Parse(req.ScheduleId)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id: %v", err)
-		}
-	} else {
-		scheduleID = uuid.New()
-	}
-
-	if req.ScheduleName == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
-	}
-
-	domainStatus := protoToDomainSchedulerStatus(req.Status)
-	if req.Status == statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED {
-		domainStatus = run.SchedulerStatusPending
-	}
-
-	tracker := &postgres.SchedulerTracker{
-		ScheduleID:           scheduleID,
-		ScheduleName:         req.ScheduleName,
-		Status:               domainStatus,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
-	}
-
-	if err := h.repo.Create(ctx, tracker); err != nil {
-		if err == postgres.ErrDuplicateKey {
-			return nil, status.Errorf(codes.AlreadyExists, "scheduler with id %s already exists", scheduleID)
-		}
-		h.logger.Error("Failed to create scheduler", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to create scheduler")
-	}
-
-	return &statev1.SchedulerResponse{
-		Scheduler: domainToProtoScheduler(tracker),
-	}, nil
 }
 
 // GetScheduler retrieves a scheduler by ID.
@@ -235,24 +189,6 @@ func (h *SchedulerHandler) CancelSchedule(
 // CONVERSION HELPERS
 // ============================================================================
 
-// protoToDomainSchedulerStatus converts proto status to domain model status.
-func protoToDomainSchedulerStatus(s statev1.SchedulerStatus) run.SchedulerStatus {
-	switch s {
-	case statev1.SchedulerStatus_SCHEDULER_STATUS_PENDING:
-		return run.SchedulerStatusPending
-	case statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING:
-		return run.SchedulerStatusRunning
-	case statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED:
-		return run.SchedulerStatusSucceeded
-	case statev1.SchedulerStatus_SCHEDULER_STATUS_FAILED:
-		return run.SchedulerStatusFailed
-	case statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED:
-		return run.SchedulerStatusCancelled
-	default:
-		return run.SchedulerStatusPending
-	}
-}
-
 // domainToProtoSchedulerStatus converts domain model status to proto status.
 func domainToProtoSchedulerStatus(s run.SchedulerStatus) statev1.SchedulerStatus {
 	switch s {
@@ -272,8 +208,8 @@ func domainToProtoSchedulerStatus(s run.SchedulerStatus) statev1.SchedulerStatus
 }
 
 // domainToProtoScheduler converts a SchedulerTracker domain model to its proto
-// representation. Used by non-cancel methods (CreateScheduler, GetScheduler)
-// that still work against the low-level tracker repo.
+// representation. Used by GetScheduler, which works against the low-level
+// tracker repo rather than the Run aggregate.
 func domainToProtoScheduler(t *postgres.SchedulerTracker) *statev1.Scheduler {
 	s := &statev1.Scheduler{
 		ScheduleId:           t.ScheduleID.String(),
@@ -442,7 +378,7 @@ func (h *SchedulerHandler) TriggerSchedule(
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
 	u := h.uowFactory()
-	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil)
+	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindTrigger, nil)
 	if err != nil {
 		switch {
 		case errors.Is(err, run.ErrScheduleNotInCatalog):

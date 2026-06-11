@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -40,7 +41,7 @@ func (h *HandleRerunHandler) Handle(ctx context.Context, cmd domainModel.RerunIn
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(ctx, h.uow.MessageProcessingRepo(), h.logger, messageID, "trigger.rerun:v1", cmdPayload, outboxEntryID)
+	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(ctx, h.uow.MessageProcessingRepo(), h.logger, messageID, streams.TriggerRerunV1, cmdPayload, outboxEntryID)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
 	}

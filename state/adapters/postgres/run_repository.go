@@ -39,7 +39,7 @@ func (r *RunRepositoryAdapter) GetRun(ctx context.Context, id uuid.UUID) (*run.R
 	if err != nil {
 		return nil, err
 	}
-	return hydrateRun(tr), nil
+	return hydrateRun(tr)
 }
 
 // LoadRunForUpdate loads a Run inside the bound transaction with SELECT … FOR UPDATE.
@@ -51,7 +51,7 @@ func (r *RunRepositoryAdapter) LoadRunForUpdate(ctx context.Context, id uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	return hydrateRun(tr), nil
+	return hydrateRun(tr)
 }
 
 // SaveRun persists every dirty field of rn. It consults rn.Changes() to
@@ -63,7 +63,10 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 	ch := rn.Changes()
 
 	if ch.IsCreated() {
-		tr := dehydrateRun(rn)
+		tr, err := dehydrateRun(rn)
+		if err != nil {
+			return fmt.Errorf("dehydrate run: %w", err)
+		}
 		if err := r.schedRepo.CreateTx(ctx, r.tx, tr); err != nil {
 			// The partial unique index uq_scheduler_tracker_active_per_schedule is
 			// the DB-level backstop for the activation TOCTOU: a concurrent
@@ -154,7 +157,7 @@ func (r *RunRepositoryAdapter) GetActiveScheduler(ctx context.Context, name stri
 	if tr == nil {
 		return nil, nil
 	}
-	return hydrateRun(tr), nil
+	return hydrateRun(tr)
 }
 
 // GetLastRunPerSchedule returns the most recent Run summary per schedule name.
@@ -177,8 +180,11 @@ func (r *RunRepositoryAdapter) GetLastRunPerSchedule(ctx context.Context) (map[s
 }
 
 // hydrateRun translates a persisted SchedulerTracker into a Run aggregate.
-func hydrateRun(tr *SchedulerTracker) *run.Run {
-	meta := tr.GetServiceMetadata()
+func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
+	meta, err := tr.GetServiceMetadata()
+	if err != nil {
+		return nil, err
+	}
 	return run.HydrateRun(
 		tr.ScheduleID,
 		tr.ScheduleName,
@@ -192,13 +198,16 @@ func hydrateRun(tr *SchedulerTracker) *run.Run {
 		tr.TotalTaskCount,
 		tr.TerminalTaskCount,
 		meta,
-	)
+	), nil
 }
 
 // dehydrateRun materialises a Run back into the SchedulerTracker shape that
 // CreateTx accepts. Used by SaveRun on the created branch.
-func dehydrateRun(r *run.Run) *SchedulerTracker {
-	metaJSON, _ := json.Marshal(r.ServiceMetadata())
+func dehydrateRun(r *run.Run) (*SchedulerTracker, error) {
+	metaJSON, err := json.Marshal(r.ServiceMetadata())
+	if err != nil {
+		return nil, fmt.Errorf("marshal service_metadata: %w", err)
+	}
 	return &SchedulerTracker{
 		ScheduleID:           r.ScheduleID(),
 		ScheduleName:         r.ScheduleName(),
@@ -217,7 +226,7 @@ func dehydrateRun(r *run.Run) *SchedulerTracker {
 		TerminalTaskCount:    r.TerminalTaskCount(),
 		Kind:                 string(r.Kind()),
 		SourceRunID:          r.SourceRunID(),
-	}
+	}, nil
 }
 
 // Compile-time interface assertion.

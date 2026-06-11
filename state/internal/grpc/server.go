@@ -94,11 +94,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // IMPLEMENT STATE SERVICE SERVER INTERFACE
 // ============================================================================
 
-// CreateScheduler delegates to scheduler handler
-func (s *Server) CreateScheduler(ctx context.Context, req *statev1.CreateSchedulerRequest) (*statev1.SchedulerResponse, error) {
-	return s.schedulerHandler.CreateScheduler(ctx, req)
-}
-
 // GetScheduler delegates to scheduler handler
 func (s *Server) GetScheduler(ctx context.Context, req *statev1.GetSchedulerRequest) (*statev1.SchedulerResponse, error) {
 	return s.schedulerHandler.GetScheduler(ctx, req)
@@ -134,11 +129,6 @@ func (s *Server) ListStuckCandidates(ctx context.Context, req *statev1.ListStuck
 	return s.schedulerHandler.ListStuckCandidates(ctx, req)
 }
 
-// CreateTask delegates to task handler
-func (s *Server) CreateTask(ctx context.Context, req *statev1.CreateTaskRequest) (*statev1.TaskResponse, error) {
-	return s.taskHandler.CreateTask(ctx, req)
-}
-
 // GetTask delegates to task handler
 func (s *Server) GetTask(ctx context.Context, req *statev1.GetTaskRequest) (*statev1.TaskResponse, error) {
 	return s.taskHandler.GetTask(ctx, req)
@@ -147,11 +137,6 @@ func (s *Server) GetTask(ctx context.Context, req *statev1.GetTaskRequest) (*sta
 // GetTaskByScheduleAndNode delegates to task handler
 func (s *Server) GetTaskByScheduleAndNode(ctx context.Context, req *statev1.GetTaskByScheduleAndNodeRequest) (*statev1.TaskResponse, error) {
 	return s.taskHandler.GetTaskByScheduleAndNode(ctx, req)
-}
-
-// DeleteTask delegates to task handler
-func (s *Server) DeleteTask(ctx context.Context, req *statev1.DeleteTaskRequest) (*statev1.DeleteTaskResponse, error) {
-	return s.taskHandler.DeleteTask(ctx, req)
 }
 
 // ListTasks delegates to task handler
