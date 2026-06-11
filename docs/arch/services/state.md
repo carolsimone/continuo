@@ -239,7 +239,7 @@ Emitted on: `ActivateSchedule` / `TriggerSchedule` (both paths)
 Payload fields:
 - `runner_id` — schedule UUID
 - `schedule_name`
-- `manifest_versions` — map of service → manifest hash read from `schedule_catalog`
+- `service_metadata` — map of service name → `{ manifest_version, image_tag }` (snake_case keys), pinned from `schedule_catalog` at activation
 - `kind` — run discriminator string (`cron`, `trigger`, `rerun`, etc.); sourced from `scheduler_tracker.kind`
 - `source_run_id` — optional UUID string; omitted or empty for `cron`/`trigger` runs; set for `rerun` and `rebase` runs
 
@@ -351,7 +351,7 @@ The two events are independent and commutative: the guard path keys on `schedule
 - `scheduler_tracker` — on activation, status transitions, rerun reset, finalization
 - `task_tracker` — on task create/update/reset (via events)
 - `task_execution` — on execution create/update (via events)
-- `schedule_catalog` — on `schedules.loaded:v1` consumption. `ScheduleCatalogHandler` loads the catalog with `LoadCatalogForUpdate` (a `SELECT … FOR UPDATE` over every row inside the handler transaction), reconciles, then `SaveCatalog` upserts the active set and soft-deletes absent rows. The `FOR UPDATE` lock serialises the read-modify-write against any concurrent reconciler, honouring the `Load*`-means-write-path-under-lock contract. `first_seen_at`/`last_seen_at`/`removed_at` are stamped with the DB clock (`NOW()`), not a Go wall-clock value.
+- `schedule_catalog` — on `schedules.loaded:v1` consumption. `ScheduleCatalogHandler` loads the catalog with `LoadCatalogForUpdate`, reconciles, then `SaveCatalog` upserts the active set and soft-deletes absent rows. `LoadCatalogForUpdate` first takes a transaction-scoped advisory lock (`pg_advisory_xact_lock`) and then `SELECT … FOR UPDATE`s every existing row. The advisory lock is what serialises the read-modify-write against any concurrent reconciler on the **first** reconcile: an empty `schedule_catalog` has no rows for `FOR UPDATE` to lock, so without it two replicas could both read the empty table and upsert a divergent snapshot. This honours the `Load*`-means-write-path-under-lock contract. `first_seen_at`/`last_seen_at`/`removed_at` are stamped with the DB clock (`NOW()`), not a Go wall-clock value.
 - `state_outbox` — atomically with every activation, rerun, or finalization
 - `message_processing` — one row per consumed Redis message ID; written by the binding inside the same transaction as the handler's state mutation
 

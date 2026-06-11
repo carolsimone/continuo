@@ -17,14 +17,23 @@ type serviceMetadataDTO struct {
 	ImageTag        string `json:"image_tag"`
 }
 
-// marshalServiceMetadata encodes a domain service-metadata map into the JSONB
-// shape persisted in Postgres. A nil map encodes as an empty JSON object.
-func marshalServiceMetadata(meta map[string]run.ServiceMetadata) ([]byte, error) {
+// toServiceMetadataDTOs converts a domain service-metadata map into the
+// snake_case serialization carrier used everywhere this value crosses a wire or
+// storage boundary (the scheduler_tracker/schedule_catalog JSONB columns and
+// the scheduler.started:v1 event payload). A nil map yields an empty (non-nil)
+// map so it encodes as `{}` rather than `null`.
+func toServiceMetadataDTOs(meta map[string]run.ServiceMetadata) map[string]serviceMetadataDTO {
 	dtos := make(map[string]serviceMetadataDTO, len(meta))
 	for svc, m := range meta {
 		dtos[svc] = serviceMetadataDTO{ManifestVersion: m.ManifestVersion, ImageTag: m.ImageTag}
 	}
-	return json.Marshal(dtos)
+	return dtos
+}
+
+// marshalServiceMetadata encodes a domain service-metadata map into the JSONB
+// shape persisted in Postgres. A nil map encodes as an empty JSON object.
+func marshalServiceMetadata(meta map[string]run.ServiceMetadata) ([]byte, error) {
+	return json.Marshal(toServiceMetadataDTOs(meta))
 }
 
 // unmarshalServiceMetadata decodes the JSONB service-metadata blob into the
