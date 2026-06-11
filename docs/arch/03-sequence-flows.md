@@ -253,25 +253,24 @@ Key invariant: `Snapshot(LatestFullDAG)` reads `:TopologyRoot` at call time. Der
 
 ## 8. Dispatch Watchdog Termination
 
-Periodic loop in `orchestrator` terminates schedules that sit in
-`is_running=true` but have no task in `RUNNING` and whose most recent task
-was created longer than `ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES` ago.
+Periodic loop in `orchestrator` terminates active runs whose dispatch has
+silently stalled: no task in `RUNNING` and the most recent task created longer
+than `ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES` ago. Stuck detection is a
+single indexed query inside state — the watchdog issues O(1) RPCs per tick and
+considers every task of each run (no 50-task paging blind spot).
 
 ```mermaid
 sequenceDiagram
   participant W as orchestrator watchdog
   participant ST as state (gRPC)
   participant R as Redis
-  participant OR as orchestrator
-  participant EC as executor-controller
   participant KC as k8s-controller
 
-  loop every ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS
-    W->>ST: ListAllSchedules()
-    Note over W,ST: filter is_running=true
-    W->>ST: ListTasks(schedule_id=last_run_id) for each
-    W->>W: IsScheduleStuck(tasks, now, NO_PROGRESS_MINUTES)
-    alt stuck
+  loop every ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS (under a per-tick deadline)
+    W->>W: cutoff = now - NO_PROGRESS_MINUTES
+    W->>ST: ListStuckCandidates(cutoff)
+    Note over W,ST: server-side: active runs with >=1 task,<br/>no RUNNING task, max(task.created_at) < cutoff
+    loop each candidate
       W->>ST: CancelSchedule(schedule_name, cancelled_by="watchdog", reason="watchdog: ...")
       ST->>ST: write outbox row (schedule.cancelled:v1)
       ST->>R: publish schedule.cancelled:v1
@@ -280,16 +279,21 @@ sequenceDiagram
   end
 ```
 
-A schedule is "stuck" iff (a) the most recent task's `created_at` is older
-than `NO_PROGRESS_MINUTES` and (b) no task is currently in `RUNNING`. The
-hasRunning guard distinguishes "stuck dispatching" from "legitimately
-running a long task" — a 4-hour dbt model with zero transitions during
-execution is not stuck.
+A run is "stuck" iff it has at least one task, the most recent task's
+`created_at` is older than `NO_PROGRESS_MINUTES`, and no task is currently in
+`RUNNING`. The RUNNING guard distinguishes "stuck dispatching" from
+"legitimately running a long task" — a 4-hour dbt model with zero transitions
+during execution is not stuck, and because the check is a server-side
+aggregation it sees a RUNNING task even in a run with hundreds of tasks. A run
+with zero tasks has not started and is never a candidate.
 
-The watchdog reuses `state.CancelSchedule` (the same path user-driven
-cancellations use), so no new publisher or terminal state is introduced.
-Defaults: 60s polling, 30 min no-progress threshold. Toggle via
-`ORCHESTRATOR_WATCHDOG_ENABLED` (default `true`).
+The watchdog speaks domain-typed ports (`ports.StuckScheduleReader`,
+`ports.ScheduleCanceller`) implemented by `adapters/grpc.StuckScheduleAdapter`;
+no gRPC/proto wire types reach the application layer. It reuses
+`state.CancelSchedule` (the same path user-driven cancellations use), so no new
+publisher or terminal state is introduced. Defaults: 60s polling, 30 min
+no-progress threshold. Toggle via `ORCHESTRATOR_WATCHDOG_ENABLED` (default
+`true`).
 
 ## 9. Single-Node Run
 

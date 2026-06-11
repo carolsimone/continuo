@@ -8,16 +8,8 @@ import (
 	"log/slog"
 	"time"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
-	"google.golang.org/grpc"
+	"github.com/carolsimone/continuo/orchestrator/service/ports"
 )
-
-// StateClient is the slimmest gRPC surface the watchdog needs.
-type StateClient interface {
-	ListAllSchedules(ctx context.Context, req *statev1.ListAllSchedulesRequest, opts ...grpc.CallOption) (*statev1.ListAllSchedulesResponse, error)
-	ListTasks(ctx context.Context, req *statev1.ListTasksRequest, opts ...grpc.CallOption) (*statev1.ListTasksResponse, error)
-	CancelSchedule(ctx context.Context, req *statev1.CancelScheduleRequest, opts ...grpc.CallOption) (*statev1.CancelScheduleResponse, error)
-}
 
 // Clock returns the current time. Injected for deterministic tests.
 type Clock interface{ Now() time.Time }
@@ -33,17 +25,20 @@ type Config struct {
 	NoProgressFor time.Duration
 }
 
-// Watchdog terminates schedules whose dispatch has silently stalled.
+// Watchdog terminates schedules whose dispatch has silently stalled. It depends
+// only on domain-typed ports; the gRPC wire types live in the adapter that
+// implements StuckScheduleReader and ScheduleCanceller.
 type Watchdog struct {
-	cfg    Config
-	state  StateClient
-	clock  Clock
-	logger *slog.Logger
+	cfg       Config
+	reader    ports.StuckScheduleReader
+	canceller ports.ScheduleCanceller
+	clock     Clock
+	logger    *slog.Logger
 }
 
 // NewWatchdog constructs a Watchdog. Uses the real clock.
-func NewWatchdog(cfg Config, state StateClient, logger *slog.Logger) *Watchdog {
-	return &Watchdog{cfg: cfg, state: state, clock: realClock{}, logger: logger}
+func NewWatchdog(cfg Config, reader ports.StuckScheduleReader, canceller ports.ScheduleCanceller, logger *slog.Logger) *Watchdog {
+	return &Watchdog{cfg: cfg, reader: reader, canceller: canceller, clock: realClock{}, logger: logger}
 }
 
 // SetClockForTest replaces the clock for tests in this package and tests
@@ -76,76 +71,46 @@ func (w *Watchdog) Run(ctx context.Context) error {
 	}
 }
 
-// tick scans for stuck schedules and cancels them via state.CancelSchedule.
-// state.CancelSchedule writes an outbox row that publishes schedule.cancelled:v1
-// — the existing cancellation pathway absorbs in-flight messages via the
-// cancelled_schedules guards in the consumers.
-func (w *Watchdog) tick(ctx context.Context) error {
-	resp, err := w.state.ListAllSchedules(ctx, &statev1.ListAllSchedulesRequest{})
-	if err != nil {
-		return fmt.Errorf("list all schedules: %w", err)
+// tickTimeout bounds a single tick so a slow state service never stalls the
+// watchdog loop across ticks. It is the interval less a small margin, capped so
+// the deadline is always positive.
+func (w *Watchdog) tickTimeout() time.Duration {
+	d := w.cfg.Interval - time.Second
+	if d <= 0 {
+		d = w.cfg.Interval
 	}
-	now := w.clock.Now()
-	for _, sched := range resp.GetSchedules() {
-		if !sched.GetIsRunning() {
-			continue
-		}
-		runID := sched.GetLastRunId()
-		if runID == "" {
-			continue // shouldn't happen if is_running=true, but skip defensively
-		}
-		tasksResp, err := w.state.ListTasks(ctx, &statev1.ListTasksRequest{ScheduleId: runID})
-		if err != nil {
-			w.logger.Error("ListTasks failed", "schedule_name", sched.GetScheduleName(), "schedule_id", runID, "error", err)
-			continue
-		}
-		if !IsScheduleStuck(tasksResp.GetTasks(), now, w.cfg.NoProgressFor) {
-			continue
-		}
-		reason := fmt.Sprintf("watchdog: no task progress for >%dm", int(w.cfg.NoProgressFor.Minutes()))
+	if d <= 0 {
+		d = 5 * time.Second
+	}
+	return d
+}
+
+// tick asks state for the active runs whose dispatch has silently stalled —
+// a single indexed query that considers every task of each run — and cancels
+// each via state.CancelSchedule. CancelSchedule writes an outbox row that
+// publishes schedule.cancelled:v1; the cancelled_schedules guards in the
+// consumers absorb in-flight messages.
+func (w *Watchdog) tick(parent context.Context) error {
+	ctx, cancel := context.WithTimeout(parent, w.tickTimeout())
+	defer cancel()
+
+	cutoff := w.clock.Now().Add(-w.cfg.NoProgressFor)
+	candidates, err := w.reader.ListStuckCandidates(ctx, cutoff)
+	if err != nil {
+		return fmt.Errorf("list stuck candidates: %w", err)
+	}
+	reason := fmt.Sprintf("watchdog: no task progress for >%dm", int(w.cfg.NoProgressFor.Minutes()))
+	for _, c := range candidates {
 		w.logger.Warn("Watchdog terminating stuck schedule",
-			"schedule_name", sched.GetScheduleName(),
-			"schedule_id", runID,
+			"schedule_name", c.ScheduleName,
+			"schedule_id", c.RunID,
 			"reason", reason,
 		)
-		if _, err := w.state.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
-			ScheduleName:       sched.GetScheduleName(),
-			CancelledBy:        "watchdog",
-			CancellationReason: reason,
-		}); err != nil {
+		if err := w.canceller.CancelSchedule(ctx, c.ScheduleName, "watchdog", reason); err != nil {
 			w.logger.Error("Watchdog CancelSchedule failed",
-				"schedule_name", sched.GetScheduleName(), "error", err)
+				"schedule_name", c.ScheduleName, "error", err)
 			continue
 		}
 	}
 	return nil
-}
-
-// IsScheduleStuck returns true iff both predicates hold:
-//
-//  1. No task is currently in TASK_STATUS_RUNNING. A running task means a
-//     long-running model is in flight — that's not stuck.
-//  2. The most recent task's created_at is older than noProgressFor. The
-//     state proto Task message has no updated_at, so created_at is the
-//     only "progress" signal available — and it's enough for the bug we
-//     care about: tasks created, dispatcher silently failed, no RUNNING
-//     transition ever happens.
-//
-// Empty input returns false — a schedule with no tasks isn't stuck, it
-// just hasn't started.
-func IsScheduleStuck(tasks []*statev1.Task, now time.Time, noProgressFor time.Duration) bool {
-	if len(tasks) == 0 {
-		return false
-	}
-	mostRecent := time.Time{}
-	for _, t := range tasks {
-		if t.GetStatus() == statev1.TaskStatus_TASK_STATUS_RUNNING {
-			return false
-		}
-		ts := t.GetCreatedAt().AsTime()
-		if ts.After(mostRecent) {
-			mostRecent = ts
-		}
-	}
-	return now.Sub(mostRecent) >= noProgressFor
 }

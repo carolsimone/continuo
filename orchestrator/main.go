@@ -196,13 +196,15 @@ func main() {
 	defer stateConn.Close()
 	stateGRPCClient := statev1.NewStateServiceClient(stateConn)
 
+	stuckScheduleAdapter := grpcinfra.NewStuckScheduleAdapter(stateGRPCClient)
 	watchdogInstance := watchdog.NewWatchdog(
 		watchdog.Config{
 			Enabled:       cfg.WatchdogEnabled,
 			Interval:      time.Duration(cfg.WatchdogIntervalSecs) * time.Second,
 			NoProgressFor: time.Duration(cfg.WatchdogNoProgressMins) * time.Minute,
 		},
-		stateGRPCClient,
+		stuckScheduleAdapter,
+		stuckScheduleAdapter,
 		logger,
 	)
 	go func() {

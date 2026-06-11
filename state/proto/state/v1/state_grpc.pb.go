@@ -26,6 +26,7 @@ const (
 	StateService_ListAllSchedules_FullMethodName         = "/state.v1.StateService/ListAllSchedules"
 	StateService_TriggerSchedule_FullMethodName          = "/state.v1.StateService/TriggerSchedule"
 	StateService_CancelSchedule_FullMethodName           = "/state.v1.StateService/CancelSchedule"
+	StateService_ListStuckCandidates_FullMethodName      = "/state.v1.StateService/ListStuckCandidates"
 	StateService_CreateTask_FullMethodName               = "/state.v1.StateService/CreateTask"
 	StateService_GetTask_FullMethodName                  = "/state.v1.StateService/GetTask"
 	StateService_GetTaskByScheduleAndNode_FullMethodName = "/state.v1.StateService/GetTaskByScheduleAndNode"
@@ -60,6 +61,13 @@ type StateServiceClient interface {
 	// CancelSchedule cancels the active run of a named schedule.
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(ctx context.Context, in *CancelScheduleRequest, opts ...grpc.CallOption) (*CancelScheduleResponse, error)
+	// ListStuckCandidates returns the active (pending|running) runs whose dispatch
+	// has silently stalled: the run has no task in TASK_STATUS_RUNNING and the most
+	// recent task's created_at is strictly older than `cutoff`. Runs with zero tasks
+	// are excluded — they have not started, so they are not stuck. This is a single
+	// indexed server-side query that replaces the watchdog's per-schedule ListTasks
+	// fan-out and the 50-task paging blind spot. Empty `cutoff` is INVALID_ARGUMENT.
+	ListStuckCandidates(ctx context.Context, in *ListStuckCandidatesRequest, opts ...grpc.CallOption) (*ListStuckCandidatesResponse, error)
 	// Task operations
 	CreateTask(ctx context.Context, in *CreateTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
@@ -192,6 +200,16 @@ func (c *stateServiceClient) CancelSchedule(ctx context.Context, in *CancelSched
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CancelScheduleResponse)
 	err := c.cc.Invoke(ctx, StateService_CancelSchedule_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) ListStuckCandidates(ctx context.Context, in *ListStuckCandidatesRequest, opts ...grpc.CallOption) (*ListStuckCandidatesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStuckCandidatesResponse)
+	err := c.cc.Invoke(ctx, StateService_ListStuckCandidates_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +374,13 @@ type StateServiceServer interface {
 	// CancelSchedule cancels the active run of a named schedule.
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(context.Context, *CancelScheduleRequest) (*CancelScheduleResponse, error)
+	// ListStuckCandidates returns the active (pending|running) runs whose dispatch
+	// has silently stalled: the run has no task in TASK_STATUS_RUNNING and the most
+	// recent task's created_at is strictly older than `cutoff`. Runs with zero tasks
+	// are excluded — they have not started, so they are not stuck. This is a single
+	// indexed server-side query that replaces the watchdog's per-schedule ListTasks
+	// fan-out and the 50-task paging blind spot. Empty `cutoff` is INVALID_ARGUMENT.
+	ListStuckCandidates(context.Context, *ListStuckCandidatesRequest) (*ListStuckCandidatesResponse, error)
 	// Task operations
 	CreateTask(context.Context, *CreateTaskRequest) (*TaskResponse, error)
 	GetTask(context.Context, *GetTaskRequest) (*TaskResponse, error)
@@ -444,6 +469,9 @@ func (UnimplementedStateServiceServer) TriggerSchedule(context.Context, *Trigger
 }
 func (UnimplementedStateServiceServer) CancelSchedule(context.Context, *CancelScheduleRequest) (*CancelScheduleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelSchedule not implemented")
+}
+func (UnimplementedStateServiceServer) ListStuckCandidates(context.Context, *ListStuckCandidatesRequest) (*ListStuckCandidatesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStuckCandidates not implemented")
 }
 func (UnimplementedStateServiceServer) CreateTask(context.Context, *CreateTaskRequest) (*TaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateTask not implemented")
@@ -630,6 +658,24 @@ func _StateService_CancelSchedule_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(StateServiceServer).CancelSchedule(ctx, req.(*CancelScheduleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_ListStuckCandidates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStuckCandidatesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListStuckCandidates(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListStuckCandidates_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListStuckCandidates(ctx, req.(*ListStuckCandidatesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -920,6 +966,10 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelSchedule",
 			Handler:    _StateService_CancelSchedule_Handler,
+		},
+		{
+			MethodName: "ListStuckCandidates",
+			Handler:    _StateService_ListStuckCandidates_Handler,
 		},
 		{
 			MethodName: "CreateTask",

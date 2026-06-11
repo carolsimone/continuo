@@ -22,7 +22,22 @@ var (
 	ErrDuplicateKey = errors.New("duplicate key violation")
 	// ErrNotCancellable is returned when Cancel affects zero rows (not found or already terminal)
 	ErrNotCancellable = errors.New("scheduler not found or already in terminal state")
+	// ErrActiveScheduleConflict is returned when an INSERT violates the partial
+	// unique index uq_scheduler_tracker_active_per_schedule — another active
+	// (pending|running) run already exists for the same schedule_name. This is the
+	// concurrent-activation loser; SaveRun maps it to run.ErrScheduleHasActiveRun.
+	ErrActiveScheduleConflict = errors.New("schedule already has an active run")
 )
+
+// activeScheduleConstraint is the name of the partial unique index that enforces
+// one active run per schedule. A 23505 mentioning it means a concurrent activation
+// won the race, as opposed to a primary-key (schedule_id) collision.
+const activeScheduleConstraint = "uq_scheduler_tracker_active_per_schedule"
+
+// isUniqueViolation reports whether err is a PostgreSQL unique_violation (23505).
+func isUniqueViolation(err error) bool {
+	return strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505")
+}
 
 // SchedulerTrackerRepository defines all operations for scheduler_tracker table
 type SchedulerTrackerRepository interface {
@@ -37,6 +52,10 @@ type SchedulerTrackerRepository interface {
 	// GetActiveScheduler returns the most recently created PENDING or RUNNING run for a schedule.
 	// Returns nil, nil when no active run exists (never returns ErrNotFound).
 	GetActiveScheduler(ctx context.Context, scheduleName string) (*SchedulerTracker, error)
+	// ListStuckCandidates returns active (pending|running) runs whose dispatch has
+	// silently stalled: the run has at least one task, no task in 'running', and the
+	// most recent task's created_at is strictly older than cutoff. One indexed query.
+	ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckCandidate, error)
 	// New: tx-accepting variants for atomic HTTP handler
 	UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status string) error
 	CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error
@@ -50,6 +69,12 @@ type SchedulerTrackerRepository interface {
 	// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row for the given id
 	// using SELECT ... FOR UPDATE. Must be called within a transaction.
 	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*SchedulerTracker, error)
+}
+
+// StuckCandidate identifies one active run whose dispatch has silently stalled.
+type StuckCandidate struct {
+	ScheduleName string
+	ScheduleID   uuid.UUID
 }
 
 // LastRunData holds the summary of the most recent run for a schedule.
@@ -109,7 +134,13 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 	)
 	if err != nil {
 		// Check for duplicate key error (PostgreSQL error code 23505)
-		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505") {
+		if isUniqueViolation(err) {
+			if strings.Contains(err.Error(), activeScheduleConstraint) {
+				r.logger.Warn("Active-run conflict creating scheduler_tracker",
+					"schedule_name", tracker.ScheduleName,
+				)
+				return ErrActiveScheduleConflict
+			}
 			r.logger.Warn("Duplicate key violation when creating scheduler_tracker",
 				"schedule_id", tracker.ScheduleID,
 				"schedule_name", tracker.ScheduleName,
@@ -165,7 +196,10 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 		kindWithDefault(tracker.Kind), tracker.SourceRunID,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505") {
+		if isUniqueViolation(err) {
+			if strings.Contains(err.Error(), activeScheduleConstraint) {
+				return ErrActiveScheduleConflict
+			}
 			return ErrDuplicateKey
 		}
 		return fmt.Errorf("failed to create scheduler_tracker: %w", err)
@@ -474,4 +508,36 @@ func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) 
 		result[d.ScheduleName] = d
 	}
 	return result, rows.Err()
+}
+
+// ListStuckCandidates returns one row per active (pending|running) run whose
+// dispatch has silently stalled. A run qualifies when it has at least one task,
+// none of its tasks is in 'running', and its most recent task's created_at is
+// strictly older than cutoff. The aggregation considers ALL of a run's tasks —
+// there is no paging blind spot — and replaces the watchdog's per-schedule
+// ListTasks fan-out with a single indexed query.
+func (r *schedulerTrackerRepository) ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckCandidate, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT st.schedule_name, st.schedule_id
+		FROM scheduler_tracker st
+		JOIN task_tracker tt ON tt.schedule_id = st.schedule_id
+		WHERE st.status IN ('pending', 'running')
+		GROUP BY st.schedule_id, st.schedule_name
+		HAVING count(*) FILTER (WHERE tt.status = 'running') = 0
+		   AND max(tt.created_at) < $1
+	`, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("list stuck candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var out []StuckCandidate
+	for rows.Next() {
+		var c StuckCandidate
+		if err := rows.Scan(&c.ScheduleName, &c.ScheduleID); err != nil {
+			return nil, fmt.Errorf("scan stuck candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }

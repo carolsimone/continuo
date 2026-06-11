@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"net"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -15,16 +15,16 @@ import (
 // Server wraps gRPC server with graceful shutdown
 type Server struct {
 	statev1.UnimplementedStateServiceServer
-	grpcServer            *grpc.Server
-	listener              net.Listener
-	logger                *slog.Logger
-	schedulerHandler      *handlers.SchedulerHandler
-	taskHandler           *handlers.TaskHandler
-	taskExecutionHandler  *handlers.TaskExecutionHandler
-	rerunHandler          *handlers.RerunHandler
-	singleNodeRunHandler  *handlers.SingleNodeRunHandler
-	rebaseHandler         *handlers.RebaseHandler
-	nodeRunHandler        *handlers.NodeRunHandler
+	grpcServer           *grpc.Server
+	listener             net.Listener
+	logger               *slog.Logger
+	schedulerHandler     *handlers.SchedulerHandler
+	taskHandler          *handlers.TaskHandler
+	taskExecutionHandler *handlers.TaskExecutionHandler
+	rerunHandler         *handlers.RerunHandler
+	singleNodeRunHandler *handlers.SingleNodeRunHandler
+	rebaseHandler        *handlers.RebaseHandler
+	nodeRunHandler       *handlers.NodeRunHandler
 }
 
 // NewServer creates a new gRPC server
@@ -127,6 +127,11 @@ func (s *Server) TriggerSchedule(ctx context.Context, req *statev1.TriggerSchedu
 // CancelSchedule delegates to scheduler handler
 func (s *Server) CancelSchedule(ctx context.Context, req *statev1.CancelScheduleRequest) (*statev1.CancelScheduleResponse, error) {
 	return s.schedulerHandler.CancelSchedule(ctx, req)
+}
+
+// ListStuckCandidates delegates to scheduler handler
+func (s *Server) ListStuckCandidates(ctx context.Context, req *statev1.ListStuckCandidatesRequest) (*statev1.ListStuckCandidatesResponse, error) {
+	return s.schedulerHandler.ListStuckCandidates(ctx, req)
 }
 
 // CreateTask delegates to task handler
