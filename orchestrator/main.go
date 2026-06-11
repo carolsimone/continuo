@@ -23,6 +23,7 @@ import (
 	snapshotsvc "github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -52,9 +53,28 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize lifecycle manager
+	// Initialize lifecycle manager and liveness registry. The lifecycle manager
+	// drives the ordered graceful shutdown (stop intake → drain → close infra);
+	// the registry tracks background workers and feeds the /ready probe.
 	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
-	lifecycleManager.SetupSignalHandlers(ctx, cancel)
+	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
+
+	liveReg := liveness.NewRegistry()
+
+	// runConsumer starts a tracked stream consumer. Its goroutine is tracked by
+	// the lifecycle WaitGroup so shutdown drains in-flight handler invocations
+	// before infra is closed. A non-nil return (a genuine exit rather than a
+	// clean ctx-cancel stop) flips readiness so the unhealthy pod is restarted.
+	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		liveReg.RegisterWorker(name)
+		lifecycleManager.Go(func() {
+			err := consumer.Start(ctx)
+			liveReg.WorkerExited(name, err)
+			if err != nil {
+				logger.Error("Consumer exited", "consumer", name, "error", err)
+			}
+		})
+	}
 
 	// ========================================================================
 	// INITIALIZE INFRASTRUCTURE
@@ -126,6 +146,16 @@ func main() {
 		return redisClient.Close()
 	})
 
+	// Cached dependency probes feed /ready. They run at most once per TTL so the
+	// readiness endpoint stays cheap under Kubernetes probe traffic; a failed
+	// ping flips readiness until the dependency recovers.
+	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error {
+		return redisClient.Ping(ctx).Err()
+	})
+	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error {
+		return pgDB.PingContext(ctx)
+	})
+
 	// ========================================================================
 	// INITIALIZE REPOSITORIES
 	// ========================================================================
@@ -166,11 +196,17 @@ func main() {
 		logger,
 		pkgoutbox.ProcessorConfig{Tick: time.Second, BatchSize: 100},
 	)
-	go func() {
-		if err := outboxProc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	liveReg.RegisterWorker("outbox_processor")
+	lifecycleManager.Go(func() {
+		err := outboxProc.Run(ctx)
+		if errors.Is(err, context.Canceled) {
+			err = nil // clean stop on shutdown
+		}
+		liveReg.WorkerExited("outbox_processor", err)
+		if err != nil {
 			logger.Error("Outbox processor exited", "error", err)
 		}
-	}()
+	})
 
 	// ========================================================================
 	// START RETENTION SWEEPER
@@ -202,7 +238,7 @@ func main() {
 	// START HTTP HEALTH CHECK SERVER
 	// ========================================================================
 
-	healthServer := httpinfra.NewHealthServer(cfg.HTTPPort, logger)
+	healthServer := httpinfra.NewHealthServer(cfg.HTTPPort, liveReg, logger)
 
 	go func() {
 		if err := healthServer.Start(); err != nil {
@@ -271,13 +307,9 @@ func main() {
 		scheduleCancelledBinding,
 		logger,
 	)
-	go func() {
-		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
-			logger.Error("Schedule cancelled consumer error", "error", err)
-		}
-	}()
+	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
 
-	go func() {
+	lifecycleManager.Go(func() {
 		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
 		defer ticker.Stop()
 		ttl := time.Duration(cfg.CancelledSchedulesTTLHours) * time.Hour
@@ -293,7 +325,7 @@ func main() {
 				return
 			}
 		}
-	}()
+	})
 
 	// ========================================================================
 	// INITIALIZE REDIS CONSUMERS
@@ -374,51 +406,17 @@ func main() {
 		logger,
 	)
 
-	// Start all consumers in goroutines
-	go func() {
-		if err := nodeUpdatedConsumer.Start(ctx); err != nil {
-			logger.Error("Node updated consumer error", "error", err)
-		}
-	}()
-
-	go func() {
-		if err := schedulerStartedConsumer.Start(ctx); err != nil {
-			logger.Error("Scheduler started consumer error", "error", err)
-		}
-	}()
-
-	go func() {
-		if err := rerunConsumer.Start(ctx); err != nil {
-			logger.Error("Rerun consumer error", "error", err)
-		}
-	}()
-
-	go func() {
-		if err := rebaseConsumer.Start(ctx); err != nil {
-			logger.Error("Rebase consumer error", "error", err)
-		}
-	}()
-
-	go func() {
-		if err := singleNodeRunConsumer.Start(ctx); err != nil {
-			logger.Error("Single-node-run consumer error", "error", err)
-		}
-	}()
-
-	go func() {
-		if err := runFinalizedConsumer.Start(ctx); err != nil {
-			logger.Error("Run finalized consumer error", "error", err)
-		}
-	}()
-
-	go func() {
-		if err := releasePromotedConsumer.Start(ctx); err != nil {
-			logger.Error("Release promoted consumer error", "error", err)
-		}
-	}()
+	// Start all consumers as tracked goroutines with liveness registration.
+	runConsumer("node_updated", nodeUpdatedConsumer)
+	runConsumer("scheduler_started", schedulerStartedConsumer)
+	runConsumer("rerun", rerunConsumer)
+	runConsumer("rebase", rebaseConsumer)
+	runConsumer("single_node_run", singleNodeRunConsumer)
+	runConsumer("run_finalized", runFinalizedConsumer)
+	runConsumer("release_promoted", releasePromotedConsumer)
 
 	// ========================================================================
-	// START gRPC SERVER (BLOCKING)
+	// START gRPC SERVER
 	// ========================================================================
 
 	runQueries := queries.NewRunQueryService(queryRepo, topologyStateRepo, logger)
@@ -443,10 +441,14 @@ func main() {
 		"http_port", cfg.HTTPPort,
 	)
 
-	if err := grpcServer.Start(); err != nil {
-		logger.Error("gRPC server error", "error", err)
-		os.Exit(1)
-	}
+	go func() {
+		if err := grpcServer.Start(); err != nil {
+			logger.Error("gRPC server error", "error", err)
+		}
+	}()
 
+	// Block until the graceful-shutdown sequence has fully completed: stop
+	// intake, drain in-flight goroutines, then close infra. No fixed sleep.
+	<-lifecycleManager.Done()
 	logger.Info("Orchestrator service stopped")
 }

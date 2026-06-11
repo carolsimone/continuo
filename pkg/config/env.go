@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"time"
 )
 
 // Validator accumulates missing required env var names during config loading.
@@ -66,4 +67,16 @@ func EnvOrDefault(key, fallback string) string {
 // EnvIntOrDefault reads an integer environment variable with a fallback default.
 func EnvIntOrDefault(key string, fallback int) int {
 	return envInt(key, fallback)
+}
+
+// EnvDurationOrDefault reads a Go duration environment variable (e.g. "15s",
+// "1m30s") with a fallback default. An unset or unparseable value yields the
+// fallback so callers need not require the variable.
+func EnvDurationOrDefault(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return fallback
 }

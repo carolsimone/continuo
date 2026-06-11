@@ -70,7 +70,7 @@ spec:
           {{- if $svc.httpPort }}
           readinessProbe:
             httpGet:
-              path: {{ default "/health" $svc.probePath }}
+              path: {{ default (default "/health" $svc.probePath) $svc.readinessPath }}
               port: {{ $svc.httpPort }}
             initialDelaySeconds: 10
             periodSeconds: 5
