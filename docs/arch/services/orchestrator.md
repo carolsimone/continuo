@@ -52,16 +52,27 @@ Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run sna
 | `table_schedule` | index, `:Table(schedule_name)` | `LoadLatestSourceDAG` and schedule-graph scans of `MATCH (:Table {schedule_name})`. |
 | `run_schedule` | index, `:Run(schedule_name)` | `ListRuns` (`MATCH (:Run {schedule_name})`). |
 
-`table_uid_unique` will refuse to create if duplicate `:Table {unique_id}` nodes already exist. Before first rollout against an existing graph, collapse duplicates with:
+`table_uid_unique` will refuse to create if duplicate `:Table {unique_id}` nodes already exist. Before first rollout against an existing graph, collapse duplicates **without losing run history**. A bare `DETACH DELETE` of the duplicates would also delete their `(:Run)-[:EXECUTES]->` relationships and erase the task outcomes recorded against them, so the run-history edges are repointed onto the kept node first:
 
 ```cypher
 MATCH (t:Table)
 WHERE t.unique_id IS NOT NULL
 WITH t.unique_id AS uid, collect(t) AS nodes
 WHERE size(nodes) > 1
-UNWIND nodes[1..] AS dup
-DETACH DELETE dup
+WITH nodes[0] AS keep, nodes[1..] AS dups
+UNWIND dups AS dup
+  // Repoint every run-history edge from the duplicate onto the kept node,
+  // carrying its status/timestamp properties. OPTIONAL so duplicates that
+  // carry no history are still removed by the DETACH DELETE below.
+  OPTIONAL MATCH (r:Run)-[e:EXECUTES]->(dup)
+  FOREACH (_ IN CASE WHEN e IS NULL THEN [] ELSE [1] END |
+    MERGE (r)-[k:EXECUTES]->(keep)
+    SET k += properties(e)
+  )
+  DETACH DELETE dup
 ```
+
+`:Table-[:DEPENDS_ON]->:Table` topology edges need not be repointed — they are rebuilt wholesale by the next `release.promoted:v1` swap. If the deployment has APOC available, `CALL apoc.refactor.mergeNodes(nodes, {properties:"discard", mergeRels:true})` is an equivalent one-liner.
 
 ### Run aggregate (`orchestrator/domain/run`)
 

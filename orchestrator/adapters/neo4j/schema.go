@@ -33,6 +33,12 @@ var schemaStatements = []string{
 	"CREATE INDEX run_schedule IF NOT EXISTS FOR (r:Run) ON (r.schedule_name)",
 }
 
+// awaitIndexTimeoutSeconds bounds how long InitSchema waits for the freshly
+// created indexes to come online. On a cold graph the indexes are populated
+// instantly; on a populated graph this is the ceiling before startup fails
+// loudly rather than serving queries against a still-building index.
+const awaitIndexTimeoutSeconds = 300
+
 // InitSchema applies the orchestrator's Neo4j constraints and indexes. It is
 // idempotent (every statement uses IF NOT EXISTS) and must run at startup,
 // before any consumer or gRPC server begins serving, so the first message does
@@ -46,10 +52,32 @@ func InitSchema(ctx context.Context, client Neo4jClient, logger *slog.Logger) er
 	session := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
+	// Bolt surfaces a DDL failure either from Run or only when the result
+	// summary is pulled, so every statement is consumed and checked — a
+	// discarded result could let a failed statement slip past this gate.
 	for _, stmt := range schemaStatements {
-		if _, err := session.Run(ctx, stmt, nil); err != nil {
+		result, err := session.Run(ctx, stmt, nil)
+		if err != nil {
 			return fmt.Errorf("InitSchema: %q: %w", stmt, err)
 		}
+		if _, err := result.Consume(ctx); err != nil {
+			return fmt.Errorf("InitSchema: %q: %w", stmt, err)
+		}
+	}
+
+	// CREATE INDEX only registers the index; on a non-empty graph Neo4j
+	// populates it asynchronously. Block until every index is online so the
+	// first consumer query seeks an index instead of falling back to the full
+	// label scan this startup gate exists to prevent.
+	awaitResult, err := session.Run(ctx,
+		"CALL db.awaitIndexes($timeout)",
+		map[string]any{"timeout": awaitIndexTimeoutSeconds},
+	)
+	if err != nil {
+		return fmt.Errorf("InitSchema: await indexes online: %w", err)
+	}
+	if _, err := awaitResult.Consume(ctx); err != nil {
+		return fmt.Errorf("InitSchema: await indexes online: %w", err)
 	}
 
 	logger.Info("Neo4j schema initialized", "statements", len(schemaStatements))
