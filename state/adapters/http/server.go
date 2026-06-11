@@ -4,18 +4,23 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+
+	"github.com/carolsimone/continuo/pkg/liveness"
 )
 
-// Server wraps HTTP server for health checks
+// Server wraps the HTTP server exposing liveness (/health) and readiness
+// (/ready) probes.
 type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
 }
 
-// NewServer creates a new HTTP server
-func NewServer(port string, logger *slog.Logger) *Server {
+// NewServer creates a new HTTP server. Readiness is answered from the supplied
+// liveness registry.
+func NewServer(port string, registry *liveness.Registry, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", HealthHandler)
+	mux.HandleFunc("/ready", NewReadinessHandler(registry))
 
 	return &Server{
 		httpServer: &http.Server{

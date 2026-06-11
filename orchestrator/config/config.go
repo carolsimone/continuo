@@ -2,9 +2,15 @@ package config
 
 import (
 	"os"
+	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
+
+// defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
+// drain plus the infra-close handlers. It is a safe default so no required env
+// var is introduced; override with SHUTDOWN_GRACE (e.g. "30s").
+const defaultShutdownGrace = 15 * time.Second
 
 // Neo4jConfig holds Neo4j connection parameters.
 type Neo4jConfig struct {
@@ -52,6 +58,9 @@ type Config struct {
 	WatchdogEnabled        bool
 	WatchdogIntervalSecs   int
 	WatchdogNoProgressMins int
+
+	// ShutdownGrace bounds the graceful-shutdown drain + infra teardown.
+	ShutdownGrace time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -85,6 +94,8 @@ func Load(v *pkgconfig.Validator) Config {
 		WatchdogEnabled:        envBool("ORCHESTRATOR_WATCHDOG_ENABLED", true),
 		WatchdogIntervalSecs:   envInt("ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS", 60),
 		WatchdogNoProgressMins: envInt("ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES", 30),
+
+		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 	}
 }
 

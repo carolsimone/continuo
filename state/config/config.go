@@ -1,8 +1,15 @@
 package config
 
 import (
+	"time"
+
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
+
+// defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
+// drain plus the infra-close handlers. It is a safe default so no required env
+// var is introduced; override with SHUTDOWN_GRACE (e.g. "30s").
+const defaultShutdownGrace = 15 * time.Second
 
 // Config holds all configuration for the state service.
 type Config struct {
@@ -23,6 +30,9 @@ type Config struct {
 	// have safe defaults so no configuration is required.
 	RetentionDays             int
 	RetentionSweepIntervalMin int
+
+	// ShutdownGrace bounds the graceful-shutdown drain + infra teardown.
+	ShutdownGrace time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -38,6 +48,8 @@ func Load(v *pkgconfig.Validator) Config {
 
 		RetentionDays:             envInt("RETENTION_DAYS", 7),
 		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
+
+		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 	}
 }
 

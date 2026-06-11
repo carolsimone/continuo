@@ -170,9 +170,28 @@ The `internal/grpc/handlers/synthesise_derived_run.go` helper backs both `RerunH
 
 | Route | Method | Description |
 |---|---|---|
-| `/health` | GET | Liveness probe |
+| `/health` | GET | Liveness probe; 200 while the process can serve HTTP |
+| `/ready` | GET | Readiness probe backed by the liveness registry |
 
 Port 8082 serves health checks only; trigger commands run over gRPC on 50051.
+
+`/ready` returns 200 only when every registered background worker (each Redis
+stream consumer plus the outbox processor) is live and the cached Redis/Postgres
+dependency probes (5s TTL) pass; otherwise 503. A consumer goroutine that
+returns a non-nil error (a genuine exit, distinct from the clean `nil` return on
+context cancel) marks itself unhealthy in the registry, flipping `/ready` to 503
+so Kubernetes stops routing to the degraded pod and restarts it.
+
+### Graceful shutdown
+
+On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence bounded by
+`SHUTDOWN_GRACE` (default 15s): (1) stop intake by cancelling the root context so
+consumers and the outbox processor return after the in-flight message; (2) drain
+— wait on a WaitGroup for those tracked goroutines to return, capped at the
+grace period; (3) close infra — run the registered shutdown handlers (gRPC/HTTP
+servers, cron scheduler, Postgres, Redis) against a fresh live context derived
+from `context.Background()`, never the just-cancelled root context. `main` blocks
+on the lifecycle completion channel, so there is no fixed sleep.
 
 **TriggerRerun preconditions (enforced atomically):**
 1. Source scheduler run must exist

@@ -38,6 +38,7 @@ services:
     replicas: 1
     httpPort: 8082
     grpcPort: 50051
+    readinessPath: /ready
     secretEnv:
       - name: POSTGRES_USER
         secretKey: POSTGRES_USER
@@ -67,6 +68,7 @@ services:
     replicas: 1
     httpPort: 8087
     grpcPort: 50052
+    readinessPath: /ready
     secretEnv:
       - name: POSTGRES_USER
         secretKey: POSTGRES_USER

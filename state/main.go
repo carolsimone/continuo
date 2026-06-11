@@ -8,6 +8,12 @@ import (
 	"strings"
 	"time"
 
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/http"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
@@ -18,14 +24,9 @@ import (
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
-	ports "github.com/carolsimone/continuo/state/service/ports"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/uow"
-	pkgconfig "github.com/carolsimone/continuo/pkg/config"
-	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
-	pkgredis "github.com/carolsimone/continuo/pkg/redis"
-	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -48,9 +49,28 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize lifecycle manager
+	// Initialize lifecycle manager and liveness registry. The lifecycle manager
+	// drives the ordered graceful shutdown (stop intake → drain → close infra);
+	// the registry tracks background workers and feeds the /ready probe.
 	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
-	lifecycleManager.SetupSignalHandlers(ctx, cancel)
+	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
+
+	liveReg := liveness.NewRegistry()
+
+	// runConsumer starts a tracked stream consumer. Its goroutine is tracked by
+	// the lifecycle WaitGroup so shutdown drains in-flight handler invocations
+	// before infra is closed. A non-nil return (a genuine exit rather than a
+	// clean ctx-cancel stop) flips readiness so the unhealthy pod is restarted.
+	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		liveReg.RegisterWorker(name)
+		lifecycleManager.Go(func() {
+			err := consumer.Start(ctx)
+			liveReg.WorkerExited(name, err)
+			if err != nil {
+				logger.Error("Consumer exited", "consumer", name, "error", err)
+			}
+		})
+	}
 
 	// Initialize PostgreSQL connection
 	db, err := database.NewConnection(cfg.Postgres)
@@ -94,6 +114,16 @@ func main() {
 		return redisClient.Close()
 	})
 
+	// Cached dependency probes feed /ready. They run at most once per TTL so the
+	// readiness endpoint stays cheap under Kubernetes probe traffic; a failed
+	// ping flips readiness until the dependency recovers.
+	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error {
+		return redisClient.Ping(ctx).Err()
+	})
+	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error {
+		return db.PingContext(ctx)
+	})
+
 	// Start outbox processor backed by pkg/outbox. The publisher XADDs each
 	// entry's JSONB payload to its stream. Nested non-scalar fields are
 	// re-encoded to JSON strings so Redis receives only plain scalars.
@@ -106,11 +136,17 @@ func main() {
 		logger,
 		pkgoutbox.ProcessorConfig{Tick: 500 * time.Millisecond, BatchSize: 100},
 	)
-	go func() {
-		if err := outboxProc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	liveReg.RegisterWorker("outbox_processor")
+	lifecycleManager.Go(func() {
+		err := outboxProc.Run(ctx)
+		if errors.Is(err, context.Canceled) {
+			err = nil // clean stop on shutdown
+		}
+		liveReg.WorkerExited("outbox_processor", err)
+		if err != nil {
 			logger.Error("Outbox processor exited", "error", err)
 		}
-	}()
+	})
 
 	// Retention sweeper — keeps the two unbounded-growth tables in check:
 	// processed state_outbox rows and terminal message_processing dedup rows
@@ -158,11 +194,7 @@ func main() {
 		logger,
 	)
 	logger.Info("Schedule catalog consumer initialized")
-	go func() {
-		if err := catalogConsumer.Start(ctx); err != nil {
-			logger.Error("Schedule catalog consumer error", "error", err)
-		}
-	}()
+	runConsumer("schedule_catalog", catalogConsumer)
 
 	// run.entries.dispatched:v1 consumer. The StreamConsumer drives the
 	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
@@ -178,11 +210,7 @@ func main() {
 		logger,
 	)
 	logger.Info("Run entries dispatched consumer initialized")
-	go func() {
-		if err := runEntriesDispatchedConsumer.Start(ctx); err != nil {
-			logger.Error("Run entries dispatched consumer error", "error", err)
-		}
-	}()
+	runConsumer("run_entries_dispatched", runEntriesDispatchedConsumer)
 
 	// run.entries.dispatch_failed:v1 consumer. The StreamConsumer drives the
 	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
@@ -198,11 +226,7 @@ func main() {
 		logger,
 	)
 	logger.Info("Run entries dispatch failed consumer initialized")
-	go func() {
-		if err := runEntriesDispatchFailedConsumer.Start(ctx); err != nil {
-			logger.Error("Run entries dispatch failed consumer error", "error", err)
-		}
-	}()
+	runConsumer("run_entries_dispatch_failed", runEntriesDispatchFailedConsumer)
 
 	// task.status.updated:v1 consumer. The StreamConsumer drives the
 	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
@@ -218,11 +242,7 @@ func main() {
 		logger,
 	)
 	logger.Info("Task status updated consumer initialized")
-	go func() {
-		if err := taskStatusUpdatedConsumer.Start(ctx); err != nil {
-			logger.Error("Task status updated consumer error", "error", err)
-		}
-	}()
+	runConsumer("task_status_updated", taskStatusUpdatedConsumer)
 
 	// task.execution.recorded:v1 consumer. The StreamConsumer drives the
 	// parser+dedup+UoW binding declared in the redis adapter. Lifecycle is
@@ -238,11 +258,7 @@ func main() {
 		logger,
 	)
 	logger.Info("Task execution recorded consumer initialized")
-	go func() {
-		if err := taskExecutionRecordedConsumer.Start(ctx); err != nil {
-			logger.Error("Task execution recorded consumer error", "error", err)
-		}
-	}()
+	runConsumer("task_execution_recorded", taskExecutionRecordedConsumer)
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.
 	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
@@ -308,8 +324,10 @@ func main() {
 		}
 	}()
 
-	// Start HTTP health server (health-only; rerun moved to gRPC)
-	healthServer := http.NewServer(cfg.HealthPort, logger)
+	// Start HTTP health server. /health is a liveness probe; /ready is backed by
+	// the liveness registry so traffic stops when a consumer exits or a backing
+	// store is unreachable.
+	healthServer := http.NewServer(cfg.HealthPort, liveReg, logger)
 
 	// Register health server cleanup
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
@@ -327,9 +345,10 @@ func main() {
 		"health_port", cfg.HealthPort,
 	)
 
-	// Wait for shutdown signal
-	<-ctx.Done()
-	logger.Info("Shutting down...")
-	time.Sleep(2 * time.Second)
+	// Block until the graceful-shutdown sequence has fully completed. The signal
+	// handler cancels ctx (stops intake), drains in-flight goroutines, then runs
+	// the infra-close handlers; Done() closes only after that sequence finishes,
+	// so there is no fixed sleep racing the shutdown.
+	<-lifecycleManager.Done()
 	logger.Info("Service stopped")
 }
