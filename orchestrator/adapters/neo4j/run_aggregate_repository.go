@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	domainRun "github.com/carolsimone/continuo/orchestrator/domain/run"
 	"github.com/google/uuid"
@@ -88,7 +89,7 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
 	if s.Status == "FAILED" {
 		query = `
             MATCH (run:Run {run_id: $run_id})
-            MATCH (run)-[:EXECUTES]->(target:Table {schema_name: $schema_name, table_name: $table_name})
+            MATCH (run)-[:EXECUTES]->(target:Table {service_name: $service_name, schema_name: $schema_name, table_name: $table_name})
             // Target + transitive downstream
             OPTIONAL MATCH (downstream:Table)-[:DEPENDS_ON*1..]->(target)
             WHERE (run)-[:EXECUTES]->(downstream)
@@ -123,7 +124,7 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
 		// SUCCEEDED / SKIPPED: target + immediate downstream + their upstreams
 		query = `
             MATCH (run:Run {run_id: $run_id})
-            MATCH (run)-[:EXECUTES]->(target:Table {schema_name: $schema_name, table_name: $table_name})
+            MATCH (run)-[:EXECUTES]->(target:Table {service_name: $service_name, schema_name: $schema_name, table_name: $table_name})
             OPTIONAL MATCH (down:Table)-[:DEPENDS_ON]->(target)
             WHERE (run)-[:EXECUTES]->(down)
             OPTIONAL MATCH (sibling:Table)<-[:DEPENDS_ON]-(down)
@@ -161,9 +162,10 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
 	}
 
 	result, err := session.Run(ctx, query, map[string]interface{}{
-		"run_id":      runID,
-		"schema_name": s.Key.SchemaName,
-		"table_name":  s.Key.TableName,
+		"run_id":       runID,
+		"service_name": s.Key.ServiceName,
+		"schema_name":  s.Key.SchemaName,
+		"table_name":   s.Key.TableName,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("rehydrateForCompletion: %w", err)
@@ -183,10 +185,12 @@ func (r *RunAggregateRepository) Save(ctx context.Context, agg *domainRun.Run) e
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	terminalStatus := ""
-	if agg.Status.IsTerminal() {
-		terminalStatus = string(agg.Status)
-	}
+	// Normalize to the canonical lowercase terminal_status at the write boundary
+	// so Save, FinalizeRun, and the snapshot writer all stamp the same form. The
+	// in-memory aggregate vocabulary is uppercase; the stored projection the UI
+	// reads is lowercase. CanonicalTerminalStatus returns "" for non-terminal
+	// statuses, which the CASE below treats as "do not stamp".
+	terminalStatus := agg.Status.CanonicalTerminalStatus()
 
 	// COALESCE(run.version, 0) lets in-flight :Run nodes created before this
 	// patch (no version property) match expected_version=0 on the first save.
@@ -269,6 +273,10 @@ func (r *RunAggregateRepository) FinalizeRun(ctx context.Context, runID, termina
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
+	// Normalize to the canonical lowercase form so this writer agrees with Save
+	// and the snapshot writer. state's run.finalized:v1 already emits lowercase
+	// ("succeeded"/"failed"/"cancelled"); lowercasing here keeps the projection
+	// consistent even if an upstream value ever arrives in another casing.
 	result, err := session.Run(ctx, `
         MATCH (run:Run {run_id: $run_id})
         SET run.terminal_status = $terminal_status,
@@ -276,7 +284,7 @@ func (r *RunAggregateRepository) FinalizeRun(ctx context.Context, runID, termina
         RETURN run.run_id AS run_id
     `, map[string]interface{}{
 		"run_id":          runID,
-		"terminal_status": terminalStatus,
+		"terminal_status": strings.ToLower(terminalStatus),
 	})
 	if err != nil {
 		return fmt.Errorf("FinalizeRun: %w", err)

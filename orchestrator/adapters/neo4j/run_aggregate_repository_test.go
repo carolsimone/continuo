@@ -342,6 +342,136 @@ func TestRunAggregateRepository_Save_DiscriminatesByServiceName(t *testing.T) {
 	assert.Equal(t, "PENDING", n2.Status, "svc-2's edge must NOT be touched (different service)")
 }
 
+// readTerminalStatus reads the raw :Run.terminal_status property so casing
+// assertions can inspect exactly what a writer stamped, independent of the
+// aggregate reconstruction in collectRunFromFlatRows.
+func readTerminalStatus(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, runID string) string {
+	t.Helper()
+	session := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+	res, err := session.Run(ctx,
+		"MATCH (r:Run {run_id: $run_id}) RETURN r.terminal_status AS ts",
+		map[string]any{"run_id": runID})
+	require.NoError(t, err)
+	require.True(t, res.Next(ctx), "run %s must exist", runID)
+	v, _ := res.Record().Get("ts")
+	if v == nil {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+// TestRunAggregateRepository_Save_StampsCanonicalLowercaseTerminalStatus guards
+// the casing fix: the aggregate's in-memory status is uppercase ("SUCCEEDED"),
+// but Save must normalize to the canonical lowercase form ("succeeded") so the
+// projection the UI reads agrees with FinalizeRun and the snapshot writer.
+func TestRunAggregateRepository_Save_StampsCanonicalLowercaseTerminalStatus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestAggRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-%s", t.Name())
+	seedRun(t, ctx, client, runID, 1, 0, 0,
+		[]seededNode{{"public", "a", "svc-1", "PENDING"}}, nil)
+
+	kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
+	agg, err := repo.Rehydrate(ctx, runID, domainRun.ScopeFull{})
+	require.NoError(t, err)
+	_, err = agg.CompleteNode(kA, "SUCCEEDED")
+	require.NoError(t, err)
+	require.Equal(t, domainRun.RunStatusSucceeded, agg.Status,
+		"single-node completion must finalize the aggregate")
+	require.NoError(t, repo.Save(ctx, agg))
+
+	assert.Equal(t, "succeeded", readTerminalStatus(t, ctx, client, runID),
+		"Save must stamp canonical lowercase terminal_status, not the uppercase enum")
+}
+
+// TestRunAggregateRepository_FinalizeRun_NormalizesCasing guards that the
+// run.finalized:v1 projection path also stores the canonical lowercase form even
+// if an upstream value arrives in another casing.
+func TestRunAggregateRepository_FinalizeRun_NormalizesCasing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestAggRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-%s", t.Name())
+	seedRun(t, ctx, client, runID, 1, 0, 0,
+		[]seededNode{{"public", "a", "svc-1", "PENDING"}}, nil)
+
+	require.NoError(t, repo.FinalizeRun(ctx, runID, "SUCCEEDED"))
+	assert.Equal(t, "succeeded", readTerminalStatus(t, ctx, client, runID),
+		"FinalizeRun must store the canonical lowercase form")
+}
+
+// TestRunAggregateRepository_RehydrateScopeNodeCompletion_DiscriminatesByServiceName
+// guards the rehydrate target-match identity fix: two :Table nodes that share
+// schema.table but belong to different services, each wired to its own
+// downstream. Rehydrating the svc-1 target must load only svc-1's downstream,
+// never svc-2's same-named node or downstream.
+func TestRunAggregateRepository_RehydrateScopeNodeCompletion_DiscriminatesByServiceName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestAggRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-%s", t.Name())
+	// svc-1: public.shared -> public.down1 ; svc-2: public.shared -> public.down2.
+	// The two "shared" tables share schema.table but differ by service.
+	seedRun(t, ctx, client, runID, 4, 0, 0,
+		[]seededNode{
+			{"public", "shared", "svc-1", "PENDING"},
+			{"public", "down1", "svc-1", "PENDING"},
+			{"public", "shared", "svc-2", "PENDING"},
+			{"public", "down2", "svc-2", "PENDING"},
+		},
+		nil,
+	)
+	// DEPENDS_ON edges keyed on (service, schema, table) so the two "shared"
+	// nodes don't collapse. seededEdge matches on schema/table only, so wire the
+	// service-scoped edges directly.
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := session.Run(ctx, `
+		MATCH (c:Table {service_name: 'svc-1', schema_name: 'public', table_name: 'down1', test_marker: $m})
+		MATCH (p:Table {service_name: 'svc-1', schema_name: 'public', table_name: 'shared', test_marker: $m})
+		MERGE (c)-[:DEPENDS_ON]->(p)
+	`, map[string]any{"m": t.Name()})
+	require.NoError(t, err)
+	_, err = session.Run(ctx, `
+		MATCH (c:Table {service_name: 'svc-2', schema_name: 'public', table_name: 'down2', test_marker: $m})
+		MATCH (p:Table {service_name: 'svc-2', schema_name: 'public', table_name: 'shared', test_marker: $m})
+		MERGE (c)-[:DEPENDS_ON]->(p)
+	`, map[string]any{"m": t.Name()})
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	target := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "shared"}
+	agg, err := repo.Rehydrate(ctx, runID,
+		domainRun.ScopeNodeCompletion{Key: target, Status: "FAILED"})
+	require.NoError(t, err)
+
+	keys := make(map[domainRun.NodeKey]bool)
+	for _, n := range agg.Nodes() {
+		keys[n.Key] = true
+	}
+	assert.True(t, keys[target], "svc-1 target must be in scope")
+	assert.True(t, keys[domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "down1"}],
+		"svc-1's downstream must be in scope")
+	assert.False(t, keys[domainRun.NodeKey{ServiceName: "svc-2", SchemaName: "public", TableName: "shared"}],
+		"svc-2's same-named node must NOT be matched as the target")
+	assert.False(t, keys[domainRun.NodeKey{ServiceName: "svc-2", SchemaName: "public", TableName: "down2"}],
+		"svc-2's downstream must NOT be loaded")
+}
+
 func TestRunAggregateRepository_Save_StaleVersion_ReturnsErrVersionConflict(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
