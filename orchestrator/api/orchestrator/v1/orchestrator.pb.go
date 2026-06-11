@@ -350,8 +350,14 @@ func (x *GetScheduleGraphResponse) GetTopologyGeneration() int64 {
 }
 
 type ListRunsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ScheduleName  string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleName string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
+	// page_size bounds the rows returned. Server clamps to [1, 200]; 0 (unset)
+	// defaults to 50. Mirrors the StateService.ListNodes pagination contract.
+	PageSize int32 `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// page_offset skips this many rows before the page. Negative values are
+	// treated as 0.
+	PageOffset    int32 `protobuf:"varint,3,opt,name=page_offset,json=pageOffset,proto3" json:"page_offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -393,9 +399,26 @@ func (x *ListRunsRequest) GetScheduleName() string {
 	return ""
 }
 
+func (x *ListRunsRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListRunsRequest) GetPageOffset() int32 {
+	if x != nil {
+		return x.PageOffset
+	}
+	return 0
+}
+
 type ListRunsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Runs          []*RunSummary          `protobuf:"bytes,1,rep,name=runs,proto3" json:"runs,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Runs  []*RunSummary          `protobuf:"bytes,1,rep,name=runs,proto3" json:"runs,omitempty"`
+	// total_count is the number of completed runs matching schedule_name,
+	// independent of page_size/page_offset, so callers can paginate.
+	TotalCount    int32 `protobuf:"varint,2,opt,name=total_count,json=totalCount,proto3" json:"total_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -435,6 +458,13 @@ func (x *ListRunsResponse) GetRuns() []*RunSummary {
 		return x.Runs
 	}
 	return nil
+}
+
+func (x *ListRunsResponse) GetTotalCount() int32 {
+	if x != nil {
+		return x.TotalCount
+	}
+	return 0
 }
 
 type RunSummary struct {
@@ -950,11 +980,16 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\x18GetScheduleGraphResponse\x120\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x1a.orchestrator.v1.TableNodeR\x05nodes\x120\n" +
 	"\x05edges\x18\x02 \x03(\v2\x1a.orchestrator.v1.GraphEdgeR\x05edges\x12/\n" +
-	"\x13topology_generation\x18\x03 \x01(\x03R\x12topologyGeneration\"6\n" +
+	"\x13topology_generation\x18\x03 \x01(\x03R\x12topologyGeneration\"t\n" +
 	"\x0fListRunsRequest\x12#\n" +
-	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\"C\n" +
+	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x1b\n" +
+	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1f\n" +
+	"\vpage_offset\x18\x03 \x01(\x05R\n" +
+	"pageOffset\"d\n" +
 	"\x10ListRunsResponse\x12/\n" +
-	"\x04runs\x18\x01 \x03(\v2\x1b.orchestrator.v1.RunSummaryR\x04runs\"\xb3\x01\n" +
+	"\x04runs\x18\x01 \x03(\v2\x1b.orchestrator.v1.RunSummaryR\x04runs\x12\x1f\n" +
+	"\vtotal_count\x18\x02 \x01(\x05R\n" +
+	"totalCount\"\xb3\x01\n" +
 	"\n" +
 	"RunSummary\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +

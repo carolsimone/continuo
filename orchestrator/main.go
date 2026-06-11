@@ -412,7 +412,11 @@ func main() {
 	// ========================================================================
 
 	runQueries := queries.NewRunQueryService(queryRepo, topologyStateRepo, logger)
-	queryHandler := grpcinfra.NewQueryHandler(queryRepo, runQueries, logger)
+	// Topology shapes are immutable per topology_generation, so wrap the schedule
+	// reader in an LRU cache keyed by (schedule_name, generation). Run graphs
+	// carry live status overlays and stay uncached (served by queryRepo).
+	scheduleGraphReader := neo4jinfra.NewCachingScheduleGraphReader(queryRepo, topologyStateRepo, logger)
+	queryHandler := grpcinfra.NewQueryHandler(scheduleGraphReader, runQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)
 	if err != nil {

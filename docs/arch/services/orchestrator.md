@@ -58,7 +58,7 @@ Domain events live in `orchestrator/domain/run/events.go`:
 Ports (`orchestrator/domain/run/ports.go`):
 
 - `AggregateRepository` (write-side) — `Rehydrate(ctx, runID, scope) (*Run, error)` reconstitutes an operation-scoped subgraph; `Save(ctx, *Run) error` persists node statuses, `total_nodes`/`terminal_count`/`failed_count`/`version`, and `:Run.terminal_status`/`completed_at` when finalised. `Save` checks `Version` against the loaded value (with `COALESCE(run.version, 0)` to admit legacy in-flight runs) and returns `ErrVersionConflict` on mismatch; the handler retries from `Rehydrate`. `terminal_status`/`completed_at` are first-writer-wins so state's authoritative `run.finalized:v1` projection cannot be overwritten by a later aggregate save.
-- `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`.
+- `RunQueryPort` (read-side, CQRS) — `GetScheduleGraph`, `ListRuns(ctx, scheduleName, limit, offset) ([]*RunSummary, total int, err)`, `GetRunGraph`, `GetRunTopologyGeneration`, `ListActiveRuns`, `GetScheduleInitNodes`.
 - `ListScheduleTopologies` is wired through the adapter-internal `ScheduleAndRunListReader` seam in `orchestrator/adapters/grpc/handlers.go`, satisfied by the same `OrchestratorQueryRepository`. It is not part of the domain port surface because no application/handler code consumes it — only the gRPC adapter.
 
 `Scope` is a sealed interface with two variants that the adapter uses to scope the Cypher read:
@@ -164,8 +164,8 @@ Each consumer is wired as a `parser → handler` binding under `adapters/redis/`
 
 | Method | Description |
 |---|---|
-| `GetScheduleGraph` | Returns all Table nodes and DEPENDS_ON edges for a schedule, plus `topology_generation` (current `:TopologyRoot.topology_generation`; `0` means "generation unknown", same contract as `GetRunGraphResponse.latest_topology_generation`). |
-| `ListRuns` | Returns Run nodes for a schedule, newest first |
+| `GetScheduleGraph` | Returns all Table nodes and DEPENDS_ON edges for a schedule, plus `topology_generation` (current `:TopologyRoot.topology_generation`; `0` means "generation unknown", same contract as `GetRunGraphResponse.latest_topology_generation`). The topology shape is served from an in-process LRU cache keyed by `(schedule_name, topology_generation)` (see "Topology-shape cache" below). |
+| `ListRuns` | Returns a page of completed Run nodes for a schedule, newest first. Paginated via `page_size` (clamped to `[1, 200]`, default 50 when unset) and `page_offset` (negatives treated as 0); the response carries `total_count` (completed runs matching the schedule, independent of the page window). A single `count(run)` query and a `SKIP/LIMIT` page query share the same `MATCH` so the filter cannot drift. |
 | `GetRunGraph` | Returns nodes and EXECUTES edges for a specific run, with per-node status. Also returns `run_topology_generation` (stamped on the `:Run` node at `Snapshot` time; `0` means "drift unknown" — not "no drift") and `latest_topology_generation` (current `topology_state.topology_generation` Postgres singleton). |
 | `ListActiveRunDrifts` | Returns one `ActiveRunDrift` row per schedule that has an in-flight run (`schedule_name`, `run_id`, `run_topology_generation`) plus the orchestrator's current `latest_topology_generation`. "In-flight" means `completed_at IS NULL` on the `:Run` node — a property stamped by the `run.finalized:v1` projection for all terminal outcomes (succeeded, failed, cancelled). The underlying `ListActiveRuns` query orders results by `schedule_name`, then `created_at DESC`; `RunQueryService.ListActiveRunDrifts` keeps the single newest in-flight run per schedule, so each schedule contributes at most one drift row to the response. Consumed by e2e tests as an active-run state probe. |
 | `ListScheduleTopologies` | Returns one entry per schedule with at least one active `:Table`: `schedule_name`, `node_count`, `last_updated_at = max(:Table.last_updated_at)`. Backs the ui-service homepage `Topology` tab tile grid. |
@@ -339,6 +339,28 @@ Postgres on the read path:
   on each query to expose the current value. The port lives at
   `orchestrator/domain/repository/port.go`; the Postgres adapter is the only
   current implementation.
+
+### Topology-shape cache
+
+`GetScheduleGraph` returns the immutable topology *shape* (Table nodes +
+DEPENDS_ON edges) for a schedule. That shape is fixed for a given
+`topology_generation`: a manifest load or release promotion bumps the
+generation, producing a new shape under a new key. The Neo4j adapter wraps the
+schedule reader in `CachingScheduleGraphReader`
+(`orchestrator/adapters/neo4j/schedule_graph_cache.go`), a bounded LRU (32
+entries) keyed by `(schedule_name, topology_generation)`.
+
+On each call the decorator probes the current generation
+(`TopologyStateReader.GetGeneration`, a cheap Postgres single-row read) to form
+the key. A hit returns the cached shape without touching Neo4j; a miss runs the
+shape query once and stores it. A bumped generation yields a new key, naturally
+invalidating stale shapes — no explicit eviction is needed. If the generation
+probe fails, the call falls back to a direct uncached read, so a transient
+Postgres error degrades performance, not correctness.
+
+**Cache boundary:** only the immutable shape is cached. `GetRunGraph` overlays
+live `:EXECUTES.status` per node and is intentionally **not** routed through the
+cache, so run status is always fresh.
 
 ### Drift contract
 
