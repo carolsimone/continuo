@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"testing"
 	"time"
 
@@ -36,6 +35,7 @@ func TestDomainToProtoScheduler_PopulatesStartedAt(t *testing.T) {
 func TestRunToProto_PopulatesStartedAt(t *testing.T) {
 	started := time.Now()
 	created := started.Add(-time.Minute)
+	total := int32(1)
 	rn := run.HydrateRun(
 		uuid.New(),
 		"s",
@@ -46,7 +46,7 @@ func TestRunToProto_PopulatesStartedAt(t *testing.T) {
 		created,
 		&started, nil, nil, nil,
 		nil, nil,
-		sql.NullInt32{Int32: 1, Valid: true},
+		&total,
 		0,
 		map[string]run.ServiceMetadata{},
 	)

@@ -21,7 +21,9 @@ import (
 	"math"
 	"time"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -102,7 +104,7 @@ func (r *nodeRunRepository) List(
 		LIMIT $4
 	`
 
-	rows := []*projection.NodeRun{}
+	rows := []nodeRunRow{}
 	if err := r.db.SelectContext(ctx, &rows, query,
 		serviceName, schemaName, tableName, limit); err != nil {
 		r.logger.Error("Failed to list node runs",
@@ -110,7 +112,50 @@ func (r *nodeRunRepository) List(
 			"error", err)
 		return nil, fmt.Errorf("failed to list node runs: %w", err)
 	}
-	return rows, nil
+	out := make([]*projection.NodeRun, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toNodeRun(row))
+	}
+	return out, nil
+}
+
+// nodeRunRow is the adapter-side scan carrier for the per-node run-history
+// query. The db column tags live here, keeping projection.NodeRun free of
+// storage concerns.
+type nodeRunRow struct {
+	ScheduleID      uuid.UUID      `db:"run_id"`
+	ScheduleName    string         `db:"schedule_name"`
+	Kind            string         `db:"kind"`
+	TerminalStatus  string         `db:"terminal_status"`
+	TaskID          uuid.UUID      `db:"task_id"`
+	TaskStatus      run.TaskStatus `db:"task_status"`
+	RetryCount      int            `db:"retry_count"`
+	ImageTag        string         `db:"image_tag"`
+	ManifestVersion string         `db:"manifest_version"`
+	CreatedAt       time.Time      `db:"created_at"`
+	StartedAt       *time.Time     `db:"started_at"`
+	CompletedAt     *time.Time     `db:"completed_at"`
+	ErrorMessage    *string        `db:"error_message"`
+	LogS3Key        *string        `db:"log_s3_key"`
+}
+
+func toNodeRun(row nodeRunRow) *projection.NodeRun {
+	return &projection.NodeRun{
+		ScheduleID:      row.ScheduleID,
+		ScheduleName:    row.ScheduleName,
+		Kind:            row.Kind,
+		TerminalStatus:  row.TerminalStatus,
+		TaskID:          row.TaskID,
+		TaskStatus:      row.TaskStatus,
+		RetryCount:      row.RetryCount,
+		ImageTag:        row.ImageTag,
+		ManifestVersion: row.ManifestVersion,
+		CreatedAt:       row.CreatedAt,
+		StartedAt:       row.StartedAt,
+		CompletedAt:     row.CompletedAt,
+		ErrorMessage:    row.ErrorMessage,
+		LogS3Key:        row.LogS3Key,
+	}
 }
 
 type nodeSummaryRow struct {

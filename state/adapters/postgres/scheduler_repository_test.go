@@ -209,7 +209,8 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	require.NoError(t, repo.CancelTx(ctx, tx, id, "test-user", "test reason"))
+	cancelledAt := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(t, repo.CancelTx(ctx, tx, id, "test-user", "test reason", cancelledAt))
 	require.NoError(t, tx.Commit())
 
 	got, err := repo.GetByID(ctx, id)
@@ -219,12 +220,18 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	assert.Equal(t, "test-user", *got.CancelledBy)
 	assert.Equal(t, "test reason", *got.CancellationReason)
 	assert.NotNil(t, got.CompletedAt, "CancelTx must stamp completed_at (cancellation is terminal)")
+	// CancelTx persists the supplied instant verbatim to both cancelled_at and
+	// completed_at (one timestamp per logical event), so the stored row equals
+	// the value the caller produced.
+	require.NotNil(t, got.CancelledAt)
+	assert.True(t, got.CancelledAt.Equal(cancelledAt), "cancelled_at must equal the supplied instant")
+	assert.True(t, got.CompletedAt.Equal(cancelledAt), "completed_at must equal the supplied instant")
 
 	// Second cancel on already-cancelled row must return ErrNotCancellable.
 	tx2, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx2.Rollback()
-	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, "test-user", "duplicate"), postgres.ErrNotCancellable)
+	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, "test-user", "duplicate", time.Now().UTC()), postgres.ErrNotCancellable)
 }
 
 // TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow walks the full

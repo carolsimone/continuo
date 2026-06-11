@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -31,7 +30,7 @@ type SchedulerTracker struct {
 	Kind                 string                     `json:"kind" db:"kind"`
 	SourceRunID          *uuid.UUID                 `json:"source_run_id,omitempty" db:"source_run_id"`
 	ServiceMetadata      map[string]run.ServiceMetadata `json:"service_metadata"`
-	ServiceMetadataRaw   json.RawMessage            `json:"-" db:"service_metadata"`
+	ServiceMetadataRaw   []byte                         `json:"-" db:"service_metadata"`
 }
 
 // GetServiceMetadata returns the decoded ServiceMetadata map. ServiceMetadata
@@ -44,15 +43,9 @@ func (s *SchedulerTracker) GetServiceMetadata() (map[string]run.ServiceMetadata,
 	if len(s.ServiceMetadata) > 0 {
 		return s.ServiceMetadata, nil
 	}
-	if len(s.ServiceMetadataRaw) == 0 {
-		return map[string]run.ServiceMetadata{}, nil
-	}
-	var meta map[string]run.ServiceMetadata
-	if err := json.Unmarshal(s.ServiceMetadataRaw, &meta); err != nil {
+	meta, err := unmarshalServiceMetadata(s.ServiceMetadataRaw)
+	if err != nil {
 		return nil, fmt.Errorf("decode service_metadata for schedule_id %s: %w", s.ScheduleID, err)
-	}
-	if meta == nil {
-		return map[string]run.ServiceMetadata{}, nil
 	}
 	return meta, nil
 }

@@ -36,9 +36,12 @@ func (r *cancelledSchedulesRepository) Exists(ctx context.Context, scheduleID uu
 }
 
 func (r *cancelledSchedulesRepository) DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error) {
+	// The cutoff is computed in SQL (NOW() - interval) rather than with a Go
+	// wall-clock value, so the comparison against cancelled_at (a DB-stamped
+	// column) uses a single time authority and is immune to host/DB clock skew.
 	result, err := r.db.ExecContext(ctx,
-		`DELETE FROM cancelled_schedules WHERE cancelled_at < $1`,
-		time.Now().Add(-ttl))
+		`DELETE FROM cancelled_schedules WHERE cancelled_at < NOW() - make_interval(secs => $1)`,
+		ttl.Seconds())
 	if err != nil {
 		return 0, err
 	}

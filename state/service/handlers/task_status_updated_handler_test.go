@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
 	"os"
@@ -133,7 +132,7 @@ func (f *fakeTaskStatusTaskCollection) BulkCreate(_ context.Context, _ []run.Tas
 func (f *fakeTaskStatusTaskCollection) GetByNode(_ context.Context, _ uuid.UUID, _ run.NodeID) (run.Task, error) {
 	panic("GetByNode not implemented in fake")
 }
-func (f *fakeTaskStatusTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string) (int, error) {
+func (f *fakeTaskStatusTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (int, error) {
 	panic("BulkCancel not implemented in fake")
 }
 func (f *fakeTaskStatusTaskCollection) Update(_ context.Context, _ run.Task) error {
@@ -174,7 +173,7 @@ func newRunningTaskStatusRun(id uuid.UUID, name string, total, terminal int32) *
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
-		sql.NullInt32{Valid: true, Int32: total},
+		&total,
 		terminal,
 		map[string]run.ServiceMetadata{},
 	)
@@ -192,7 +191,7 @@ func newTerminalTaskStatusRun(id uuid.UUID, name string, status run.SchedulerSta
 		now,
 		nil, &now, nil, nil,
 		nil, nil,
-		sql.NullInt32{},
+		nil,
 		0,
 		map[string]run.ServiceMetadata{},
 	)

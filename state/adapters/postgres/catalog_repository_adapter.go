@@ -39,12 +39,20 @@ func (a *CatalogRepositoryAdapter) GetCatalog(ctx context.Context) (*catalog.Sch
 	return hydrateCatalog(rows), nil
 }
 
-// LoadCatalogForUpdate loads the full schedule_catalog for a reconcile cycle.
-// schedule_catalog reconciliation is driven by a single consumer of
-// schedules.loaded:v1, so a plain ListAll suffices. If contention increases,
-// add a ListAllForUpdate (SELECT … FOR UPDATE) to the underlying repository.
+// LoadCatalogForUpdate loads the full schedule_catalog for a reconcile cycle,
+// row-locking every row with SELECT … FOR UPDATE inside the bound transaction.
+// The lock serialises the reconcile read-modify-write (GetCatalog → mutate →
+// SaveCatalog) against any concurrent reconciler, honouring the Load* contract
+// (write-path load under a FOR UPDATE lock).
 func (a *CatalogRepositoryAdapter) LoadCatalogForUpdate(ctx context.Context) (*catalog.ScheduleCatalog, error) {
-	return a.GetCatalog(ctx)
+	if a.tx == nil {
+		return nil, fmt.Errorf("LoadCatalogForUpdate requires an active transaction")
+	}
+	rows, err := a.repo.ListAllForUpdateTx(ctx, a.tx)
+	if err != nil {
+		return nil, err
+	}
+	return hydrateCatalog(rows), nil
 }
 
 // SaveCatalog persists the full active set of the catalog inside the caller's

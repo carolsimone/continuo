@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
 	"os"
@@ -90,7 +89,7 @@ func newPendingTestRun(id uuid.UUID, name string) *run.Run {
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
-		sql.NullInt32{},
+		nil,
 		0,
 		map[string]run.ServiceMetadata{},
 	)
@@ -109,7 +108,7 @@ func newTerminalTestRun(id uuid.UUID, name string, status run.SchedulerStatus) *
 		now,
 		nil, &now, nil, nil,
 		nil, nil,
-		sql.NullInt32{},
+		nil,
 		0,
 		map[string]run.ServiceMetadata{},
 	)

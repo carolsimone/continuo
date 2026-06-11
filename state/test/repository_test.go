@@ -409,7 +409,7 @@ func TestSchedulerTrackerRepository_GetActiveScheduler(t *testing.T) {
 		require.NoError(t, repo.Create(ctx, tracker))
 		tx, err := db.BeginTxx(ctx, nil)
 		require.NoError(t, err)
-		require.NoError(t, repo.CancelTx(ctx, tx, schedID, "test", ""))
+		require.NoError(t, repo.CancelTx(ctx, tx, schedID, "test", "", time.Now().UTC()))
 		require.NoError(t, tx.Commit())
 
 		result, err := repo.GetActiveScheduler(ctx, "post-cancel")

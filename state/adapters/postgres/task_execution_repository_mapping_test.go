@@ -48,8 +48,9 @@ func TestRowFromEvent(t *testing.T) {
 		assert.Equal(t, &s3Key, row.LogS3Key)
 		// ExecutorID must always be nil: the event carries no executor id.
 		assert.Nil(t, row.ExecutorID)
-		// CreatedAt is set to time.Now() inside rowFromEvent.
-		assert.False(t, row.CreatedAt.IsZero())
+		// CreatedAt is left zero: CreateTx stamps it with the DB clock (NOW()),
+		// so rowFromEvent does not populate it.
+		assert.True(t, row.CreatedAt.IsZero())
 	})
 
 	t.Run("all optional fields nil", func(t *testing.T) {
@@ -80,6 +81,7 @@ func TestRowFromEvent(t *testing.T) {
 		assert.Nil(t, row.LogS3Key)
 		// ExecutorID must always be nil.
 		assert.Nil(t, row.ExecutorID)
-		assert.False(t, row.CreatedAt.IsZero())
+		// CreatedAt is left zero: CreateTx stamps it with the DB clock (NOW()).
+		assert.True(t, row.CreatedAt.IsZero())
 	})
 }

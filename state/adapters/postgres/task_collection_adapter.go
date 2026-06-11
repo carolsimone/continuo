@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -109,8 +110,8 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 	return a.repo.BulkCreateTx(ctx, a.tx, rows)
 }
 
-func (a *TaskCollectionAdapter) BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string) (int, error) {
-	n, err := a.repo.BulkCancelByScheduleIDTx(ctx, a.tx, runID, cancelledBy)
+func (a *TaskCollectionAdapter) BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (int, error) {
+	n, err := a.repo.BulkCancelByScheduleIDTx(ctx, a.tx, runID, cancelledBy, cancelledAt)
 	return int(n), err
 }
 

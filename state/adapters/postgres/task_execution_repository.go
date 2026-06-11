@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/carolsimone/continuo/state/domain/events"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
@@ -84,7 +83,9 @@ func (r *taskExecutionRepository) Create(ctx context.Context, execution *TaskExe
 }
 
 // CreateTx inserts a new task_execution record within an existing transaction.
-// Uses ON CONFLICT (id) DO NOTHING for idempotency.
+// Uses ON CONFLICT (id) DO NOTHING for idempotency. created_at is stamped by
+// the DB clock (NOW()) so the ingest timestamp uses a single time authority
+// rather than a Go wall-clock value.
 func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, execution *TaskExecution) error {
 	_, err := tx.NamedExecContext(ctx, `
 		INSERT INTO task_execution (
@@ -93,7 +94,7 @@ func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, exe
 			error_message, cancelled_at, cancelled_by, cancellation_reason,
 			log_s3_key
 		) VALUES (
-			:id, :task_id, :created_at, :started_at, :completed_at,
+			:id, :task_id, NOW(), :started_at, :completed_at,
 			:execution_time_seconds, :executor_id, :k8s_job_name,
 			:error_message, :cancelled_at, :cancelled_by, :cancellation_reason,
 			:log_s3_key
@@ -117,11 +118,11 @@ func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, exe
 
 // rowFromEvent maps a recorded-execution domain event to its storage row.
 // ExecutorID is intentionally left nil: the event carries no executor id.
+// CreatedAt is left zero: CreateTx stamps it with the DB clock (NOW()).
 func rowFromEvent(evt events.TaskExecutionRecorded) *TaskExecution {
 	return &TaskExecution{
 		ID:                   evt.ExecutionID,
 		TaskID:               evt.TaskID,
-		CreatedAt:            time.Now(),
 		StartedAt:            evt.StartedAt,
 		CompletedAt:          evt.CompletedAt,
 		ExecutionTimeSeconds: evt.ExecutionTimeSeconds,

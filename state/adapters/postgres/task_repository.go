@@ -41,8 +41,9 @@ type TaskTrackerRepository interface {
 	// visible as a rebase candidate iff it is terminal AND has ≥1 non-succeeded task.
 	HasNonSucceededTask(ctx context.Context, scheduleID uuid.UUID) (bool, error)
 	// BulkCancelByScheduleIDTx sets status='cancelled' for all pending/running tasks
-	// in a schedule. Returns the number of rows updated.
-	BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string) (int64, error)
+	// in a schedule, stamping cancelled_at with cancelledAt (the run's
+	// authoritative cancellation instant). Returns the number of rows updated.
+	BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string, cancelledAt time.Time) (int64, error)
 }
 
 type taskTrackerRepository struct {
@@ -374,7 +375,7 @@ func (r *taskTrackerRepository) HasNonSucceededTask(ctx context.Context, schedul
 
 // BulkCancelByScheduleIDTx sets status='cancelled' for all pending/running tasks
 // in a schedule within the given transaction. Returns the number of rows updated.
-func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string) (int64, error) {
+func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string, cancelledAt time.Time) (int64, error) {
 	result, err := tx.ExecContext(ctx, `
 		UPDATE task_tracker
 		SET status       = $1,
@@ -382,7 +383,7 @@ func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx
 		    cancelled_by = $3
 		WHERE schedule_id = $4
 		  AND status IN ('pending', 'running')
-	`, run.TaskStatusCancelled, time.Now(), cancelledBy, scheduleID)
+	`, run.TaskStatusCancelled, cancelledAt, cancelledBy, scheduleID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to bulk cancel tasks: %w", err)
 	}

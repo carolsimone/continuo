@@ -41,7 +41,7 @@ func (h *TaskStatusUpdatedHandler) Handle(
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
-	domainEvents, err := r.RecordTaskStatus(ctx, u.TaskCollection(), evt.TaskID, evt.Status, evt.RetryCount)
+	domainEvents, err := r.RecordTaskStatus(ctx, u.TaskCollection(), evt.TaskID, evt.Status, evt.RetryCount, u.Clock().Now())
 	if err != nil {
 		return fmt.Errorf("record task status: %w", err)
 	}

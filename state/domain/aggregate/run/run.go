@@ -2,7 +2,6 @@ package run
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
@@ -31,7 +30,9 @@ type Run struct {
 	cancelledBy        *string
 	cancellationReason *string
 
-	totalTaskCount    sql.NullInt32
+	// totalTaskCount is nil until the run's child set is known (it is stamped on
+	// AcceptDispatch). nil mirrors a NULL total_task_count column.
+	totalTaskCount    *int32
 	terminalTaskCount int32
 
 	serviceMetadata map[string]ServiceMetadata
@@ -66,7 +67,7 @@ func HydrateRun(
 	createdAt time.Time,
 	startedAt, completedAt, lastHeartbeatAt, cancelledAt *time.Time,
 	cancelledBy, cancellationReason *string,
-	total sql.NullInt32,
+	total *int32,
 	terminal int32,
 	serviceMetadata map[string]ServiceMetadata,
 ) *Run {
@@ -209,7 +210,7 @@ func (r *Run) LastHeartbeatAt() *time.Time      { return r.lastHeartbeatAt }
 func (r *Run) CancelledAt() *time.Time          { return r.cancelledAt }
 func (r *Run) CancelledBy() *string             { return r.cancelledBy }
 func (r *Run) CancellationReason() *string      { return r.cancellationReason }
-func (r *Run) TotalTaskCount() sql.NullInt32    { return r.totalTaskCount }
+func (r *Run) TotalTaskCount() *int32           { return r.totalTaskCount }
 func (r *Run) TerminalTaskCount() int32         { return r.terminalTaskCount }
 func (r *Run) ServiceMetadata() map[string]ServiceMetadata {
 	out := make(map[string]ServiceMetadata, len(r.serviceMetadata))
@@ -273,7 +274,7 @@ func (r *Run) AcceptDispatch(
 
 	built := make([]Task, 0, len(projection))
 	for _, p := range projection {
-		jobName, err := computeJobName(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
+		jobName, err := domain.ComputeJobName(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidDispatchedTask, err)
 		}
@@ -310,7 +311,8 @@ func (r *Run) AcceptDispatch(
 		}
 	}
 
-	r.totalTaskCount = sql.NullInt32{Int32: int32(len(projection)), Valid: true}
+	total := int32(len(projection))
+	r.totalTaskCount = &total
 	r.terminalTaskCount = terminal
 	r.initStatus = InitStatusCompleted
 	r.changes.totalTaskCountDirty = true
@@ -371,7 +373,7 @@ func (r *Run) Cancel(
 	r.changes.cancelDirty = true
 	r.changes.statusDirty = true
 
-	if _, err := tasks.BulkCancel(ctx, r.scheduleID, by); err != nil {
+	if _, err := tasks.BulkCancel(ctx, r.scheduleID, by, now); err != nil {
 		return nil, fmt.Errorf("bulk cancel tasks: %w", err)
 	}
 
@@ -406,6 +408,7 @@ func (r *Run) RecordTaskStatus(
 	taskID uuid.UUID,
 	newStatus TaskStatus,
 	retryCount int32,
+	now time.Time,
 ) ([]DomainEvent, error) {
 	if r.IsTerminal() {
 		return nil, nil
@@ -479,7 +482,7 @@ func (r *Run) RecordTaskStatus(
 			return nil, nil // cancelled or vanished — leave counters untouched.
 		}
 		r.fillSlot()
-		return r.finalizeIfComplete(ctx, tasks)
+		return r.finalizeIfComplete(ctx, tasks, now)
 	}
 
 	// Newer attempt (retryCount > prevAttempt) or no prior status — adopt it.
@@ -498,13 +501,13 @@ func (r *Run) RecordTaskStatus(
 	case !prevWasTerminal && isTerminal:
 		// Terminal of a running/new attempt — fill the slot.
 		r.fillSlot()
-		return r.finalizeIfComplete(ctx, tasks)
+		return r.finalizeIfComplete(ctx, tasks, now)
 	case prevWasTerminal && isTerminal:
 		// A newer attempt's terminal arriving after an older attempt's terminal
 		// (e.g. the retry also failed, or it succeeded). The slot stays filled —
 		// no count change — but the task's retryability may have flipped, so
 		// re-check finalization with the now-current attempt persisted.
-		return r.finalizeIfComplete(ctx, tasks)
+		return r.finalizeIfComplete(ctx, tasks, now)
 	default:
 		// Non-terminal after non-terminal (newer attempt already running) — the
 		// slot was empty and stays empty.
@@ -532,8 +535,8 @@ func (r *Run) unfillSlot() {
 // graph has finished loading, the run is still RUNNING, and no failed task is
 // still retryable. Returns the RunFinalized event(s), or nil when finalization
 // is deferred.
-func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection) ([]DomainEvent, error) {
-	if !r.totalTaskCount.Valid || r.terminalTaskCount != r.totalTaskCount.Int32 {
+func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, error) {
+	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount {
 		return nil, nil
 	}
 	if r.initStatus != InitStatusCompleted {
@@ -558,7 +561,7 @@ func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection) ([]D
 	if anyFailed {
 		outcome = SchedulerStatusFailed
 	}
-	return r.finalize(outcome, timeNow()), nil
+	return r.finalize(outcome, now), nil
 }
 
 // MarkDispatchFailed is called when orchestrator emits
@@ -581,34 +584,6 @@ func (r *Run) finalize(outcome SchedulerStatus, now time.Time) []DomainEvent {
 	r.changes.completedDirty = true
 	evt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: outcome}
 	return []DomainEvent{evt}
-}
-
-// timeNow is a package-private hook so RecordTaskStatus can timestamp its
-// finalize event without taking a Clock parameter (the inbound
-// task.status.updated:v1 event has no timestamp field). Tests can override
-// it via a package_test helper if needed; production uses time.Now.
-var timeNow = time.Now
-
-// defaultComputeJobName is the production implementation of the job-name
-// computation. Stored separately so tests can restore it via
-// ResetComputeJobNameFn after injecting a failure.
-var defaultComputeJobName = domain.ComputeJobName
-
-// computeJobName is a package-level hook that delegates to
-// pkg/domain.ComputeJobName. Tests can override it via SetComputeJobNameFn to
-// inject errors for the ErrInvalidDispatchedTask code path.
-var computeJobName = defaultComputeJobName
-
-// SetComputeJobNameFn replaces the job-name computation hook for the duration
-// of a test. Always paired with t.Cleanup(run.ResetComputeJobNameFn).
-func SetComputeJobNameFn(fn func(service, schema, table, scheduleID string) (string, error)) {
-	computeJobName = fn
-}
-
-// ResetComputeJobNameFn restores the job-name computation hook to the
-// production default.
-func ResetComputeJobNameFn() {
-	computeJobName = defaultComputeJobName
 }
 
 // CanBeRerunSource enforces the eligibility check for a run to serve as a

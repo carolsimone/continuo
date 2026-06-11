@@ -311,7 +311,7 @@ A cancelled task is never overwritten (the write is a no-op and leaves the count
 
 `repository.RunRepository.SaveRun` (implemented by `postgres.RunRepositoryAdapter`) writes the updated `scheduler_tracker` row; the handler then appends any emitted finalization event to `state_outbox` through `ports.OutboxPublisher.Append` — all within the same Postgres transaction opened by the binding's `UnitOfWork`.
 
-`SaveRun` collects every dirty column reported by the aggregate's change set (`status`, `initialization_status`, `total_task_count`, `terminal_task_count`, `started_at`, and `completed_at`) into a single parameterised `UPDATE scheduler_tracker SET … WHERE schedule_id = $n` issued by `UpdateRunRowTx`. Because the run row is already held under `SELECT … FOR UPDATE` by `LoadRunForUpdate`, this is one round-trip per save. The column list is a fixed allowlist driven by the change-set flags; values are always bound as parameters. Cancellation is the one exception: it persists through the guarded `CancelTx` statement (`WHERE status NOT IN (terminal)`, mapped to `ErrAlreadyTerminal`), which writes `status`, `cancelled_at`, `completed_at`, `cancelled_by`, and `cancellation_reason` together.
+`SaveRun` collects every dirty column reported by the aggregate's change set (`status`, `initialization_status`, `total_task_count`, `terminal_task_count`, `started_at`, and `completed_at`) into a single parameterised `UPDATE scheduler_tracker SET … WHERE schedule_id = $n` issued by `UpdateRunRowTx`. Because the run row is already held under `SELECT … FOR UPDATE` by `LoadRunForUpdate`, this is one round-trip per save. The column list is a fixed allowlist driven by the change-set flags; values are always bound as parameters. Cancellation is the one exception: it persists through the guarded `CancelTx` statement (`WHERE status NOT IN (terminal)`, mapped to `ErrAlreadyTerminal`), which writes `status`, `cancelled_at`, `completed_at`, `cancelled_by`, and `cancellation_reason` together. `CancelTx` takes the authoritative cancellation instant produced by `Run.Cancel` (`ports.Clock.Now()` at the gRPC handler) and persists it verbatim to both `cancelled_at` and `completed_at`, so the value the gRPC response reports equals the stored row — one timestamp per logical event.
 
 `started_at` is stamped when the run transitions PENDING→RUNNING (a non-terminal dispatch in `AcceptDispatch`) and persisted on that save. Runs that auto-rollup directly to a terminal status at dispatch time never enter RUNNING, so their `started_at` stays NULL while `completed_at` is set — the `valid_timestamps` CHECK tolerates a NULL `started_at`.
 
@@ -326,10 +326,10 @@ If **every** dispatched task is in a terminal state (i.e. there is nothing to ex
 `Run.Cancel()` is a terminal transition with the same finalization side-effects as SUCCEEDED and FAILED. When a run is cancelled it:
 
 1. Sets `cancelled_at`, `cancelled_by`, and `cancellation_reason` — the cancellation-specific metadata.
-2. Sets `completed_at` (alongside `cancelled_at`) and emits `RunFinalized{Outcome: cancelled}` — the same finalization side-effects SUCCEEDED and FAILED produce. The cancel path persists through `cancelDirty`/`CancelTx`, so it stamps these directly rather than through the `completedDirty`/`FinalizeRunTx` path the SUCCEEDED/FAILED rollup uses.
+2. Sets `completed_at` (alongside `cancelled_at`, both to the single `ports.Clock.Now()` instant the handler passed in) and emits `RunFinalized{Outcome: cancelled}` — the same finalization side-effects SUCCEEDED and FAILED produce. The cancel path persists through `cancelDirty`/`CancelTx`, so it stamps these directly rather than through the `completedDirty`/`FinalizeRunTx` path the SUCCEEDED/FAILED rollup uses. The child `task_tracker` rows cancelled in the same transaction (`BulkCancel`) are stamped with that same instant.
 3. Emits `RunCancelled` — the work-suppression guard event.
 
-`SaveRun` persists both `cancelled_at` and `completed_at` in the same `CancelTx` SQL statement, so state's `scheduler_tracker.completed_at` is always non-NULL for a cancelled run.
+`SaveRun` persists both `cancelled_at` and `completed_at` in the same `CancelTx` SQL statement using the aggregate's authoritative instant, so state's `scheduler_tracker.completed_at` is always non-NULL for a cancelled run and equals the value returned to the caller.
 
 `Run.Cancel()` therefore produces two domain events published to two separate streams in one outbox transaction:
 
@@ -351,7 +351,7 @@ The two events are independent and commutative: the guard path keys on `schedule
 - `scheduler_tracker` — on activation, status transitions, rerun reset, finalization
 - `task_tracker` — on task create/update/reset (via events)
 - `task_execution` — on execution create/update (via events)
-- `schedule_catalog` — on `schedules.loaded:v1` consumption (upsert active, soft-delete absent)
+- `schedule_catalog` — on `schedules.loaded:v1` consumption. `ScheduleCatalogHandler` loads the catalog with `LoadCatalogForUpdate` (a `SELECT … FOR UPDATE` over every row inside the handler transaction), reconciles, then `SaveCatalog` upserts the active set and soft-deletes absent rows. The `FOR UPDATE` lock serialises the read-modify-write against any concurrent reconciler, honouring the `Load*`-means-write-path-under-lock contract. `first_seen_at`/`last_seen_at`/`removed_at` are stamped with the DB clock (`NOW()`), not a Go wall-clock value.
 - `state_outbox` — atomically with every activation, rerun, or finalization
 - `message_processing` — one row per consumed Redis message ID; written by the binding inside the same transaction as the handler's state mutation
 
