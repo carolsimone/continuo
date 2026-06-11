@@ -18,7 +18,7 @@ import (
 // adapters/neo4j.OrchestratorQueryRepository.
 type ScheduleAndRunListReader interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
-	ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error)
+	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
 }
 
@@ -70,16 +70,48 @@ func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1
 	return resp, nil
 }
 
+// ListRuns pagination bounds. defaultListRunsPageSize applies when the request
+// leaves page_size unset (0); maxListRunsPageSize caps oversized requests so a
+// single call can never scan an unbounded run history. Mirrors the
+// StateService.ListNodes 50/200 contract.
+const (
+	defaultListRunsPageSize = 50
+	maxListRunsPageSize     = 200
+)
+
+func clampPageSize(requested int32) int {
+	size := int(requested)
+	if size <= 0 {
+		return defaultListRunsPageSize
+	}
+	if size > maxListRunsPageSize {
+		return maxListRunsPageSize
+	}
+	return size
+}
+
+func clampOffset(requested int32) int {
+	if requested < 0 {
+		return 0
+	}
+	return int(requested)
+}
+
 func (h *QueryHandler) ListRuns(ctx context.Context, req *orchestratorv1.ListRunsRequest) (*orchestratorv1.ListRunsResponse, error) {
 	if req.ScheduleName == "" {
 		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
 	}
-	runs, err := h.scheduleAndRunLists.ListRuns(ctx, req.ScheduleName)
+	limit := clampPageSize(req.PageSize)
+	offset := clampOffset(req.PageOffset)
+	runs, total, err := h.scheduleAndRunLists.ListRuns(ctx, req.ScheduleName, limit, offset)
 	if err != nil {
 		h.logger.Error("ListRuns failed", "schedule", req.ScheduleName, "error", err)
 		return nil, status.Errorf(codes.Internal, "ListRuns: %v", err)
 	}
-	resp := &orchestratorv1.ListRunsResponse{Runs: make([]*orchestratorv1.RunSummary, 0, len(runs))}
+	resp := &orchestratorv1.ListRunsResponse{
+		Runs:       make([]*orchestratorv1.RunSummary, 0, len(runs)),
+		TotalCount: int32(total),
+	}
 	for _, r := range runs {
 		resp.Runs = append(resp.Runs, &orchestratorv1.RunSummary{
 			RunId:          r.RunID,

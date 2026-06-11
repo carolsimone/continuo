@@ -164,7 +164,7 @@ The `internal/grpc/handlers/synthesise_derived_run.go` helper backs both `RerunH
 | Method | Description |
 |---|---|
 | `GetTaskExecution` | Fetch by UUID |
-| `ListTaskExecutions` | List executions, optionally filtered by task |
+| `ListTaskExecutions` | List executions for a schedule. Paginated via `page_size` (clamped to `[1, 200]`, default 50 when unset) and `page_offset` (negatives treated as 0); the response carries `total_count`. |
 
 ### HTTP server (port 8082)
 

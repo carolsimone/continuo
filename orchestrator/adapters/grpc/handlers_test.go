@@ -38,21 +38,34 @@ func (f *fakeDriftAwareRuns) ListActiveRunDrifts(ctx context.Context) (*queries.
 
 // fakeScheduleAndRunLists satisfies grpcadapter.ScheduleAndRunListReader for
 // the GetScheduleGraph and ListRuns RPCs. The drift-aware GetRunGraph path
-// goes through DriftAwareRunReader instead.
-type fakeScheduleAndRunLists struct{}
+// goes through DriftAwareRunReader instead. It records the limit/offset the
+// handler computed so pagination clamping can be asserted, and replays a fixed
+// page + total back.
+type fakeScheduleAndRunLists struct {
+	gotLimit  int
+	gotOffset int
+	runs      []*domain.RunSummary
+	total     int
+}
 
 func (fakeScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
 	return &domain.ScheduleGraph{}, nil
 }
-func (fakeScheduleAndRunLists) ListRuns(context.Context, string) ([]*domain.RunSummary, error) {
-	return nil, nil
+func (f *fakeScheduleAndRunLists) ListRuns(_ context.Context, _ string, limit, offset int) ([]*domain.RunSummary, int, error) {
+	f.gotLimit = limit
+	f.gotOffset = offset
+	return f.runs, f.total, nil
 }
 func (fakeScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
 
 func newHandler(rq *fakeDriftAwareRuns) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(fakeScheduleAndRunLists{}, rq, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return grpcadapter.NewQueryHandler(&fakeScheduleAndRunLists{}, rq, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+}
+
+func newHandlerWithLists(lists *fakeScheduleAndRunLists) *grpcadapter.QueryHandler {
+	return grpcadapter.NewQueryHandler(lists, &fakeDriftAwareRuns{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 func TestQueryHandler_GetRunGraph_PopulatesGenerations(t *testing.T) {
@@ -95,4 +108,55 @@ func TestQueryHandler_ListActiveRunDrifts_PopulatesView(t *testing.T) {
 	assert.Equal(t, "sched-a", resp.ActiveRuns[0].ScheduleName)
 	assert.Equal(t, "run-a", resp.ActiveRuns[0].RunId)
 	assert.Equal(t, int64(5), resp.ActiveRuns[0].RunTopologyGeneration)
+}
+
+func TestQueryHandler_ListRuns_ClampsPageSizeAndOffset(t *testing.T) {
+	cases := []struct {
+		name        string
+		reqPageSize int32
+		reqOffset   int32
+		wantLimit   int
+		wantOffset  int
+	}{
+		{"unset defaults to 50", 0, 0, 50, 0},
+		{"negative defaults to 50", -1, 0, 50, 0},
+		{"within range passes through", 25, 10, 25, 10},
+		{"oversized clamps to 200", 1000, 0, 200, 0},
+		{"negative offset clamps to 0", 30, -5, 30, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lists := &fakeScheduleAndRunLists{total: 3}
+			h := newHandlerWithLists(lists)
+			_, err := h.ListRuns(context.Background(), &orchestratorv1.ListRunsRequest{
+				ScheduleName: "sched-a",
+				PageSize:     tc.reqPageSize,
+				PageOffset:   tc.reqOffset,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantLimit, lists.gotLimit, "limit")
+			assert.Equal(t, tc.wantOffset, lists.gotOffset, "offset")
+		})
+	}
+}
+
+func TestQueryHandler_ListRuns_PopulatesTotalCount(t *testing.T) {
+	lists := &fakeScheduleAndRunLists{
+		total: 42,
+		runs: []*domain.RunSummary{
+			{RunID: "r1", ScheduleName: "sched-a", TerminalStatus: "succeeded"},
+		},
+	}
+	h := newHandlerWithLists(lists)
+	resp, err := h.ListRuns(context.Background(), &orchestratorv1.ListRunsRequest{ScheduleName: "sched-a"})
+	require.NoError(t, err)
+	assert.Equal(t, int32(42), resp.TotalCount)
+	require.Len(t, resp.Runs, 1)
+	assert.Equal(t, "r1", resp.Runs[0].RunId)
+}
+
+func TestQueryHandler_ListRuns_RejectsEmptyScheduleName(t *testing.T) {
+	h := newHandlerWithLists(&fakeScheduleAndRunLists{})
+	_, err := h.ListRuns(context.Background(), &orchestratorv1.ListRunsRequest{ScheduleName: ""})
+	require.Error(t, err)
 }

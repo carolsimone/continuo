@@ -93,8 +93,8 @@ type stubScheduleAndRunLists struct{}
 func (stubScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
 	return &domain.ScheduleGraph{}, nil
 }
-func (stubScheduleAndRunLists) ListRuns(context.Context, string) ([]*domain.RunSummary, error) {
-	return nil, nil
+func (stubScheduleAndRunLists) ListRuns(context.Context, string, int, int) ([]*domain.RunSummary, int, error) {
+	return nil, 0, nil
 }
 func (stubScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil

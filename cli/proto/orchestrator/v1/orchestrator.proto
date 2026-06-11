@@ -47,8 +47,21 @@ message GetScheduleGraphResponse {
   int64 topology_generation             = 3;
 }
 
-message ListRunsRequest { string schedule_name = 1; }
-message ListRunsResponse { repeated RunSummary runs = 1; }
+message ListRunsRequest {
+  string schedule_name = 1;
+  // page_size bounds the rows returned. Server clamps to [1, 200]; 0 (unset)
+  // defaults to 50. Mirrors the StateService.ListNodes pagination contract.
+  int32 page_size = 2;
+  // page_offset skips this many rows before the page. Negative values are
+  // treated as 0.
+  int32 page_offset = 3;
+}
+message ListRunsResponse {
+  repeated RunSummary runs = 1;
+  // total_count is the number of completed runs matching schedule_name,
+  // independent of page_size/page_offset, so callers can paginate.
+  int32 total_count = 2;
+}
 message RunSummary {
   string run_id = 1;
   string schedule_name = 2;

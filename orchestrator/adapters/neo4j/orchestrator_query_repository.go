@@ -136,12 +136,35 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 	return &domain.ScheduleGraph{Nodes: nodes, Edges: edges, TopologyGeneration: topologyGen}, nil
 }
 
-// ListRuns returns completed runs for a schedule ordered by creation date descending.
-func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName string) ([]*domain.RunSummary, error) {
+// ListRuns returns a page of completed runs for a schedule, newest-first, along
+// with the total number of completed runs matching the schedule (independent of
+// the page window) so callers can paginate. limit must be > 0 and offset >= 0;
+// the gRPC handler clamps both before calling.
+func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
-	query := `
+	// count and page share the same MATCH so their filter can never drift.
+	countQuery := `
+		MATCH (run:Run {schedule_name: $schedule_name})
+		WHERE run.completed_at IS NOT NULL
+		RETURN count(run) AS total
+	`
+	countResult, err := session.Run(ctx, countQuery, map[string]interface{}{"schedule_name": scheduleName})
+	if err != nil {
+		return nil, 0, fmt.Errorf("ListRuns count: %w", err)
+	}
+	var total int
+	if countResult.Next(ctx) {
+		if v, ok := recordValue(countResult.Record(), "total").(int64); ok {
+			total = int(v)
+		}
+	}
+	if err := countResult.Err(); err != nil {
+		return nil, 0, fmt.Errorf("ListRuns count iterate: %w", err)
+	}
+
+	pageQuery := `
 		MATCH (run:Run {schedule_name: $schedule_name})
 		WHERE run.completed_at IS NOT NULL
 		RETURN run.run_id AS run_id,
@@ -150,10 +173,16 @@ func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName
 		       toString(run.created_at) AS created_at,
 		       toString(run.completed_at) AS completed_at
 		ORDER BY run.created_at DESC
+		SKIP $offset
+		LIMIT $limit
 	`
-	result, err := session.Run(ctx, query, map[string]interface{}{"schedule_name": scheduleName})
+	result, err := session.Run(ctx, pageQuery, map[string]interface{}{
+		"schedule_name": scheduleName,
+		"offset":        int64(offset),
+		"limit":         int64(limit),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("ListRuns: %w", err)
+		return nil, 0, fmt.Errorf("ListRuns: %w", err)
 	}
 
 	var runs []*domain.RunSummary
@@ -169,9 +198,9 @@ func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName
 		runs = append(runs, summary)
 	}
 	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("ListRuns iterate: %w", err)
+		return nil, 0, fmt.Errorf("ListRuns iterate: %w", err)
 	}
-	return runs, nil
+	return runs, total, nil
 }
 
 // GetRunGraph returns nodes with their execution status and edges for a run.

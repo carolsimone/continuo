@@ -125,6 +125,9 @@ type nodeSummaryRow struct {
 	FlakyCount     int       `db:"flaky_count"`
 	LastStatus     string    `db:"last_status"`
 	LastRunAt      time.Time `db:"last_run_at"`
+	// TotalCount is COUNT(*) OVER () — the same match count on every page row.
+	// Only populated by the ListNodes page query.
+	TotalCount int `db:"total_count"`
 }
 
 // ListNodes returns the node catalog: one summary per node that has run, with
@@ -149,10 +152,13 @@ func (r *nodeRunRepository) ListNodes(
 		offset = 0
 	}
 
-	// rankedWindowedCTE is shared verbatim by the count query and the page query
-	// so their filter and windowing can never drift. $1 is a case-insensitive
-	// EXACT match on the table name (not a substring): searching "table_2" returns
-	// only "table_2", never "ftable_2" or "table_2_v2". Service is filtered via $2.
+	// rankedWindowedCTE filters and caps each node to its most recent 50 runs.
+	// $1 is a case-insensitive EXACT match on the table name (not a substring):
+	// searching "table_2" returns only "table_2", never "ftable_2" or
+	// "table_2_v2". Service is filtered via $2. The window-function scan over
+	// task_tracker ⋈ scheduler_tracker runs ONCE: the page query layers the
+	// per-node aggregation and a COUNT(*) OVER () total on top of this single
+	// scan, so the match count no longer requires a second pass.
 	const rankedWindowedCTE = `
 		WITH ranked AS (
 			SELECT t.task_id, t.service_name, t.schema_name, t.table_name,
@@ -168,18 +174,9 @@ func (r *nodeRunRepository) ListNodes(
 		),
 		windowed AS ( SELECT * FROM ranked WHERE rn <= 50 )`
 
-	// total_count is computed independently of paging so an empty page (offset
-	// past the end) still reports the true match count.
-	countQuery := rankedWindowedCTE + `
-		SELECT COUNT(*) FROM (
-			SELECT 1 FROM windowed GROUP BY service_name, schema_name, table_name
-		) g`
-	var total int
-	if err := r.db.GetContext(ctx, &total, countQuery, search, serviceName); err != nil {
-		r.logger.Error("Failed to count nodes", "search", search, "service", serviceName, "error", err)
-		return nil, 0, fmt.Errorf("failed to count nodes: %w", err)
-	}
-
+	// total_count is COUNT(*) OVER () the full agg set (one row per node) before
+	// paging, so each returned row carries the true match count and a single
+	// scan covers both the page and the total.
 	pageQuery := rankedWindowedCTE + `,
 		-- latest execution per task; DISTINCT ON is satisfied by idx_task_execution_task_id
 		latest_exec AS (
@@ -209,7 +206,8 @@ func (r *nodeRunRepository) ListNodes(
 			GROUP BY w.service_name, w.schema_name, w.table_name
 		)
 		SELECT service_name, schema_name, table_name, run_count, terminal_count,
-		       succeeded_count, avg_dur, p95_dur, flaky_count, last_status, last_run_at
+		       succeeded_count, avg_dur, p95_dur, flaky_count, last_status, last_run_at,
+		       COUNT(*) OVER () AS total_count
 		FROM agg
 		ORDER BY last_run_at DESC, service_name, schema_name, table_name
 		LIMIT $3 OFFSET $4`
@@ -221,9 +219,27 @@ func (r *nodeRunRepository) ListNodes(
 	}
 
 	out := make([]*projection.NodeSummary, 0, len(rows))
+	total := 0
 	for _, row := range rows {
 		out = append(out, toNodeSummary(row))
+		total = row.TotalCount
 	}
+
+	// COUNT(*) OVER () travels on the page rows, so an empty page (offset past
+	// the end, or zero matches) yields no rows and no total. Recover the true
+	// match count with a cheap count-only pass — this second scan happens only
+	// on empty pages, not on the common path.
+	if len(rows) == 0 {
+		countQuery := rankedWindowedCTE + `
+			SELECT COUNT(*) FROM (
+				SELECT 1 FROM windowed GROUP BY service_name, schema_name, table_name
+			) g`
+		if err := r.db.GetContext(ctx, &total, countQuery, search, serviceName); err != nil {
+			r.logger.Error("Failed to count nodes", "search", search, "service", serviceName, "error", err)
+			return nil, 0, fmt.Errorf("failed to count nodes: %w", err)
+		}
+	}
+
 	return out, total, nil
 }
 

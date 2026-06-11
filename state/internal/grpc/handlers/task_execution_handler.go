@@ -12,6 +12,15 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// ListTaskExecutions pagination bounds. defaultTaskExecutionsPageSize applies
+// when the request leaves page_size unset (0); maxTaskExecutionsPageSize caps
+// oversized requests so a single call can never return an unbounded execution
+// history.
+const (
+	defaultTaskExecutionsPageSize = 50
+	maxTaskExecutionsPageSize     = 200
+)
+
 // TaskExecutionHandler handles all task_execution-related gRPC requests
 type TaskExecutionHandler struct {
 	repo   postgres.TaskExecutionRepository
@@ -36,10 +45,17 @@ func (h *TaskExecutionHandler) ListTaskExecutions(ctx context.Context, req *stat
 
 	pageSize := int(req.PageSize)
 	if pageSize <= 0 {
-		pageSize = 500
+		pageSize = defaultTaskExecutionsPageSize
+	}
+	if pageSize > maxTaskExecutionsPageSize {
+		pageSize = maxTaskExecutionsPageSize
+	}
+	offset := int(req.PageOffset)
+	if offset < 0 {
+		offset = 0
 	}
 
-	executions, total, err := h.repo.ListByScheduleID(ctx, req.ScheduleId, pageSize, int(req.PageOffset))
+	executions, total, err := h.repo.ListByScheduleID(ctx, req.ScheduleId, pageSize, offset)
 	if err != nil {
 		h.logger.Error("Failed to list task executions", "schedule_id", req.ScheduleId, "error", err)
 		return nil, status.Errorf(codes.Internal, "failed to list task executions")
