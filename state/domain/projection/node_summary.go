@@ -12,14 +12,14 @@ import "time"
 // no terminal runs in the window, or no run with a measurable duration. The
 // repository converts these to nulls at the BFF boundary so the UI renders "—".
 type NodeSummary struct {
-	ServiceName    string    `db:"service_name"`
-	SchemaName     string    `db:"schema_name"`
-	TableName      string    `db:"table_name"`
-	RunCount       int       `db:"run_count"`
-	SuccessRatePct int       `db:"success_rate_pct"`
-	AvgDurationSec int       `db:"avg_duration_sec"`
-	P95DurationSec int       `db:"p95_duration_sec"`
-	FlakyRatePct   int       `db:"flaky_rate_pct"`
-	LastStatus     string    `db:"last_status"`
-	LastRunAt      time.Time `db:"last_run_at"`
+	ServiceName    string
+	SchemaName     string
+	TableName      string
+	RunCount       int
+	SuccessRatePct int
+	AvgDurationSec int
+	P95DurationSec int
+	FlakyRatePct   int
+	LastStatus     string
+	LastRunAt      time.Time
 }

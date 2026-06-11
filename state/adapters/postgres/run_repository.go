@@ -2,7 +2,7 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -94,7 +94,16 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 		if rn.CancellationReason() != nil {
 			reason = *rn.CancellationReason()
 		}
-		if err := r.schedRepo.CancelTx(ctx, r.tx, rn.ScheduleID(), by, reason); err != nil {
+		// The aggregate stamped cancelled_at and completed_at to the same
+		// authoritative instant; persist that value so the row matches the
+		// gRPC response built from the same aggregate. Run.Cancel always sets
+		// cancelled_at when it marks the change set cancelDirty, so a nil here is
+		// a programming error rather than a missing-value default to paper over.
+		at := rn.CancelledAt()
+		if at == nil {
+			return fmt.Errorf("cancel save: aggregate marked cancel-dirty without a cancelled_at")
+		}
+		if err := r.schedRepo.CancelTx(ctx, r.tx, rn.ScheduleID(), by, reason, *at); err != nil {
 			if errors.Is(err, ErrNotCancellable) {
 				return run.ErrAlreadyTerminal
 			}
@@ -112,8 +121,8 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 		fields.InitializationStatus = &v
 	}
 	if ch.IsTotalTaskCountDirty() {
-		if total := rn.TotalTaskCount(); total.Valid {
-			v := total.Int32
+		if total := rn.TotalTaskCount(); total != nil {
+			v := *total
 			fields.TotalTaskCount = &v
 		}
 	}
@@ -195,16 +204,35 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 		tr.CreatedAt,
 		tr.StartedAt, tr.CompletedAt, tr.LastHeartbeatAt, tr.CancelledAt,
 		tr.CancelledBy, tr.CancellationReason,
-		tr.TotalTaskCount,
+		nullInt32ToPtr(tr.TotalTaskCount),
 		tr.TerminalTaskCount,
 		meta,
 	), nil
 }
 
+// nullInt32ToPtr maps the storage-layer sql.NullInt32 to the domain's *int32:
+// an invalid (NULL) value becomes nil.
+func nullInt32ToPtr(n sql.NullInt32) *int32 {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Int32
+	return &v
+}
+
+// ptrToNullInt32 maps the domain's *int32 back to the storage-layer
+// sql.NullInt32: nil becomes an invalid (NULL) value.
+func ptrToNullInt32(p *int32) sql.NullInt32 {
+	if p == nil {
+		return sql.NullInt32{}
+	}
+	return sql.NullInt32{Int32: *p, Valid: true}
+}
+
 // dehydrateRun materialises a Run back into the SchedulerTracker shape that
 // CreateTx accepts. Used by SaveRun on the created branch.
 func dehydrateRun(r *run.Run) (*SchedulerTracker, error) {
-	metaJSON, err := json.Marshal(r.ServiceMetadata())
+	metaJSON, err := marshalServiceMetadata(r.ServiceMetadata())
 	if err != nil {
 		return nil, fmt.Errorf("marshal service_metadata: %w", err)
 	}
@@ -222,7 +250,7 @@ func dehydrateRun(r *run.Run) (*SchedulerTracker, error) {
 		InitializationStatus: string(r.InitializationStatus()),
 		ServiceMetadataRaw:   metaJSON,
 		ServiceMetadata:      r.ServiceMetadata(),
-		TotalTaskCount:       r.TotalTaskCount(),
+		TotalTaskCount:       ptrToNullInt32(r.TotalTaskCount()),
 		TerminalTaskCount:    r.TerminalTaskCount(),
 		Kind:                 string(r.Kind()),
 		SourceRunID:          r.SourceRunID(),

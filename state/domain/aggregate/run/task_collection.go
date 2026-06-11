@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -54,6 +55,8 @@ type TaskCollection interface {
 	BulkCreate(ctx context.Context, tasks []Task) error
 
 	// BulkCancel marks every non-terminal task of the given run as
-	// CANCELLED, stamping cancelled_by. Returns the number of rows updated.
-	BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string) (rowsAffected int, err error)
+	// CANCELLED, stamping cancelled_by and cancelled_at with cancelledAt — the
+	// same authoritative instant the Run aggregate used for the run-level
+	// cancellation. Returns the number of rows updated.
+	BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (rowsAffected int, err error)
 }

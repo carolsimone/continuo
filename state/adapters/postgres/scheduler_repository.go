@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -43,8 +42,11 @@ func isUniqueViolation(err error) bool {
 type SchedulerTrackerRepository interface {
 	Create(ctx context.Context, tracker *SchedulerTracker) error
 	GetByID(ctx context.Context, scheduleID uuid.UUID) (*SchedulerTracker, error)
-	// CancelTx cancels a scheduler within an existing transaction.
-	CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string) error
+	// CancelTx cancels a scheduler within an existing transaction. cancelledAt is
+	// the authoritative cancellation instant produced by the Run aggregate; it is
+	// persisted to both cancelled_at and completed_at so the row matches the value
+	// the gRPC response reports.
+	CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string, cancelledAt time.Time) error
 	HasActiveSchedule(ctx context.Context, scheduleName string) (bool, error)
 	// GetLastRunPerSchedule returns the most recent scheduler_tracker row per schedule name.
 	// Only returns schedules that have at least one run.
@@ -109,7 +111,7 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 	if err != nil {
 		return err
 	}
-	metaJSON, err := json.Marshal(meta)
+	metaJSON, err := marshalServiceMetadata(meta)
 	if err != nil {
 		return fmt.Errorf("marshal service_metadata: %w", err)
 	}
@@ -178,7 +180,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 	if err != nil {
 		return err
 	}
-	metaJSON, err := json.Marshal(meta)
+	metaJSON, err := marshalServiceMetadata(meta)
 	if err != nil {
 		return fmt.Errorf("marshal service_metadata: %w", err)
 	}
@@ -265,8 +267,9 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 
 // CancelTx cancels a scheduler within an existing transaction.
 // Cancellation is terminal, so both cancelled_at and completed_at are stamped
-// with the same timestamp.
-func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string) error {
+// with cancelledAt — the single authoritative instant the aggregate produced —
+// keeping the persisted row equal to the value returned to the caller.
+func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string, cancelledAt time.Time) error {
 	result, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
 		SET status              = $1,
@@ -276,7 +279,7 @@ func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, 
 		    cancellation_reason = $4
 		WHERE schedule_id = $5
 		  AND status NOT IN ('succeeded', 'failed', 'cancelled')
-	`, run.SchedulerStatusCancelled, time.Now(), cancelledBy, reason, scheduleID)
+	`, run.SchedulerStatusCancelled, cancelledAt, cancelledBy, reason, scheduleID)
 	if err != nil {
 		return fmt.Errorf("failed to cancel scheduler tx: %w", err)
 	}

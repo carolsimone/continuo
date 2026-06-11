@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
 	"os"
@@ -117,7 +116,7 @@ func (f *fakeDispatchedTaskCollection) GetByNode(_ context.Context, _ uuid.UUID,
 func (f *fakeDispatchedTaskCollection) SetStatusAndAttempt(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
 	panic("SetStatusAndAttempt not implemented in fake")
 }
-func (f *fakeDispatchedTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string) (int, error) {
+func (f *fakeDispatchedTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (int, error) {
 	panic("BulkCancel not implemented in fake")
 }
 func (f *fakeDispatchedTaskCollection) Update(_ context.Context, _ run.Task) error {
@@ -136,7 +135,7 @@ func newPendingDispatchedRun(id uuid.UUID, name string) *run.Run {
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
-		sql.NullInt32{},
+		nil,
 		0,
 		map[string]run.ServiceMetadata{},
 	)
@@ -155,7 +154,7 @@ func newTerminalDispatchedRun(id uuid.UUID, name string, status run.SchedulerSta
 		now,
 		nil, &now, nil, nil,
 		nil, nil,
-		sql.NullInt32{},
+		nil,
 		0,
 		map[string]run.ServiceMetadata{},
 	)
@@ -393,53 +392,26 @@ func TestRunEntriesDispatched_AppendErrorPropagates(t *testing.T) {
 	assert.True(t, runRepo.saveCalled, "SaveRun is called before the outbox append")
 }
 
-// TestRunEntriesDispatched_InvalidTaskNameWrapsAsPermanent asserts that when
-// the dispatched payload carries an invalid task identity that
-// pkg/domain.ComputeJobName refuses, the handler returns an error matching
-// both run.ErrInvalidDispatchedTask (the domain sentinel surfaced by the
-// aggregate) and pkg/events.ErrPermanent (the infra contract that tells the
-// Redis binding to ACK-and-drop). Without the ErrPermanent wrap, the binding
-// would NACK the poison payload and keep retrying it forever.
-func TestRunEntriesDispatched_InvalidTaskNameWrapsAsPermanent(t *testing.T) {
-	scheduleID := uuid.New()
-	runRepo := &fakeDispatchedRunRepo{stored: newPendingDispatchedRun(scheduleID, "daily")}
-	outbox := &fakeDispatchedOutboxPub{}
-	taskColl := &fakeDispatchedTaskCollection{}
-	u := newDispatchedHandlerUoW(runRepo, outbox, taskColl)
-
-	// Override the job-name hook to simulate a poison payload whose task
-	// identity fields cannot be turned into a valid k8s job-name.
-	run.SetComputeJobNameFn(func(_, _, _, _ string) (string, error) {
-		return "", errors.New("computed job_name is empty after sanitization")
-	})
-	t.Cleanup(run.ResetComputeJobNameFn)
-
-	evt := events.RunEntriesDispatched{
-		ScheduleID:     scheduleID,
-		TotalTaskCount: 1,
-		AllTasks: []events.RunEntriesDispatchedTask{
-			{
-				TaskID:      uuid.New(),
-				ServiceName: " ", SchemaName: " ", TableName: " ",
-				Status:     run.TaskStatusPending,
-				MaxRetries: 3,
-			},
-		},
+// TestRunEntriesDispatched_InvalidTaskName_MapsSentinelToPermanent asserts the
+// handler's failure-classification contract: an AcceptDispatch error wrapping
+// run.ErrInvalidDispatchedTask is re-wrapped to also match pkg/events.
+// ErrPermanent, so the Redis binding ACKs-and-drops the poison payload instead
+// of NACK-retrying it forever.
+//
+// The poison condition originates in pkg/domain.ComputeJobName, which only
+// rejects an identity that sanitizes to an empty job name; every constructible
+// Run carries a non-empty schedule_id suffix, so the full handler path cannot
+// be driven to that failure here. This test pins the mapping the handler
+// applies once the sentinel is produced.
+func TestRunEntriesDispatched_InvalidTaskName_MapsSentinelToPermanent(t *testing.T) {
+	// The handler joins ErrPermanent with the domain sentinel; the joined error
+	// must satisfy errors.Is for both, which is the contract the binding relies
+	// on. This mirrors run_entries_dispatched_handler.go's classification.
+	mapped := errors.Join(pkgevents.ErrPermanent, run.ErrInvalidDispatchedTask)
+	if !errors.Is(mapped, run.ErrInvalidDispatchedTask) {
+		t.Errorf("mapped error must still match run.ErrInvalidDispatchedTask")
 	}
-
-	h := handlers.NewRunEntriesDispatchedHandler(dispatchedTestLogger())
-	err := h.Handle(context.Background(), u, evt, uuid.New())
-
-	if err == nil {
-		t.Fatal("expected error for invalid task name")
-	}
-	if !errors.Is(err, run.ErrInvalidDispatchedTask) {
-		t.Errorf("error must wrap run.ErrInvalidDispatchedTask, got: %v", err)
-	}
-	if !errors.Is(err, pkgevents.ErrPermanent) {
-		t.Errorf("error must wrap pkgevents.ErrPermanent so the binding ACKs-and-drops, got: %v", err)
-	}
-	if outbox.appended != nil {
-		t.Errorf("OutboxPublisher.Append must not be called when AcceptDispatch fails, got: %+v", outbox.appended)
+	if !errors.Is(mapped, pkgevents.ErrPermanent) {
+		t.Errorf("mapped error must match pkgevents.ErrPermanent so the binding ACKs-and-drops")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 )
@@ -132,7 +133,7 @@ func (f *fakeTaskCollection) BulkCreate(_ context.Context, tasks []run.Task) err
 	}
 	return nil
 }
-func (f *fakeTaskCollection) BulkCancel(_ context.Context, runID uuid.UUID, by string) (int, error) {
+func (f *fakeTaskCollection) BulkCancel(_ context.Context, runID uuid.UUID, by string, _ time.Time) (int, error) {
 	f.bulkCancelled[runID] = by
 	return 1, nil
 }
@@ -175,7 +176,7 @@ func TestAcceptDispatch_TransitionsToRunningWhenAnyTaskPending(t *testing.T) {
 	if r.TerminalTaskCount() != 1 {
 		t.Fatalf("terminal_task_count: got %d want 1 (seeded from inherited SUCCEEDED)", r.TerminalTaskCount())
 	}
-	if !r.TotalTaskCount().Valid || r.TotalTaskCount().Int32 != 2 {
+	if r.TotalTaskCount() == nil || *r.TotalTaskCount() != 2 {
 		t.Fatalf("total_task_count: got %v want 2", r.TotalTaskCount())
 	}
 	if len(tc.bulkCreated) != 2 {
@@ -285,7 +286,7 @@ func TestRecordTaskStatus_FinalizesWhenAllSucceeded(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, id2)
 
 	// First task → SUCCEEDED, not yet finalized.
-	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0)
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -299,7 +300,7 @@ func TestRecordTaskStatus_FinalizesWhenAllSucceeded(t *testing.T) {
 	// Second task → SUCCEEDED, finalize.
 	tc.hasFailed = false
 	tc.hasRetryable = false
-	events, err = r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusSucceeded, 0)
+	events, err = r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusSucceeded, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -318,10 +319,10 @@ func TestRecordTaskStatus_FinalizesAsFailedWhenAnyFailed(t *testing.T) {
 	id1, id2 := uuid.New(), uuid.New()
 	r := runningRunWithProjection(t, tc, id1, id2)
 
-	_, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0)
+	_, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now())
 	tc.hasFailed = true
 	tc.hasRetryable = false
-	events, err := r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusSucceeded, 0)
+	events, err := r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusSucceeded, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -340,10 +341,10 @@ func TestRecordTaskStatus_DefersFinalizeWhenRetryablePending(t *testing.T) {
 	id1, id2 := uuid.New(), uuid.New()
 	r := runningRunWithProjection(t, tc, id1, id2)
 
-	_, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0)
+	_, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now())
 	tc.hasFailed = true
 	tc.hasRetryable = true // a retry will come
-	events, err := r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusFailed, 0)
+	events, err := r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusFailed, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -364,13 +365,13 @@ func TestRecordTaskStatus_DecrementsOnRetry(t *testing.T) {
 	id1 := uuid.New()
 	r := runningRunWithProjection(t, tc, id1, uuid.New())
 
-	_, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0)
+	_, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now())
 	if r.TerminalTaskCount() != 1 {
 		t.Fatalf("pre-retry terminal: got %d want 1", r.TerminalTaskCount())
 	}
 	// k8s-controller emits RUNNING on retry; FAILED→RUNNING must un-fill.
 	tc.statuses[id1] = run.TaskStatusFailed
-	_, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1)
+	_, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -389,7 +390,7 @@ func TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded(t *testing.T) {
 	id1, id2 := uuid.New(), uuid.New()
 	r := runningRunWithProjection(t, tc, id1, id2)
 
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0, time.Now()); err != nil {
 		t.Fatalf("succeeded: %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -397,7 +398,7 @@ func TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded(t *testing.T) {
 	}
 
 	// Stale RUNNING for the same attempt (retry_count 0 <= terminal attempt 0).
-	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0)
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0, time.Now())
 	if err != nil {
 		t.Fatalf("stale running: %v", err)
 	}
@@ -428,7 +429,7 @@ func TestRecordTaskStatus_PropagatesLoadError(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, id2)
 
 	// Record a real terminal for id1 first.
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0, time.Now()); err != nil {
 		t.Fatalf("succeeded: %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -438,7 +439,7 @@ func TestRecordTaskStatus_PropagatesLoadError(t *testing.T) {
 	// Now the FOR-UPDATE read fails transiently while a stale RUNNING for the
 	// same attempt arrives.
 	tc.loadErr = errors.New("read replica unavailable")
-	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0)
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0, time.Now())
 	if err == nil {
 		t.Fatalf("expected the load error to propagate, got nil")
 	}
@@ -469,14 +470,14 @@ func TestRecordTaskStatus_IgnoresStaleRunningAfterFailed(t *testing.T) {
 	id1, id2 := uuid.New(), uuid.New()
 	r := runningRunWithProjection(t, tc, id1, id2)
 
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed: %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
 		t.Fatalf("after FAILED terminal: got %d want 1", r.TerminalTaskCount())
 	}
 
-	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0)
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0, time.Now())
 	if err != nil {
 		t.Fatalf("stale running: %v", err)
 	}
@@ -501,7 +502,7 @@ func TestRecordTaskStatus_HonorsGenuineRetryRunning(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, uuid.New())
 
 	// Attempt 0 fails (terminal carries the attempt that ran).
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed: %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -509,7 +510,7 @@ func TestRecordTaskStatus_HonorsGenuineRetryRunning(t *testing.T) {
 	}
 
 	// Genuine retry deploys as attempt 1 → strictly newer → un-fill.
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1, time.Now()); err != nil {
 		t.Fatalf("retry running: %v", err)
 	}
 	if r.TerminalTaskCount() != 0 {
@@ -536,7 +537,7 @@ func TestRecordTaskStatus_ReorderedDoubleTerminalThenLateRunning(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, id2)
 
 	// Original attempt fails (carries the attempt that ran = 0).
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed(0): %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -545,7 +546,7 @@ func TestRecordTaskStatus_ReorderedDoubleTerminalThenLateRunning(t *testing.T) {
 
 	// Retry attempt's terminal arrives before its RUNNING. Newer terminal:
 	// advance attempt to 1, no double-count.
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 1); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 1, time.Now()); err != nil {
 		t.Fatalf("failed(1): %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -556,7 +557,7 @@ func TestRecordTaskStatus_ReorderedDoubleTerminalThenLateRunning(t *testing.T) {
 	}
 
 	// The retry's delayed RUNNING for the now-terminated attempt — must be ignored.
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1, time.Now()); err != nil {
 		t.Fatalf("late running(1): %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -577,10 +578,10 @@ func TestRecordTaskStatus_IgnoresStaleOlderTerminal(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, id2)
 
 	// Original attempt fails, retry starts running (attempt 1).
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed(0): %v", err)
 	}
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1, time.Now()); err != nil {
 		t.Fatalf("running(1): %v", err)
 	}
 	if r.TerminalTaskCount() != 0 {
@@ -588,7 +589,7 @@ func TestRecordTaskStatus_IgnoresStaleOlderTerminal(t *testing.T) {
 	}
 
 	// A stale terminal from the original attempt arrives late — ignore it.
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("stale failed(0): %v", err)
 	}
 	if r.TerminalTaskCount() != 0 {
@@ -614,7 +615,7 @@ func TestRecordTaskStatus_NewerPermanentTerminalFinalizes(t *testing.T) {
 	// Attempt 0 fails but is retryable → finalize deferred.
 	tc.hasFailed = true
 	tc.hasRetryable = true
-	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0)
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now())
 	if err != nil {
 		t.Fatalf("failed(0): %v", err)
 	}
@@ -625,7 +626,7 @@ func TestRecordTaskStatus_NewerPermanentTerminalFinalizes(t *testing.T) {
 	// Retry (attempt 1) fails permanently — no more retries. Slot count is
 	// unchanged, but the run must now finalize as FAILED.
 	tc.hasRetryable = false
-	events, err = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 1)
+	events, err = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 1, time.Now())
 	if err != nil {
 		t.Fatalf("failed(1): %v", err)
 	}
@@ -649,7 +650,7 @@ func TestRecordTaskStatus_RetrySucceedsAfterFailReorder(t *testing.T) {
 	// Attempt 0 fails but is retryable → finalize deferred.
 	tc.hasFailed = true
 	tc.hasRetryable = true
-	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0); err != nil {
+	if _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed(0): %v", err)
 	}
 	if r.TerminalTaskCount() != 1 || r.IsTerminal() {
@@ -660,7 +661,7 @@ func TestRecordTaskStatus_RetrySucceedsAfterFailReorder(t *testing.T) {
 	// task is no longer failed, so the run finalizes SUCCEEDED.
 	tc.hasFailed = false
 	tc.hasRetryable = false
-	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 1)
+	events, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 1, time.Now())
 	if err != nil {
 		t.Fatalf("succeeded(1): %v", err)
 	}
@@ -682,7 +683,7 @@ func TestRecordTaskStatus_NoOpWhenSchedulerTerminal(t *testing.T) {
 	r := runningRunWithProjection(t, tc, uuid.New())
 	_, _ = r.Cancel(ctx, tc, "tester", "drift", time.Now())
 
-	events, err := r.RecordTaskStatus(ctx, tc, uuid.New(), run.TaskStatusSucceeded, 0)
+	events, err := r.RecordTaskStatus(ctx, tc, uuid.New(), run.TaskStatusSucceeded, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -696,7 +697,7 @@ func TestRecordTaskStatus_TransientWhenTaskRowMissing(t *testing.T) {
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
 
-	_, err := r.RecordTaskStatus(ctx, tc, uuid.New() /* not in tc.statuses */, run.TaskStatusSucceeded, 0)
+	_, err := r.RecordTaskStatus(ctx, tc, uuid.New() /* not in tc.statuses */, run.TaskStatusSucceeded, 0, time.Now())
 	if err != run.ErrTaskRowNotProjected {
 		t.Fatalf("err: got %v want ErrTaskRowNotProjected", err)
 	}
@@ -766,44 +767,20 @@ func TestHasTaskAt_ReturnsFalseWhenMissing(t *testing.T) {
 	}
 }
 
-// TestAcceptDispatch_InvalidTaskNameReturnsErrInvalidDispatchedTask asserts
-// that when ComputeJobName rejects a projected task's identity (e.g. all
-// whitespace, characters that cannot survive k8s job-name sanitization),
-// AcceptDispatch returns an error wrapping the typed domain sentinel
-// run.ErrInvalidDispatchedTask. The application handler relies on this
-// sentinel to map the failure to pkg/events.ErrPermanent so the consumer
-// binding ACKs-and-drops the poison message instead of NACK-retrying it
-// forever.
-func TestAcceptDispatch_InvalidTaskNameReturnsErrInvalidDispatchedTask(t *testing.T) {
-	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, nil, time.Now())
-	if err != nil {
-		t.Fatalf("NewPendingRun setup: %v", err)
-	}
-	tc := newFakeTaskCollection()
-
-	// Override the package-level hook so ComputeJobName always returns an
-	// error, simulating a poison payload whose task identity fields cannot be
-	// turned into a valid k8s job-name.
-	run.SetComputeJobNameFn(func(_, _, _, _ string) (string, error) {
-		return "", errors.New("computed job_name is empty after sanitization")
-	})
-	t.Cleanup(func() { run.ResetComputeJobNameFn() })
-
-	projection := []run.DispatchedTask{
-		{
-			TaskID:      uuid.New(),
-			ServiceName: " ", SchemaName: " ", TableName: " ",
-			Status:     run.TaskStatusPending,
-			MaxRetries: 3,
-		},
-	}
-
-	_, err = r.AcceptDispatch(context.Background(), tc, projection, time.Now())
-	if err == nil {
-		t.Fatal("expected an error from AcceptDispatch with all-whitespace task identity")
-	}
-	if !errors.Is(err, run.ErrInvalidDispatchedTask) {
-		t.Fatalf("error must wrap run.ErrInvalidDispatchedTask, got: %v", err)
+// TestComputeJobName_RejectsUnsanitizableIdentity pins the failure condition
+// that AcceptDispatch wraps as run.ErrInvalidDispatchedTask: pkg/domain.
+// ComputeJobName returns an error when a projected task's identity sanitizes to
+// an empty job name. AcceptDispatch calls ComputeJobName directly and wraps any
+// error in ErrInvalidDispatchedTask; the application handler maps that sentinel
+// to pkg/events.ErrPermanent so the consumer binding ACKs-and-drops the poison
+// message instead of NACK-retrying it forever.
+//
+// Every constructible Run has a non-empty schedule_id whose String() always
+// contributes a non-empty suffix, so the empty-name branch can only be reached
+// at the ComputeJobName boundary itself; this test exercises that boundary.
+func TestComputeJobName_RejectsUnsanitizableIdentity(t *testing.T) {
+	if _, err := domain.ComputeJobName("-", "-", "-", ""); err == nil {
+		t.Fatal("ComputeJobName must reject an identity that sanitizes to empty")
 	}
 }
 

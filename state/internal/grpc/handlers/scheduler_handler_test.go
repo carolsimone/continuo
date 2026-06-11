@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"io"
 	"log/slog"
@@ -74,6 +73,9 @@ func (s *stubCatalogRepo) SoftDeleteAbsentTx(_ context.Context, _ *sqlx.Tx, _ []
 func (s *stubCatalogRepo) ListAll(_ context.Context) ([]postgres.ScheduleCatalogRow, error) {
 	return nil, nil
 }
+func (s *stubCatalogRepo) ListAllForUpdateTx(_ context.Context, _ *sqlx.Tx) ([]postgres.ScheduleCatalogRow, error) {
+	return nil, nil
+}
 func (s *stubCatalogRepo) GetCatalog(_ context.Context) (*catalog.ScheduleCatalog, error) {
 	return nil, nil
 }
@@ -142,7 +144,7 @@ func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.
 func (s *stubSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ postgres.RunRowUpdate) error {
 	return nil
 }
-func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string) error {
+func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string, _ time.Time) error {
 	return s.cancelErr
 }
 
@@ -504,7 +506,7 @@ type cancelFakeTaskCollection struct {
 	bulkCancelErr    error
 }
 
-func (f *cancelFakeTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string) (int, error) {
+func (f *cancelFakeTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (int, error) {
 	f.bulkCancelCalled = true
 	return f.bulkCancelN, f.bulkCancelErr
 }
@@ -561,7 +563,7 @@ func newPendingRun(scheduleID uuid.UUID, name string) *run.Run {
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
-		sql.NullInt32{Valid: false},
+		nil,
 		0,
 		nil,
 	)
@@ -616,7 +618,7 @@ func TestCancelScheduler_AlreadyTerminal(t *testing.T) {
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
-		sql.NullInt32{Valid: false},
+		nil,
 		0,
 		nil,
 	)
@@ -651,6 +653,55 @@ func TestCancelScheduler_Success(t *testing.T) {
 	assert.True(t, runRepo.saveCalled, "SaveRun must be called")
 	assert.True(t, tasks.bulkCancelCalled, "BulkCancel must be called")
 	assertCancelEvents(t, outbox.appended, "ops-user")
+}
+
+// fixedClock is a ports.Clock that always returns a pinned instant, letting a
+// test assert exact timestamp equality across the response and the persisted
+// aggregate.
+type fixedClock struct{ now time.Time }
+
+func (c fixedClock) Now() time.Time { return c.now }
+
+// TestCancelScheduler_CompletedAtMatchesPersistedRow is the acceptance test for
+// timestamp consistency on cancel: the completed_at reported in the gRPC
+// response must equal the value persisted for the row. The handler stamps the
+// aggregate from ports.Clock at one instant; the response is built from that
+// aggregate (CompletedAt()) and the postgres adapter persists the aggregate's
+// CancelledAt()/CompletedAt() verbatim via CancelTx. With a pinned clock this
+// asserts response.CompletedAt == aggregate.CompletedAt == aggregate.CancelledAt
+// == the clock instant — i.e. one timestamp per logical event, response equals
+// persisted value.
+func TestCancelScheduler_CompletedAtMatchesPersistedRow(t *testing.T) {
+	id := uuid.New()
+	pinned := time.Date(2026, 6, 11, 9, 30, 0, 0, time.UTC)
+	pendingRun := newPendingRun(id, "daily")
+	runRepo := &cancelFakeRunRepo{stored: pendingRun}
+	fu, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
+	fu.SetClock(fixedClock{now: pinned})
+	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
+
+	resp, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+		ScheduleId:  id.String(),
+		CancelledBy: "ops-user",
+	})
+	require.NoError(t, err)
+
+	// The response's completed_at is the pinned clock instant.
+	require.NotNil(t, resp.Scheduler.CompletedAt)
+	assert.True(t, resp.Scheduler.CompletedAt.AsTime().Equal(pinned),
+		"response completed_at must equal the clock instant")
+
+	// The persisted aggregate (what the postgres adapter feeds CancelTx as
+	// cancelled_at == completed_at) carries the identical instant, so the stored
+	// row equals the response.
+	require.NotNil(t, runRepo.stored.CompletedAt())
+	require.NotNil(t, runRepo.stored.CancelledAt())
+	assert.True(t, runRepo.stored.CompletedAt().Equal(pinned),
+		"persisted completed_at must equal the clock instant")
+	assert.True(t, runRepo.stored.CancelledAt().Equal(pinned),
+		"persisted cancelled_at must equal the clock instant")
+	assert.True(t, resp.Scheduler.CompletedAt.AsTime().Equal(*runRepo.stored.CompletedAt()),
+		"response completed_at must equal the persisted row value")
 }
 
 func TestCancelScheduler_SaveError(t *testing.T) {
@@ -738,7 +789,7 @@ func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
-		sql.NullInt32{Valid: false},
+		nil,
 		0,
 		nil,
 	)
@@ -814,7 +865,7 @@ func (f *fakeSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.
 func (f *fakeSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ postgres.RunRowUpdate) error {
 	return nil
 }
-func (f *fakeSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string) error {
+func (f *fakeSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string, _ time.Time) error {
 	return nil
 }
 

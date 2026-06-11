@@ -154,7 +154,7 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	n, err := taskRepo.BulkCancelByScheduleIDTx(ctx, tx, schedID, "user1")
+	n, err := taskRepo.BulkCancelByScheduleIDTx(ctx, tx, schedID, "user1", time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	assert.EqualValues(t, 2, n) // pending + running; succeeded untouched

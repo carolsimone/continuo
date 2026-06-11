@@ -69,7 +69,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		payload, err := json.Marshal(map[string]interface{}{
 			"runner_id":        e.ID.String(),
 			"schedule_name":    e.Name,
-			"service_metadata": e.ServiceMetadata,
+			"service_metadata": toServiceMetadataDTOs(e.ServiceMetadata),
 			"kind":             string(e.K),
 			"source_run_id":    sourceIDStr(e.SourceID),
 		})

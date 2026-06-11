@@ -39,12 +39,35 @@ func (a *CatalogRepositoryAdapter) GetCatalog(ctx context.Context) (*catalog.Sch
 	return hydrateCatalog(rows), nil
 }
 
-// LoadCatalogForUpdate loads the full schedule_catalog for a reconcile cycle.
-// schedule_catalog reconciliation is driven by a single consumer of
-// schedules.loaded:v1, so a plain ListAll suffices. If contention increases,
-// add a ListAllForUpdate (SELECT … FOR UPDATE) to the underlying repository.
+// scheduleCatalogReconcileLockKey is the fixed advisory-lock key that
+// serialises schedule_catalog reconcile cycles. It is an arbitrary constant
+// scoped to this one reconcile domain; no other advisory lock uses it.
+const scheduleCatalogReconcileLockKey int64 = 0x5343_4154 // "SCAT"
+
+// LoadCatalogForUpdate loads the full schedule_catalog for a reconcile cycle
+// under a lock that serialises the read-modify-write (LoadCatalogForUpdate →
+// mutate → SaveCatalog) against any concurrent reconciler, honouring the Load*
+// contract.
+//
+// It takes a transaction-scoped advisory lock first, then SELECT … FOR UPDATE
+// on the existing rows. The advisory lock — not the row locks — is what makes
+// this correct on the very first reconcile: an empty schedule_catalog has no
+// rows for FOR UPDATE to lock, so without it two replicas could both read the
+// empty table and concurrently upsert, leaving the union of two snapshots.
+// pg_advisory_xact_lock blocks the second reconciler regardless of row count
+// and releases automatically when the transaction ends.
 func (a *CatalogRepositoryAdapter) LoadCatalogForUpdate(ctx context.Context) (*catalog.ScheduleCatalog, error) {
-	return a.GetCatalog(ctx)
+	if a.tx == nil {
+		return nil, fmt.Errorf("LoadCatalogForUpdate requires an active transaction")
+	}
+	if _, err := a.tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, scheduleCatalogReconcileLockKey); err != nil {
+		return nil, fmt.Errorf("acquire schedule_catalog reconcile lock: %w", err)
+	}
+	rows, err := a.repo.ListAllForUpdateTx(ctx, a.tx)
+	if err != nil {
+		return nil, err
+	}
+	return hydrateCatalog(rows), nil
 }
 
 // SaveCatalog persists the full active set of the catalog inside the caller's

@@ -66,6 +66,54 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 	assert.Equal(t, "succeeded", payload["status"])
 }
 
+// TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase pins the
+// scheduler.started:v1 wire contract: the per-service metadata block is keyed
+// manifest_version / image_tag, not the Go field names. The domain value object
+// carries no JSON tags, so the publisher must route it through the adapter DTO.
+func TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	pub := postgres.NewOutboxPublisher(tx, discardLogger())
+
+	scheduleID := uuid.New()
+	err = pub.Append(ctx, []run.DomainEvent{
+		run.RunStarted{
+			ID:   scheduleID,
+			Name: "daily",
+			K:    run.KindCron,
+			ServiceMetadata: map[string]run.ServiceMetadata{
+				"service-1": {ManifestVersion: "v42", ImageTag: "sha-abc"},
+			},
+		},
+	}, uuid.Nil)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
+
+	var payload []byte
+	require.NoError(t, db.GetContext(ctx, &payload,
+		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+		scheduleID, streams.SchedulerStartedV1,
+	))
+
+	var decoded struct {
+		ServiceMetadata map[string]map[string]string `json:"service_metadata"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &decoded))
+
+	svc, ok := decoded.ServiceMetadata["service-1"]
+	require.True(t, ok, "service-1 metadata must be present")
+	assert.Equal(t, "v42", svc["manifest_version"], "snake_case manifest_version key")
+	assert.Equal(t, "sha-abc", svc["image_tag"], "snake_case image_tag key")
+	_, hasPascal := svc["ManifestVersion"]
+	assert.False(t, hasPascal, "must not leak Go field name ManifestVersion onto the wire")
+}
+
 // TestOutboxPublisher_RunCancelledPair verifies that appending the
 // [RunCancelled, RunFinalized] pair (as produced by Run.Cancel) writes exactly
 // two outbox rows on their respective streams, and that the run.finalized:v1

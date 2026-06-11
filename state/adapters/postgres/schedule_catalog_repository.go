@@ -2,7 +2,7 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
@@ -38,6 +38,11 @@ type ScheduleCatalogRepository interface {
 	// ListAll returns every row in schedule_catalog, including soft-deleted
 	// rows, for aggregate hydration.
 	ListAll(ctx context.Context) ([]ScheduleCatalogRow, error)
+	// ListAllForUpdateTx returns every row in schedule_catalog within the
+	// caller's transaction, taking a SELECT ... FOR UPDATE row lock so a
+	// reconcile cycle's read-modify-write is serialised against concurrent
+	// reconcilers. Like ListAll it includes soft-deleted rows.
+	ListAllForUpdateTx(ctx context.Context, tx *sqlx.Tx) ([]ScheduleCatalogRow, error)
 }
 
 type scheduleCatalogRepository struct {
@@ -83,12 +88,9 @@ func (r *scheduleCatalogRepository) GetServiceMetadata(ctx context.Context, sche
 		return nil, fmt.Errorf("get service_metadata for %q: %w", scheduleName, err)
 	}
 
-	var meta map[string]run.ServiceMetadata
-	if err := json.Unmarshal(raw, &meta); err != nil {
+	meta, err := unmarshalServiceMetadata(raw)
+	if err != nil {
 		return nil, fmt.Errorf("unmarshal service_metadata: %w", err)
-	}
-	if meta == nil {
-		meta = map[string]run.ServiceMetadata{}
 	}
 	return meta, nil
 }
@@ -100,21 +102,23 @@ func (r *scheduleCatalogRepository) UpsertAllTx(ctx context.Context, tx *sqlx.Tx
 	if len(names) == 0 {
 		return nil
 	}
-	now := time.Now()
 	for _, name := range names {
 		perScheduleMeta := serviceMetadata[name]
-		metaJSON, err := json.Marshal(perScheduleMeta)
+		metaJSON, err := marshalServiceMetadata(perScheduleMeta)
 		if err != nil {
 			return fmt.Errorf("marshal service_metadata for %q: %w", name, err)
 		}
+		// first_seen_at / last_seen_at use the DB clock (NOW()) rather than a
+		// Go wall-clock value, keeping persisted catalog timestamps on a single
+		// authority and immune to host/DB clock skew.
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
-			VALUES ($1, $2, $2, NULL, $3)
+			VALUES ($1, NOW(), NOW(), NULL, $2)
 			ON CONFLICT (schedule_name) DO UPDATE
-			  SET last_seen_at = $2,
+			  SET last_seen_at = NOW(),
 			      removed_at = NULL,
-			      service_metadata = $3
-		`, name, now, metaJSON)
+			      service_metadata = $2
+		`, name, metaJSON)
 		if err != nil {
 			return fmt.Errorf("upsert schedule_catalog %q: %w", name, err)
 		}
@@ -124,11 +128,11 @@ func (r *scheduleCatalogRepository) UpsertAllTx(ctx context.Context, tx *sqlx.Tx
 
 // SoftDeleteAbsentTx is the tx-bound variant of SoftDeleteAbsent.
 func (r *scheduleCatalogRepository) SoftDeleteAbsentTx(ctx context.Context, tx *sqlx.Tx, names []string) error {
-	now := time.Now()
+	// removed_at uses the DB clock (NOW()) so the soft-delete stamp shares the
+	// same time authority as the rest of the reconcile cycle.
 	if len(names) == 0 {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE schedule_catalog SET removed_at = $1 WHERE removed_at IS NULL`,
-			now,
+			`UPDATE schedule_catalog SET removed_at = NOW() WHERE removed_at IS NULL`,
 		)
 		if err != nil {
 			return fmt.Errorf("soft-delete all active schedules: %w", err)
@@ -136,8 +140,8 @@ func (r *scheduleCatalogRepository) SoftDeleteAbsentTx(ctx context.Context, tx *
 		return nil
 	}
 	query, args, err := sqlx.In(
-		`UPDATE schedule_catalog SET removed_at = ? WHERE removed_at IS NULL AND schedule_name NOT IN (?)`,
-		now, names,
+		`UPDATE schedule_catalog SET removed_at = NOW() WHERE removed_at IS NULL AND schedule_name NOT IN (?)`,
+		names,
 	)
 	if err != nil {
 		return fmt.Errorf("build SoftDeleteAbsentTx query: %w", err)
@@ -157,7 +161,26 @@ func (r *scheduleCatalogRepository) ListAll(ctx context.Context) ([]ScheduleCata
 		return nil, fmt.Errorf("list all schedule_catalog rows: %w", err)
 	}
 	defer rows.Close()
+	return scanScheduleCatalogRows(rows)
+}
 
+// ListAllForUpdateTx returns every schedule_catalog row within tx, locking the
+// scanned rows with FOR UPDATE so a reconcile cycle's read-modify-write is
+// serialised against any concurrent reconciler.
+func (r *scheduleCatalogRepository) ListAllForUpdateTx(ctx context.Context, tx *sqlx.Tx) ([]ScheduleCatalogRow, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT schedule_name, removed_at, service_metadata FROM schedule_catalog ORDER BY schedule_name FOR UPDATE`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list all schedule_catalog rows for update: %w", err)
+	}
+	defer rows.Close()
+	return scanScheduleCatalogRows(rows)
+}
+
+// scanScheduleCatalogRows materialises a schedule_catalog result set into
+// ScheduleCatalogRow values, decoding each service_metadata blob.
+func scanScheduleCatalogRows(rows *sql.Rows) ([]ScheduleCatalogRow, error) {
 	var out []ScheduleCatalogRow
 	for rows.Next() {
 		var name string
@@ -166,14 +189,9 @@ func (r *scheduleCatalogRepository) ListAll(ctx context.Context) ([]ScheduleCata
 		if err := rows.Scan(&name, &removedAt, &rawMeta); err != nil {
 			return nil, fmt.Errorf("scan schedule_catalog row: %w", err)
 		}
-		var meta map[string]run.ServiceMetadata
-		if len(rawMeta) > 0 {
-			if err := json.Unmarshal(rawMeta, &meta); err != nil {
-				return nil, fmt.Errorf("unmarshal service_metadata for %q: %w", name, err)
-			}
-		}
-		if meta == nil {
-			meta = map[string]run.ServiceMetadata{}
+		meta, err := unmarshalServiceMetadata(rawMeta)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal service_metadata for %q: %w", name, err)
 		}
 		out = append(out, ScheduleCatalogRow{
 			ScheduleName:    name,
