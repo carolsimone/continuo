@@ -25,23 +25,69 @@ func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
 	return &OutboxPublisher{redis: r, logger: l}
 }
 
+// streamMaxLen caps each published stream at roughly this many entries
+// (Approx/~ trimming). It bounds Redis memory for streams a consumer group may
+// lag on. Trimming can drop the oldest entries before a lagging group reads
+// them; 10000 is the accepted bound across producers.
+const streamMaxLen = 10000
+
 // Publish dispatches on event type to build the Redis field map, then XADDs it
 // to the stream stored in entry.StreamName.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
-	values, err := p.payloadToValues(entry)
+	args, err := p.xaddArgs(entry)
 	if err != nil {
 		return err
 	}
-	_, err = p.redis.XAdd(ctx, &goredis.XAddArgs{
-		Stream: entry.StreamName,
-		MaxLen: 10000,
-		Approx: true,
-		Values: values,
-	}).Result()
-	if err != nil {
+	if _, err := p.redis.XAdd(ctx, args).Result(); err != nil {
 		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
 	}
 	return nil
+}
+
+// PublishBatch pipelines one XADD per entry over a single Redis round trip and
+// returns one error per entry, positionally aligned with entries. Commands are
+// queued in slice order on a single connection, so per-aggregate FIFO (imposed
+// by the outbox SELECT order) is preserved. A payload that fails to encode is
+// reported in its slot without aborting the rest of the batch.
+func (p *OutboxPublisher) PublishBatch(ctx context.Context, entries []*outbox.Entry) []error {
+	errs := make([]error, len(entries))
+	pipe := p.redis.Pipeline()
+	cmds := make([]*goredis.StringCmd, len(entries))
+	for i, entry := range entries {
+		args, err := p.xaddArgs(entry)
+		if err != nil {
+			errs[i] = err
+			continue
+		}
+		cmds[i] = pipe.XAdd(ctx, args)
+	}
+	// Exec flushes every queued command. A transport-level error is surfaced
+	// per command below; we ignore Exec's aggregate error and read each result.
+	_, _ = pipe.Exec(ctx)
+	for i, cmd := range cmds {
+		if cmd == nil {
+			continue // encode failure already recorded
+		}
+		if err := cmd.Err(); err != nil {
+			errs[i] = fmt.Errorf("xadd to %s: %w", entries[i].StreamName, err)
+		}
+	}
+	return errs
+}
+
+// xaddArgs builds the XADD arguments for one entry, including the shared MaxLen
+// cap so single and batched publishes trim identically.
+func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, error) {
+	values, err := p.payloadToValues(entry)
+	if err != nil {
+		return nil, err
+	}
+	return &goredis.XAddArgs{
+		Stream: entry.StreamName,
+		MaxLen: streamMaxLen,
+		Approx: true,
+		Values: values,
+	}, nil
 }
 
 // PayloadToValuesForTest is a test-only accessor that exposes payloadToValues

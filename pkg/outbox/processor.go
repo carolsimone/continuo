@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -18,6 +19,21 @@ import (
 // (executor: K8s deploy + multiple XADDs), the implementation is service-aware.
 type Publisher interface {
 	Publish(ctx context.Context, entry *Entry) error
+}
+
+// BatchPublisher is an optional capability a Publisher may also implement to
+// dispatch a whole batch in one network round trip (e.g. a Redis pipeline of
+// XADDs). PublishBatch returns one error per entry, positionally aligned with
+// entries; a nil at index i means entry i succeeded. The processor uses this
+// path automatically when the publisher implements it, and falls back to
+// per-entry Publish otherwise — so multi-step publishers (executor) keep their
+// sequential semantics untouched.
+//
+// Ordering guarantee: implementations MUST issue the per-entry side effects in
+// the slice order they receive, over a single connection, so per-aggregate FIFO
+// (already enforced by the SELECT order in GetPendingBatch) is preserved.
+type BatchPublisher interface {
+	PublishBatch(ctx context.Context, entries []*Entry) []error
 }
 
 // TerminalFailureHook runs once per entry when its retry budget is exhausted,
@@ -97,18 +113,46 @@ func (p *Processor) Run(ctx context.Context) error {
 			p.logger.Info("Outbox processor stopped", "table", p.tableName)
 			return ctx.Err()
 		case <-ticker.C:
-			if err := p.ProcessBatch(ctx); err != nil {
-				p.logger.Error("Outbox batch failed", "table", p.tableName, "error", err)
-			}
+			p.drain(ctx)
+		}
+	}
+}
+
+// drain processes batches back-to-back as long as each one comes back full
+// (len == batchSize), which signals more pending rows are waiting. This lets a
+// burst of thousands of pending rows clear within the same tick instead of one
+// batch per tick, so publishing throughput is bounded by Postgres+Redis rather
+// than the tick interval. It stops on a short batch (backlog drained), an error,
+// or context cancellation, yielding control back to the ticker.
+func (p *Processor) drain(ctx context.Context) {
+	for {
+		processed, err := p.processBatchOnce(ctx)
+		if err != nil {
+			p.logger.Error("Outbox batch failed", "table", p.tableName, "error", err)
+			return
+		}
+		if processed < p.batchSize {
+			return
+		}
+		if ctx.Err() != nil {
+			return
 		}
 	}
 }
 
 // ProcessBatch runs one cycle. Exported for tests.
 func (p *Processor) ProcessBatch(ctx context.Context) error {
+	_, err := p.processBatchOnce(ctx)
+	return err
+}
+
+// processBatchOnce runs exactly one cycle and reports how many rows it claimed
+// (the GetPendingBatch result size), so the drain loop can tell a full batch
+// (more work waiting) from a short one (backlog drained).
+func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	tx, err := p.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() {
 		if tx != nil {
@@ -119,18 +163,25 @@ func (p *Processor) ProcessBatch(ctx context.Context) error {
 	repo := NewPostgresRepository(tx, p.tableName, p.logger, p.repoOpts...)
 	entries, err := repo.GetPendingBatch(ctx, p.batchSize)
 	if err != nil {
-		return fmt.Errorf("get pending batch: %w", err)
+		return 0, fmt.Errorf("get pending batch: %w", err)
 	}
-	if len(entries) == 0 {
-		return tx.Commit()
+	claimed := len(entries)
+	if claimed == 0 {
+		return 0, tx.Commit()
 	}
 
-	for _, entry := range entries {
-		pubErr := p.publisher.Publish(ctx, entry)
+	// publish dispatches the whole batch (pipelined when the publisher supports
+	// it) and returns one error per entry, positionally aligned with entries.
+	pubErrs := p.publish(ctx, entries)
+
+	// Successes are flipped to 'processed' in a single UPDATE; only the failed
+	// subset takes per-row retry/fail handling. This keeps the common all-success
+	// path at one round trip for the status flip.
+	processedIDs := make([]uuid.UUID, 0, len(entries))
+	for i, entry := range entries {
+		pubErr := pubErrs[i]
 		if pubErr == nil {
-			if err := repo.MarkProcessed(ctx, entry.ID); err != nil {
-				p.logger.Error("Mark processed failed", "entry_id", entry.ID, "error", err)
-			}
+			processedIDs = append(processedIDs, entry.ID)
 			continue
 		}
 		p.logger.Error("Publish failed", "entry_id", entry.ID, "event_type", entry.EventType, "error", pubErr)
@@ -156,12 +207,39 @@ func (p *Processor) ProcessBatch(ctx context.Context) error {
 		}
 	}
 
+	if err := repo.MarkProcessedBatch(ctx, processedIDs); err != nil {
+		p.logger.Error("Mark processed batch failed", "table", p.tableName, "count", len(processedIDs), "error", err)
+	}
+
 	err = tx.Commit()
 	tx = nil
 	if err != nil {
-		return fmt.Errorf("commit tx: %w", err)
+		return 0, fmt.Errorf("commit tx: %w", err)
 	}
-	return nil
+	return claimed, nil
+}
+
+// publish dispatches the batch and returns one error per entry, aligned with
+// entries by index. When the publisher implements BatchPublisher the whole batch
+// goes out in one pipelined round trip; otherwise each entry is published
+// sequentially, preserving the per-aggregate FIFO order already imposed by
+// GetPendingBatch.
+func (p *Processor) publish(ctx context.Context, entries []*Entry) []error {
+	if batch, ok := p.publisher.(BatchPublisher); ok {
+		errs := batch.PublishBatch(ctx, entries)
+		if len(errs) == len(entries) {
+			return errs
+		}
+		// A misbehaving BatchPublisher returned a mismatched slice; fall back to
+		// per-entry publish rather than risk a panic on index access.
+		p.logger.Error("BatchPublisher returned mismatched error slice; falling back to per-entry publish",
+			"table", p.tableName, "entries", len(entries), "errors", len(errs))
+	}
+	errs := make([]error, len(entries))
+	for i, entry := range entries {
+		errs[i] = p.publisher.Publish(ctx, entry)
+	}
+	return errs
 }
 
 // Sentinel for tests / callers that want to detect a particular failure

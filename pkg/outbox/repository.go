@@ -31,6 +31,10 @@ type Repository interface {
 	Create(ctx context.Context, entry *Entry) error
 	GetPendingBatch(ctx context.Context, limit int) ([]*Entry, error)
 	MarkProcessed(ctx context.Context, id uuid.UUID) error
+	// MarkProcessedBatch flips every id to status='processed' with a single
+	// UPDATE … WHERE id = ANY($1), avoiding one round trip per row. ids may be
+	// empty (no-op). processed_at is stamped from the DB clock (NOW()).
+	MarkProcessedBatch(ctx context.Context, ids []uuid.UUID) error
 	MarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error
 	IncrementRetry(ctx context.Context, id uuid.UUID) error
 }

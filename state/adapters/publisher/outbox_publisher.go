@@ -25,12 +25,62 @@ func NewOutboxPublisher(redis *goredis.Client, logger *slog.Logger) *OutboxPubli
 	return &OutboxPublisher{redis: redis, logger: logger}
 }
 
+// streamMaxLen caps each published stream at roughly this many entries
+// (Approx/~ trimming). It bounds Redis memory for streams a consumer group may
+// lag on. Trimming can drop the oldest entries before a lagging group reads
+// them; 10000 is the accepted bound, matching the orchestrator's publisher.
+const streamMaxLen = 10000
+
 // Publish unmarshals the entry's JSONB payload into a field map, normalizes
 // any nested structures to scalar strings, and XADDs them to entry.StreamName.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
+	args, err := p.xaddArgs(entry)
+	if err != nil {
+		return err
+	}
+	if err := p.redis.XAdd(ctx, args).Err(); err != nil {
+		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
+	}
+	return nil
+}
+
+// PublishBatch pipelines one XADD per entry over a single Redis round trip and
+// returns one error per entry, positionally aligned with entries. Commands are
+// queued in slice order on a single connection, so per-aggregate FIFO (imposed
+// by the outbox SELECT order) is preserved. A payload that fails to encode is
+// reported in its slot without aborting the rest of the batch.
+func (p *OutboxPublisher) PublishBatch(ctx context.Context, entries []*outbox.Entry) []error {
+	errs := make([]error, len(entries))
+	pipe := p.redis.Pipeline()
+	cmds := make([]*goredis.StringCmd, len(entries))
+	for i, entry := range entries {
+		args, err := p.xaddArgs(entry)
+		if err != nil {
+			errs[i] = err
+			continue
+		}
+		cmds[i] = pipe.XAdd(ctx, args)
+	}
+	_, _ = pipe.Exec(ctx)
+	for i, cmd := range cmds {
+		if cmd == nil {
+			continue // encode failure already recorded
+		}
+		if err := cmd.Err(); err != nil {
+			errs[i] = fmt.Errorf("xadd to %s: %w", entries[i].StreamName, err)
+		}
+	}
+	return errs
+}
+
+// xaddArgs unmarshals the entry's JSONB payload, injects outbox_entry_id for
+// consumer-side dedup, normalizes nested values to scalars, and returns the
+// XADD arguments (including the shared MaxLen cap so single and batched
+// publishes trim identically).
+func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, error) {
 	var fields map[string]interface{}
 	if err := json.Unmarshal(entry.Payload, &fields); err != nil {
-		return fmt.Errorf("unmarshal payload for stream %s: %w", entry.StreamName, err)
+		return nil, fmt.Errorf("unmarshal payload for stream %s: %w", entry.StreamName, err)
 	}
 	// Inject outbox_entry_id so consumer-side dedup via
 	// pkg/messageprocessing.DedupWithOutboxEntryID can catch Processor-crash
@@ -38,15 +88,14 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 	fields["outbox_entry_id"] = entry.ID.String()
 	normalized, err := normalizeRedisFields(fields)
 	if err != nil {
-		return fmt.Errorf("normalize fields for stream %s: %w", entry.StreamName, err)
+		return nil, fmt.Errorf("normalize fields for stream %s: %w", entry.StreamName, err)
 	}
-	if err := p.redis.XAdd(ctx, &goredis.XAddArgs{
+	return &goredis.XAddArgs{
 		Stream: entry.StreamName,
+		MaxLen: streamMaxLen,
+		Approx: true,
 		Values: normalized,
-	}).Err(); err != nil {
-		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
-	}
-	return nil
+	}, nil
 }
 
 // normalizeRedisFields returns a copy of fields where every value is a Redis-

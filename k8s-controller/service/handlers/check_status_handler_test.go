@@ -59,7 +59,8 @@ func (r *fakeOutboxRepo) Create(_ context.Context, e *pkgoutbox.Entry) error {
 func (r *fakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*pkgoutbox.Entry, error) {
 	return nil, nil
 }
-func (r *fakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *fakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error        { return nil }
+func (r *fakeOutboxRepo) MarkProcessedBatch(_ context.Context, _ []uuid.UUID) error { return nil }
 func (r *fakeOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
@@ -83,6 +84,9 @@ func (r *threadSafeFakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]
 	return nil, nil
 }
 func (r *threadSafeFakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+func (r *threadSafeFakeOutboxRepo) MarkProcessedBatch(_ context.Context, _ []uuid.UUID) error {
 	return nil
 }
 func (r *threadSafeFakeOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
@@ -150,6 +154,10 @@ func (r *fakeMessageProcessingRepo) GetByID(_ context.Context, id uuid.UUID) (*m
 
 func (r *fakeMessageProcessingRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
+}
+
+func (r *fakeMessageProcessingRepo) DeleteTerminalOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+	return 0, nil
 }
 
 var _ messageprocessing.Repository = (*fakeMessageProcessingRepo)(nil)

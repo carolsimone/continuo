@@ -113,7 +113,7 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 | Table | Purpose |
 |---|---|
 | `message_processing` | Inbound dedup: one row per consumed Redis message, scoped by `(message_id, stream_name)`; tracks state (`processing` / `completed` / `acked`) |
-| `orchestrator_outbox` | Canonical transactional outbox — each write-time side effect is a separate row with a JSONB payload; `pkg/outbox.Processor` polls and publishes to the typed Redis stream per row |
+| `orchestrator_outbox` | Canonical transactional outbox — each write-time side effect is a separate row with a JSONB payload; `pkg/outbox.Processor` polls and publishes to the typed Redis stream per row. Each batch pipelines its XADDs over one Redis connection and flips the successful subset in one `UPDATE … WHERE id = ANY(...)`; a full batch immediately drains the next before sleeping to the next tick. Every XADD caps its stream at `MaxLen 10000` (approximate `~`). **Caveat:** approximate trimming can drop the oldest entries before a lagging consumer group reads them; 10000 is the accepted bound |
 | `topology_state` | Singleton row holding the monotonic `topology_generation` counter |
 | `cancelled_schedules` | Schedule IDs cancelled by an upstream control-plane signal; consulted to short-circuit terminal-state processing for already-cancelled runs |
 
@@ -138,10 +138,12 @@ Read-side ports specific to the CQRS query path (`RunReader`, `TopologyStateRead
 
 ## Background loops
 
-Three goroutines started in `main.go` run for the process lifetime:
+Goroutines started in `main.go` run for the process lifetime:
 - **Run sweeper** (`internal/sweeper`) — deletes `:Run` nodes older than the retention window.
 - **Dispatch watchdog** (`service/watchdog`, every `ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS`, default 60) — cancels schedules whose dispatch has silently stalled. Each tick computes a cutoff of `now − ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES` and issues a single `ListStuckCandidates(cutoff)` RPC to state, which answers with one indexed server-side query: the active (`pending|running`) runs that have at least one task, no task in `running`, and a most-recent task older than the cutoff. The watchdog then calls state's `CancelSchedule` for each candidate. This is O(1) RPCs per tick (no per-schedule fan-out) and considers **all** of a run's tasks, so a long-running task anywhere in a wide run never makes it falsely stuck. The watchdog speaks only domain-typed ports (`ports.StuckScheduleReader`, `ports.ScheduleCanceller`), both implemented by `adapters/grpc.StuckScheduleAdapter`; no gRPC/proto wire types enter the application layer. Every tick runs under a `context.WithTimeout` bounded by the interval.
 - **Reconciler** (`internal/reconciler`, every `ORCHESTRATOR_RECONCILER_INTERVAL_SECONDS`, default 60) — converges the `:Run` projection to state's authoritative status: it lists active `:Run`s (`completed_at IS NULL`), reads each run's status from state through the orchestrator-owned `ports.RunStatusReader` (implemented by `adapters/grpc.RunStatusReader` over the state gRPC client's `GetScheduler`), and `FinalizeRun`s any that state already reports terminal. It acts only on runs that exist in Neo4j and are terminal in state, so retention-deleted or never-snapshotted runs are never touched. Each tick runs under a `context.WithTimeout` bounded by the interval. This is the ordering-independent backstop for finalizations missed or raced ahead of a run's snapshot.
+- **Cancelled-schedules sweeper** — deletes `cancelled_schedules` rows past their TTL.
+- **Retention sweeper** (`pkg/outbox.RetentionSweeper`, default hourly, `RETENTION_SWEEP_INTERVAL_MINUTES`) — prunes, using DB-clock cutoffs, `orchestrator_outbox` rows with `status='processed'` and terminal (`completed`/`acked`) `message_processing` dedup rows older than the retention window (`RETENTION_DAYS`, default 7); `processing` rows are never purged. Each delete is bounded by a per-statement `LIMIT` loop. All knobs default safely — no configuration required.
 
 ## Inbound Interfaces
 
