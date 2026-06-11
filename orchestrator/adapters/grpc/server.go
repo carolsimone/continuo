@@ -11,16 +11,19 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
-// Server wraps the gRPC server with graceful shutdown support.
+// Server wraps the gRPC server with graceful shutdown support. It owns the
+// listener and *grpc.Server lifecycle only; the OrchestratorQuery RPCs are
+// served directly by the *QueryHandler registered in NewServer, so adding a
+// new RPC requires implementing it once on QueryHandler — there is no second
+// delegate layer to keep in sync.
 type Server struct {
-	orchestratorv1.UnimplementedOrchestratorQueryServer
-	grpcServer   *grpc.Server
-	listener     net.Listener
-	logger       *slog.Logger
-	queryHandler *QueryHandler
+	grpcServer *grpc.Server
+	listener   net.Listener
+	logger     *slog.Logger
 }
 
-// NewServer creates and configures a new gRPC server.
+// NewServer creates and configures a new gRPC server, registering the
+// QueryHandler as the OrchestratorQuery service implementation.
 func NewServer(port int, queryHandler *QueryHandler, logger *slog.Logger) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -30,13 +33,12 @@ func NewServer(port int, queryHandler *QueryHandler, logger *slog.Logger) (*Serv
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(loggingInterceptor(logger)))
 
 	server := &Server{
-		grpcServer:   grpcServer,
-		listener:     listener,
-		logger:       logger,
-		queryHandler: queryHandler,
+		grpcServer: grpcServer,
+		listener:   listener,
+		logger:     logger,
 	}
 
-	orchestratorv1.RegisterOrchestratorQueryServer(grpcServer, server)
+	orchestratorv1.RegisterOrchestratorQueryServer(grpcServer, queryHandler)
 	reflection.Register(grpcServer)
 
 	return server, nil
@@ -62,39 +64,6 @@ func (s *Server) Shutdown(_ context.Context) error {
 func (s *Server) Addr() string {
 	return s.listener.Addr().String()
 }
-
-// ============================================================================
-// IMPLEMENT OrchestratorQueryServer INTERFACE
-// ============================================================================
-
-// GetScheduleGraph delegates to the query handler.
-func (s *Server) GetScheduleGraph(ctx context.Context, req *orchestratorv1.GetScheduleGraphRequest) (*orchestratorv1.GetScheduleGraphResponse, error) {
-	return s.queryHandler.GetScheduleGraph(ctx, req)
-}
-
-// ListRuns delegates to the query handler.
-func (s *Server) ListRuns(ctx context.Context, req *orchestratorv1.ListRunsRequest) (*orchestratorv1.ListRunsResponse, error) {
-	return s.queryHandler.ListRuns(ctx, req)
-}
-
-// GetRunGraph delegates to the query handler.
-func (s *Server) GetRunGraph(ctx context.Context, req *orchestratorv1.GetRunGraphRequest) (*orchestratorv1.GetRunGraphResponse, error) {
-	return s.queryHandler.GetRunGraph(ctx, req)
-}
-
-// ListActiveRunDrifts delegates to the query handler.
-func (s *Server) ListActiveRunDrifts(ctx context.Context, req *orchestratorv1.ListActiveRunDriftsRequest) (*orchestratorv1.ListActiveRunDriftsResponse, error) {
-	return s.queryHandler.ListActiveRunDrifts(ctx, req)
-}
-
-// ListScheduleTopologies delegates to the query handler.
-func (s *Server) ListScheduleTopologies(ctx context.Context, req *orchestratorv1.ListScheduleTopologiesRequest) (*orchestratorv1.ListScheduleTopologiesResponse, error) {
-	return s.queryHandler.ListScheduleTopologies(ctx, req)
-}
-
-// ============================================================================
-// INTERCEPTORS
-// ============================================================================
 
 // loggingInterceptor logs all incoming gRPC requests and any errors.
 func loggingInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {

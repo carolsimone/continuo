@@ -161,7 +161,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		Payload:             dispatchedPayload,
 		StreamName:          streams.RunEntriesDispatchedV1,
 		Status:              "pending",
-		MaxRetries:          3,
+		MaxRetries:          pkgoutbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("write run.entries.dispatched to outbox: %w", err)
 	}
@@ -196,7 +196,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		Payload:             queryPayload,
 		StreamName:          streams.QueryModelV1,
 		Status:              "pending",
-		MaxRetries:          3,
+		MaxRetries:          pkgoutbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("write query.model to outbox: %w", err)
 	}

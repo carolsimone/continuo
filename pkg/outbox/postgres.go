@@ -91,7 +91,7 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 		entry.Status = "pending"
 	}
 	if entry.MaxRetries == 0 {
-		entry.MaxRetries = 3
+		entry.MaxRetries = DefaultMaxRetries
 	}
 
 	query := fmt.Sprintf(`

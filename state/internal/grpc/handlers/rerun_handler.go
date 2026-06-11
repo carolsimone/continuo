@@ -24,21 +24,22 @@ import (
 // re-execute happens in the orchestrator via Snapshot(SourcePinnedDAG{}) —
 // non-SUCCEEDED source tasks + descendants in the source's pinned :EXECUTES set.
 type RerunHandler struct {
-	useCase    *svchandlers.TriggerRerunHandler
+	useCase    *svchandlers.TriggerDerivedRunHandler
 	uowFactory func() uow.UnitOfWork
 	logger     *slog.Logger
 }
 
 // NewRerunHandler creates a new RerunHandler.
 func NewRerunHandler(
-	useCase *svchandlers.TriggerRerunHandler,
+	useCase *svchandlers.TriggerDerivedRunHandler,
 	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,
 ) *RerunHandler {
 	return &RerunHandler{useCase: useCase, uowFactory: uowFactory, logger: logger}
 }
 
-// TriggerRerun validates the request and delegates to TriggerRerunHandler.
+// TriggerRerun validates the request and delegates to the rerun-configured
+// TriggerDerivedRunHandler use case.
 func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
 	h.logger.Info("TriggerRerun called", "source_run_id", req.SourceRunId)
 

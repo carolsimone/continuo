@@ -87,6 +87,41 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
+	r, gerr := h.cancelRunTx(ctx, cancelParams{
+		scheduleID:         scheduleID,
+		cancelledBy:        req.CancelledBy,
+		cancellationReason: req.CancellationReason,
+		loadNotFoundCode:   codes.NotFound,
+		loadNotFoundMsg:    "scheduler not found",
+		terminalMsg:        "scheduler already in terminal state",
+	})
+	if gerr != nil {
+		return nil, gerr
+	}
+	return &statev1.SchedulerResponse{Scheduler: runToProto(r)}, nil
+}
+
+// cancelParams carries the per-call inputs to cancelRunTx.
+type cancelParams struct {
+	scheduleID         uuid.UUID
+	cancelledBy        string
+	cancellationReason string
+	// loadNotFoundCode / loadNotFoundMsg control how a LoadRunForUpdate
+	// ErrNotFound is reported: CancelScheduler treats it as NotFound (the
+	// caller passed a raw schedule_id), whereas CancelSchedule has already
+	// resolved an active run and reports a stale lookup as Internal.
+	loadNotFoundCode codes.Code
+	loadNotFoundMsg  string
+	// terminalMsg is the FailedPrecondition message when the run is already
+	// terminal.
+	terminalMsg string
+}
+
+// cancelRunTx runs the shared cancel transaction: begin → LoadRunForUpdate →
+// Run.Cancel → SaveRun → Outbox.Append → commit. It returns the cancelled Run
+// aggregate or a ready-to-return gRPC status error. The only behaviour that
+// varies between the two cancel RPCs is captured in cancelParams.
+func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*run.Run, error) {
 	u := h.uowFactory()
 	if err := u.Begin(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
@@ -98,17 +133,17 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 		}
 	}()
 
-	r, err := u.Run().LoadRunForUpdate(ctx, scheduleID)
+	r, err := u.Run().LoadRunForUpdate(ctx, p.scheduleID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "scheduler not found")
+			return nil, status.Errorf(p.loadNotFoundCode, "%s", p.loadNotFoundMsg)
 		}
 		return nil, status.Errorf(codes.Internal, "load: %v", err)
 	}
-	domainEvents, err := r.Cancel(ctx, u.TaskCollection(), req.CancelledBy, req.CancellationReason, u.Clock().Now())
+	domainEvents, err := r.Cancel(ctx, u.TaskCollection(), p.cancelledBy, p.cancellationReason, u.Clock().Now())
 	if err != nil {
 		if errors.Is(err, run.ErrAlreadyTerminal) {
-			return nil, status.Errorf(codes.FailedPrecondition, "scheduler already in terminal state")
+			return nil, status.Errorf(codes.FailedPrecondition, "%s", p.terminalMsg)
 		}
 		return nil, status.Errorf(codes.Internal, "cancel: %v", err)
 	}
@@ -122,8 +157,7 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 		return nil, status.Errorf(codes.Internal, "commit: %v", err)
 	}
 	committed = true
-
-	return &statev1.SchedulerResponse{Scheduler: runToProto(r)}, nil
+	return r, nil
 }
 
 // CancelSchedule cancels the active run of a named schedule. It looks up the
@@ -148,38 +182,17 @@ func (h *SchedulerHandler) CancelSchedule(
 		return nil, status.Errorf(codes.FailedPrecondition, "no active run for schedule %q", req.ScheduleName)
 	}
 
-	u := h.uowFactory()
-	if err := u.Begin(ctx); err != nil {
-		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
+	r, gerr := h.cancelRunTx(ctx, cancelParams{
+		scheduleID:         active.ScheduleID(),
+		cancelledBy:        req.CancelledBy,
+		cancellationReason: req.CancellationReason,
+		loadNotFoundCode:   codes.Internal,
+		loadNotFoundMsg:    "load: run not found",
+		terminalMsg:        "schedule run already in terminal state",
+	})
+	if gerr != nil {
+		return nil, gerr
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = u.Rollback()
-		}
-	}()
-
-	r, err := u.Run().LoadRunForUpdate(ctx, active.ScheduleID())
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "load: %v", err)
-	}
-	domainEvents, err := r.Cancel(ctx, u.TaskCollection(), req.CancelledBy, req.CancellationReason, u.Clock().Now())
-	if err != nil {
-		if errors.Is(err, run.ErrAlreadyTerminal) {
-			return nil, status.Errorf(codes.FailedPrecondition, "schedule run already in terminal state")
-		}
-		return nil, status.Errorf(codes.Internal, "cancel: %v", err)
-	}
-	if err := u.Run().SaveRun(ctx, r); err != nil {
-		return nil, status.Errorf(codes.Internal, "save: %v", err)
-	}
-	if err := u.Outbox().Append(ctx, domainEvents, uuid.Nil); err != nil {
-		return nil, status.Errorf(codes.Internal, "outbox: %v", err)
-	}
-	if err := u.Commit(); err != nil {
-		return nil, status.Errorf(codes.Internal, "commit: %v", err)
-	}
-	committed = true
 
 	h.logger.Info("Schedule cancelled", "schedule_name", req.ScheduleName, "schedule_id", r.ScheduleID())
 	return &statev1.CancelScheduleResponse{ScheduleId: r.ScheduleID().String()}, nil

@@ -16,11 +16,14 @@ var (
 		"source run must be in terminal FAILED or CANCELLED state")
 
 	// ErrNothingToRerun is returned by CanBeRerunSource when the source
-	// run has zero non-SUCCEEDED tasks.
-	ErrNothingToRerun = errors.New("source run has no non-SUCCEEDED tasks")
+	// run has zero non-SUCCEEDED tasks. Its message is distinct from
+	// ErrNothingToRebase so logs and gRPC status text identify which trigger
+	// the source was rejected for.
+	ErrNothingToRerun = errors.New("source run has no non-SUCCEEDED tasks to rerun")
 
-	// ErrNothingToRebase is returned by CanBeRebaseSource for the same reason.
-	ErrNothingToRebase = errors.New("source run has no non-SUCCEEDED tasks")
+	// ErrNothingToRebase is returned by CanBeRebaseSource for the same
+	// underlying reason, with distinct message text from ErrNothingToRerun.
+	ErrNothingToRebase = errors.New("source run has no non-SUCCEEDED tasks to rebase")
 
 	// ErrInvalidKind is returned by constructors when Kind is not one of the
 	// allowed wire-stable values.

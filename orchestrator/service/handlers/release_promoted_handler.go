@@ -219,7 +219,7 @@ func (h *ReleasePromotedHandler) Handle(
 		Payload:             outboxPayload,
 		StreamName:          streams.SchedulesLoadedV1,
 		Status:              "pending",
-		MaxRetries:          3,
+		MaxRetries:          pkgoutbox.DefaultMaxRetries,
 	}
 
 	if err := h.uow.OutboxRepo().Create(ctx, outboxEntry); err != nil {
