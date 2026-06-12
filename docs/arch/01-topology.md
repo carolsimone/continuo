@@ -22,7 +22,7 @@ flowchart LR
     KCPG[(Postgres: k8s_outbox/message_processing)]
     S3[(S3/LocalStack)]
     K8S[(Kubernetes API)]
-    R[(Redis Streams)]
+    R[(Redis)]
   end
 
   ST --> STDB
@@ -37,6 +37,7 @@ flowchart LR
   KC <--> R
   MC <--> R
   RC <--> R
+  UI --> R
 
   OR --> ST
   EC --> ST
@@ -129,7 +130,7 @@ flowchart TD
 | Runtime status / retry orchestration | `k8s-controller` | Postgres (`k8s_outbox`, `message_processing`) |
 | Cancelled schedule guard (local copy) | `orchestrator`, `executor-controller`, `k8s-controller` | Postgres (`cancelled_schedules`) |
 | Candidate manifest parsing and dependency resolution | `manifest-controller` | Redis + S3 |
-| UI/API facade | `ui-service` | none (gRPC reads/writes to `state` and `orchestrator`) |
+| UI/API facade + login sessions | `ui-service` | Redis (plain `uisession:` keys, `AUTH_MODE=oidc`); gRPC reads/writes to `state` and `orchestrator` |
 | `topology_generation` counter and run-isolation snapshot | `orchestrator` | Postgres (`topology_state`) + Neo4j (`:TopologyRoot`, `Run`, `EXECUTES`) |
 
 ## Key Architectural Rules
@@ -143,7 +144,7 @@ flowchart TD
 - The `deploy/infra` Helm chart provisions the shared infrastructure stack (`Postgres`, `Redis`, `Neo4j`) as cluster-internal defaults and initializes the service databases in one Postgres instance. Local docker-compose uses `POSTGRES_PASSWORD=continuo` (superuser) and `REDIS_PASSWORD=continuo`.
 - `manifest-controller` parses candidate manifests and resolves dependencies; it does not orchestrate execution.
 - Topology enters production exclusively through releases: `POST /releases` on `release-controller` emits `release.requested:v1`, `manifest-controller` parses the candidate manifests and publishes `manifest.loaded.candidate:v1`, and after validation `release-controller` promotes via `release.promoted:v1`.
-- `ui-service` is read-only apart from the run-trigger write endpoints (`TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`), which it issues as gRPC calls to `state`. It constructs no Redis client.
+- `ui-service` is read-only apart from the run-trigger write endpoints (`TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`), which it issues as gRPC calls to `state`. It is the system's only HTTP edge and authenticates users via OIDC (OpenID Connect); its only Redis use is the `uisession:` login-session keyspace (plain keys in `AUTH_MODE=oidc`) — it produces and consumes no Redis Streams.
 - `schedule.cancelled:v1` is published by `state` via the outbox processor and consumed independently by `orchestrator`, `executor-controller`, and `k8s-controller` (each with its own consumer group). Each consumer maintains a local `cancelled_schedules` Postgres table populated from this stream and uses it as a hot-path guard to suppress further processing for cancelled runs. Rows are swept after a configurable TTL (default 24h).
 
 ## Topology Versioning

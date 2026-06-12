@@ -153,10 +153,10 @@ Provisioning databases inside the job — rather than relying solely on the Post
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | none |
+| Durable state | Redis `uisession:<id>` plain keys — server-side OIDC (OpenID Connect) login sessions (`AUTH_MODE=oidc`), TTL-bound, not streams |
 | gRPC server methods owned | none |
-| Redis consumes | none |
-| Redis produces | none |
+| Redis consumes | none (no stream consumption; session keys only) |
+| Redis produces | none (no stream production; session keys only) |
 | Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph` |
 
 ## `continuo CLI`

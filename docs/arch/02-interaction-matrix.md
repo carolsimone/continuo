@@ -16,8 +16,10 @@ Legend:
 | `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `W` | `-` | `W` (candidate schema teardown) |
 | `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `R` | `W` | `-` |
 | `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `-` | `R` | `-` |
-| `ui-service` | `-` | `-` | `-` | `RW` | `R` | `R` | `-` | `R` | `-` |
+| `ui-service` | `-` | `-` | `RW` | `RW` | `R` | `R` | `-` | `R` | `-` |
 | `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` | `-` |
+
+> `ui-service` uses Redis only for server-side login sessions (`AUTH_MODE=oidc`): plain `uisession:<id>` keys with TTLs, created at the OIDC (OpenID Connect) callback, read and refreshed on every authenticated request, deleted on logout. They are ordinary keys, not Redis Streams — `ui-service` produces and consumes no stream events, and `pkg/streams/contract.yaml` is unaffected. In `AUTH_MODE=dev` it constructs no Redis client.
 
 > `continuo CLI` is an external consumer (not a Docker Compose service). It is invoked by humans or LLM agents and makes direct gRPC calls to `state` (port 50051) and `orchestrator` (port 50052). It produces no Redis events and holds no durable state.
 
@@ -94,4 +96,4 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `k8s-controller` | `k8s_outbox`, `message_processing` |
 | `release-controller` | `releases` (+ `changed_service`, assembled `image_tags`), `current_prod` (live `topology_snapshot`), `service_prod` (per-service live `manifest_s3_key` + `image_tag` + `release_id`), `release_controller_outbox`, `message_processing` |
 | `manifest-controller` | none |
-| `ui-service` | none |
+| `ui-service` | Redis `uisession:<id>` plain keys (server-side login sessions, `AUTH_MODE=oidc`; TTL-bound, not streams) |
