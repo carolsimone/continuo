@@ -8,9 +8,11 @@ import { audit } from './audit';
 import { DEV_USER, PENDING_COOKIE, SESSION_COOKIE } from './types';
 
 // returnTo must stay inside our own origin: a relative path, never
-// protocol-relative ("//evil.com") or absolute.
+// protocol-relative ("//evil.com") or absolute. Backslashes are rejected too
+// because browsers normalize "\" to "/", turning "/\evil.com" into
+// "//evil.com".
 export function safeReturnTo(raw: unknown): string {
-  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//')) return '/';
+  if (typeof raw !== 'string' || !/^\/(?![/\\])/.test(raw)) return '/';
   return raw;
 }
 
@@ -28,6 +30,7 @@ export function createAuthRouter(deps: {
     sameSite: 'lax' as const,
     path: '/',
   };
+  const publicOrigin = new URL(cfg.publicUrl).origin;
   const router = Router();
 
   router.get('/login', async (req, res, next) => {
@@ -87,6 +90,14 @@ export function createAuthRouter(deps: {
 
   router.post('/logout', async (req, res, next) => {
     try {
+      // Same Origin rejection as csrfOriginCheck on /api: logout is the one
+      // mutating endpoint outside that mount, so it carries its own check.
+      const origin = req.headers.origin;
+      if (origin && origin !== publicOrigin) {
+        audit('csrf_rejected', { method: req.method, path: req.originalUrl, origin, outcome: 'forbidden' });
+        res.status(403).json({ error: { code: 'csrf_rejected', message: 'cross-origin request rejected' } });
+        return;
+      }
       const id = parseCookies(req.headers.cookie ?? '')[SESSION_COOKIE] ?? '';
       await sessions.destroy(id);
       res.clearCookie(SESSION_COOKIE, baseCookie);

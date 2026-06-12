@@ -122,6 +122,12 @@ describe('/auth routes', () => {
     expect(me.status).toBe(401);
   });
 
+  it('logout rejects a cross-origin browser request', async () => {
+    const { app } = await makeApp();
+    const res = await request(app).post('/auth/logout').set('Origin', 'https://evil.example.com');
+    expect(res.status).toBe(403);
+  });
+
   it('me without a session is 401', async () => {
     const { app } = await makeApp();
     expect((await request(app).get('/auth/me')).status).toBe(401);
@@ -133,6 +139,8 @@ describe('safeReturnTo', () => {
     expect(safeReturnTo('/schedule/x')).toBe('/schedule/x');
     expect(safeReturnTo('https://evil.com')).toBe('/');
     expect(safeReturnTo('//evil.com')).toBe('/');
+    expect(safeReturnTo('/\\evil.com')).toBe('/');
+    expect(safeReturnTo('/\\/evil.com')).toBe('/');
     expect(safeReturnTo(undefined)).toBe('/');
   });
 });

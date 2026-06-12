@@ -5,6 +5,11 @@ export interface SessionRecord extends AuthUser {
   createdAt: number; // epoch ms
 }
 
+// Project the stored record back to the request-facing identity.
+export function toAuthUser(record: SessionRecord): AuthUser {
+  return { userId: record.userId, email: record.email, name: record.name, role: record.role };
+}
+
 // The subset of ioredis the store needs; tests substitute an in-memory fake.
 export interface RedisLike {
   get(key: string): Promise<string | null>;
@@ -46,7 +51,15 @@ export class SessionStore {
     try {
       const parsed: unknown = JSON.parse(raw);
       if (typeof parsed !== 'object' || parsed === null) throw new Error('not an object');
-      record = parsed as SessionRecord;
+      const candidate = parsed as Partial<SessionRecord>;
+      if (
+        typeof candidate.createdAt !== 'number' ||
+        typeof candidate.userId !== 'string' ||
+        (candidate.role !== 'viewer' && candidate.role !== 'operator')
+      ) {
+        throw new Error('malformed session record');
+      }
+      record = candidate as SessionRecord;
     } catch {
       await this.redis.del(KEY_PREFIX + id);
       return null;

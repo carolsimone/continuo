@@ -74,8 +74,10 @@ describe('SessionStore', () => {
     const { store, redis } = makeStore();
     await redis.set('uisession:bad-json', 'not json', 'EX', 3600);
     await redis.set('uisession:not-object', '42', 'EX', 3600);
+    await redis.set('uisession:missing-fields', JSON.stringify({ email: 'a@b.c' }), 'EX', 3600);
     expect(await store.load('bad-json')).toBeNull();
     expect(await store.load('not-object')).toBeNull();
+    expect(await store.load('missing-fields')).toBeNull();
     expect(redis.keys()).toEqual([]);
   });
 });

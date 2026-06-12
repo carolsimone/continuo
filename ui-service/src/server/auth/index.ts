@@ -12,7 +12,7 @@ import {
   sessionAuth,
 } from './middleware';
 import { createAuthRouter, createDevAuthRouter } from './routes';
-import { SessionStore } from './session';
+import { SessionStore, toAuthUser } from './session';
 import { DEV_USER, SESSION_COOKIE, type AppAuth, type AuthUser } from './types';
 
 export interface BuiltAuth {
@@ -50,9 +50,7 @@ export async function buildAuth(cfg: AuthConfig): Promise<BuiltAuth> {
     authenticateWs: async (req) => {
       const id = parseCookies(req.headers.cookie ?? '')[SESSION_COOKIE] ?? '';
       const record = await sessions.load(id);
-      return record
-        ? { userId: record.userId, email: record.email, name: record.name, role: record.role }
-        : null;
+      return record ? toAuthUser(record) : null;
     },
   };
 }

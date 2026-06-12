@@ -1,6 +1,6 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import { parse as parseCookies } from 'cookie';
-import type { SessionStore } from './session';
+import { toAuthUser, type SessionStore } from './session';
 import { audit } from './audit';
 import { DEV_USER, SESSION_COOKIE } from './types';
 
@@ -25,7 +25,7 @@ export function sessionAuth(sessions: SessionStore): RequestHandler {
       .load(id)
       .then((record) => {
         if (record) {
-          req.user = { userId: record.userId, email: record.email, name: record.name, role: record.role };
+          req.user = toAuthUser(record);
         }
         next();
       })
