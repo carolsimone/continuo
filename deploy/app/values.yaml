@@ -16,6 +16,12 @@ global:
     port: "6379"
     password: ""
 
+  auth:
+    # OIDC client secret for ui-service. Empty by default: the service
+    # fails fast at boot until the deployer sets it, never serving an
+    # unauthenticated UI.
+    oidcClientSecret: ""
+
   neo4j:
     uri: bolt://continuo-infra-neo4j:7687
     user: neo4j
