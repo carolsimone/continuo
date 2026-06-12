@@ -25,7 +25,7 @@ It owns no storage and constructs no Redis client.
 
 ### Overview
 
-`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image (which runs `node dist-server/index.js` without the flag). Local development enables it via the `dev` npm script. Operating the bridge in a shared or production environment additionally requires the `claude` and `continuo` binaries present in the runtime image with Claude credentials, plus authentication, origin checks, connection limits, and Application Programming Interface (API) budget quotas on the endpoint — none of which are provided today.
+`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image (which runs `node dist-server/index.js` without the flag). Local development enables it via the `dev` npm script. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the bridge is enabled, so the default/production configuration shows no chat panel rather than a permanently disconnected one. Operating the bridge in a shared or production environment additionally requires the `claude` and `continuo` binaries present in the runtime image with Claude credentials, plus authentication, origin checks, connection limits, and Application Programming Interface (API) budget quotas on the endpoint — none of which are provided today.
 
 Each incoming WebSocket connection receives one dedicated headless `claude` subprocess. The subprocess runs in streaming-JSON mode:
 
@@ -49,6 +49,8 @@ One subprocess is created per WebSocket connection. The bridge captures the Clau
 |---|---|---|
 | `user_message` | `{ "text": string }` | User turn to relay to the `claude` subprocess |
 | `new_chat` | `{}` | Reset the current conversation and start a new one |
+
+Incoming frames are validated before use: anything that is not valid JSON, or that decodes to a non-object (e.g. `null`, a number, an array), is dropped silently, as is a `user_message` whose `text` is not a string. A malformed frame can therefore never throw an uncaught exception and tear down the server.
 
 **Server → client messages** (JSON over WebSocket):
 
@@ -128,6 +130,12 @@ None.
 | Route | Method | Backend |
 |---|---|---|
 | `/api/task-executions/:id/logs?key=<s3_key>` | GET | S3 `GetObject` — streams log content as `text/plain` |
+
+#### Feature flags
+
+| Route | Method | Backend |
+|---|---|---|
+| `/api/features` | GET | Returns `{ "chatBridgeEnabled": boolean }`, reflecting `CHAT_BRIDGE_ENABLED`. The SPA reads this on load to decide whether to mount the chat panel and open `/ws/chat`. |
 
 #### Chat WebSocket
 

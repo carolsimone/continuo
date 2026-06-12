@@ -15,7 +15,7 @@ const CHAT_BRIDGE_ENABLED = process.env.CHAT_BRIDGE_ENABLED === 'true';
 
 const client = createGrpcClient(STATE_GRPC_ADDR);
 const graphClient = createGrpcGraphClient(ORCHESTRATOR_GRPC_ADDR);
-const app = createApp(client, graphClient, CONFIG_FILE, RELEASE_CONTROLLER_URL);
+const app = createApp(client, graphClient, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED);
 
 if (process.env.NODE_ENV === 'production') {
   const staticDir = path.join(__dirname, '../dist');

@@ -1,13 +1,24 @@
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import DashboardPage from './DashboardPage';
 import DetailPage from './DetailPage';
 import NodeDetailPage from './NodeDetailPage';
 import ReleaseDetailPage from './ReleaseDetailPage';
-import ChatPanel from './ChatPanel';
-import { useChatSocket } from './chat/useChatSocket';
+import ChatContainer from './chat/ChatContainer';
 
 export default function App() {
-  const chat = useChatSocket();
+  const [chatEnabled, setChatEnabled] = useState(false);
+
+  // The chat bridge is attached server-side only when CHAT_BRIDGE_ENABLED is set.
+  // Read the flag before mounting the panel so production (bridge off by default)
+  // never opens a socket the server isn't serving.
+  useEffect(() => {
+    fetch('/api/features')
+      .then((r) => (r.ok ? r.json() : { chatBridgeEnabled: false }))
+      .then((d) => setChatEnabled(Boolean(d.chatBridgeEnabled)))
+      .catch(() => setChatEnabled(false));
+  }, []);
+
   return (
     <BrowserRouter>
       <div className="app-shell">
@@ -20,12 +31,7 @@ export default function App() {
             <Route path="/releases/:id" element={<ReleaseDetailPage />} />
           </Routes>
         </div>
-        <ChatPanel
-          items={chat.state.items}
-          connected={chat.connected}
-          onSend={chat.send}
-          onNewChat={chat.newChat}
-        />
+        {chatEnabled && <ChatContainer />}
       </div>
     </BrowserRouter>
   );

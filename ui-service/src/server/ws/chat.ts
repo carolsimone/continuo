@@ -42,13 +42,18 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions = {}): W
     }
 
     ws.on('message', (data) => {
-      let parsed: ClientMessage;
+      let raw: unknown;
       try {
-        parsed = JSON.parse(data.toString());
+        raw = JSON.parse(data.toString());
       } catch {
         return;
       }
-      if (parsed.type === 'user_message') {
+      // Valid JSON can still decode to null, a number, or an array; reject anything
+      // that is not a plain object before dereferencing so a malformed frame cannot
+      // throw an uncaught exception and tear down the server.
+      if (typeof raw !== 'object' || raw === null) return;
+      const parsed = raw as ClientMessage;
+      if (parsed.type === 'user_message' && typeof parsed.text === 'string') {
         ensureAlive();
         proc.send(parsed.text);
       } else if (parsed.type === 'new_chat') {

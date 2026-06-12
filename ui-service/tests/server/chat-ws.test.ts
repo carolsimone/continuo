@@ -89,6 +89,37 @@ describe('attachChatWebSocket', () => {
     client.close();
   });
 
+  it('ignores non-object JSON frames without crashing and keeps serving', async () => {
+    const fake = new FakeProcess();
+    server = createServer();
+    attachChatWebSocket(server, { createProcess: () => fake as any });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    await new Promise((r) => client.on('open', r));
+    client.send(JSON.stringify(null));
+    client.send(JSON.stringify(42));
+    client.send(JSON.stringify(['user_message']));
+    client.send(JSON.stringify({ type: 'user_message', text: 'hi' }));
+    await tick();
+    expect(fake.send).toHaveBeenCalledTimes(1);
+    expect(fake.send).toHaveBeenCalledWith('hi');
+    client.close();
+  });
+
+  it('ignores a user_message whose text is not a string', async () => {
+    const fake = new FakeProcess();
+    server = createServer();
+    attachChatWebSocket(server, { createProcess: () => fake as any });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    await new Promise((r) => client.on('open', r));
+    client.send(JSON.stringify({ type: 'user_message' }));
+    client.send(JSON.stringify({ type: 'user_message', text: 99 }));
+    await tick();
+    expect(fake.send).not.toHaveBeenCalled();
+    client.close();
+  });
+
   it('passes the sessionId query param to the process factory', async () => {
     const seen: (string | undefined)[] = [];
     server = createServer();
