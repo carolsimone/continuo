@@ -33,6 +33,18 @@ var schemaStatements = []string{
 	"CREATE INDEX run_schedule IF NOT EXISTS FOR (r:Run) ON (r.schedule_name)",
 }
 
+// dataMigrations are idempotent DML statements applied once startup DDL is in
+// place. Unlike schemaStatements they touch data, so they run after the indexes
+// are online (the migrations themselves benefit from those indexes).
+//
+//   - normalize_terminal_status: folds the legacy uppercase casing the run
+//     aggregate used to stamp ("SUCCEEDED"/"FAILED") down to the canonical
+//     lowercase form every writer now produces, so the UI never sees a mixed
+//     casing. Re-running it is a no-op once all rows are lowercase.
+var dataMigrations = []string{
+	"MATCH (r:Run) WHERE r.terminal_status IN ['SUCCEEDED', 'FAILED'] SET r.terminal_status = toLower(r.terminal_status)",
+}
+
 // awaitIndexTimeoutSeconds bounds how long InitSchema waits for the freshly
 // created indexes to come online. On a cold graph the indexes are populated
 // instantly; on a populated graph this is the ceiling before startup fails
@@ -80,6 +92,19 @@ func InitSchema(ctx context.Context, client Neo4jClient, logger *slog.Logger) er
 		return fmt.Errorf("InitSchema: await indexes online: %w", err)
 	}
 
-	logger.Info("Neo4j schema initialized", "statements", len(schemaStatements))
+	// Apply idempotent data migrations once the indexes backing them are online.
+	for _, stmt := range dataMigrations {
+		result, err := session.Run(ctx, stmt, nil)
+		if err != nil {
+			return fmt.Errorf("InitSchema: data migration %q: %w", stmt, err)
+		}
+		if _, err := result.Consume(ctx); err != nil {
+			return fmt.Errorf("InitSchema: data migration %q: %w", stmt, err)
+		}
+	}
+
+	logger.Info("Neo4j schema initialized",
+		"statements", len(schemaStatements),
+		"data_migrations", len(dataMigrations))
 	return nil
 }

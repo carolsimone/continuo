@@ -1,6 +1,8 @@
 package run
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+)
 
 // NodeKey is a value object that uniquely identifies a table within the run.
 type NodeKey struct {
@@ -17,10 +19,15 @@ const (
 	RunStatusInProgress  RunStatus = "IN_PROGRESS"
 	RunStatusSucceeded   RunStatus = "SUCCEEDED"
 	RunStatusFailed      RunStatus = "FAILED"
+	RunStatusCancelled   RunStatus = "CANCELLED"
 )
 
+// IsTerminal reports whether the status is a terminal run outcome. The aggregate
+// vocabulary is the canonical uppercase enum above; the neo4j adapter is
+// responsible for translating any stored or wire casing into one of these
+// values on rehydration, so this is an exact comparison with no casing concerns.
 func (s RunStatus) IsTerminal() bool {
-	return s == RunStatusSucceeded || s == RunStatusFailed
+	return s == RunStatusSucceeded || s == RunStatusFailed || s == RunStatusCancelled
 }
 
 // RunNode is an entity within the Run aggregate, representing one table's

@@ -28,7 +28,7 @@ Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run sna
 
 | Property | Type | Notes |
 |---|---|---|
-| `terminal_status` | string | Set at run completion |
+| `terminal_status` | string | Set at run completion. Always stored in the canonical lowercase form (`succeeded`, `failed`, `cancelled`) regardless of which writer stamps it: `AggregateRepository.Save` normalizes the uppercase in-memory aggregate status, `FinalizeRun` lowercases the `run.finalized:v1` wire value, and the snapshot writer stamps `cancelled` for a cancel-before-snapshot run. Casing translation is owned entirely by the neo4j adapter (`run_status_codec.go`): it maps the domain enum to the stored lowercase form on write and back to the enum on rehydration, so the domain `RunStatus.IsTerminal()` is a plain exact comparison over `SUCCEEDED`/`FAILED`/`CANCELLED` with no storage-casing knowledge. |
 | `created_at` | datetime | Stamped at `Snapshot` time |
 | `completed_at` | datetime | Stamped when the run reaches any terminal outcome (succeeded, failed, or cancelled) |
 | `topology_generation` | int64 | Stamped at `Snapshot` time. Derived runs (`rerun`, `rebase`, stale-mode `single_node_run`) copy it from the source `:Run`; fresh runs (`cron`, `trigger`, latest-mode `single_node_run`) copy it from `:TopologyRoot`. `0` means drift unknown. |
@@ -51,6 +51,8 @@ Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run sna
 | `table_fqn` | index, `:Table(service_name, schema_name, table_name)` | The snapshot writer's `:EXECUTES` match and every fully-qualified descendant/single-table reader. |
 | `table_schedule` | index, `:Table(schedule_name)` | `LoadLatestSourceDAG` and schedule-graph scans of `MATCH (:Table {schedule_name})`. |
 | `run_schedule` | index, `:Run(schedule_name)` | `ListRuns` (`MATCH (:Run {schedule_name})`). |
+
+After the DDL is applied and the indexes are online, `InitSchema` runs a set of idempotent data migrations. The current one folds any legacy uppercase `:Run.terminal_status` (`SUCCEEDED`/`FAILED`, stamped by an earlier aggregate writer) down to the canonical lowercase form so the UI never reads a mixed casing: `MATCH (r:Run) WHERE r.terminal_status IN ['SUCCEEDED','FAILED'] SET r.terminal_status = toLower(r.terminal_status)`. Re-running it is a no-op once every row is lowercase.
 
 `table_uid_unique` will refuse to create if duplicate `:Table {unique_id}` nodes already exist. Before first rollout against an existing graph, collapse duplicates **without losing run history**. A bare `DETACH DELETE` of the duplicates would also delete their `(:Run)-[:EXECUTES]->` relationships and erase the task outcomes recorded against them, so the run-history edges are repointed onto the kept node first:
 
@@ -103,7 +105,7 @@ Ports (`orchestrator/domain/run/ports.go`):
 | `ScopeNodeCompletion{Key, Status}` | `Status="FAILED"` → target + full transitive downstream; `Status="SUCCEEDED"`/`SKIPPED` → target + immediate downstream + each downstream's upstreams. |
 
 Adapter implementations:
-- `orchestrator/adapters/neo4j/run_aggregate_repository.go` — `RunAggregateRepository` implements `AggregateRepository`. Also owns `DeleteExpiredRuns` for the sweeper. `Save` persists all loaded node statuses in a single `UNWIND` round trip, keyed on the full `(service_name, schema_name, table_name)` identity so two services sharing `schema.table` in one run keep distinct `:EXECUTES.status`.
+- `orchestrator/adapters/neo4j/run_aggregate_repository.go` — `RunAggregateRepository` implements `AggregateRepository`. Also owns `DeleteExpiredRuns` for the sweeper. Both the `ScopeNodeCompletion` rehydrate target match and the `Save` write match on the full `(service_name, schema_name, table_name)` identity so two services sharing a `schema.table` name in one run resolve to distinct `:Table` targets: `Save` persists all loaded node statuses in a single `UNWIND` round trip keyed on that 4-tuple identity, and rehydrate loads only the addressed service's target and its neighbourhood rather than both same-named nodes.
 - `orchestrator/adapters/neo4j/orchestrator_query_repository.go` — `OrchestratorQueryRepository` implements `RunQueryPort`.
 
 ### Snapshot — domain ports, adapters, and application service
@@ -345,7 +347,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 5. Update message_processing state -> completed; commit transaction
 ```
 
-`runs.Save` writes `:Run.terminal_status` / `:Run.completed_at` when the aggregate finalises internally. A separate Redis consumer on `run.finalized:v1` projects state's authoritative terminal outcome — succeeded, failed, or cancelled — onto the same fields whenever a run's terminal transition is not produced by the aggregate. This covers full-inherited rebases that never publish `node.updated:v1` events and cancelled runs, which emit `run.finalized:v1` (status `cancelled`) from state's `Run.Cancel()` rather than through the task-completion path. State remains the source of truth for run terminality; orchestrator's role on this stream is read-only persistence.
+`runs.Save` writes `:Run.terminal_status` / `:Run.completed_at` when the aggregate finalises internally, normalizing the uppercase in-memory aggregate status to the canonical lowercase stored form at the write boundary so every writer agrees. A separate Redis consumer on `run.finalized:v1` projects state's authoritative terminal outcome — succeeded, failed, or cancelled — onto the same fields whenever a run's terminal transition is not produced by the aggregate. This covers full-inherited rebases that never publish `node.updated:v1` events and cancelled runs, which emit `run.finalized:v1` (status `cancelled`) from state's `Run.Cancel()` rather than through the task-completion path. State remains the source of truth for run terminality; orchestrator's role on this stream is read-only persistence.
 
 ## Background Loops
 
