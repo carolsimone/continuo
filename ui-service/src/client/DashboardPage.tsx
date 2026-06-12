@@ -71,8 +71,8 @@ export default function DashboardPage() {
           <span className="live-badge">
             ● live{lastUpdated ? ` · ${lastUpdated.toLocaleTimeString()}` : ''}
           </span>
+          <UserMenu />
         </div>
-        <UserMenu />
       </header>
       <main className="page-content page-content--readable">
         <Tabs param="tab" defaultSlug="runs" tabs={tabSpecs} />
