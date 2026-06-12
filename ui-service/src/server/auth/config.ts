@@ -23,7 +23,7 @@ export interface DevAuthConfig {
 
 export type AuthConfig = OidcAuthConfig | DevAuthConfig;
 
-const ROLES: ReadonlySet<string> = new Set(['viewer', 'operator']);
+const ROLES: ReadonlySet<Role> = new Set<Role>(['viewer', 'operator']);
 
 export function parseDuration(raw: string, name: string): number {
   const m = /^(\d+)(s|m|h)$/.exec(raw.trim());
@@ -39,7 +39,7 @@ function parseRoleMapping(raw: string): Map<string, Role> {
     if (eq <= 0) throw new Error(`AUTH_ROLE_MAPPING: expected "group=role", got "${pair}"`);
     const group = pair.slice(0, eq).trim();
     const role = pair.slice(eq + 1).trim();
-    if (!ROLES.has(role)) throw new Error(`AUTH_ROLE_MAPPING: unknown role "${role}" for group "${group}"`);
+    if (!ROLES.has(role as Role)) throw new Error(`AUTH_ROLE_MAPPING: unknown role "${role}" for group "${group}"`);
     mapping.set(group, role as Role);
   }
   return mapping;
@@ -51,7 +51,7 @@ function parseEmails(raw: string): Set<string> {
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const v = env[name];
-  if (!v) throw new Error(`${name} is required when AUTH_MODE=oidc`);
+  if (v === undefined || v.trim() === '') throw new Error(`${name} is required when AUTH_MODE=oidc`);
   return v;
 }
 
@@ -62,7 +62,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv): AuthConfig {
     throw new Error(`AUTH_MODE must be "oidc" or "dev", got "${mode ?? ''}" (there is no unauthenticated mode)`);
   }
   const defaultRole = env.AUTH_DEFAULT_ROLE ?? 'none';
-  if (defaultRole !== 'none' && !ROLES.has(defaultRole)) {
+  if (defaultRole !== 'none' && !ROLES.has(defaultRole as Role)) {
     throw new Error(`AUTH_DEFAULT_ROLE must be none, viewer or operator, got "${defaultRole}"`);
   }
   return {

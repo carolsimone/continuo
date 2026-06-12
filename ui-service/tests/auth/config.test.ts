@@ -23,6 +23,7 @@ describe('loadAuthConfig', () => {
   it('fails fast when an oidc variable is missing', () => {
     const { AUTH_OIDC_CLIENT_SECRET: _omitted, ...partial } = oidcEnv;
     expect(() => loadAuthConfig(partial)).toThrow(/AUTH_OIDC_CLIENT_SECRET/);
+    expect(() => loadAuthConfig({ ...oidcEnv, AUTH_OIDC_CLIENT_SECRET: '' })).toThrow(/AUTH_OIDC_CLIENT_SECRET/);
   });
 
   it('parses a full oidc config with defaults and normalized publicUrl', () => {

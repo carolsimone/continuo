@@ -9,8 +9,8 @@ export interface AuthUser {
   role: Role;
 }
 
-// AUTH_MODE=dev placeholder identity (never used in production: no
-// unauthenticated mode exists, and dev mode logs a loud boot warning).
+// Placeholder identity injected by the dev-mode auth handler. The operator
+// role gives local development full access without an identity provider.
 export const DEV_USER: AuthUser = {
   userId: 'dev|local',
   email: 'dev@localhost',
