@@ -69,4 +69,13 @@ describe('SessionStore', () => {
     expect(await store.load('')).toBeNull();
     expect(await store.load('nope')).toBeNull();
   });
+
+  it('treats a corrupt session record as no session and deletes it', async () => {
+    const { store, redis } = makeStore();
+    await redis.set('uisession:bad-json', 'not json', 'EX', 3600);
+    await redis.set('uisession:not-object', '42', 'EX', 3600);
+    expect(await store.load('bad-json')).toBeNull();
+    expect(await store.load('not-object')).toBeNull();
+    expect(redis.keys()).toEqual([]);
+  });
 });

@@ -42,7 +42,15 @@ export class SessionStore {
     if (!id) return null;
     const raw = await this.redis.get(KEY_PREFIX + id);
     if (!raw) return null;
-    const record = JSON.parse(raw) as SessionRecord;
+    let record: SessionRecord;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== 'object' || parsed === null) throw new Error('not an object');
+      record = parsed as SessionRecord;
+    } catch {
+      await this.redis.del(KEY_PREFIX + id);
+      return null;
+    }
     const ttl = this.ttlFor(record.createdAt);
     if (ttl <= 0) {
       await this.redis.del(KEY_PREFIX + id);
