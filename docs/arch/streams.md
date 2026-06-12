@@ -43,10 +43,35 @@ CI fails if `go generate` would produce a diff that isn't committed.
   group names are passed to `pkg/redis.NewStreamConsumer` at the wiring site in
   `main.go`, so the constant only appears there.
 
+## Consumer identity and throughput
+
+`pkg/redis.NewStreamConsumer` derives a **stable per-pod consumer name**
+(`<group>-<hostname>`, falling back to a time-seeded name only when the
+hostname is unavailable). Because the name is stable across restarts, a
+restarted process re-attaches to its own pending-entry list (PEL) instead of
+minting a fresh consumer every boot — the consumer-group registry no longer
+grows an orphaned entry per restart. A dead pod's PEL is still recovered by the
+`XAUTOCLAIM` reclaim sweep (see `docs/arch/05-error-classification.md`).
+
+Throughput within a single consumer is tuned by `WithWorkerPool(n,
+aggregateKeyField)`:
+
+- **Default `n = 1`** — strictly-serial processing, identical to the original
+  behaviour. Every binding opts into parallelism deliberately.
+- **`n > 1`** — each read batch is sharded across `n` lanes by a hash of the
+  message's `aggregateKeyField` value (for example `schedule_id`). All messages
+  for one aggregate land on the same lane, so per-aggregate ordering is
+  preserved (same key → same lane → FIFO) while distinct aggregates process in
+  parallel. A message missing that field hashes to a single stable lane, so it
+  is never reordered; it just forgoes parallelism. The full batch completes
+  before the next read, so ack-after-success and PEL semantics are unchanged.
+  Sizing note: per-aggregate `SELECT … FOR UPDATE` serialization in the write
+  store means `n > 1` only adds throughput across aggregates, so size `n`
+  against concurrently-active aggregates rather than raw message rate.
+
 ## Out of scope
 
 - Stream payload schemas — protobuf owns these.
-- Consumer names within a group — runtime-generated, not in the registry.
 - Per-environment overrides for stream or group names — names are code-level
   identifiers, not deployment-tunable.
 
