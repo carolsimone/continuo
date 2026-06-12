@@ -15,10 +15,65 @@ It provides:
 - rebase triggering: proxies `POST /api/schedulers/:id/rebase` to the `TriggerRebase` gRPC method on `state`
 - single-node run triggering: proxies `POST /api/nodes/:service/:schema/:table/run` to the `TriggerSingleNodeRun` gRPC method on `state`
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`
+- a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): a WebSocket (WS) endpoint that exposes a Large Language Model (LLM) agent which inspects schedule status, task status, and dependency graphs via the `continuo` CLI (Command-Line Interface); mutating commands are blocked by a deny-list, and the endpoint is gated off outside local development
 
 It owns no storage and constructs no Redis client.
 
 **Runtime**: Node.js / Express / TypeScript (port 8090).
+
+## Chat Bridge
+
+### Overview
+
+`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image (which runs `node dist-server/index.js` without the flag). Local development enables it via the `dev` npm script. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the bridge is enabled, so the default/production configuration shows no chat panel rather than a permanently disconnected one. Operating the bridge in a shared or production environment additionally requires the `claude` and `continuo` binaries present in the runtime image with Claude credentials, plus authentication, origin checks, connection limits, and Application Programming Interface (API) budget quotas on the endpoint — none of which are provided today.
+
+Each incoming WebSocket connection receives one dedicated headless `claude` subprocess. The subprocess runs in streaming-JSON mode:
+
+```
+claude -p --input-format stream-json --output-format stream-json --verbose
+```
+
+Read-only behavior is enforced by a deny-list, not the allow-list. In headless `claude -p` mode the `--allowedTools` list does not act as a default-deny — tool calls are auto-approved — so the intended read surface (`Bash(continuo schedule status:*)`, `Bash(continuo schedule list:*)`, `Bash(continuo schedule graph:*)`, `Bash(continuo describe:*)`) is documentation of intent rather than a boundary. The boundary is `--disallowedTools`, which Claude Code does honor: `Bash(continuo schedule trigger:*)` is denied, so the mutating command cannot run. The system prompt additionally instructs read-only behavior as defense in depth. This is best-effort confinement for local development only: the subprocess is not sandboxed against arbitrary shell, so it runs with the developer's privileges. That, together with the absence of authentication, is why the endpoint is gated off outside local development. The agent inspects the system by shelling out to the `continuo` CLI, which in turn reads `state` and `orchestrator` over gRPC (Remote Procedure Call). The `claude` process itself has no direct gRPC or Redis connections.
+
+The spawned `claude` process (and the `continuo` CLI it invokes) receive `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` in their environment, mapped from the ui-service server's `STATE_GRPC_ADDR` and `ORCHESTRATOR_GRPC_ADDR`, so the CLI reaches the same `state` and `orchestrator` gRPC endpoints the ui-service uses.
+
+### Process lifetime and session continuity
+
+One subprocess is created per WebSocket connection. The bridge captures the Claude session ID from the first response. The subprocess signals termination exactly once whether it exits normally or fails to spawn; on the next user turn the bridge respawns it and passes `--resume <session_id>` so the conversation resumes without loss of context. A `new_chat` message from the client terminates any existing subprocess, clears the session ID, and starts a fresh conversation. The browser chat socket reconnects automatically with capped exponential backoff, reusing the stored session ID, after a disconnect.
+
+### Message contract
+
+**Client → server messages** (JSON over WebSocket):
+
+| `type` | Payload | Meaning |
+|---|---|---|
+| `user_message` | `{ "text": string }` | User turn to relay to the `claude` subprocess |
+| `new_chat` | `{}` | Reset the current conversation and start a new one |
+
+Incoming frames are validated before use: anything that is not valid JSON, or that decodes to a non-object (e.g. `null`, a number, an array), is dropped silently, as is a `user_message` whose `text` is not a string. A malformed frame can therefore never throw an uncaught exception and tear down the server.
+
+**Server → client messages** (JSON over WebSocket):
+
+| `type` | Payload | Meaning |
+|---|---|---|
+| `session` | `{ "sessionId": string }` | Captured Claude session ID; sent once after the first response |
+| `tool` | `{ "command": string }` | Tool call in flight (for UI progress indication) |
+| `text` | `{ "text": string }` | Assistant text for the current turn (emitted at whole-message granularity, not token-by-token) |
+| `final` | `{ "text": string }` | Complete assistant response, marking the turn as done |
+| `error` | `{ "code": string, "message": string }` | Bridge or subprocess error |
+
+### Scope and constraints
+
+A deny-list (`--disallowedTools`) blocks the mutating `continuo schedule trigger`; the agent is steered to the read-only surface below by the system prompt and the documented allow-list. The `continuo` CLI commands surfaced are:
+
+| Command | Data read |
+|---|---|
+| `schedule list` | All schedules and their last-run status |
+| `schedule status <name>` | Per-node task status of a schedule's latest run |
+| `schedule graph <name>` | Dependency graph (nodes and edges) |
+| `describe` | Machine-readable command catalog |
+
+No backend service contracts, storage ownership, Redis Streams flows, or gRPC interfaces change as a result of the chat bridge. The bridge introduces no new outbound connections beyond what the `continuo` CLI already makes to `state` and `orchestrator`.
 
 ## Owned Storage
 
@@ -75,6 +130,18 @@ None.
 | Route | Method | Backend |
 |---|---|---|
 | `/api/task-executions/:id/logs?key=<s3_key>` | GET | S3 `GetObject` — streams log content as `text/plain` |
+
+#### Feature flags
+
+| Route | Method | Backend |
+|---|---|---|
+| `/api/features` | GET | Returns `{ "chatBridgeEnabled": boolean }`, reflecting `CHAT_BRIDGE_ENABLED`. The SPA reads this on load to decide whether to mount the chat panel and open `/ws/chat`. |
+
+#### Chat WebSocket
+
+| Route | Protocol | Description |
+|---|---|---|
+| `/ws/chat` | WebSocket | Chat bridge. Attached only when `CHAT_BRIDGE_ENABLED=true`; absent by default. Each connection spawns one `claude` subprocess. See "Chat Bridge" section for the full message contract. |
 
 #### Frontend
 
