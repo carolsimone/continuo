@@ -395,6 +395,42 @@ Content rules:
 - For "no topology yet" states render an `.info-strip--neutral` in
   place of the grid — do not render empty tiles.
 
+## Sign-in page
+
+The only page rendered to an unauthenticated user. Uses the standard `.page`
+shell; the single surface is a centered card.
+
+```css
+.signin-card        { max-width: 360px; margin: 96px auto 0; background: #fff;
+                      border: 1px solid #e2e8f0; border-radius: 6px; padding: 24px;
+                      display: flex; flex-direction: column; gap: 12px;
+                      align-items: flex-start; }
+.signin-card__hint  { font-size: 12px; color: #6b7280; margin: 0; }
+```
+
+Rules:
+
+- The card title uses the `.section-header__title` micro-label treatment.
+- The sign-in action is the page's single confirming action and uses
+  `.btn--primary` (same rationale as a modal's confirming verb). It is an
+  anchor to `/auth/login`, not a JavaScript handler.
+- Login errors (`no_role`, `login_failed`) render as an `.info-strip--error`
+  inside the card, above the button.
+- No password fields, ever — authentication is delegated to the deployer's
+  identity provider.
+
+## User menu
+
+Identity + sign-out, right-aligned in the homepage `.page-header`.
+
+```css
+.user-menu          { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.user-menu__email   { font-size: 12px; color: #6b7280; }
+```
+
+The sign-out action is a `.btn--secondary` following the standard button state
+rules (`Sign out` → `Signing out…` with `.is-loading`).
+
 ## Things to avoid
 
 - New `.foo-btn` or `.foo-banner` classes — extend `.btn` / `.info-strip`
