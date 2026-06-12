@@ -1,0 +1,27 @@
+issuer: http://dex:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+staticClients:
+  - id: continuo-ui
+    redirectURIs:
+      - http://ui-auth:8090/auth/callback
+    name: Continuo UI (auth e2e)
+    secret: e2e-secret
+enablePasswordDB: true
+staticPasswords:
+  - email: operator@example.com
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: operator
+    userID: 11111111-1111-1111-1111-111111111111
+  - email: viewer@example.com
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: viewer
+    userID: 22222222-2222-2222-2222-222222222222
+  - email: norole@example.com
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: norole
+    userID: 33333333-3333-3333-3333-333333333333

@@ -408,8 +408,55 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
+      - AUTH_MODE=dev
     ports:
       - "8090:8090"
+    volumes:
+      - ./ui-service/config:/app/config:ro
+    networks:
+      - default
+
+  dex:
+    image: dexidp/dex:v2.41.1
+    container_name: dex
+    profiles: ["auth-e2e"]
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      - ./tests/e2e/dex/config.yaml:/etc/dex/config.yaml:ro
+    networks:
+      - default
+
+  ui-auth:
+    build:
+      context: ./ui-service
+      network: host
+    container_name: ui-auth
+    profiles: ["auth-e2e"]
+    depends_on:
+      - state
+      - redis
+      - dex
+      - localstack
+      - release-controller
+    environment:
+      - STATE_GRPC_ADDR=state:50051
+      - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
+      - PORT=8090
+      - NODE_ENV=production
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_BUCKET=continuo
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - RELEASE_CONTROLLER_URL=http://release-controller:8088
+      - AUTH_MODE=oidc
+      - AUTH_OIDC_ISSUER_URL=http://dex:5556/dex
+      - AUTH_OIDC_CLIENT_ID=continuo-ui
+      - AUTH_OIDC_CLIENT_SECRET=e2e-secret
+      - AUTH_PUBLIC_URL=http://ui-auth:8090
+      - AUTH_OPERATOR_EMAILS=operator@example.com
+      - AUTH_VIEWER_EMAILS=viewer@example.com
+      - REDIS_URL=redis://:continuo@redis:6379
     volumes:
       - ./ui-service/config:/app/config:ro
     networks:
