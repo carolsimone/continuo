@@ -4,6 +4,7 @@ import type { AddressInfo } from 'net';
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
 import { attachChatWebSocket } from '../../src/server/ws/chat';
+import type { AuthUser } from '../../src/server/auth/types';
 
 class FakeProcess extends EventEmitter {
   send = vi.fn();
@@ -16,6 +17,10 @@ function listen(server: Server): Promise<number> {
 
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
+const operator: AuthUser = { userId: 'i|o', email: 'o@c.com', name: 'O', role: 'operator' };
+const viewer: AuthUser = { userId: 'i|v', email: 'v@c.com', name: 'V', role: 'viewer' };
+const asOperator = async () => operator;
+
 let server: Server | undefined;
 afterEach(() => server?.close());
 
@@ -23,7 +28,7 @@ describe('attachChatWebSocket', () => {
   it('relays user_message to the process and process messages to the client', async () => {
     const fake = new FakeProcess();
     server = createServer();
-    attachChatWebSocket(server, { createProcess: () => fake as any });
+    attachChatWebSocket(server, { createProcess: () => fake as any, authenticate: asOperator });
     const port = await listen(server);
 
     const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
@@ -51,6 +56,7 @@ describe('attachChatWebSocket', () => {
         procs.push(p);
         return p as any;
       },
+      authenticate: asOperator,
     });
     const port = await listen(server);
     const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
@@ -66,7 +72,7 @@ describe('attachChatWebSocket', () => {
   it('kills the process when the socket closes', async () => {
     const fake = new FakeProcess();
     server = createServer();
-    attachChatWebSocket(server, { createProcess: () => fake as any });
+    attachChatWebSocket(server, { createProcess: () => fake as any, authenticate: asOperator });
     const port = await listen(server);
     const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
     await new Promise((r) => client.on('open', r));
@@ -78,7 +84,7 @@ describe('attachChatWebSocket', () => {
   it('ignores malformed JSON and keeps serving later messages', async () => {
     const fake = new FakeProcess();
     server = createServer();
-    attachChatWebSocket(server, { createProcess: () => fake as any });
+    attachChatWebSocket(server, { createProcess: () => fake as any, authenticate: asOperator });
     const port = await listen(server);
     const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
     await new Promise((r) => client.on('open', r));
@@ -92,7 +98,7 @@ describe('attachChatWebSocket', () => {
   it('ignores non-object JSON frames without crashing and keeps serving', async () => {
     const fake = new FakeProcess();
     server = createServer();
-    attachChatWebSocket(server, { createProcess: () => fake as any });
+    attachChatWebSocket(server, { createProcess: () => fake as any, authenticate: asOperator });
     const port = await listen(server);
     const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
     await new Promise((r) => client.on('open', r));
@@ -109,7 +115,7 @@ describe('attachChatWebSocket', () => {
   it('ignores a user_message whose text is not a string', async () => {
     const fake = new FakeProcess();
     server = createServer();
-    attachChatWebSocket(server, { createProcess: () => fake as any });
+    attachChatWebSocket(server, { createProcess: () => fake as any, authenticate: asOperator });
     const port = await listen(server);
     const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
     await new Promise((r) => client.on('open', r));
@@ -125,6 +131,7 @@ describe('attachChatWebSocket', () => {
     server = createServer();
     attachChatWebSocket(server, {
       createProcess: (sid) => { seen.push(sid); return new FakeProcess() as any; },
+      authenticate: asOperator,
     });
     const port = await listen(server);
     const client = new WebSocket(`ws://localhost:${port}/ws/chat?sessionId=abc`);
@@ -140,6 +147,7 @@ describe('attachChatWebSocket', () => {
     server = createServer();
     attachChatWebSocket(server, {
       createProcess: (sid) => { seen.push(sid); const p = new FakeProcess(); procs.push(p); return p as any; },
+      authenticate: asOperator,
     });
     const port = await listen(server);
     const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
@@ -163,6 +171,7 @@ describe('attachChatWebSocket', () => {
     server = createServer();
     attachChatWebSocket(server, {
       createProcess: (sid) => { seen.push(sid); const p = new FakeProcess(); procs.push(p); return p as any; },
+      authenticate: asOperator,
     });
     const port = await listen(server);
     const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
@@ -187,7 +196,7 @@ describe('attachChatWebSocket', () => {
   it('relays agent_unavailable to the client', async () => {
     const fake = new FakeProcess();
     server = createServer();
-    attachChatWebSocket(server, { createProcess: () => fake as any });
+    attachChatWebSocket(server, { createProcess: () => fake as any, authenticate: asOperator });
     const port = await listen(server);
     const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
     await new Promise((r) => client.on('open', r));
@@ -196,6 +205,39 @@ describe('attachChatWebSocket', () => {
     fake.emit('message', { type: 'error', code: 'agent_unavailable', message: 'spawn claude ENOENT' });
     await tick();
     expect(received).toContainEqual({ type: 'error', code: 'agent_unavailable', message: 'spawn claude ENOENT' });
+    client.close();
+  });
+
+  it('rejects the upgrade when no authenticate callback is configured (default deny)', async () => {
+    server = createServer();
+    attachChatWebSocket(server, { createProcess: () => new FakeProcess() as any });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    const err = await new Promise<Error>((resolve) => client.on('error', resolve));
+    expect(err.message).toContain('401');
+  });
+
+  it('rejects the upgrade for a viewer (operator-only)', async () => {
+    server = createServer();
+    attachChatWebSocket(server, {
+      createProcess: () => new FakeProcess() as any,
+      authenticate: async () => viewer,
+    });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    const err = await new Promise<Error>((resolve) => client.on('error', resolve));
+    expect(err.message).toContain('401');
+  });
+
+  it('accepts the upgrade for an operator', async () => {
+    server = createServer();
+    attachChatWebSocket(server, {
+      createProcess: () => new FakeProcess() as any,
+      authenticate: asOperator,
+    });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    await new Promise((resolve) => client.on('open', resolve));
     client.close();
   });
 });

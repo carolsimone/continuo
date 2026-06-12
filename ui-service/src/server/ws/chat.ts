@@ -1,15 +1,53 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Server } from 'http';
+import type { IncomingMessage, Server } from 'http';
 import { ClaudeProcess } from './claude-process';
 import type { ClientMessage, ServerMessage } from './chat-protocol';
+import { audit } from '../auth/audit';
+import type { AuthUser } from '../auth/types';
 
 export interface ChatWsOptions {
   createProcess?: (sessionId?: string) => ClaudeProcess;
+  // Resolves the incoming HTTP upgrade request to a user; returning null rejects
+  // the upgrade. Defaults to deny-all so an unwired chat socket can never be
+  // opened. The chat endpoint is operator-only: it spends LLM tokens and can
+  // request run triggers.
+  authenticate?: (req: IncomingMessage) => Promise<AuthUser | null>;
 }
 
 export function attachChatWebSocket(server: Server, opts: ChatWsOptions = {}): WebSocketServer {
   const createProcess = opts.createProcess ?? ((sessionId?: string) => new ClaudeProcess({ sessionId }));
-  const wss = new WebSocketServer({ server, path: '/ws/chat' });
+  const authenticate = opts.authenticate ?? (async () => null);
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (req, socket, head) => {
+    const { pathname } = new URL(req.url ?? '/', 'http://localhost');
+    if (pathname !== '/ws/chat') {
+      socket.destroy();
+      return;
+    }
+    authenticate(req)
+      .then((user) => {
+        if (!user || user.role !== 'operator') {
+          audit('ws_denied', {
+            path: '/ws/chat',
+            user_id: user?.userId,
+            outcome: user ? 'forbidden' : 'unauthenticated',
+          });
+          socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        // The authenticated user is passed as the third connection argument.
+        // Today's handler ignores it; the agent-runner relay will use it on the
+        // gRPC stream.
+        wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, user));
+      })
+      .catch((err) => {
+        console.error('ws auth error:', err);
+        socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+      });
+  });
 
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
