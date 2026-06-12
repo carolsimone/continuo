@@ -150,13 +150,17 @@ services:
     enabled: true
     replicas: 1
     httpPort: 8090
-    probePath: /
+    probePath: /healthz
     serviceType: ClusterIP
     secretEnv:
       - name: AWS_ACCESS_KEY_ID
         secretKey: AWS_ACCESS_KEY_ID
       - name: AWS_SECRET_ACCESS_KEY
         secretKey: AWS_SECRET_ACCESS_KEY
+      - name: REDIS_PASSWORD
+        secretKey: REDIS_PASSWORD
+      - name: AUTH_OIDC_CLIENT_SECRET
+        secretKey: AUTH_OIDC_CLIENT_SECRET
     ingress:
       enabled: true
       host: dev.yourdomain.com
@@ -164,6 +168,17 @@ services:
       PORT: "8090"
       NODE_ENV: production
       RELEASE_CONTROLLER_URL: http://release-controller:8088
+      # Authentication: ui-service fails fast at boot when these are missing,
+      # so a misconfigured deployment crashloops instead of serving an open UI.
+      AUTH_MODE: oidc
+      AUTH_OIDC_ISSUER_URL: ""
+      AUTH_OIDC_CLIENT_ID: ""
+      AUTH_PUBLIC_URL: https://dev.yourdomain.com
+      AUTH_GROUPS_CLAIM: groups
+      AUTH_ROLE_MAPPING: ""
+      AUTH_OPERATOR_EMAILS: ""
+      AUTH_VIEWER_EMAILS: ""
+      REDIS_URL: __REDIS_URL_FROM_AUTH__
     volumeMounts:
       - name: cancel-config
         mountPath: /app/config
