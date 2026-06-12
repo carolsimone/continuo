@@ -37,9 +37,9 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions = {}): W
           socket.destroy();
           return;
         }
-        // The authenticated user is passed as the third connection argument.
-        // Today's handler ignores it; the agent-runner relay will use it on the
-        // gRPC stream.
+        // Pass the authenticated user as the third connection argument so
+        // connection handlers can inspect role and identity without re-reading
+        // session state.
         wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, user));
       })
       .catch((err) => {
