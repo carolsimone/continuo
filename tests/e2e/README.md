@@ -108,6 +108,28 @@ make e2e-full
 `make e2e-full` runs `docker compose up -d`, waits for health, starts services,
 runs `provision-k8s-test-env.sh`, then executes the tests.
 
+## Auth e2e suite (OIDC against Dex)
+
+The auth suite exercises the real OIDC login flow (ui-service in `oidc` mode
+against a Dex identity provider). It is skipped unless `UI_AUTH_HTTP_BASE` is
+set.
+
+```bash
+# Requires the standard stack to be up (state, orchestrator, redis, …).
+docker compose build ui-auth
+docker compose --profile auth-e2e up -d dex ui-auth
+
+docker exec -e UI_AUTH_HTTP_BASE=http://ui-auth:8090 orchestrator \
+  go test -v -run TestAuthOIDC /app/tests/e2e/...
+
+docker compose --profile auth-e2e down dex ui-auth
+```
+
+Static users (password `password`): `operator@example.com` (operator role via
+email override), `viewer@example.com` (viewer), `norole@example.com` (no role —
+denied). Dex static users carry no groups claim; the groups-mapping path is
+covered by ui-service unit tests.
+
 ## Script Reference
 
 | Script | What it does |
@@ -180,6 +202,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | `release_promote_test.go` | dbt blue/green release tests — see [Blue/Green Release Tests](#bluegreen-release-tests) |
 | `seed_topology_test.go` | `seedTopology` helper — publishes `release.promoted:v1` to establish the e2e DAG in Neo4j (the kept production path) |
 | `ui_http_test.go` | HTTP assertions against the ui-service (`verifyUIService`) |
+| `auth_oidc_test.go` | `TestAuthOIDC` — real OIDC login flow against Dex (auth-e2e profile); skipped unless `UI_AUTH_HTTP_BASE` is set |
 | `verify.go` | DAG-level assertions (executor jobs, k8s jobs, dependency unlocking, failure helpers) |
 | `clients.go` | gRPC, Redis, Postgres, Neo4j, S3, and release-controller client setup |
 | `helpers.go` | `pollUntil`, k8s job helpers, `containsAll` |
