@@ -206,6 +206,6 @@ The full producer contract — image naming, the canonical manifest key, the
 release-controller HTTP API (`GET /current-prod`, `POST /releases`,
 `GET /releases/{id}`, `GET /releases`), bootstrap detection, and polling to a
 terminal status — is documented in
-[`docs/integration/loading-releases.md`](../docs/integration/loading-releases.md).
+[`docs/loading-releases.md`](../docs/loading-releases.md).
 A runnable reference producer lives at
 <https://github.com/carolsimone/continuo-dbt-demo>.
