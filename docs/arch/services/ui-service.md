@@ -58,8 +58,8 @@ Authorization Code + PKCE (Proof Key for Code Exchange) via the `openid-client` 
 
 Two roles: `viewer` (read) and `operator` (viewer + mutations + chat). Resolution happens once, at login:
 
-1. The IdP groups claim (`AUTH_GROUPS_CLAIM`, default `groups`) is mapped through `AUTH_ROLE_MAPPING` (comma-separated `group=role` pairs); the strongest matching role wins.
-2. Email overrides: `AUTH_OPERATOR_EMAILS` / `AUTH_VIEWER_EMAILS`.
+1. The IdP groups claim (`AUTH_GROUPS_CLAIM`, default `groups`) is mapped through `AUTH_ROLE_MAPPING` (comma-separated `group=role` pairs); the strongest matching role wins. Group membership comes from the IdP directory and is not gated on email verification.
+2. Email overrides: `AUTH_OPERATOR_EMAILS` / `AUTH_VIEWER_EMAILS`. These lists are applied only when the ID token asserts a verified email (`email_verified` claim is `true` or `"true"`); an unverified or absent `email_verified` falls through to step 3. This prevents privilege escalation through unverified email aliases.
 3. `AUTH_DEFAULT_ROLE` (default `none` — login is denied).
 
 ### Request gating
@@ -73,11 +73,15 @@ Enforced by middleware wired in `createApp`; method-based, so new endpoints are 
 | Static SPA shell | Public — holds no data and renders a sign-in page when `/auth/me` returns 401. |
 | `GET /api/*` | Any authenticated user. |
 | `POST`/`PUT`/`PATCH`/`DELETE` `/api/*` | `operator` role (403 otherwise). |
-| `/ws/chat` upgrade | `operator` only; rejected with HTTP 401 before any WebSocket is established. |
+| `/ws/chat` upgrade | `operator` only; rejected with HTTP 401 before any WebSocket is established. Browser requests whose `Origin` header does not match the deployment origin (derived from `AUTH_PUBLIC_URL`) are additionally rejected with HTTP 403. Requests with no `Origin` header (non-browser clients) pass. The origin check is skipped in `dev` mode. |
 
 ### CSRF (Cross-Site Request Forgery)
 
 SameSite=Lax cookies plus an Origin-header check on mutating `/api` requests: a browser `Origin` that does not match `AUTH_PUBLIC_URL`'s origin is rejected with 403. Requests without an `Origin` header pass through to the auth gate — they carry no ambient cookie and are not CSRF-able.
+
+### Error body contract
+
+All auth error responses use the shape `{ "error": "<human-readable string>", "code": "<machine token>" }`. The `error` string is suitable for the client to render directly; the `code` value is a stable token for programmatic handling (e.g. `unauthenticated`, `forbidden`, `csrf_rejected`, `auth_unavailable`). The terminal error handler is status-aware: an upstream client error carrying an HTTP status below 500 (for example, malformed JSON rejected by the body parser at status 400) is preserved at that status with `code: "bad_request"`. Only errors with no HTTP status, or with a 5xx status, indicate a backend outage (Redis or the IdP unreachable) and are returned as `503` with `code: "auth_unavailable"`.
 
 ### Audit
 
@@ -116,7 +120,7 @@ Deployment surfaces:
 
 ### Overview
 
-`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image (which runs `node dist-server/index.js` without the flag). Local development enables it via the `dev` npm script. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the bridge is enabled, so the default/production configuration shows no chat panel rather than a permanently disconnected one. The endpoint upgrade is authenticated: only a session with the `operator` role may open `/ws/chat`; anything else is rejected with HTTP 401 before the WebSocket is established (audited as `ws_denied`). Operating the bridge in a shared or production environment additionally requires the `claude` and `continuo` binaries present in the runtime image with Claude credentials, plus connection limits and Application Programming Interface (API) budget quotas on the endpoint — none of which are provided today.
+`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image (which runs `node dist-server/index.js` without the flag). Local development enables it via the `dev` npm script. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the bridge is enabled, so the default/production configuration shows no chat panel rather than a permanently disconnected one. The endpoint upgrade is authenticated: only a session with the `operator` role may open `/ws/chat`; anything else is rejected with HTTP 401 before the WebSocket is established (audited as `ws_denied`). Browser upgrade requests whose `Origin` header does not match the deployment origin (derived from `AUTH_PUBLIC_URL`) are rejected with HTTP 403 before authentication is attempted, preventing cross-site WebSocket hijacking. Requests with no `Origin` header (non-browser clients) are not subject to this check. The origin check is skipped in `dev` mode. Operating the bridge in a shared or production environment additionally requires the `claude` and `continuo` binaries present in the runtime image with Claude credentials, plus connection limits and Application Programming Interface (API) budget quotas on the endpoint — none of which are provided today.
 
 Each incoming WebSocket connection receives one dedicated headless `claude` subprocess. The subprocess runs in streaming-JSON mode:
 
@@ -249,7 +253,7 @@ All `/api` routes below require an authenticated session; mutating methods (ever
 
 | Route | Protocol | Description |
 |---|---|---|
-| `/ws/chat` | WebSocket | Chat bridge. Attached only when `CHAT_BRIDGE_ENABLED=true`; absent by default. The upgrade is operator-only — unauthenticated or non-operator upgrades are rejected with HTTP 401 before any WebSocket is established. Each connection spawns one `claude` subprocess. See "Chat Bridge" section for the full message contract. |
+| `/ws/chat` | WebSocket | Chat bridge. Attached only when `CHAT_BRIDGE_ENABLED=true`; absent by default. Browser upgrades whose `Origin` does not match `AUTH_PUBLIC_URL`'s origin are rejected with HTTP 403 before authentication. The upgrade is additionally operator-only — unauthenticated or non-operator upgrades are rejected with HTTP 401. Each connection spawns one `claude` subprocess. See "Chat Bridge" section for the full message contract. |
 
 #### Frontend
 
