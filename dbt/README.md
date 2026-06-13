@@ -25,7 +25,8 @@ dbt/
     test_config.py           # Unit tests for config module
     test_compile.py          # Unit tests for compile module
     test_cli.py              # Unit tests for CLI
-    test_upload.py           # Integration tests (require Docker + localstack)
+    test_upload.py           # Manifest filter + S3 key unit tests, plus
+                             #   localstack integration tests (@pytest.mark.integration)
 ```
 
 ## dbt_upload CLI
@@ -190,65 +191,21 @@ docker exec \
 ```
 
 
-## Deploy-time manifest + sidecar publish (production)
+## Producing a release for continuo
 
-Every push to `main` that triggers `.github/workflows/deploy.yml` also
-runs a `publish-dbt-manifests` job that:
+`dbt_upload` compiles a dbt service and uploads its filtered manifest to the
+canonical S3 key `s3://<bucket>/<service>/<release_id>/manifest.json`. Uploading
+the manifest is one step of shipping a change into continuo's blue/green
+pipeline; it does not, by itself, promote anything. To register the change,
+build and push the service image, upload the manifest, then `POST /releases` on
+the release-controller HTTP API. Only one object is uploaded per release — the
+filtered `manifest.json`. There is no `service_metadata.json` sidecar, and the
+image tag travels in the HTTP request body, not in object storage.
 
-1. Spins up an ephemeral postgres service container.
-2. Installs `dbt-postgres` + the `dbt_upload` tool's deps.
-3. Compiles each service via `dbt compile`.
-4. Calls `python -m dbt_upload load --target hetzner --services-dir services`
-   with `IMAGE_TAG_PER_SERVICE=service-1=<commit-sha>,...` so each
-   `service_metadata.json` sidecar pins to the same SHA the
-   `build-publish-dbt` job pushed to Docker Hub in the same workflow run.
-5. Publishes `update.graph:v1` to the in-cluster Redis via SSH +
-   `kubectl exec`, so manifest-controller picks up the fresh manifests
-   immediately — no operator action required after deploy.
-
-### Required GitHub repo secrets
-
-| Secret | Source | Used by |
-|---|---|---|
-| `HETZNER_S3_ACCESS_KEY_ID` | same value as `manifest-controller` pod's `AWS_ACCESS_KEY_ID` env | upload step |
-| `HETZNER_S3_SECRET_ACCESS_KEY` | same value as `manifest-controller` pod's `AWS_SECRET_ACCESS_KEY` env | upload step |
-| `HETZNER_HOST` | (already exists, used by the `deploy` job) | SSH-tunnel Redis publish |
-| `HETZNER_SSH_KEY` | (already exists) | same |
-
-### Reproducing the deploy-time upload locally
-
-If the CI step fails, reproduce the upload portion locally before
-pushing a fix.
-
-Prerequisites:
-
-- Local `dbt-compile-and-load` container running (per `docker-compose.yml`).
-- AWS credentials for Hetzner Object Storage exported in your shell:
-
-```bash
-export AWS_ACCESS_KEY_ID=...   # = HETZNER_S3_ACCESS_KEY_ID GHA secret
-export AWS_SECRET_ACCESS_KEY=...
-```
-
-Run:
-
-```bash
-COMMIT_SHA=$(git rev-parse HEAD)
-docker exec \
-  -e AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
-  -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-  -e IMAGE_TAG_PER_SERVICE="service-1=${COMMIT_SHA},service-2=${COMMIT_SHA},service-3=${COMMIT_SHA}" \
-  dbt-compile-and-load \
-  uv run python -m dbt_upload load --target hetzner --services-dir /app/services
-```
-
-Expected: `Load done: 3 compiled, 3 uploaded, 0 failed` plus six
-`Uploaded ...` lines (3 manifests + 3 sidecars).
-
-### Reduced `publish-dbt-images.yml`
-
-The legacy `publish-dbt-images.yml` workflow is now `workflow_dispatch`
-only; it builds dbt images at `:latest` (no SHA) as a manual safety
-valve. The default path for dbt image builds is `deploy.yml`'s
-`build-publish-dbt` job, which produces both `:latest` and
-`:${{ github.sha }}`.
+The full producer contract — image naming, the canonical manifest key, the
+release-controller HTTP API (`GET /current-prod`, `POST /releases`,
+`GET /releases/{id}`, `GET /releases`), bootstrap detection, and polling to a
+terminal status — is documented in
+[`docs/loading-releases.md`](../docs/loading-releases.md).
+A runnable reference producer lives at
+<https://github.com/carolsimone/continuo-dbt-demo>.

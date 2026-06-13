@@ -43,23 +43,38 @@ def s3():
 
 
 def test_upload_manifest_canonical_key(tmp_path):
-    """upload_manifest uploads to <service_name>/<release_id>/manifest.json — the
-    canonical S3 key that release-controller's Go CanonicalManifestKey produces."""
+    """Cross-language drift guard for the manifest S3 key.
+
+    The authoritative owner of the manifest layout is the Go function
+    CanonicalManifestKey in
+    release-controller/service/handlers/manifest_layout.go, which builds
+    s3://<bucket>/<service>/<release_id>/manifest.json. release-controller
+    derives the key it reads from (bucket, service, release_id), so the Python
+    writer must produce the exact same <service>/<release_id>/manifest.json key
+    object (the s3:// scheme + bucket are supplied to boto3 separately as the
+    Bucket argument). If either side changes the layout, this test fails before
+    the two can silently diverge.
+    """
     from unittest.mock import MagicMock
 
-    service_dir = tmp_path / "service-2"
+    service = "service-2"
+    release_id = "rel-abc"
+    bucket = "continuo"
+
+    service_dir = tmp_path / service
     (service_dir / "target").mkdir(parents=True)
     (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
 
     mock_s3 = MagicMock()
 
-    result = upload_manifest(mock_s3, str(service_dir), "local", "continuo", release_id="rel-abc")
+    result = upload_manifest(mock_s3, str(service_dir), "local", bucket, release_id=release_id)
 
     assert result is True
-    upload_calls = [str(c) for c in mock_s3.upload_file.call_args_list]
-    assert any(
-        "service-2/rel-abc/manifest.json" in c for c in upload_calls
-    ), f"canonical key not uploaded; calls={upload_calls}"
+    # boto3 upload_file(filename, bucket, key) — assert the exact (bucket, key) pair.
+    args, _ = mock_s3.upload_file.call_args
+    _filename, called_bucket, called_key = args
+    assert called_bucket == bucket
+    assert called_key == f"{service}/{release_id}/manifest.json"
     # Exactly one upload — no sidecar.
     assert mock_s3.upload_file.call_count == 1
 
