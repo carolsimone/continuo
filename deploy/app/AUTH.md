@@ -39,7 +39,7 @@ exactly two values:
 Google is a standards-compliant OIDC provider, and its OAuth clients allow
 **loopback redirect URIs** (`http://localhost:<port>`). That means you can run
 genuine `AUTH_MODE=oidc` against Google with **no domain and no self-hosted IdP**:
-you reach `ui-service` through a `kubectl port-forward` to `localhost:8090`, and
+you reach `ui-service` through a `kubectl port-forward` to a local port, and
 Google redirects back to that same loopback address after login.
 
 Role assignment uses an **email allowlist** (Google does not emit a `groups`
