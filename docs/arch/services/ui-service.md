@@ -116,6 +116,8 @@ Deployment surfaces:
 - The `auth-e2e` compose profile (dex + `ui-auth`) runs the real OIDC flow for the dedicated e2e suite (`tests/e2e/auth_oidc_test.go`).
 - Helm (`deploy/app`) runs `AUTH_MODE=oidc` with the client secret in the chart credentials Secret (`global.auth.oidcClientSecret`) and `REDIS_URL: __REDIS_URL_FROM_AUTH__`; Kubernetes probes target `/healthz`.
 
+Operator setup, including configuring an identity provider and a no-domain Google loopback flow for testing, is documented in `deploy/app/AUTH.md`.
+
 ## Chat Bridge
 
 ### Overview
