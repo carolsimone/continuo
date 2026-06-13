@@ -39,7 +39,7 @@ export function sessionAuth(sessions: SessionStore): RequestHandler {
 export function requireApiAuth(): RequestHandler {
   return (req, res, next) => {
     if (!req.user) {
-      res.status(401).json({ error: { code: 'unauthenticated', message: 'sign in required' } });
+      res.status(401).json({ error: 'sign in required', code: 'unauthenticated' });
       return;
     }
     if (MUTATING.has(req.method) && req.user.role !== 'operator') {
@@ -47,7 +47,7 @@ export function requireApiAuth(): RequestHandler {
         user_id: req.user.userId, email: req.user.email, role: req.user.role,
         method: req.method, path: req.originalUrl, outcome: 'forbidden',
       });
-      res.status(403).json({ error: { code: 'forbidden', message: 'operator role required' } });
+      res.status(403).json({ error: 'operator role required', code: 'forbidden' });
       return;
     }
     next();
@@ -64,7 +64,7 @@ export function csrfOriginCheck(publicOrigin: string): RequestHandler {
     const origin = req.headers.origin;
     if (origin && origin !== publicOrigin) {
       audit('csrf_rejected', { method: req.method, path: req.originalUrl, origin, outcome: 'forbidden' });
-      res.status(403).json({ error: { code: 'csrf_rejected', message: 'cross-origin request rejected' } });
+      res.status(403).json({ error: 'cross-origin request rejected', code: 'csrf_rejected' });
       return;
     }
     next();

@@ -95,7 +95,7 @@ export function createAuthRouter(deps: {
       const origin = req.headers.origin;
       if (origin && origin !== publicOrigin) {
         audit('csrf_rejected', { method: req.method, path: req.originalUrl, origin, outcome: 'forbidden' });
-        res.status(403).json({ error: { code: 'csrf_rejected', message: 'cross-origin request rejected' } });
+        res.status(403).json({ error: 'cross-origin request rejected', code: 'csrf_rejected' });
         return;
       }
       const id = parseCookies(req.headers.cookie ?? '')[SESSION_COOKIE] ?? '';
@@ -110,7 +110,7 @@ export function createAuthRouter(deps: {
 
   router.get('/me', (req, res) => {
     if (!req.user) {
-      res.status(401).json({ error: { code: 'unauthenticated', message: 'sign in required' } });
+      res.status(401).json({ error: 'sign in required', code: 'unauthenticated' });
       return;
     }
     res.json(req.user);

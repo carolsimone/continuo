@@ -38,7 +38,8 @@ describe('gating matrix', () => {
     expect((await request(app).get('/api/thing')).status).toBe(200);
     const res = await request(app).post('/api/thing');
     expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe('forbidden');
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.code).toBe('forbidden');
   });
 
   it('operator: reads and mutations pass', async () => {
@@ -81,7 +82,7 @@ describe('sessionAuth', () => {
     const app = apiApp(sessionAuth(store));
     const res = await request(app).get('/api/thing').set('Cookie', `${SESSION_COOKIE}=any`);
     expect(res.status).toBe(503);
-    expect(res.body.error.code).toBe('auth_unavailable');
+    expect(res.body.error.code).toBe('auth_unavailable'); // authErrorHandler shape — unchanged, fixed in next PR
   });
 });
 
@@ -104,7 +105,8 @@ describe('csrfOriginCheck', () => {
   it('rejects cross-origin mutations', async () => {
     const res = await request(appWithCsrf()).post('/api/thing').set('Origin', 'https://evil.example.com');
     expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe('csrf_rejected');
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.code).toBe('csrf_rejected');
   });
 
   it('allows mutations without an Origin header (non-browser clients)', async () => {
