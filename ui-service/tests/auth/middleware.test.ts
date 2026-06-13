@@ -82,7 +82,21 @@ describe('sessionAuth', () => {
     const app = apiApp(sessionAuth(store));
     const res = await request(app).get('/api/thing').set('Cookie', `${SESSION_COOKIE}=any`);
     expect(res.status).toBe(503);
-    expect(res.body.error.code).toBe('auth_unavailable'); // authErrorHandler shape — unchanged, fixed in next PR
+    expect(res.body.code).toBe('auth_unavailable');
+    expect(typeof res.body.error).toBe('string');
+  });
+
+  it('preserves an upstream client error status instead of masking it as 503', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post('/api/thing', (_req, res) => res.status(202).json({ ok: true }));
+    app.use(authErrorHandler());
+    const res = await request(app)
+      .post('/api/thing')
+      .set('Content-Type', 'application/json')
+      .send('{ this is not json');
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
   });
 });
 

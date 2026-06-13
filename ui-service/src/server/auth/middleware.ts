@@ -86,11 +86,33 @@ export function auditMutations(): RequestHandler {
   };
 }
 
-// Fail closed: a session-store error (Redis unreachable) becomes 503, never an
-// unauthenticated pass-through.
+// Terminal error handler. Client errors from upstream middleware (e.g. malformed
+// JSON rejected by express.json() with status 400) are preserved at their own
+// status. Only plain Errors with no HTTP status — or 5xx errors — indicate a
+// genuine auth-backend failure (Redis/IdP unreachable) and become 503.
 export function authErrorHandler(): ErrorRequestHandler {
-  return (err, _req, res, _next) => {
+  return (err, _req, res, next) => {
+    if (res.headersSent) {
+      next(err);
+      return;
+    }
+    const status =
+      typeof (err as { status?: unknown })?.status === 'number'
+        ? (err as { status: number }).status
+        : typeof (err as { statusCode?: unknown })?.statusCode === 'number'
+          ? (err as { statusCode: number }).statusCode
+          : undefined;
+    if (status !== undefined && status < 500) {
+      // A client error surfaced by upstream middleware (e.g. malformed JSON
+      // rejected by express.json(), which carries status 400). Preserve its
+      // status; only reveal the message when the error marks itself safe.
+      const expose = (err as { expose?: unknown })?.expose === true;
+      res.status(status).json({ error: expose ? (err as Error).message : 'invalid request', code: 'bad_request' });
+      return;
+    }
+    // No HTTP status (or a 5xx) → treat as an auth-backend failure: Redis or the
+    // identity provider is unreachable. Fail closed with 503.
     console.error('auth error:', err);
-    res.status(503).json({ error: { code: 'auth_unavailable', message: 'authentication backend unavailable' } });
+    res.status(503).json({ error: 'authentication backend unavailable', code: 'auth_unavailable' });
   };
 }
