@@ -61,11 +61,22 @@ which `ui-service` requires before honoring the allowlist, so this works cleanly
    - Application type: **Web application**.
    - **Authorized redirect URIs** → add exactly:
      ```
-     http://localhost:8090/auth/callback
+     http://localhost:18090/auth/callback
      ```
      This must match `AUTH_PUBLIC_URL` + `/auth/callback` character-for-character
      (scheme, host, port, path). `http://localhost` is permitted by Google for web
      clients — this is the loopback exception that makes the no-domain flow work.
+     For a **Web application** client Google matches the port exactly, so register
+     the specific port you will forward to (you can add more than one redirect URI
+     to the same client).
+
+   > **Choosing the local port.** `18090` here is the **local** port you will
+   > forward to; it is your choice, not fixed. Pick any free port — `8090` itself
+   > is frequently already taken on a developer machine (a local colima/SSH mux
+   > commonly holds it), which is why this guide uses `18090`. Whatever you pick
+   > must be identical in all three places: this redirect URI, `AUTH_PUBLIC_URL`,
+   > and the local side of the `port-forward`. The container always listens on
+   > `8090` internally, so the *remote* side of the `port-forward` stays `8090`.
 4. Save, and copy the **Client ID** and **Client secret**.
 
 ### Step 2 — Configure continuo
@@ -79,9 +90,11 @@ Edit the `ui-service` `env` block in `deploy/app/values.yaml`:
       AUTH_MODE: oidc
       AUTH_OIDC_ISSUER_URL: https://accounts.google.com
       AUTH_OIDC_CLIENT_ID: <your-client-id>.apps.googleusercontent.com
-      AUTH_PUBLIC_URL: http://localhost:8090   # no trailing slash; http so the
+      AUTH_PUBLIC_URL: http://localhost:18090  # no trailing slash; http so the
                                                # session cookie's Secure flag is
-                                               # off and flows over loopback http
+                                               # off and flows over loopback http.
+                                               # 18090 is the local forward port
+                                               # (see Step 1); match it everywhere
       AUTH_OPERATOR_EMAILS: you@example.com    # your Google account → operator
       # AUTH_OIDC_ISSUER_URL/CLIENT_ID/PUBLIC_URL above replace the empty defaults
 ```
@@ -117,20 +130,21 @@ kubectl -n <namespace> logs -l app=ui-service | tail
 
 ### Step 4 — Reach it and log in
 
-Port-forward the service to `localhost:8090` (over your SSH tunnel to the cluster,
-using your Hetzner kubeconfig). The local port **must be 8090** to match the
-redirect URI and `AUTH_PUBLIC_URL`:
+Port-forward the service to `localhost:18090` (over your SSH tunnel to the
+cluster, using your Hetzner kubeconfig). The **local** port (left of the colon)
+must match the redirect URI and `AUTH_PUBLIC_URL`; the **remote** port (right of
+the colon) is always `8090`, the port the container listens on:
 
 ```bash
-kubectl -n <namespace> port-forward svc/ui-service 8090:8090
+kubectl -n <namespace> port-forward svc/ui-service 18090:8090
 ```
 
-Then open `http://localhost:8090` in your browser:
+Then open `http://localhost:18090` in your browser:
 
 1. You land on the sign-in page.
 2. Click **Sign in** → you are redirected to Google (accept the "unverified app"
    notice — it is your own app in testing mode).
-3. Google redirects to `http://localhost:8090/auth/callback`; `ui-service`
+3. Google redirects to `http://localhost:18090/auth/callback`; `ui-service`
    validates the token, sees your verified email on the operator allowlist, and
    creates a session.
 4. You are now signed in as `operator`. `GET /auth/me` shows your email and role.
@@ -185,6 +199,7 @@ Resolution order at login (first match wins, strongest role wins on ties):
 | Pod `CrashLoopBackOff`, log `AUTH_OIDC_* is required` | An OIDC value is still empty. Fill issuer URL, client ID, public URL, and the client secret. |
 | Google error `redirect_uri_mismatch` | The Google client's redirect URI must exactly equal `AUTH_PUBLIC_URL` + `/auth/callback` — scheme, host, port, and path all included. |
 | Logged in, but "your account has no continuo role" | Your email is not on `AUTH_OPERATOR_EMAILS`/`AUTH_VIEWER_EMAILS` (case-insensitive), or the IdP did not assert `email_verified: true`. |
-| Signed in but immediately bounced back to sign-in | Cookie scheme mismatch: for loopback use `AUTH_PUBLIC_URL: http://localhost:8090` (http), so the `Secure` flag is off and the cookie flows. https `AUTH_PUBLIC_URL` requires you to actually be on https. |
+| Signed in but immediately bounced back to sign-in | Cookie scheme mismatch: for loopback use an `http://localhost:<port>` `AUTH_PUBLIC_URL`, so the `Secure` flag is off and the cookie flows. An https `AUTH_PUBLIC_URL` requires you to actually be on https. |
 | Boot log `OIDC discovery failed after N attempts` | The pod cannot reach `https://accounts.google.com`. Check cluster egress / DNS. |
-| Browser can't reach `http://localhost:8090` | The `port-forward` is not running, or you forwarded a different local port than 8090 (then the redirect URI and `AUTH_PUBLIC_URL` must change to match). |
+| Browser can't reach `http://localhost:<port>` | The `port-forward` is not running, or the local port you forwarded does not match the redirect URI and `AUTH_PUBLIC_URL` (all three must agree). |
+| `kubectl port-forward` fails with "address already in use" | The local port is taken. Pick another free one and update the redirect URI and `AUTH_PUBLIC_URL` to match; the remote side stays `:8090`. |
