@@ -81,50 +81,65 @@ which `ui-service` requires before honoring the allowlist, so this works cleanly
 
 ### Step 2 — Configure continuo
 
-Edit the `ui-service` `env` block in `deploy/app/values.yaml`:
-
-```yaml
-    ingress:
-      enabled: false            # reached via port-forward, not a public host
-    env:
-      AUTH_MODE: oidc
-      AUTH_OIDC_ISSUER_URL: https://accounts.google.com
-      AUTH_OIDC_CLIENT_ID: <your-client-id>.apps.googleusercontent.com
-      AUTH_PUBLIC_URL: http://localhost:18090  # no trailing slash; http so the
-                                               # session cookie's Secure flag is
-                                               # off and flows over loopback http.
-                                               # 18090 is the local forward port
-                                               # (see Step 1); match it everywhere
-      AUTH_OPERATOR_EMAILS: you@example.com    # your Google account → operator
-      # AUTH_OIDC_ISSUER_URL/CLIENT_ID/PUBLIC_URL above replace the empty defaults
-```
-
-Put the **client secret** in your secret values file (the real, git-ignored copy
-of `values.secret.yaml.example`), not in `values.yaml`:
+All per-deployment identity settings live under `global.auth` and are read from
+the **on-box secret values file** that the deploy passes with `-f` (on the
+Hetzner server this is `/root/continuo-values.secret.yaml`). Nothing here goes in
+the committed `deploy/app/values.yaml` — the chart's `global.auth.*` defaults are
+empty (a deploy fails closed until they are set), and the on-box file deep-merges
+real values over them. So you only edit the on-box secret file; add an `auth`
+block next to the existing `postgres`/`redis`/`neo4j`/`s3` secrets:
 
 ```yaml
 global:
+  # ...existing postgres / redis / neo4j / s3 secrets...
   auth:
+    issuerUrl: https://accounts.google.com
+    clientId: <your-client-id>.apps.googleusercontent.com
+    publicUrl: http://localhost:18090   # no trailing slash; http so the session
+                                         # cookie's Secure flag is off and flows
+                                         # over loopback http. 18090 is the local
+                                         # forward port (Step 1) — match it in all
+                                         # three places.
+    operatorEmails: you@example.com      # your Google account → operator
     oidcClientSecret: <your-client-secret>
 ```
 
-The chart wires `oidcClientSecret` into the credentials Secret and injects it as
-`AUTH_OIDC_CLIENT_SECRET`. `REDIS_URL` is already wired to the in-cluster Redis,
-which is where sessions live — no extra setup.
+That on-box `global.auth` block is the **only** change the loopback test needs —
+no edits to the committed chart at all. `AUTH_MODE` (`oidc`), `REDIS_URL` (the
+in-cluster Redis where sessions live), and the rest are already wired.
+
+You reach the UI by port-forward, so the public ingress is irrelevant here; you
+can leave it enabled (its route just goes unused). If you want to suppress the
+stale ingress and its failing certificate order, set the `ui-service`
+`ingress.enabled` to `false` in `deploy/app/values.yaml` — but that is a commit
+to `main`, so it is optional and not part of the test.
 
 ### Step 3 — Deploy
 
-Apply the chart the same way you normally do, passing your secret values file:
+The `global.auth.*` sentinel expansion must be present in the chart the cluster
+deploys. The Hetzner deploy renders from the `main` branch checked out at
+`/root/continuo`, so this chart change has to be on `main` first (merge it),
+after which a normal deploy picks up the on-box `global.auth` values.
+
+Trigger the deploy the way you normally do (the `deploy` GitHub Actions workflow
+SSHes in, runs `git pull --ff-only origin main`, then `helm upgrade`), or apply
+it by hand on the box with both value files — the committed chart plus the on-box
+secrets:
 
 ```bash
-helm upgrade --install continuo-app deploy/app -f values.secret.yaml
+ssh continuo-server
+cd /root/continuo && git pull --ff-only origin main
+KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm upgrade --install continuo-app deploy/app \
+  -f deploy/app/values.yaml \
+  -f /root/continuo-values.secret.yaml \
+  -n continuo
 ```
 
 Confirm the pod is healthy (not crashlooping):
 
 ```bash
-kubectl -n <namespace> get pods -l app=ui-service
-kubectl -n <namespace> logs -l app=ui-service | tail
+kubectl -n continuo get pods -l app=ui-service
+kubectl -n continuo logs -l app=ui-service | tail
 #   -> "Continuo UI running on http://localhost:8090 (auth mode: oidc)"
 ```
 
@@ -136,7 +151,7 @@ must match the redirect URI and `AUTH_PUBLIC_URL`; the **remote** port (right of
 the colon) is always `8090`, the port the container listens on:
 
 ```bash
-kubectl -n <namespace> port-forward svc/ui-service 18090:8090
+kubectl -n continuo port-forward svc/ui-service 18090:8090
 ```
 
 Then open `http://localhost:18090` in your browser:
@@ -159,14 +174,15 @@ denied; that is the expected default-deny behavior.
 
 When you have a domain and want the UI reachable from any browser:
 
-1. Point DNS at the cluster and re-enable the ingress:
+1. In the on-box secret file, set the real public URL:
    ```yaml
-   ingress:
-     enabled: true
-     host: continuo.yourdomain.com
-   env:
-     AUTH_PUBLIC_URL: https://continuo.yourdomain.com   # https in production
+   global:
+     auth:
+       publicUrl: https://continuo.yourdomain.com   # https in production
    ```
+   and point DNS at the cluster with the `ui-service` ingress enabled
+   (`ingress.enabled: true`, `host: continuo.yourdomain.com` in
+   `deploy/app/values.yaml`).
 2. Add `https://continuo.yourdomain.com/auth/callback` to the Google OAuth
    client's authorized redirect URIs (you can keep the loopback URI alongside it).
 3. Redeploy. The session cookie is now marked `Secure` automatically because

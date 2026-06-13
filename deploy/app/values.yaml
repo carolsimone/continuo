@@ -17,10 +17,18 @@ global:
     password: ""
 
   auth:
-    # OIDC client secret for ui-service. Empty by default: the service
-    # fails fast at boot until the deployer sets it, never serving an
-    # unauthenticated UI.
-    oidcClientSecret: ""
+    # ui-service identity-provider settings. The committed defaults are empty,
+    # so a deploy fails closed (the pod crashloops) until they are set — it never
+    # serves an unauthenticated UI. Populate these in the on-box secret values
+    # file passed with `-f` (it deep-merges over these defaults), keeping
+    # per-deployment identity config out of the committed chart.
+    oidcClientSecret: ""   # OAuth client secret (sensitive)
+    issuerUrl: ""          # OIDC issuer, e.g. https://accounts.google.com
+    clientId: ""           # OAuth client ID
+    publicUrl: ""          # external base URL, e.g. https://continuo.example.com
+    operatorEmails: ""     # comma-separated operator emails (verified-email gate)
+    viewerEmails: ""       # comma-separated viewer emails
+    roleMapping: ""        # group=role pairs when the IdP emits a groups claim
 
   neo4j:
     uri: bolt://continuo-infra-neo4j:7687
@@ -176,14 +184,17 @@ services:
       RELEASE_CONTROLLER_URL: http://release-controller:8088
       # Authentication: ui-service fails fast at boot when these are missing,
       # so a misconfigured deployment crashloops instead of serving an open UI.
+      # The __AUTH_*__ sentinels are expanded by the deployment template from
+      # global.auth.* (see global.auth above), so per-deployment identity config
+      # lives in the on-box secret values file, not in this committed chart.
       AUTH_MODE: oidc
-      AUTH_OIDC_ISSUER_URL: ""
-      AUTH_OIDC_CLIENT_ID: ""
-      AUTH_PUBLIC_URL: https://dev.yourdomain.com
+      AUTH_OIDC_ISSUER_URL: __AUTH_ISSUER_URL__
+      AUTH_OIDC_CLIENT_ID: __AUTH_CLIENT_ID__
+      AUTH_PUBLIC_URL: __AUTH_PUBLIC_URL__
       AUTH_GROUPS_CLAIM: groups
-      AUTH_ROLE_MAPPING: ""
-      AUTH_OPERATOR_EMAILS: ""
-      AUTH_VIEWER_EMAILS: ""
+      AUTH_ROLE_MAPPING: __AUTH_ROLE_MAPPING__
+      AUTH_OPERATOR_EMAILS: __AUTH_OPERATOR_EMAILS__
+      AUTH_VIEWER_EMAILS: __AUTH_VIEWER_EMAILS__
       REDIS_URL: __REDIS_URL_FROM_AUTH__
     volumeMounts:
       - name: cancel-config

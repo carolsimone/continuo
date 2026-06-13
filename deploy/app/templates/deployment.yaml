@@ -50,6 +50,18 @@ spec:
               value: {{ printf "redis://:$(REDIS_PASSWORD)@%s:%v" $.Values.global.redis.host $.Values.global.redis.port | quote }}
               {{- else if and (eq $key "DOCKERHUB_USERNAME") (eq $val "__DOCKERHUB_USERNAME__") }}
               value: {{ $.Values.global.dockerHubUser | quote }}
+              {{- else if and (eq $key "AUTH_OIDC_ISSUER_URL") (eq $val "__AUTH_ISSUER_URL__") }}
+              value: {{ $.Values.global.auth.issuerUrl | quote }}
+              {{- else if and (eq $key "AUTH_OIDC_CLIENT_ID") (eq $val "__AUTH_CLIENT_ID__") }}
+              value: {{ $.Values.global.auth.clientId | quote }}
+              {{- else if and (eq $key "AUTH_PUBLIC_URL") (eq $val "__AUTH_PUBLIC_URL__") }}
+              value: {{ $.Values.global.auth.publicUrl | quote }}
+              {{- else if and (eq $key "AUTH_OPERATOR_EMAILS") (eq $val "__AUTH_OPERATOR_EMAILS__") }}
+              value: {{ $.Values.global.auth.operatorEmails | quote }}
+              {{- else if and (eq $key "AUTH_VIEWER_EMAILS") (eq $val "__AUTH_VIEWER_EMAILS__") }}
+              value: {{ $.Values.global.auth.viewerEmails | quote }}
+              {{- else if and (eq $key "AUTH_ROLE_MAPPING") (eq $val "__AUTH_ROLE_MAPPING__") }}
+              value: {{ $.Values.global.auth.roleMapping | quote }}
               {{- else }}
               value: {{ $val | quote }}
               {{- end }}
