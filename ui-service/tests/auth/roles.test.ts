@@ -35,7 +35,7 @@ describe('resolveRole', () => {
 
   it('falls back to email overrides when no group matches (case-insensitive)', () => {
     const c = cfg({ operatorEmails: new Set(['ana@corp.com']) });
-    expect(resolveRole({ groups: ['unmapped'] }, 'Ana@Corp.com', c)).toBe('operator');
+    expect(resolveRole({ groups: ['unmapped'], email_verified: true }, 'Ana@Corp.com', c)).toBe('operator');
   });
 
   it('group mapping takes priority over email overrides', () => {
@@ -50,5 +50,25 @@ describe('resolveRole', () => {
 
   it('tolerates a non-array groups claim', () => {
     expect(resolveRole({ groups: 'not-an-array' }, 'x@y.z', cfg())).toBe('none');
+  });
+
+  it('ignores the email allowlist when the email is unverified', () => {
+    const c = cfg({ operatorEmails: new Set(['ana@corp.com']) });
+    expect(resolveRole({ email_verified: false }, 'Ana@Corp.com', c)).toBe('none');
+  });
+
+  it('ignores the email allowlist when email_verified is absent', () => {
+    const c = cfg({ operatorEmails: new Set(['ana@corp.com']) });
+    expect(resolveRole({}, 'Ana@Corp.com', c)).toBe('none');
+  });
+
+  it('accepts a stringified email_verified claim', () => {
+    const c = cfg({ operatorEmails: new Set(['ana@corp.com']) });
+    expect(resolveRole({ email_verified: 'true' }, 'ana@corp.com', c)).toBe('operator');
+  });
+
+  it('group mapping is not gated on email verification', () => {
+    // groups come from the IdP directory, not a user-claimable field
+    expect(resolveRole({ groups: ['ops-team'], email_verified: false }, 'x@y.z', cfg())).toBe('operator');
   });
 });
