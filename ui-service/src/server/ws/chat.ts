@@ -12,6 +12,13 @@ export interface ChatWsOptions {
   // opened. The chat endpoint is operator-only: it spends LLM tokens and can
   // request run triggers.
   authenticate?: (req: IncomingMessage) => Promise<AuthUser | null>;
+  // When set, browser upgrade requests whose Origin header does not exactly match
+  // this value are rejected with 403 before authentication is attempted. Mirrors
+  // the csrfOriginCheck policy used for /api routes to prevent cross-site
+  // WebSocket hijacking (CSWSH). Requests without an Origin header (non-browser
+  // clients, server-side tests) are always allowed regardless of this setting.
+  // Leave undefined (dev mode) to skip the check entirely.
+  allowedOrigin?: string;
 }
 
 export function attachChatWebSocket(server: Server, opts: ChatWsOptions = {}): WebSocketServer {
@@ -22,6 +29,13 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions = {}): W
   server.on('upgrade', (req, socket, head) => {
     const { pathname } = new URL(req.url ?? '/', 'http://localhost');
     if (pathname !== '/ws/chat') {
+      socket.destroy();
+      return;
+    }
+    const origin = req.headers.origin;
+    if (opts.allowedOrigin && origin && origin !== opts.allowedOrigin) {
+      audit('ws_denied', { path: '/ws/chat', origin, outcome: 'cross_origin' });
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
     }

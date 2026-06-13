@@ -240,4 +240,43 @@ describe('attachChatWebSocket', () => {
     await new Promise((resolve) => client.on('open', resolve));
     client.close();
   });
+
+  it('rejects the upgrade when the browser Origin does not match allowedOrigin', async () => {
+    server = createServer();
+    attachChatWebSocket(server, {
+      createProcess: () => new FakeProcess() as any,
+      authenticate: asOperator,
+      allowedOrigin: 'https://app.example.com',
+    });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`, { origin: 'https://evil.example.com' });
+    const err = await new Promise<Error>((resolve) => client.on('error', resolve));
+    expect(err.message).toContain('403');
+  });
+
+  it('accepts the upgrade when the browser Origin matches allowedOrigin', async () => {
+    server = createServer();
+    attachChatWebSocket(server, {
+      createProcess: () => new FakeProcess() as any,
+      authenticate: asOperator,
+      allowedOrigin: 'https://app.example.com',
+    });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`, { origin: 'https://app.example.com' });
+    await new Promise((resolve) => client.on('open', resolve));
+    client.close();
+  });
+
+  it('accepts the upgrade with no Origin header (non-browser client)', async () => {
+    server = createServer();
+    attachChatWebSocket(server, {
+      createProcess: () => new FakeProcess() as any,
+      authenticate: asOperator,
+      allowedOrigin: 'https://app.example.com',
+    });
+    const port = await listen(server);
+    const client = new WebSocket(`ws://localhost:${port}/ws/chat`);
+    await new Promise((resolve) => client.on('open', resolve));
+    client.close();
+  });
 });

@@ -34,7 +34,7 @@ async function main() {
 
   const server = http.createServer(app);
   if (CHAT_BRIDGE_ENABLED) {
-    attachChatWebSocket(server, { authenticate: auth.authenticateWs });
+    attachChatWebSocket(server, { authenticate: auth.authenticateWs, allowedOrigin: auth.publicOrigin });
     console.log('Chat bridge enabled at /ws/chat (operator-only)');
   }
   server.listen(PORT, () => {

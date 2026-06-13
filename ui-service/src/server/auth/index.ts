@@ -19,6 +19,10 @@ export interface BuiltAuth {
   app: AppAuth;
   // Session check for the WebSocket upgrade; null means reject.
   authenticateWs: (req: IncomingMessage) => Promise<AuthUser | null>;
+  // The deployment origin (e.g. "https://app.example.com") used to validate the
+  // browser Origin header on WebSocket upgrades. Undefined in dev mode, which
+  // disables the cross-origin check entirely.
+  publicOrigin?: string;
 }
 
 export async function buildAuth(cfg: AuthConfig): Promise<BuiltAuth> {
@@ -32,6 +36,7 @@ export async function buildAuth(cfg: AuthConfig): Promise<BuiltAuth> {
         errorHandler: authErrorHandler(),
       },
       authenticateWs: async () => DEV_USER,
+      publicOrigin: undefined,
     };
   }
 
@@ -52,5 +57,6 @@ export async function buildAuth(cfg: AuthConfig): Promise<BuiltAuth> {
       const record = await sessions.load(id);
       return record ? toAuthUser(record) : null;
     },
+    publicOrigin: origin,
   };
 }
