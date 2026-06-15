@@ -165,6 +165,35 @@ func (r *ThreadRepository) ResolvePendingAction(ctx context.Context, id uuid.UUI
 	return nil
 }
 
+// GetPendingAction returns the most recent still-pending action for a thread
+// whose approval window has not passed. It returns repository.ErrNotFound when
+// no resumable action exists.
+func (r *ThreadRepository) GetPendingAction(ctx context.Context, threadID uuid.UUID) (*domain.PendingAction, error) {
+	const q = `SELECT id, thread_id, tool, args, summary, status, created_at, expires_at
+	            FROM pending_actions
+	            WHERE thread_id = $1 AND status = $2 AND expires_at > now()
+	            ORDER BY created_at DESC
+	            LIMIT 1`
+	var (
+		a       domain.PendingAction
+		argsRaw []byte
+		status  string
+	)
+	err := r.db.QueryRowxContext(ctx, q, threadID, string(domain.ActionPending)).
+		Scan(&a.ID, &a.ThreadID, &a.Tool, &argsRaw, &a.Summary, &status, &a.CreatedAt, &a.ExpiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("get pending action for thread %s: %w", threadID, repository.ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get pending action for thread %s: %w", threadID, err)
+	}
+	if err := json.Unmarshal(argsRaw, &a.Args); err != nil {
+		return nil, fmt.Errorf("unmarshal pending action args %s: %w", a.ID, err)
+	}
+	a.Status = domain.ActionStatus(status)
+	return &a, nil
+}
+
 // ListIdleThreads returns threads whose updated_at is before cutoff, ordered by
 // updated_at ascending (oldest first), up to limit results. These are candidates
 // for retention eviction.

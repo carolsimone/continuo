@@ -11,6 +11,7 @@ import (
 
 	"github.com/carolsimone/continuo/agent-runner/adapters/grpcserver"
 	"github.com/carolsimone/continuo/agent-runner/domain"
+	"github.com/carolsimone/continuo/agent-runner/domain/repository"
 	agentchatv1 "github.com/carolsimone/continuo/agent-runner/proto/agentchat/v1"
 	"github.com/carolsimone/continuo/agent-runner/service/chat"
 	"github.com/carolsimone/continuo/agent-runner/service/ports"
@@ -64,6 +65,9 @@ func (f *fakeRepo) ListMessages(_ context.Context, threadID uuid.UUID) ([]domain
 func (f *fakeRepo) CreatePendingAction(context.Context, *domain.PendingAction) error { return nil }
 func (f *fakeRepo) ResolvePendingAction(context.Context, uuid.UUID, domain.ActionStatus) error {
 	return nil
+}
+func (f *fakeRepo) GetPendingAction(context.Context, uuid.UUID) (*domain.PendingAction, error) {
+	return nil, repository.ErrNotFound
 }
 func (f *fakeRepo) ListIdleThreads(context.Context, time.Time, int) ([]domain.Thread, error) {
 	return nil, nil

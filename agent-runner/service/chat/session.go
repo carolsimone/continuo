@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -89,6 +90,13 @@ type Session struct {
 	// Interrupt pushes to this channel; the turn goroutine reads it.
 	turnCancel chan context.CancelFunc
 
+	// resumed is a pending tool confirmation carried over from a previous
+	// connection. It is set on resume when a still-pending, non-expired action
+	// exists, and cleared once handled. The approval/denial for it arrives
+	// outside any in-flight turn and is processed by Run between turns. Accessed
+	// only from the Run goroutine, so it needs no lock.
+	resumed *domain.PendingAction
+
 	mu     sync.Mutex
 	closed bool
 }
@@ -122,6 +130,10 @@ func NewSession(ctx context.Context, deps Deps, userID, threadID string, sink Ev
 
 	sink.Thread(thread.ID)
 
+	// resumed holds a pending confirmation carried over from a previous
+	// connection, if any (only meaningful when resuming an existing thread).
+	var resumed *domain.PendingAction
+
 	if threadID != "" {
 		msgs, err := deps.Repo.ListMessages(ctx, thread.ID)
 		if err != nil {
@@ -129,6 +141,21 @@ func NewSession(ctx context.Context, deps Deps, userID, threadID string, sink Ev
 		}
 		if len(msgs) > 0 {
 			sink.History(msgs)
+		}
+
+		// If a mutating tool confirmation was still pending (and not yet expired)
+		// when the previous connection dropped, re-offer it so an approval can
+		// run the tool and continue the turn. ErrNotFound simply means there is
+		// nothing to resume.
+		action, err := deps.Repo.GetPendingAction(ctx, thread.ID)
+		switch {
+		case err == nil:
+			resumed = action
+			sink.ConfirmRequest(action.ID, action.Summary)
+		case errors.Is(err, repository.ErrNotFound):
+			// nothing to resume
+		default:
+			return nil, fmt.Errorf("get pending action: %w", err)
 		}
 	}
 
@@ -145,6 +172,7 @@ func NewSession(ctx context.Context, deps Deps, userID, threadID string, sink Ev
 		confirms:   make(chan confirmReply, 16),
 		done:       make(chan struct{}),
 		turnCancel: make(chan context.CancelFunc, 1),
+		resumed:    resumed,
 	}
 	return s, nil
 }
@@ -220,21 +248,33 @@ func (s *Session) Run(ctx context.Context) {
 			return
 		case text := <-s.queue:
 			s.runTurn(text)
+		case reply := <-s.confirms:
+			// A confirm reaching the Run loop arrived between turns: while a turn
+			// is in flight, runTurn blocks here and executeWithConfirm consumes
+			// confirms itself, so this case fires only when idle. It is the
+			// approval/denial for a confirmation resumed from a prior connection.
+			s.handleResumedConfirm(reply)
 		}
 	}
 }
 
-// runTurn persists the user message, then drives the provider→tool loop
-// up to MaxIterations times, emitting events to the sink throughout.
+// runTurn persists the user message, then drives the provider→tool loop.
 func (s *Session) runTurn(text string) {
-	ctx := s.ctx
-
 	// Persist user message.
 	userContent, _ := json.Marshal(domain.TextContent{Text: text})
-	if _, err := s.deps.Repo.AppendMessage(ctx, s.threadID, domain.RoleUser, userContent); err != nil {
+	if _, err := s.deps.Repo.AppendMessage(s.ctx, s.threadID, domain.RoleUser, userContent); err != nil {
 		s.sink.Error("internal", fmt.Sprintf("persist user message: %v", err))
 		return
 	}
+	s.driveTurn()
+}
+
+// driveTurn runs the provider→tool loop up to MaxIterations times against the
+// current persisted history, emitting events to the sink throughout. The caller
+// appends whatever message starts the turn first — a user message for a fresh
+// turn, or the tool result for a resumed confirmation.
+func (s *Session) driveTurn() {
+	ctx := s.ctx
 
 	// Set up a per-turn context so Interrupt() can abort only this turn.
 	turnCtx, turnCancel := context.WithCancel(ctx)
@@ -346,7 +386,14 @@ func (s *Session) runTurn(text string) {
 			}
 
 			// Execute (with optional confirm gate for mutating tools).
-			toolResult := s.executeWithConfirm(turnCtx, call)
+			toolResult, suspended := s.executeWithConfirm(turnCtx, call)
+			if suspended {
+				// The client disconnected while awaiting approval. The pending
+				// action is left pending (resumable) and this tool call dangles
+				// without a result; stop the turn. On reconnect the confirmation
+				// is re-offered and an approval continues the turn from here.
+				return
+			}
 
 			// Persist the tool result.
 			resultContent, _ := json.Marshal(domain.ToolResultContent{
@@ -371,21 +418,25 @@ func (s *Session) runTurn(text string) {
 }
 
 // executeWithConfirm runs one tool call, pausing for human approval when the
-// tool is marked Mutating. The returned ToolResult is always populated.
-func (s *Session) executeWithConfirm(ctx context.Context, call ports.ToolCall) ports.ToolResult {
+// tool is marked Mutating. It returns the tool result and whether the turn was
+// suspended: suspended is true only when the client disconnected while awaiting
+// approval, in which case the pending action is left pending (resumable) and the
+// returned result must be ignored (the caller stops the turn without persisting
+// a result). In every other case suspended is false and the result is populated.
+func (s *Session) executeWithConfirm(ctx context.Context, call ports.ToolCall) (ports.ToolResult, bool) {
 	def, ok := s.deps.Catalog.Lookup(call.Name)
 	if !ok {
 		return ports.ToolResult{
 			Output:  fmt.Sprintf(`{"error":"unknown tool %q"}`, call.Name),
 			IsError: true,
-		}
+		}, false
 	}
 
 	cmd := commandString(s.deps.Cfg.CLIName, def, call.Args)
 
 	if !def.Mutating {
 		s.sink.Tool(cmd)
-		return s.deps.Executor.Execute(ctx, s.userID, s.threadID, call)
+		return s.deps.Executor.Execute(ctx, s.userID, s.threadID, call), false
 	}
 
 	// Mutating tool: create a pending action and wait for approval.
@@ -405,7 +456,7 @@ func (s *Session) executeWithConfirm(ctx context.Context, call ports.ToolCall) p
 		return ports.ToolResult{
 			Output:  fmt.Sprintf(`{"error":"failed to create pending action: %v"}`, err),
 			IsError: true,
-		}
+		}, false
 	}
 
 	// Drain any stale confirm replies that arrived before this action was
@@ -433,17 +484,22 @@ drained:
 	for {
 		select {
 		case <-ctx.Done():
-			// A disconnect (WebSocket/gRPC drop or shutdown) deliberately expires
-			// the pending action: a mutating tool must never run without a live,
-			// explicit approval, so a confirmation does NOT survive a reconnect.
-			// The persisted row records the expired outcome for audit; on resume
-			// the client re-asks and a fresh confirm_request is issued.
+			// Distinguish a disconnect from an in-session interrupt. When the
+			// whole session is shutting down (s.ctx cancelled — the gRPC stream
+			// dropped or the service is stopping), leave the action pending and
+			// non-expired so a reconnect can resume the confirmation; do not run
+			// the tool and do not persist a result. When only this turn was
+			// cancelled (Interrupt, s.ctx still alive), expire the action — the
+			// user actively abandoned it.
+			if s.ctx.Err() != nil {
+				return ports.ToolResult{}, true
+			}
 			_ = s.deps.Repo.ResolvePendingAction(context.Background(), action.ID, domain.ActionExpired)
-			return denial
+			return denial, false
 
 		case <-timer.C:
 			_ = s.deps.Repo.ResolvePendingAction(context.Background(), action.ID, domain.ActionExpired)
-			return denial
+			return denial, false
 
 		case reply := <-s.confirms:
 			if reply.actionID != action.ID {
@@ -452,13 +508,102 @@ drained:
 			}
 			if !reply.approved {
 				_ = s.deps.Repo.ResolvePendingAction(ctx, action.ID, domain.ActionDenied)
-				return denial
+				return denial, false
 			}
 			_ = s.deps.Repo.ResolvePendingAction(ctx, action.ID, domain.ActionApproved)
 			s.sink.Tool(cmd)
-			return s.deps.Executor.Execute(ctx, s.userID, s.threadID, call)
+			return s.deps.Executor.Execute(ctx, s.userID, s.threadID, call), false
 		}
 	}
+}
+
+// handleResumedConfirm processes the approval or denial of a confirmation that
+// was resumed from a previous connection (see Run). The matching tool call was
+// persisted before the disconnect and left without a result; this appends that
+// result — the tool's output on approval, a denial marker otherwise — and then
+// continues the turn so the model can react to the outcome.
+func (s *Session) handleResumedConfirm(reply confirmReply) {
+	if s.resumed == nil || reply.actionID != s.resumed.ID {
+		return // not the resumed action (or nothing to resume)
+	}
+	action := s.resumed
+	s.resumed = nil
+
+	call, ok := s.danglingToolCall()
+	if !ok {
+		// No dangling tool call to complete (history already consistent); just
+		// record the terminal status so the row is not left pending.
+		status := domain.ActionApproved
+		if !reply.approved {
+			status = domain.ActionDenied
+		}
+		_ = s.deps.Repo.ResolvePendingAction(s.ctx, action.ID, status)
+		return
+	}
+
+	var toolResult ports.ToolResult
+	if reply.approved {
+		if err := s.deps.Repo.ResolvePendingAction(s.ctx, action.ID, domain.ActionApproved); err != nil {
+			s.sink.Error("internal", fmt.Sprintf("approve pending action: %v", err))
+			return
+		}
+		if def, ok := s.deps.Catalog.Lookup(call.Name); ok {
+			s.sink.Tool(commandString(s.deps.Cfg.CLIName, def, call.Args))
+		}
+		toolResult = s.deps.Executor.Execute(s.ctx, s.userID, s.threadID, call)
+	} else {
+		_ = s.deps.Repo.ResolvePendingAction(s.ctx, action.ID, domain.ActionDenied)
+		toolResult = ports.ToolResult{
+			Output:  `{"denied":"the user declined this action; do not retry"}`,
+			IsError: true,
+		}
+	}
+
+	resultContent, _ := json.Marshal(domain.ToolResultContent{
+		CallID:  call.ID,
+		Output:  toolResult.Output,
+		IsError: toolResult.IsError,
+	})
+	if _, err := s.deps.Repo.AppendMessage(s.ctx, s.threadID, domain.RoleToolResult, resultContent); err != nil {
+		s.sink.Error("internal", fmt.Sprintf("persist tool result: %v", err))
+		return
+	}
+
+	// Continue the turn so the model sees the tool result and produces a reply.
+	s.driveTurn()
+}
+
+// danglingToolCall returns the most recent persisted tool call that has no
+// matching tool result — the call left pending when a confirmation was
+// suspended on a prior connection. It returns false when none is found.
+func (s *Session) danglingToolCall() (ports.ToolCall, bool) {
+	msgs, err := s.deps.Repo.ListMessages(s.ctx, s.threadID)
+	if err != nil {
+		return ports.ToolCall{}, false
+	}
+	resolved := map[string]bool{}
+	for _, m := range msgs {
+		if m.Role == domain.RoleToolResult {
+			var rc domain.ToolResultContent
+			if json.Unmarshal(m.Content, &rc) == nil {
+				resolved[rc.CallID] = true
+			}
+		}
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != domain.RoleToolCall {
+			continue
+		}
+		var cc domain.ToolCallContent
+		if json.Unmarshal(msgs[i].Content, &cc) != nil {
+			continue
+		}
+		if resolved[cc.CallID] {
+			continue
+		}
+		return ports.ToolCall{ID: cc.CallID, Name: cc.Tool, Args: cc.Args}, true
+	}
+	return ports.ToolCall{}, false
 }
 
 // commandString renders the CLI command as a human-readable string for display.
