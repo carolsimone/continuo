@@ -144,6 +144,7 @@ services:
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
       - ./config/schedules.yaml:/etc/continuo/schedules.yaml:ro
     networks:
@@ -193,6 +194,7 @@ services:
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
     networks:
@@ -252,6 +254,7 @@ services:
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
     networks:
@@ -315,6 +318,7 @@ services:
       - ./orchestrator:/app/orchestrator
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -437,6 +441,7 @@ services:
       - ./k8s-controller:/app/k8s-controller
       - ./pkg:/app/pkg
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - default
