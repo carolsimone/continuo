@@ -71,7 +71,7 @@ One class for the shape, three variants, two orthogonal states.
                   padding: 4px 12px; font: 500 12px/1.4 inherit;
                   border-radius: 4px; border: 1px solid transparent;
                   background: #fff; color: #374151; cursor: pointer;
-                  white-space: nowrap;
+                  white-space: nowrap; text-decoration: none;
                   transition: background .15s, border-color .15s, color .15s; }
 
 .btn--secondary { border-color: #d1d5db; }

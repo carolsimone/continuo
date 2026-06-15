@@ -682,6 +682,7 @@ body {
   color: #374151;
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
   font-family: inherit;
 }
