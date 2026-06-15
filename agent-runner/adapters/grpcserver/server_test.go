@@ -18,7 +18,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -143,4 +145,5 @@ func TestChat_FirstEventMustBeOpen(t *testing.T) {
 	require.NoError(t, stream.Send(&agentchatv1.ClientEvent{Event: &agentchatv1.ClientEvent_UserMessage{UserMessage: &agentchatv1.UserMessage{Text: "hi"}}}))
 	_, err = stream.Recv()
 	assert.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }

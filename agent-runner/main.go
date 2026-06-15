@@ -7,26 +7,30 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
+	"runtime/debug"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/carolsimone/continuo/agent-runner/adapters/anthropic"
 	"github.com/carolsimone/continuo/agent-runner/adapters/cliexec"
 	"github.com/carolsimone/continuo/agent-runner/adapters/grpcserver"
+	agenthttp "github.com/carolsimone/continuo/agent-runner/adapters/http"
 	adapteropenai "github.com/carolsimone/continuo/agent-runner/adapters/openai"
 	"github.com/carolsimone/continuo/agent-runner/adapters/postgres"
 	"github.com/carolsimone/continuo/agent-runner/adapters/s3"
 	"github.com/carolsimone/continuo/agent-runner/config"
+	"github.com/carolsimone/continuo/agent-runner/internal/lifecycle"
 	agentchatv1 "github.com/carolsimone/continuo/agent-runner/proto/agentchat/v1"
 	"github.com/carolsimone/continuo/agent-runner/service/chat"
 	"github.com/carolsimone/continuo/agent-runner/service/ports"
 	"github.com/carolsimone/continuo/agent-runner/service/retention"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/liveness"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func main() {
@@ -39,16 +43,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Root context cancelled on SIGTERM/SIGINT so background jobs stop cleanly.
+	logger.Info("Starting agent-runner service")
+
+	// Create root context cancelled by shutdown signal.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() {
-		ch := make(chan os.Signal, 1)
-		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
-		<-ch
-		logger.Info("shutdown signal received")
-		cancel()
-	}()
+
+	// Initialize lifecycle manager and liveness registry. The lifecycle manager
+	// drives the ordered graceful shutdown (stop intake → drain → close infra);
+	// the registry tracks dependency probes and feeds the /ready probe.
+	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
+	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
+
+	liveReg := liveness.NewRegistry()
 
 	// Postgres connection.
 	db, err := sqlx.Connect("postgres", cfg.Postgres.DSN())
@@ -56,8 +63,18 @@ func main() {
 		logger.Error("failed to connect to postgres", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
 	logger.Info("postgres connection established")
+
+	// Register database cleanup (LIFO — runs after gRPC and health servers close).
+	lifecycleManager.RegisterShutdownHandler(func(_ context.Context) error {
+		logger.Info("Closing database connection")
+		return db.Close()
+	})
+
+	// Postgres readiness probe: reports NOT ready when Postgres is unreachable.
+	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error {
+		return db.PingContext(ctx)
+	})
 
 	// CLI catalog: runs `continuo describe` to discover available tools.
 	catalog, err := cliexec.LoadCatalog(ctx, cfg.CLIPath)
@@ -67,8 +84,8 @@ func main() {
 	}
 	logger.Info("CLI catalog loaded", "tools", len(catalog.Tools()))
 
-	// The CLI executor inherits the process environment plus service addresses so
-	// the continuo binary can reach state and orchestrator.
+	// os.Environ() returns a fresh copy of the environment slice, so the append
+	// below is safe and does not alias the process environment.
 	cliEnv := append(
 		os.Environ(),
 		"CONTINUO_STATE_ADDR="+cfg.StateAddr,
@@ -76,15 +93,26 @@ func main() {
 	)
 	executor := cliexec.NewExecutor(catalog, cfg.CLIPath, cliEnv, cfg.ToolTimeout, cfg.ToolResultMaxBytes, logger)
 
+	// Shared HTTP client for LLM providers. No overall Timeout is set because
+	// streaming responses can run for minutes; context cancellation (interrupt /
+	// turn ctx) is the primary backstop. Transport-level timeouts guard the
+	// socket layer so a dead connection does not hang indefinitely.
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
+	}
+
 	// LLM provider selection.
 	var provider ports.LLMProvider
 	switch cfg.LLMProvider {
 	case "anthropic":
-		provider = anthropic.NewProvider("https://api.anthropic.com", cfg.LLMAPIKey, cfg.LLMModel, nil)
+		provider = anthropic.NewProvider("https://api.anthropic.com", cfg.LLMAPIKey, cfg.LLMModel, httpClient)
 	case "openai":
-		provider = adapteropenai.NewProvider("https://api.openai.com", cfg.LLMAPIKey, cfg.LLMModel, nil)
+		provider = adapteropenai.NewProvider("https://api.openai.com", cfg.LLMAPIKey, cfg.LLMModel, httpClient)
 	case "openai-compatible":
-		provider = adapteropenai.NewProvider(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, nil)
+		provider = adapteropenai.NewProvider(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, httpClient)
 	default:
 		logger.Error("unsupported LLM provider", "provider", cfg.LLMProvider)
 		os.Exit(1)
@@ -104,7 +132,8 @@ func main() {
 		archiver = s3.NewArchiver(s3cfg.EndpointURL, s3cfg.Bucket, s3cfg.Region, s3cfg.AccessKeyID, s3cfg.SecretAccessKey)
 	}
 
-	// Retention job sweeps idle threads on a configurable interval.
+	// Retention job sweeps idle threads on a configurable interval. It stops
+	// when the root context is cancelled.
 	go retention.NewJob(repo, archiver, cfg.RetentionDays, logger).Run(ctx, cfg.RetentionSweepEvery)
 
 	deps := chat.Deps{
@@ -124,33 +153,30 @@ func main() {
 		},
 	}
 
-	// HTTP health endpoint.
-	go func() {
-		mux := http.NewServeMux()
-		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-		addr := fmt.Sprintf(":%d", cfg.HealthPort)
-		logger.Info("starting health server", "addr", addr)
-		if err := http.ListenAndServe(addr, mux); err != nil {
-			logger.Error("health server error", "error", err)
-		}
-	}()
+	// Stream panic-recovery interceptor: a panic inside a streaming session
+	// handler must not crash the process. It logs the stack, then returns
+	// codes.Internal to the client so the stream is cleanly terminated.
+	streamRecovery := func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("panic in gRPC stream handler", "panic", fmt.Sprintf("%v", r), "stack", string(debug.Stack()))
+				err = status.Errorf(codes.Internal, "internal server error")
+			}
+		}()
+		return handler(srv, ss)
+	}
 
-	// gRPC server.
+	// gRPC server with the stream panic-recovery interceptor.
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
 	if err != nil {
 		logger.Error("failed to listen for gRPC", "port", cfg.GRPCPort, "error", err)
 		os.Exit(1)
 	}
-
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(grpc.StreamInterceptor(streamRecovery))
 	agentchatv1.RegisterAgentChatServer(grpcSrv, grpcserver.NewServer(deps, logger))
 
-	// Graceful shutdown: wait for root context to be cancelled, then allow
-	// in-flight RPCs cfg.ShutdownGrace to drain before force-stopping.
-	go func() {
-		<-ctx.Done()
+	// Register gRPC server shutdown (LIFO order: gRPC first, then health, then DB).
+	lifecycleManager.RegisterShutdownHandler(func(_ context.Context) error {
 		logger.Info("initiating graceful gRPC shutdown")
 		shutdownDone := make(chan struct{})
 		go func() {
@@ -160,8 +186,31 @@ func main() {
 		select {
 		case <-shutdownDone:
 		case <-time.After(cfg.ShutdownGrace):
-			logger.Warn("shutdown grace period exceeded; forcing stop")
+			logger.Warn("gRPC shutdown grace period exceeded; forcing stop")
 			grpcSrv.Stop()
+		}
+		return nil
+	})
+
+	// Start gRPC server in a goroutine; errors are logged but the process lets
+	// the lifecycle manager drive the exit.
+	go func() {
+		if err := grpcSrv.Serve(lis); err != nil {
+			logger.Error("gRPC server error", "error", err)
+		}
+	}()
+
+	// HTTP health server: /health is the liveness probe; /ready is backed by
+	// the liveness registry so traffic stops when Postgres is unreachable.
+	healthServer := agenthttp.NewServer(cfg.HealthPort, liveReg, logger)
+
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
+		return healthServer.Shutdown(ctx)
+	})
+
+	go func() {
+		if err := healthServer.Start(); err != nil {
+			logger.Error("health server error", "error", err)
 		}
 	}()
 
@@ -172,9 +221,9 @@ func main() {
 		"llm_model", cfg.LLMModel,
 	)
 
-	if err := grpcSrv.Serve(lis); err != nil {
-		logger.Error("gRPC server error", "error", err)
-		os.Exit(1)
-	}
+	// Block until the graceful-shutdown sequence has fully completed. The signal
+	// handler cancels ctx (stops intake), drains in-flight goroutines, then runs
+	// the infra-close handlers; Done() closes only after that sequence finishes.
+	<-lifecycleManager.Done()
 	logger.Info("agent-runner stopped")
 }

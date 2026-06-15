@@ -2,10 +2,12 @@ package grpcserver
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 
 	"github.com/carolsimone/continuo/agent-runner/domain"
+	"github.com/carolsimone/continuo/agent-runner/domain/repository"
 	agentchatv1 "github.com/carolsimone/continuo/agent-runner/proto/agentchat/v1"
 	"github.com/carolsimone/continuo/agent-runner/service/chat"
 	"github.com/google/uuid"
@@ -161,7 +163,10 @@ func (s *Server) Chat(stream grpc.BidiStreamingServer[agentchatv1.ClientEvent, a
 	sink := &streamSink{stream: stream}
 	session, err := chat.NewSession(stream.Context(), s.deps, openMsg.GetUserId(), openMsg.GetThreadId(), sink)
 	if err != nil {
-		return status.Errorf(codes.NotFound, "open session: %v", err)
+		if errors.Is(err, repository.ErrNotFound) {
+			return status.Errorf(codes.NotFound, "open session: %v", err)
+		}
+		return status.Errorf(codes.Internal, "open session: %v", err)
 	}
 	defer session.Close()
 
