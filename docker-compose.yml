@@ -352,6 +352,15 @@ services:
     networks:
       - default
 
+  stub-llm:
+    build:
+      context: ./tests/e2e/stub-llm
+    container_name: stub-llm
+    ports:
+      - "9100:9100"
+    networks:
+      - default
+
   agent-runner:
     build:
       context: .
@@ -362,6 +371,7 @@ services:
       - flyway-agent-runner
       - state
       - orchestrator
+      - stub-llm
     environment:
       - POSTGRES_DB=continuo_agent
       - POSTGRES_USER=continuo_svc
