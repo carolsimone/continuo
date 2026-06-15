@@ -77,3 +77,12 @@ func TestValidator_Missing_accumulates_all(t *testing.T) {
 		t.Fatalf("want 3 missing, got %d: %v", got, v.Missing())
 	}
 }
+
+func TestValidator_Add_records_entry(t *testing.T) {
+	v := &Validator{}
+	v.Add("MY_CUSTOM_VAR (must be foo|bar)")
+	missing := v.Missing()
+	if len(missing) != 1 || missing[0] != "MY_CUSTOM_VAR (must be foo|bar)" {
+		t.Fatalf("want [MY_CUSTOM_VAR (must be foo|bar)], got %v", missing)
+	}
+}

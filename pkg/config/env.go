@@ -41,6 +41,13 @@ func (v *Validator) Missing() []string {
 	return v.missing
 }
 
+// Add records an arbitrary validation failure (e.g. an invalid value or a
+// conditional-required var) in the same missing list so callers can report a
+// complete set of problems in one fail-fast pass.
+func (v *Validator) Add(name string) {
+	v.missing = append(v.missing, name)
+}
+
 // env reads a string environment variable with a fallback default (Tier 2 vars).
 func env(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
