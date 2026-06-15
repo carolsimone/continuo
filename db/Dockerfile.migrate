@@ -16,5 +16,6 @@ COPY migration/executor /flyway/sql/executor
 COPY migration/orchestrator /flyway/sql/orchestrator
 COPY migration/k8s /flyway/sql/k8s
 COPY migration/release /flyway/sql/release
+COPY migration/agent /flyway/sql/agent
 
 ENTRYPOINT ["/bin/sh", "/migrate-all.sh"]

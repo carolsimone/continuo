@@ -43,6 +43,8 @@ jobs:
               - 'ui-service/**'
               - 'manifest-controller/**'
               - 'release-controller/**'
+              - 'agent-runner/**'
+              - 'cli/**'
             state:
               - 'Dockerfile.base'
               - 'go.work'
@@ -77,6 +79,13 @@ jobs:
               - 'go.work.sum'
               - 'pkg/**'
               - 'release-controller/**'
+            agent_runner:
+              - 'Dockerfile.base'
+              - 'go.work'
+              - 'go.work.sum'
+              - 'pkg/**'
+              - 'agent-runner/**'
+              - 'cli/**'
             migrations:
               - 'db/**'
 
@@ -90,6 +99,7 @@ jobs:
           UI_CHANGED: ${{ steps.filter.outputs.ui_service }}
           MANIFEST_CHANGED: ${{ steps.filter.outputs.manifest_controller }}
           RELEASE_CONTROLLER_CHANGED: ${{ steps.filter.outputs.release_controller }}
+          AGENT_RUNNER_CHANGED: ${{ steps.filter.outputs.agent_runner }}
           MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations }}
         run: |
           matrix="$(
@@ -101,6 +111,7 @@ jobs:
               --arg ui "$UI_CHANGED" \
               --arg manifest "$MANIFEST_CHANGED" \
               --arg release_controller "$RELEASE_CONTROLLER_CHANGED" \
+              --arg agent_runner "$AGENT_RUNNER_CHANGED" \
               --arg migrations "$MIGRATIONS_CHANGED" \
               '{
                 include: [
@@ -111,6 +122,7 @@ jobs:
                   {service: "ui-service", changed: $ui, dockerfile: "ui-service/Dockerfile", context: "ui-service"},
                   {service: "manifest-controller", changed: $manifest, dockerfile: "manifest-controller/Dockerfile.prod", context: "manifest-controller"},
                   {service: "release-controller", changed: $release_controller, dockerfile: "release-controller/Dockerfile.prod", context: "."},
+                  {service: "agent-runner", changed: $agent_runner, dockerfile: "agent-runner/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"}
                 ]
               }'

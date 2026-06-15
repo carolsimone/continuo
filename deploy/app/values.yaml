@@ -37,6 +37,14 @@ global:
 
   stateGrpcAddr: state:50051
   orchestratorGrpcAddr: orchestrator:50052
+  agentRunnerGrpcAddr: agent-runner:50053
+
+  llm:
+    # LLM provider API key (sensitive). Populated in the on-box secret values
+    # file passed with `-f`. The chart default is empty so a deploy without the
+    # key leaves the agent-runner unable to call the LLM — the pod still starts
+    # and serves gRPC, but chat sessions will fail until the key is supplied.
+    apiKey: ""
 
   s3:
     endpointUrl: https://nbg1.your-objectstorage.com
@@ -98,6 +106,29 @@ services:
       POSTGRES_DB: continuo_orchestrator
       GRPC_PORT: "50052"
       HTTP_PORT: "8087"
+
+  - name: agent-runner
+    enabled: true
+    replicas: 1
+    httpPort: 8091
+    grpcPort: 50053
+    readinessPath: /ready
+    secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
+      - name: LLM_API_KEY
+        secretKey: LLM_API_KEY
+    env:
+      POSTGRES_DB: continuo_agent
+      DB_SSLMODE: disable
+      HEALTH_PORT: "8091"
+      GRPC_PORT: "50053"
+      CONTINUO_STATE_ADDR: state:50051
+      CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
+      LLM_PROVIDER: anthropic
+      LLM_MODEL: claude-sonnet-4-6
 
   - name: executor-controller
     enabled: true
@@ -187,6 +218,7 @@ services:
       # The __AUTH_*__ sentinels are expanded by the deployment template from
       # global.auth.* (see global.auth above), so per-deployment identity config
       # lives in the on-box secret values file, not in this committed chart.
+      CHAT_BRIDGE_ENABLED: "false"
       AUTH_MODE: oidc
       AUTH_OIDC_ISSUER_URL: __AUTH_ISSUER_URL__
       AUTH_OIDC_CLIENT_ID: __AUTH_CLIENT_ID__

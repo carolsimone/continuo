@@ -1,6 +1,7 @@
 go 1.25.1
 
 use (
+	./agent-runner
 	./executor-controller
 	./k8s-controller
 	./orchestrator

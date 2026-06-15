@@ -95,6 +95,12 @@ docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv 
 sleep 3
 log_info "manifest-controller started"
 
+log_info "Starting agent-runner..."
+docker exec -d agent-runner bash -c "cd /app/agent-runner && go run . > /tmp/agent-runner.log 2>&1"
+log_info "Waiting for agent-runner to compile and start (this may take 20-30 seconds)..."
+sleep 20
+check_health "agent-runner" 8091 || exit 1
+
 log_info "Compiling and uploading dbt manifests..."
 docker exec dbt-compile-and-load \
   uv run python -m dbt_upload load --services-dir /app/services --release-id e2e-baseline

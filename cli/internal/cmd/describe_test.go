@@ -23,6 +23,7 @@ type describeCommandJSON struct {
 	Examples     []string           `json:"examples"`
 	OutputSchema json.RawMessage    `json:"output_schema"`
 	ExitCodes    json.RawMessage    `json:"exit_codes"`
+	Mutating     bool               `json:"mutating"`
 }
 type describePayloadJSON struct {
 	Commands []describeCommandJSON `json:"commands"`
@@ -122,4 +123,16 @@ func TestDescribe_ExtraArgEmitsUsageEnvelopeExits2(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &env))
 	assert.Equal(t, "usage", env.Error.Code)
+}
+
+func TestDescribe_MutatingFlagMarksTriggerOnly(t *testing.T) {
+	p := runDescribe(t)
+
+	trigger := findCmd(t, p, "schedule trigger")
+	assert.True(t, trigger.Mutating, "schedule trigger must be marked mutating")
+
+	for _, path := range []string{"schedule status", "schedule list", "schedule graph", "describe"} {
+		c := findCmd(t, p, path)
+		assert.False(t, c.Mutating, "command %q must not be mutating", path)
+	}
 }

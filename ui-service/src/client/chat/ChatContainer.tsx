@@ -11,8 +11,12 @@ export default function ChatContainer() {
     <ChatPanel
       items={chat.state.items}
       connected={chat.connected}
+      pendingConfirm={chat.state.pendingConfirm}
+      streaming={chat.state.streaming}
       onSend={chat.send}
       onNewChat={chat.newChat}
+      onConfirm={chat.confirm}
+      onInterrupt={chat.interrupt}
     />
   );
 }

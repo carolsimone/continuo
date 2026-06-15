@@ -1,12 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { initialChatState, appendUserText, applyServerMessage } from '../../src/client/chat/chat-state';
+import { applyServerMessage, initialChatState, appendUserText, resolveConfirm } from '../../src/client/chat/chat-state';
 
 describe('chat-state reducer', () => {
-  it('captures the session id', () => {
-    const s = applyServerMessage(initialChatState, { type: 'session', sessionId: 'abc' });
-    expect(s.sessionId).toBe('abc');
-  });
-
   it('builds a user → tool → assistant transcript and replaces partials on final', () => {
     let s = appendUserText(initialChatState, 'how is daily?');
     s = applyServerMessage(s, { type: 'tool', command: 'continuo schedule status daily' });
@@ -47,5 +42,66 @@ describe('chat-state reducer', () => {
       { kind: 'tool', command: 'continuo schedule list' },
       { kind: 'assistant', text: 'Done', done: true },
     ]);
+  });
+});
+
+describe('confirm flow state', () => {
+  it('appends a confirm item and blocks input while pending', () => {
+    const s = applyServerMessage(initialChatState, {
+      type: 'confirm_request', actionId: 'a1', summary: 'Run `continuo schedule trigger daily`?',
+    });
+    const last = s.items[s.items.length - 1];
+    expect(last).toEqual({ kind: 'confirm', actionId: 'a1', summary: 'Run `continuo schedule trigger daily`?', resolved: null });
+    expect(s.pendingConfirm).toBe('a1');
+  });
+
+  it('resolveConfirm marks the item and unblocks input', () => {
+    let s = applyServerMessage(initialChatState, { type: 'confirm_request', actionId: 'a1', summary: 'x' });
+    s = resolveConfirm(s, 'a1', true);
+    const last = s.items[s.items.length - 1] as any;
+    expect(last.resolved).toBe(true);
+    expect(s.pendingConfirm).toBeNull();
+  });
+});
+
+describe('history + thread', () => {
+  it('thread replaces session id semantics', () => {
+    const s = applyServerMessage(initialChatState, { type: 'thread', threadId: 't-9' });
+    expect(s.threadId).toBe('t-9');
+  });
+
+  it('history replaces items with replayed transcript', () => {
+    const s = applyServerMessage(initialChatState, {
+      type: 'history',
+      messages: [
+        { role: 'user', text: 'q' },
+        { role: 'tool', command: 'schedule_status' },
+        { role: 'assistant', text: 'a' },
+      ],
+    });
+    expect(s.items).toEqual([
+      { kind: 'user', text: 'q' },
+      { kind: 'tool', command: 'schedule_status' },
+      { kind: 'assistant', text: 'a', done: true },
+    ]);
+  });
+
+  it('history replay clears stale streaming/pendingConfirm flags', () => {
+    const stale = { ...initialChatState, streaming: true, pendingConfirm: 'old' };
+    const s = applyServerMessage(stale, { type: 'history', messages: [{ role: 'user', text: 'q' }] });
+    expect(s.streaming).toBe(false);
+    expect(s.pendingConfirm).toBeNull();
+  });
+});
+
+describe('error never leaves input stuck disabled', () => {
+  it('an error while a confirm is pending clears pendingConfirm', () => {
+    let s = applyServerMessage(initialChatState, { type: 'confirm_request', actionId: 'a1', summary: 'x' });
+    expect(s.pendingConfirm).toBe('a1');
+    s = applyServerMessage(s, { type: 'error', code: 'agent_failed', message: 'agent crashed' });
+    expect(s.pendingConfirm).toBeNull();
+    expect(s.items).toContainEqual({ kind: 'error', message: 'agent crashed' });
+    // the confirm item remains in the transcript (unresolved is harmless once the agent is gone)
+    expect(s.items.some((i) => i.kind === 'confirm')).toBe(true);
   });
 });

@@ -61,6 +61,15 @@ services:
       - postgres
     tty: true
 
+  flyway-agent-runner:
+    image: flyway/flyway
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_agent -user=continuo_svc -password=continuo -connectRetries=30
+    volumes:
+      - ./db/migration/agent:/flyway/sql
+    depends_on:
+      - postgres
+    tty: true
+
   redis:
     image: redis:7.2-alpine
     ports:
@@ -135,6 +144,7 @@ services:
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
       - ./config/schedules.yaml:/etc/continuo/schedules.yaml:ro
     networks:
@@ -184,6 +194,7 @@ services:
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
     networks:
@@ -243,6 +254,7 @@ services:
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
     networks:
@@ -306,6 +318,7 @@ services:
       - ./orchestrator:/app/orchestrator
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -342,6 +355,54 @@ services:
       - "8088:8088"
     networks:
       - default
+
+  stub-llm:
+    build:
+      context: ./tests/e2e/stub-llm
+    container_name: stub-llm
+    ports:
+      - "9100:9100"
+    networks:
+      - default
+
+  agent-runner:
+    build:
+      context: .
+      dockerfile: agent-runner/Dockerfile.dev
+    container_name: agent-runner
+    depends_on:
+      - postgres
+      - flyway-agent-runner
+      - state
+      - orchestrator
+      - stub-llm
+    environment:
+      - POSTGRES_DB=continuo_agent
+      - POSTGRES_USER=continuo_svc
+      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - DB_SSLMODE=disable
+      - GRPC_PORT=50053
+      - HEALTH_PORT=8091
+      - CONTINUO_STATE_ADDR=state:50051
+      - CONTINUO_ORCHESTRATOR_ADDR=orchestrator:50052
+      - LOG_LEVEL=INFO
+      - ENV=local
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai-compatible}
+      - LLM_API_KEY=${LLM_API_KEY:-stub}
+      - LLM_MODEL=${LLM_MODEL:-stub-model}
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://stub-llm:9100}
+    ports:
+      - "8091:8091"
+      - "50053:50053"
+    volumes:
+      - ./agent-runner:/app/agent-runner
+      - ./pkg:/app/pkg
+      - ./go.work:/app/go.work
+    networks:
+      - default
+    tty: true
 
   e2e:
     build:
@@ -380,6 +441,7 @@ services:
       - ./k8s-controller:/app/k8s-controller
       - ./pkg:/app/pkg
       - ./go.work:/app/go.work
+      - ./agent-runner:/app/agent-runner
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - default
@@ -409,6 +471,8 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
       - AUTH_MODE=dev
+      - AGENT_RUNNER_GRPC_ADDR=agent-runner:50053
+      - CHAT_BRIDGE_ENABLED=true
     ports:
       - "8090:8090"
     volumes:
