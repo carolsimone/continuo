@@ -2,6 +2,7 @@ package cliexec
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -13,6 +14,33 @@ import (
 )
 
 const truncationNotice = "\n[output truncated]"
+
+// defaultMaxBytes is used when NewExecutor is called with maxBytes <= 0,
+// preventing a misconfigured zero from silently blanking all output.
+const defaultMaxBytes = 65536
+
+// stderrCap is the maximum number of stderr bytes included in the agent_failed
+// fallback payload (Fix 2).
+const stderrCap = 500
+
+// errorEnvelope is the canonical JSON error shape emitted to the model.
+type errorEnvelope struct {
+	Error errorBody `json:"error"`
+}
+
+type errorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// errorJSON builds a valid JSON error envelope using real JSON encoding so
+// that arbitrary message text (control chars, quotes, backslashes, etc.) never
+// produces invalid JSON. The %q approach it replaces was unsafe because Go's
+// %q emits escape sequences (\a, \v, …) that are not valid JSON string escapes.
+func errorJSON(code, message string) string {
+	b, _ := json.Marshal(errorEnvelope{Error: errorBody{Code: code, Message: message}})
+	return string(b)
+}
 
 // Executor runs catalogued tools as direct argv exec of the continuo binary.
 // No shell is involved at any point: the argv goes straight to execve.
@@ -27,12 +55,34 @@ type Executor struct {
 
 var _ ports.ToolExecutor = (*Executor)(nil)
 
+// NewExecutor constructs an Executor. If maxBytes <= 0 it is set to
+// defaultMaxBytes (65536) to prevent a misconfigured zero from silently
+// blanking all output via truncation.
 func NewExecutor(catalog ports.ToolCatalog, cliPath string, env []string, timeout time.Duration, maxBytes int, logger *slog.Logger) *Executor {
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxBytes
+	}
 	return &Executor{catalog: catalog, cliPath: cliPath, env: env, timeout: timeout, maxBytes: maxBytes, logger: logger}
 }
 
 func reject(format string, a ...any) ports.ToolResult {
-	return ports.ToolResult{Output: fmt.Sprintf(`{"error":{"code":"usage","message":%q}}`, fmt.Sprintf(format, a...)), IsError: true}
+	return ports.ToolResult{
+		Output:  errorJSON("usage", fmt.Sprintf(format, a...)),
+		IsError: true,
+	}
+}
+
+// orderedArgValues returns the positional argv values for def in ParamOrder
+// sequence, skipping absent or whitespace-only entries. It is shared by
+// Execute and CommandString to keep argv assembly in one place.
+func orderedArgValues(def ports.ToolDef, args map[string]string) []string {
+	var out []string
+	for _, name := range def.ParamOrder {
+		if v, ok := args[name]; ok && strings.TrimSpace(v) != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // Execute applies the four checks, then execs. Tool-level failures are
@@ -64,17 +114,17 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 			return reject("parameter %q must not start with '-'", name)
 		}
 	}
-	// Check 4 (assembly): argv is the catalog's path + ordered positional values.
+	// Check 4 (assembly): argv is the catalog's CLIPath + ordered positional values.
+	// Whitespace-only optional values are skipped so they don't appear as blank tokens.
 	argv := append([]string{}, def.CLIPath...)
-	for _, name := range def.ParamOrder {
-		if v, ok := call.Args[name]; ok && v != "" {
-			argv = append(argv, v)
-		}
-	}
+	argv = append(argv, orderedArgValues(def, call.Args)...)
 
 	cctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, e.cliPath, argv...)
+	// A nil env intentionally inherits the parent process environment; the
+	// continuo CLI is our own trusted binary and needs PATH plus the
+	// CONTINUO_* address vars that main injects.
 	cmd.Env = e.env
 	start := time.Now()
 	out, err := cmd.Output() // stdout only; the CLI emits JSON there for both success and error
@@ -88,9 +138,21 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 			exitCode = ee.ExitCode()
 			// out already holds whatever stdout the process wrote (cmd.Output
 			// captures it even on non-zero exit), so the model sees the CLIError JSON.
+			// If stdout is empty the process likely panicked or wrote only to stderr;
+			// surface the stderr text so the failure is visible to the model.
+			if len(out) == 0 {
+				stderr := strings.TrimSpace(string(ee.Stderr))
+				if len(stderr) > stderrCap {
+					stderr = stderr[:stderrCap]
+				}
+				if stderr == "" {
+					stderr = "process exited non-zero with no output"
+				}
+				out = []byte(errorJSON("agent_failed", fmt.Sprintf("exit %d: %s", exitCode, stderr)))
+			}
 		} else {
 			exitCode = -1
-			out = []byte(fmt.Sprintf(`{"error":{"code":"unavailable","message":%q}}`, err.Error()))
+			out = []byte(errorJSON("unavailable", err.Error()))
 		}
 	}
 	if len(out) > e.maxBytes {
@@ -110,12 +172,9 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 }
 
 // CommandString renders the argv as displayed to the user in tool ticks.
+// Whitespace-only optional values are skipped so the display matches the real argv.
 func CommandString(cliName string, def ports.ToolDef, args map[string]string) string {
 	parts := append([]string{cliName}, def.CLIPath...)
-	for _, name := range def.ParamOrder {
-		if v, ok := args[name]; ok && v != "" {
-			parts = append(parts, v)
-		}
-	}
+	parts = append(parts, orderedArgValues(def, args)...)
 	return strings.Join(parts, " ")
 }
