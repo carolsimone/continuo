@@ -32,8 +32,11 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # the runtime image for the catalog-load exec at agent startup.
 WORKDIR /app
 COPY cli/ ./cli/
+# The CLI is its own module, deliberately excluded from /app/go.work. Building it
+# while the workspace is active fails ("not one of the workspace modules"), so
+# disable workspace mode for this standalone build.
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    cd /app/cli && CGO_ENABLED=0 GOOS=linux go build -o /app/bin/continuo ./cmd/continuo
+    cd /app/cli && GOWORK=off CGO_ENABLED=0 GOOS=linux go build -o /app/bin/continuo ./cmd/continuo
 
 # Runtime stage
 FROM alpine:latest
