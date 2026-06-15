@@ -1,12 +1,16 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage, Server } from 'http';
-import { ClaudeProcess } from './claude-process';
-import type { ClientMessage, ServerMessage } from './chat-protocol';
+import type { AgentChatStream } from '../agent-client';
+import type { ClientMessage } from './chat-protocol';
+import { toClientEvent, fromServerEvent } from './chat-protocol';
 import { audit } from '../auth/audit';
 import type { AuthUser } from '../auth/types';
 
 export interface ChatWsOptions {
-  createProcess?: (sessionId?: string) => ClaudeProcess;
+  // Factory that opens a new bidirectional gRPC stream to agent-runner.
+  // Called once per WebSocket connection upgrade. The stream is cancelled when
+  // the socket closes.
+  agentClient: () => AgentChatStream;
   // Resolves the incoming HTTP upgrade request to a user; returning null rejects
   // the upgrade. Defaults to deny-all so an unwired chat socket can never be
   // opened. The chat endpoint is operator-only: it spends LLM tokens and can
@@ -21,8 +25,11 @@ export interface ChatWsOptions {
   allowedOrigin?: string;
 }
 
-export function attachChatWebSocket(server: Server, opts: ChatWsOptions = {}): WebSocketServer {
-  const createProcess = opts.createProcess ?? ((sessionId?: string) => new ClaudeProcess({ sessionId }));
+function sendJSON(ws: WebSocket, msg: object): void {
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+export function attachChatWebSocket(server: Server, opts: ChatWsOptions): WebSocketServer {
   const authenticate = opts.authenticate ?? (async () => null);
   const wss = new WebSocketServer({ noServer: true });
 
@@ -63,37 +70,35 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions = {}): W
       });
   });
 
-  wss.on('connection', (ws, req) => {
+  wss.on('connection', (ws: WebSocket, req: IncomingMessage, user: AuthUser) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    let sessionId = url.searchParams.get('sessionId') ?? undefined;
-    let alive = false;
+    const threadId = url.searchParams.get('threadId') ?? '';
 
-    let proc = wire(sessionId);
-
-    function wire(sid?: string): ClaudeProcess {
-      const p = createProcess(sid);
-      alive = true;
-      p.on('message', (msg: ServerMessage) => {
-        if (msg.type === 'session') sessionId = msg.sessionId;
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-      });
-      p.on('exit', () => {
-        alive = false;
-      });
-      return p;
+    let stream: AgentChatStream;
+    try {
+      stream = opts.agentClient();
+    } catch (err: any) {
+      sendJSON(ws, { type: 'error', code: 'agent_unavailable', message: err?.message ?? 'agent unavailable' });
+      ws.close();
+      return;
     }
 
-    // A persistent claude process may exit between turns (clean end or crash).
-    // Respawn lazily on the next user turn, resuming the captured session so the
-    // conversation continues instead of writing to a dead stdin and hanging.
-    function ensureAlive(): void {
-      if (!alive) {
-        proc.removeAllListeners();
-        proc = wire(sessionId);
-      }
-    }
+    stream.write({ open: { user_id: user.userId, thread_id: threadId } });
 
-    ws.on('message', (data) => {
+    stream.on('data', (ev) => {
+      const msg = fromServerEvent(ev);
+      if (msg) sendJSON(ws, msg);
+    });
+
+    stream.on('error', (err) => {
+      sendJSON(ws, { type: 'error', code: 'agent_unavailable', message: err.message });
+    });
+
+    stream.on('end', () => {
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+    });
+
+    ws.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
       let raw: unknown;
       try {
         raw = JSON.parse(data.toString());
@@ -105,21 +110,11 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions = {}): W
       // throw an uncaught exception and tear down the server.
       if (typeof raw !== 'object' || raw === null) return;
       const parsed = raw as ClientMessage;
-      if (parsed.type === 'user_message' && typeof parsed.text === 'string') {
-        ensureAlive();
-        proc.send(parsed.text);
-      } else if (parsed.type === 'new_chat') {
-        proc.removeAllListeners();
-        proc.kill();
-        sessionId = undefined;
-        proc = wire(undefined);
-      }
+      const ev = toClientEvent(parsed);
+      if (ev) stream.write(ev);
     });
 
-    ws.on('close', () => {
-      proc.removeAllListeners();
-      proc.kill();
-    });
+    ws.on('close', () => stream.cancel());
   });
 
   return wss;

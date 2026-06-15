@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package agentchat.v1;
+
+option go_package = "github.com/carolsimone/continuo/agent-runner/proto/agentchat/v1;agentchatv1";
+
+// AgentChat is the cluster-internal chat transport: one bidirectional stream
+// per browser WebSocket connection, relayed 1:1 by ui-service.
+service AgentChat {
+  rpc Chat(stream ClientEvent) returns (stream ServerEvent);
+}
+
+message ClientEvent {
+  oneof event {
+    Open open = 1;                       // MUST be the first event on the stream
+    UserMessage user_message = 2;
+    NewChat new_chat = 3;
+    ConfirmResponse confirm_response = 4;
+    Interrupt interrupt = 5;
+  }
+}
+
+message Open {
+  string user_id = 1;                    // authenticated identity supplied by ui-service
+  string thread_id = 2;                  // empty = new thread; set = resume + replay history
+}
+message UserMessage { string text = 1; }
+message NewChat {}
+message ConfirmResponse {
+  string action_id = 1;
+  bool approved = 2;
+}
+message Interrupt {}
+
+message ServerEvent {
+  oneof event {
+    Thread thread = 1;
+    History history = 2;
+    Tool tool = 3;
+    Text text = 4;
+    Final final = 5;
+    ConfirmRequest confirm_request = 6;
+    Error error = 7;
+  }
+}
+
+message Thread { string thread_id = 1; }
+message HistoryMessage {
+  string role = 1;                       // user | assistant | tool
+  string text = 2;                       // user/assistant text
+  string command = 3;                    // tool: the rendered argv string
+}
+message History { repeated HistoryMessage messages = 1; }
+message Tool { string command = 1; }
+message Text { string text = 1; }        // token delta
+message Final { string text = 1; }       // complete answer for the turn
+message ConfirmRequest {
+  string action_id = 1;
+  string summary = 2;                    // human-readable, e.g. "Trigger schedule \"daily\" now?"
+}
+message Error {
+  string code = 1;                       // provider_unavailable | rate_limited | iteration_limit | token_budget | agent_failed
+  string message = 2;
+}
