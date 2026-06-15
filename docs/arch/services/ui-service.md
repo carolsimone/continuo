@@ -5,6 +5,7 @@
 `ui-service` is an HTTP facade and React frontend for operators.
 
 It provides:
+- OpenID Connect (OIDC) login with role-based authorization: every `/api` route requires an authenticated session, and mutations plus the chat WebSocket (WS) require the `operator` role (see "Authentication & Authorization")
 - a real-time dashboard of all schedules and their last-run status
 - a detail view per schedule run: DAG topology, node statuses, task list, execution history
 - a per-node detail page: recent run history for a single dbt node, with trigger controls
@@ -15,17 +16,113 @@ It provides:
 - rebase triggering: proxies `POST /api/schedulers/:id/rebase` to the `TriggerRebase` gRPC method on `state`
 - single-node run triggering: proxies `POST /api/nodes/:service/:schema/:table/run` to the `TriggerSingleNodeRun` gRPC method on `state`
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`
-- a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): a WebSocket (WS) endpoint that exposes a Large Language Model (LLM) agent which inspects schedule status, task status, and dependency graphs via the `continuo` CLI (Command-Line Interface); mutating commands are blocked by a deny-list, and the endpoint is gated off outside local development
+- a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): a WebSocket (WS) endpoint that exposes a Large Language Model (LLM) agent which inspects schedule status, task status, and dependency graphs via the `continuo` CLI (Command-Line Interface); mutating commands are blocked by a deny-list, the WebSocket upgrade is operator-only, and the endpoint is gated off outside local development
 
-It owns no storage and constructs no Redis client.
+Its only datastore is Redis, used in `AUTH_MODE=oidc` for server-side login sessions under plain `uisession:` keys (not Redis Streams). It owns no Postgres or Neo4j storage.
 
 **Runtime**: Node.js / Express / TypeScript (port 8090).
+
+## Authentication & Authorization
+
+`ui-service` is the only HTTP edge of the system; it authenticates every browser user as an OIDC (OpenID Connect) relying party and enforces role-based authorization on every request.
+
+### Modes
+
+`AUTH_MODE` is required; there is no unauthenticated mode — a missing or invalid value fails boot.
+
+| Mode | Behavior |
+|---|---|
+| `oidc` | Production. Full OIDC login flow against an external Identity Provider (IdP); sessions stored in Redis. |
+| `dev` | Local development and the standard end-to-end (e2e) suites (the docker-compose `ui` service). Every request carries the fixed placeholder identity `dev\|local` with the `operator` role; a loud warning is logged at boot. |
+
+### Login flow (`src/server/auth/`)
+
+Authorization Code + PKCE (Proof Key for Code Exchange) via the `openid-client` library. The issuer is discovered from `AUTH_OIDC_ISSUER_URL` at boot, retried with backoff; if discovery never succeeds the process exits and the platform restarts it.
+
+| Route | Method | Behavior |
+|---|---|---|
+| `/auth/login` | GET | Redirects to the IdP authorization endpoint. State, nonce, and the PKCE verifier travel in a 10-minute HttpOnly pending cookie. |
+| `/auth/callback` | GET | Validates state + nonce, resolves the role, creates the Redis session, sets the session cookie, and redirects to the sanitized `returnTo` (same-origin relative paths only). |
+| `/auth/logout` | POST | Destroys the Redis session, clears the cookie, and returns the IdP end-session redirect when the IdP advertises one. |
+| `/auth/me` | GET | Current identity (`userId`, `email`, `name`, `role`) for the React shell; 401 when unauthenticated. |
+
+### Sessions
+
+- Server-side in Redis under `uisession:<256-bit-random-id>` keys — plain keys with TTLs, not Redis Streams, so `pkg/streams/contract.yaml` is unaffected.
+- The browser holds only an opaque HttpOnly SameSite=Lax cookie `continuo_session` (Secure when `AUTH_PUBLIC_URL` is https).
+- Sliding idle TTL (`AUTH_SESSION_IDLE_TTL`, default `8h`) capped by an absolute lifetime (`AUTH_SESSION_MAX_TTL`, default `24h`).
+- Deleting the Redis key revokes the session instantly.
+- IdP tokens are used once at the callback and discarded; per-request checks touch only Redis.
+
+### Roles
+
+Two roles: `viewer` (read) and `operator` (viewer + mutations + chat). Resolution happens once, at login:
+
+1. The IdP groups claim (`AUTH_GROUPS_CLAIM`, default `groups`) is mapped through `AUTH_ROLE_MAPPING` (comma-separated `group=role` pairs); the strongest matching role wins. Group membership comes from the IdP directory and is not gated on email verification.
+2. Email overrides: `AUTH_OPERATOR_EMAILS` / `AUTH_VIEWER_EMAILS`. These lists are applied only when the ID token asserts a verified email (`email_verified` claim is `true` or `"true"`); an unverified or absent `email_verified` falls through to step 3. This prevents privilege escalation through unverified email aliases.
+3. `AUTH_DEFAULT_ROLE` (default `none` — login is denied).
+
+### Request gating
+
+Enforced by middleware wired in `createApp`; method-based, so new endpoints are safe by default:
+
+| Surface | Requirement |
+|---|---|
+| `/healthz` | Public — Kubernetes probe target. |
+| `/auth/*` | Public — login machinery. |
+| Static SPA shell | Public — holds no data and renders a sign-in page when `/auth/me` returns 401. |
+| `GET /api/*` | Any authenticated user. |
+| `POST`/`PUT`/`PATCH`/`DELETE` `/api/*` | `operator` role (403 otherwise). |
+| `/ws/chat` upgrade | `operator` only; rejected with HTTP 401 before any WebSocket is established. Browser requests whose `Origin` header does not match the deployment origin (derived from `AUTH_PUBLIC_URL`) are additionally rejected with HTTP 403. Requests with no `Origin` header (non-browser clients) pass. The origin check is skipped in `dev` mode. |
+
+### CSRF (Cross-Site Request Forgery)
+
+SameSite=Lax cookies plus an Origin-header check on mutating `/api` requests: a browser `Origin` that does not match `AUTH_PUBLIC_URL`'s origin is rejected with 403. Requests without an `Origin` header pass through to the auth gate — they carry no ambient cookie and are not CSRF-able.
+
+### Error body contract
+
+All auth error responses use the shape `{ "error": "<human-readable string>", "code": "<machine token>" }`. The `error` string is suitable for the client to render directly; the `code` value is a stable token for programmatic handling (e.g. `unauthenticated`, `forbidden`, `csrf_rejected`, `auth_unavailable`). The terminal error handler is status-aware: an upstream client error carrying an HTTP status below 500 (for example, malformed JSON rejected by the body parser at status 400) is preserved at that status with `code: "bad_request"`. Only errors with no HTTP status, or with a 5xx status, indicate a backend outage (Redis or the IdP unreachable) and are returned as `503` with `code: "auth_unavailable"`.
+
+### Audit
+
+One structured JSON line to stdout per auth event (login success/failure/denied, logout, `role_denied`, `csrf_rejected`, `ws_denied`) and per mutating `/api` call (user, role, method, path, outcome status).
+
+### Failure modes
+
+- Redis unreachable → 503 fail-closed; a request is never passed through unauthenticated.
+- IdP unreachable after boot → new logins fail; active sessions keep working, because per-request checks touch only Redis.
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AUTH_MODE` | required | `oidc` or `dev` |
+| `AUTH_OIDC_ISSUER_URL` | required (oidc) | OIDC issuer URL for discovery |
+| `AUTH_OIDC_CLIENT_ID` | required (oidc) | OIDC client ID |
+| `AUTH_OIDC_CLIENT_SECRET` | required (oidc) | OIDC client secret |
+| `AUTH_PUBLIC_URL` | required (oidc) | Externally visible base URL; drives the redirect URI, the cookie `Secure` flag, and the CSRF origin |
+| `AUTH_OIDC_SCOPES` | `openid email profile` | Requested scopes |
+| `AUTH_GROUPS_CLAIM` | `groups` | ID-token claim holding group names |
+| `AUTH_ROLE_MAPPING` | empty | `group=role` pairs |
+| `AUTH_OPERATOR_EMAILS` / `AUTH_VIEWER_EMAILS` | empty | Per-email role overrides |
+| `AUTH_DEFAULT_ROLE` | `none` | Role when nothing matches (`none` = login denied) |
+| `AUTH_SESSION_IDLE_TTL` | `8h` | Sliding session idle TTL |
+| `AUTH_SESSION_MAX_TTL` | `24h` | Absolute session lifetime cap |
+| `REDIS_URL` | required (oidc) | Session store connection |
+
+Deployment surfaces:
+
+- The docker-compose `ui` service runs `AUTH_MODE=dev`.
+- The `auth-e2e` compose profile (dex + `ui-auth`) runs the real OIDC flow for the dedicated e2e suite (`tests/e2e/auth_oidc_test.go`).
+- Helm (`deploy/app`) runs `AUTH_MODE=oidc`. Per-deployment identity settings (issuer URL, client ID, public URL, operator/viewer email allowlists, role mapping) come from `global.auth.*`, which the deployment template expands into the `AUTH_*` env via sentinels; the committed defaults are empty so a deploy fails closed until they are set in the on-box secret values file. The client secret lands in the chart credentials Secret via `global.auth.oidcClientSecret`, and `REDIS_URL` expands from `__REDIS_URL_FROM_AUTH__`. Kubernetes probes target `/healthz`.
+
+Operator setup, including configuring an identity provider and a no-domain Google loopback flow for testing, is documented in `deploy/app/AUTH.md`.
 
 ## Chat Bridge
 
 ### Overview
 
-`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image (which runs `node dist-server/index.js` without the flag). Local development enables it via the `dev` npm script. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the bridge is enabled, so the default/production configuration shows no chat panel rather than a permanently disconnected one. Operating the bridge in a shared or production environment additionally requires the `claude` and `continuo` binaries present in the runtime image with Claude credentials, plus authentication, origin checks, connection limits, and Application Programming Interface (API) budget quotas on the endpoint — none of which are provided today.
+`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image (which runs `node dist-server/index.js` without the flag). Local development enables it via the `dev` npm script. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the bridge is enabled, so the default/production configuration shows no chat panel rather than a permanently disconnected one. The endpoint upgrade is authenticated: only a session with the `operator` role may open `/ws/chat`; anything else is rejected with HTTP 401 before the WebSocket is established (audited as `ws_denied`). Browser upgrade requests whose `Origin` header does not match the deployment origin (derived from `AUTH_PUBLIC_URL`) are rejected with HTTP 403 before authentication is attempted, preventing cross-site WebSocket hijacking. Requests with no `Origin` header (non-browser clients) are not subject to this check. The origin check is skipped in `dev` mode. Operating the bridge in a shared or production environment additionally requires the `claude` and `continuo` binaries present in the runtime image with Claude credentials, plus connection limits and Application Programming Interface (API) budget quotas on the endpoint — none of which are provided today.
 
 Each incoming WebSocket connection receives one dedicated headless `claude` subprocess. The subprocess runs in streaming-JSON mode:
 
@@ -33,7 +130,7 @@ Each incoming WebSocket connection receives one dedicated headless `claude` subp
 claude -p --input-format stream-json --output-format stream-json --verbose
 ```
 
-Read-only behavior is enforced by a deny-list, not the allow-list. In headless `claude -p` mode the `--allowedTools` list does not act as a default-deny — tool calls are auto-approved — so the intended read surface (`Bash(continuo schedule status:*)`, `Bash(continuo schedule list:*)`, `Bash(continuo schedule graph:*)`, `Bash(continuo describe:*)`) is documentation of intent rather than a boundary. The boundary is `--disallowedTools`, which Claude Code does honor: `Bash(continuo schedule trigger:*)` is denied, so the mutating command cannot run. The system prompt additionally instructs read-only behavior as defense in depth. This is best-effort confinement for local development only: the subprocess is not sandboxed against arbitrary shell, so it runs with the developer's privileges. That, together with the absence of authentication, is why the endpoint is gated off outside local development. The agent inspects the system by shelling out to the `continuo` CLI, which in turn reads `state` and `orchestrator` over gRPC (Remote Procedure Call). The `claude` process itself has no direct gRPC or Redis connections.
+Read-only behavior is enforced by a deny-list, not the allow-list. In headless `claude -p` mode the `--allowedTools` list does not act as a default-deny — tool calls are auto-approved — so the intended read surface (`Bash(continuo schedule status:*)`, `Bash(continuo schedule list:*)`, `Bash(continuo schedule graph:*)`, `Bash(continuo describe:*)`) is documentation of intent rather than a boundary. The boundary is `--disallowedTools`, which Claude Code does honor: `Bash(continuo schedule trigger:*)` is denied, so the mutating command cannot run. The system prompt additionally instructs read-only behavior as defense in depth. This is best-effort confinement for local development only: the subprocess is not sandboxed against arbitrary shell, so it runs with the developer's privileges. That unsandboxed subprocess is why the endpoint stays gated off outside local development even though the upgrade itself is operator-only. The agent inspects the system by shelling out to the `continuo` CLI, which in turn reads `state` and `orchestrator` over gRPC (Remote Procedure Call). The `claude` process itself has no direct gRPC or Redis connections.
 
 The spawned `claude` process (and the `continuo` CLI it invokes) receive `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` in their environment, mapped from the ui-service server's `STATE_GRPC_ADDR` and `ORCHESTRATOR_GRPC_ADDR`, so the CLI reaches the same `state` and `orchestrator` gRPC endpoints the ui-service uses.
 
@@ -77,11 +174,28 @@ No backend service contracts, storage ownership, Redis Streams flows, or gRPC in
 
 ## Owned Storage
 
-None.
+Redis, in `AUTH_MODE=oidc` only: server-side login sessions under plain `uisession:<256-bit-random-id>` keys with TTLs. These are ordinary keys, not Redis Streams — `pkg/streams/contract.yaml` is unaffected. In `AUTH_MODE=dev` no Redis client is constructed. No Postgres, no Neo4j.
 
 ## Inbound Interfaces
 
 ### HTTP server (port 8090)
+
+All `/api` routes below require an authenticated session; mutating methods (every `POST` below) additionally require the `operator` role. See "Authentication & Authorization".
+
+#### Health
+
+| Route | Method | Backend |
+|---|---|---|
+| `/healthz` | GET | None — returns `{ "ok": true }`. Public; Kubernetes liveness/readiness probes target it. |
+
+#### Auth
+
+| Route | Method | Backend |
+|---|---|---|
+| `/auth/login` | GET | Redirect to the IdP authorization endpoint (OIDC Authorization Code + PKCE). |
+| `/auth/callback` | GET | OIDC callback — validates state + nonce, resolves the role, creates the Redis session. |
+| `/auth/logout` | POST | Destroys the Redis session; returns the IdP end-session redirect when advertised. |
+| `/auth/me` | GET | Current identity for the SPA; 401 when unauthenticated. |
 
 #### Schedule API
 
@@ -141,7 +255,7 @@ None.
 
 | Route | Protocol | Description |
 |---|---|---|
-| `/ws/chat` | WebSocket | Chat bridge. Attached only when `CHAT_BRIDGE_ENABLED=true`; absent by default. Each connection spawns one `claude` subprocess. See "Chat Bridge" section for the full message contract. |
+| `/ws/chat` | WebSocket | Chat bridge. Attached only when `CHAT_BRIDGE_ENABLED=true`; absent by default. Browser upgrades whose `Origin` does not match `AUTH_PUBLIC_URL`'s origin are rejected with HTTP 403 before authentication. The upgrade is additionally operator-only — unauthenticated or non-operator upgrades are rejected with HTTP 401. Each connection spawns one `claude` subprocess. See "Chat Bridge" section for the full message contract. |
 
 #### Frontend
 
@@ -191,7 +305,17 @@ HTTP errors from release-controller are forwarded with their status code; networ
 
 On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" }`.
 
-`ui-service` makes no Redis connection; it reaches backends through gRPC (`state`, `orchestrator`), HTTP (`release-controller`), and S3 (log proxy) only.
+### Redis (`REDIS_URL`, `AUTH_MODE=oidc` only)
+
+| Operation | Purpose |
+|---|---|
+| `GET` / `SET ... EX` / `EXPIRE` / `DEL` on `uisession:<id>` | Server-side session records: created at `/auth/callback`, read and TTL-refreshed on every authenticated request and on the `/ws/chat` upgrade, deleted on logout or expiry. Plain keys, not streams. |
+
+### OIDC Identity Provider (`AUTH_OIDC_ISSUER_URL`, `AUTH_MODE=oidc` only)
+
+HTTP(S) to the IdP: issuer discovery at boot (retried with backoff; the process exits if discovery never succeeds) and the token-endpoint exchange during `/auth/callback`. IdP downtime after boot blocks only new logins; active sessions keep working.
+
+Beyond the session keyspace above, `ui-service` reaches backends through gRPC (`state`, `orchestrator`), HTTP (`release-controller`, the IdP), and S3 (log proxy); it neither produces nor consumes Redis Streams.
 
 ## What It Reads
 
@@ -210,6 +334,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 | Current production release + topology snapshot | `release-controller GET /current-prod` |
 | Pod logs | S3 (via `log_s3_key` from task execution records) |
 | dbt validation logs | S3 (via `dbt_log_uri` from per-node validation results) |
+| Login session records | Redis `uisession:<id>` keys (oidc mode) |
 
 ## What It Writes
 
@@ -219,6 +344,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 | Rebase trigger (re-execute failed/cancelled tasks + new arrivals against latest topology) | `state.TriggerRebase` via `POST /api/schedulers/:id/rebase` |
 | Single-node run trigger (one-task ad-hoc run for a specific dbt node) | `state.TriggerSingleNodeRun` via `POST /api/nodes/:service/:schema/:table/run` |
 | Schedule trigger (start full DAG run) | `state.TriggerSchedule` via `POST /api/schedules/:name/trigger` |
+| Login session records (create at callback, sliding-TTL refresh per request, delete on logout) | Redis `uisession:<id>` keys (oidc mode) |
 
 ## Data Transformations
 
@@ -236,6 +362,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 ## Frontend Architecture
 
 - React SPA (TypeScript + Vite)
+- Auth shell: `useAuth` bootstraps identity from `GET /auth/me` on load and flips to unauthenticated when any later `/api` call returns 401 (server-side session expiry); the unauthenticated state renders `SignInPage` (which links to `/auth/login`) instead of the app; the authenticated state renders a `UserMenu` (the user's email and a sign-out action via `POST /auth/logout`). The chat panel mounts only for `operator` users (and only when the chat bridge is enabled).
 - `DashboardPage`: three URL-routed tabs under the page header — `Runs` (default, `/?tab=runs`) shows the `SchedulerCard` list, `Topology` (`/?tab=topology`) shows the `SnapshotTile` grid, and `Releases` (`/?tab=releases`) shows `ReleasesPanel`. Schedule and topology data sources poll every 5 seconds regardless of active tab: `/api/schedules` feeds the `Runs` tab and the `Runs` count pill; `/api/topology/schedules` feeds the `Topology` tab and its count pill. Each snapshot tile navigates to `/schedule/:name/latest`.
 - `ReleasesPanel`: displays the live `current_prod` release, the first in-flight candidate (parsing or validating), and a paginated release history list with status filtering. Fetches `/api/releases/current-prod` and `/api/releases` (with optional `status` and `cursor` params); supports load-more pagination via `next_cursor`. Each release row links to `ReleaseDetailPage`.
 - `ReleaseDetailPage`: full detail view for a single release at `/releases/:id`. Fetches `/api/releases/:id`. Shows status, bootstrap flag, reject reason, and a per-node validation results table. Each row with a `dbt_log_uri` includes an inline log viewer that fetches `/api/releases/log?key=<uri>` on demand.
@@ -251,5 +378,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 - Mostly read-only; write-side effects are `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), `TriggerRebase` (via `POST /api/schedulers/:id/rebase`), `TriggerSingleNodeRun` (via `POST /api/nodes/:service/:schema/:table/run`), and `TriggerSchedule` (via `POST /api/schedules/:name/trigger`). All trigger calls delegate atomicity and error semantics to `state`.
 - gRPC errors are surfaced as HTTP 500 with the gRPC error message.
 - S3 errors are surfaced as HTTP 502.
+- Auth fails closed: a session-store (Redis) error returns 503 `auth_unavailable`; a request is never passed through unauthenticated.
+- Kubernetes liveness/readiness probes target `GET /healthz`, which is public and bypasses auth; `GET /` serves the SPA shell.
 - `log_s3_key` is stored by `k8s-controller` on task execution records; the UI does not resolve or generate S3 keys itself.
 - `ListAllSchedules` reads from `schedule_catalog`; a schedule not in the catalog (e.g. activated before the catalog was populated) will not appear in the dashboard until the catalog is updated.

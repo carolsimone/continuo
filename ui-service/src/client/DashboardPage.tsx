@@ -5,6 +5,7 @@ import SnapshotTile from './SnapshotTile';
 import Tabs, { useActiveTab } from './Tabs';
 import ReleasesPanel from './ReleasesPanel';
 import NodesCatalogPanel from './NodesCatalogPanel';
+import UserMenu from './auth/UserMenu';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -70,6 +71,7 @@ export default function DashboardPage() {
           <span className="live-badge">
             ● live{lastUpdated ? ` · ${lastUpdated.toLocaleTimeString()}` : ''}
           </span>
+          <UserMenu />
         </div>
       </header>
       <main className="page-content page-content--readable">

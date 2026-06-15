@@ -24,6 +24,10 @@ export default defineConfig({
         target: wsTarget,
         ws: true,
       },
+      '/auth': {
+        target: httpTarget,
+        changeOrigin: true,
+      },
     },
   },
 });
