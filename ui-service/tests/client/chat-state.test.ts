@@ -85,4 +85,23 @@ describe('history + thread', () => {
       { kind: 'assistant', text: 'a', done: true },
     ]);
   });
+
+  it('history replay clears stale streaming/pendingConfirm flags', () => {
+    const stale = { ...initialChatState, streaming: true, pendingConfirm: 'old' };
+    const s = applyServerMessage(stale, { type: 'history', messages: [{ role: 'user', text: 'q' }] });
+    expect(s.streaming).toBe(false);
+    expect(s.pendingConfirm).toBeNull();
+  });
+});
+
+describe('error never leaves input stuck disabled', () => {
+  it('an error while a confirm is pending clears pendingConfirm', () => {
+    let s = applyServerMessage(initialChatState, { type: 'confirm_request', actionId: 'a1', summary: 'x' });
+    expect(s.pendingConfirm).toBe('a1');
+    s = applyServerMessage(s, { type: 'error', code: 'agent_failed', message: 'agent crashed' });
+    expect(s.pendingConfirm).toBeNull();
+    expect(s.items).toContainEqual({ kind: 'error', message: 'agent crashed' });
+    // the confirm item remains in the transcript (unresolved is harmless once the agent is gone)
+    expect(s.items.some((i) => i.kind === 'confirm')).toBe(true);
+  });
 });

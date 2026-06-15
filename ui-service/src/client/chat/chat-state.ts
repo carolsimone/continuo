@@ -42,7 +42,7 @@ export function applyServerMessage(state: ChatState, msg: ServerMessage): ChatSt
             ? { kind: 'tool', command: m.command ?? '' }
             : { kind: 'assistant', text: m.text ?? '', done: true },
       );
-      return { ...state, items };
+      return { ...state, items, streaming: false, pendingConfirm: null };
     }
     case 'tool':
       return { ...state, items: [...state.items, { kind: 'tool', command: msg.command }] };
@@ -73,7 +73,7 @@ export function applyServerMessage(state: ChatState, msg: ServerMessage): ChatSt
         items: [...state.items, { kind: 'confirm', actionId: msg.actionId, summary: msg.summary, resolved: null }],
       };
     case 'error':
-      return { ...state, streaming: false, items: [...state.items, { kind: 'error', message: msg.message }] };
+      return { ...state, streaming: false, pendingConfirm: null, items: [...state.items, { kind: 'error', message: msg.message }] };
     default:
       return state;
   }
