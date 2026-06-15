@@ -94,6 +94,22 @@ describe('history + thread', () => {
   });
 });
 
+describe('thread_not_found recovery', () => {
+  it('clears the threadId so the next connection opens a fresh thread', () => {
+    let s = applyServerMessage(initialChatState, { type: 'thread', threadId: 't-gone' });
+    expect(s.threadId).toBe('t-gone');
+    s = applyServerMessage(s, { type: 'error', code: 'thread_not_found', message: 'not found' });
+    expect(s.threadId).toBeNull();
+    expect(s.items).toContainEqual({ kind: 'error', message: 'not found' });
+  });
+
+  it('leaves the threadId intact for a generic error', () => {
+    let s = applyServerMessage(initialChatState, { type: 'thread', threadId: 't-1' });
+    s = applyServerMessage(s, { type: 'error', code: 'agent_unavailable', message: 'down' });
+    expect(s.threadId).toBe('t-1');
+  });
+});
+
 describe('error never leaves input stuck disabled', () => {
   it('an error while a confirm is pending clears pendingConfirm', () => {
     let s = applyServerMessage(initialChatState, { type: 'confirm_request', actionId: 'a1', summary: 'x' });

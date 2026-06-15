@@ -72,8 +72,13 @@ export function applyServerMessage(state: ChatState, msg: ServerMessage): ChatSt
         pendingConfirm: msg.actionId,
         items: [...state.items, { kind: 'confirm', actionId: msg.actionId, summary: msg.summary, resolved: null }],
       };
-    case 'error':
-      return { ...state, streaming: false, pendingConfirm: null, items: [...state.items, { kind: 'error', message: msg.message }] };
+    case 'error': {
+      // thread_not_found means the resumed thread is gone or not ours; drop the
+      // threadId so the next connection opens a fresh thread instead of retrying
+      // the missing one.
+      const threadId = msg.code === 'thread_not_found' ? null : state.threadId;
+      return { ...state, threadId, streaming: false, pendingConfirm: null, items: [...state.items, { kind: 'error', message: msg.message }] };
+    }
     default:
       return state;
   }
