@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -74,6 +75,30 @@ func EnvOrDefault(key, fallback string) string {
 // EnvIntOrDefault reads an integer environment variable with a fallback default.
 func EnvIntOrDefault(key string, fallback int) int {
 	return envInt(key, fallback)
+}
+
+// EnvBoolOrDefault reads a boolean environment variable with a fallback
+// default. Accepts the values accepted by strconv.ParseBool (true/false, 1/0,
+// t/f, T/F, TRUE/FALSE, etc.) plus "yes"/"no" and "on"/"off"
+// (case-insensitive). An unset, empty, or unrecognized value yields the
+// fallback without panicking.
+func EnvBoolOrDefault(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	// strconv.ParseBool handles: 1/0, t/f, T/F, TRUE/FALSE, true/false.
+	if b, err := strconv.ParseBool(v); err == nil {
+		return b
+	}
+	// Extend with yes/no and on/off.
+	switch strings.ToLower(v) {
+	case "yes", "on":
+		return true
+	case "no", "off":
+		return false
+	}
+	return fallback
 }
 
 // EnvDurationOrDefault reads a Go duration environment variable (e.g. "15s",

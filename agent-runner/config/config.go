@@ -63,7 +63,7 @@ func Load(v *pkgconfig.Validator) Config {
 		RateLimitPerMinute:  pkgconfig.EnvIntOrDefault("CHAT_RATE_LIMIT_PER_MINUTE", 20),
 		RetentionDays:       pkgconfig.EnvIntOrDefault("RETENTION_DAYS", 30),
 		RetentionSweepEvery: pkgconfig.EnvDurationOrDefault("RETENTION_SWEEP_EVERY", 24*time.Hour),
-		RetentionArchiveS3:  pkgconfig.EnvOrDefault("RETENTION_ARCHIVE_S3", "false") == "true",
+		RetentionArchiveS3:  pkgconfig.EnvBoolOrDefault("RETENTION_ARCHIVE_S3", false),
 		ShutdownGrace:       pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", 10*time.Second),
 	}
 	switch cfg.LLMProvider {
@@ -74,7 +74,9 @@ func Load(v *pkgconfig.Validator) Config {
 			v.Add("LLM_BASE_URL")
 		}
 	default:
-		v.Add("LLM_PROVIDER (must be anthropic|openai|openai-compatible)")
+		if cfg.LLMProvider != "" {
+			v.Add("LLM_PROVIDER (must be anthropic|openai|openai-compatible)")
+		}
 	}
 	return cfg
 }

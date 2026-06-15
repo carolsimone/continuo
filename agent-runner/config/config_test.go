@@ -48,3 +48,23 @@ func TestLoad_RejectsUnknownProvider(t *testing.T) {
 	Load(v)
 	assert.Contains(t, v.Missing(), "LLM_PROVIDER (must be anthropic|openai|openai-compatible)")
 }
+
+func TestLoad_UnsetProvider_SingleMissingEntry(t *testing.T) {
+	setBaseEnv(t)
+	// Override the base env to leave LLM_PROVIDER unset (empty string).
+	t.Setenv("LLM_PROVIDER", "")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	missing := v.Missing()
+	// Count occurrences of the plain "LLM_PROVIDER" key — must be exactly one.
+	count := 0
+	for _, m := range missing {
+		if m == "LLM_PROVIDER" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "LLM_PROVIDER should appear exactly once in missing list, got %v", missing)
+	// The descriptive "(must be ...)" variant must NOT appear when the var is simply unset.
+	assert.NotContains(t, missing, "LLM_PROVIDER (must be anthropic|openai|openai-compatible)",
+		"descriptive entry must not fire for an unset provider, got %v", missing)
+}

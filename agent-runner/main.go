@@ -14,7 +14,7 @@ func main() {
 	v := &pkgconfig.Validator{}
 	cfg := config.Load(v)
 	if missing := v.Missing(); len(missing) > 0 {
-		logger.Error("missing required env vars", "vars", strings.Join(missing, ", "))
+		logger.Error("startup configuration errors", "vars", strings.Join(missing, ", "))
 		os.Exit(1)
 	}
 	_ = cfg

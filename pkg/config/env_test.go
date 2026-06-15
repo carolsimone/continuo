@@ -86,3 +86,36 @@ func TestValidator_Add_records_entry(t *testing.T) {
 		t.Fatalf("want [MY_CUSTOM_VAR (must be foo|bar)], got %v", missing)
 	}
 }
+
+func TestEnvBoolOrDefault(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    string
+		unset    bool
+		fallback bool
+		want     bool
+	}{
+		{name: "unset uses fallback true", unset: true, fallback: true, want: true},
+		{name: "unset uses fallback false", unset: true, fallback: false, want: false},
+		{name: "true", value: "true", want: true},
+		{name: "1", value: "1", want: true},
+		{name: "True", value: "True", want: true},
+		{name: "false", value: "false", want: false},
+		{name: "0", value: "0", want: false},
+		{name: "unrecognized uses fallback", value: "maybe", fallback: false, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			const key = "TEST_BOOL_VAR"
+			if tc.unset {
+				os.Unsetenv(key)
+			} else {
+				t.Setenv(key, tc.value)
+			}
+			got := EnvBoolOrDefault(key, tc.fallback)
+			if got != tc.want {
+				t.Fatalf("EnvBoolOrDefault(%q, %v) = %v, want %v", tc.value, tc.fallback, got, tc.want)
+			}
+		})
+	}
+}
