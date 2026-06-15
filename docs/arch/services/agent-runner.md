@@ -22,7 +22,7 @@ The LLM provider is operator-configured per deployment. Three provider types are
 | `openai` | OpenAI API (`LLM_API_KEY`, `LLM_MODEL`) |
 | `openai-compatible` | Any OpenAI-compatible endpoint (`LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`) |
 
-All provider communication is outbound HTTPS. agent-runner holds no Redis connections and participates in no Redis Streams.
+All provider communication is outbound HTTPS. agent-runner participates in no Redis Streams. It opens a single Redis connection only when `REDIS_ADDR` is set, used exclusively for the shared per-user rate limiter (see Scaling).
 
 ## Tool Execution
 
@@ -124,6 +124,19 @@ The `continuo` binary is bundled in the agent-runner container image. It is invo
 | `CONTINUO_ORCHESTRATOR_ADDR` | required | gRPC address of the `orchestrator` service (forwarded to CLI subprocess) |
 | `RETENTION_DAYS` | `30` | Threads idle longer than this are deleted by the retention job |
 | `RETENTION_ARCHIVE_S3` | `false` | When `true`, each thread is archived to S3 (`S3_BUCKET`) before deletion |
+| `CHAT_RATE_LIMIT_PER_MINUTE` | `20` | Per-user message quota per rolling one-minute window |
+| `REDIS_ADDR` | `""` (unset) | When set, the per-user rate limiter uses this shared Redis so the limit is global across replicas; empty selects the process-local in-memory limiter |
+| `REDIS_PASSWORD` | `""` | Password for `REDIS_ADDR` |
+| `CHAT_MAX_CONCURRENT_SESSIONS` | `100` | Maximum concurrent chat streams per instance; excess connections are rejected with gRPC `ResourceExhausted` (`0` = unlimited) |
+
+## Scaling
+
+agent-runner runs at `replicas: 1` by default. Two guards bound its load:
+
+- **Per-user rate limit.** Each user is capped at `CHAT_RATE_LIMIT_PER_MINUTE` messages per rolling minute. The limiter has two implementations behind one port: an in-memory sliding window (process-local) and a Redis-backed sliding window (global). When `REDIS_ADDR` is set the Redis limiter is used so the per-user limit is enforced across all replicas; when unset the in-memory limiter applies and the limit is per-process. A transient Redis failure fails open (the message is allowed and the error logged) so a limiter outage cannot block legitimate users.
+- **Concurrent-session cap.** Each instance serves at most `CHAT_MAX_CONCURRENT_SESSIONS` live `Chat` streams (each holds a goroutine and an upstream provider stream open). Connections beyond the cap are rejected with gRPC `ResourceExhausted`; the slot is released when a stream ends.
+
+Before scaling agent-runner past one replica, set `REDIS_ADDR`/`REDIS_PASSWORD` so the rate limit stays global.
 
 ## Dependencies
 
@@ -133,6 +146,7 @@ The `continuo` binary is bundled in the agent-runner container image. It is invo
 | `orchestrator` | Via `continuo` CLI subprocess over public gRPC (port 50052) |
 | LLM provider | HTTPS egress |
 | `continuo_agent` Postgres | Direct connection via `POSTGRES_DSN` |
+| Redis | Direct connection via `REDIS_ADDR` (optional; shared rate limiter only) |
 | S3 | AWS SDK `PutObject` (optional, retention-job only) |
 
 agent-runner holds no direct gRPC stubs for `state` or `orchestrator` and imports none of their source packages. All system reads happen through the `continuo` CLI subprocess, which uses only those services' public interfaces.

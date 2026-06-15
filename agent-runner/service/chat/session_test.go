@@ -15,6 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// allowAllLimiter is a ports.RateLimiter that never throttles, used where a
+// test exercises session behaviour unrelated to rate limiting.
+type allowAllLimiter struct{}
+
+func (allowAllLimiter) Allow(context.Context, string) (bool, error) { return true, nil }
+
 type fakeRepo struct {
 	mu      sync.Mutex
 	threads map[uuid.UUID]*domain.Thread
@@ -164,7 +170,7 @@ func newTestSession(t *testing.T, provider *scriptedProvider, exec *fakeExecutor
 	sink := newSink()
 	s, err := NewSession(context.Background(), Deps{
 		Provider: provider, Catalog: &fakeCatalog{defs: defs}, Executor: exec, Repo: repo,
-		Limiter: NewRateLimiter(100),
+		Limiter: allowAllLimiter{},
 		Cfg: Config{
 			SystemPrompt: "sys", MaxIterations: 5, MaxTurnTokens: 100000,
 			WindowTokens: 100000, ConfirmTTL: 50 * time.Millisecond,
@@ -326,7 +332,7 @@ func TestSession_NoRetryAfterPartialStream(t *testing.T) {
 	sink := newSink()
 	s, err := NewSession(context.Background(), Deps{
 		Provider: provider, Catalog: &fakeCatalog{defs: nil}, Executor: &fakeExecutor{}, Repo: repo,
-		Limiter: NewRateLimiter(100),
+		Limiter: allowAllLimiter{},
 		Cfg: Config{
 			SystemPrompt: "sys", MaxIterations: 5, MaxTurnTokens: 100000,
 			WindowTokens: 100000, ConfirmTTL: 50 * time.Millisecond,
@@ -370,7 +376,7 @@ func TestSession_RunStopsOnContextCancel(t *testing.T) {
 	sink := newSink()
 	s, err := NewSession(context.Background(), Deps{
 		Provider: provider, Catalog: &fakeCatalog{defs: nil}, Executor: &fakeExecutor{}, Repo: repo,
-		Limiter: NewRateLimiter(100),
+		Limiter: allowAllLimiter{},
 		Cfg: Config{
 			SystemPrompt: "sys", MaxIterations: 5, MaxTurnTokens: 100000,
 			WindowTokens: 100000, ConfirmTTL: 50 * time.Millisecond,
@@ -423,7 +429,7 @@ func TestSession_InterruptCancelsInFlightTurn(t *testing.T) {
 	sink := newSink()
 	s, err := NewSession(context.Background(), Deps{
 		Provider: provider, Catalog: &fakeCatalog{defs: nil}, Executor: &fakeExecutor{}, Repo: repo,
-		Limiter: NewRateLimiter(100),
+		Limiter: allowAllLimiter{},
 		Cfg: Config{
 			SystemPrompt: "sys", MaxIterations: 5, MaxTurnTokens: 100000,
 			WindowTokens: 100000, ConfirmTTL: 50 * time.Millisecond,

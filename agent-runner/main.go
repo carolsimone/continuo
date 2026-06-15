@@ -17,6 +17,7 @@ import (
 	agenthttp "github.com/carolsimone/continuo/agent-runner/adapters/http"
 	adapteropenai "github.com/carolsimone/continuo/agent-runner/adapters/openai"
 	"github.com/carolsimone/continuo/agent-runner/adapters/postgres"
+	"github.com/carolsimone/continuo/agent-runner/adapters/ratelimit"
 	"github.com/carolsimone/continuo/agent-runner/adapters/s3"
 	"github.com/carolsimone/continuo/agent-runner/config"
 	"github.com/carolsimone/continuo/agent-runner/internal/lifecycle"
@@ -28,6 +29,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -120,6 +122,32 @@ func main() {
 
 	repo := postgres.NewThreadRepository(db)
 
+	// Rate limiter. With more than one replica the per-user limit must be
+	// enforced from a shared store, otherwise it degrades to per-replica. When
+	// REDIS_ADDR is set we use the Redis-backed limiter (global across
+	// replicas); otherwise the process-local in-memory limiter (single replica).
+	var limiter ports.RateLimiter
+	if cfg.RedisAddr != "" {
+		redisClient := goredis.NewClient(&goredis.Options{
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
+			DB:       0,
+		})
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			logger.Error("failed to connect to Redis for rate limiting", "addr", cfg.RedisAddr, "error", err)
+			os.Exit(1)
+		}
+		logger.Info("Redis connection established for shared rate limiting", "addr", cfg.RedisAddr)
+		lifecycleManager.RegisterShutdownHandler(func(_ context.Context) error {
+			logger.Info("Closing Redis connection")
+			return redisClient.Close()
+		})
+		limiter = ratelimit.NewRedis(redisClient, cfg.RateLimitPerMinute)
+	} else {
+		logger.Info("REDIS_ADDR unset; using in-memory rate limiter (single replica)")
+		limiter = ratelimit.NewMemory(cfg.RateLimitPerMinute)
+	}
+
 	// Optional S3 archiver for thread retention.
 	var archiver ports.Archiver
 	if cfg.RetentionArchiveS3 {
@@ -141,7 +169,7 @@ func main() {
 		Catalog:  catalog,
 		Executor: executor,
 		Repo:     repo,
-		Limiter:  chat.NewRateLimiter(cfg.RateLimitPerMinute),
+		Limiter:  limiter,
 		Logger:   logger,
 		Cfg: chat.Config{
 			SystemPrompt:  cfg.SystemPrompt,
@@ -173,7 +201,7 @@ func main() {
 		os.Exit(1)
 	}
 	grpcSrv := grpc.NewServer(grpc.StreamInterceptor(streamRecovery))
-	agentchatv1.RegisterAgentChatServer(grpcSrv, grpcserver.NewServer(deps, logger))
+	agentchatv1.RegisterAgentChatServer(grpcSrv, grpcserver.NewServer(deps, logger, cfg.MaxConcurrentSessions))
 
 	// Register gRPC server shutdown (LIFO order: gRPC first, then health, then DB).
 	lifecycleManager.RegisterShutdownHandler(func(_ context.Context) error {
