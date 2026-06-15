@@ -40,6 +40,7 @@ Errors:
 		Annotations: map[string]string{
 			"output_schema": `{"schedule_id":"string","schedule_name":"string","triggered_at":"string"}`,
 			"exit_codes":    `[0,2,3,4,5,6]`,
+			"mutating":      "true",
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {

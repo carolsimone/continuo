@@ -29,6 +29,7 @@ type describeCmd struct {
 	Examples     []string        `json:"examples"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 	ExitCodes    json.RawMessage `json:"exit_codes,omitempty"`
+	Mutating     bool            `json:"mutating,omitempty"`
 }
 
 type describePayload struct {
@@ -148,6 +149,9 @@ func toDescribeCmd(root, c *cobra.Command) describeCmd {
 	}
 	if v, ok := c.Annotations["exit_codes"]; ok && json.Valid([]byte(v)) {
 		dc.ExitCodes = json.RawMessage(v)
+	}
+	if c.Annotations["mutating"] == "true" {
+		dc.Mutating = true
 	}
 	return dc
 }
