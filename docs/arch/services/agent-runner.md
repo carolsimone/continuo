@@ -139,7 +139,7 @@ agent-runner holds no direct gRPC stubs for `state` or `orchestrator` and import
 
 ## Reliability Notes
 
-- The gRPC `AgentChat.Chat` stream is held open for the duration of a WebSocket connection. If the stream is interrupted, `ui-service` reconnects and the client resumes by sending its thread context in the next `user_message`.
-- Pending tool confirmations survive agent-runner restarts: `pending_actions` rows are persisted in Postgres and re-surfaced to the client on stream resume.
+- The gRPC `AgentChat.Chat` stream is held open for the duration of a WebSocket connection. If the stream is interrupted, `ui-service` reconnects and the client resumes the thread; on reconnect the agent replays the stored message history.
+- A pending tool confirmation does not survive a disconnect: if the stream drops (or the service restarts) while awaiting approval, the `pending_actions` row is resolved as `expired` and the mutating tool is not run. This is deliberate — a mutating action requires a live, explicit approval, so it is never executed off a stale confirmation. The persisted row records the outcome for audit; after reconnecting the user re-asks and a fresh `confirm_request` is issued.
 - Missing `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `POSTGRES_DSN`, `CONTINUO_STATE_ADDR`, or `CONTINUO_ORCHESTRATOR_ADDR` cause the process to exit before accepting any traffic (`pkg/config.Validator`).
 - LLM provider errors are returned to the client as `error` ServerEvents; they do not crash the stream.

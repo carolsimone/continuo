@@ -433,6 +433,11 @@ drained:
 	for {
 		select {
 		case <-ctx.Done():
+			// A disconnect (WebSocket/gRPC drop or shutdown) deliberately expires
+			// the pending action: a mutating tool must never run without a live,
+			// explicit approval, so a confirmation does NOT survive a reconnect.
+			// The persisted row records the expired outcome for audit; on resume
+			// the client re-asks and a fresh confirm_request is issued.
 			_ = s.deps.Repo.ResolvePendingAction(context.Background(), action.ID, domain.ActionExpired)
 			return denial
 
