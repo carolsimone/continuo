@@ -12,6 +12,7 @@ flowchart LR
     MC[manifest-controller]
     RC[release-controller]
     UI[ui-service]
+    AR[agent-runner]
   end
 
   subgraph Storage
@@ -20,9 +21,11 @@ flowchart LR
     GRDB[(Neo4j: graph)]
     ECPG[(Postgres: executor_deployments/executor_outbox/message_processing/cancelled_schedules)]
     KCPG[(Postgres: k8s_outbox/message_processing)]
+    AGPG[(Postgres: continuo_agent)]
     S3[(S3/LocalStack)]
     K8S[(Kubernetes API)]
     R[(Redis)]
+    LLM[(LLM provider HTTPS)]
   end
 
   ST --> STDB
@@ -30,6 +33,7 @@ flowchart LR
   OR --> ORPG
   EC --> ECPG
   KC --> KCPG
+  AR --> AGPG
 
   ST <--> R
   OR <--> R
@@ -44,12 +48,15 @@ flowchart LR
   KC --> ST
   UI --> ST
   UI --> OR
+  UI --> AR
 
   EC --> K8S
   KC --> K8S
   KC --> S3
   MC --> S3
   RC --> S3
+  AR -.-> S3
+  AR --> LLM
 ```
 
 ## Redis Topology
@@ -131,6 +138,7 @@ flowchart TD
 | Cancelled schedule guard (local copy) | `orchestrator`, `executor-controller`, `k8s-controller` | Postgres (`cancelled_schedules`) |
 | Candidate manifest parsing and dependency resolution | `manifest-controller` | Redis + S3 |
 | UI/API facade + login sessions | `ui-service` | Redis (plain `uisession:` keys, `AUTH_MODE=oidc`); gRPC reads/writes to `state` and `orchestrator` |
+| LLM agent conversations and tool execution | `agent-runner` | Postgres `continuo_agent` (`threads`, `messages`, `pending_actions`) |
 | `topology_generation` counter and run-isolation snapshot | `orchestrator` | Postgres (`topology_state`) + Neo4j (`:TopologyRoot`, `Run`, `EXECUTES`) |
 
 ## Key Architectural Rules
@@ -143,6 +151,8 @@ flowchart TD
 - The controller services use local Postgres outbox and dedup tables to make cross-service messaging reliable.
 - The `deploy/infra` Helm chart provisions the shared infrastructure stack (`Postgres`, `Redis`, `Neo4j`) as cluster-internal defaults and initializes the service databases in one Postgres instance. Local docker-compose uses `POSTGRES_PASSWORD=continuo` (superuser) and `REDIS_PASSWORD=continuo`.
 - `manifest-controller` parses candidate manifests and resolves dependencies; it does not orchestrate execution.
+- `agent-runner` serves gRPC `AgentChat` (bidirectional streaming, port 50053) and health (port 8091). It is cluster-internal; browsers reach it only through `ui-service`'s `/ws/chat` WebSocket relay. It runs an LLM tool-use loop against an operator-configured provider (Anthropic, OpenAI, or any OpenAI-compatible endpoint) over HTTPS. Tools are derived from the bundled `continuo` CLI self-description and executed by spawning that binary via direct argv exec (no shell). The CLI subprocess reaches `state` and `orchestrator` exclusively through their public gRPC interfaces (ports 50051 / 50052); agent-runner never imports or connects to any service internals. Mutating tools are gated behind a human confirmation step before execution. Conversations are persisted in the `continuo_agent` Postgres database and optionally archived to S3. Chat uses no Redis Streams.
+- `ui-service` relays browser chat over the `/ws/chat` WebSocket (operator-only, feature-flagged by `CHAT_BRIDGE_ENABLED`) onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-runner`, forwarding the authenticated user identity. The browser-to-ui-service leg is WebSocket (JSON frames); the ui-service-to-agent-runner leg is gRPC bidi streaming.
 - Topology enters production exclusively through releases: `POST /releases` on `release-controller` emits `release.requested:v1`, `manifest-controller` parses the candidate manifests and publishes `manifest.loaded.candidate:v1`, and after validation `release-controller` promotes via `release.promoted:v1`.
 - `ui-service` is read-only apart from the run-trigger write endpoints (`TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`), which it issues as gRPC calls to `state`. It is the system's only HTTP edge and authenticates users via OIDC (OpenID Connect); its only Redis use is the `uisession:` login-session keyspace (plain keys in `AUTH_MODE=oidc`) — it produces and consumes no Redis Streams.
 - `schedule.cancelled:v1` is published by `state` via the outbox processor and consumed independently by `orchestrator`, `executor-controller`, and `k8s-controller` (each with its own consumer group). Each consumer maintains a local `cancelled_schedules` Postgres table populated from this stream and uses it as a hot-path guard to suppress further processing for cancelled runs. Rows are swept after a configurable TTL (default 24h).

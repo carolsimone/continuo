@@ -16,7 +16,7 @@ It provides:
 - rebase triggering: proxies `POST /api/schedulers/:id/rebase` to the `TriggerRebase` gRPC method on `state`
 - single-node run triggering: proxies `POST /api/nodes/:service/:schema/:table/run` to the `TriggerSingleNodeRun` gRPC method on `state`
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`
-- a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): a WebSocket (WS) endpoint that exposes a Large Language Model (LLM) agent which inspects schedule status, task status, and dependency graphs via the `continuo` CLI (Command-Line Interface); mutating commands are blocked by a deny-list, the WebSocket upgrade is operator-only, and the endpoint is gated off outside local development
+- a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): an operator-only WebSocket (WS) endpoint that relays browser messages over a bidirectional gRPC stream to `agent-runner`, which runs the LLM (Large Language Model) tool-use loop; the WebSocket upgrade is operator-only and the endpoint is gated off by default
 
 Its only datastore is Redis, used in `AUTH_MODE=oidc` for server-side login sessions under plain `uisession:` keys (not Redis Streams). It owns no Postgres or Neo4j storage.
 
@@ -118,59 +118,44 @@ Deployment surfaces:
 
 Operator setup, including configuring an identity provider and a no-domain Google loopback flow for testing, is documented in `deploy/app/AUTH.md`.
 
-## Chat Bridge
+## Chat Relay
 
 ### Overview
 
-`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image (which runs `node dist-server/index.js` without the flag). Local development enables it via the `dev` npm script. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the bridge is enabled, so the default/production configuration shows no chat panel rather than a permanently disconnected one. The endpoint upgrade is authenticated: only a session with the `operator` role may open `/ws/chat`; anything else is rejected with HTTP 401 before the WebSocket is established (audited as `ws_denied`). Browser upgrade requests whose `Origin` header does not match the deployment origin (derived from `AUTH_PUBLIC_URL`) are rejected with HTTP 403 before authentication is attempted, preventing cross-site WebSocket hijacking. Requests with no `Origin` header (non-browser clients) are not subject to this check. The origin check is skipped in `dev` mode. Operating the bridge in a shared or production environment additionally requires the `claude` and `continuo` binaries present in the runtime image with Claude credentials, plus connection limits and Application Programming Interface (API) budget quotas on the endpoint — none of which are provided today.
+`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the feature is enabled.
 
-Each incoming WebSocket connection receives one dedicated headless `claude` subprocess. The subprocess runs in streaming-JSON mode:
+The endpoint upgrade is authenticated: only a session with the `operator` role may open `/ws/chat`; anything else is rejected with HTTP 401 before the WebSocket is established (audited as `ws_denied`). Browser upgrade requests whose `Origin` header does not match the deployment origin (derived from `AUTH_PUBLIC_URL`) are rejected with HTTP 403 before authentication is attempted, preventing cross-site WebSocket hijacking. Requests with no `Origin` header (non-browser clients) are not subject to this check. The origin check is skipped in `dev` mode.
 
-```
-claude -p --input-format stream-json --output-format stream-json --verbose
-```
-
-Read-only behavior is enforced by a deny-list, not the allow-list. In headless `claude -p` mode the `--allowedTools` list does not act as a default-deny — tool calls are auto-approved — so the intended read surface (`Bash(continuo schedule status:*)`, `Bash(continuo schedule list:*)`, `Bash(continuo schedule graph:*)`, `Bash(continuo describe:*)`) is documentation of intent rather than a boundary. The boundary is `--disallowedTools`, which Claude Code does honor: `Bash(continuo schedule trigger:*)` is denied, so the mutating command cannot run. The system prompt additionally instructs read-only behavior as defense in depth. This is best-effort confinement for local development only: the subprocess is not sandboxed against arbitrary shell, so it runs with the developer's privileges. That unsandboxed subprocess is why the endpoint stays gated off outside local development even though the upgrade itself is operator-only. The agent inspects the system by shelling out to the `continuo` CLI, which in turn reads `state` and `orchestrator` over gRPC (Remote Procedure Call). The `claude` process itself has no direct gRPC or Redis connections.
-
-The spawned `claude` process (and the `continuo` CLI it invokes) receive `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` in their environment, mapped from the ui-service server's `STATE_GRPC_ADDR` and `ORCHESTRATOR_GRPC_ADDR`, so the CLI reaches the same `state` and `orchestrator` gRPC endpoints the ui-service uses.
-
-### Process lifetime and session continuity
-
-One subprocess is created per WebSocket connection. The bridge captures the Claude session ID from the first response. The subprocess signals termination exactly once whether it exits normally or fails to spawn; on the next user turn the bridge respawns it and passes `--resume <session_id>` so the conversation resumes without loss of context. A `new_chat` message from the client terminates any existing subprocess, clears the session ID, and starts a fresh conversation. The browser chat socket reconnects automatically with capped exponential backoff, reusing the stored session ID, after a disconnect.
+Each incoming WebSocket connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-runner` (`AGENT_RUNNER_GRPC_ADDR`, default `localhost:50053`). `ui-service` forwards the authenticated `user_id` in the initial stream metadata. The browser-to-ui-service leg is WebSocket (JSON frames); the ui-service-to-agent-runner leg is gRPC bidi streaming. `ui-service` performs no LLM calls and holds no agent state; it is a transport relay.
 
 ### Message contract
 
-**Client → server messages** (JSON over WebSocket):
+**Client → server messages** (JSON over WebSocket, relayed as `ClientEvent` proto to agent-runner):
 
 | `type` | Payload | Meaning |
 |---|---|---|
-| `user_message` | `{ "text": string }` | User turn to relay to the `claude` subprocess |
-| `new_chat` | `{}` | Reset the current conversation and start a new one |
+| `user_message` | `{ "text": string }` | User turn forwarded to the agent loop in agent-runner |
+| `new_chat` | `{}` | Start a fresh conversation thread |
+| `approve` | `{ "action_id": string }` | Approve a pending mutating tool call |
+| `reject` | `{ "action_id": string }` | Reject a pending mutating tool call |
 
-Incoming frames are validated before use: anything that is not valid JSON, or that decodes to a non-object (e.g. `null`, a number, an array), is dropped silently, as is a `user_message` whose `text` is not a string. A malformed frame can therefore never throw an uncaught exception and tear down the server.
+Incoming frames are validated before use: anything that is not valid JSON, or that decodes to a non-object (e.g. `null`, a number, an array), is dropped silently.
 
-**Server → client messages** (JSON over WebSocket):
+**Server → client messages** (JSON over WebSocket, translated from `ServerEvent` proto from agent-runner):
 
 | `type` | Payload | Meaning |
 |---|---|---|
-| `session` | `{ "sessionId": string }` | Captured Claude session ID; sent once after the first response |
-| `tool` | `{ "command": string }` | Tool call in flight (for UI progress indication) |
-| `text` | `{ "text": string }` | Assistant text for the current turn (emitted at whole-message granularity, not token-by-token) |
-| `final` | `{ "text": string }` | Complete assistant response, marking the turn as done |
-| `error` | `{ "code": string, "message": string }` | Bridge or subprocess error |
+| `text` | `{ "text": string }` | Agent text for the current turn |
+| `tool_call` | `{ "tool": string, "args": object }` | Tool call in flight (for UI progress indication) |
+| `tool_result` | `{ "tool": string, "result": string }` | Tool execution outcome |
+| `confirm_request` | `{ "action_id": string, "tool": string, "args": object }` | Mutating tool pending human confirmation |
+| `final` | `{ "text": string }` | Complete agent response, marking the turn as done |
+| `error` | `{ "code": string, "message": string }` | Agent or relay error |
+| `history` | `{ "messages": array }` | Prior conversation history on thread resume |
 
 ### Scope and constraints
 
-A deny-list (`--disallowedTools`) blocks the mutating `continuo schedule trigger`; the agent is steered to the read-only surface below by the system prompt and the documented allow-list. The `continuo` CLI commands surfaced are:
-
-| Command | Data read |
-|---|---|
-| `schedule list` | All schedules and their last-run status |
-| `schedule status <name>` | Per-node task status of a schedule's latest run |
-| `schedule graph <name>` | Dependency graph (nodes and edges) |
-| `describe` | Machine-readable command catalog |
-
-No backend service contracts, storage ownership, Redis Streams flows, or gRPC interfaces change as a result of the chat bridge. The bridge introduces no new outbound connections beyond what the `continuo` CLI already makes to `state` and `orchestrator`.
+`ui-service` is a pure transport relay for chat. All agent logic, tool execution, LLM calls, confirmation gating, and conversation persistence are owned by `agent-runner`. `ui-service` introduces no new storage, no Redis Streams, and no direct connections to `state`, `orchestrator`, or LLM providers as a result of the chat relay.
 
 ## Owned Storage
 
@@ -255,7 +240,7 @@ All `/api` routes below require an authenticated session; mutating methods (ever
 
 | Route | Protocol | Description |
 |---|---|---|
-| `/ws/chat` | WebSocket | Chat bridge. Attached only when `CHAT_BRIDGE_ENABLED=true`; absent by default. Browser upgrades whose `Origin` does not match `AUTH_PUBLIC_URL`'s origin are rejected with HTTP 403 before authentication. The upgrade is additionally operator-only — unauthenticated or non-operator upgrades are rejected with HTTP 401. Each connection spawns one `claude` subprocess. See "Chat Bridge" section for the full message contract. |
+| `/ws/chat` | WebSocket | Chat relay. Attached only when `CHAT_BRIDGE_ENABLED=true`; absent by default. Browser upgrades whose `Origin` does not match `AUTH_PUBLIC_URL`'s origin are rejected with HTTP 403 before authentication. The upgrade is additionally operator-only — unauthenticated or non-operator upgrades are rejected with HTTP 401. Each connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-runner`. See "Chat Relay" section for the full message contract. |
 
 #### Frontend
 
@@ -286,6 +271,14 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 | `GetRunGraph` | `GET /api/runs/:run_id/graph` (used both directly and by per-card drift polling on the dashboard) |
 | `ListScheduleTopologies` | `GET /api/topology/schedules` |
 
+### gRPC to `agent-runner` (`AGENT_RUNNER_GRPC_ADDR`, default `localhost:50053`)
+
+| Method | Trigger |
+|---|---|
+| `AgentChat.Chat` (bidirectional streaming) | `/ws/chat` WebSocket connection (operator-only, `CHAT_BRIDGE_ENABLED=true`) |
+
+Each WebSocket connection opens one bidirectional `AgentChat.Chat` gRPC stream. The authenticated `user_id` is forwarded in the stream metadata. WebSocket frames are translated to `ClientEvent` proto messages on the request side; `ServerEvent` proto messages are translated back to JSON WebSocket frames on the response side.
+
 ### HTTP to `release-controller` (`RELEASE_CONTROLLER_URL`, default `http://release-controller:8088`)
 
 | Route proxied | BFF route |
@@ -315,7 +308,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 HTTP(S) to the IdP: issuer discovery at boot (retried with backoff; the process exits if discovery never succeeds) and the token-endpoint exchange during `/auth/callback`. IdP downtime after boot blocks only new logins; active sessions keep working.
 
-Beyond the session keyspace above, `ui-service` reaches backends through gRPC (`state`, `orchestrator`), HTTP (`release-controller`, the IdP), and S3 (log proxy); it neither produces nor consumes Redis Streams.
+Beyond the session keyspace above, `ui-service` reaches backends through gRPC (`state`, `orchestrator`, `agent-runner`), HTTP (`release-controller`, the IdP), and S3 (log proxy); it neither produces nor consumes Redis Streams.
 
 ## What It Reads
 
