@@ -9,7 +9,7 @@ POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
 # Single source of truth: every database this job owns. The same list drives
 # both the create-loop and the flyway-loop below, so they cannot drift.
-DATABASES="state executor orchestrator k8s release"
+DATABASES="state executor orchestrator k8s release agent-runner"
 
 # -connectRetries rides out Postgres cold start. Kept low enough that a genuine
 # misconfiguration surfaces well within the Helm pre-upgrade hook timeout rather
