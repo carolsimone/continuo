@@ -203,15 +203,20 @@ func (s *Session) Close() {
 	<-s.done
 }
 
+// defaultMaxResponseTokens is the per-call token cap sent to the provider.
+// It bounds individual completions independently of the cumulative turn budget.
+const defaultMaxResponseTokens = 4096
+
 // Run is the main event loop. It must be started in a goroutine by the
-// caller. It runs until the session context is cancelled (via Close).
-// The ctx parameter is ignored in favour of the session's internal context
-// so that Close() is the single stop mechanism.
-func (s *Session) Run(_ context.Context) {
+// caller. It runs until either the provided ctx is cancelled or Close() is
+// called — whichever comes first.
+func (s *Session) Run(ctx context.Context) {
 	defer close(s.done)
 	for {
 		select {
 		case <-s.ctx.Done():
+			return
+		case <-ctx.Done():
 			return
 		case text := <-s.queue:
 			s.runTurn(text)
@@ -253,32 +258,51 @@ func (s *Session) runTurn(text string) {
 			System:    s.deps.Cfg.SystemPrompt,
 			Messages:  msgs,
 			Tools:     s.deps.Catalog.Tools(),
-			MaxTokens: s.deps.Cfg.MaxTurnTokens,
+			MaxTokens: defaultMaxResponseTokens,
 		}
 
 		// Stream one provider turn with one retry on transient failure.
+		// Retry is only attempted if the first attempt streamed nothing; if any
+		// delta was emitted we must not retry (that would duplicate streamed text).
 		var result *ports.TurnResult
-		for attempt := 0; attempt < 2; attempt++ {
-			result, err = s.deps.Provider.StreamTurn(turnCtx, req, func(delta string) {
-				s.sink.Text(delta)
-			})
-			if err == nil {
-				break
-			}
-			if attempt == 0 {
-				continue
-			}
-			// Both attempts failed.
+		var streamed bool
+		result, err = s.deps.Provider.StreamTurn(turnCtx, req, func(delta string) {
+			streamed = true
+			s.sink.Text(delta)
+		})
+		if err != nil {
 			if turnCtx.Err() != nil {
 				s.sink.Final("")
 				return
 			}
-			if strings.Contains(err.Error(), "429") {
-				s.sink.Error("rate_limited", fmt.Sprintf("provider rate limit: %v", err))
-			} else {
-				s.sink.Error("provider_unavailable", fmt.Sprintf("provider error: %v", err))
+			if streamed {
+				// Partial stream already delivered — do not retry to avoid duplication.
+				if strings.Contains(err.Error(), "429") {
+					s.sink.Error("rate_limited", fmt.Sprintf("provider rate limit: %v", err))
+				} else {
+					s.sink.Error("provider_unavailable", fmt.Sprintf("provider error: %v", err))
+				}
+				return
 			}
-			return
+			// Nothing streamed yet — safe to retry once.
+			var streamed2 bool
+			result, err = s.deps.Provider.StreamTurn(turnCtx, req, func(delta string) {
+				streamed2 = true
+				s.sink.Text(delta)
+			})
+			_ = streamed2
+			if err != nil {
+				if turnCtx.Err() != nil {
+					s.sink.Final("")
+					return
+				}
+				if strings.Contains(err.Error(), "429") {
+					s.sink.Error("rate_limited", fmt.Sprintf("provider rate limit: %v", err))
+				} else {
+					s.sink.Error("provider_unavailable", fmt.Sprintf("provider error: %v", err))
+				}
+				return
+			}
 		}
 
 		// Check for interrupt after provider call.
@@ -383,6 +407,18 @@ func (s *Session) executeWithConfirm(ctx context.Context, call ports.ToolCall) p
 			IsError: true,
 		}
 	}
+
+	// Drain any stale confirm replies that arrived before this action was
+	// created. Without this drain, a burst of prior-action replies can fill
+	// the channel and cause the live approval to be dropped.
+	for {
+		select {
+		case <-s.confirms:
+		default:
+			goto drained
+		}
+	}
+drained:
 
 	s.sink.ConfirmRequest(action.ID, action.Summary)
 

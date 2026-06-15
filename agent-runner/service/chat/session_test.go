@@ -281,3 +281,169 @@ func TestSession_QueuedMessagesAnswerInOrder(t *testing.T) {
 	}
 	assert.True(t, i1 >= 0 && i2 > i1, "answers must arrive in order: %v", events)
 }
+
+// partialThenErrorProvider is a scripted provider whose first call streams a
+// delta and then returns an error, simulating a partial-stream failure.
+type partialThenErrorProvider struct {
+	mu      sync.Mutex
+	calls   int
+	results []*ports.TurnResult // fallback results for calls after the first
+}
+
+func (p *partialThenErrorProvider) StreamTurn(_ context.Context, req ports.TurnRequest, onDelta func(string)) (*ports.TurnResult, error) {
+	p.mu.Lock()
+	call := p.calls
+	p.calls++
+	p.mu.Unlock()
+
+	if call == 0 {
+		// First call: emit a delta then fail.
+		onDelta("partial")
+		return nil, fmt.Errorf("transient network error")
+	}
+	// Subsequent calls: return the next scripted result.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.results) == 0 {
+		return nil, fmt.Errorf("provider script exhausted")
+	}
+	r := p.results[0]
+	p.results = p.results[1:]
+	if r.Text != "" {
+		onDelta(r.Text)
+	}
+	return r, nil
+}
+
+func TestSession_NoRetryAfterPartialStream(t *testing.T) {
+	// The provider streams "partial" then fails on the first call. Because a
+	// delta was already emitted, the session must NOT retry (which would
+	// duplicate "partial") and must emit an error event instead.
+	provider := &partialThenErrorProvider{
+		results: []*ports.TurnResult{{Text: "should not appear"}},
+	}
+	repo := newFakeRepo()
+	sink := newSink()
+	s, err := NewSession(context.Background(), Deps{
+		Provider: provider, Catalog: &fakeCatalog{defs: nil}, Executor: &fakeExecutor{}, Repo: repo,
+		Limiter: NewRateLimiter(100),
+		Cfg: Config{
+			SystemPrompt: "sys", MaxIterations: 5, MaxTurnTokens: 100000,
+			WindowTokens: 100000, ConfirmTTL: 50 * time.Millisecond,
+			CLIName: "continuo",
+		},
+	}, "alice", "", sink)
+	require.NoError(t, err)
+	go s.Run(context.Background())
+	t.Cleanup(s.Close)
+
+	s.Enqueue("hello")
+	// Must get an error event (no retry took place).
+	waitFor(t, sink, "error:provider_unavailable")
+
+	// "partial" must appear exactly once — the retry must not have doubled it.
+	count := 0
+	for _, e := range sink.snapshot() {
+		if e == "text:partial" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "streamed delta must appear exactly once, got events: %v", sink.snapshot())
+
+	// "should not appear" must never have been streamed.
+	for _, e := range sink.snapshot() {
+		assert.NotEqual(t, "text:should not appear", e, "retry must not have fired: %v", sink.snapshot())
+	}
+
+	// Provider was only called once (no retry).
+	provider.mu.Lock()
+	calls := provider.calls
+	provider.mu.Unlock()
+	assert.Equal(t, 1, calls, "provider must be called exactly once when a delta was streamed")
+}
+
+func TestSession_RunStopsOnContextCancel(t *testing.T) {
+	// Run(ctx) must return when the provided ctx is cancelled, not just when
+	// Close() is called. This prevents goroutine leaks per connection.
+	provider := &scriptedProvider{}
+	repo := newFakeRepo()
+	sink := newSink()
+	s, err := NewSession(context.Background(), Deps{
+		Provider: provider, Catalog: &fakeCatalog{defs: nil}, Executor: &fakeExecutor{}, Repo: repo,
+		Limiter: NewRateLimiter(100),
+		Cfg: Config{
+			SystemPrompt: "sys", MaxIterations: 5, MaxTurnTokens: 100000,
+			WindowTokens: 100000, ConfirmTTL: 50 * time.Millisecond,
+		},
+	}, "bob", "", sink)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.Run(ctx)
+	}()
+
+	// Cancel the external context and expect Run to return within 1 s.
+	cancel()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// Run returned as expected.
+	case <-time.After(1 * time.Second):
+		t.Fatal("Run did not return after context cancel")
+	}
+	// Close should still work (idempotent).
+	s.Close()
+}
+
+// blockingProvider blocks inside StreamTurn until the turn context is cancelled.
+type blockingProvider struct {
+	inFlight chan struct{} // closed when StreamTurn is entered
+}
+
+func (p *blockingProvider) StreamTurn(ctx context.Context, _ ports.TurnRequest, _ func(string)) (*ports.TurnResult, error) {
+	close(p.inFlight)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestSession_InterruptCancelsInFlightTurn(t *testing.T) {
+	// A blocking provider parks inside StreamTurn. Calling Interrupt() must
+	// cancel the turn context, causing the provider to return, and the session
+	// must emit a final:"" (empty final) event.
+	provider := &blockingProvider{inFlight: make(chan struct{})}
+	repo := newFakeRepo()
+	sink := newSink()
+	s, err := NewSession(context.Background(), Deps{
+		Provider: provider, Catalog: &fakeCatalog{defs: nil}, Executor: &fakeExecutor{}, Repo: repo,
+		Limiter: NewRateLimiter(100),
+		Cfg: Config{
+			SystemPrompt: "sys", MaxIterations: 5, MaxTurnTokens: 100000,
+			WindowTokens: 100000, ConfirmTTL: 50 * time.Millisecond,
+		},
+	}, "carol", "", sink)
+	require.NoError(t, err)
+	go s.Run(context.Background())
+	t.Cleanup(s.Close)
+
+	s.Enqueue("block me")
+
+	// Wait until the provider is in-flight.
+	select {
+	case <-provider.inFlight:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider never entered StreamTurn")
+	}
+
+	s.Interrupt()
+
+	// The turn must end with a final:"" event.
+	waitFor(t, sink, "final:")
+}
