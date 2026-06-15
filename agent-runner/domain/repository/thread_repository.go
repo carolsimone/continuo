@@ -3,11 +3,16 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/carolsimone/continuo/agent-runner/domain"
 	"github.com/google/uuid"
 )
+
+// ErrNotFound is returned when a thread or pending action does not exist (or is
+// not owned by the requesting user). Callers map it to a not-found result.
+var ErrNotFound = errors.New("agent-runner: not found")
 
 // ThreadRepository persists conversations and pending confirmations.
 type ThreadRepository interface {

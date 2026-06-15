@@ -11,7 +11,7 @@ CREATE TABLE messages (
     id         UUID PRIMARY KEY,
     thread_id  UUID        NOT NULL REFERENCES threads (id) ON DELETE CASCADE,
     seq        INTEGER     NOT NULL,
-    role       TEXT        NOT NULL,
+    role       TEXT        NOT NULL CHECK (role IN ('user','assistant','tool_call','tool_result')),
     content    JSONB       NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     UNIQUE (thread_id, seq)
@@ -23,7 +23,8 @@ CREATE TABLE pending_actions (
     tool       TEXT        NOT NULL,
     args       JSONB       NOT NULL,
     summary    TEXT        NOT NULL,
-    status     TEXT        NOT NULL,
+    status     TEXT        NOT NULL CHECK (status IN ('pending','approved','denied','expired')),
     created_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL
 );
+CREATE INDEX idx_pending_actions_thread_id ON pending_actions (thread_id);

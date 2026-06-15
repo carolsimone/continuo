@@ -50,7 +50,7 @@ func (r *ThreadRepository) GetThread(ctx context.Context, id uuid.UUID, userID s
 	var t domain.Thread
 	err := r.db.QueryRowContext(ctx, q, id, userID).Scan(&t.ID, &t.UserID, &t.CreatedAt, &t.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("thread %s not found or not owned by user %s", id, userID)
+		return nil, fmt.Errorf("get thread %s for user %s: %w", id, userID, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get thread %s: %w", id, err)
@@ -66,6 +66,12 @@ func (r *ThreadRepository) AppendMessage(ctx context.Context, threadID uuid.UUID
 		return nil, fmt.Errorf("begin tx for append message: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	// Lock the thread row so concurrent appends to the same thread serialize and
+	// cannot compute the same next seq (which would collide on UNIQUE(thread_id,seq)).
+	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM threads WHERE id = $1 FOR UPDATE`, threadID); err != nil {
+		return nil, fmt.Errorf("lock thread %s: %w", threadID, err)
+	}
 
 	// Compute the next sequence number atomically inside the transaction.
 	var seq int
@@ -108,7 +114,7 @@ func (r *ThreadRepository) ListMessages(ctx context.Context, threadID uuid.UUID)
 	}
 	defer rows.Close()
 
-	var msgs []domain.Message
+	out := []domain.Message{}
 	for rows.Next() {
 		var m domain.Message
 		var role string
@@ -118,12 +124,12 @@ func (r *ThreadRepository) ListMessages(ctx context.Context, threadID uuid.UUID)
 		}
 		m.Role = domain.Role(role)
 		m.Content = json.RawMessage(content)
-		msgs = append(msgs, m)
+		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate messages for thread %s: %w", threadID, err)
 	}
-	return msgs, nil
+	return out, nil
 }
 
 // CreatePendingAction inserts a PendingAction, marshaling Args to JSONB.
@@ -141,10 +147,11 @@ func (r *ThreadRepository) CreatePendingAction(ctx context.Context, a *domain.Pe
 }
 
 // ResolvePendingAction transitions a pending action from "pending" to the given
-// status. Returns an error if the action is not found or has already been resolved.
+// status. Returns an error wrapping repository.ErrNotFound if the action is not
+// found or has already been resolved.
 func (r *ThreadRepository) ResolvePendingAction(ctx context.Context, id uuid.UUID, status domain.ActionStatus) error {
-	const q = `UPDATE pending_actions SET status = $1 WHERE id = $2 AND status = 'pending'`
-	res, err := r.db.ExecContext(ctx, q, string(status), id)
+	const q = `UPDATE pending_actions SET status = $1 WHERE id = $2 AND status = $3`
+	res, err := r.db.ExecContext(ctx, q, string(status), id, string(domain.ActionPending))
 	if err != nil {
 		return fmt.Errorf("resolve pending action %s: %w", id, err)
 	}
@@ -153,7 +160,7 @@ func (r *ThreadRepository) ResolvePendingAction(ctx context.Context, id uuid.UUI
 		return fmt.Errorf("rows affected for resolve pending action %s: %w", id, err)
 	}
 	if n == 0 {
-		return fmt.Errorf("pending action %s: not found or already resolved", id)
+		return fmt.Errorf("resolve pending action %s: %w", id, repository.ErrNotFound)
 	}
 	return nil
 }
