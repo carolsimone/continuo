@@ -21,8 +21,11 @@ export function toClientEvent(msg: ClientMessage): object | null {
     case 'new_chat':
       return { new_chat: {} };
     case 'confirm_response':
-      return typeof msg.actionId === 'string'
-        ? { confirm_response: { action_id: msg.actionId, approved: Boolean(msg.approved) } }
+      // approved must be a real boolean: Boolean("false") is true, so coercing a
+      // malformed frame would silently approve a mutating action. Drop anything
+      // that isn't a literal boolean (the pending action then safely expires).
+      return typeof msg.actionId === 'string' && typeof msg.approved === 'boolean'
+        ? { confirm_response: { action_id: msg.actionId, approved: msg.approved } }
         : null;
     case 'interrupt':
       return { interrupt: {} };
