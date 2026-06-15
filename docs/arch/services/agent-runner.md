@@ -34,7 +34,7 @@ When the LLM requests a tool call, agent-runner:
 2. Validates the arguments against the per-command schema (malformed or injected flags are rejected).
 3. Classifies the tool as read-only or mutating based on the CLI annotation in `continuo describe`.
 4. For read-only tools: spawns the `continuo` binary via direct argv exec (no shell) and streams the result back.
-5. For mutating tools: persists a `pending_actions` row in Postgres, emits a `confirm_request` event to the client, and waits. Execution only proceeds on an explicit `approve` message; a `reject` message discards the action.
+5. For mutating tools: persists a `pending_actions` row in Postgres, emits a `confirm_request` event to the client, and waits. Execution only proceeds on an explicit `confirm_response` with `approved: true`; `approved: false` discards the action.
 
 The `continuo` CLI subprocess reaches `state` (port 50051) and `orchestrator` (port 50052) over their public gRPC interfaces. agent-runner holds no direct connections to those services and imports none of their internals.
 
@@ -44,11 +44,11 @@ Postgres database `continuo_agent`:
 
 | Table | Contents |
 |---|---|
-| `threads` | One row per conversation thread: `thread_id`, `user_id`, `created_at`, `last_active_at` |
-| `messages` | Full turn history: role (`user` / `assistant`), content, timestamp, `thread_id` foreign key |
-| `pending_actions` | Tool calls awaiting human confirmation: `action_id`, `thread_id`, tool name, serialized args, created timestamp |
+| `threads` | One row per conversation thread: `id` (UUID PK), `user_id`, `created_at`, `updated_at` |
+| `messages` | Full turn history: `id` (UUID PK), `thread_id` FK, `seq`, role (`user` / `assistant` / `tool_call` / `tool_result`), `content` (JSONB), `created_at` |
+| `pending_actions` | Tool calls awaiting human confirmation: `id` (UUID PK), `thread_id` FK, `tool`, `args` (JSONB), `summary`, `status` (`pending` / `approved` / `denied` / `expired`), `created_at`, `expires_at` |
 
-The retention job runs on a configurable interval and deletes threads whose `last_active_at` is older than `RETENTION_DAYS`. When `ARCHIVE_BUCKET` is set, each thread is written to S3 at `chat-archive/<user_id>/<thread_id>.json` before deletion.
+The retention job runs on a configurable interval and deletes threads whose `updated_at` is older than `RETENTION_DAYS`. When `RETENTION_ARCHIVE_S3=true`, each thread is written to S3 at `chat-archive/<user_id>/<thread_id>.json` before deletion.
 
 ## Inbound Interfaces
 
@@ -56,32 +56,33 @@ The retention job runs on a configurable interval and deletes threads whose `las
 
 | Service | RPC | Description |
 |---|---|---|
-| `AgentChat` | `Chat(stream ClientEvent) returns (stream ServerEvent)` | Bidirectional streaming chat. The authenticated `user_id` arrives in the stream metadata (forwarded by `ui-service` from the browser session). Each request stream carries `ClientEvent` messages; responses are `ServerEvent` messages. |
+| `AgentChat` | `Chat(stream ClientEvent) returns (stream ServerEvent)` | Bidirectional streaming chat. The authenticated `user_id` arrives in the first `Open` event on the request stream (sent by `ui-service` immediately after the stream is established). Each request stream carries `ClientEvent` messages; responses are `ServerEvent` messages. |
 
 #### Health
 
-Port 8091: standard HTTP health endpoint (`/healthz`), public; Kubernetes liveness/readiness probes target it.
+Port 8091: HTTP health endpoints `/health` (liveness) and `/ready` (readiness); Kubernetes liveness/readiness probes target these paths.
 
 ### ClientEvent types (inbound stream)
 
 | Type | Payload | Meaning |
 |---|---|---|
+| `open` | `user_id`, `thread_id` | MUST be the first event; identifies the user and optionally resumes an existing thread |
 | `user_message` | `text` | User turn; drives one iteration of the LLM tool-use loop |
 | `new_chat` | — | Start a fresh thread (abandons the current thread context) |
-| `approve` | `action_id` | Approve a pending mutating tool call |
-| `reject` | `action_id` | Reject a pending mutating tool call |
+| `confirm_response` | `action_id`, `approved` | Approve (`approved: true`) or deny (`approved: false`) a pending mutating tool call |
+| `interrupt` | — | Cancel the in-flight turn |
 
 ### ServerEvent types (outbound stream)
 
 | Type | Payload | Meaning |
 |---|---|---|
-| `text` | `text` | Partial or complete assistant text for the current turn |
-| `tool_call` | `tool`, `args` | Tool call in flight |
-| `tool_result` | `tool`, `result` | Tool execution outcome |
-| `confirm_request` | `action_id`, `tool`, `args` | Mutating tool pending human confirmation |
-| `final` | `text` | Complete assistant response; marks the turn as done |
-| `error` | `code`, `message` | Agent or execution error |
+| `thread` | `thread_id` | Thread UUID, emitted immediately after session creation or resume |
 | `history` | `messages` | Prior conversation messages on thread resume |
+| `tool` | `command` | Human-readable CLI command string for an upcoming tool execution |
+| `text` | `text` | Streaming assistant text delta for the current turn |
+| `final` | `text` | Complete assistant response; marks the turn as done |
+| `confirm_request` | `action_id`, `summary` | Mutating tool pending human confirmation |
+| `error` | `code`, `message` | Agent or execution error |
 
 ## Outbound Interfaces
 
@@ -106,7 +107,7 @@ The `continuo` binary is bundled in the agent-runner container image. It is invo
 
 | Operation | Key pattern | Trigger |
 |---|---|---|
-| `PutObject` | `chat-archive/<user_id>/<thread_id>.json` | Retention job, when `ARCHIVE_BUCKET` is configured |
+| `PutObject` | `chat-archive/<user_id>/<thread_id>.json` | Retention job, when `RETENTION_ARCHIVE_S3=true` |
 
 ## Configuration
 
@@ -122,7 +123,7 @@ The `continuo` binary is bundled in the agent-runner container image. It is invo
 | `CONTINUO_STATE_ADDR` | required | gRPC address of the `state` service (forwarded to CLI subprocess) |
 | `CONTINUO_ORCHESTRATOR_ADDR` | required | gRPC address of the `orchestrator` service (forwarded to CLI subprocess) |
 | `RETENTION_DAYS` | `30` | Threads idle longer than this are deleted by the retention job |
-| `ARCHIVE_BUCKET` | empty (disabled) | S3 bucket for conversation archives before deletion |
+| `RETENTION_ARCHIVE_S3` | `false` | When `true`, each thread is archived to S3 (`S3_BUCKET`) before deletion |
 
 ## Dependencies
 

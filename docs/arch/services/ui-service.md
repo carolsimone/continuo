@@ -126,7 +126,7 @@ Operator setup, including configuring an identity provider and a no-domain Googl
 
 The endpoint upgrade is authenticated: only a session with the `operator` role may open `/ws/chat`; anything else is rejected with HTTP 401 before the WebSocket is established (audited as `ws_denied`). Browser upgrade requests whose `Origin` header does not match the deployment origin (derived from `AUTH_PUBLIC_URL`) are rejected with HTTP 403 before authentication is attempted, preventing cross-site WebSocket hijacking. Requests with no `Origin` header (non-browser clients) are not subject to this check. The origin check is skipped in `dev` mode.
 
-Each incoming WebSocket connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-runner` (`AGENT_RUNNER_GRPC_ADDR`, default `localhost:50053`). `ui-service` forwards the authenticated `user_id` in the initial stream metadata. The browser-to-ui-service leg is WebSocket (JSON frames); the ui-service-to-agent-runner leg is gRPC bidi streaming. `ui-service` performs no LLM calls and holds no agent state; it is a transport relay.
+Each incoming WebSocket connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-runner` (`AGENT_RUNNER_GRPC_ADDR`, default `localhost:50053`). `ui-service` forwards the authenticated `user_id` in the first `Open` event written to the gRPC stream (carrying `user_id` and the optional `thread_id` query parameter). The browser-to-ui-service leg is WebSocket (JSON frames); the ui-service-to-agent-runner leg is gRPC bidi streaming. `ui-service` performs no LLM calls and holds no agent state; it is a transport relay.
 
 ### Message contract
 
@@ -136,8 +136,8 @@ Each incoming WebSocket connection is relayed 1:1 onto a bidirectional gRPC `Age
 |---|---|---|
 | `user_message` | `{ "text": string }` | User turn forwarded to the agent loop in agent-runner |
 | `new_chat` | `{}` | Start a fresh conversation thread |
-| `approve` | `{ "action_id": string }` | Approve a pending mutating tool call |
-| `reject` | `{ "action_id": string }` | Reject a pending mutating tool call |
+| `confirm_response` | `{ "actionId": string, "approved": boolean }` | Approve (`true`) or deny (`false`) a pending mutating tool call |
+| `interrupt` | `{}` | Cancel the in-flight turn |
 
 Incoming frames are validated before use: anything that is not valid JSON, or that decodes to a non-object (e.g. `null`, a number, an array), is dropped silently.
 
@@ -145,13 +145,13 @@ Incoming frames are validated before use: anything that is not valid JSON, or th
 
 | `type` | Payload | Meaning |
 |---|---|---|
-| `text` | `{ "text": string }` | Agent text for the current turn |
-| `tool_call` | `{ "tool": string, "args": object }` | Tool call in flight (for UI progress indication) |
-| `tool_result` | `{ "tool": string, "result": string }` | Tool execution outcome |
-| `confirm_request` | `{ "action_id": string, "tool": string, "args": object }` | Mutating tool pending human confirmation |
-| `final` | `{ "text": string }` | Complete agent response, marking the turn as done |
-| `error` | `{ "code": string, "message": string }` | Agent or relay error |
+| `thread` | `{ "threadId": string }` | Thread UUID, emitted after session creation or resume |
 | `history` | `{ "messages": array }` | Prior conversation history on thread resume |
+| `tool` | `{ "command": string }` | Human-readable CLI command string for an upcoming tool execution |
+| `text` | `{ "text": string }` | Streaming agent text delta for the current turn |
+| `final` | `{ "text": string }` | Complete agent response, marking the turn as done |
+| `confirm_request` | `{ "actionId": string, "summary": string }` | Mutating tool pending human confirmation |
+| `error` | `{ "code": string, "message": string }` | Agent or relay error |
 
 ### Scope and constraints
 
@@ -277,7 +277,7 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 |---|---|
 | `AgentChat.Chat` (bidirectional streaming) | `/ws/chat` WebSocket connection (operator-only, `CHAT_BRIDGE_ENABLED=true`) |
 
-Each WebSocket connection opens one bidirectional `AgentChat.Chat` gRPC stream. The authenticated `user_id` is forwarded in the stream metadata. WebSocket frames are translated to `ClientEvent` proto messages on the request side; `ServerEvent` proto messages are translated back to JSON WebSocket frames on the response side.
+Each WebSocket connection opens one bidirectional `AgentChat.Chat` gRPC stream. The authenticated `user_id` is forwarded in the first `Open` event written to the stream (alongside the optional `thread_id` taken from the WebSocket URL query parameter). WebSocket frames are translated to `ClientEvent` proto messages on the request side; `ServerEvent` proto messages are translated back to JSON WebSocket frames on the response side.
 
 ### HTTP to `release-controller` (`RELEASE_CONTROLLER_URL`, default `http://release-controller:8088`)
 

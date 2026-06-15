@@ -167,7 +167,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | gRPC server methods owned | `AgentChat.Chat` (bidirectional streaming; port 50053, cluster-internal) |
 | Redis consumes | none |
 | Redis produces | none |
-| Outbound connections | LLM provider HTTPS (Anthropic Messages API, OpenAI, or any OpenAI-compatible endpoint; operator-configured via `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`); S3 `PutObject` (optional chat-archive to `chat-archive/<user>/<thread>.json` on thread expiry, enabled by `ARCHIVE_BUCKET`); `continuo` CLI subprocess (argv exec, no shell) which in turn calls `state` gRPC (port 50051) and `orchestrator` gRPC (port 50052) |
+| Outbound connections | LLM provider HTTPS (Anthropic Messages API, OpenAI, or any OpenAI-compatible endpoint; operator-configured via `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`); S3 `PutObject` (optional chat-archive to `chat-archive/<user>/<thread>.json` on thread expiry, enabled when `RETENTION_ARCHIVE_S3=true`); `continuo` CLI subprocess (argv exec, no shell) which in turn calls `state` gRPC (port 50051) and `orchestrator` gRPC (port 50052) |
 
 ### Invariants
 
@@ -175,7 +175,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 - **Direct argv exec, no shell.** CLI tools are executed by spawning the `continuo` binary directly via OS exec (no shell interposition). Arguments are validated against the catalog (membership check, schema check, no flag injection) before the process is created.
 - **Read-only tools run immediately; mutating tools require confirmation.** The agent loop emits a `confirm_request` event to the client and persists a `PendingAction` row in Postgres before any tool annotated as mutating executes. Execution only proceeds on an explicit `approve` message from the client. No mutation can occur without a round-trip human approval.
 - **No direct gRPC connections to backend services.** agent-runner never imports or holds connections to `state`, `orchestrator`, or any other service internals. All system reads happen through the `continuo` CLI subprocess, which uses the services' public gRPC interfaces.
-- **Conversation persistence and retention.** Threads and messages are persisted in `continuo_agent`; a background retention job deletes threads idle past `RETENTION_DAYS`. When `ARCHIVE_BUCKET` is configured, each thread is written to S3 as a JSON archive before deletion.
+- **Conversation persistence and retention.** Threads and messages are persisted in `continuo_agent`; a background retention job deletes threads idle past `RETENTION_DAYS`. When `RETENTION_ARCHIVE_S3=true`, each thread is written to S3 as a JSON archive before deletion.
 
 ## `continuo CLI`
 

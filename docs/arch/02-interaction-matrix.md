@@ -96,7 +96,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `manifest-controller` | read | `download_file` (the `manifest.json` files named in the `release.requested:v1` `manifest_keys` list; no S3 listing) |
 | `k8s-controller` | write | `PutObject` |
 | `ui-service` | read | `GetObject` — task-execution pod logs (proxied via `GET /api/task-executions/:id/logs`) and dbt validation logs (proxied via `GET /api/releases/log`) |
-| `agent-runner` | write (optional) | `PutObject` — conversation archive to `chat-archive/<user>/<thread>.json` before a thread is deleted by the retention job; enabled by `ARCHIVE_BUCKET` env var |
+| `agent-runner` | write (optional) | `PutObject` — conversation archive to `chat-archive/<user>/<thread>.json` before a thread is deleted by the retention job; enabled when `RETENTION_ARCHIVE_S3=true` |
 
 ## Local Durable State by Service
 
