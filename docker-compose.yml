@@ -65,7 +65,7 @@ services:
     image: flyway/flyway
     command: migrate -url=jdbc:postgresql://postgres:5432/continuo_agent -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
-      - ./db/migration/agent-runner:/flyway/sql
+      - ./db/migration/agent:/flyway/sql
     depends_on:
       - postgres
     tty: true

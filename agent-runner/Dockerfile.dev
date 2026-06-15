@@ -42,10 +42,10 @@ RUN cd /cli && CGO_ENABLED=0 go build -o /usr/local/bin/continuo ./cmd/continuo
 COPY pkg/ ./pkg/
 COPY agent-runner/ ./agent-runner/
 
-# agent-runner/test loads db/migration/agent-runner/V*.sql at test runtime
+# agent-runner/test loads db/migration/agent/V*.sql at test runtime
 # so the in-container integration tests apply the same Flyway DDL as
 # production.
-COPY db/migration/agent-runner/ ./db/migration/agent-runner/
+COPY db/migration/agent/ ./db/migration/agent/
 
 WORKDIR /app/agent-runner
 

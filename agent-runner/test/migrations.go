@@ -9,7 +9,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/testmigrations"
 )
 
-// ApplyMigrations runs every Flyway migration in db/migration/agent-runner/
+// ApplyMigrations runs every Flyway migration in db/migration/agent/
 // against the provided *sql.DB, in ascending version order. Keeps integration
 // tests in lock-step with production schema.
 //
@@ -24,7 +24,7 @@ func ApplyMigrations(db *sql.DB) error {
 	return testmigrations.Apply(db, dir)
 }
 
-// agentRunnerMigrationDir returns the absolute path to db/migration/agent-runner/
+// agentRunnerMigrationDir returns the absolute path to db/migration/agent/
 // as a sibling of agent-runner/ at the repo root.
 func agentRunnerMigrationDir() (string, error) {
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -34,5 +34,5 @@ func agentRunnerMigrationDir() (string, error) {
 	// thisFile = <repo>/agent-runner/test/migrations.go
 	// filepath.Dir x3: test → agent-runner → repo root
 	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	return filepath.Join(repoRoot, "db", "migration", "agent-runner"), nil
+	return filepath.Join(repoRoot, "db", "migration", "agent"), nil
 }
