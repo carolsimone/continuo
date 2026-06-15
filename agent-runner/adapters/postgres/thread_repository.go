@@ -199,3 +199,21 @@ func (r *ThreadRepository) DeleteThread(ctx context.Context, id uuid.UUID) error
 	}
 	return nil
 }
+
+// DeleteThreadIfIdle deletes the thread only if it is still idle
+// (updated_at < idleSince). It returns false when a message arrived after the
+// retention sweep selected the thread (refreshing updated_at), so an active
+// thread is never removed by a stale idle-selection. Messages and pending
+// actions cascade.
+func (r *ThreadRepository) DeleteThreadIfIdle(ctx context.Context, id uuid.UUID, idleSince time.Time) (bool, error) {
+	const q = `DELETE FROM threads WHERE id = $1 AND updated_at < $2`
+	res, err := r.db.ExecContext(ctx, q, id, idleSince)
+	if err != nil {
+		return false, fmt.Errorf("conditional delete thread %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected for thread %s: %w", id, err)
+	}
+	return n > 0, nil
+}

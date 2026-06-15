@@ -169,3 +169,28 @@ func TestThreadRepository_PendingActionsAndRetention(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, repository.ErrNotFound), "expected ErrNotFound after delete, got: %v", err)
 }
+
+func TestThreadRepository_DeleteThreadIfIdle(t *testing.T) {
+	truncateTables(t)
+	repo := postgres.NewThreadRepository(sharedDB)
+	ctx := context.Background()
+
+	th, err := repo.CreateThread(ctx, "alice")
+	require.NoError(t, err)
+
+	// A cutoff BEFORE the thread's updated_at = thread is still active → no delete.
+	pastCutoff := time.Now().UTC().Add(-time.Hour)
+	deleted, err := repo.DeleteThreadIfIdle(ctx, th.ID, pastCutoff)
+	require.NoError(t, err)
+	assert.False(t, deleted, "an active thread (updated_at >= cutoff) must not be deleted")
+	_, err = repo.GetThread(ctx, th.ID, "alice")
+	require.NoError(t, err, "thread must still exist after a skipped conditional delete")
+
+	// A cutoff AFTER the thread's updated_at = genuinely idle → delete.
+	futureCutoff := time.Now().UTC().Add(time.Hour)
+	deleted, err = repo.DeleteThreadIfIdle(ctx, th.ID, futureCutoff)
+	require.NoError(t, err)
+	assert.True(t, deleted, "an idle thread (updated_at < cutoff) must be deleted")
+	_, err = repo.GetThread(ctx, th.ID, "alice")
+	assert.True(t, errors.Is(err, repository.ErrNotFound), "thread must be gone after conditional delete")
+}

@@ -12,8 +12,9 @@ import (
 )
 
 type stubRepo struct {
-	idle    []domain.Thread
-	deleted []uuid.UUID
+	idle      []domain.Thread
+	deleted   []uuid.UUID
+	nowActive map[uuid.UUID]bool // threads that became active after selection
 }
 
 func (s *stubRepo) ListIdleThreads(context.Context, time.Time, int) ([]domain.Thread, error) {
@@ -24,9 +25,12 @@ func (s *stubRepo) ListIdleThreads(context.Context, time.Time, int) ([]domain.Th
 func (s *stubRepo) ListMessages(context.Context, uuid.UUID) ([]domain.Message, error) {
 	return []domain.Message{{Role: domain.RoleUser}}, nil
 }
-func (s *stubRepo) DeleteThread(_ context.Context, id uuid.UUID) error {
+func (s *stubRepo) DeleteThreadIfIdle(_ context.Context, id uuid.UUID, _ time.Time) (bool, error) {
+	if s.nowActive[id] {
+		return false, nil // raced: a message arrived, no longer idle
+	}
 	s.deleted = append(s.deleted, id)
-	return nil
+	return true, nil
 }
 
 type recordingArchiver struct{ archived []uuid.UUID }
@@ -52,4 +56,13 @@ func TestSweep_ArchivesBeforeDeleteWhenConfigured(t *testing.T) {
 	require.NoError(t, job.Sweep(context.Background()))
 	assert.Equal(t, []uuid.UUID{th.ID}, arch.archived)
 	assert.Equal(t, []uuid.UUID{th.ID}, repo.deleted)
+}
+
+func TestSweep_SkipsThreadThatBecameActive(t *testing.T) {
+	th := domain.Thread{ID: uuid.New()}
+	// Selected as idle, but a message arrived before the conditional delete.
+	repo := &stubRepo{idle: []domain.Thread{th}, nowActive: map[uuid.UUID]bool{th.ID: true}}
+	job := NewJob(repo, nil, 30, nil)
+	require.NoError(t, job.Sweep(context.Background()))
+	assert.Empty(t, repo.deleted, "a now-active thread must not be deleted")
 }

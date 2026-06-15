@@ -15,7 +15,11 @@ import (
 type Repo interface {
 	ListIdleThreads(ctx context.Context, cutoff time.Time, limit int) ([]domain.Thread, error)
 	ListMessages(ctx context.Context, threadID uuid.UUID) ([]domain.Message, error)
-	DeleteThread(ctx context.Context, id uuid.UUID) error
+	// DeleteThreadIfIdle atomically deletes the thread only if it is still idle
+	// (updated_at < idleSince), returning false if a message arrived after the
+	// thread was selected and refreshed updated_at. This closes the race between
+	// ListIdleThreads selecting a thread and the sweep deleting it.
+	DeleteThreadIfIdle(ctx context.Context, id uuid.UUID, idleSince time.Time) (bool, error)
 }
 
 // Job deletes threads idle past the retention window, optionally archiving
@@ -71,8 +75,14 @@ func (j *Job) Sweep(ctx context.Context) error {
 					return fmt.Errorf("archive thread %s: %w", th.ID, err)
 				}
 			}
-			if err := j.repo.DeleteThread(ctx, th.ID); err != nil {
+			deleted, err := j.repo.DeleteThreadIfIdle(ctx, th.ID, cutoff)
+			if err != nil {
 				return err
+			}
+			if !deleted {
+				// A message arrived after selection; the thread is active again.
+				j.logger.Info("retention skipped now-active thread", "thread_id", th.ID.String())
+				continue
 			}
 			j.logger.Info("retention removed thread", "thread_id", th.ID.String(), "archived", j.archiver != nil)
 		}
