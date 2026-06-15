@@ -140,4 +140,39 @@ describe('chat gRPC relay (operator session)', () => {
     ws.close();
     await vi.waitFor(() => expect(stream.cancelled).toBe(true));
   });
+
+  it('does not crash when a message is sent after the stream errors', async () => {
+    const { stream, url } = await setup();
+    const ws = new WebSocket(url);
+    await connected(ws);
+
+    // Collect all messages received by the client.
+    const received: any[] = [];
+    ws.on('message', (d) => received.push(JSON.parse(d.toString())));
+
+    // Emit a non-CANCELLED stream error — this should send an error frame and
+    // close the WebSocket.
+    stream.emit('error', new Error('boom'));
+
+    // Wait for the error frame to arrive.
+    await vi.waitFor(() => expect(received.length).toBeGreaterThan(0));
+    expect(received[0]).toMatchObject({ type: 'error', code: 'agent_unavailable' });
+
+    // Wait for the socket to be closed by the server.
+    await vi.waitFor(() => expect(ws.readyState).toBe(WebSocket.CLOSED));
+
+    // Attempt to send a message AFTER the stream has errored. This must not
+    // throw ERR_STREAM_DESTROYED or produce an unhandled rejection — it is a
+    // no-op because the WebSocket is already closed.
+    ws.send(JSON.stringify({ type: 'user_message', text: 'after' }));
+
+    // Allow the event loop to drain so any synchronous throws or unhandled
+    // promise rejections would surface before the assertion.
+    await new Promise((r) => setImmediate(r));
+
+    // The stream write method must not have been called after the error (only
+    // the initial open write was present before the error).
+    const writeCountAtError = stream.written.length;
+    expect(writeCountAtError).toBe(1); // only the open frame
+  });
 });

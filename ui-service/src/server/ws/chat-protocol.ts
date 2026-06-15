@@ -33,20 +33,20 @@ export function toClientEvent(msg: ClientMessage): object | null {
 
 // fromServerEvent maps a gRPC ServerEvent to the ws JSON frame (null = skip).
 export function fromServerEvent(ev: any): ServerMessage | null {
-  if (ev.thread) return { type: 'thread', threadId: ev.thread.thread_id };
+  if (ev.thread) return { type: 'thread', threadId: ev.thread.thread_id ?? '' };
   if (ev.history) {
     const messages = (ev.history.messages ?? []).map((m: any) => ({
       role: m.role,
-      ...(m.text ? { text: m.text } : {}),
-      ...(m.command ? { command: m.command } : {}),
+      ...(m.text != null ? { text: m.text ?? '' } : {}),
+      ...(m.command != null ? { command: m.command ?? '' } : {}),
     }));
     return { type: 'history', messages };
   }
-  if (ev.tool) return { type: 'tool', command: ev.tool.command };
-  if (ev.text) return { type: 'text', text: ev.text.text };
+  if (ev.tool) return { type: 'tool', command: ev.tool.command ?? '' };
+  if (ev.text) return { type: 'text', text: ev.text.text ?? '' };
   if (ev.final) return { type: 'final', text: ev.final.text ?? '' };
   if (ev.confirm_request)
-    return { type: 'confirm_request', actionId: ev.confirm_request.action_id, summary: ev.confirm_request.summary };
+    return { type: 'confirm_request', actionId: ev.confirm_request.action_id ?? '', summary: ev.confirm_request.summary ?? '' };
   if (ev.error) return { type: 'error', code: ev.error.code, message: ev.error.message };
   return null;
 }

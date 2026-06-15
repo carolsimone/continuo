@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage, Server } from 'http';
+import { status as grpcStatus } from '@grpc/grpc-js';
 import type { AgentChatStream } from '../agent-client';
 import type { ClientMessage } from './chat-protocol';
 import { toClientEvent, fromServerEvent } from './chat-protocol';
@@ -83,6 +84,11 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions): WebSoc
       return;
     }
 
+    // Tracks whether the gRPC stream is still usable. Set to false on stream
+    // error or socket close so late message handlers never attempt a write to a
+    // destroyed stream (which would throw ERR_STREAM_DESTROYED).
+    let streamAlive = true;
+
     stream.write({ open: { user_id: user.userId, thread_id: threadId } });
 
     stream.on('data', (ev) => {
@@ -90,8 +96,16 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions): WebSoc
       if (msg) sendJSON(ws, msg);
     });
 
-    stream.on('error', (err) => {
-      sendJSON(ws, { type: 'error', code: 'agent_unavailable', message: err.message });
+    stream.on('error', (err: any) => {
+      // A CANCELLED status means we triggered stream.cancel() ourselves (e.g.
+      // on socket close). That is a clean teardown — do not surface it as an
+      // error to the client.
+      const isCancelled = err?.code === grpcStatus.CANCELLED;
+      if (!isCancelled) {
+        sendJSON(ws, { type: 'error', code: 'agent_unavailable', message: err.message });
+      }
+      streamAlive = false;
+      ws.close();
     });
 
     stream.on('end', () => {
@@ -111,10 +125,30 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions): WebSoc
       if (typeof raw !== 'object' || raw === null) return;
       const parsed = raw as ClientMessage;
       const ev = toClientEvent(parsed);
-      if (ev) stream.write(ev);
+      if (!ev) return;
+      if (!streamAlive) {
+        sendJSON(ws, { type: 'error', code: 'agent_unavailable', message: 'stream closed' });
+        ws.close();
+        return;
+      }
+      try {
+        stream.write(ev);
+      } catch (writeErr: any) {
+        sendJSON(ws, { type: 'error', code: 'agent_unavailable', message: writeErr?.message ?? 'write failed' });
+        ws.close();
+      }
     });
 
-    ws.on('close', () => stream.cancel());
+    // Absorb WebSocket-level errors (e.g. ECONNRESET) so they never become
+    // unhandled exceptions. Tear down the gRPC stream when the socket errors.
+    ws.on('error', () => {
+      try { stream.cancel(); } catch {}
+    });
+
+    ws.on('close', () => {
+      streamAlive = false;
+      try { stream.cancel(); } catch {}
+    });
   });
 
   return wss;
