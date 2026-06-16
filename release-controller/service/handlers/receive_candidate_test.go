@@ -17,6 +17,8 @@ func TestReceiveCandidate_PersistsAsReceived(t *testing.T) {
 		Service:   "service-1",
 		ReleaseID: "sha-abc",
 		ImageTag:  "sha-abc",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	r, err := store.GetRelease("sha-abc")
@@ -32,6 +34,8 @@ func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
 		Service:   "svc",
 		ReleaseID: "sha-abc",
 		ImageTag:  "sha-abc",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
@@ -77,8 +81,34 @@ func TestReceiveCandidate_PersistsBootstrapFlag(t *testing.T) {
 		ReleaseID: "rBoot",
 		ImageTag:  "sha-a",
 		Bootstrap: true,
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}))
 	r, err := store.GetRelease("rBoot")
 	require.NoError(t, err)
 	assert.True(t, r.IsBootstrap())
+}
+
+func TestReceiveCandidate_RejectsEmptyRepo(t *testing.T) {
+	deps, _ := newDeps(time.Unix(100, 0).UTC())
+	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service:   "svc",
+		ReleaseID: "sha-abc",
+		ImageTag:  "t",
+		Repo:      "",
+		CommitSHA: "deadbeef",
+	})
+	assert.Error(t, err)
+}
+
+func TestReceiveCandidate_RejectsEmptyCommitSHA(t *testing.T) {
+	deps, _ := newDeps(time.Unix(100, 0).UTC())
+	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service:   "svc",
+		ReleaseID: "sha-abc",
+		ImageTag:  "t",
+		Repo:      "acme/demo",
+		CommitSHA: "",
+	})
+	assert.Error(t, err)
 }

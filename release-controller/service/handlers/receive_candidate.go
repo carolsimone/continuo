@@ -9,16 +9,20 @@ import (
 )
 
 // ReceiveCandidateInput carries the fields required to register a new release
-// candidate. Service, ReleaseID, and ImageTag are mandatory; Bootstrap is
-// optional (defaults false) and, when true, promotes the release without
-// validation. The manifest-key assembly and image-tag collection for other
-// services happen later in AdvanceQueue, not here, so that we always read the
-// live service_prod pointers at the moment this release becomes active.
+// candidate. Service, ReleaseID, ImageTag, Repo, and CommitSHA are mandatory;
+// Bootstrap is optional (defaults false) and, when true, promotes the release
+// without validation. Repo (GitHub owner/name) and CommitSHA (full SHA) identify
+// the source change so a downstream agent can locate it; they are opaque to
+// release-controller. The manifest-key assembly and image-tag collection for
+// other services happen later in AdvanceQueue, not here, so that we always read
+// the live service_prod pointers at the moment this release becomes active.
 type ReceiveCandidateInput struct {
 	Service   string `json:"service"`
 	ReleaseID string `json:"release_id"`
 	ImageTag  string `json:"image_tag"`
 	Bootstrap bool   `json:"bootstrap"`
+	Repo      string `json:"repo"`
+	CommitSHA string `json:"commit_sha"`
 }
 
 func (i ReceiveCandidateInput) validate() error {
@@ -30,6 +34,12 @@ func (i ReceiveCandidateInput) validate() error {
 	}
 	if i.ImageTag == "" {
 		return errors.New("image_tag is required")
+	}
+	if i.Repo == "" {
+		return errors.New("repo is required")
+	}
+	if i.CommitSHA == "" {
+		return errors.New("commit_sha is required")
 	}
 	return nil
 }
@@ -52,6 +62,8 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return u.Commit()
 	}
 
+	// Repo and CommitSHA are validated above but not yet threaded into the
+	// aggregate; the next change adds them to release.New and the releases row.
 	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, d.Clock.Now())
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
