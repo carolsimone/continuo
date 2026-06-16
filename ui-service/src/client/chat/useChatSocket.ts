@@ -44,6 +44,11 @@ export function useChatSocket(): ChatSocket {
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data) as ServerMessage;
         if (msg.type === 'thread') sessionStorage.setItem(THREAD_KEY, msg.threadId);
+        // A resumed thread that no longer exists (deleted by retention or not
+        // owned by this user) yields thread_not_found and a server-side close.
+        // Forget the stored id so the automatic reconnect opens a fresh thread
+        // rather than re-requesting the missing one in a tight loop.
+        if (msg.type === 'error' && msg.code === 'thread_not_found') sessionStorage.removeItem(THREAD_KEY);
         setState((s) => applyServerMessage(s, msg));
       };
     }

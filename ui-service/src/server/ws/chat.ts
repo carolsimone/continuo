@@ -102,7 +102,13 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions): WebSoc
       // error to the client.
       const isCancelled = err?.code === grpcStatus.CANCELLED;
       if (!isCancelled) {
-        sendJSON(ws, { type: 'error', code: 'agent_unavailable', message: err.message });
+        // Map the gRPC status to a precise client error. agent-runner returns
+        // NOT_FOUND when a resumed thread_id does not exist or is not owned by
+        // the user; surface that distinctly as thread_not_found so the client
+        // can drop its stale thread and start fresh instead of looping on
+        // "agent unavailable". Everything else stays agent_unavailable.
+        const code = err?.code === grpcStatus.NOT_FOUND ? 'thread_not_found' : 'agent_unavailable';
+        sendJSON(ws, { type: 'error', code, message: err?.message ?? 'agent unavailable' });
       }
       streamAlive = false;
       ws.close();

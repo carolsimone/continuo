@@ -3,6 +3,7 @@ import { createServer, Server } from 'http';
 import type { AddressInfo } from 'net';
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
+import { status as grpcStatus } from '@grpc/grpc-js';
 import { attachChatWebSocket } from '../../src/server/ws/chat';
 import type { AuthUser } from '../../src/server/auth/types';
 
@@ -139,6 +140,20 @@ describe('chat gRPC relay (operator session)', () => {
     expect(err.code).toBe('agent_unavailable');
     ws.close();
     await vi.waitFor(() => expect(stream.cancelled).toBe(true));
+  });
+
+  it('maps a gRPC NOT_FOUND stream error to thread_not_found (deleted/foreign thread)', async () => {
+    const { stream, url } = await setup();
+    const ws = new WebSocket(`${url}?threadId=missing`);
+    await connected(ws);
+    const got = nextMessage(ws);
+    const notFound: any = new Error('open session: agent-runner: not found');
+    notFound.code = grpcStatus.NOT_FOUND;
+    stream.emit('error', notFound);
+    const err = await got;
+    expect(err.type).toBe('error');
+    expect(err.code).toBe('thread_not_found');
+    ws.close();
   });
 
   it('does not crash when a message is sent after the stream errors', async () => {
