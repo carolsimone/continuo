@@ -722,6 +722,8 @@ func postRelease(t *testing.T, clients *testClients, service, releaseID, imageTa
 		"release_id": releaseID,
 		"image_tag":  imageTag,
 		"bootstrap":  bootstrap,
+		"repo":       "carolsimone/continuo-dbt-demo",
+		"commit_sha": imageTag,
 	})
 	require.NoError(t, err)
 
