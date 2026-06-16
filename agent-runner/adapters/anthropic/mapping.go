@@ -16,14 +16,20 @@ type wireMessage struct {
 
 // wireBlock is one content block inside a message (text, tool_use, or tool_result).
 type wireBlock struct {
-	Type      string         `json:"type"`
-	Text      string         `json:"text,omitempty"`
-	ID        string         `json:"id,omitempty"`
-	Name      string         `json:"name,omitempty"`
-	Input     map[string]any `json:"input,omitempty"`
-	ToolUseID string         `json:"tool_use_id,omitempty"`
-	Content   string         `json:"content,omitempty"`
-	IsError   bool           `json:"is_error,omitempty"`
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Input is typed as any (not map[string]any) so that a tool_use block with
+	// no arguments still serializes its Anthropic-required "input" field as an
+	// empty object. With omitempty, encoding/json drops an empty map but keeps a
+	// non-nil interface holding one — and the API rejects a tool_use block
+	// without input ("tool_use.input: Field required"). Non-tool_use blocks
+	// leave this as a nil interface, which omitempty correctly omits.
+	Input     any    `json:"input,omitempty"`
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   string `json:"content,omitempty"`
+	IsError   bool   `json:"is_error,omitempty"`
 }
 
 // wireTool is the Anthropic API representation of a tool definition.
