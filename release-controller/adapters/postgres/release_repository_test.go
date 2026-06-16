@@ -299,3 +299,18 @@ func TestReleaseRepository_DeleteResolvedBeforeEmptyKeepSlice(t *testing.T) {
 	gone, _ := repo.Get(ctx, "old-prom")
 	assert.Nil(t, gone)
 }
+
+func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db)
+	ctx := context.Background()
+
+	r := release.New("rPROV", "svc-a", "img-1", false, "acme/demo", "deadbeefcafe1234", time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rPROV")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "acme/demo", got.Repo())
+	assert.Equal(t, "deadbeefcafe1234", got.CommitSHA())
+}
