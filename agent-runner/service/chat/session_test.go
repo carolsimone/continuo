@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/agent-runner/domain"
+	"github.com/carolsimone/continuo/agent-runner/domain/repository"
 	"github.com/carolsimone/continuo/agent-runner/service/ports"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -73,6 +74,24 @@ func (f *fakeRepo) ResolvePendingAction(_ context.Context, id uuid.UUID, s domai
 		return fmt.Errorf("not found")
 	}
 	return a.Resolve(s)
+}
+func (f *fakeRepo) GetPendingAction(_ context.Context, threadID uuid.UUID) (*domain.PendingAction, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now()
+	var latest *domain.PendingAction
+	for _, a := range f.actions {
+		if a.ThreadID != threadID || a.Status != domain.ActionPending || !a.ExpiresAt.After(now) {
+			continue
+		}
+		if latest == nil || a.CreatedAt.After(latest.CreatedAt) {
+			latest = a
+		}
+	}
+	if latest == nil {
+		return nil, repository.ErrNotFound
+	}
+	return latest, nil
 }
 func (f *fakeRepo) ListIdleThreads(context.Context, time.Time, int) ([]domain.Thread, error) {
 	return nil, nil
@@ -167,20 +186,51 @@ func waitFor(t *testing.T, sink *recordingSink, want string) {
 
 func newTestSession(t *testing.T, provider *scriptedProvider, exec *fakeExecutor, defs map[string]ports.ToolDef) (*Session, *recordingSink, *fakeRepo) {
 	repo := newFakeRepo()
+	s, sink := startSession(t, repo, provider, exec, defs, "", 50*time.Millisecond)
+	return s, sink, repo
+}
+
+// startSession builds and runs a session over the given repo, resuming threadID
+// when non-empty, with the given confirmation TTL.
+func startSession(t *testing.T, repo *fakeRepo, provider *scriptedProvider, exec *fakeExecutor, defs map[string]ports.ToolDef, threadID string, ttl time.Duration) (*Session, *recordingSink) {
 	sink := newSink()
 	s, err := NewSession(context.Background(), Deps{
 		Provider: provider, Catalog: &fakeCatalog{defs: defs}, Executor: exec, Repo: repo,
 		Limiter: allowAllLimiter{},
 		Cfg: Config{
 			SystemPrompt: "sys", MaxIterations: 5, MaxTurnTokens: 100000,
-			WindowTokens: 100000, ConfirmTTL: 50 * time.Millisecond,
+			WindowTokens: 100000, ConfirmTTL: ttl,
 			CLIName: "continuo",
 		},
-	}, "alice", "", sink)
+	}, "alice", threadID, sink)
 	require.NoError(t, err)
 	go s.Run(context.Background())
 	t.Cleanup(s.Close)
-	return s, sink, repo
+	return s, sink
+}
+
+// seedDanglingConfirm pre-populates repo with a thread whose last turn left a
+// mutating tool call awaiting approval — a user message, the persisted tool call
+// with no result, and a still-pending (non-expired) pending_actions row. This is
+// the exact state left behind when a client disconnects mid-confirmation.
+func seedDanglingConfirm(t *testing.T, repo *fakeRepo) (threadID uuid.UUID, actionID uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	thread, err := repo.CreateThread(ctx, "alice")
+	require.NoError(t, err)
+	uc, _ := json.Marshal(domain.TextContent{Text: "trigger daily"})
+	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleUser, uc)
+	require.NoError(t, err)
+	cc, _ := json.Marshal(domain.ToolCallContent{CallID: "c1", Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}})
+	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleToolCall, cc)
+	require.NoError(t, err)
+	action := &domain.PendingAction{
+		ID: uuid.New(), ThreadID: thread.ID, Tool: "schedule_trigger",
+		Args: map[string]string{"schedule-name": "daily"}, Summary: "Run `continuo schedule trigger daily`?",
+		Status: domain.ActionPending, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(5 * time.Minute),
+	}
+	require.NoError(t, repo.CreatePendingAction(ctx, action))
+	return thread.ID, action.ID
 }
 
 var statusDef = ports.ToolDef{
@@ -452,4 +502,92 @@ func TestSession_InterruptCancelsInFlightTurn(t *testing.T) {
 
 	// The turn must end with a final:"" event.
 	waitFor(t, sink, "final:")
+}
+
+func TestSession_ResumeApprovalRunsToolAndContinues(t *testing.T) {
+	repo := newFakeRepo()
+	threadID, actionID := seedDanglingConfirm(t, repo)
+	// On continuation (after the tool runs) the provider produces the final text.
+	provider := &scriptedProvider{results: []*ports.TurnResult{{Text: "Triggered."}}}
+	exec := &fakeExecutor{}
+	s, sink := startSession(t, repo, provider, exec, map[string]ports.ToolDef{"schedule_trigger": triggerDef}, threadID.String(), 5*time.Minute)
+
+	// Resume re-offers the pending confirmation after replaying history.
+	id := <-sink.confirmIDs
+	assert.Equal(t, actionID, id, "the resumed confirmation must reference the persisted action")
+	assert.Contains(t, sink.snapshot(), "history")
+	assert.Empty(t, exec.calls, "the tool must not run before approval")
+
+	// Approving out-of-turn runs the tool and continues the turn.
+	s.Confirm(id, true)
+	waitFor(t, sink, "final:Triggered.")
+	require.Len(t, exec.calls, 1)
+	assert.Equal(t, "schedule_trigger", exec.calls[0].Name)
+
+	assert.Equal(t, domain.ActionApproved, repo.actions[actionID].Status)
+
+	// A tool result for the dangling call (c1) must now be persisted.
+	msgs, _ := repo.ListMessages(context.Background(), threadID)
+	var sawResult bool
+	for _, m := range msgs {
+		if m.Role != domain.RoleToolResult {
+			continue
+		}
+		var rc domain.ToolResultContent
+		require.NoError(t, json.Unmarshal(m.Content, &rc))
+		if rc.CallID == "c1" {
+			sawResult = true
+		}
+	}
+	assert.True(t, sawResult, "the resumed tool call must get a persisted result")
+}
+
+func TestSession_ResumeDenialRecordsRefusalAndContinues(t *testing.T) {
+	repo := newFakeRepo()
+	threadID, actionID := seedDanglingConfirm(t, repo)
+	provider := &scriptedProvider{results: []*ports.TurnResult{{Text: "Understood, not triggering."}}}
+	exec := &fakeExecutor{}
+	s, sink := startSession(t, repo, provider, exec, map[string]ports.ToolDef{"schedule_trigger": triggerDef}, threadID.String(), 5*time.Minute)
+
+	id := <-sink.confirmIDs
+	require.Equal(t, actionID, id)
+
+	s.Confirm(id, false)
+	waitFor(t, sink, "final:Understood, not triggering.")
+	assert.Empty(t, exec.calls, "a denied tool must not run on resume")
+	assert.Equal(t, domain.ActionDenied, repo.actions[actionID].Status)
+}
+
+func TestSession_DisconnectLeavesPendingActionResumable(t *testing.T) {
+	repo := newFakeRepo()
+	provider := &scriptedProvider{results: []*ports.TurnResult{
+		{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}}}},
+	}}
+	exec := &fakeExecutor{}
+	// Long TTL so the confirmation does not time out before the disconnect.
+	s, sink := startSession(t, repo, provider, exec, map[string]ports.ToolDef{"schedule_trigger": triggerDef}, "", 5*time.Minute)
+
+	s.Enqueue("trigger daily")
+	actionID := <-sink.confirmIDs
+
+	// Close cancels the session ctx — exactly what a WebSocket/gRPC drop does.
+	s.Close()
+
+	// The action stays pending (resumable), not expired/denied; the tool did not
+	// run; and the tool call is left without a result so a resume can complete it.
+	require.NotNil(t, repo.actions[actionID])
+	assert.Equal(t, domain.ActionPending, repo.actions[actionID].Status)
+	assert.Empty(t, exec.calls)
+	msgs, _ := repo.ListMessages(context.Background(), s.ThreadID())
+	var calls, results int
+	for _, m := range msgs {
+		switch m.Role {
+		case domain.RoleToolCall:
+			calls++
+		case domain.RoleToolResult:
+			results++
+		}
+	}
+	assert.Equal(t, 1, calls, "the tool call is persisted")
+	assert.Equal(t, 0, results, "no tool result is persisted on disconnect")
 }

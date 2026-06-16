@@ -24,6 +24,10 @@ type ThreadRepository interface {
 	ListMessages(ctx context.Context, threadID uuid.UUID) ([]domain.Message, error)
 	CreatePendingAction(ctx context.Context, a *domain.PendingAction) error
 	ResolvePendingAction(ctx context.Context, id uuid.UUID, status domain.ActionStatus) error
+	// GetPendingAction returns the most recent still-pending, non-expired action
+	// for a thread, used to resume a confirmation after a reconnect. It returns
+	// ErrNotFound when no such action exists.
+	GetPendingAction(ctx context.Context, threadID uuid.UUID) (*domain.PendingAction, error)
 	// ListIdleThreads returns threads not updated since cutoff (retention candidates).
 	ListIdleThreads(ctx context.Context, cutoff time.Time, limit int) ([]domain.Thread, error)
 	DeleteThread(ctx context.Context, id uuid.UUID) error

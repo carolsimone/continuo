@@ -170,6 +170,47 @@ func TestThreadRepository_PendingActionsAndRetention(t *testing.T) {
 	assert.True(t, errors.Is(err, repository.ErrNotFound), "expected ErrNotFound after delete, got: %v", err)
 }
 
+func TestThreadRepository_GetPendingAction(t *testing.T) {
+	truncateTables(t)
+	repo := postgres.NewThreadRepository(sharedDB)
+	ctx := context.Background()
+
+	th, err := repo.CreateThread(ctx, "alice")
+	require.NoError(t, err)
+
+	// No pending action yet → ErrNotFound.
+	_, err = repo.GetPendingAction(ctx, th.ID)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, repository.ErrNotFound), "expected ErrNotFound, got: %v", err)
+
+	now := time.Now().UTC()
+	// An older pending action and a newer one; an expired one; a resolved one.
+	older := &domain.PendingAction{ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "old"}, Summary: "old", Status: domain.ActionPending, CreatedAt: now.Add(-2 * time.Minute), ExpiresAt: now.Add(5 * time.Minute)}
+	newer := &domain.PendingAction{ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "new"}, Summary: "new", Status: domain.ActionPending, CreatedAt: now.Add(-1 * time.Minute), ExpiresAt: now.Add(5 * time.Minute)}
+	expired := &domain.PendingAction{ID: uuid.New(), ThreadID: th.ID, Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "exp"}, Summary: "exp", Status: domain.ActionPending, CreatedAt: now, ExpiresAt: now.Add(-time.Second)}
+	require.NoError(t, repo.CreatePendingAction(ctx, older))
+	require.NoError(t, repo.CreatePendingAction(ctx, newer))
+	require.NoError(t, repo.CreatePendingAction(ctx, expired))
+
+	// Returns the most recent still-pending, non-expired action with args intact.
+	got, err := repo.GetPendingAction(ctx, th.ID)
+	require.NoError(t, err)
+	assert.Equal(t, newer.ID, got.ID)
+	assert.Equal(t, domain.ActionPending, got.Status)
+	assert.Equal(t, map[string]string{"schedule-name": "new"}, got.Args)
+
+	// Once the newer action is resolved, the older one becomes the candidate.
+	require.NoError(t, repo.ResolvePendingAction(ctx, newer.ID, domain.ActionApproved))
+	got, err = repo.GetPendingAction(ctx, th.ID)
+	require.NoError(t, err)
+	assert.Equal(t, older.ID, got.ID)
+
+	// With every action resolved or expired, nothing is resumable.
+	require.NoError(t, repo.ResolvePendingAction(ctx, older.ID, domain.ActionDenied))
+	_, err = repo.GetPendingAction(ctx, th.ID)
+	assert.True(t, errors.Is(err, repository.ErrNotFound), "expected ErrNotFound when no resumable action, got: %v", err)
+}
+
 func TestThreadRepository_DeleteThreadIfIdle(t *testing.T) {
 	truncateTables(t)
 	repo := postgres.NewThreadRepository(sharedDB)
