@@ -17,7 +17,7 @@ func TestAdvanceQueue_NoActive_PromotesNextReceivedToParsing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "my-bucket"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-a",
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -58,7 +58,7 @@ func TestAdvanceQueue_OtherServicesIncludedInManifestKeys(t *testing.T) {
 	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rNEW", ImageTag: "tag-a-new",
+		Service: "svc-a", ReleaseID: "rNEW", ImageTag: "tag-a-new", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -108,7 +108,7 @@ func TestAdvanceQueue_ProdSeeded_UncoveredService_BlocksActivation(t *testing.T)
 	store.SeedCurrentProd(cp)
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "t",
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -137,7 +137,7 @@ func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
 	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "t",
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -153,11 +153,11 @@ func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rA", ImageTag: "t",
+		Service: "svc", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rB", ImageTag: "t2",
+		Service: "svc", ReleaseID: "rB", ImageTag: "t2", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rB, _ := store.GetRelease("rB")
@@ -176,10 +176,10 @@ func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rOLD", ImageTag: "t",
+		Service: "svc", ReleaseID: "rOLD", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rNEW", ImageTag: "t",
+		Service: "svc", ReleaseID: "rNEW", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rOLD, _ := store.GetRelease("rOLD")

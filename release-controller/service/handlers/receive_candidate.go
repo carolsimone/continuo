@@ -62,9 +62,7 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return u.Commit()
 	}
 
-	// Repo and CommitSHA are validated above but not yet threaded into the
-	// aggregate; the next change adds them to release.New and the releases row.
-	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, d.Clock.Now())
+	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, d.Clock.Now())
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
