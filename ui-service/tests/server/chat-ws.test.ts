@@ -119,11 +119,11 @@ describe('chat gRPC relay (operator session)', () => {
     expect(stream.written[3]).toEqual({ interrupt: {} });
 
     const got = nextMessage(ws);
-    stream.emit('data', { text: { text: 'All ' } });
+    stream.emit('data', { event: 'text', text: { text: 'All ' } });
     expect(await got).toEqual({ type: 'text', text: 'All ' });
 
     const got2 = nextMessage(ws);
-    stream.emit('data', { confirm_request: { action_id: 'a1', summary: 'Run `x`?' } });
+    stream.emit('data', { event: 'confirm_request', confirm_request: { action_id: 'a1', summary: 'Run `x`?' } });
     expect(await got2).toEqual({ type: 'confirm_request', actionId: 'a1', summary: 'Run `x`?' });
 
     ws.close();

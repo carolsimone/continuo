@@ -35,21 +35,39 @@ export function toClientEvent(msg: ClientMessage): object | null {
 }
 
 // fromServerEvent maps a gRPC ServerEvent to the ws JSON frame (null = skip).
+//
+// Dispatch is driven by the proto-loader oneof discriminator (`ev.event`, the
+// name of the set field — the loader is configured with `oneofs: true`) rather
+// than by field presence. A new ServerEvent variant added to agentchat.proto
+// therefore lands in the default branch and is logged, instead of being
+// silently dropped with no compile error or test failure.
 export function fromServerEvent(ev: any): ServerMessage | null {
-  if (ev.thread) return { type: 'thread', threadId: ev.thread.thread_id ?? '' };
-  if (ev.history) {
-    const messages = (ev.history.messages ?? []).map((m: any) => ({
-      role: m.role,
-      ...(m.text != null ? { text: m.text ?? '' } : {}),
-      ...(m.command != null ? { command: m.command ?? '' } : {}),
-    }));
-    return { type: 'history', messages };
+  switch (ev?.event) {
+    case 'thread':
+      return { type: 'thread', threadId: ev.thread.thread_id ?? '' };
+    case 'history': {
+      const messages = (ev.history.messages ?? []).map((m: any) => ({
+        role: m.role,
+        ...(m.text != null ? { text: m.text ?? '' } : {}),
+        ...(m.command != null ? { command: m.command ?? '' } : {}),
+      }));
+      return { type: 'history', messages };
+    }
+    case 'tool':
+      return { type: 'tool', command: ev.tool.command ?? '' };
+    case 'text':
+      return { type: 'text', text: ev.text.text ?? '' };
+    case 'final':
+      return { type: 'final', text: ev.final.text ?? '' };
+    case 'confirm_request':
+      return { type: 'confirm_request', actionId: ev.confirm_request.action_id ?? '', summary: ev.confirm_request.summary ?? '' };
+    case 'error':
+      return { type: 'error', code: ev.error.code, message: ev.error.message };
+    default:
+      // An absent oneof (event === undefined) is a no-op; a set-but-unhandled
+      // variant means agentchat.proto added a ServerEvent the relay does not map
+      // yet — log it so the gap is visible rather than silently swallowed.
+      if (ev?.event) console.warn(`fromServerEvent: unhandled ServerEvent variant "${ev.event}"`);
+      return null;
   }
-  if (ev.tool) return { type: 'tool', command: ev.tool.command ?? '' };
-  if (ev.text) return { type: 'text', text: ev.text.text ?? '' };
-  if (ev.final) return { type: 'final', text: ev.final.text ?? '' };
-  if (ev.confirm_request)
-    return { type: 'confirm_request', actionId: ev.confirm_request.action_id ?? '', summary: ev.confirm_request.summary ?? '' };
-  if (ev.error) return { type: 'error', code: ev.error.code, message: ev.error.message };
-  return null;
 }
