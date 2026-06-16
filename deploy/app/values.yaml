@@ -120,6 +120,11 @@ services:
         secretKey: POSTGRES_PASSWORD
       - name: LLM_API_KEY
         secretKey: LLM_API_KEY
+      # REDIS_PASSWORD enables the shared (global) rate limiter; REDIS_ADDR/HOST/
+      # PORT reach every pod via the shared ConfigMap. Required before scaling
+      # agent-runner past replicas: 1 so the per-user limit stays global.
+      - name: REDIS_PASSWORD
+        secretKey: REDIS_PASSWORD
     env:
       POSTGRES_DB: continuo_agent
       DB_SSLMODE: disable
@@ -129,6 +134,7 @@ services:
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
       LLM_PROVIDER: anthropic
       LLM_MODEL: claude-sonnet-4-6
+      CHAT_MAX_CONCURRENT_SESSIONS: "100"
 
   - name: executor-controller
     enabled: true

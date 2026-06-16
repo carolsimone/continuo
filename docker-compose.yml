@@ -376,6 +376,7 @@ services:
       - state
       - orchestrator
       - stub-llm
+      - redis
     environment:
       - POSTGRES_DB=continuo_agent
       - POSTGRES_USER=continuo_svc
@@ -387,6 +388,9 @@ services:
       - HEALTH_PORT=8091
       - CONTINUO_STATE_ADDR=state:50051
       - CONTINUO_ORCHESTRATOR_ADDR=orchestrator:50052
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=continuo
+      - CHAT_MAX_CONCURRENT_SESSIONS=100
       - LOG_LEVEL=INFO
       - ENV=local
       - LLM_PROVIDER=${LLM_PROVIDER:-openai-compatible}

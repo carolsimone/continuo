@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/carolsimone/continuo/agent-runner/domain"
 	"github.com/carolsimone/continuo/agent-runner/domain/repository"
@@ -21,14 +22,21 @@ type Server struct {
 	agentchatv1.UnimplementedAgentChatServer
 	deps   chat.Deps
 	logger *slog.Logger
+
+	// maxSessions caps the number of concurrent Chat streams this instance
+	// serves (each holds a goroutine and an upstream provider stream open).
+	// Zero or less means unlimited. active tracks the live count.
+	maxSessions int
+	active      atomic.Int64
 }
 
 // NewServer creates a Server. If logger is nil, slog.Default() is used.
-func NewServer(deps chat.Deps, logger *slog.Logger) *Server {
+// maxSessions caps concurrent Chat streams (<= 0 means unlimited).
+func NewServer(deps chat.Deps, logger *slog.Logger, maxSessions int) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{deps: deps, logger: logger}
+	return &Server{deps: deps, logger: logger, maxSessions: maxSessions}
 }
 
 // streamSink adapts chat.EventSink to a gRPC bidi stream. All Send calls are
@@ -150,6 +158,18 @@ func toHistoryMessage(m domain.Message) *agentchatv1.HistoryMessage {
 // text, ConfirmResponse approves/denies a pending action, Interrupt cancels the
 // in-flight turn, and NewChat resets to a fresh thread on the same stream.
 func (s *Server) Chat(stream grpc.BidiStreamingServer[agentchatv1.ClientEvent, agentchatv1.ServerEvent]) error {
+	// Concurrency cap: bound the number of live streams this instance serves so
+	// a burst of connections cannot exhaust goroutines / upstream provider
+	// streams. Reserve a slot up front and release it when the stream ends.
+	if s.maxSessions > 0 {
+		if n := s.active.Add(1); n > int64(s.maxSessions) {
+			s.active.Add(-1)
+			s.logger.Warn("chat session rejected: at capacity", "max_sessions", s.maxSessions)
+			return status.Error(codes.ResourceExhausted, "agent-runner at capacity; please retry shortly")
+		}
+		defer s.active.Add(-1)
+	}
+
 	// The first event must be Open.
 	first, err := stream.Recv()
 	if err != nil {

@@ -58,7 +58,7 @@ type Deps struct {
 	Catalog  ports.ToolCatalog
 	Executor ports.ToolExecutor
 	Repo     repository.ThreadRepository
-	Limiter  *RateLimiter
+	Limiter  ports.RateLimiter
 	Logger   *slog.Logger
 	Cfg      Config
 }
@@ -158,7 +158,12 @@ func (s *Session) ThreadID() uuid.UUID {
 // user exceeds their per-minute quota the sink receives an error event and
 // the message is dropped.
 func (s *Session) Enqueue(text string) {
-	if !s.deps.Limiter.Allow(s.userID, time.Now()) {
+	allowed, err := s.deps.Limiter.Allow(s.ctx, s.userID)
+	if err != nil {
+		// Fail open: a transient limiter-backend failure must not block a
+		// legitimate user. Log it so a persistent outage is visible.
+		s.deps.Logger.Warn("rate limiter backend error; allowing message", "user_id", s.userID, "error", err)
+	} else if !allowed {
 		s.sink.Error("rate_limited", "too many messages; please wait before sending another")
 		return
 	}

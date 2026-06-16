@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/agent-runner/adapters/grpcserver"
+	"github.com/carolsimone/continuo/agent-runner/adapters/ratelimit"
 	"github.com/carolsimone/continuo/agent-runner/domain"
 	agentchatv1 "github.com/carolsimone/continuo/agent-runner/proto/agentchat/v1"
 	"github.com/carolsimone/continuo/agent-runner/service/chat"
@@ -90,14 +91,18 @@ func (noopExecutor) Execute(context.Context, string, uuid.UUID, ports.ToolCall) 
 }
 
 func dialServer(t *testing.T) agentchatv1.AgentChatClient {
+	return dialServerWithCap(t, 0)
+}
+
+func dialServerWithCap(t *testing.T, maxSessions int) agentchatv1.AgentChatClient {
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer()
 	deps := chat.Deps{
 		Provider: fakeProvider{}, Catalog: emptyCatalog{}, Executor: noopExecutor{},
-		Repo: newFakeRepo(), Limiter: chat.NewRateLimiter(100),
+		Repo: newFakeRepo(), Limiter: ratelimit.NewMemory(100),
 		Cfg: chat.Config{SystemPrompt: "s", MaxIterations: 3, MaxTurnTokens: 100000, WindowTokens: 100000, ConfirmTTL: time.Second, CLIName: "continuo"},
 	}
-	agentchatv1.RegisterAgentChatServer(srv, grpcserver.NewServer(deps, nil))
+	agentchatv1.RegisterAgentChatServer(srv, grpcserver.NewServer(deps, nil, maxSessions))
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
@@ -146,4 +151,40 @@ func TestChat_FirstEventMustBeOpen(t *testing.T) {
 	_, err = stream.Recv()
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestChat_RejectsBeyondConcurrentSessionCap(t *testing.T) {
+	client := dialServerWithCap(t, 1)
+
+	// First session: open it and keep it live (do not close the stream).
+	s1, err := client.Chat(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, s1.Send(&agentchatv1.ClientEvent{Event: &agentchatv1.ClientEvent_Open{Open: &agentchatv1.Open{UserId: "alice"}}}))
+	ev, err := s1.Recv()
+	require.NoError(t, err)
+	require.NotEmpty(t, ev.GetThread().GetThreadId())
+
+	// Second session: the cap of 1 is reached, so the server rejects it with
+	// ResourceExhausted on the first Recv.
+	s2, err := client.Chat(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, s2.Send(&agentchatv1.ClientEvent{Event: &agentchatv1.ClientEvent_Open{Open: &agentchatv1.Open{UserId: "bob"}}}))
+	_, err = s2.Recv()
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	// Free the first slot; a new session is admitted again.
+	require.NoError(t, s1.CloseSend())
+	// Give the server a moment to release the slot as the stream tears down.
+	assert.Eventually(t, func() bool {
+		s3, err := client.Chat(context.Background())
+		if err != nil {
+			return false
+		}
+		if err := s3.Send(&agentchatv1.ClientEvent{Event: &agentchatv1.ClientEvent_Open{Open: &agentchatv1.Open{UserId: "carol"}}}); err != nil {
+			return false
+		}
+		ev, err := s3.Recv()
+		return err == nil && ev.GetThread().GetThreadId() != ""
+	}, 2*time.Second, 20*time.Millisecond)
 }
