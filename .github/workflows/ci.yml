@@ -203,6 +203,26 @@ jobs:
             sleep 2
           done
 
+          echo "Starting agent-runner (gRPC :50053, health :8091)..."
+          docker exec -d agent-runner bash -c "cd /app/agent-runner && go run . > /tmp/agent-runner.log 2>&1"
+
+          # Wait for the gRPC listener itself, not just /health (which is the
+          # always-200 liveness probe): the chat e2e dials 50053 through the
+          # ui-service relay, so the port must be accepting before tests run.
+          echo "Waiting for agent-runner gRPC port 50053 (go run compiles cold ~30-60s)..."
+          for i in $(seq 1 60); do
+            if docker exec agent-runner bash -c 'echo > /dev/tcp/localhost/50053' 2>/dev/null; then
+              echo "✓ agent-runner gRPC ready"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "✗ agent-runner gRPC not ready after 120s"
+              docker exec agent-runner tail -40 /tmp/agent-runner.log || true
+              exit 1
+            fi
+            sleep 2
+          done
+
       - name: Start ui-service container
         run: |
           echo "Starting ui container (HTTP :8090)..."
