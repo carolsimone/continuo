@@ -17,7 +17,7 @@ It is responsible for:
 | Table | Purpose |
 |---|---|
 | `executor_deployments` | K8s-deploy command queue. Handlers write a row here inside their Unit-of-Work transaction (pure Postgres write, no Kubernetes I/O). `deployer.Dispatcher` drains due rows, calls `CreateQueryJob`, and on success writes canonical announcement rows to `executor_outbox`. A `mode` column distinguishes `production` rows (the default query.model path) from `validation` rows (candidate-release validation checks, which carry `release_id`/`node_id`, `upstream_node_ids` (in-set gating edges, covering both intra- and cross-service upstreams), and a per-node terminal `outcome`). Validation rows start `pending` (no in-set upstreams) or `blocked` (has in-set upstreams that are not yet `ok`). |
-| `executor_outbox` | Canonical transactional outbox — one row per pending Redis announcement (`task_status_updated` RUNNING/FAILED and `node_deployed`/`node_updated`); `pkg/outbox.Processor` polls and performs the Redis XADD per row. |
+| `executor_outbox` | Canonical transactional outbox — one row per pending Redis announcement (`task_status_updated` FAILED on the never-deployed path, plus `node_deployed`/`node_updated`); `pkg/outbox.Processor` polls and performs the Redis XADD per row. The deploy-success path no longer announces RUNNING — k8s-controller owns the running/terminal pod lifecycle. |
 | `message_processing` | Inbound dedup: keyed on `(message_id, stream_name)`; prevents double-processing of duplicate Redis messages |
 | `cancelled_schedules` | Records schedule cancellations; consulted by deploy handlers before writing to `executor_deployments` |
 | `validation_aggregates` | Per-release sentinel (`release_id` PK). `ClaimEmission` does an `INSERT … ON CONFLICT DO NOTHING` so exactly one caller wins the right to emit the aggregate validation-completed announcement when the final per-node outcomes land concurrently. `LockRelease` takes a transaction-scoped advisory lock (`pg_advisory_xact_lock(hashtext(release_id))`) that serializes the whole count→claim→emit gate per release, so concurrent last-node terminals cannot both no-op (lost emission) under READ COMMITTED. |
@@ -135,7 +135,7 @@ For each due row (inside one transaction for the batch):
      → unmarshal failure or invalid fields: writeFailed → write FAILED outbox rows, MarkFailed
   b. CreateQueryJob (K8s) — idempotent by job name
      → success: writeDeployed
-       - write task_status_updated (RUNNING) + node_deployed outbox rows
+       - write node_deployed outbox row (k8s-controller announces RUNNING on first observed run)
        - MarkDeployed
      → transient error AND retry budget remains:
        - Reschedule with exponential backoff (base 5s, cap 2m) via next_attempt_at
@@ -143,7 +143,7 @@ For each due row (inside one transaction for the batch):
        - writeFailed: write task_status_updated (FAILED) + node_updated (FAILED) outbox rows, MarkFailed
 ```
 
-The dispatcher only dispatches `pending` validation rows; `blocked` rows (with unresolved in-set upstreams) remain in place until the `ValidationNodeCompletedHandler` transitions them to `pending`. On a successful K8s validation Job creation, the dispatcher `MarkDeployed`s the row and writes a single `node_deployed` → `node.deployed:v1` outbox row so k8s-controller status-checks the Job — it never polls, so without this trigger the release would hang in `validating`. It does NOT write the production-only `task_status_updated` (RUNNING) announcement: validation rows have no real task/schedule to surface in the UI. The per-node terminal outcome (`ok`/`failed`) arrives later via `validation.node.completed:v1`. A validation row that fails AT dispatch (not deployable, or a permanent pre-deploy error) is made terminal via `FailValidation`, records `outcome=failed`, emits no `node.deployed` trigger, skips transitively `blocked` downstreams (marking them `skipped`), and runs the aggregate gate.
+The dispatcher only dispatches `pending` validation rows; `blocked` rows (with unresolved in-set upstreams) remain in place until the `ValidationNodeCompletedHandler` transitions them to `pending`. On a successful K8s validation Job creation, the dispatcher `MarkDeployed`s the row and writes a single `node_deployed` → `node.deployed:v1` outbox row so k8s-controller status-checks the Job — it never polls, so without this trigger the release would hang in `validating`. This is the same single-row deploy announcement the production path now writes; validation rows have no real task/schedule, and k8s-controller suppresses the RUNNING announcement for `mode=validation` Jobs, so no `task_status_updated` row is ever surfaced for them. The per-node terminal outcome (`ok`/`failed`) arrives later via `validation.node.completed:v1`. A validation row that fails AT dispatch (not deployable, or a permanent pre-deploy error) is made terminal via `FailValidation`, records `outcome=failed`, emits no `node.deployed` trigger, skips transitively `blocked` downstreams (marking them `skipped`), and runs the aggregate gate.
 
 ### Per-release validation aggregate gate
 

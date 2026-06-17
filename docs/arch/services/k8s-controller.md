@@ -102,7 +102,7 @@ Both production and `mode=validation` Jobs are observed over these same `node.de
 
 | Status | Action |
 |---|---|
-| **Running** | Write `check_delayed` outbox entry → re-enqueue to `check.k8s:v1` with `check_after` |
+| **Running** | The first time an attempt is observed running (`running_announced=false`), announce `task.status.updated:v1` (RUNNING) stamped with the running attempt — suppressed for `mode=validation` Jobs. Always write a `check_delayed` outbox entry → re-enqueue to `check.k8s:v1` with `check_after` and `running_announced=true`, so RUNNING is announced exactly once per attempt. k8s-controller is the sole producer of the running/terminal pod lifecycle. |
 | **Failed, retryable** (`retry_count < max_retries`) | Fetch+upload logs (soft-fail) → entry A: publish `task.status.updated:v1` (FAILED) stamping the attempt that ran; entry B: publish `retry.task:v1` for the next attempt (`retry_count + 1`) |
 | **Failed, permanent** (`retry_count >= max_retries`) | Fetch+upload logs (soft-fail) → entry A: publish `task.status.updated:v1` (FAILED) + `task.execution.recorded:v1`; entry B: publish `task.failed:v1` + `node.updated:v1` FAILED |
 | **Succeeded** | Entry A: publish `task.status.updated:v1` (SUCCEEDED) + `task.execution.recorded:v1`; entry B: publish `node.updated:v1` SUCCEEDED |
@@ -117,14 +117,15 @@ Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single tr
 | Succeeded | `task_status_updated` (SUCCEEDED) + `task_execution_recorded` + `node_status_updated` |
 | Failed, retryable | `task_status_updated` (FAILED) + `task_execution_recorded` + `task_retry` |
 | Failed, permanent | `task_status_updated` (FAILED) + `task_execution_recorded` + `node_status_updated` |
-| Running | `check_delayed` (1 row) |
+| Running (first observation, production) | `task_status_updated` (RUNNING) + `check_delayed` |
+| Running (already announced, or validation) | `check_delayed` (1 row) |
 | Unknown | `task_status_updated` (FAILED) + `task_failed` |
 
 ### Validation-job routing
 
 `CheckStatusHandler` fetches the live Job's labels and annotations and routes on the `mode` label. A Job labelled `mode=validation` (created by `executor-controller`'s validation dispatch path) bypasses the production outcome branches:
 
-- **Running** — handled by the shared re-poll before the mode branch: the handler writes one `check_delayed` row (→ `check.k8s:v1`) with a `check_after` delay, identical to the production running path. On the next check the Job's `mode` is re-read and routing recurs. A validation Job is always Running on the first check fired by the `node.deployed:v1` trigger, so this re-poll is what carries it to a terminal status instead of being checked once and dropped.
+- **Running** — handled by the shared re-poll before the terminal mode branch: the handler writes one `check_delayed` row (→ `check.k8s:v1`) with a `check_after` delay. On the first observation it reads the Job's `mode`, and because the Job is `mode=validation` it **suppresses** the RUNNING `task_status_updated` announcement (validation rows have no real task/schedule) while still setting `running_announced=true` on the forward ticket so metadata is not re-read every poll. On the next check the Job's `mode` is re-read and routing recurs. A validation Job is always Running on the first check fired by the `node.deployed:v1` trigger, so this re-poll is what carries it to a terminal status instead of being checked once and dropped.
 - **Unknown** — also not terminal (e.g. pods not yet scheduled); the validation branch re-polls via the same `check.k8s:v1` ticket rather than emitting a premature failure. (Production treats Unknown as a permanent failure — `task_status_updated` (FAILED) + `task_failed`.)
 - **Succeeded / Failed** — the handler uploads pod logs (soft-fail) and writes exactly ONE `validation_node_completed` outbox row (→ `validation.node.completed:v1`) carrying `{release_id, node_id, outcome, dbt_log_uri}`. `outcome` is `ok` when the Job succeeded, else `failed`. This single row replaces the three production task-status rows — no `task_status_updated`, `task_execution_recorded`, or `node_status_updated` is written for validation Jobs.
 

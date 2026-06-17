@@ -435,7 +435,7 @@ Dedup against `message_processing` is performed by the binding before the handle
 
 ### Consumes: `task.status.updated:v1`
 
-Published by: `executor-controller` (RUNNING) and `k8s-controller` (SUCCEEDED/FAILED)
+Published by: `k8s-controller` (RUNNING + SUCCEEDED/FAILED — the pod lifecycle), `executor-controller` (FAILED only, on the never-deployed path), and `orchestrator` (SKIPPED on cascade-skip)
 
 Effects:
 1. Update task status in `task_tracker`

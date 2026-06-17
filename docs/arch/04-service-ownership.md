@@ -96,7 +96,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Durable state | `executor_deployments`, `executor_outbox`, `message_processing`, `cancelled_schedules`, `validation_aggregates` |
 | gRPC server methods owned | none |
 | Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.completed:v1` |
-| Redis produces | `node.deployed:v1`, `task.status.updated:v1` (RUNNING on success; FAILED on terminal dispatch failure), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.completed:v1` (per-release validation aggregate) |
+| Redis produces | `node.deployed:v1`, `task.status.updated:v1` (FAILED only, on the never-deployed terminal dispatch failure — k8s-controller owns RUNNING and the pod terminal), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.completed:v1` (per-release validation aggregate) |
 | External DB writes | dbt warehouse (`DBT_POSTGRES_DB`) — drops `_candidate_<release>` schema on `validation.completed:v1` via `CandidateSchemaCleaner` |
 | Outbound gRPC calls | none |
 
@@ -118,7 +118,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Durable state | `k8s_outbox`, `message_processing` |
 | gRPC server methods owned | none |
 | Redis consumes | `node.deployed:v1`, `check.k8s:v1`, `schedule.cancelled:v1` |
-| Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `task.status.updated:v1` (SUCCEEDED/FAILED), `task.execution.recorded:v1`, `node.updated:v1` |
+| Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `task.status.updated:v1` (RUNNING + SUCCEEDED/FAILED — the full pod lifecycle), `task.execution.recorded:v1`, `node.updated:v1` |
 | Outbound gRPC calls | none |
 
 ## `manifest-controller`
