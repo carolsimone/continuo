@@ -59,6 +59,7 @@ func (c *S3Client) DeletePrefix(ctx context.Context, prefix string) error {
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
+			c.logger.Warn("s3 ListObjectsV2 failed", "prefix", prefix, "error", err)
 			return fmt.Errorf("list objects prefix=%s: %w", prefix, err)
 		}
 		if len(page.Contents) == 0 {
@@ -82,9 +83,9 @@ func (c *S3Client) DeletePrefix(ctx context.Context, prefix string) error {
 			return fmt.Errorf("delete objects prefix=%s: %w", prefix, err)
 		}
 		if len(out.Errors) > 0 {
-			// Report the first error; others will be reclaimed by the lifecycle rule.
+			// Report the first error for context; remaining keys will be reclaimed by the lifecycle rule.
 			e := out.Errors[0]
-			c.logger.Warn("s3 DeleteObjects partial failure", "prefix", prefix, "key", aws.ToString(e.Key), "code", aws.ToString(e.Code))
+			c.logger.Warn("s3 DeleteObjects partial failure", "prefix", prefix, "failed_keys", len(out.Errors), "first_key", aws.ToString(e.Key), "first_code", aws.ToString(e.Code))
 			return fmt.Errorf("delete objects prefix=%s key=%s: %s", prefix, aws.ToString(e.Key), aws.ToString(e.Message))
 		}
 	}

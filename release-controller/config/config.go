@@ -18,7 +18,7 @@ type Redis struct {
 type Config struct {
 	Postgres              Postgres
 	Redis                 Redis
-	S3Bucket              string
+	S3                    pkgconfig.S3Config
 	HTTPPort              string
 	ParseTimeout          string
 	ParseHardTimeout      string
@@ -45,6 +45,7 @@ func Load(v *pkgconfig.Validator) Config {
 			Port:     pkgconfig.EnvOrDefault("REDIS_PORT", "6379"),
 			Password: pkgconfig.EnvOrDefault("REDIS_PASSWORD", ""),
 		},
+		S3:                    pkgconfig.LoadS3(v),
 		HTTPPort:              pkgconfig.EnvOrDefault("RELEASE_CONTROLLER_HTTP_PORT", "8088"),
 		ParseTimeout:          pkgconfig.EnvOrDefault("RELEASE_PARSE_TIMEOUT", "10m"),
 		ParseHardTimeout:      pkgconfig.EnvOrDefault("RELEASE_PARSE_HARD_TIMEOUT", "1h"),
@@ -53,6 +54,5 @@ func Load(v *pkgconfig.Validator) Config {
 		JanitorInterval:       pkgconfig.EnvOrDefault("RELEASE_JANITOR_INTERVAL", "24h"),
 		RetentionDays:         pkgconfig.EnvOrDefault("RELEASE_RETENTION_DAYS", "90"),
 		RecoverStuckInterval:  pkgconfig.EnvOrDefault("RECOVER_STUCK_INTERVAL", "1m"),
-		S3Bucket:              v.Require("S3_BUCKET"),
 	}
 }

@@ -309,7 +309,7 @@ func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff tim
 			// Soft-fail: a failed candidate-SQL cleanup must not abort the prune;
 			// the bucket lifecycle rule reclaims anything left behind.
 			if err := r.deleter.DeletePrefix(ctx, "candidate-sql/"+id+"/"); err != nil {
-				_ = err // logged by the deleter itself; prune continues
+				_ = err // soft-fail: the S3 deleter logs its own failures; a cleanup error must not abort the prune (the bucket lifecycle rule reclaims anything left behind).
 			}
 		}
 	}

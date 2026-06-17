@@ -67,15 +67,12 @@ func main() {
 	defer rc.Close()
 
 	// S3 client for pruning candidate-SQL objects when releases are deleted.
-	// Credentials are optional: when running on a cloud instance with an IAM
-	// role the static provider is a no-op, so plain os.Getenv is used here
-	// rather than the required-var validator.
 	s3Client := s3adapter.NewS3Client(
-		os.Getenv("S3_ENDPOINT_URL"),
-		cfg.S3Bucket,
-		os.Getenv("AWS_DEFAULT_REGION"),
-		os.Getenv("AWS_ACCESS_KEY_ID"),
-		os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		cfg.S3.EndpointURL,
+		cfg.S3.Bucket,
+		cfg.S3.Region,
+		cfg.S3.AccessKeyID,
+		cfg.S3.SecretAccessKey,
 		logger,
 	)
 
@@ -84,7 +81,7 @@ func main() {
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    logger,
-		Bucket:    cfg.S3Bucket,
+		Bucket:    cfg.S3.Bucket,
 	}
 
 	// Start outbox publisher — spawns its own goroutine internally and runs until
