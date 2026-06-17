@@ -18,7 +18,7 @@ Postgres (its own database). Tables:
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
 | `message_processing` | Inbound dedup ledger (`outbox_entry_id` / message id) for idempotent consumption. |
 
-The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. When a new candidate is promoted, its candidate topology (carrying `content_hash` + joined `image_tag`) replaces the snapshot, forming the change-detection base for the next release.
+The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. When a new candidate is promoted, its candidate topology (carrying `content_hash` + joined `image_tag`) replaces the snapshot, forming the change-detection base for the next release. The `candidate_sql_uri` field is stored in `releases.candidate_topology` (as a JSONB field) during validation but is stripped on promotion — it is transient validation data and is not carried into `current_prod`.
 
 ## Inbound Interfaces
 
@@ -91,7 +91,8 @@ status=ok:
   else:
       transition to Validating, emit validation.requested:v1
         (mode=validation, candidate_schema=_candidate_<release_id>,
-         nodes carry upstream_node_ids = all in-set upstreams, intra- and cross-service)
+         nodes carry upstream_node_ids = all in-set upstreams, intra- and cross-service,
+         and candidate_sql_uri = the S3 URI for the node's rewritten SQL)
   advance queue
 ```
 A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.
@@ -104,6 +105,7 @@ all nodes ok and none missing → handleValidationOK:
    transition to Promoted, emit release.promoted:v1
 any node failed / missing / aggregate not ok → Reject(reason=validation_failed),
    emit release.rejected:v1
+   (carries top-level repo + commit_sha for provenance, and per failing node: node_id, candidate_sql_uri)
 advance queue
 ```
 
@@ -124,7 +126,15 @@ Promotion is shared by the validation-passed path, the bootstrap short-circuit, 
 | Outbox publisher | Drains `release_controller_outbox` and XADDs each row to its stream. |
 | `manifest.loaded.candidate:v1` consumer | Dispatches to the parsed-manifest handler. |
 | `validation.completed:v1` consumer | Dispatches to the validation-result handler. |
-| Retention | Runs on the janitor interval (`RELEASE_JANITOR_INTERVAL`, default 24h). Deletes terminal releases (promoted, rejected, superseded) whose creation timestamp is older than `RELEASE_RETENTION_DAYS` (default 90 days). Never deletes the release referenced by `current_prod` or by any `service_prod` pointer. |
+| Retention | Runs on the janitor interval (`RELEASE_JANITOR_INTERVAL`, default 24h). Deletes terminal releases (promoted, rejected, superseded) whose creation timestamp is older than `RELEASE_RETENTION_DAYS` (default 90 days). Never deletes the release referenced by `current_prod` or by any `service_prod` pointer. For each pruned release, also deletes the `candidate-sql/<release_id>/` S3 prefix (soft-fail — a delete error does not abort the prune; the S3 lifecycle expiry rule is the backstop). |
+
+## S3 Behavior
+
+| Operation | Description |
+|---|---|
+| `DeleteObjects` | Delete the `candidate-sql/<release_id>/` prefix for each pruned release during retention; soft-fail (a delete error is logged but does not abort the prune). |
+
+The S3 bucket is not managed by release-controller's Helm chart. A native S3 lifecycle expiry rule (30 days) on the `candidate-sql/` prefix is configured via a one-time bootstrap for production and the LocalStack init script for development. The prune-time delete is the primary reclaim path; the lifecycle rule is the backstop.
 
 ## gRPC Callers
 
