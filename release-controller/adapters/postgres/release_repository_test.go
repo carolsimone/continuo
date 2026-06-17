@@ -4,7 +4,10 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"os"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +19,31 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fakeDeleter is a test double for ports.CandidateSQLDeleter that records
+// which prefixes it was asked to delete and can be configured to return an
+// error on every call.
+type fakeDeleter struct {
+	mu      sync.Mutex
+	called  []string
+	failErr error
+}
+
+func (f *fakeDeleter) DeletePrefix(_ context.Context, prefix string) error {
+	f.mu.Lock()
+	f.called = append(f.called, prefix)
+	f.mu.Unlock()
+	return f.failErr
+}
+
+func (f *fakeDeleter) prefixes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.called))
+	copy(out, f.called)
+	sort.Strings(out)
+	return out
+}
 
 func openTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
@@ -31,7 +59,7 @@ func openTestDB(t *testing.T) *sqlx.DB {
 
 func TestReleaseRepository_SaveAndGet(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	r := release.New("rA", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(context.Background(), r))
 
@@ -45,7 +73,7 @@ func TestReleaseRepository_SaveAndGet(t *testing.T) {
 
 func TestReleaseRepository_BootstrapRoundTrips(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
 	boot := release.New("r-boot", "svc-a", "sha-a", true, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
@@ -66,7 +94,7 @@ func TestReleaseRepository_BootstrapRoundTrips(t *testing.T) {
 
 func TestReleaseRepository_NextQueuedAndActive(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	older := release.New("rOLD", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	newer := release.New("rNEW", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(200, 0).UTC())
 	require.NoError(t, repo.Save(context.Background(), older))
@@ -88,7 +116,7 @@ func TestReleaseRepository_NextQueuedAndActive(t *testing.T) {
 
 func TestReleaseRepository_ChangedServiceRoundTrips(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
 	r := release.New("rCS", "service-x", "img-1", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
@@ -103,7 +131,7 @@ func TestReleaseRepository_ChangedServiceRoundTrips(t *testing.T) {
 
 func TestReleaseRepository_SetAssembledImageTagsRoundTrips(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
 	r := release.New("rIT", "svc-a", "tag-a", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
@@ -120,7 +148,7 @@ func TestReleaseRepository_SetAssembledImageTagsRoundTrips(t *testing.T) {
 
 func TestReleaseRepository_ListPaginatesNewestFirst(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 	for i, id := range []string{"r1", "r2", "r3"} {
 		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", time.Unix(int64(100+i), 0).UTC())
@@ -142,7 +170,7 @@ func TestReleaseRepository_ListPaginatesNewestFirst(t *testing.T) {
 
 func TestReleaseRepository_ListTiebreaksByReleaseIDOnEqualTimestamp(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 	ts := time.Unix(200, 0).UTC()
 	ra := release.New("ra", "svc", "t", false, "acme/demo", "deadbeef", ts)
@@ -165,7 +193,7 @@ func TestReleaseRepository_ListTiebreaksByReleaseIDOnEqualTimestamp(t *testing.T
 
 func TestReleaseRepository_ListFiltersByStatus(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 	a := release.New("ra", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, a))
@@ -184,7 +212,7 @@ func TestReleaseRepository_ListFiltersByStatus(t *testing.T) {
 
 func TestReleaseRepository_PerNodeResultsRoundTrip(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 	r := release.New("rp", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
@@ -201,7 +229,7 @@ func TestReleaseRepository_PerNodeResultsRoundTrip(t *testing.T) {
 
 func TestReleaseRepository_DeleteResolvedBeforeKeepsCurrentProd(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 	mkRejected := func(id string, ts int64) {
 		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
@@ -240,7 +268,7 @@ func TestReleaseRepository_DeleteResolvedBeforeKeepsCurrentProd(t *testing.T) {
 
 func TestReleaseRepository_DeleteResolvedBeforeKeepsServiceProdRefs(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	spRepo := postgres.NewServiceProdRepository(db)
 	ctx := context.Background()
 
@@ -282,7 +310,7 @@ func TestReleaseRepository_DeleteResolvedBeforeKeepsServiceProdRefs(t *testing.T
 
 func TestReleaseRepository_DeleteResolvedBeforeEmptyKeepSlice(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
 	r := release.New("old-prom", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
@@ -302,7 +330,7 @@ func TestReleaseRepository_DeleteResolvedBeforeEmptyKeepSlice(t *testing.T) {
 
 func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
 	r := release.New("rPROV", "svc-a", "img-1", false, "acme/demo", "deadbeefcafe1234", time.Unix(100, 0).UTC())
@@ -317,7 +345,7 @@ func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
 
 func TestReleaseRepository_RoundTripsCandidateSQLURI(t *testing.T) {
 	db := openTestDB(t)
-	repo := postgres.NewReleaseRepository(db)
+	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
 	// Build a release that already has a candidate topology containing a node
@@ -346,4 +374,58 @@ func TestReleaseRepository_RoundTripsCandidateSQLURI(t *testing.T) {
 	require.Len(t, got.CandidateTopology(), 1)
 	assert.Equal(t, "s3://b/candidate-sql/r/n.sql", got.CandidateTopology()[0].CandidateSQLURI,
 		"candidate_sql_uri must survive a JSONB round-trip through Postgres")
+}
+
+// TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes
+// verifies that DeleteResolvedBefore calls the CandidateSQLDeleter with the
+// correct prefix for each pruned release, and that a deleter error does not
+// abort the prune (soft-fail).
+func TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	mkTerminal := func(id string, ts int64) {
+		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
+		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
+		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
+		require.NoError(t, r.TransitionToRejected("validation_failed", nil, time.Unix(ts+3, 0).UTC()))
+		repo := postgres.NewReleaseRepository(db, nil)
+		require.NoError(t, repo.Save(ctx, r))
+	}
+
+	mkTerminal("prune-a", 100)
+	mkTerminal("prune-b", 101)
+	mkTerminal("keep-c", 102)
+
+	cutoff := time.Unix(1000, 0).UTC()
+
+	t.Run("deleter is called with correct prefixes", func(t *testing.T) {
+		fd := &fakeDeleter{}
+		repo := postgres.NewReleaseRepository(db, fd)
+		n, err := repo.DeleteResolvedBefore(ctx, cutoff, []string{"keep-c"})
+		require.NoError(t, err)
+		assert.Equal(t, 2, n)
+
+		got := fd.prefixes()
+		assert.Equal(t, []string{
+			"candidate-sql/prune-a/",
+			"candidate-sql/prune-b/",
+		}, got, "deleter must be called once per pruned release with the correct prefix")
+	})
+
+	// Reseed because the previous sub-test deleted prune-a and prune-b.
+	mkTerminal("prune-d", 103)
+	mkTerminal("prune-e", 104)
+
+	t.Run("deleter error does not fail the prune", func(t *testing.T) {
+		fd := &fakeDeleter{failErr: errors.New("s3 unavailable")}
+		repo := postgres.NewReleaseRepository(db, fd)
+		n, err := repo.DeleteResolvedBefore(ctx, cutoff, []string{"keep-c"})
+		require.NoError(t, err, "prune must succeed even when S3 deletion fails")
+		assert.Equal(t, 2, n, "both releases must be counted as pruned despite S3 error")
+
+		// Both prefixes were attempted despite the first failing.
+		got := fd.prefixes()
+		assert.Len(t, got, 2, "deleter must be attempted for every pruned release")
+	})
 }

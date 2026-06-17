@@ -35,7 +35,7 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 	_, err = db.Exec("TRUNCATE releases, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
 	deps := &handlers.Deps{
-		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, slog.Default()) },
+		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, slog.Default(), nil) },
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.Default(),

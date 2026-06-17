@@ -11,6 +11,7 @@ import (
 
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )
@@ -27,12 +28,18 @@ type Queryer interface {
 
 // ReleaseRepository is the Postgres-backed implementation of
 // repository.ReleaseRepository.
-type ReleaseRepository struct{ q Queryer }
+type ReleaseRepository struct {
+	q       Queryer
+	deleter ports.CandidateSQLDeleter
+}
 
 // NewReleaseRepository constructs a ReleaseRepository bound to the given
-// Queryer. Pass *sqlx.DB for autocommit operations or *sqlx.Tx for
-// transactional writes.
-func NewReleaseRepository(q Queryer) *ReleaseRepository { return &ReleaseRepository{q: q} }
+// Queryer and CandidateSQLDeleter. Pass *sqlx.DB for autocommit operations or
+// *sqlx.Tx for transactional writes. deleter may be nil in tests that do not
+// exercise pruning; production always passes a real S3 client.
+func NewReleaseRepository(q Queryer, deleter ports.CandidateSQLDeleter) *ReleaseRepository {
+	return &ReleaseRepository{q: q, deleter: deleter}
+}
 
 var _ repository.ReleaseRepository = (*ReleaseRepository)(nil)
 
@@ -268,19 +275,44 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 // (promoted, rejected, or superseded), were created before the given cutoff,
 // and are not in the keepReleaseIDs set. An empty keepReleaseIDs slice means
 // no extra releases are preserved. Returns the number of rows deleted.
+// After deleting each row, it also attempts to remove the corresponding
+// candidate-SQL objects from S3 under the prefix candidate-sql/<release_id>/.
+// S3 deletion is soft-fail: if it errors, the error is logged and the prune
+// continues. A bucket lifecycle rule is the backstop for any objects left behind.
 func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
-	res, err := r.q.ExecContext(ctx,
+	rows, err := r.q.QueryxContext(ctx,
 		`DELETE FROM releases
 		 WHERE status IN ('promoted','rejected','superseded')
 		   AND created_at < $1
-		   AND release_id <> ALL($2)`,
+		   AND release_id <> ALL($2)
+		 RETURNING release_id`,
 		cutoff, pq.Array(keepReleaseIDs))
 	if err != nil {
 		return 0, fmt.Errorf("delete resolved releases: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("rows affected: %w", err)
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return 0, fmt.Errorf("scan deleted release_id: %w", err)
+		}
+		ids = append(ids, id)
 	}
-	return int(n), nil
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate deleted release ids: %w", err)
+	}
+
+	if r.deleter != nil {
+		for _, id := range ids {
+			// Soft-fail: a failed candidate-SQL cleanup must not abort the prune;
+			// the bucket lifecycle rule reclaims anything left behind.
+			if err := r.deleter.DeletePrefix(ctx, "candidate-sql/"+id+"/"); err != nil {
+				_ = err // logged by the deleter itself; prune continues
+			}
+		}
+	}
+
+	return len(ids), nil
 }

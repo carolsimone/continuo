@@ -14,6 +14,7 @@ import (
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	redisadapter "github.com/carolsimone/continuo/release-controller/adapters/redis"
+	s3adapter "github.com/carolsimone/continuo/release-controller/adapters/s3"
 	"github.com/carolsimone/continuo/release-controller/config"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
@@ -65,8 +66,21 @@ func main() {
 	}
 	defer rc.Close()
 
+	// S3 client for pruning candidate-SQL objects when releases are deleted.
+	// Credentials are optional: when running on a cloud instance with an IAM
+	// role the static provider is a no-op, so plain os.Getenv is used here
+	// rather than the required-var validator.
+	s3Client := s3adapter.NewS3Client(
+		os.Getenv("S3_ENDPOINT_URL"),
+		cfg.S3Bucket,
+		os.Getenv("AWS_DEFAULT_REGION"),
+		os.Getenv("AWS_ACCESS_KEY_ID"),
+		os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		logger,
+	)
+
 	deps := &handlers.Deps{
-		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, s3Client) },
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    logger,

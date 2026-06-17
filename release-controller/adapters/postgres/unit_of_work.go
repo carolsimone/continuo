@@ -10,6 +10,7 @@ import (
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/jmoiron/sqlx"
 )
@@ -18,15 +19,17 @@ import (
 // transaction-scoped repositories handlers need. Callers own its lifecycle:
 // Begin → (work) → Commit, with Rollback on any failure.
 type UnitOfWork struct {
-	db     *sqlx.DB
-	tx     *sqlx.Tx
-	inTx   bool
-	logger *slog.Logger
+	db      *sqlx.DB
+	tx      *sqlx.Tx
+	inTx    bool
+	logger  *slog.Logger
+	deleter ports.CandidateSQLDeleter
 }
 
-// NewUnitOfWork creates a new Postgres-backed UnitOfWork.
-func NewUnitOfWork(db *sqlx.DB, logger *slog.Logger) *UnitOfWork {
-	return &UnitOfWork{db: db, logger: logger}
+// NewUnitOfWork creates a new Postgres-backed UnitOfWork. deleter is used by
+// ReleaseRepo to remove candidate-SQL objects from S3 when releases are pruned.
+func NewUnitOfWork(db *sqlx.DB, logger *slog.Logger, deleter ports.CandidateSQLDeleter) *UnitOfWork {
+	return &UnitOfWork{db: db, logger: logger, deleter: deleter}
 }
 
 var _ uow.UnitOfWork = (*UnitOfWork)(nil)
@@ -42,7 +45,7 @@ func (u *UnitOfWork) queryer() Queryer {
 
 // ReleaseRepo returns the release repository bound to the current queryer.
 func (u *UnitOfWork) ReleaseRepo() repository.ReleaseRepository {
-	return NewReleaseRepository(u.queryer())
+	return NewReleaseRepository(u.queryer(), u.deleter)
 }
 
 // CurrentProdRepo returns the current-prod repository bound to the current queryer.
