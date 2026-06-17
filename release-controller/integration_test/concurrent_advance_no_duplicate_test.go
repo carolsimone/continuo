@@ -30,6 +30,8 @@ func TestIntegration_ConcurrentAdvance_PromotesAtMostOnce(t *testing.T) {
 		Service:   "service-1",
 		ReleaseID: "rA",
 		ImageTag:  "sha-rA",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeefcafe1234",
 	}))
 
 	// Truncate any outbox rows from setup() so the count assertion below is

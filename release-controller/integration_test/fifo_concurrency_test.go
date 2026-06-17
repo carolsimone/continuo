@@ -29,6 +29,7 @@ func TestIntegration_FIFO_SerializesConcurrentCandidates(t *testing.T) {
 			id := fmt.Sprintf("r%02d", i)
 			_ = handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 				Service: "service-1", ReleaseID: id, ImageTag: "sha-" + id,
+				Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 			})
 		}(i)
 	}

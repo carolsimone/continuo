@@ -19,6 +19,7 @@ func TestIntegration_FailedValidationKeepsCurrentProdUnchanged(t *testing.T) {
 	// Seed candidate through happy stages up to Validating
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "service-1", ReleaseID: "rFAIL", ImageTag: "sha-rFAIL",
+		Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{

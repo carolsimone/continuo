@@ -28,6 +28,8 @@ func TestIntegration_ConcurrentReceiveAndAdvance_NoTxCollision(t *testing.T) {
 				Service:   "service-1",
 				ReleaseID: id,
 				ImageTag:  "sha-" + id,
+				Repo:      "acme/demo",
+				CommitSHA: "deadbeefcafe1234",
 			})
 		}(i)
 		go func() {

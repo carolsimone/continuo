@@ -54,6 +54,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 		Service:   "service-1",
 		ReleaseID: "rA",
 		ImageTag:  "sha-rA",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeefcafe1234",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/releases", bytes.NewReader(body))
 	w := httptest.NewRecorder()
