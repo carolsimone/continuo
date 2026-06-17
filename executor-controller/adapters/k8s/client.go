@@ -173,7 +173,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 // ValidationJobParams represents the parameters needed to create a
 // mode=validation K8s Job. It mirrors JobParams for the production fields a
 // validation node still needs and adds the validation-only fields (release/node
-// identity, candidate schema, candidate SQL).
+// identity, candidate schema, candidate SQL URI).
 type ValidationJobParams struct {
 	JobName     string
 	ReleaseID   string
@@ -185,7 +185,7 @@ type ValidationJobParams struct {
 	ImageTag    string
 
 	CandidateSchema string
-	CandidateSQL    string
+	CandidateSQLURI string
 
 	Namespace string
 }
@@ -251,9 +251,9 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // Image construction and the dbt-profile env conventions mirror the production
 // buildPodSpec; the container command comes from model.ValidationCommand, the
 // single source of truth for the validation CLI. Model/snapshot nodes run
-// validation_runner.py (reading CANDIDATE_SQL from env); seed nodes use
-// `dbt seed --select <table> --empty`. An empty ImageTag is a permanent error —
-// content-addressed tags must be explicit.
+// validation_runner.py (fetching SQL from S3 via CANDIDATE_SQL_URI); seed nodes
+// use `dbt seed --select <table> --empty`. An empty ImageTag is a permanent
+// error — content-addressed tags must be explicit.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing for service %s",
@@ -273,10 +273,18 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
-		// candidate_sql is the node's compiled SQL with schema refs already
-		// rewritten to the candidate schema; validation_runner.py reads it to build
-		// the node as an empty table. Empty for seeds (they use `dbt seed --empty`).
-		{Name: "CANDIDATE_SQL", Value: p.CandidateSQL},
+		// CANDIDATE_SQL_URI is an S3 URI pointing to the node's compiled SQL with
+		// schema refs already rewritten to the candidate schema. validation_runner.py
+		// fetches this object from S3 and builds the node as an empty CTAS table.
+		// Empty for seeds (they use `dbt seed --empty` instead).
+		{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI},
+		// S3 credentials — forwarded from executor-controller environment so the
+		// validation runner can boto3-GET the candidate SQL object.
+		{Name: "S3_ENDPOINT_URL", Value: os.Getenv("S3_ENDPOINT_URL")},
+		{Name: "S3_BUCKET", Value: os.Getenv("S3_BUCKET")},
+		{Name: "AWS_ACCESS_KEY_ID", Value: os.Getenv("AWS_ACCESS_KEY_ID")},
+		{Name: "AWS_SECRET_ACCESS_KEY", Value: os.Getenv("AWS_SECRET_ACCESS_KEY")},
+		{Name: "AWS_DEFAULT_REGION", Value: os.Getenv("AWS_DEFAULT_REGION")},
 		// dbt profile connection — forwarded from executor-controller environment
 		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
 		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},

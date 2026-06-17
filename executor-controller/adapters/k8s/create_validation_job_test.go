@@ -38,24 +38,24 @@ func fetchJob(t *testing.T, c *K8sClient, namespace, name string) *batchv1.Job {
 
 func validationParams() ValidationJobParams {
 	return ValidationJobParams{
-		JobName:         "validate-orders-rel123",
-		ReleaseID:       "rel123",
-		NodeID:          "svc.orders",
-		ServiceName:     "service-1",
-		SchemaName:      "analytics",
-		TableName:       "orders",
-		NodeType:        pkg_model.NodeTypeDbtModel,
-		ImageTag:        "abc-1714300000",
-		CandidateSchema: "_candidate_rel_123",
-		CandidateSQL:    "select id, amount from _candidate_rel_123.payments",
-		Namespace:       "default",
+		JobName:          "validate-orders-rel123",
+		ReleaseID:        "rel123",
+		NodeID:           "svc.orders",
+		ServiceName:      "service-1",
+		SchemaName:       "analytics",
+		TableName:        "orders",
+		NodeType:         pkg_model.NodeTypeDbtModel,
+		ImageTag:         "abc-1714300000",
+		CandidateSchema:  "_candidate_rel_123",
+		CandidateSQLURI:  "s3://continuo-artifacts/candidate-sql/rel123/svc.orders.sql",
+		Namespace:        "default",
 	}
 }
 
 // TestCreateValidationJob_BuildsExpectedCommand_DbtModel verifies that model
 // nodes run validation_runner.py (CTAS path) rather than a dbt command.
-// CANDIDATE_SQL env must be populated from the params so the runner can build
-// the empty table without a dbt recompile.
+// CANDIDATE_SQL_URI env must be populated from the params so the runner can
+// fetch the SQL from S3 and build the empty table without a dbt recompile.
 func TestCreateValidationJob_BuildsExpectedCommand_DbtModel(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newValidationTestClient()
@@ -70,10 +70,10 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtModel(t *testing.T) {
 		job.Spec.Template.Spec.Containers[0].Command)
 	assert.Equal(t, "service-1:abc-1714300000", job.Spec.Template.Spec.Containers[0].Image)
 
-	// CANDIDATE_SQL must be wired through so validation_runner.py can build the
-	// empty CTAS table.
-	assert.Equal(t, p.CandidateSQL, envByName(job.Spec.Template.Spec, "CANDIDATE_SQL"),
-		"model validation job must set CANDIDATE_SQL env")
+	// CANDIDATE_SQL_URI must be wired through so validation_runner.py can fetch
+	// the SQL from S3 and build the empty CTAS table.
+	assert.Equal(t, p.CandidateSQLURI, envByName(job.Spec.Template.Spec, "CANDIDATE_SQL_URI"),
+		"model validation job must set CANDIDATE_SQL_URI env")
 }
 
 func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
@@ -91,12 +91,20 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
-// TestCreateValidationJob_PassesCandidateEnvsViaEnv verifies that both
-// DBT_TARGET_SCHEMA and CANDIDATE_SQL are set on the validation pod.
+// TestCreateValidationJob_PassesCandidateEnvsViaEnv verifies that
+// DBT_TARGET_SCHEMA, CANDIDATE_SQL_URI, and the five S3 credential vars are
+// all set on the validation pod.
 // DBT_TARGET_SCHEMA routes the generate_schema_name macro to the candidate
-// schema; CANDIDATE_SQL carries the rewritten SQL for validation_runner.py.
-// Dropping either would silently break the validation run.
+// schema; CANDIDATE_SQL_URI is the S3 address the runner fetches to build the
+// empty CTAS table; the S3 vars give the runner credentials to perform that
+// fetch. Dropping any of these would silently break the validation run.
 func TestCreateValidationJob_PassesCandidateEnvsViaEnv(t *testing.T) {
+	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
+	t.Setenv("S3_BUCKET", "continuo-artifacts")
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+	t.Setenv("AWS_DEFAULT_REGION", "us-east-1")
+
 	c := newValidationTestClient()
 	p := validationParams()
 
@@ -109,8 +117,15 @@ func TestCreateValidationJob_PassesCandidateEnvsViaEnv(t *testing.T) {
 	require.NotEmpty(t, envByName(spec, "DBT_TARGET_SCHEMA"), "validation job must set DBT_TARGET_SCHEMA")
 	assert.Equal(t, p.CandidateSchema, envByName(spec, "DBT_TARGET_SCHEMA"))
 
-	require.NotEmpty(t, envByName(spec, "CANDIDATE_SQL"), "validation job must set CANDIDATE_SQL")
-	assert.Equal(t, p.CandidateSQL, envByName(spec, "CANDIDATE_SQL"))
+	require.NotEmpty(t, envByName(spec, "CANDIDATE_SQL_URI"), "validation job must set CANDIDATE_SQL_URI")
+	assert.Equal(t, p.CandidateSQLURI, envByName(spec, "CANDIDATE_SQL_URI"))
+
+	// S3 credentials — the runner needs these to boto3-GET the candidate SQL.
+	assert.Equal(t, "http://minio:9000", envByName(spec, "S3_ENDPOINT_URL"), "validation job must forward S3_ENDPOINT_URL")
+	assert.Equal(t, "continuo-artifacts", envByName(spec, "S3_BUCKET"), "validation job must forward S3_BUCKET")
+	assert.Equal(t, "test-key-id", envByName(spec, "AWS_ACCESS_KEY_ID"), "validation job must forward AWS_ACCESS_KEY_ID")
+	assert.Equal(t, "test-secret", envByName(spec, "AWS_SECRET_ACCESS_KEY"), "validation job must forward AWS_SECRET_ACCESS_KEY")
+	assert.Equal(t, "us-east-1", envByName(spec, "AWS_DEFAULT_REGION"), "validation job must forward AWS_DEFAULT_REGION")
 }
 
 func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {

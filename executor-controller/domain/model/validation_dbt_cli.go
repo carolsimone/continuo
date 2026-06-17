@@ -14,12 +14,12 @@ import (
 // candidate schema (DBT_TARGET_SCHEMA) from the CSV's column definitions, so they
 // keep `dbt seed --select <table> --empty`.
 //
-// Models and snapshots are built by validation_runner.py, which executes
-// `CREATE TABLE <candidate>.<table> AS (<CANDIDATE_SQL>) WITH NO DATA`. CANDIDATE_SQL
-// is the node's compiled SQL with every schema-qualified reference already
-// rewritten to the candidate schema, so raw cross-service refs resolve against the
-// empty upstream tables built earlier in dependency order — no model edits, no dbt
-// recompile from production-schema refs.
+// Models and snapshots are built by validation_runner.py, which fetches the
+// compiled SQL from S3 via the CANDIDATE_SQL_URI env var and executes
+// `CREATE TABLE <candidate>.<table> AS (<sql>) WITH NO DATA`. The SQL has every
+// schema-qualified reference already rewritten to the candidate schema, so raw
+// cross-service refs resolve against the empty upstream tables built earlier in
+// dependency order — no model edits, no dbt recompile from production-schema refs.
 func ValidationCommand(nt pkg_model.NodeType, tableName string) []string {
 	if nt == pkg_model.NodeTypeDbtSeed {
 		args := append([]string{}, nt.Command(tableName)...) // dbt seed --select <table>
