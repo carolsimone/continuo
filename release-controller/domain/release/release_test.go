@@ -1,6 +1,7 @@
 package release_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -122,4 +123,41 @@ func TestRelease_RehydrateRoundTripsProvenance(t *testing.T) {
 	})
 	assert.Equal(t, "acme/demo", r.Repo())
 	assert.Equal(t, "deadbeefcafe", r.CommitSHA())
+}
+
+func TestNode_CandidateSQLURIRoundTrips(t *testing.T) {
+	// Node.CandidateSQLURI must round-trip via JSON under the key "candidate_sql_uri".
+	n := release.Node{
+		UniqueID:        "a",
+		CandidateSQLURI: "s3://continuo/svc-a/rA/candidate_a.sql",
+	}
+	b, err := json.Marshal(n)
+	require.NoError(t, err)
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(b, &m))
+	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a.sql", m["candidate_sql_uri"],
+		"JSON key must be candidate_sql_uri")
+	_, hasCandidateSQL := m["candidate_sql"]
+	assert.False(t, hasCandidateSQL, "old candidate_sql key must not appear")
+
+	var n2 release.Node
+	require.NoError(t, json.Unmarshal(b, &n2))
+	assert.Equal(t, n.CandidateSQLURI, n2.CandidateSQLURI, "round-trip preserves value")
+}
+
+func TestTopology_WithoutCandidateSQLURI_ClearsField(t *testing.T) {
+	// WithoutCandidateSQLURI must return a copy with every node's CandidateSQLURI
+	// cleared, leaving other fields intact.
+	topo := release.Topology{
+		{UniqueID: "a", CandidateSQLURI: "s3://continuo/svc-a/rA/a.sql", TableName: "tbl_a"},
+		{UniqueID: "b", CandidateSQLURI: "s3://continuo/svc-a/rA/b.sql", TableName: "tbl_b"},
+	}
+	stripped := topo.WithoutCandidateSQLURI()
+	for _, n := range stripped {
+		assert.Empty(t, n.CandidateSQLURI, "CandidateSQLURI must be cleared in stripped topology")
+	}
+	assert.Equal(t, "tbl_a", stripped[0].TableName, "other fields must be preserved")
+	// original must be unmodified
+	assert.NotEmpty(t, topo[0].CandidateSQLURI, "original topology must not be mutated")
 }
