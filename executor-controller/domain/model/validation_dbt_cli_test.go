@@ -10,7 +10,8 @@ import (
 )
 
 // TestValidationCommand_Model verifies that model nodes run validation_runner.py
-// instead of a dbt command — the runner executes a CTAS from CANDIDATE_SQL.
+// instead of a dbt command — the runner fetches SQL from S3 via CANDIDATE_SQL_URI
+// and executes a CTAS from it.
 func TestValidationCommand_Model(t *testing.T) {
 	got := model.ValidationCommand(pkg_model.NodeTypeDbtModel, "orders")
 	want := []string{"python", "/validation_runner.py"}
