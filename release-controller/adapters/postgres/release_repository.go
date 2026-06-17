@@ -279,6 +279,12 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 // candidate-SQL objects from S3 under the prefix candidate-sql/<release_id>/.
 // S3 deletion is soft-fail: if it errors, the error is logged and the prune
 // continues. A bucket lifecycle rule is the backstop for any objects left behind.
+//
+// The S3 deletes run inside the prune transaction, before the caller commits.
+// This ordering is intentional: the failure it exposes (a post-delete commit
+// failure leaving objects deleted for rows that survive) only ever orphans S3
+// objects — never SQL still referenced by a live release — and the lifecycle rule
+// reclaims those anyway.
 func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	rows, err := r.q.QueryxContext(ctx,
 		`DELETE FROM releases
@@ -306,11 +312,9 @@ func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff tim
 
 	if r.deleter != nil {
 		for _, id := range ids {
-			// Soft-fail: a failed candidate-SQL cleanup must not abort the prune;
-			// the bucket lifecycle rule reclaims anything left behind.
-			if err := r.deleter.DeletePrefix(ctx, "candidate-sql/"+id+"/"); err != nil {
-				_ = err // soft-fail: the S3 deleter logs its own failures; a cleanup error must not abort the prune (the bucket lifecycle rule reclaims anything left behind).
-			}
+			// Soft-fail: the S3 deleter logs its own failures; a cleanup error must
+			// not abort the prune (the bucket lifecycle rule reclaims anything left).
+			_ = r.deleter.DeletePrefix(ctx, "candidate-sql/"+id+"/")
 		}
 	}
 
