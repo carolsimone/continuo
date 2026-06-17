@@ -298,10 +298,9 @@ func (d *Dispatcher) settleFailedValidation(ctx context.Context, repo repository
 
 func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	cmd := dep.Command()
-	if err := d.createOutbox(ctx, outboxRepo, dep, "task_status_updated", streams.TaskStatusUpdatedV1,
-		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "RUNNING", RetryCount: int32(cmd.TaskRetryCount)}); err != nil {
-		return fmt.Errorf("write RUNNING announcement: %w", err)
-	}
+	// The deploy path emits only the node_deployed trigger that starts k8s polling.
+	// k8s-controller is the sole producer of the running/terminal pod lifecycle and
+	// announces RUNNING the first time it observes the Job running.
 	deployed := event.JobDeployed{
 		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
 		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName,

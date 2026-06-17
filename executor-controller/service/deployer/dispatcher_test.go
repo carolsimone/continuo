@@ -83,7 +83,7 @@ func outboxCountByType(t *testing.T, db *sqlx.DB, eventType string) int {
 	return n
 }
 
-func TestDispatcher_SuccessWritesRunningAndDeployed(t *testing.T) {
+func TestDispatcher_SuccessWritesDeployedOnly(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	id := seedJob(t, db, 3, 0)
@@ -95,7 +95,9 @@ func TestDispatcher_SuccessWritesRunningAndDeployed(t *testing.T) {
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "deployed", status)
-	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
+	// k8s-controller now owns the RUNNING announcement; the deploy path emits only
+	// the node_deployed trigger that starts k8s polling.
+	assert.Equal(t, 0, outboxCountByType(t, db, "task_status_updated"), "deploy path no longer announces RUNNING")
 	assert.Equal(t, 1, outboxCountByType(t, db, "node_deployed"))
 	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"))
 }

@@ -50,7 +50,7 @@ All three streams are consumed via `pkg/redis.StreamConsumer` with per-stream pa
 
 Both production and `mode=validation` Jobs are observed over these same `node.deployed:v1` / `check.k8s:v1` consumers; there is no separate validation consumer group and no label-selector filter on the consumers themselves. Routing to the validation result happens inside `CheckStatusHandler` by inspecting the live Job's labels (see Validation-job routing).
 
-`node.deployed:v1` and `check.k8s:v1` carry their event as a typed JSON `payload` field, decoded by the per-stream parsers into `pkg/events.NodeDeployed` and `pkg/events.CheckK8s` (`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `image_tag`, plus retry/max-retries). The task-level retry count is named `task_retry_count` on `node.deployed:v1` and `retry_count` on `check.k8s:v1`; both parsers map it onto `command.CheckJobStatus.RetryCount`. Transport metadata travels as flat sibling fields: `outbox_entry_id` (consumed by `DedupWithOutboxEntryID` for dedup) and, on `check.k8s:v1`, `check_after` (the binding's delay gate reads it before the payload is decoded, so re-circulated copies preserve the schedule).
+`node.deployed:v1` and `check.k8s:v1` carry their event as a typed JSON `payload` field, decoded by the per-stream parsers into `pkg/events.NodeDeployed` and `pkg/events.CheckK8s` (`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `image_tag`, plus retry/max-retries). The task-level retry count is named `task_retry_count` on `node.deployed:v1` and `retry_count` on `check.k8s:v1`; both parsers map it onto `command.CheckJobStatus.RetryCount`. `check.k8s:v1` additionally carries `running_announced` — false on a fresh `node.deployed:v1` (a new attempt), set true once RUNNING has been announced, so the self-poll loop announces RUNNING exactly once per attempt without persistent state. Transport metadata travels as flat sibling fields: `outbox_entry_id` (consumed by `DedupWithOutboxEntryID` for dedup) and, on `check.k8s:v1`, `check_after` (the binding's delay gate reads it before the payload is decoded, so re-circulated copies preserve the schedule).
 
 ### HTTP (port 8085)
 
@@ -65,7 +65,7 @@ Both production and `mode=validation` Jobs are observed over these same `node.de
 | `check.k8s:v1` | Job still running; re-enqueue with `check_after` delay |
 | `retry.task:v1` | Job failed, retryable; `executor-controller` will re-deploy |
 | `task.failed:v1` | Job failed permanently; currently has no in-repo consumer |
-| `task.status.updated:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `state` to update task status |
+| `task.status.updated:v1` | Job running (first observation) and terminal (SUCCEEDED/FAILED); consumed by `state` to update task status. k8s-controller is the sole producer of the running/terminal pod lifecycle. |
 | `task.execution.recorded:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `state` to persist execution record |
 | `node.updated:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `orchestrator` for topology projection |
 | `validation.node.completed:v1` | `mode=validation` Job terminal (SUCCEEDED or FAILED); single per-node result consumed by `executor-controller` instead of the three production task-status rows |
@@ -102,7 +102,7 @@ Both production and `mode=validation` Jobs are observed over these same `node.de
 
 | Status | Action |
 |---|---|
-| **Running** | Write `check_delayed` outbox entry → re-enqueue to `check.k8s:v1` with `check_after` |
+| **Running** | The first time an attempt is observed running (`running_announced=false`), announce `task.status.updated:v1` (RUNNING) stamped with the running attempt — suppressed for `mode=validation` Jobs. Always write a `check_delayed` outbox entry → re-enqueue to `check.k8s:v1` with `check_after` and `running_announced=true`, so RUNNING is announced exactly once per attempt. k8s-controller is the sole producer of the running/terminal pod lifecycle. |
 | **Failed, retryable** (`retry_count < max_retries`) | Fetch+upload logs (soft-fail) → entry A: publish `task.status.updated:v1` (FAILED) stamping the attempt that ran; entry B: publish `retry.task:v1` for the next attempt (`retry_count + 1`) |
 | **Failed, permanent** (`retry_count >= max_retries`) | Fetch+upload logs (soft-fail) → entry A: publish `task.status.updated:v1` (FAILED) + `task.execution.recorded:v1`; entry B: publish `task.failed:v1` + `node.updated:v1` FAILED |
 | **Succeeded** | Entry A: publish `task.status.updated:v1` (SUCCEEDED) + `task.execution.recorded:v1`; entry B: publish `node.updated:v1` SUCCEEDED |
@@ -117,14 +117,15 @@ Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single tr
 | Succeeded | `task_status_updated` (SUCCEEDED) + `task_execution_recorded` + `node_status_updated` |
 | Failed, retryable | `task_status_updated` (FAILED) + `task_execution_recorded` + `task_retry` |
 | Failed, permanent | `task_status_updated` (FAILED) + `task_execution_recorded` + `node_status_updated` |
-| Running | `check_delayed` (1 row) |
+| Running (first observation, production) | `task_status_updated` (RUNNING) + `check_delayed` |
+| Running (already announced, or validation) | `check_delayed` (1 row) |
 | Unknown | `task_status_updated` (FAILED) + `task_failed` |
 
 ### Validation-job routing
 
 `CheckStatusHandler` fetches the live Job's labels and annotations and routes on the `mode` label. A Job labelled `mode=validation` (created by `executor-controller`'s validation dispatch path) bypasses the production outcome branches:
 
-- **Running** — handled by the shared re-poll before the mode branch: the handler writes one `check_delayed` row (→ `check.k8s:v1`) with a `check_after` delay, identical to the production running path. On the next check the Job's `mode` is re-read and routing recurs. A validation Job is always Running on the first check fired by the `node.deployed:v1` trigger, so this re-poll is what carries it to a terminal status instead of being checked once and dropped.
+- **Running** — handled by the shared re-poll before the terminal mode branch: the handler writes one `check_delayed` row (→ `check.k8s:v1`) with a `check_after` delay. On the first observation it reads the Job's `mode`, and because the Job is `mode=validation` it **suppresses** the RUNNING `task_status_updated` announcement (validation rows have no real task/schedule) while still setting `running_announced=true` on the forward ticket so metadata is not re-read every poll. On the next check the Job's `mode` is re-read and routing recurs. A validation Job is always Running on the first check fired by the `node.deployed:v1` trigger, so this re-poll is what carries it to a terminal status instead of being checked once and dropped.
 - **Unknown** — also not terminal (e.g. pods not yet scheduled); the validation branch re-polls via the same `check.k8s:v1` ticket rather than emitting a premature failure. (Production treats Unknown as a permanent failure — `task_status_updated` (FAILED) + `task_failed`.)
 - **Succeeded / Failed** — the handler uploads pod logs (soft-fail) and writes exactly ONE `validation_node_completed` outbox row (→ `validation.node.completed:v1`) carrying `{release_id, node_id, outcome, dbt_log_uri}`. `outcome` is `ok` when the Job succeeded, else `failed`. This single row replaces the three production task-status rows — no `task_status_updated`, `task_execution_recorded`, or `node_status_updated` is written for validation Jobs.
 
@@ -142,7 +143,7 @@ The row's `aggregate_id` is a deterministic UUIDv5 over an immutable namespace a
 ## Redis Payload Reference
 
 ### `check.k8s:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`, `retry_count`, `max_retries`, `image_tag`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`, `retry_count`, `max_retries`, `image_tag`, `running_announced`
 
 ### `retry.task:v1`
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `retry_count`, `node_type`

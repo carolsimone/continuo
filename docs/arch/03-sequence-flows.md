@@ -31,13 +31,13 @@ sequenceDiagram
       Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker (skip if cancelled)<br/>BulkCreate task_tracker rows — status=PENDING<br/>SetTotalTaskCount, init_status=completed, status=RUNNING
     and executor launches seed/root jobs
       R->>EC: consume query.model v1
-      Note over EC: write executor_deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob (idempotent on JobName)<br/>write executor_outbox rows (task_status_updated RUNNING + node_deployed)
-      EC->>R: publish task.status.updated v1 (RUNNING)
+      Note over EC: write executor_deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob (idempotent on JobName)<br/>write executor_outbox row (node_deployed)
       EC->>R: publish node.deployed v1
+      R->>KC: consume node.deployed v1
+      Note over KC: start poll loop — CheckJobStatus + check.k8s v1 backoff<br/>first time the Job is observed running: announce RUNNING once per attempt
+      KC->>R: publish task.status.updated v1 (RUNNING)
       R->>ST: consume task.status.updated v1 (RUNNING)
       Note over ST: task_tracker.status = RUNNING
-      R->>KC: consume node.deployed v1
-      Note over KC: start poll loop — CheckJobStatus + check.k8s v1 backoff
     end
   end
 ```
@@ -68,9 +68,9 @@ sequenceDiagram
   OR->>R: publish query.model:v1
 
   R->>EC: consume query.model:v1
-  EC->>EC: write executor_outbox
-  EC->>ST: UpdateTask(status=RUNNING)
+  EC->>EC: write executor_outbox (node_deployed)
   EC->>R: publish node.deployed:v1
+  Note over KC: node.deployed:v1 → poll loop;<br/>k8s announces RUNNING once when the Job is first observed running
 ```
 
 ## 3. Retry and Terminal Failure Path
@@ -104,9 +104,9 @@ sequenceDiagram
     KC->>S3: upload pod logs
     KC->>R: publish retry.task:v1
     R->>EC: consume retry.task:v1
-    Note over EC: write executor_deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob<br/>write executor_outbox rows (task_status_updated RUNNING + node_deployed)
-    EC->>R: publish task.status.updated v1 (RUNNING)
+    Note over EC: write executor_deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob<br/>write executor_outbox row (node_deployed)
     EC->>R: publish node.deployed:v1
+    Note over KC: node.deployed:v1 → poll loop;<br/>k8s announces RUNNING once at the retry's attempt number
   else retries exhausted
     KC->>KC: write k8s_outbox(task_failed + node_status_updated)
     KC->>ST: UpdateTask(status=failed)
@@ -333,7 +333,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker row (1 row)<br/>SetTotalTaskCount=1, init_status=completed, status=RUNNING
   and executor launches the job
     R->>EC: consume query.model:v1
-    Note over EC: identical to Flow 1 from here<br/>executor_deployments (pending) → deployer.Dispatcher → CreateQueryJob → executor_outbox rows → task.status.updated:v1 RUNNING + node.deployed:v1
+    Note over EC: identical to Flow 1 from here<br/>executor_deployments (pending) → deployer.Dispatcher → CreateQueryJob → executor_outbox row → node.deployed:v1 (k8s announces RUNNING on first observed run)
   end
 ```
 
@@ -379,7 +379,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker — inherited rows land at SUCCEEDED with inherited_from_task_id<br/>rebased rows land at PENDING<br/>SetTotalTaskCount, init_status=completed<br/>auto-rollup if every task already terminal (defensive — no-op rebase)<br/>else status=RUNNING
   and executor launches rebased K8s Jobs
     R->>EC: consume query.model v1
-    Note over EC: identical to Flow 1 from here<br/>executor_deployments (pending) → deployer.Dispatcher → CreateQueryJob → executor_outbox rows → task.status.updated v1 RUNNING + node.deployed v1
+    Note over EC: identical to Flow 1 from here<br/>executor_deployments (pending) → deployer.Dispatcher → CreateQueryJob → executor_outbox row → node.deployed v1 (k8s announces RUNNING on first observed run)
   end
 ```
 

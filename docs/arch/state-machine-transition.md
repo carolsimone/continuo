@@ -10,7 +10,7 @@ Source of truth: `state/domain/aggregate/run/` (`run.go` aggregate methods; `sta
 
 ```
 pending → running → succeeded
-                 ↘ failed → running   (direct re-run via executor-controller)
+                 ↘ failed → running   (re-run redeployed by executor; running observed by k8s-controller)
        ↘ skipped                       (cascade-skip when an upstream node fails)
 ```
 
@@ -27,8 +27,8 @@ pending → running → succeeded
 
 | From | To | Produced by | Trigger |
 |---|---|---|---|
-| `pending` | `running` | `executor-controller` | Task picked up from the dependency-resolved queue |
-| `failed` | `running` | `executor-controller` | Direct re-run of a failed task |
+| `pending` | `running` | `k8s-controller` | Kubernetes job observed running (first poll) |
+| `failed` | `running` | `k8s-controller` | Re-run/retry's Kubernetes job observed running (first poll) |
 | `running` | `succeeded` | `k8s-controller` | Kubernetes job completes successfully |
 | `running` | `failed` | `k8s-controller` | Kubernetes job errors or times out |
 | `pending` | `skipped` | `orchestrator` | Upstream node failed; the run aggregate cascade-skips the still-pending downstream and emits `task.status.updated:v1` (`"skipped"`) |
@@ -46,7 +46,8 @@ Task status is applied by `Run.RecordTaskStatus` in
 and orders updates by attempt (`retry_count`) so the projection is independent
 of delivery order — see **Attempt-monotonic status updates** below. There is no
 per-transition `(from, to, owner)` table; status is a straight, attempt-ordered
-projection of the events the executor and k8s controllers emit.
+projection of the `task.status.updated:v1` events the k8s, executor, and
+orchestrator controllers emit.
 
 ### Notes
 
@@ -55,13 +56,34 @@ projection of the events the executor and k8s controllers emit.
 
 ### Attempt-monotonic status updates
 
-`task.status.updated:v1` has two producers — **executor-controller** emits `running`, **k8s-controller** emits the terminal `succeeded` / `failed`. The two messages for one task ride the same stream but originate from different services, so `state` can process them out of order: a `running` from the original attempt may arrive *after* that attempt's terminal status.
+`task.status.updated:v1` is written by three services, each owning a
+non-overlapping slice of a task's lifecycle:
 
-`retry_count` is the **attempt number** and disambiguates this. Producers stamp it so that a `running` and the terminal of the *same* attempt carry the *same* `retry_count`, and a retry is a strictly newer attempt:
+- **k8s-controller** owns the pod lifecycle: it emits `running` the first time it
+  observes a Job running, and the terminal `succeeded` / `failed` from the same
+  pod. Both carry the attempt that ran.
+- **executor-controller** owns the *never-deployed* terminal: a `failed` produced
+  when dispatch is exhausted (or job_params are not deployable) before any pod
+  exists. A pod that never ran cannot be reported by k8s.
+- **orchestrator** owns `skipped`: a cascade-skip of a still-pending downstream
+  when an upstream node fails. The task is never dispatched, so it carries
+  `retry_count = 0` and cannot collide with a real attempt of a task that ran.
 
-- executor-controller stamps the attempt it is starting on `running`.
-- k8s-controller stamps the attempt that ran on the terminal `succeeded` / `failed`.
-- on a retryable failure, k8s-controller records `failed` at the attempt that ran and dispatches the retry at `attempt + 1`; the retry then runs as `running` with that higher number.
+Only the k8s-owned slice contains a `running` + terminal pair, and a single
+service emits both in causal order, so under normal operation they no longer
+reorder against each other. The attempt-monotonic guard below is retained as
+defensive idempotency for *delivery* disorder that any single producer still
+incurs — redelivery, PEL reclaims, replays.
+
+`retry_count` is the **attempt number** and orders updates so that a `running`
+and the terminal of the *same* attempt carry the *same* `retry_count`, and a
+retry is a strictly newer attempt:
+
+- k8s-controller stamps the running attempt on `running` and the same attempt on
+  that attempt's terminal `succeeded` / `failed`.
+- on a retryable failure, k8s-controller records `failed` at the attempt that ran
+  and dispatches the retry at `attempt + 1`; the retry redeploys, and k8s emits
+  `running` at that higher number the first time it observes the retry's pod.
 
 The `Run` aggregate (`RecordTaskStatus`) orders **every** update by attempt, so the projection is independent of processing order:
 
@@ -69,7 +91,7 @@ The `Run` aggregate (`RecordTaskStatus`) orders **every** update by attempt, so 
 - for the **same** attempt, the first terminal fills the slot (`terminal_task_count++`); a `running` re-delivered after that attempt's terminal is ignored (no un-fill, no status regression);
 - for a **newer** attempt, a `running` after a terminal is a genuine retry and un-fills the slot (`terminal_task_count--`), while a terminal after an older terminal advances the stored attempt **without** double-counting and re-checks finalization (a retryable failure followed by a permanent one must finalize).
 
-The decision lives entirely in the aggregate; the repository supplies the prior status and stored attempt (under a `FOR UPDATE` lock so concurrent deliveries for one task serialize) and persists what the aggregate decides. This closes the cross-producer race regardless of delivery order. The structural follow-up — consolidating to a single producer so the reordering cannot arise — is tracked separately.
+The decision lives entirely in the aggregate; the repository supplies the prior status and stored attempt (under a `FOR UPDATE` lock so concurrent deliveries for one task serialize) and persists what the aggregate decides. This keeps the projection correct regardless of delivery order.
 
 ---
 

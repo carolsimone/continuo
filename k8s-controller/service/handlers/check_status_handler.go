@@ -402,10 +402,31 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	return nil
 }
 
-// handleRunning handles still-running jobs.
-// Writes 1 canonical outbox row: check_delayed (→ check.k8s:v1)
+// handleRunning handles a still-running Job. The first time an attempt is observed
+// running (RunningAnnounced == false) it announces the task as RUNNING — making
+// k8s-controller the sole producer of the task's running/terminal pod lifecycle —
+// then re-enqueues a check_delayed ticket. The announcement is mode-aware:
+// mode=validation Jobs use synthetic task IDs and carry no real task status, so
+// their RUNNING is suppressed; the forward ticket still sets running_announced so
+// metadata is not re-read on every poll. RUNNING is stamped with cmd.RetryCount so
+// it shares the attempt number of that attempt's terminal, which state's
+// attempt-monotonic guard relies on. The announcement and the forward ticket are
+// written in the same transaction, so the flag and the announcement never diverge.
 func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus) error {
 	repo := u.OutboxRepo()
+
+	if !cmd.RunningAnnounced {
+		labels, _, err := h.k8sClient.GetJobMeta(ctx, h.config.K8sNamespace, cmd.JobName)
+		if err != nil {
+			return fmt.Errorf("fetch job meta for running announcement: %w", err)
+		}
+		if labels["mode"] != "validation" {
+			if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "RUNNING", cmd.RetryCount); err != nil {
+				return fmt.Errorf("task_status_updated RUNNING: %w", err)
+			}
+		}
+	}
+
 	checkAfter := time.Now().Add(time.Duration(h.config.CheckDelaySeconds) * time.Second)
 
 	maxRetries := cmd.MaxRetries
@@ -418,18 +439,19 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 	outboxEntryID := uuid.New()
 
 	checkPayload, err := json.Marshal(event.JobCheckRequest{
-		TaskID:       cmd.TaskID.String(),
-		ScheduleID:   cmd.ScheduleID.String(),
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  cmd.ServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		JobName:      cmd.JobName,
-		CheckAfter:   checkAfter.Unix(),
-		NodeType:     cmd.NodeType,
-		ImageTag:     cmd.ImageTag,
-		RetryCount:   int(cmd.RetryCount),
-		MaxRetries:   int(maxRetries),
+		TaskID:           cmd.TaskID.String(),
+		ScheduleID:       cmd.ScheduleID.String(),
+		ScheduleName:     cmd.ScheduleName,
+		ServiceName:      cmd.ServiceName,
+		SchemaName:       cmd.SchemaName,
+		TableName:        cmd.TableName,
+		JobName:          cmd.JobName,
+		CheckAfter:       checkAfter.Unix(),
+		NodeType:         cmd.NodeType,
+		ImageTag:         cmd.ImageTag,
+		RetryCount:       int(cmd.RetryCount),
+		MaxRetries:       int(maxRetries),
+		RunningAnnounced: true,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal check_delayed: %w", err)

@@ -67,3 +67,25 @@ func TestToValues_CheckDelayed_EmitsPayloadAndFlatCheckAfter(t *testing.T) {
 		MaxRetries:   5,
 	}, ck)
 }
+
+// TestToValues_CheckDelayed_CarriesRunningAnnounced verifies running_announced
+// survives the check_delayed → check.k8s:v1 typed-payload conversion.
+func TestToValues_CheckDelayed_CarriesRunningAnnounced(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	p := NewOutboxPublisher(nil, logger)
+
+	raw, err := json.Marshal(event.JobCheckRequest{
+		TaskID:           uuid.New().String(),
+		ScheduleID:       uuid.New().String(),
+		JobName:          "job-1",
+		RunningAnnounced: true,
+	})
+	require.NoError(t, err)
+
+	vals, err := p.toValues(&outbox.Entry{EventType: "check_delayed", Payload: raw})
+	require.NoError(t, err)
+
+	var ck pkgevents.CheckK8s
+	require.NoError(t, json.Unmarshal([]byte(vals["payload"].(string)), &ck))
+	assert.True(t, ck.RunningAnnounced, "running_announced must survive check_delayed → check.k8s:v1 conversion")
+}

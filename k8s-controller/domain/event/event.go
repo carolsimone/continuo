@@ -9,18 +9,20 @@ type Event interface {
 // reads it to build the check.k8s:v1 typed event; check_after gates the
 // consumer-side re-delivery delay.
 type JobCheckRequest struct {
-	TaskID        string `json:"task_id"`
-	ScheduleID    string `json:"schedule_id"`
-	ScheduleName  string `json:"schedule_name"`
-	ServiceName   string `json:"service_name"`
-	SchemaName    string `json:"schema_name"`
-	TableName     string `json:"table_name"`
-	JobName       string `json:"job_name"`
-	CheckAfter    int64  `json:"check_after"` // Unix timestamp for delayed processing
-	NodeType      string `json:"node_type"`
-	ImageTag      string `json:"image_tag"`
-	RetryCount    int    `json:"retry_count"` // current task retry count
-	MaxRetries    int    `json:"max_retries"` // maximum task retries allowed
+	TaskID       string `json:"task_id"`
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+	ServiceName  string `json:"service_name"`
+	SchemaName   string `json:"schema_name"`
+	TableName    string `json:"table_name"`
+	JobName      string `json:"job_name"`
+	CheckAfter   int64  `json:"check_after"` // Unix timestamp for delayed processing
+	NodeType     string `json:"node_type"`
+	ImageTag     string `json:"image_tag"`
+	RetryCount   int    `json:"retry_count"` // current task retry count
+	MaxRetries   int    `json:"max_retries"` // maximum task retries allowed
+	// RunningAnnounced is true once RUNNING has been announced for this attempt.
+	RunningAnnounced bool `json:"running_announced"`
 }
 
 func (JobCheckRequest) isEvent() {}

@@ -394,8 +394,9 @@ func TestHandleFailedPermanent(t *testing.T) {
 	}
 }
 
-// TestHandleRunningCarriesRetryInfo verifies that a running job's check_delayed entry
-// carries RetryCount and MaxRetries forward in its payload.
+// TestHandleRunningCarriesRetryInfo verifies that a subsequent poll of a running
+// job (RunningAnnounced=true) writes only the check_delayed re-poll and carries
+// RetryCount and MaxRetries forward in its payload.
 func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 	outbox := &fakeOutboxRepo{}
 	handler := newHandler(
@@ -404,11 +405,12 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 	)
 
 	cmd := command.CheckJobStatus{
-		TaskID:     uuid.New(),
-		ScheduleID: uuid.New(),
-		JobName:    "job-running",
-		RetryCount: 1,
-		MaxRetries: 5,
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		JobName:          "job-running",
+		RetryCount:       1,
+		MaxRetries:       5,
+		RunningAnnounced: true,
 	}
 
 	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
@@ -434,6 +436,137 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 	}
 	if got := int(payload["max_retries"].(float64)); got != 5 {
 		t.Errorf("expected max_retries=5, got %d", got)
+	}
+}
+
+// TestHandleRunning_FirstObservation_AnnouncesRunningOncePerAttempt verifies that
+// the first time k8s observes a production Job running (RunningAnnounced=false) it
+// emits a task_status_updated RUNNING row stamped with the running attempt
+// (cmd.RetryCount), plus the check_delayed re-poll ticket carrying
+// running_announced=true so the next poll does not re-announce.
+func TestHandleRunning_FirstObservation_AnnouncesRunningOncePerAttempt(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusRunning},
+			labels: map[string]string{"mode": "production"},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		JobName:          "job-running",
+		RetryCount:       1,
+		MaxRetries:       5,
+		RunningAnnounced: false,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries (task_status_updated RUNNING + check_delayed), got %d: %v", len(entries), eventTypesOf(entries))
+	}
+
+	statusEntry := findEntryByEventType(entries, "task_status_updated")
+	if statusEntry == nil {
+		t.Fatal("missing task_status_updated entry")
+	}
+	var statusPayload pkgevents.TaskStatusUpdated
+	if err := json.Unmarshal(statusEntry.Payload, &statusPayload); err != nil {
+		t.Fatalf("unmarshal task_status_updated: %v", err)
+	}
+	if statusPayload.Status != "RUNNING" {
+		t.Errorf("expected status=RUNNING, got %q", statusPayload.Status)
+	}
+	if statusPayload.RetryCount != cmd.RetryCount {
+		t.Errorf("RUNNING retry_count: expected %d (attempt running), got %d", cmd.RetryCount, statusPayload.RetryCount)
+	}
+
+	checkEntry := findEntryByEventType(entries, "check_delayed")
+	if checkEntry == nil {
+		t.Fatal("missing check_delayed entry")
+	}
+	var checkPayload map[string]interface{}
+	if err := json.Unmarshal(checkEntry.Payload, &checkPayload); err != nil {
+		t.Fatalf("unmarshal check_delayed: %v", err)
+	}
+	if ra, _ := checkPayload["running_announced"].(bool); !ra {
+		t.Errorf("expected check_delayed running_announced=true, got %v", checkPayload["running_announced"])
+	}
+}
+
+// TestHandleRunning_AlreadyAnnounced_DoesNotReannounce verifies a subsequent poll
+// (RunningAnnounced=true) writes only the check_delayed re-poll — RUNNING is
+// emitted exactly once per attempt.
+func TestHandleRunning_AlreadyAnnounced_DoesNotReannounce(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		JobName:          "job-running",
+		RetryCount:       1,
+		MaxRetries:       5,
+		RunningAnnounced: true,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry (check_delayed only), got %d: %v", len(entries), eventTypesOf(entries))
+	}
+	if entries[0].EventType != "check_delayed" {
+		t.Errorf("expected check_delayed, got %q", entries[0].EventType)
+	}
+	if findEntryByEventType(entries, "task_status_updated") != nil {
+		t.Error("unexpected task_status_updated on already-announced poll")
+	}
+}
+
+// TestHandleRunning_ValidationJob_SuppressesRunningAnnouncement verifies a
+// mode=validation Job observed running for the first time writes only the
+// check_delayed re-poll and never a task_status_updated row (validation Jobs use
+// synthetic task IDs and carry no real task status).
+func TestHandleRunning_ValidationJob_SuppressesRunningAnnouncement(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusRunning},
+			labels: map[string]string{"mode": "validation"},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		JobName:          "validate-node-1",
+		MaxRetries:       3,
+		RunningAnnounced: false,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	if len(entries) != 1 || entries[0].EventType != "check_delayed" {
+		t.Fatalf("expected 1 check_delayed entry, got %v", eventTypesOf(entries))
+	}
+	if findEntryByEventType(entries, "task_status_updated") != nil {
+		t.Error("validation Job must not emit task_status_updated RUNNING")
 	}
 }
 
