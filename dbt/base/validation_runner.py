@@ -36,6 +36,8 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
         raise ValueError(f"invalid S3 URI (must start with s3://): {uri!r}")
     without_scheme = uri[len("s3://"):]
     bucket, _, key = without_scheme.partition("/")
+    if not bucket or not key:
+        raise ValueError(f"invalid S3 URI (missing bucket or key): {uri!r}")
     return bucket, key
 
 
@@ -73,7 +75,6 @@ def _ensure_schema(cur, schema: str) -> None:
     which is the desired outcome — swallow it.
     (autocommit is on, so the failed statement leaves no aborted transaction.)
     """
-    import psycopg2
     from psycopg2 import errors as pg_errors
     from psycopg2 import sql as pg_sql
 
@@ -89,7 +90,15 @@ def main() -> None:
     schema = _require("DBT_TARGET_SCHEMA")
     table = _require("TABLE_NAME")
 
-    raw_sql = load_candidate_sql()
+    try:
+        raw_sql = load_candidate_sql()
+    except Exception as exc:
+        uri = os.environ.get("CANDIDATE_SQL_URI", "")
+        print(
+            f"validation_runner: ERROR fetching candidate SQL from {uri!r}: {exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if not raw_sql:
         # Seed or empty node — nothing to validate via CTAS.
         print(

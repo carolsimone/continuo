@@ -21,9 +21,21 @@ def test_parse_s3_uri_basic():
 
 
 def test_parse_s3_uri_nested_key():
-    bucket, key = _parse_s3_uri("s3://continuo/candidate-sql/r/n.sql")
-    assert bucket == "continuo"
-    assert key == "candidate-sql/r/n.sql"
+    bucket, key = _parse_s3_uri("s3://bucket/a/b/c.sql")
+    assert bucket == "bucket"
+    assert key == "a/b/c.sql"
+
+
+def test_parse_s3_uri_rejects_missing_key_bucket_only():
+    """s3://bucket-only (no slash after bucket) must raise ValueError."""
+    with pytest.raises(ValueError, match="missing bucket or key"):
+        _parse_s3_uri("s3://bucket-only")
+
+
+def test_parse_s3_uri_rejects_empty_key():
+    """s3://bucket/ (slash but empty key) must raise ValueError."""
+    with pytest.raises(ValueError, match="missing bucket or key"):
+        _parse_s3_uri("s3://bucket/")
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +64,7 @@ def test_load_candidate_sql_fetches_from_s3(monkeypatch):
     mock_s3.get_object.assert_called_once_with(Bucket="continuo", Key="candidate-sql/r/n.sql")
 
 
-def test_load_candidate_sql_strips_trailing_content(monkeypatch):
+def test_load_candidate_sql_returns_raw_body_without_stripping(monkeypatch):
     """load_candidate_sql does NOT strip the SQL — caller (main) does that."""
     monkeypatch.setenv("CANDIDATE_SQL_URI", "s3://continuo/key.sql")
 
