@@ -33,6 +33,8 @@ func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) 
 		Service:   svc,
 		ReleaseID: releaseID,
 		ImageTag:  tag,
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	return deps, store
@@ -66,6 +68,8 @@ func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string
 		ReleaseID: releaseID,
 		ImageTag:  changedTag,
 		Bootstrap: true,
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	return deps, store
@@ -432,7 +436,7 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 	deps.Bucket = "continuo"
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "sha-b", time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a",
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -587,7 +591,7 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	deps.Bucket = "continuo"
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-alpha",
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-alpha", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 

@@ -12,7 +12,7 @@ Postgres (its own database). Tables:
 
 | Table | Purpose |
 |---|---|
-| `releases` | One row per candidate release: status, the `changed_service` this delta belongs to, the per-service image tags assembled at activation, candidate topology, validation node ids, per-node results, transition history. |
+| `releases` | One row per candidate release: status, the `changed_service` this delta belongs to, the per-service image tags assembled at activation, candidate topology, validation node ids, per-node results, transition history, and the immutable provenance columns `repo` (GitHub owner/name) and `commit_sha` (full SHA) captured at receipt. |
 | `current_prod` | Singleton row: the promoted `release_id` and its `topology_snapshot` (the live topology). |
 | `service_prod` | One row per dbt service — the live per-service production pointer: `{service_name, release_id, manifest_s3_key, image_tag, updated_at}`. Records which manifest key and image tag are currently live for each service; the full production manifest set is reconstructed by collecting every service's pointer at activation time. |
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
@@ -26,13 +26,13 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 
 | Route | Purpose |
 |---|---|
-| `POST /releases` | Accept a candidate release for a single dbt service. Body: `{service, release_id, image_tag, bootstrap?}`. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
-| `GET /releases/{id}` | Full release detail: `{release_id, status, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap}`. `per_node_results` is an array of `{node_id, status, dbt_log_uri, duration_ms}`. |
+| `POST /releases` | Accept a candidate release for a single dbt service. Body: `{service, release_id, image_tag, repo, commit_sha, bootstrap?}`. `repo` (GitHub owner/name) and `commit_sha` (full SHA) are required; missing either returns 400. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
+| `GET /releases/{id}` | Full release detail: `{release_id, status, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap, repo, commit_sha}`. `per_node_results` is an array of `{node_id, status, dbt_log_uri, duration_ms}`. |
 | `GET /releases` | Paginated release history, newest-first. Query params: `status` (optional exact-match filter), `limit` (default 20; values that are unparseable, non-positive, or exceed 100 fall back to the default of 20), `cursor` (opaque keyset cursor). Response: `{"releases":[{release_id, status, created_at, resolved_at, node_count, bootstrap, reject_reason}], "next_cursor":"<opaque or empty>"}`. |
 | `GET /current-prod` | The current promoted release + topology snapshot. |
 | `GET /healthz` | Liveness. |
 
-`POST /releases` is the production entry point for a deploy: each team's CI uploads only its own service's compiled manifest to the canonical S3 key `s3://<bucket>/<service>/<release_id>/manifest.json` and posts a single-service candidate here. The request carries no manifest-key list — release-controller assembles the full per-service set at activation time from `service_prod` (see Processing Logic). It also carries no changed-node list — release-controller derives it.
+`POST /releases` is the production entry point for a deploy: each team's CI uploads only its own service's compiled manifest to the canonical S3 key `s3://<bucket>/<service>/<release_id>/manifest.json` and posts a single-service candidate here. The request carries no manifest-key list — release-controller assembles the full per-service set at activation time from `service_prod` (see Processing Logic). It also carries no changed-node list — release-controller derives it. The CI caller supplies `repo` (`github.repository`, e.g. `org/continuo-dbt-demo`) and `commit_sha` (`github.sha`) as required provenance fields; release-controller stores them verbatim and exposes them on `GET /releases/{id}`.
 
 ### Redis consumer
 
@@ -61,7 +61,7 @@ Calls no gRPC services.
 Releases run a FIFO queue: one release is active (parsing or validating) at a time; on each terminal outcome the queue advances the next queued release.
 
 ### On `POST /releases`
-Create a `Received` release for the single submitted service (idempotent: an existing `release_id` is a no-op). The release records its `changed_service` and that service's `image_tag`. The queue advance promotes the next `Received` release to `Parsing`, assembles its full manifest set, and emits `release.requested:v1`.
+Create a `Received` release for the single submitted service (idempotent: an existing `release_id` is a no-op). The release records its `changed_service`, that service's `image_tag`, and the immutable provenance (`repo`, `commit_sha`) supplied by the caller. The queue advance promotes the next `Received` release to `Parsing`, assembles its full manifest set, and emits `release.requested:v1`.
 
 ### Manifest-set assembly (at activation, not receipt)
 Assembly happens when a release transitions to `Parsing`, not when it is received. Under the FIFO queue an earlier release may promote and change another service's pointer before this one activates, so the set must be read from live state at the moment of activation. The queue advance reads every other service's `service_prod` row and combines them with the changed service's new canonical key (`s3://<bucket>/<changed_service>/<release_id>/manifest.json`) and its submitted image tag. The changed service's prior pointer, if any, is replaced rather than duplicated. The assembled per-service image tags are persisted on the release; the resulting `manifest_keys` list — one `{service, s3_uri}` entry per service — is emitted in the `release.requested:v1` payload `{release_id, manifest_keys}`.

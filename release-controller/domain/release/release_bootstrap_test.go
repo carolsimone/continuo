@@ -11,10 +11,10 @@ import (
 func TestNew_BootstrapFlag(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 
-	plain := release.New("r1", "svc-a", "sha-a", false, now)
+	plain := release.New("r1", "svc-a", "sha-a", false, "acme/demo", "deadbeef", now)
 	assert.False(t, plain.IsBootstrap())
 
-	boot := release.New("r2", "svc-a", "sha-a", true, now)
+	boot := release.New("r2", "svc-a", "sha-a", true, "acme/demo", "deadbeef", now)
 	assert.True(t, boot.IsBootstrap())
 }
 

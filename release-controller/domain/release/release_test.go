@@ -10,24 +10,24 @@ import (
 )
 
 func TestRelease_NewIsReceived(t *testing.T) {
-	r := release.New("sha-abc", "svc1", "sha-abc", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	assert.Equal(t, release.StatusReceived, r.Status())
 }
 
 func TestRelease_NewInitialisesImageTags(t *testing.T) {
-	r := release.New("sha-abc", "svc1", "sha-abc", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	assert.Equal(t, map[string]string{"svc1": "sha-abc"}, r.ImageTags())
 	assert.Equal(t, "svc1", r.ChangedService())
 }
 
 func TestRelease_TransitionReceivedToParsing(t *testing.T) {
-	r := release.New("sha-abc", "svc", "tag", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	assert.Equal(t, release.StatusParsing, r.Status())
 }
 
 func TestRelease_TransitionParsingToValidating(t *testing.T) {
-	r := release.New("sha-abc", "svc", "tag", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	assert.Equal(t, release.StatusValidating, r.Status())
@@ -35,7 +35,7 @@ func TestRelease_TransitionParsingToValidating(t *testing.T) {
 }
 
 func TestRelease_TransitionValidatingToPromoted(t *testing.T) {
-	r := release.New("sha-abc", "svc", "tag", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.TransitionToPromoted(time.Unix(3, 0)))
@@ -43,7 +43,7 @@ func TestRelease_TransitionValidatingToPromoted(t *testing.T) {
 }
 
 func TestRelease_TransitionValidatingToRejected(t *testing.T) {
-	r := release.New("sha-abc", "svc", "tag", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.TransitionToRejected("validation_failed", []string{"n"}, time.Unix(3, 0)))
@@ -52,13 +52,13 @@ func TestRelease_TransitionValidatingToRejected(t *testing.T) {
 }
 
 func TestRelease_CannotSkipStates(t *testing.T) {
-	r := release.New("sha-abc", "svc", "tag", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	assert.Error(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(1, 0)))
 	assert.Error(t, r.TransitionToPromoted(time.Unix(1, 0)))
 }
 
 func TestRelease_CannotDoublePromote(t *testing.T) {
-	r := release.New("sha-abc", "svc", "tag", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.TransitionToPromoted(time.Unix(3, 0)))
@@ -66,7 +66,7 @@ func TestRelease_CannotDoublePromote(t *testing.T) {
 }
 
 func TestRelease_TransitionsAreRecorded(t *testing.T) {
-	r := release.New("sha-abc", "svc", "tag", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
 	transitions := r.Transitions()
@@ -77,14 +77,14 @@ func TestRelease_TransitionsAreRecorded(t *testing.T) {
 }
 
 func TestRelease_SetAssembledImageTags(t *testing.T) {
-	r := release.New("sha-abc", "svc-a", "tag-a", false, time.Unix(0, 0))
+	r := release.New("sha-abc", "svc-a", "tag-a", false, "acme/demo", "deadbeef", time.Unix(0, 0))
 	assembled := map[string]string{"svc-a": "tag-a", "svc-b": "tag-b"}
 	r.SetAssembledImageTags(assembled)
 	assert.Equal(t, assembled, r.ImageTags())
 }
 
 func TestRecordValidationResults_RetainedAcrossReject(t *testing.T) {
-	r := release.New("rX", "svc", "t", false, time.Unix(1, 0).UTC())
+	r := release.New("rX", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(release.Topology{{UniqueID: "a"}}, []string{"a"}, time.Unix(3, 0).UTC()))
 
@@ -99,10 +99,27 @@ func TestRecordValidationResults_RetainedAcrossReject(t *testing.T) {
 }
 
 func TestRecordValidationResults_RetainedAcrossPromote(t *testing.T) {
-	r := release.New("rY", "svc", "t", false, time.Unix(1, 0).UTC())
+	r := release.New("rY", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(release.Topology{{UniqueID: "a"}}, []string{"a"}, time.Unix(3, 0).UTC()))
 	r.RecordValidationResults([]release.NodeValidationResult{{NodeID: "a", Status: "ok"}})
 	require.NoError(t, r.TransitionToPromoted(time.Unix(4, 0).UTC()))
 	assert.Equal(t, []release.NodeValidationResult{{NodeID: "a", Status: "ok"}}, r.PerNodeResults())
+}
+
+func TestRelease_NewCarriesProvenance(t *testing.T) {
+	r := release.New("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeefcafe", time.Unix(0, 0))
+	assert.Equal(t, "acme/demo", r.Repo())
+	assert.Equal(t, "deadbeefcafe", r.CommitSHA())
+}
+
+func TestRelease_RehydrateRoundTripsProvenance(t *testing.T) {
+	r := release.Rehydrate(release.RehydrateInput{
+		ID:        "r1",
+		Status:    release.StatusRejected,
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeefcafe",
+	})
+	assert.Equal(t, "acme/demo", r.Repo())
+	assert.Equal(t, "deadbeefcafe", r.CommitSHA())
 }

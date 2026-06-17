@@ -36,6 +36,8 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 		Service:   "svc-a",
 		ReleaseID: releaseID,
 		ImageTag:  "sha-a",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
