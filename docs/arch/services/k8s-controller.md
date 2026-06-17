@@ -50,7 +50,7 @@ All three streams are consumed via `pkg/redis.StreamConsumer` with per-stream pa
 
 Both production and `mode=validation` Jobs are observed over these same `node.deployed:v1` / `check.k8s:v1` consumers; there is no separate validation consumer group and no label-selector filter on the consumers themselves. Routing to the validation result happens inside `CheckStatusHandler` by inspecting the live Job's labels (see Validation-job routing).
 
-`node.deployed:v1` and `check.k8s:v1` carry their event as a typed JSON `payload` field, decoded by the per-stream parsers into `pkg/events.NodeDeployed` and `pkg/events.CheckK8s` (`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `image_tag`, plus retry/max-retries). The task-level retry count is named `task_retry_count` on `node.deployed:v1` and `retry_count` on `check.k8s:v1`; both parsers map it onto `command.CheckJobStatus.RetryCount`. Transport metadata travels as flat sibling fields: `outbox_entry_id` (consumed by `DedupWithOutboxEntryID` for dedup) and, on `check.k8s:v1`, `check_after` (the binding's delay gate reads it before the payload is decoded, so re-circulated copies preserve the schedule).
+`node.deployed:v1` and `check.k8s:v1` carry their event as a typed JSON `payload` field, decoded by the per-stream parsers into `pkg/events.NodeDeployed` and `pkg/events.CheckK8s` (`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `image_tag`, plus retry/max-retries). The task-level retry count is named `task_retry_count` on `node.deployed:v1` and `retry_count` on `check.k8s:v1`; both parsers map it onto `command.CheckJobStatus.RetryCount`. `check.k8s:v1` additionally carries `running_announced` — false on a fresh `node.deployed:v1` (a new attempt), set true once RUNNING has been announced, so the self-poll loop announces RUNNING exactly once per attempt without persistent state. Transport metadata travels as flat sibling fields: `outbox_entry_id` (consumed by `DedupWithOutboxEntryID` for dedup) and, on `check.k8s:v1`, `check_after` (the binding's delay gate reads it before the payload is decoded, so re-circulated copies preserve the schedule).
 
 ### HTTP (port 8085)
 
@@ -65,7 +65,7 @@ Both production and `mode=validation` Jobs are observed over these same `node.de
 | `check.k8s:v1` | Job still running; re-enqueue with `check_after` delay |
 | `retry.task:v1` | Job failed, retryable; `executor-controller` will re-deploy |
 | `task.failed:v1` | Job failed permanently; currently has no in-repo consumer |
-| `task.status.updated:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `state` to update task status |
+| `task.status.updated:v1` | Job running (first observation) and terminal (SUCCEEDED/FAILED); consumed by `state` to update task status. k8s-controller is the sole producer of the running/terminal pod lifecycle. |
 | `task.execution.recorded:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `state` to persist execution record |
 | `node.updated:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `orchestrator` for topology projection |
 | `validation.node.completed:v1` | `mode=validation` Job terminal (SUCCEEDED or FAILED); single per-node result consumed by `executor-controller` instead of the three production task-status rows |
@@ -143,7 +143,7 @@ The row's `aggregate_id` is a deterministic UUIDv5 over an immutable namespace a
 ## Redis Payload Reference
 
 ### `check.k8s:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`, `retry_count`, `max_retries`, `image_tag`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`, `retry_count`, `max_retries`, `image_tag`, `running_announced`
 
 ### `retry.task:v1`
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `retry_count`, `node_type`

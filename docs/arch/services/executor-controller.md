@@ -9,7 +9,7 @@ It is responsible for:
 - deduplicating repeated dispatches via `pkg/messageprocessing` keyed on `(message_id, stream_name)`
 - durably recording deployment intent in its own outbox
 - creating K8s Jobs via the Kubernetes API
-- publishing `task.status.updated:v1` (RUNNING) so `state` can track task progress
+- publishing `task.status.updated:v1` (FAILED) on the never-deployed path so `state` learns of dispatch-time terminal failures (k8s-controller owns the RUNNING/terminal pod lifecycle)
 - publishing `node.deployed:v1` so `k8s-controller` can begin monitoring
 
 ## Owned Storage (Postgres: `continuo_executor`)
@@ -70,9 +70,10 @@ The cancelled-schedule guard runs inside `QueryModelHandler` and `RetryTaskHandl
 
 `deployer.Dispatcher` writes canonical announcement rows to `executor_outbox` as part of each deploy cycle (never at inbound-message time). `pkg/outbox.Processor` then drains those rows via the executor `OutboxPublisher`, which is a uniform marshal-and-XADD — one Redis XADD per row, no K8s I/O and no executor-specific fanout logic in the publisher.
 
-On a successful deploy, the dispatcher writes two outbox rows in one transaction:
-1. `task_status_updated` (RUNNING) → XADD `task.status.updated:v1`
-2. `node_deployed` → XADD `node.deployed:v1`
+On a successful deploy, the dispatcher writes one outbox row:
+1. `node_deployed` → XADD `node.deployed:v1`
+
+The deploy path no longer announces RUNNING — k8s-controller announces `task.status.updated:v1` (RUNNING) the first time it observes the Job running, so the running/terminal pod lifecycle has a single producer.
 
 On terminal failure (permanent error or retry-budget exhaustion), the dispatcher writes two outbox rows:
 1. `task_status_updated` (FAILED) → XADD `task.status.updated:v1`
@@ -80,7 +81,7 @@ On terminal failure (permanent error or retry-budget exhaustion), the dispatcher
 
 | Stream | Description |
 |---|---|
-| `task.status.updated:v1` | Published after K8s job creation succeeds with `status=RUNNING`; also published with `status=FAILED` on terminal dispatch failure |
+| `task.status.updated:v1` | Published with `status=FAILED` on the never-deployed terminal dispatch failure only (permanent error or retry-budget exhaustion before a pod exists). k8s-controller owns RUNNING and the pod terminal (SUCCEEDED/FAILED). |
 | `node.deployed:v1` | Published after K8s job creation succeeds (both production and validation Jobs); triggers `k8s-controller` monitoring. For validation Jobs the `task_id`/`schedule_id` are the deterministic synthetic UUIDs derived from `(release_id, node_id)`; they are inert carriers because k8s-controller routes the validation Job's status by its `mode=validation` label, not by these IDs |
 | `node.updated:v1` | Published on terminal dispatch failure only; consumed by `orchestrator` to advance the schedule |
 | `validation.completed:v1` | Per-release validation aggregate; emitted exactly once when every `mode=validation` node for a release is terminal. Payload: `release_id`, `candidate_schema` (the `_candidate_<release>` schema name, for teardown), `aggregate_status` (`ok` iff every node is `ok`, else `failed`), and `per_node_results[]` (`node_id`, `status`, optional `dbt_log_uri`) |
@@ -88,7 +89,7 @@ On terminal failure (permanent error or retry-budget exhaustion), the dispatcher
 `task.status.updated:v1` payload fields:
 - `task_id`, `schedule_id`, `schedule_name`
 - `service_name`, `schema_name`, `table_name`
-- `status` — `RUNNING` on success, `FAILED` on terminal failure
+- `status` — `FAILED` (the only status executor emits on this stream; the never-deployed terminal)
 
 `node.deployed:v1` is emitted as a typed JSON `payload` field (`pkg/events.NodeDeployed`), with `outbox_entry_id` as a flat sibling field for consumer-side dedup. Payload fields:
 - `task_id`, `schedule_id`, `schedule_name`
