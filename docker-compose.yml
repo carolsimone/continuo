@@ -161,6 +161,7 @@ services:
       - postgres
       - redis
       - neo4j
+      - localstack
     environment:
       # Redis
       - REDIS_HOST=redis
@@ -180,6 +181,13 @@ services:
       - MAX_CONCURRENT_JOBS=50
       # dbt PostgreSQL target (forwarded to K8s job pods)
       - DBT_POSTGRES_DB=continuo_dbt
+      # S3 — forwarded into K8s validation job pods so validation_runner.py can
+      # fetch the candidate SQL from CANDIDATE_SQL_URI (points at LocalStack).
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_BUCKET=continuo
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
       # Application
       - HTTP_PORT=8084
       - ENV=local

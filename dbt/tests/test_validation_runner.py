@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from base.validation_runner import load_candidate_sql, _parse_s3_uri
+from base.validation_runner import load_candidate_sql, _parse_s3_uri, main
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +94,27 @@ def test_load_candidate_sql_no_uri_returns_empty(monkeypatch):
         result = load_candidate_sql()
 
     assert result == ""
+    mock_client.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# main: a missing URI for a model/snapshot node is a validation error (exit != 0)
+# ---------------------------------------------------------------------------
+
+
+def test_main_missing_uri_fails_validation(monkeypatch):
+    """A model/snapshot node with no CANDIDATE_SQL_URI must fail (non-zero exit),
+    not silently report itself validated. No S3 call and no DB connection occur."""
+    monkeypatch.setenv("DBT_TARGET_SCHEMA", "_candidate_r")
+    monkeypatch.setenv("TABLE_NAME", "orders")
+    monkeypatch.delenv("CANDIDATE_SQL_URI", raising=False)
+
+    mock_client = MagicMock()
+    with patch("base.validation_runner.boto3.client", mock_client):
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code != 0
     mock_client.assert_not_called()
 
 

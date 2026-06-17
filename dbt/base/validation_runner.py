@@ -8,9 +8,11 @@ so the SQL is validated against the (empty) upstream tables built earlier in
 dependency order, without touching production. stdout is captured as the per-node
 validation log; a non-zero exit marks the node failed.
 
-Seeds run ``dbt seed --empty`` via a separate code path. When ``CANDIDATE_SQL_URI``
-is absent or empty this runner exits cleanly (exit 0) — there is nothing to
-validate.
+Seeds run ``dbt seed --empty`` via a separate code path and never invoke this
+runner (the executor only uses it as the model/snapshot validation command). A
+missing or empty ``CANDIDATE_SQL_URI`` therefore means the producer never uploaded
+this node's compiled SQL — that is a validation error, not a no-op: the node fails
+rather than being silently reported as validated.
 """
 import os
 import sys
@@ -100,12 +102,16 @@ def main() -> None:
         )
         sys.exit(1)
     if not raw_sql:
-        # Seed or empty node — nothing to validate via CTAS.
+        # This runner is only ever the model/snapshot validation command; seeds use
+        # `dbt seed --empty` and never reach here. A missing/empty CANDIDATE_SQL_URI
+        # means this node's compiled SQL was never produced — fail the node rather
+        # than silently report it validated.
         print(
-            "validation_runner: no CANDIDATE_SQL_URI (seed/empty node); nothing to validate",
-            flush=True,
+            "validation_runner: CANDIDATE_SQL_URI is missing or empty for a "
+            "model/snapshot node; cannot validate",
+            file=sys.stderr,
         )
-        return
+        sys.exit(2)
 
     # Strip any trailing terminator so it embeds cleanly inside CREATE TABLE AS (...).
     candidate_sql = raw_sql.strip().rstrip(";").strip()
