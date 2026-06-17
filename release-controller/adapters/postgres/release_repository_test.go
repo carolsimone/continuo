@@ -314,3 +314,36 @@ func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
 	assert.Equal(t, "acme/demo", got.Repo())
 	assert.Equal(t, "deadbeefcafe1234", got.CommitSHA())
 }
+
+func TestReleaseRepository_RoundTripsCandidateSQLURI(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db)
+	ctx := context.Background()
+
+	// Build a release that already has a candidate topology containing a node
+	// with a CandidateSQLURI. Rehydrate bypasses the state machine so we can
+	// inject the topology directly, mirroring how the repository reconstructs
+	// releases from Postgres.
+	topo := release.Topology{
+		{UniqueID: "n", CandidateSQLURI: "s3://b/candidate-sql/r/n.sql"},
+	}
+	r := release.Rehydrate(release.RehydrateInput{
+		ID:                "rCSURI",
+		Status:            release.StatusValidating,
+		ChangedService:    "svc-a",
+		ImageTags:         map[string]string{"svc-a": "img-1"},
+		CandidateTopology: topo,
+		ValidationNodeIDs: []string{"n"},
+		Repo:              "acme/demo",
+		CommitSHA:         "deadbeef",
+		CreatedAt:         time.Unix(100, 0).UTC(),
+	})
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rCSURI")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Len(t, got.CandidateTopology(), 1)
+	assert.Equal(t, "s3://b/candidate-sql/r/n.sql", got.CandidateTopology()[0].CandidateSQLURI,
+		"candidate_sql_uri must survive a JSONB round-trip through Postgres")
+}
