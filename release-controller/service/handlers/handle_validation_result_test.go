@@ -15,11 +15,22 @@ import (
 
 // rejectedPayload is the JSON shape released into release.rejected:v1.
 type rejectedPayload struct {
-	ReleaseID       string   `json:"release_id"`
-	Reason          string   `json:"reason"`
-	FailingNodes    []string `json:"failing_nodes"`
-	MissingNodes    []string `json:"missing_nodes"`
-	AggregateStatus string   `json:"aggregate_status"`
+	ReleaseID       string             `json:"release_id"`
+	Reason          string             `json:"reason"`
+	FailingNodes    []string           `json:"failing_nodes"`
+	MissingNodes    []string           `json:"missing_nodes"`
+	AggregateStatus string             `json:"aggregate_status"`
+	Repo            string             `json:"repo"`
+	CommitSHA       string             `json:"commit_sha"`
+	PerNode         []rejectedPerNode  `json:"per_node"`
+}
+
+// rejectedPerNode mirrors the per-node entries in the release.rejected:v1 payload.
+type rejectedPerNode struct {
+	NodeID       string `json:"node_id"`
+	Status       string `json:"status"`
+	DBTLogURI    string `json:"dbt_log_uri,omitempty"`
+	CandidateSQL string `json:"candidate_sql,omitempty"`
 }
 
 // seedToValidating advances a release from Received through Parsing to Validating.
@@ -51,6 +62,75 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 		Topology:  topo,
 	}))
 	return deps, store
+}
+
+// seedToValidatingWithSQL is like seedToValidating but sets CandidateSQL on the
+// topology nodes, enabling tests to assert that the release.rejected:v1 payload
+// carries compiled SQL for failing nodes.
+func seedToValidatingWithSQL(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
+	t.Helper()
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service:   "svc-a",
+		ReleaseID: releaseID,
+		ImageTag:  "sha-a",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}, CandidateSQL: "SELECT 1 AS id"},
+		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"}, CandidateSQL: "SELECT id FROM _candidate_rA.model_a"},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: releaseID,
+		Status:    "ok",
+		Topology:  topo,
+	}))
+	return deps, store
+}
+
+// TestHandleValidationResult_AnyFail_RejectedPayload_HasProvenanceAndSQL asserts
+// that the release.rejected:v1 outbox payload carries the release's source
+// provenance (repo, commit_sha) and the compiled candidate_sql for failing
+// nodes. Passing nodes must not carry candidate_sql (omitempty keeps the
+// payload lean; remediation agents only need SQL for the models they fix).
+func TestHandleValidationResult_AnyFail_RejectedPayload_HasProvenanceAndSQL(t *testing.T) {
+	deps, store := seedToValidatingWithSQL(t, "rA")
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA",
+		PerNodeResults: []handlers.NodeResult{
+			{NodeID: "a", Status: "ok"},
+			{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/b.log"},
+		},
+		AggregateStatus: "failed",
+	})
+	require.NoError(t, err)
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 3) // ReleaseRequested + ValidationRequested + ReleaseRejected
+
+	var payload rejectedPayload
+	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
+
+	// Top-level provenance from the release aggregate.
+	assert.Equal(t, "acme/demo", payload.Repo, "repo must be propagated from the release")
+	assert.Equal(t, "deadbeef", payload.CommitSHA, "commit_sha must be propagated from the release")
+
+	// Per-node: failing node "b" carries its compiled SQL; ok node "a" does not.
+	require.Len(t, payload.PerNode, 2)
+	byNode := make(map[string]rejectedPerNode, len(payload.PerNode))
+	for _, pn := range payload.PerNode {
+		byNode[pn.NodeID] = pn
+	}
+	assert.Equal(t, "SELECT id FROM _candidate_rA.model_a", byNode["b"].CandidateSQL,
+		"failing node must carry candidate_sql for the remediation agent")
+	assert.Empty(t, byNode["a"].CandidateSQL,
+		"ok node must not carry candidate_sql (omitempty; keeps payload lean)")
 }
 
 // TestHandleValidationResult_UnknownRelease_DropsWithoutPanic guards against a

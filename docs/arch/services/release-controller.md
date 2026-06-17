@@ -52,6 +52,30 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | `release.promoted:v1` | orchestrator | A release is promoted to production. |
 | `release.rejected:v1` | (observers) | A release fails parsing or validation. |
 
+#### `release.rejected:v1` payload
+
+```json
+{
+  "release_id":       "string",
+  "reason":           "parse_failed | validation_failed | unbuildable_cross_service_upstream",
+  "repo":             "string (GitHub owner/name, e.g. acme/continuo-dbt)",
+  "commit_sha":       "string (full Git SHA of the candidate commit)",
+  "failing_nodes":    ["string"],
+  "missing_nodes":    ["string"],
+  "aggregate_status": "string",
+  "per_node": [
+    {
+      "node_id":       "string",
+      "status":        "ok | failed",
+      "dbt_log_uri":   "string (omitted when empty)",
+      "candidate_sql": "string (compiled SQL for this node; present only for failing nodes)"
+    }
+  ]
+}
+```
+
+`repo` and `commit_sha` identify the source change that produced the candidate — useful for correlating the rejection back to a CI run or proposing a targeted SQL fix. `candidate_sql` carries the compiled SQL (with schema references rewritten to the candidate schema) for each failing node; it is omitted for passing nodes to keep the payload lean. The candidate topology still holds `candidate_sql` on the rejection path (it is stripped only on the promote path via `WithoutCandidateSQL`), so it is always available here.
+
 All events are written to the outbox inside the same transaction as the state change and published with an injected `outbox_entry_id` for consumer-side dedup.
 
 Calls no gRPC services.

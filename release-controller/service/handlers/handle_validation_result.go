@@ -195,18 +195,34 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		return fmt.Errorf("save release: %w", err)
 	}
 
+	// Build a lookup from unique_id → CandidateSQL so that failing nodes in
+	// the outbox payload carry their compiled SQL. The candidate topology is
+	// available on the rejected path (only the promote path strips it via
+	// WithoutCandidateSQL), so reading it here is safe.
+	sqlByNodeID := make(map[string]string, len(r.CandidateTopology()))
+	for _, n := range r.CandidateTopology() {
+		sqlByNodeID[n.UniqueID] = n.CandidateSQL
+	}
+
 	type perNodeEntry struct {
-		NodeID    string `json:"node_id"`
-		Status    string `json:"status"`
-		DBTLogURI string `json:"dbt_log_uri,omitempty"`
+		NodeID       string `json:"node_id"`
+		Status       string `json:"status"`
+		DBTLogURI    string `json:"dbt_log_uri,omitempty"`
+		CandidateSQL string `json:"candidate_sql,omitempty"`
 	}
 	perNode := make([]perNodeEntry, len(in.PerNodeResults))
 	for i, nr := range in.PerNodeResults {
-		perNode[i] = perNodeEntry{
+		entry := perNodeEntry{
 			NodeID:    nr.NodeID,
 			Status:    nr.Status,
 			DBTLogURI: nr.DBTLogURI,
 		}
+		// Include compiled SQL only for failing nodes; ok nodes are not
+		// candidates for remediation, so omitting their SQL keeps the payload lean.
+		if nr.Status != "ok" {
+			entry.CandidateSQL = sqlByNodeID[nr.NodeID]
+		}
+		perNode[i] = entry
 	}
 
 	payload, err := json.Marshal(map[string]any{
@@ -216,6 +232,8 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		"missing_nodes":    missing,
 		"aggregate_status": in.AggregateStatus,
 		"per_node":         perNode,
+		"repo":             r.Repo(),
+		"commit_sha":       r.CommitSHA(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
