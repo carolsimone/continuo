@@ -14,6 +14,7 @@ import (
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	redisadapter "github.com/carolsimone/continuo/release-controller/adapters/redis"
+	s3adapter "github.com/carolsimone/continuo/release-controller/adapters/s3"
 	"github.com/carolsimone/continuo/release-controller/config"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
@@ -65,12 +66,22 @@ func main() {
 	}
 	defer rc.Close()
 
+	// S3 client for pruning candidate-SQL objects when releases are deleted.
+	s3Client := s3adapter.NewS3Client(
+		cfg.S3.EndpointURL,
+		cfg.S3.Bucket,
+		cfg.S3.Region,
+		cfg.S3.AccessKeyID,
+		cfg.S3.SecretAccessKey,
+		logger,
+	)
+
 	deps := &handlers.Deps{
-		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, s3Client) },
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    logger,
-		Bucket:    cfg.S3Bucket,
+		Bucket:    cfg.S3.Bucket,
 	}
 
 	// Start outbox publisher — spawns its own goroutine internally and runs until

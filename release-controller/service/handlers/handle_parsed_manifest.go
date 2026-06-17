@@ -266,14 +266,14 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 			continue
 		}
 		out = append(out, map[string]any{
-			"unique_id":         n.UniqueID,
-			"service_name":      n.ServiceName,
-			"node_type":         n.NodeType,
-			"schema_name":       n.SchemaName,
-			"table_name":        n.TableName,
-			"image_tag":         n.ImageTag,
-			"upstream_node_ids": release.InSetUpstreams(topo, id, inSet),
-			"candidate_sql":     n.CandidateSQL,
+			"unique_id":          n.UniqueID,
+			"service_name":       n.ServiceName,
+			"node_type":          n.NodeType,
+			"schema_name":        n.SchemaName,
+			"table_name":         n.TableName,
+			"image_tag":          n.ImageTag,
+			"upstream_node_ids":  release.InSetUpstreams(topo, id, inSet),
+			"candidate_sql_uri":  n.CandidateSQLURI,
 		})
 	}
 	return out

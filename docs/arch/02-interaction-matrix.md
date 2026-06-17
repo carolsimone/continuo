@@ -15,7 +15,8 @@ Legend:
 | `orchestrator` | `RW` (`topology_state` also read on query path) | `RW` | `RW` | `R` (watchdog) | server | `-` | `-` | `-` | `-` | `-` | `-` |
 | `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `W` | `-` | `W` (candidate schema teardown) | `-` | `-` |
 | `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `R` | `W` | `-` | `-` | `-` |
-| `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `-` | `R` | `-` | `-` | `-` |
+| `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `-` | `RW` | `-` | `-` | `-` |
+| `release-controller` | `RW` | `-` | `RW` | `-` | `-` | server | `-` | `W` (prune-time delete of `candidate-sql/<release_id>/`) | `-` | `-` | `-` |
 | `ui-service` | `-` | `-` | `RW` | `RW` | `R` | `R` | `-` | `R` | `-` | `-` | `RW` (bidi stream) |
 | `agent-runner` | `RW` (`continuo_agent`) | `-` | `RW` (optional, rate limiter) | `-` | `-` | `-` | `-` | `W` (optional archive) | `-` | `W` (tool-use loop) | server |
 | `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` | `-` | `-` | `-` |
@@ -49,7 +50,7 @@ Legend:
 | `schedule.cancelled:v1` | `state` (triggered by `ui-service.CancelSchedule` **OR by `orchestrator` dispatch watchdog**) | `orchestrator`, `executor-controller`, `k8s-controller` | Signal active-run cancellation; consumers halt in-flight work for the cancelled schedule. Watchdog uses `cancelled_by="watchdog"` and `cancellation_reason="watchdog: ..."`. |
 | `release.requested:v1` | `release-controller` | `manifest-controller` | Trigger manifest load for a candidate release. |
 | `manifest.loaded.candidate:v1` | `manifest-controller` | `release-controller` | Resolved candidate topology (or parse failure) for a release; release-controller derives the validation set and advances the state machine. |
-| `validation.requested:v1` | `release-controller` | `executor-controller` | Candidate-release validation request; each node entry carries `upstream_node_ids` (in-set gating edges, intra- and cross-service); executor-controller creates one `executor_deployments` row per node (`blocked` or `pending`). |
+| `validation.requested:v1` | `release-controller` | `executor-controller` | Candidate-release validation request; each node entry carries `upstream_node_ids` (in-set gating edges, intra- and cross-service) and `candidate_sql_uri` (the `s3://` pointer to the node's rewritten SQL, empty for seeds); executor-controller creates one `executor_deployments` row per node (`blocked` or `pending`). |
 | `validation.node.completed:v1` | `k8s-controller` | `executor-controller` | Per-node validation Job terminal status; executor-controller records the outcome, unblocks or skips in-set downstreams, and runs the per-release aggregate-emit gate. |
 | `validation.completed:v1` | `executor-controller` | `release-controller` (result), `executor-controller` (group `executor-validation-completed`, candidate schema teardown) | Per-release validation aggregate; consumed by release-controller to advance the release state machine and by executor-controller to drop `_candidate_<release>` from the dbt warehouse. |
 | `release.promoted:v1` | `release-controller` | `orchestrator` | A release is promoted to production; orchestrator swaps schedules, topology, and image tags. |
@@ -93,8 +94,9 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 
 | Service | Operation type | Concrete calls |
 |---|---|---|
-| `manifest-controller` | read | `download_file` (the `manifest.json` files named in the `release.requested:v1` `manifest_keys` list; no S3 listing) |
-| `k8s-controller` | write | `PutObject` |
+| `manifest-controller` | read + write | `download_file` (the `manifest.json` files named in the `release.requested:v1` `manifest_keys` list; no S3 listing); `PutObject` (candidate SQL per non-seed node to `candidate-sql/<release_id>/<unique_id>.sql`; upload failure aborts the load) |
+| `k8s-controller` | write | `PutObject` (pod logs to `logs/` prefix) |
+| `release-controller` | delete | `DeleteObjects` — prune-time delete of `candidate-sql/<release_id>/` prefix for each expired release (soft-fail; lifecycle rule is the backstop) |
 | `ui-service` | read | `GetObject` — task-execution pod logs (proxied via `GET /api/task-executions/:id/logs`) and dbt validation logs (proxied via `GET /api/releases/log`) |
 | `agent-runner` | write (optional) | `PutObject` — conversation archive to `chat-archive/<user>/<thread>.json` before a thread is deleted by the retention job; enabled when `RETENTION_ARCHIVE_S3=true` |
 

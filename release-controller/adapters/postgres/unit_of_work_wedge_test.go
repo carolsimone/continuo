@@ -21,7 +21,7 @@ func TestUnitOfWork_RecoversAfterFailedCommit(t *testing.T) {
 	defer db.Close()
 
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	u := NewUnitOfWork(sqlxDB, slog.Default())
+	u := NewUnitOfWork(sqlxDB, slog.Default(), nil)
 
 	mock.ExpectBegin()
 	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
@@ -45,7 +45,7 @@ func TestUnitOfWork_RollbackSwallowsErrTxDone(t *testing.T) {
 	defer db.Close()
 
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	u := NewUnitOfWork(sqlxDB, slog.Default())
+	u := NewUnitOfWork(sqlxDB, slog.Default(), nil)
 
 	mock.ExpectBegin()
 	mock.ExpectCommit().WillReturnError(sql.ErrTxDone)

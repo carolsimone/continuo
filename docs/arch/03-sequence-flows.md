@@ -410,13 +410,13 @@ sequenceDiagram
   Note over MC,RC: Phase 2 — candidate parse
   R->>MC: consume release.requested:v1
   MC->>S3: download each manifest named in manifest_keys (explicit key list)
-  Note over MC: parse model/seed/snapshot nodes<br/>content_hash = dbt checksum (sha256 fallback, never empty)<br/>resolve upstreams via sqlglot (qualified refs only)<br/>candidate_sql = compiled SQL with known-node schema refs<br/>rewritten to _candidate_{release} (seeds → empty candidate_sql)
-  alt manifest malformed / unqualified table ref
+  Note over MC: parse model/seed/snapshot nodes<br/>content_hash = dbt checksum (sha256 fallback, never empty)<br/>resolve upstreams via sqlglot (qualified refs only)<br/>rewrite SQL to _candidate_{release} schema refs via sqlglot<br/>upload rewritten SQL → S3 candidate-sql/{release_id}/{unique_id}.sql<br/>(upload failure is fatal; seeds → empty candidate_sql_uri)
+  alt manifest malformed / unqualified table ref / S3 upload failure
     MC->>R: publish manifest.loaded.candidate:v1 {status=failed, error_class}
     R->>RC: consume manifest.loaded.candidate:v1 (failed)
     Note over RC: Reject(parse_failed) → release.rejected:v1, advance queue
-  else parsed ok
-    MC->>R: publish manifest.loaded.candidate:v1 {status=ok, topology[]}
+  else parsed and uploaded ok
+    MC->>R: publish manifest.loaded.candidate:v1 {status=ok, topology[] (per node: candidate_sql_uri)}
     R->>RC: consume manifest.loaded.candidate:v1 (ok)
     Note over RC: join per-service image_tags into candidate topology
   end
@@ -432,7 +432,7 @@ sequenceDiagram
       RC->>R: publish release.rejected:v1
     else buildable
       Note over RC: transition Validating
-      RC->>R: publish validation.requested:v1<br/>{candidate_schema=_candidate_{id}, per node:<br/>node_type, image_tag, candidate_sql, upstream_node_ids}
+      RC->>R: publish validation.requested:v1<br/>{candidate_schema=_candidate_{id}, per node:<br/>node_type, image_tag, candidate_sql_uri, upstream_node_ids}
     end
   end
 
@@ -440,7 +440,7 @@ sequenceDiagram
   R->>EC: consume validation.requested:v1
   Note over EC: per node → executor_deployments (mode=validation)<br/>roots → pending, nodes with upstreams → blocked<br/>(inbound dedup is per-release)
   loop dispatch pending rows, unblocking downstream as upstreams settle ok
-    Note over EC: model/snapshot → validation_runner.py:<br/>CREATE TABLE {candidate}.{table} AS (candidate_sql) WITH NO DATA<br/>seed → dbt seed --select {table} --empty
+    Note over EC: model/snapshot → validation_runner.py (CANDIDATE_SQL_URI env):<br/>fetch SQL from S3 via boto3 → CREATE TABLE {candidate}.{table} AS (fetched SQL) WITH NO DATA<br/>seed (empty CANDIDATE_SQL_URI) → dbt seed --select {table} --empty
     EC->>R: publish node.deployed:v1 (synthetic ids — routes by mode=validation label)
     R->>KC: consume node.deployed:v1 / check.k8s:v1
     Note over KC: poll Job, re-arm check.k8s:v1 until terminal
@@ -473,11 +473,11 @@ sequenceDiagram
   Note over EC: drop the _candidate_{release} schema (teardown)
 ```
 
-**Self-contained validation (zero model edits).** The validation build set is the changed nodes, their downstream descendants, and their *full transitive upstream closure across service boundaries*. `manifest-controller` emits a per-node `candidate_sql` — the compiled SQL with every known-node schema reference rewritten (via sqlglot) to the candidate schema; `executor-controller` builds every upstream as an empty table (`CREATE TABLE … WITH NO DATA`, seeds via `dbt seed --empty`) in `_candidate_<release>` in dependency order, then the changed node against them. Because the executed SQL's refs already point at the candidate schema, a model whose source still reads `FROM analytics.table_a` validates against the candidate copy — teams never template their schema names. Nothing in production is touched during validation, and the candidate schema is dropped after the aggregate result is consumed.
+**Self-contained validation (zero model edits).** The validation build set is the changed nodes, their downstream descendants, and their *full transitive upstream closure across service boundaries*. `manifest-controller` rewrites each node's compiled SQL to the candidate schema (via sqlglot), uploads it to S3 at `candidate-sql/<release_id>/<unique_id>.sql`, and emits a per-node `candidate_sql_uri` — an `s3://` reference to that object. `executor-controller` builds every upstream as an empty table (`CREATE TABLE … WITH NO DATA`, seeds via `dbt seed --empty`) in `_candidate_<release>` in dependency order, then the changed node against them. The validation runner (`validation_runner.py`) fetches the SQL object from S3 via `CANDIDATE_SQL_URI` before materializing the table. Because the fetched SQL's refs already point at the candidate schema, a model whose source still reads `FROM analytics.table_a` validates against the candidate copy — teams never template their schema names. Nothing in production is touched during validation, and the candidate schema is dropped after the aggregate result is consumed.
 
 **Gating and exactly-once aggregation.** Each node's `executor_deployments` row starts `blocked` if it has in-set upstreams; a node is dispatched only once all its upstreams have settled `ok` (their empty tables now exist). A non-`ok` terminal skips all reachable downstream nodes. When no node remains non-terminal, a per-release advisory lock plus an insert-once emission sentinel guarantee a single `validation.completed:v1` is produced even under redelivery or crash-retry. `aggregate_status` is `ok` iff every per-node status is `ok`.
 
-**Reject reasons.** A release ends in `Rejected` for one of three reasons, each also emitted as `release.rejected:v1` for observers: `parse_failed` (manifest malformed or an unqualified table reference), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology — i.e. not in the release at all), or `validation_failed` (one or more validation Jobs failed).
+**Reject reasons.** A release ends in `Rejected` for one of three reasons, each also emitted as `release.rejected:v1` for observers: `parse_failed` (manifest malformed, an unqualified table reference, or candidate SQL S3 upload failure), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology — i.e. not in the release at all), or `validation_failed` (one or more validation Jobs failed). For `validation_failed`, the `release.rejected:v1` event includes top-level `repo` and `commit_sha` (provenance) plus, per failing node, `candidate_sql_uri` — allowing a downstream remediation agent to fetch the SQL for each failed node without re-parsing the manifest.
 
 **Bootstrap and empty-diff short-circuits.** A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes — the initial cutover (or a trusted re-baseline) against an empty or mismatched snapshot. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology. A release whose diff is empty (e.g. an image-tag-only bump) trivially passes the gate and promotes directly. All three promotion paths point `current_prod` at the candidate topology and upsert the changed service's `service_prod` pointer, so the next release's change-detection diff is correct and any other service's next release assembles against the refreshed pointer.
 

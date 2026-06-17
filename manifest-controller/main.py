@@ -10,6 +10,7 @@ from config.config import (
     MANIFEST_LOADED_CANDIDATE_STREAM,
     validate,
 )
+from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
 from adapters.sources.s3 import S3Source
@@ -50,6 +51,7 @@ def main() -> None:
     candidate_publisher = CandidateManifestPublisher(
         redis_client, MANIFEST_LOADED_CANDIDATE_STREAM,
     )
+    candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
 
     def handle_release_requested(fields: dict) -> None:
         payload_raw = _decode_field(fields, "payload")
@@ -91,9 +93,11 @@ def main() -> None:
         shared_bucket = buckets[0] if buckets else S3_BUCKET
         source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=keyed_pairs)
         # Cleanup is owned by CandidateManifestHandler.handle() via its own finally block.
-        CandidateManifestHandler(source=source, publisher=candidate_publisher).handle(
-            release_id=release_id,
-        )
+        CandidateManifestHandler(
+            source=source,
+            publisher=candidate_publisher,
+            uploader=candidate_uploader,
+        ).handle(release_id=release_id)
 
     candidate_consumer = Consumer(
         redis_client=redis_client,

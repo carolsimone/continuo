@@ -1,5 +1,6 @@
 import json
 import logging
+from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.sources import ManifestSource
 from domain.exceptions import UnqualifiedTableReferenceError
@@ -20,13 +21,24 @@ class CandidateManifestHandler:
     The registry is built in-memory solely for dependency resolution
     and is not persisted anywhere.
 
+    Each node's compiled candidate SQL is uploaded to S3 via the uploader;
+    the topology carries candidate_sql_uri (an s3:// reference) rather than
+    the inline SQL string. Upload failures are fatal — publish_failed is
+    called and the handler returns so the consumer ACKs without dangling refs.
+
     On parse/resolve failures that re-delivery cannot fix, publishes
     status=failed and returns normally so the consumer ACKs.
     """
 
-    def __init__(self, source: ManifestSource, publisher: CandidateManifestPublisher) -> None:
+    def __init__(
+        self,
+        source: ManifestSource,
+        publisher: CandidateManifestPublisher,
+        uploader: CandidateSqlUploader,
+    ) -> None:
         self._source = source
         self._publisher = publisher
+        self._uploader = uploader
 
     def handle(self, release_id: str) -> None:
         try:
@@ -119,16 +131,38 @@ class CandidateManifestHandler:
                 )
                 return
 
-            # candidate_sql is the node's compiled SQL with every known-node schema
-            # reference redirected to the candidate schema, so blue/green validation
-            # can build it against the empty upstream closure (seeds carry "").
+            # Rewrite all known-node schema references to the candidate schema so
+            # blue/green validation can build each node against its upstream closure.
+            # Seeds carry no compiled SQL and yield an empty string.
             candidate_sql = rewrite_to_candidate_schema(
                 node.compiled_sql, lookup, candidate_schema,
                 self_schema=node.schema_name, self_table=node.table_name,
             )
 
+            unique_id = f"{node.schema_name}.{node.table_name}"
+
+            # Upload the rewritten SQL to S3 and store only the s3:// URI in the
+            # topology event; an upload failure is fatal because publishing a node
+            # without its SQL would leave release-controller with a dangling reference.
+            try:
+                candidate_sql_uri = self._uploader.upload(
+                    release_id=release_id,
+                    unique_id=unique_id,
+                    sql=candidate_sql,
+                )
+            except Exception as exc:
+                # Collapse all upload errors to a permanent failure so the load is
+                # failed (operator re-triggers) rather than left pending — this
+                # guarantees no dangling reference is ever published.
+                self._publisher.publish_failed(
+                    release_id=release_id,
+                    error_class="CandidateSqlUploadFailed",
+                    error_detail=str(exc),
+                )
+                return
+
             topology.append({
-                "unique_id":           f"{node.schema_name}.{node.table_name}",
+                "unique_id":           unique_id,
                 "schema_name":         node.schema_name,
                 "table_name":          node.table_name,
                 "service_name":        node.service_name,
@@ -139,7 +173,7 @@ class CandidateManifestHandler:
                     f"{dep.schema_name}.{dep.table_name}" for dep in node.upstream_deps
                 ],
                 "schedule":            node.schedule_name,
-                "candidate_sql":       candidate_sql,
+                "candidate_sql_uri":   candidate_sql_uri,
             })
 
         self._publisher.publish_ok(release_id=release_id, topology=topology)

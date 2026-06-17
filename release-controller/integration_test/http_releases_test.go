@@ -22,6 +22,7 @@ func TestIntegration_ListReleasesPaginated(t *testing.T) {
 	for _, id := range []string{"rh1", "rh2", "rh3"} {
 		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
 			Service: "service-1", ReleaseID: id, ImageTag: "t",
+			Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 		}))
 	}
 	req := httptest.NewRequest(http.MethodGet, "/releases?limit=2", nil)
@@ -48,6 +49,7 @@ func TestIntegration_ListReleasesLimitFallback(t *testing.T) {
 	for _, id := range []string{"rl1", "rl2", "rl3"} {
 		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
 			Service: "service-1", ReleaseID: id, ImageTag: "t",
+			Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 		}))
 	}
 	for _, limit := range []string{"abc", "0", "-1", "999"} {
@@ -72,6 +74,7 @@ func TestIntegration_GetReleaseIncludesPerNode(t *testing.T) {
 	// Drive through the full failure path so per_node_results are persisted.
 	require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
 		Service: "service-1", ReleaseID: "rd1", ImageTag: "t",
+		Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx, deps))
 	require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{

@@ -66,7 +66,7 @@ func (d *Deployer) DeployValidation(ctx context.Context, spec deploy.ValidationJ
 		NodeType:        nodeType,
 		ImageTag:        spec.ImageTag,
 		CandidateSchema: spec.CandidateSchema,
-		CandidateSQL:    spec.CandidateSQL,
+		CandidateSQLURI: spec.CandidateSQLURI,
 		Namespace:       d.namespace,
 	})
 }

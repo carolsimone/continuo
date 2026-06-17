@@ -5,7 +5,9 @@ FROM python:3.12-slim
 # ("InvalidConfig dbt1005: 'postgres' adapter is not yet supported by dbt
 # Fusion") — breaking every dbt compile/run/validation. These are the exact
 # versions the e2e suite is validated against.
-RUN pip install --no-cache-dir "dbt-core==1.12.0b1" "dbt-postgres==1.10.0"
+# boto3 is required by validation_runner.py to fetch each node's compiled
+# candidate SQL from S3 (CANDIDATE_SQL_URI) before materializing it.
+RUN pip install --no-cache-dir "dbt-core==1.12.0b1" "dbt-postgres==1.10.0" "boto3>=1.34.0"
 
 WORKDIR /project
 

@@ -20,6 +20,8 @@ type rejectedPayload struct {
 	FailingNodes    []string `json:"failing_nodes"`
 	MissingNodes    []string `json:"missing_nodes"`
 	AggregateStatus string   `json:"aggregate_status"`
+	Repo            string   `json:"repo"`
+	CommitSHA       string   `json:"commit_sha"`
 }
 
 // seedToValidating advances a release from Received through Parsing to Validating.
@@ -185,6 +187,100 @@ func TestHandleValidationResult_MissingNodeInResults_Rejects(t *testing.T) {
 	assert.Empty(t, payload.FailingNodes, "no explicitly-failed nodes in this scenario")
 	assert.Equal(t, []string{"b"}, payload.MissingNodes, "b was expected but never reported")
 	assert.Equal(t, "ok", payload.AggregateStatus, "aggregate_status passed through unchanged")
+}
+
+// seedToValidatingWithURIs is like seedToValidating but uses a two-node topology
+// where each node carries a CandidateSQLURI so the rejected payload enrichment
+// can be verified. Node "b" (svc-a) fails validation; node "a" passes.
+func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
+	t.Helper()
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service:   "svc-a",
+		ReleaseID: releaseID,
+		ImageTag:  "sha-a",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{},
+			CandidateSQLURI: "s3://continuo/svc-a/" + releaseID + "/candidate_a.sql"},
+		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"},
+			CandidateSQLURI: "s3://continuo/svc-a/" + releaseID + "/candidate_b.sql"},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: releaseID,
+		Status:    "ok",
+		Topology:  topo,
+	}))
+	return deps, store
+}
+
+// TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance asserts
+// that the release.rejected:v1 outbox payload emitted for a validation failure
+// carries:
+//   - per_node[*].candidate_sql_uri  — S3 URI pointer to the candidate SQL for each node
+//   - top-level "repo" and "commit_sha" — provenance fields from the release aggregate
+//
+// This allows the consumer to fetch the exact SQL that was validated when
+// investigating a failure without inline SQL bloat in the event.
+func TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance(t *testing.T) {
+	deps, store := seedToValidatingWithURIs(t, "rA")
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA",
+		PerNodeResults: []handlers.NodeResult{
+			{NodeID: "a", Status: "ok"},
+			{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/rA/b.log"},
+		},
+		AggregateStatus: "failed",
+	})
+	require.NoError(t, err)
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusRejected, r.Status())
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 3) // ReleaseRequested + ValidationRequested + ReleaseRejected
+	rejEntry := entries[2]
+	assert.Equal(t, streams.ReleaseRejectedV1, rejEntry.StreamName)
+
+	// Decode top-level payload
+	var topLevel map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rejEntry.Payload, &topLevel))
+
+	// Assert top-level provenance fields
+	var repo string
+	require.NoError(t, json.Unmarshal(topLevel["repo"], &repo))
+	assert.Equal(t, "acme/demo", repo, "top-level repo must come from release aggregate")
+
+	var commitSHA string
+	require.NoError(t, json.Unmarshal(topLevel["commit_sha"], &commitSHA))
+	assert.Equal(t, "deadbeef", commitSHA, "top-level commit_sha must come from release aggregate")
+
+	// Decode per_node and check candidate_sql_uri per entry
+	var perNode []struct {
+		NodeID          string `json:"node_id"`
+		Status          string `json:"status"`
+		DBTLogURI       string `json:"dbt_log_uri,omitempty"`
+		CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
+	}
+	require.NoError(t, json.Unmarshal(topLevel["per_node"], &perNode))
+	require.Len(t, perNode, 2)
+
+	byID := map[string]string{}
+	for _, pn := range perNode {
+		byID[pn.NodeID] = pn.CandidateSQLURI
+	}
+	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a.sql", byID["a"],
+		"ok nodes must also carry candidate_sql_uri (pointer, not inline SQL)")
+	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_b.sql", byID["b"],
+		"failing node must carry candidate_sql_uri")
 }
 
 // TestHandleValidationResult_AggregateStatusFailed_Rejects covers the edge case

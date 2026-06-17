@@ -113,9 +113,9 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	// candidate_sql is transient, release-specific validation data; the promoted
+	// candidate_sql_uri is transient, release-specific validation data; the promoted
 	// topology (current_prod and the release.promoted event) must not carry it.
-	promotedTopo := r.CandidateTopology().WithoutCandidateSQL()
+	promotedTopo := r.CandidateTopology().WithoutCandidateSQLURI()
 	cp.Update(releaseID, promotedTopo, now)
 	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
 		return fmt.Errorf("upsert current prod: %w", err)
@@ -195,17 +195,27 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		return fmt.Errorf("save release: %w", err)
 	}
 
+	// Build a map from node UniqueID to CandidateSQLURI so each per-node entry
+	// in the rejected payload can carry the S3 pointer to the SQL that was
+	// validated — mirroring the dbt_log_uri pattern as a pointer, not inline SQL.
+	uriByNodeID := make(map[string]string, len(r.CandidateTopology()))
+	for _, n := range r.CandidateTopology() {
+		uriByNodeID[n.UniqueID] = n.CandidateSQLURI
+	}
+
 	type perNodeEntry struct {
-		NodeID    string `json:"node_id"`
-		Status    string `json:"status"`
-		DBTLogURI string `json:"dbt_log_uri,omitempty"`
+		NodeID          string `json:"node_id"`
+		Status          string `json:"status"`
+		DBTLogURI       string `json:"dbt_log_uri,omitempty"`
+		CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
 	}
 	perNode := make([]perNodeEntry, len(in.PerNodeResults))
 	for i, nr := range in.PerNodeResults {
 		perNode[i] = perNodeEntry{
-			NodeID:    nr.NodeID,
-			Status:    nr.Status,
-			DBTLogURI: nr.DBTLogURI,
+			NodeID:          nr.NodeID,
+			Status:          nr.Status,
+			DBTLogURI:       nr.DBTLogURI,
+			CandidateSQLURI: uriByNodeID[nr.NodeID],
 		}
 	}
 
@@ -216,6 +226,8 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		"missing_nodes":    missing,
 		"aggregate_status": in.AggregateStatus,
 		"per_node":         perNode,
+		"repo":             r.Repo(),
+		"commit_sha":       r.CommitSHA(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

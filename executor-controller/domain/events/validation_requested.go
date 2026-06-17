@@ -20,11 +20,12 @@ import (
 // dispatched. An empty slice means the node is a root and can be dispatched
 // immediately.
 //
-// CandidateSQL is the node's compiled SQL with every schema-qualified reference
-// already rewritten to the candidate schema. For model/snapshot nodes it is
-// passed as the CANDIDATE_SQL env var on the validation K8s Job so
-// validation_runner.py can build an empty CTAS table without a dbt recompile.
-// Empty for seed nodes (seeds use `dbt seed --empty` instead).
+// CandidateSQLURI is an S3 URI (s3://bucket/key) pointing to the node's
+// compiled SQL with every schema-qualified reference already rewritten to the
+// candidate schema. For model/snapshot nodes it is passed as the
+// CANDIDATE_SQL_URI env var on the validation K8s Job so validation_runner.py
+// can fetch the SQL from S3 and build an empty CTAS table without a dbt
+// recompile. Empty for seed nodes (seeds use `dbt seed --empty` instead).
 type ValidationNode struct {
 	NodeID          string // dbt unique_id
 	ServiceName     string
@@ -33,7 +34,7 @@ type ValidationNode struct {
 	NodeType        pkg_model.NodeType
 	ImageTag        string
 	UpstreamNodeIDs []string
-	CandidateSQL    string
+	CandidateSQLURI string
 }
 
 // ValidationRequested is the parsed validation.requested:v1 stream payload —
