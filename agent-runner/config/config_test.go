@@ -33,6 +33,19 @@ func TestLoad_DefaultsAndRequired(t *testing.T) {
 	assert.False(t, cfg.RetentionArchiveS3)
 }
 
+func TestLoad_LLMAPIKeyOptional(t *testing.T) {
+	setBaseEnv(t)
+	// An empty LLM_API_KEY must NOT be a fatal missing-config error: agent-runner
+	// boots and serves gRPC, and chat sessions fail only when they call the LLM.
+	// This prevents a missing key from crashlooping the pod and timing out the
+	// whole helm deploy.
+	t.Setenv("LLM_API_KEY", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	assert.Empty(t, v.Missing(), "LLM_API_KEY must be optional; got missing=%v", v.Missing())
+	assert.Equal(t, "", cfg.LLMAPIKey)
+}
+
 func TestLoad_CompatibleRequiresBaseURL(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("LLM_PROVIDER", "openai-compatible")

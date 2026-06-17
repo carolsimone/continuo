@@ -114,7 +114,7 @@ The `continuo` binary is bundled in the agent-runner container image. It is invo
 | Variable | Default | Meaning |
 |---|---|---|
 | `LLM_PROVIDER` | required | `anthropic`, `openai`, or `openai-compatible` |
-| `LLM_API_KEY` | required | API key for the LLM provider |
+| `LLM_API_KEY` | optional | API key for the LLM provider. When unset, the service still boots and serves gRPC; chat sessions fail at LLM-call time until a key is supplied (a startup warning is logged). |
 | `LLM_MODEL` | required | Model identifier (e.g. `claude-opus-4-5`, `gpt-4o`) |
 | `LLM_BASE_URL` | required (`openai-compatible`) | Base URL for the OpenAI-compatible endpoint |
 | `POSTGRES_DSN` | required | Connection string for `continuo_agent` |
@@ -155,5 +155,5 @@ agent-runner holds no direct gRPC stubs for `state` or `orchestrator` and import
 
 - The gRPC `AgentChat.Chat` stream is held open for the duration of a WebSocket connection. If the stream is interrupted, `ui-service` reconnects and the client resumes the thread; on reconnect the agent replays the stored message history.
 - A pending tool confirmation can be resumed across a reconnect, but is never executed off a stale confirmation. When the stream drops while awaiting approval, the `pending_actions` row is left `pending` (not expired) and the tool call is persisted without a result. On thread resume, if a still-`pending` action whose `ConfirmTTL` window has not passed exists, agent-runner re-emits its `confirm_request`; an approval arriving outside an in-flight turn then runs the tool, persists the result, and continues the turn, while a denial records the refusal. The mutating tool still runs only on a fresh, live, explicit approval — the resume just re-offers the confirmation instead of forcing the user to re-ask. An in-session interrupt (as opposed to a disconnect) still resolves the action as `expired`, and once the `ConfirmTTL` window passes a disconnected action is no longer resumable.
-- Missing `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `POSTGRES_DSN`, `CONTINUO_STATE_ADDR`, or `CONTINUO_ORCHESTRATOR_ADDR` cause the process to exit before accepting any traffic (`pkg/config.Validator`).
+- Missing `LLM_PROVIDER`, `LLM_MODEL`, `POSTGRES_DSN`, `CONTINUO_STATE_ADDR`, or `CONTINUO_ORCHESTRATOR_ADDR` cause the process to exit before accepting any traffic (`pkg/config.Validator`). `LLM_API_KEY` is deliberately exempt: an empty key logs a startup warning and degrades chat (LLM calls fail) rather than crashing the process, so a missing key cannot crashloop the pod and time out a deploy.
 - LLM provider errors are returned to the client as `error` ServerEvents; they do not crash the stream.
