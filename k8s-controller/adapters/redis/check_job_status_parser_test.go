@@ -75,6 +75,39 @@ func TestParseCheckK8s_DecodesPayloadAndRetryCount(t *testing.T) {
 	}
 }
 
+// TestParseCheckK8s_CarriesRunningAnnounced verifies the re-poll loop preserves the
+// per-attempt "already announced RUNNING" flag across check.k8s:v1 hops.
+func TestParseCheckK8s_CarriesRunningAnnounced(t *testing.T) {
+	cmd, err := ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{
+		TaskID:           uuid.New().String(),
+		ScheduleID:       uuid.New().String(),
+		JobName:          "job-ra",
+		RunningAnnounced: true,
+	}), 3)
+	if err != nil {
+		t.Fatalf("ParseCheckK8s: %v", err)
+	}
+	if !cmd.RunningAnnounced {
+		t.Fatal("expected RunningAnnounced=true carried from check.k8s:v1 payload")
+	}
+}
+
+// TestParseNodeDeployed_RunningAnnouncedDefaultsFalse verifies a fresh attempt
+// (the node.deployed:v1 that starts an attempt) has not yet announced RUNNING.
+func TestParseNodeDeployed_RunningAnnouncedDefaultsFalse(t *testing.T) {
+	cmd, err := ParseNodeDeployed(payloadMsg(t, pkgevents.NodeDeployed{
+		TaskID:     uuid.New().String(),
+		ScheduleID: uuid.New().String(),
+		JobName:    "job-fresh",
+	}), 3)
+	if err != nil {
+		t.Fatalf("ParseNodeDeployed: %v", err)
+	}
+	if cmd.RunningAnnounced {
+		t.Fatal("expected RunningAnnounced=false for a fresh node.deployed attempt")
+	}
+}
+
 func TestParseCheckK8s_DefaultMaxRetriesWhenAbsent(t *testing.T) {
 	cmd, err := ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{
 		TaskID:     uuid.New().String(),

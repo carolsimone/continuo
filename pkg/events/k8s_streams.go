@@ -41,4 +41,9 @@ type CheckK8s struct {
 	ImageTag     string `json:"image_tag"`
 	RetryCount   int32  `json:"retry_count"`
 	MaxRetries   int32  `json:"max_retries"`
+	// RunningAnnounced is true once k8s-controller has announced this attempt as
+	// RUNNING on task.status.updated:v1. It rides the check.k8s:v1 self-poll loop
+	// so RUNNING is emitted exactly once per attempt; a fresh node.deployed:v1
+	// (a new attempt) carries no such field and so resets it to false.
+	RunningAnnounced bool `json:"running_announced"`
 }
