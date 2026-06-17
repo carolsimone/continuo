@@ -371,3 +371,16 @@ def test_upload_failure_is_fatal(handler_with_mocks):
     publisher.publish_ok.assert_not_called()
     publisher.publish_failed.assert_called_once()
     assert publisher.publish_failed.call_args.kwargs["error_class"] == "CandidateSqlUploadFailed"
+
+
+def test_handle_calls_source_cleanup_even_on_upload_failure():
+    """source.cleanup() must run even when an upload fails mid-flight."""
+    source = _make_source(("manifest_service1.json", "v1"))
+    publisher = MagicMock()
+    uploader = _make_uploader()
+    uploader.upload.side_effect = RuntimeError("s3 down")
+
+    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=uploader)
+    handler.handle(release_id="rel-upload-fail")
+
+    source.cleanup.assert_called_once()

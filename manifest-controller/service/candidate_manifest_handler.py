@@ -139,16 +139,21 @@ class CandidateManifestHandler:
                 self_schema=node.schema_name, self_table=node.table_name,
             )
 
+            unique_id = f"{node.schema_name}.{node.table_name}"
+
             # Upload the rewritten SQL to S3 and store only the s3:// URI in the
             # topology event; an upload failure is fatal because publishing a node
             # without its SQL would leave release-controller with a dangling reference.
             try:
                 candidate_sql_uri = self._uploader.upload(
                     release_id=release_id,
-                    unique_id=f"{node.schema_name}.{node.table_name}",
+                    unique_id=unique_id,
                     sql=candidate_sql,
                 )
             except Exception as exc:
+                # Collapse all upload errors to a permanent failure so the load is
+                # failed (operator re-triggers) rather than left pending — this
+                # guarantees no dangling reference is ever published.
                 self._publisher.publish_failed(
                     release_id=release_id,
                     error_class="CandidateSqlUploadFailed",
@@ -157,7 +162,7 @@ class CandidateManifestHandler:
                 return
 
             topology.append({
-                "unique_id":           f"{node.schema_name}.{node.table_name}",
+                "unique_id":           unique_id,
                 "schema_name":         node.schema_name,
                 "table_name":          node.table_name,
                 "service_name":        node.service_name,
