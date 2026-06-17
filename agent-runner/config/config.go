@@ -54,7 +54,11 @@ func Load(v *pkgconfig.Validator) Config {
 		HealthPort:            pkgconfig.EnvIntOrDefault("HEALTH_PORT", 8091),
 		Postgres:              pkgconfig.LoadPostgres(v),
 		LLMProvider:           v.Require("LLM_PROVIDER"),
-		LLMAPIKey:             v.Require("LLM_API_KEY"),
+		// LLM_API_KEY is intentionally optional: agent-runner boots and serves
+		// gRPC without it, and chat sessions fail only when they actually call the
+		// LLM. Requiring it would crashloop the pod on a missing key and time out
+		// the whole helm deploy. main logs a warning when it is empty.
+		LLMAPIKey:             pkgconfig.EnvOrDefault("LLM_API_KEY", ""),
 		LLMModel:              v.Require("LLM_MODEL"),
 		LLMBaseURL:            pkgconfig.EnvOrDefault("LLM_BASE_URL", ""),
 		CLIPath:               pkgconfig.EnvOrDefault("CONTINUO_CLI_PATH", "continuo"),

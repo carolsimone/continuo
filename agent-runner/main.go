@@ -45,6 +45,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.LLMAPIKey == "" {
+		logger.Warn("LLM_API_KEY is not set; agent-runner will start and serve gRPC, but chat sessions will fail until a key is supplied")
+	}
+
 	logger.Info("Starting agent-runner service")
 
 	// Create root context cancelled by shutdown signal.
