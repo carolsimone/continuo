@@ -116,6 +116,15 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	// candidate_sql_uri is transient, release-specific validation data; the promoted
 	// topology (current_prod and the release.promoted event) must not carry it.
 	promotedTopo := r.CandidateTopology().WithoutCandidateSQLURI()
+
+	// Determine which nodes actually changed versus the prod being replaced, so
+	// the release.promoted event can tag them. Computed against cp's snapshot
+	// BEFORE cp.Update overwrites it below. Bootstrap (empty prod) flags all.
+	changedSet := make(map[string]bool)
+	for _, id := range release.DerivedChangedNodeIDs(promotedTopo, cp.TopologySnapshot()) {
+		changedSet[id] = true
+	}
+
 	cp.Update(releaseID, promotedTopo, now)
 	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
 		return fmt.Errorf("upsert current prod: %w", err)
@@ -142,10 +151,40 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		return fmt.Errorf("save release: %w", err)
 	}
 
+	type promotedNodeWire struct {
+		UniqueID          string   `json:"unique_id"`
+		SchemaName        string   `json:"schema_name"`
+		TableName         string   `json:"table_name"`
+		ServiceName       string   `json:"service_name"`
+		NodeType          string   `json:"node_type"`
+		ContentHash       string   `json:"content_hash"`
+		ImageTag          string   `json:"image_tag"`
+		UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
+		Schedule          string   `json:"schedule"`
+		Changed           bool     `json:"changed"`
+	}
+	wireTopo := make([]promotedNodeWire, len(promotedTopo))
+	for i, n := range promotedTopo {
+		wireTopo[i] = promotedNodeWire{
+			UniqueID:          n.UniqueID,
+			SchemaName:        n.SchemaName,
+			TableName:         n.TableName,
+			ServiceName:       n.ServiceName,
+			NodeType:          n.NodeType,
+			ContentHash:       n.ContentHash,
+			ImageTag:          n.ImageTag,
+			UpstreamUniqueIDs: n.UpstreamUniqueIDs,
+			Schedule:          n.Schedule,
+			Changed:           changedSet[n.UniqueID],
+		}
+	}
 	payload, err := json.Marshal(map[string]any{
-		"release_id": releaseID,
-		"topology":   promotedTopo,
-		"image_tags": r.ImageTags(),
+		"release_id":  releaseID,
+		"topology":    wireTopo,
+		"image_tags":  r.ImageTags(),
+		"repo":        r.Repo(),
+		"commit_sha":  r.CommitSHA(),
+		"promoted_at": now.UTC(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

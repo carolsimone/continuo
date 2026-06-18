@@ -31,9 +31,12 @@ func NewReleasePromotedBinding(
 			return err
 		}
 		in := model.PromoteReleaseInput{
-			ReleaseID: evt.ReleaseID,
-			Topology:  evt.Topology,
-			ImageTags: evt.ImageTags,
+			ReleaseID:  evt.ReleaseID,
+			Topology:   evt.Topology,
+			ImageTags:  evt.ImageTags,
+			Repo:       evt.Repo,
+			CommitSHA:  evt.CommitSHA,
+			PromotedAt: evt.PromotedAt,
 		}
 		outboxEntryID := messageprocessing.ExtractOutboxEntryID(msg.Values)
 		return handler.Handle(ctx, msg.ID, outboxEntryID, in)

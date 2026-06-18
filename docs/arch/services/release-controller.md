@@ -49,7 +49,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 |---|---|---|
 | `release.requested:v1` | manifest-controller | A release becomes active; carries the assembled `manifest_keys` set (the changed service plus every other service's current prod manifest) to parse. |
 | `validation.requested:v1` | executor-controller | A candidate has changed nodes to validate. |
-| `release.promoted:v1` | orchestrator | A release is promoted to production. |
+| `release.promoted:v1` | orchestrator | A release is promoted to production. Payload: `{release_id, topology, image_tags, repo, commit_sha, promoted_at}`. Each entry in `topology` carries the standard node fields plus a `changed` boolean that is `true` when the node's `content_hash` differs from the prior `current_prod` (or when `current_prod` was empty). The top-level `repo`, `commit_sha`, and `promoted_at` are the source-change provenance for this release; orchestrator stamps them onto each changed `:Table` node. |
 | `release.rejected:v1` | (observers) | A release fails parsing or validation. |
 
 All events are written to the outbox inside the same transaction as the state change and published with an injected `outbox_entry_id` for consumer-side dedup.
@@ -110,6 +110,8 @@ advance queue
 ```
 
 Promotion is shared by the validation-passed path, the bootstrap short-circuit, and the nothing-to-validate short-circuit: all point `current_prod` at the candidate topology, upsert the changed service's `service_prod` pointer (its canonical manifest key, image tag, and this `release_id`), transition the release to `Promoted`, and emit `release.promoted:v1`. The candidate topology (carrying `content_hash` + joined `image_tag`) becomes the new snapshot, so the next release's change-detection diff is correct, and the refreshed pointer is what the next release for any other service assembles against.
+
+Before updating `current_prod`, `promoteToProduction` computes the set of changed node IDs by calling `DerivedChangedNodeIDs` against the pre-update `current_prod` snapshot (bootstrap emits all nodes as changed). Each node in the `release.promoted:v1` topology carries a `changed` boolean reflecting membership in that set. The event also carries top-level `repo`, `commit_sha`, and `promoted_at` fields taken from the release's provenance; orchestrator uses these to stamp `:Table.last_commit_sha`, `:Table.last_repo`, `:Table.last_changed_at`, and `:Table.last_release_id` on changed nodes only.
 
 ## Consumer Reliability
 

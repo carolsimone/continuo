@@ -317,3 +317,94 @@ func TestHandleValidationResult_AggregateStatusFailed_Rejects(t *testing.T) {
 	assert.Equal(t, "partial_failed", payload.AggregateStatus,
 		"aggregate_status must be surfaced so operators can diagnose a rejection with no per-node signal")
 }
+
+// promotedNodeWire mirrors the per-node shape of release.promoted:v1, including
+// the new `changed` flag and all other per-node fields to catch regressions
+// if any field is dropped or renamed.
+type promotedNodeWire struct {
+	UniqueID          string   `json:"unique_id"`
+	SchemaName        string   `json:"schema_name"`
+	TableName         string   `json:"table_name"`
+	ServiceName       string   `json:"service_name"`
+	NodeType          string   `json:"node_type"`
+	ContentHash       string   `json:"content_hash"`
+	ImageTag          string   `json:"image_tag"`
+	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
+	Schedule          string   `json:"schedule"`
+	Changed           bool     `json:"changed"`
+}
+
+// promotedPayload is the JSON shape released into release.promoted:v1.
+type promotedPayload struct {
+	ReleaseID  string             `json:"release_id"`
+	Repo       string             `json:"repo"`
+	CommitSHA  string             `json:"commit_sha"`
+	PromotedAt time.Time          `json:"promoted_at"`
+	Topology   []promotedNodeWire `json:"topology"`
+}
+
+// TestHandleValidationResult_Promote_StampsChangedAndProvenance verifies that a
+// promotion emits release-level provenance (repo, commit_sha, promoted_at) and
+// flags exactly the nodes whose content_hash differs from the prior prod: node
+// "b" changed (hash differs), node "a" unchanged (hash matches). Node "a" is
+// validated because it is "b"'s ancestor, but it must carry changed=false.
+func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	// Prior prod: a@"h", b@"old". Both in svc-a; b depends on a.
+	store.SeedCurrentProd(release.RehydrateCurrentProd("r0", release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "old", UpstreamUniqueIDs: []string{"a"}},
+	}, time.Unix(50, 0).UTC()))
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service:   "svc-a",
+		ReleaseID: "rA",
+		ImageTag:  "sha-a",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	// Candidate: a unchanged (hash "h"), b changed (hash "new").
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h", UpstreamUniqueIDs: []string{}},
+			{UniqueID: "b", ServiceName: "svc-a", ContentHash: "new", UpstreamUniqueIDs: []string{"a"}},
+		},
+	}))
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA",
+		PerNodeResults: []handlers.NodeResult{
+			{NodeID: "a", Status: "ok"},
+			{NodeID: "b", Status: "ok"},
+		},
+		AggregateStatus: "ok",
+	}))
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 3) // ReleaseRequested + ValidationRequested + ReleasePromoted
+	promotedEntry := entries[2]
+	require.Equal(t, streams.ReleasePromotedV1, promotedEntry.StreamName)
+
+	var p promotedPayload
+	require.NoError(t, json.Unmarshal(promotedEntry.Payload, &p))
+	assert.Equal(t, "acme/demo", p.Repo)
+	assert.Equal(t, "deadbeef", p.CommitSHA)
+	assert.Equal(t, time.Unix(100, 0).UTC(), p.PromotedAt.UTC())
+
+	changedByID := map[string]bool{}
+	contentHashByID := map[string]string{}
+	for _, n := range p.Topology {
+		changedByID[n.UniqueID] = n.Changed
+		contentHashByID[n.UniqueID] = n.ContentHash
+	}
+	assert.False(t, changedByID["a"], "a is unchanged (hash matches prior prod)")
+	assert.True(t, changedByID["b"], "b changed (hash differs from prior prod)")
+	assert.Equal(t, "new", contentHashByID["b"], "b's content_hash must match candidate (verifies field is emitted)")
+	assert.Equal(t, "h", contentHashByID["a"], "a's content_hash must match candidate")
+}
