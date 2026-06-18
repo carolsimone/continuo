@@ -402,6 +402,70 @@ func TestReleasePromotionRepository_PreservesRunExecutesEdgesWhenRetiringTables(
 	assert.Equal(t, "rB", rid)
 }
 
+// TestReleasePromotionRepository_StampsProvenanceOnlyOnChangedNodes verifies
+// that PromoteRelease writes last_commit_sha/last_repo/last_changed_at/
+// last_release_id onto nodes flagged Changed, and leaves an unchanged node's
+// provenance untouched across a subsequent promotion.
+func TestReleasePromotionRepository_StampsProvenanceOnlyOnChangedNodes(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t) // skips if Neo4j is unreachable
+	wipeReleaseFixtures(t, client)
+	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
+
+	repo := newReleaseRepo(client)
+
+	// rel-1: both a and b are new → both changed, stamped with commit c1.
+	t1 := time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC)
+	first := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
+			Changed: true, LastCommitSHA: "c1", LastRepo: "acme/demo", LastChangedAt: t1},
+		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "x", Schedule: "d", UpstreamUniqueIDs: []string{"a"},
+			Changed: true, LastCommitSHA: "c1", LastRepo: "acme/demo", LastChangedAt: t1},
+	}
+	_, err := repo.PromoteRelease(ctx, "rel-1", first, time.Now().UTC())
+	require.NoError(t, err)
+
+	// rel-2: a unchanged (keeps c1), b changed → stamped with commit c2.
+	t2 := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
+	second := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
+			Changed: false},
+		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "y", Schedule: "d", UpstreamUniqueIDs: []string{"a"},
+			Changed: true, LastCommitSHA: "c2", LastRepo: "acme/demo", LastChangedAt: t2},
+	}
+	_, err = repo.PromoteRelease(ctx, "rel-2", second, time.Now().UTC())
+	require.NoError(t, err)
+
+	s := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer s.Close(ctx)
+
+	res, err := s.Run(ctx, `
+		MATCH (t:Table)
+		RETURN t.unique_id AS uid, t.last_commit_sha AS sha, t.last_repo AS repo, t.last_release_id AS rid
+		ORDER BY uid
+	`, nil)
+	require.NoError(t, err)
+	got := map[string]map[string]any{}
+	for res.Next(ctx) {
+		uid, _ := res.Record().Get("uid")
+		sha, _ := res.Record().Get("sha")
+		repoV, _ := res.Record().Get("repo")
+		rid, _ := res.Record().Get("rid")
+		got[uid.(string)] = map[string]any{"sha": sha, "repo": repoV, "rid": rid}
+	}
+	require.NoError(t, res.Err())
+
+	// a kept rel-1's provenance (unchanged in rel-2).
+	assert.Equal(t, "c1", got["a"]["sha"])
+	assert.Equal(t, "acme/demo", got["a"]["repo"])
+	assert.Equal(t, "rel-1", got["a"]["rid"])
+
+	// b was re-stamped with rel-2's provenance.
+	assert.Equal(t, "c2", got["b"]["sha"])
+	assert.Equal(t, "acme/demo", got["b"]["repo"])
+	assert.Equal(t, "rel-2", got["b"]["rid"])
+}
+
 // TestReleasePromotionRepository_DeletesOrphanedTablesWithNoRunReferences
 // verifies that a :Table removed from the new topology IS deleted when no
 // :Run-[:EXECUTES] edge points at it. The orphan-cleanup step removes it.

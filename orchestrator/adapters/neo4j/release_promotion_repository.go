@@ -115,6 +115,10 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 			"image_tag":           n.ImageTag,
 			"schedule":            n.Schedule,
 			"upstream_unique_ids": upstreams,
+			"changed":             n.Changed,
+			"last_commit_sha":     n.LastCommitSHA,
+			"last_repo":           n.LastRepo,
+			"last_changed_at":     n.LastChangedAt.UTC(),
 		})
 		newUniqueIDs = append(newUniqueIDs, n.UniqueID)
 	}
@@ -161,6 +165,11 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 			    existing.release_id   = $release_id,
 			    existing.active       = true,
 			    existing.retired_at   = null
+			FOREACH (_ IN CASE WHEN t.changed THEN [1] ELSE [] END |
+			    SET existing.last_commit_sha = t.last_commit_sha,
+			        existing.last_repo       = t.last_repo,
+			        existing.last_changed_at  = t.last_changed_at,
+			        existing.last_release_id  = $release_id)
 		`, map[string]interface{}{
 			"topology":   payload,
 			"release_id": releaseID,
