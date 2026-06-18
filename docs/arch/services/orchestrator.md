@@ -17,7 +17,7 @@ It is responsible for:
 
 | Entity | Description |
 |---|---|
-| `Table` node | One per model/seed; carries topology metadata (`schema_name`, `table_name`, `service_name`, `node_type`, `schedule_name`, `image_tag`), `last_updated_at`, and an `active` flag for current-topology reconciliation |
+| `Table` node | One per model/seed; carries topology metadata (`schema_name`, `table_name`, `service_name`, `node_type`, `schedule_name`, `image_tag`), `last_updated_at`, an `active` flag for current-topology reconciliation, and per-node provenance properties (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) that record the most recent release in which the node's `content_hash` changed |
 | `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at`, `kind`, `source_run_id`, `topology_generation`, `total_nodes`, `terminal_count`, `version` |
 | `DEPENDS_ON` relationship | Directed edge from downstream to upstream `Table` |
 | `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status`, pre-assigned `task_id` UUID, per-task `image_tag` + `manifest_version`, and (for rebase-projected inherited rows only) an optional `inherited_from_task_id` property pointing to the root executed `task_id` in the source lineage |
@@ -191,7 +191,7 @@ Goroutines started in `main.go` run for the process lifetime:
 |---|---|---|
 | `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — runs `Snapshot(LatestFullDAG)`, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` + `query.model:v1` for the dispatch frontier (`ReadyToDispatch` rows: seeds first, else roots) |
 | `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes (SUCCEEDED → `query.model:v1` for newly-ready nodes; FAILED → cascade-skip downstream + emit `task.status.updated:v1` for skipped tasks) |
-| `release.promoted:v1` | `orchestrator-release-promoted` | `ReleasePromotedHandler` — swaps the `:Table` topology via `ReleasePromotionRepository.PromoteRelease`, increments `topology_generation`, writes `:TopologyRoot` service_metadata, then emits `schedules.loaded:v1` |
+| `release.promoted:v1` | `orchestrator-release-promoted` | `ReleasePromotedHandler` — swaps the `:Table` topology via `ReleasePromotionRepository.PromoteRelease`, stamps per-node provenance (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) on changed nodes only, increments `topology_generation`, writes `:TopologyRoot` service_metadata, then emits `schedules.loaded:v1` |
 | `trigger.rerun:v1` | `orchestrator_rerun` | `DerivedRunHandler` (rerun config) — runs `Snapshot(SourcePinnedDAG{})` against the **new** `:Run` minted by state's `TriggerRerun`, projecting the source's pinned DAG with non-SUCCEEDED tasks + their descendants as rebased PENDING and the rest as inherited at source's stored status; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only |
 | `trigger.rebase:v1` | `orchestrator-rebase` | `DerivedRunHandler` (rebase config) — runs `Snapshot(RebasePartition)` against the new `:Run`; projects rebase_set ∪ inherit_set against the latest topology; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only. Shares one handler implementation with the rerun trigger, differing only in selector/kind/stream |
 | `trigger.single_node_run:v1` | `orchestrator_single_node_run` | `HandleSingleNodeRunHandler` — runs `Snapshot(SingleNode)` and dispatches the one task; see details below |
@@ -263,10 +263,10 @@ Before writing the dispatched entry, the handler validates the `node_type` of ev
 
 ### On `release.promoted:v1` — ReleasePromotedHandler
 
-Receives the full promoted topology for a release (each node carries its `image_tag`, already joined by `release-controller`). The handler runs in one Postgres UoW transaction:
+Receives the full promoted topology for a release (each node carries its `image_tag` joined by `release-controller`, the top-level `repo`, `commit_sha`, and `promoted_at` provenance fields, and a per-node `changed` flag indicating whether that node's `content_hash` differed from the prior prod). The handler runs in one Postgres UoW transaction:
 
 1. Dedup on `message_processing`, keyed `(message_id, release.promoted:v1)`; a secondary uniqueness key on the upstream outbox entry ID catches a re-XADD under a fresh Redis message ID.
-2. `ReleasePromotionRepository.PromoteRelease` performs the atomic Neo4j topology swap in a single Neo4j transaction (retire-then-orphan-cleanup; see "Topology swap pattern" below). It short-circuits (`changed=false`) when the `:Meta {key:'current_release'}` singleton already records this `release_id`.
+2. `ReleasePromotionRepository.PromoteRelease` performs the atomic Neo4j topology swap in a single Neo4j transaction (retire-then-orphan-cleanup; see "Topology swap pattern" below). During the upsert, nodes with `changed=true` have `last_commit_sha`, `last_repo`, `last_changed_at`, and `last_release_id` stamped from the release's provenance; unchanged nodes retain their prior values. It short-circuits (`changed=false`) when the `:Meta {key:'current_release'}` singleton already records this `release_id`.
 3. If `changed=true`, increment `topology_state.topology_generation`; otherwise read the current value. Either way, write the per-service `service_metadata` and the generation onto `:TopologyRoot` (idempotent MERGE).
 4. Always write a `schedules.loaded:v1` outbox entry with the schedule names, `service_metadata`, and `topology_generation`. The `event_id` is a deterministic UUID v5 of `(namespace, release_id)`, so re-emissions from idempotent redeliveries are deduplicated by state's `ScheduleCatalogHandler`.
 
@@ -435,7 +435,7 @@ as warnings by `RunQueryService` but otherwise pass through unmodified.
 `ReleasePromotionRepository.PromoteRelease` (invoked by `ReleasePromotedHandler`) replaces the `:Table` topology graph using a **retire-then-orphan-cleanup** pattern, not a truncate-and-load. Every `:Table` node may have incoming `:Run-[:EXECUTES]->Table` edges from active or historical runs; a blunt `MATCH (n:Table) DETACH DELETE n` would erase that history and strand in-flight runs. The swap runs in a single Neo4j transaction:
 
 1. **Retire** — `MATCH (t:Table) WHERE NOT t.unique_id IN $new SET t.active = false, t.retired_at = $now`. Nodes stay in the graph; their `:Run` edges still resolve.
-2. **Upsert** — `MERGE (existing:Table {unique_id: ...}) SET ..., active = true, retired_at = NULL`. Reactivates any node that's back in the new topology.
+2. **Upsert** — `MERGE (existing:Table {unique_id: ...}) SET ..., active = true, retired_at = NULL`. Reactivates any node that's back in the new topology. For each node whose `changed` flag is `true`, the provenance properties `last_commit_sha`, `last_repo`, `last_changed_at`, and `last_release_id` are also stamped via a `FOREACH` guard; unchanged nodes retain their prior provenance values (null until first change for nodes predating this feature).
 3. **Clear outgoing edges** on upserted nodes so dependencies can be rebuilt: `MATCH (a:Table {unique_id: ...})-[r:DEPENDS_ON]->() DELETE r`.
 4. **Rebuild `:DEPENDS_ON`** between nodes in the new topology. References to `unique_id`s outside the candidate set are silently skipped (matches dbt's compile semantics for cross-service dependencies).
 5. **Orphan cleanup** — `MATCH (t:Table) WHERE COALESCE(t.active, true) = false AND NOT EXISTS { (:Run)-[:EXECUTES]->(t) } DETACH DELETE t`. Removes only the `:Table` nodes no run still references.
