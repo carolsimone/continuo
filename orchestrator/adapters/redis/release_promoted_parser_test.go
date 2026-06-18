@@ -2,6 +2,7 @@ package redis
 
 import (
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -58,6 +59,30 @@ func TestParseReleasePromoted_NilTopology(t *testing.T) {
 	_, err := ParseReleasePromoted(msg)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, events.ErrPermanent)
+}
+
+func TestParseReleasePromoted_DecodesProvenanceAndChanged(t *testing.T) {
+	raw := `{
+		"release_id": "rA",
+		"repo": "acme/demo",
+		"commit_sha": "deadbeef",
+		"promoted_at": "2026-06-18T10:00:00Z",
+		"image_tags": {"svc-a": "sha-a"},
+		"topology": [
+			{"unique_id": "a", "service_name": "svc-a", "changed": false, "upstream_unique_ids": []},
+			{"unique_id": "b", "service_name": "svc-a", "changed": true, "upstream_unique_ids": ["a"]}
+		]
+	}`
+	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": raw}}
+
+	evt, err := ParseReleasePromoted(msg)
+	require.NoError(t, err)
+	assert.Equal(t, "acme/demo", evt.Repo)
+	assert.Equal(t, "deadbeef", evt.CommitSHA)
+	assert.Equal(t, time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC), evt.PromotedAt.UTC())
+	require.Len(t, evt.Topology, 2)
+	assert.False(t, evt.Topology[0].Changed)
+	assert.True(t, evt.Topology[1].Changed)
 }
 
 // TestExtractOutboxEntryID_FromReleasePromotedMessage verifies that

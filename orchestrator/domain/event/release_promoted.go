@@ -1,8 +1,11 @@
 package event
 
+import "time"
+
 // ReleasePromotedNode is the wire-format representation of a single node in a
 // release.promoted:v1 payload's topology array. Nodes are keyed by unique_id
-// and carry upstream relationships as a string-id list.
+// and carry upstream relationships as a string-id list. `changed` marks nodes
+// whose dbt content_hash differs from the prior prod, scoping provenance writes.
 type ReleasePromotedNode struct {
 	UniqueID          string   `json:"unique_id"`
 	SchemaName        string   `json:"schema_name"`
@@ -12,12 +15,17 @@ type ReleasePromotedNode struct {
 	ImageTag          string   `json:"image_tag"`
 	Schedule          string   `json:"schedule"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
+	Changed           bool     `json:"changed"`
 }
 
 // ReleasePromoted is the full release.promoted:v1 payload as published by
-// release-controller's outbox processor.
+// release-controller's outbox processor. repo/commit_sha/promoted_at carry the
+// source change that this release promoted; they stamp the changed nodes.
 type ReleasePromoted struct {
-	ReleaseID string                `json:"release_id"`
-	Topology  []ReleasePromotedNode `json:"topology"`
-	ImageTags map[string]string     `json:"image_tags"`
+	ReleaseID  string                `json:"release_id"`
+	Topology   []ReleasePromotedNode `json:"topology"`
+	ImageTags  map[string]string     `json:"image_tags"`
+	Repo       string                `json:"repo"`
+	CommitSHA  string                `json:"commit_sha"`
+	PromotedAt time.Time             `json:"promoted_at"`
 }

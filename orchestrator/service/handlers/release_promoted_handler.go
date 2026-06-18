@@ -116,7 +116,7 @@ func (h *ReleasePromotedHandler) Handle(
 	}
 
 	// Translate wire-format nodes to domain nodes.
-	domainNodes := toDomainNodes(in.Topology)
+	domainNodes := toDomainNodes(in.Topology, in.Repo, in.CommitSHA, in.PromotedAt)
 
 	// Atomically swap the Neo4j topology. PromoteRelease short-circuits (returns
 	// changed=false) when the :Meta singleton already records the same release_id.
@@ -246,10 +246,10 @@ func (h *ReleasePromotedHandler) Handle(
 }
 
 // toDomainNodes translates wire-format ReleasePromotedNode slices to domain
-// ReleasePromotedTopologyNode slices. Both types carry the same fields; the
-// wire type has JSON tags for unmarshaling and the domain type is JSON-tag-free
-// as required by clean-architecture boundaries.
-func toDomainNodes(wire []domainEvent.ReleasePromotedNode) []topology.ReleasePromotedTopologyNode {
+// ReleasePromotedTopologyNode slices, denormalizing the release-level
+// provenance (repo, commitSHA, promotedAt) onto every node. The repository
+// stamps it only onto nodes where Changed is true.
+func toDomainNodes(wire []domainEvent.ReleasePromotedNode, repo, commitSHA string, promotedAt time.Time) []topology.ReleasePromotedTopologyNode {
 	out := make([]topology.ReleasePromotedTopologyNode, 0, len(wire))
 	for _, n := range wire {
 		out = append(out, topology.ReleasePromotedTopologyNode{
@@ -261,6 +261,10 @@ func toDomainNodes(wire []domainEvent.ReleasePromotedNode) []topology.ReleasePro
 			ImageTag:          n.ImageTag,
 			Schedule:          n.Schedule,
 			UpstreamUniqueIDs: append([]string(nil), n.UpstreamUniqueIDs...),
+			Changed:           n.Changed,
+			LastCommitSHA:     commitSHA,
+			LastRepo:          repo,
+			LastChangedAt:     promotedAt,
 		})
 	}
 	return out
