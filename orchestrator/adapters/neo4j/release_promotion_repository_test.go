@@ -441,7 +441,7 @@ func TestReleasePromotionRepository_StampsProvenanceOnlyOnChangedNodes(t *testin
 
 	res, err := s.Run(ctx, `
 		MATCH (t:Table)
-		RETURN t.unique_id AS uid, t.last_commit_sha AS sha, t.last_repo AS repo, t.last_release_id AS rid
+		RETURN t.unique_id AS uid, t.last_commit_sha AS sha, t.last_repo AS repo, t.last_release_id AS rid, t.last_changed_at AS changed_at
 		ORDER BY uid
 	`, nil)
 	require.NoError(t, err)
@@ -451,7 +451,8 @@ func TestReleasePromotionRepository_StampsProvenanceOnlyOnChangedNodes(t *testin
 		sha, _ := res.Record().Get("sha")
 		repoV, _ := res.Record().Get("repo")
 		rid, _ := res.Record().Get("rid")
-		got[uid.(string)] = map[string]any{"sha": sha, "repo": repoV, "rid": rid}
+		changedAt, _ := res.Record().Get("changed_at")
+		got[uid.(string)] = map[string]any{"sha": sha, "repo": repoV, "rid": rid, "changed_at": changedAt}
 	}
 	require.NoError(t, res.Err())
 
@@ -459,11 +460,15 @@ func TestReleasePromotionRepository_StampsProvenanceOnlyOnChangedNodes(t *testin
 	assert.Equal(t, "c1", got["a"]["sha"])
 	assert.Equal(t, "acme/demo", got["a"]["repo"])
 	assert.Equal(t, "rel-1", got["a"]["rid"])
+	gotA := got["a"]["changed_at"].(time.Time)
+	assert.True(t, t1.Equal(gotA), "a keeps rel-1 timestamp; got %v", gotA)
 
 	// b was re-stamped with rel-2's provenance.
 	assert.Equal(t, "c2", got["b"]["sha"])
 	assert.Equal(t, "acme/demo", got["b"]["repo"])
 	assert.Equal(t, "rel-2", got["b"]["rid"])
+	gotB := got["b"]["changed_at"].(time.Time)
+	assert.True(t, t2.Equal(gotB), "b gets rel-2 timestamp; got %v", gotB)
 }
 
 // TestReleasePromotionRepository_DeletesOrphanedTablesWithNoRunReferences
