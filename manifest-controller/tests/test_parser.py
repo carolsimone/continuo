@@ -160,3 +160,26 @@ def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
     assert len(nodes) == 1
     assert nodes[0].image_tag == "abc123-1714300000"
     assert nodes[0].manifest_version == "v3"
+
+
+def test_parse_manifest_captures_original_file_path(tmp_path):
+    manifest = {
+        "nodes": {
+            "model.svc.stg_orders": {
+                "resource_type": "model",
+                "name": "stg_orders",
+                "schema": "analytics",
+                "fqn": ["svc", "staging", "stg_orders"],
+                "original_file_path": "models/staging/stg_orders.sql",
+                "config": {"meta": {"owner": "team-a"}},
+                "tags": ["daily"],
+            }
+        }
+    }
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    nodes = parse_manifest(str(path), manifest_version="v1")
+
+    assert len(nodes) == 1
+    assert nodes[0].original_file_path == "models/staging/stg_orders.sql"

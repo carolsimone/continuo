@@ -169,6 +169,7 @@ class CandidateManifestHandler:
                 "node_type":           node.node_type,
                 "content_hash":        node.content_hash,
                 "image_tag":           node.image_tag,
+                "original_file_path":  node.original_file_path,
                 "upstream_unique_ids": [
                     f"{dep.schema_name}.{dep.table_name}" for dep in node.upstream_deps
                 ],

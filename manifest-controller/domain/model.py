@@ -36,6 +36,7 @@ class ManifestNode:
     content_hash: str = ""  # dbt's per-node source checksum (checksum.checksum)
     manifest_version: str = ""
     image_tag: str = ""
+    original_file_path: str = ""  # dbt original_file_path (project-relative)
     upstream_deps: list[UpstreamDep] = field(default_factory=list)
 
 
