@@ -61,13 +61,20 @@ func pipelineLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
+// noopSchemaCreator stubs the candidate-schema pre-create. The pipeline test
+// drives the executor command queue, not the dbt warehouse, so the binding's
+// warehouse-side schema creation is a no-op here.
+type noopSchemaCreator struct{}
+
+func (noopSchemaCreator) EnsureCandidateSchema(context.Context, string) error { return nil }
+
 // newValidationRequestedBinding builds the production validation.requested:v1
 // binding over the live *sqlx.DB.
 func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XMessage) error {
 	logger := pipelineLogger()
 	uowFactory := func() uow.UnitOfWork { return uow.NewPostgresUnitOfWork(db, logger) }
 	return executorredis.NewValidationRequestedBinding(
-		uowFactory, handlers.NewValidationRequestedHandler(logger), logger)
+		uowFactory, handlers.NewValidationRequestedHandler(logger), noopSchemaCreator{}, logger)
 }
 
 // newNodeCompletedBinding builds the production validation.node.completed:v1

@@ -68,24 +68,35 @@ def load_candidate_sql() -> str:
 
 
 def _ensure_schema(cur, schema: str) -> None:
-    """Create the candidate schema, tolerating a concurrent create.
+    """Create the candidate schema race-safely.
 
     ``CREATE SCHEMA IF NOT EXISTS`` is not atomic under concurrency: root
     validation nodes have no gating upstreams and dispatch in parallel, so
     several pods can race this statement and raise DuplicateSchema /
-    UniqueViolation on pg_namespace.  Either means the schema now exists,
-    which is the desired outcome — swallow it.
-    (autocommit is on, so the failed statement leaves no aborted transaction.)
+    UniqueViolation on pg_namespace.  A session-level advisory lock keyed on the
+    schema name serializes concurrent creators on the same database, so only one
+    issues the CREATE; the lock is released before returning.  A
+    DuplicateSchema / UniqueViolation is still tolerated (the schema now exists,
+    which is the desired outcome) as a second line of defense against any
+    creator that does not hold the lock.
+    (autocommit is on, so a failed statement leaves no aborted transaction.)
     """
     from psycopg2 import errors as pg_errors
     from psycopg2 import sql as pg_sql
 
-    stmt = pg_sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(pg_sql.Identifier(schema))
-    print(f"-- executing:\n{stmt.as_string(cur.connection)}", flush=True)
+    # hashtext maps the schema name to the int4 key pg_advisory_lock needs.
+    # Holders of the same key block until the lock is released, so only one
+    # session at a time runs the CREATE for a given candidate schema.
+    cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (schema,))
     try:
-        cur.execute(stmt)
-    except (pg_errors.DuplicateSchema, pg_errors.UniqueViolation):
-        print(f"-- schema {schema} already exists (concurrent create); continuing", flush=True)
+        stmt = pg_sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(pg_sql.Identifier(schema))
+        print(f"-- ensuring candidate schema {schema} exists", flush=True)
+        try:
+            cur.execute(stmt)
+        except (pg_errors.DuplicateSchema, pg_errors.UniqueViolation):
+            print(f"-- schema {schema} already exists (concurrent create); continuing", flush=True)
+    finally:
+        cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (schema,))
 
 
 def main() -> None:
