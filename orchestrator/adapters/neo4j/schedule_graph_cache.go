@@ -18,13 +18,14 @@ const scheduleGraphCacheSize = 32
 
 // ScheduleGraphProvider is the full read surface the cache decorates. It caches
 // only GetScheduleGraph (the expensive, immutable topology-shape query) and
-// passes ListRuns / ListScheduleTopologies straight through so the decorator
-// can stand in for the repository wherever the schedule-and-run reader is
-// required. Satisfied by *OrchestratorQueryRepository.
+// passes ListRuns / ListScheduleTopologies / GetNodeAncestry straight through so
+// the decorator can stand in for the repository wherever the schedule-and-run
+// reader is required. Satisfied by *OrchestratorQueryRepository.
 type ScheduleGraphProvider interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
 	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
+	GetNodeAncestry(ctx context.Context, nodeUniqueID string, maxDepth int) ([]*domain.NodeAncestor, error)
 }
 
 // GenerationProvider returns the orchestrator's current topology_generation.
@@ -117,6 +118,11 @@ func (c *CachingScheduleGraphReader) ListRuns(ctx context.Context, scheduleName 
 // ListScheduleTopologies passes through to the underlying reader.
 func (c *CachingScheduleGraphReader) ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return c.inner.ListScheduleTopologies(ctx)
+}
+
+// GetNodeAncestry passes through to the underlying reader; ancestry queries are not cached.
+func (c *CachingScheduleGraphReader) GetNodeAncestry(ctx context.Context, nodeUniqueID string, maxDepth int) ([]*domain.NodeAncestor, error) {
+	return c.inner.GetNodeAncestry(ctx, nodeUniqueID, maxDepth)
 }
 
 func (c *CachingScheduleGraphReader) get(key scheduleGraphKey) (*domain.ScheduleGraph, bool) {
