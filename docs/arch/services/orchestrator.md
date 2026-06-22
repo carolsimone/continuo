@@ -17,7 +17,7 @@ It is responsible for:
 
 | Entity | Description |
 |---|---|
-| `Table` node | One per model/seed; carries topology metadata (`schema_name`, `table_name`, `service_name`, `node_type`, `schedule_name`, `image_tag`), `last_updated_at`, an `active` flag for current-topology reconciliation, and per-node provenance properties (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) that record the most recent release in which the node's `content_hash` changed |
+| `Table` node | One per model/seed; carries topology metadata (`schema_name`, `table_name`, `service_name`, `node_type`, `schedule_name`, `image_tag`, `original_file_path`), `last_updated_at`, an `active` flag for current-topology reconciliation, and per-node provenance properties (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) that record the most recent release in which the node's `content_hash` changed |
 | `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at`, `kind`, `source_run_id`, `topology_generation`, `total_nodes`, `terminal_count`, `version` |
 | `DEPENDS_ON` relationship | Directed edge from downstream to upstream `Table` |
 | `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status`, pre-assigned `task_id` UUID, per-task `image_tag` + `manifest_version`, and (for rebase-projected inherited rows only) an optional `inherited_from_task_id` property pointing to the root executed `task_id` in the source lineage |
@@ -207,6 +207,7 @@ Each consumer is wired as a `parser → handler` binding under `adapters/redis/`
 | `GetRunGraph` | Returns nodes and EXECUTES edges for a specific run, with per-node status. Also returns `run_topology_generation` (stamped on the `:Run` node at `Snapshot` time; `0` means "drift unknown" — not "no drift") and `latest_topology_generation` (current `topology_state.topology_generation` Postgres singleton). |
 | `ListActiveRunDrifts` | Returns one `ActiveRunDrift` row per schedule that has an in-flight run (`schedule_name`, `run_id`, `run_topology_generation`) plus the orchestrator's current `latest_topology_generation`. "In-flight" means `completed_at IS NULL` on the `:Run` node — a property stamped by the `run.finalized:v1` projection for all terminal outcomes (succeeded, failed, cancelled). The underlying `ListActiveRuns` query orders results by `schedule_name`, then `created_at DESC`; `RunQueryService.ListActiveRunDrifts` keeps the single newest in-flight run per schedule, so each schedule contributes at most one drift row to the response. Consumed by e2e tests as an active-run state probe. |
 | `ListScheduleTopologies` | Returns one entry per schedule with at least one active `:Table`: `schedule_name`, `node_count`, `last_updated_at = max(:Table.last_updated_at)`. Backs the ui-service homepage `Topology` tab tile grid. |
+| `GetNodeAncestry` | Returns a node and its transitive upstream ancestry (outgoing `:DEPENDS_ON`) for a given `:Table` `unique_id`, up to a configurable `max_depth`. Each result entry includes per-node provenance (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) and `file_path`, ranked by change-recency (`last_changed_at` DESC, nulls last). Returns `NOT_FOUND` for an unknown or inactive node. |
 
 ### HTTP (port 8087)
 
