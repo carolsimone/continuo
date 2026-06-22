@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
@@ -405,4 +406,111 @@ func (r *OrchestratorQueryRepository) parseNeo4jTimestamp(field, value string) t
 		return time.Time{}
 	}
 	return ts
+}
+
+// GetNodeAncestry returns the node identified by uniqueID at depth 0 plus its
+// transitive upstream ancestors (following OUTGOING :DEPENDS_ON edges, since the
+// edge points downstream -> upstream), deduped to shallowest depth, ordered by
+// last_changed_at DESC with unknown-provenance nodes last. maxDepth <= 0 walks
+// the full closure; maxDepth > 0 caps the hop count. Returns domain.ErrNodeNotFound
+// when uniqueID is not an active :Table.
+func (r *OrchestratorQueryRepository) GetNodeAncestry(ctx context.Context, uniqueID string, maxDepth int) ([]*domain.NodeAncestor, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	// Cypher cannot parameterize the *1..N path-length bound, so interpolate the
+	// validated integer (handler enforces 0..100). Unbounded when maxDepth <= 0.
+	hop := "*1.."
+	if maxDepth > 0 {
+		hop = fmt.Sprintf("*1..%d", maxDepth)
+	}
+	query := fmt.Sprintf(`
+		MATCH (n:Table {unique_id: $uid})
+		WHERE COALESCE(n.active, true)
+		OPTIONAL MATCH path = (n)-[:DEPENDS_ON%s]->(anc:Table)
+		WITH n, anc, min(length(path)) AS depth
+		RETURN n AS self,
+		       collect(CASE WHEN anc IS NULL THEN null ELSE {node: anc, depth: depth} END) AS ancestors
+	`, hop)
+
+	result, err := session.Run(ctx, query, map[string]interface{}{"uid": uniqueID})
+	if err != nil {
+		return nil, fmt.Errorf("GetNodeAncestry query failed: %w", err)
+	}
+	if !result.Next(ctx) {
+		if err := result.Err(); err != nil {
+			return nil, fmt.Errorf("GetNodeAncestry query error: %w", err)
+		}
+		return nil, domain.ErrNodeNotFound
+	}
+	record := result.Record()
+
+	selfRaw, _ := record.Get("self")
+	selfNode, ok := selfRaw.(neo4j.Node)
+	if !ok {
+		return nil, domain.ErrNodeNotFound
+	}
+
+	out := []*domain.NodeAncestor{ancestorFromProps(selfNode.Props, 0)}
+
+	if ancRaw, ok := record.Get("ancestors"); ok {
+		if ancList, ok := ancRaw.([]interface{}); ok {
+			for _, item := range ancList {
+				m, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				node, ok := m["node"].(neo4j.Node)
+				if !ok {
+					continue
+				}
+				depth := 0
+				if d, ok := m["depth"].(int64); ok {
+					depth = int(d)
+				}
+				out = append(out, ancestorFromProps(node.Props, depth))
+			}
+		}
+	}
+
+	// Order by last_changed_at DESC, unknown (nil) last. Neo4j orders nulls first
+	// under DESC, so sort in Go instead.
+	sort.SliceStable(out, func(i, j int) bool {
+		ci, cj := out[i].LastChangedAt, out[j].LastChangedAt
+		if ci == nil && cj == nil {
+			return false
+		}
+		if ci == nil {
+			return false
+		}
+		if cj == nil {
+			return true
+		}
+		return ci.After(*cj)
+	})
+	return out, nil
+}
+
+func ancestorFromProps(props map[string]interface{}, depth int) *domain.NodeAncestor {
+	a := &domain.NodeAncestor{
+		UniqueID:      safeString(props["unique_id"]),
+		SchemaName:    safeString(props["schema_name"]),
+		TableName:     safeString(props["table_name"]),
+		ServiceName:   safeString(props["service_name"]),
+		NodeType:      safeString(props["node_type"]),
+		Depth:         depth,
+		FilePath:      safeString(props["original_file_path"]),
+		LastCommitSHA: safeString(props["last_commit_sha"]),
+		LastRepo:      safeString(props["last_repo"]),
+		LastReleaseID: safeString(props["last_release_id"]),
+	}
+	switch v := props["last_changed_at"].(type) {
+	case time.Time:
+		t := v
+		a.LastChangedAt = &t
+	case neo4j.LocalDateTime:
+		t := v.Time()
+		a.LastChangedAt = &t
+	}
+	return a
 }
