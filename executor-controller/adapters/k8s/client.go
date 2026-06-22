@@ -297,9 +297,15 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		RestartPolicy: corev1.RestartPolicyNever,
 		Containers: []corev1.Container{
 			{
-				Name:            "dbt-job",
-				Image:           image,
-				ImagePullPolicy: corev1.PullIfNotPresent,
+				Name:  "dbt-job",
+				Image: image,
+				// Always re-pull the validation image. A service image is re-baked
+				// FROM dbt-base whenever validation_runner.py changes, and the new
+				// image is pushed under the same mutable service tag. PullIfNotPresent
+				// would keep running a stale cached image on a node, so the candidate
+				// would be validated by an out-of-date runner. PullAlways guarantees
+				// the node fetches the freshly pushed image for every validation run.
+				ImagePullPolicy: corev1.PullAlways,
 				Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
 				Env:             envVars,
 			},
