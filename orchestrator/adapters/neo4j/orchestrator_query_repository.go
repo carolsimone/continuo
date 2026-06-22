@@ -426,6 +426,8 @@ func (r *OrchestratorQueryRepository) GetNodeAncestry(ctx context.Context, uniqu
 	}
 	query := fmt.Sprintf(`
 		MATCH (n:Table {unique_id: $uid})
+		// COALESCE treats a missing active flag as true to remain consistent with all
+		// other topology queries in this repository; do not tighten to n.active = true.
 		WHERE COALESCE(n.active, true)
 		OPTIONAL MATCH path = (n)-[:DEPENDS_ON%s]->(anc:Table)
 		WITH n, anc, min(length(path)) AS depth

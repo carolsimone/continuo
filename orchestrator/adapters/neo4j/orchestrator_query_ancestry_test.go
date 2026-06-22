@@ -146,3 +146,24 @@ func TestGetNodeAncestry_NotFoundAndNoAncestors(t *testing.T) {
 	assert.Equal(t, 0, got[0].Depth)
 }
 
+func TestGetNodeAncestry_RetiredNodeNotFound(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := s.Run(ctx, `MATCH (n:Table) DETACH DELETE n`, nil)
+	require.NoError(t, err)
+	_, err = s.Run(ctx, `CREATE (:Table {unique_id:'retired', schema_name:'p', table_name:'r', service_name:'s', node_type:'dbt-model', active:false})`, nil)
+	require.NoError(t, err)
+	s.Close(ctx)
+
+	t.Cleanup(func() {
+		ws := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer ws.Close(ctx)
+		_, _ = ws.Run(ctx, `MATCH (n:Table) DETACH DELETE n`, nil)
+	})
+
+	_, err = newQueryRepo(client).GetNodeAncestry(ctx, "retired", 0)
+	require.True(t, errors.Is(err, domain.ErrNodeNotFound))
+}
+

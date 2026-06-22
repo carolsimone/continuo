@@ -2,7 +2,6 @@ package grpc
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -82,5 +81,3 @@ func TestGetNodeAncestry_MapsDomainToProto(t *testing.T) {
 	assert.Nil(t, z.LastChangedAt, "unknown provenance -> unset Timestamp")
 	assert.Equal(t, "", z.LastCommitSha)
 }
-
-var _ = errors.Is
