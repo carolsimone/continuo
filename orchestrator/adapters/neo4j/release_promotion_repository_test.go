@@ -514,3 +514,27 @@ func TestReleasePromotionRepository_DeletesOrphanedTablesWithNoRunReferences(t *
 	bCount, _ := bRes.Record().Get("n")
 	assert.Equal(t, int64(1), bCount, ":Table 'b' must exist after rB promotion")
 }
+
+func TestReleasePromotionRepository_SetsOriginalFilePathUnconditionally(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t) // skips if Neo4j unreachable
+	wipeReleaseFixtures(t, client)
+	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
+
+	repo := newReleaseRepo(client)
+	// node "a" is unchanged (Changed:false) — file_path must STILL be set.
+	nodes := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
+			OriginalFilePath: "models/a.sql", Changed: false},
+	}
+	_, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	require.NoError(t, err)
+
+	s := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `MATCH (t:Table {unique_id:'a'}) RETURN t.original_file_path AS fp`, nil)
+	require.NoError(t, err)
+	require.True(t, res.Next(ctx))
+	fp, _ := res.Record().Get("fp")
+	assert.Equal(t, "models/a.sql", fp)
+}

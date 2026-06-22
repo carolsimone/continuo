@@ -119,6 +119,7 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 			"last_commit_sha":     n.LastCommitSHA,
 			"last_repo":           n.LastRepo,
 			"last_changed_at":     n.LastChangedAt.UTC(),
+			"original_file_path":  n.OriginalFilePath,
 		})
 		newUniqueIDs = append(newUniqueIDs, n.UniqueID)
 	}
@@ -162,6 +163,7 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 			    existing.node_type    = t.node_type,
 			    existing.image_tag    = t.image_tag,
 			    existing.schedule_name = t.schedule,
+			    existing.original_file_path = t.original_file_path,
 			    existing.release_id   = $release_id,
 			    existing.active       = true,
 			    existing.retired_at   = null
