@@ -950,6 +950,226 @@ func (x *ScheduleTopologySummary) GetLastUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+type GetNodeAncestryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeUniqueId  string                 `protobuf:"bytes,1,opt,name=node_unique_id,json=nodeUniqueId,proto3" json:"node_unique_id,omitempty"` // :Table unique_id (schema.table) of the failed node
+	MaxDepth      int32                  `protobuf:"varint,2,opt,name=max_depth,json=maxDepth,proto3" json:"max_depth,omitempty"`              // 0 = full ancestry closure; >0 caps hops from the node
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeAncestryRequest) Reset() {
+	*x = GetNodeAncestryRequest{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeAncestryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeAncestryRequest) ProtoMessage() {}
+
+func (x *GetNodeAncestryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeAncestryRequest.ProtoReflect.Descriptor instead.
+func (*GetNodeAncestryRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *GetNodeAncestryRequest) GetNodeUniqueId() string {
+	if x != nil {
+		return x.NodeUniqueId
+	}
+	return ""
+}
+
+func (x *GetNodeAncestryRequest) GetMaxDepth() int32 {
+	if x != nil {
+		return x.MaxDepth
+	}
+	return 0
+}
+
+type GetNodeAncestryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ancestors     []*AncestorNode        `protobuf:"bytes,1,rep,name=ancestors,proto3" json:"ancestors,omitempty"` // node itself at depth 0, then upstreams; changed_at DESC nulls last
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeAncestryResponse) Reset() {
+	*x = GetNodeAncestryResponse{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeAncestryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeAncestryResponse) ProtoMessage() {}
+
+func (x *GetNodeAncestryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeAncestryResponse.ProtoReflect.Descriptor instead.
+func (*GetNodeAncestryResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetNodeAncestryResponse) GetAncestors() []*AncestorNode {
+	if x != nil {
+		return x.Ancestors
+	}
+	return nil
+}
+
+type AncestorNode struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId      string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	SchemaName    string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
+	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
+	ServiceName   string                 `protobuf:"bytes,4,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	NodeType      string                 `protobuf:"bytes,5,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
+	Depth         int32                  `protobuf:"varint,6,opt,name=depth,proto3" json:"depth,omitempty"`                                        // 0 = the queried node itself; 1 = direct upstream; ...
+	LastCommitSha string                 `protobuf:"bytes,7,opt,name=last_commit_sha,json=lastCommitSha,proto3" json:"last_commit_sha,omitempty"`  // "" when unknown (pre-tracking)
+	LastRepo      string                 `protobuf:"bytes,8,opt,name=last_repo,json=lastRepo,proto3" json:"last_repo,omitempty"`                   // "" when unknown
+	LastChangedAt *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=last_changed_at,json=lastChangedAt,proto3" json:"last_changed_at,omitempty"`  // unset when unknown
+	LastReleaseId string                 `protobuf:"bytes,10,opt,name=last_release_id,json=lastReleaseId,proto3" json:"last_release_id,omitempty"` // "" when unknown
+	FilePath      string                 `protobuf:"bytes,11,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`                  // dbt original_file_path (project-relative); "" if not captured
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AncestorNode) Reset() {
+	*x = AncestorNode{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AncestorNode) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AncestorNode) ProtoMessage() {}
+
+func (x *AncestorNode) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AncestorNode.ProtoReflect.Descriptor instead.
+func (*AncestorNode) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *AncestorNode) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *AncestorNode) GetSchemaName() string {
+	if x != nil {
+		return x.SchemaName
+	}
+	return ""
+}
+
+func (x *AncestorNode) GetTableName() string {
+	if x != nil {
+		return x.TableName
+	}
+	return ""
+}
+
+func (x *AncestorNode) GetServiceName() string {
+	if x != nil {
+		return x.ServiceName
+	}
+	return ""
+}
+
+func (x *AncestorNode) GetNodeType() string {
+	if x != nil {
+		return x.NodeType
+	}
+	return ""
+}
+
+func (x *AncestorNode) GetDepth() int32 {
+	if x != nil {
+		return x.Depth
+	}
+	return 0
+}
+
+func (x *AncestorNode) GetLastCommitSha() string {
+	if x != nil {
+		return x.LastCommitSha
+	}
+	return ""
+}
+
+func (x *AncestorNode) GetLastRepo() string {
+	if x != nil {
+		return x.LastRepo
+	}
+	return ""
+}
+
+func (x *AncestorNode) GetLastChangedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastChangedAt
+	}
+	return nil
+}
+
+func (x *AncestorNode) GetLastReleaseId() string {
+	if x != nil {
+		return x.LastReleaseId
+	}
+	return ""
+}
+
+func (x *AncestorNode) GetFilePath() string {
+	if x != nil {
+		return x.FilePath
+	}
+	return ""
+}
+
 var File_proto_orchestrator_v1_orchestrator_proto protoreflect.FileDescriptor
 
 const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
@@ -1021,18 +1241,39 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x1d\n" +
 	"\n" +
 	"node_count\x18\x02 \x01(\x05R\tnodeCount\x12B\n" +
-	"\x0flast_updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\rlastUpdatedAt*w\n" +
+	"\x0flast_updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\rlastUpdatedAt\"[\n" +
+	"\x16GetNodeAncestryRequest\x12$\n" +
+	"\x0enode_unique_id\x18\x01 \x01(\tR\fnodeUniqueId\x12\x1b\n" +
+	"\tmax_depth\x18\x02 \x01(\x05R\bmaxDepth\"V\n" +
+	"\x17GetNodeAncestryResponse\x12;\n" +
+	"\tancestors\x18\x01 \x03(\v2\x1d.orchestrator.v1.AncestorNodeR\tancestors\"\x8f\x03\n" +
+	"\fAncestorNode\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x1f\n" +
+	"\vschema_name\x18\x02 \x01(\tR\n" +
+	"schemaName\x12\x1d\n" +
+	"\n" +
+	"table_name\x18\x03 \x01(\tR\ttableName\x12!\n" +
+	"\fservice_name\x18\x04 \x01(\tR\vserviceName\x12\x1b\n" +
+	"\tnode_type\x18\x05 \x01(\tR\bnodeType\x12\x14\n" +
+	"\x05depth\x18\x06 \x01(\x05R\x05depth\x12&\n" +
+	"\x0flast_commit_sha\x18\a \x01(\tR\rlastCommitSha\x12\x1b\n" +
+	"\tlast_repo\x18\b \x01(\tR\blastRepo\x12B\n" +
+	"\x0flast_changed_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\rlastChangedAt\x12&\n" +
+	"\x0flast_release_id\x18\n" +
+	" \x01(\tR\rlastReleaseId\x12\x1b\n" +
+	"\tfile_path\x18\v \x01(\tR\bfilePath*w\n" +
 	"\vCriticality\x12\x1b\n" +
 	"\x17CRITICALITY_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16CRITICALITY_REGULATORY\x10\x01\x12\x14\n" +
 	"\x10CRITICALITY_CORE\x10\x02\x12\x19\n" +
-	"\x15CRITICALITY_SECONDARY\x10\x032\x94\x04\n" +
+	"\x15CRITICALITY_SECONDARY\x10\x032\xfa\x04\n" +
 	"\x11OrchestratorQuery\x12g\n" +
 	"\x10GetScheduleGraph\x12(.orchestrator.v1.GetScheduleGraphRequest\x1a).orchestrator.v1.GetScheduleGraphResponse\x12O\n" +
 	"\bListRuns\x12 .orchestrator.v1.ListRunsRequest\x1a!.orchestrator.v1.ListRunsResponse\x12X\n" +
 	"\vGetRunGraph\x12#.orchestrator.v1.GetRunGraphRequest\x1a$.orchestrator.v1.GetRunGraphResponse\x12p\n" +
 	"\x13ListActiveRunDrifts\x12+.orchestrator.v1.ListActiveRunDriftsRequest\x1a,.orchestrator.v1.ListActiveRunDriftsResponse\x12y\n" +
-	"\x16ListScheduleTopologies\x12..orchestrator.v1.ListScheduleTopologiesRequest\x1a/.orchestrator.v1.ListScheduleTopologiesResponseBJZHgithub.com/carolsimone/continuo/cli/proto/orchestrator/v1;orchestratorv1b\x06proto3"
+	"\x16ListScheduleTopologies\x12..orchestrator.v1.ListScheduleTopologiesRequest\x1a/.orchestrator.v1.ListScheduleTopologiesResponse\x12d\n" +
+	"\x0fGetNodeAncestry\x12'.orchestrator.v1.GetNodeAncestryRequest\x1a(.orchestrator.v1.GetNodeAncestryResponseBJZHgithub.com/carolsimone/continuo/cli/proto/orchestrator/v1;orchestratorv1b\x06proto3"
 
 var (
 	file_proto_orchestrator_v1_orchestrator_proto_rawDescOnce sync.Once
@@ -1047,7 +1288,7 @@ func file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_orchestrator_v1_orchestrator_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_proto_orchestrator_v1_orchestrator_proto_goTypes = []any{
 	(Criticality)(0),                       // 0: orchestrator.v1.Criticality
 	(*TableNode)(nil),                      // 1: orchestrator.v1.TableNode
@@ -1065,12 +1306,15 @@ var file_proto_orchestrator_v1_orchestrator_proto_goTypes = []any{
 	(*ListScheduleTopologiesRequest)(nil),  // 13: orchestrator.v1.ListScheduleTopologiesRequest
 	(*ListScheduleTopologiesResponse)(nil), // 14: orchestrator.v1.ListScheduleTopologiesResponse
 	(*ScheduleTopologySummary)(nil),        // 15: orchestrator.v1.ScheduleTopologySummary
-	(*timestamppb.Timestamp)(nil),          // 16: google.protobuf.Timestamp
+	(*GetNodeAncestryRequest)(nil),         // 16: orchestrator.v1.GetNodeAncestryRequest
+	(*GetNodeAncestryResponse)(nil),        // 17: orchestrator.v1.GetNodeAncestryResponse
+	(*AncestorNode)(nil),                   // 18: orchestrator.v1.AncestorNode
+	(*timestamppb.Timestamp)(nil),          // 19: google.protobuf.Timestamp
 }
 var file_proto_orchestrator_v1_orchestrator_proto_depIdxs = []int32{
 	0,  // 0: orchestrator.v1.TableNode.criticality:type_name -> orchestrator.v1.Criticality
-	16, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
-	16, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
+	19, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
+	19, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: orchestrator.v1.GetScheduleGraphResponse.nodes:type_name -> orchestrator.v1.TableNode
 	2,  // 4: orchestrator.v1.GetScheduleGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
 	7,  // 5: orchestrator.v1.ListRunsResponse.runs:type_name -> orchestrator.v1.RunSummary
@@ -1078,22 +1322,26 @@ var file_proto_orchestrator_v1_orchestrator_proto_depIdxs = []int32{
 	2,  // 7: orchestrator.v1.GetRunGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
 	12, // 8: orchestrator.v1.ListActiveRunDriftsResponse.active_runs:type_name -> orchestrator.v1.ActiveRunDrift
 	15, // 9: orchestrator.v1.ListScheduleTopologiesResponse.schedules:type_name -> orchestrator.v1.ScheduleTopologySummary
-	16, // 10: orchestrator.v1.ScheduleTopologySummary.last_updated_at:type_name -> google.protobuf.Timestamp
-	3,  // 11: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
-	5,  // 12: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
-	8,  // 13: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
-	10, // 14: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:input_type -> orchestrator.v1.ListActiveRunDriftsRequest
-	13, // 15: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:input_type -> orchestrator.v1.ListScheduleTopologiesRequest
-	4,  // 16: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
-	6,  // 17: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
-	9,  // 18: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
-	11, // 19: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:output_type -> orchestrator.v1.ListActiveRunDriftsResponse
-	14, // 20: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:output_type -> orchestrator.v1.ListScheduleTopologiesResponse
-	16, // [16:21] is the sub-list for method output_type
-	11, // [11:16] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	19, // 10: orchestrator.v1.ScheduleTopologySummary.last_updated_at:type_name -> google.protobuf.Timestamp
+	18, // 11: orchestrator.v1.GetNodeAncestryResponse.ancestors:type_name -> orchestrator.v1.AncestorNode
+	19, // 12: orchestrator.v1.AncestorNode.last_changed_at:type_name -> google.protobuf.Timestamp
+	3,  // 13: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
+	5,  // 14: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
+	8,  // 15: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
+	10, // 16: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:input_type -> orchestrator.v1.ListActiveRunDriftsRequest
+	13, // 17: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:input_type -> orchestrator.v1.ListScheduleTopologiesRequest
+	16, // 18: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:input_type -> orchestrator.v1.GetNodeAncestryRequest
+	4,  // 19: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
+	6,  // 20: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
+	9,  // 21: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
+	11, // 22: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:output_type -> orchestrator.v1.ListActiveRunDriftsResponse
+	14, // 23: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:output_type -> orchestrator.v1.ListScheduleTopologiesResponse
+	17, // 24: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:output_type -> orchestrator.v1.GetNodeAncestryResponse
+	19, // [19:25] is the sub-list for method output_type
+	13, // [13:19] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_proto_orchestrator_v1_orchestrator_proto_init() }
@@ -1107,7 +1355,7 @@ func file_proto_orchestrator_v1_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_orchestrator_v1_orchestrator_proto_rawDesc), len(file_proto_orchestrator_v1_orchestrator_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
