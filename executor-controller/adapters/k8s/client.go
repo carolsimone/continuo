@@ -299,12 +299,35 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 			{
 				Name:            "dbt-job",
 				Image:           image,
-				ImagePullPolicy: corev1.PullIfNotPresent,
+				ImagePullPolicy: validationImagePullPolicy(),
 				Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
 				Env:             envVars,
 			},
 		},
 	}, nil
+}
+
+// validationImagePullPolicy resolves the pull policy for validation Job pods.
+//
+// In production a service image is re-baked FROM dbt-base whenever
+// validation_runner.py changes and is re-pushed under the same mutable service
+// tag, so a node must re-pull or it would validate the candidate with a stale
+// cached runner. The default is therefore PullAlways.
+//
+// Environments that side-load images directly into the node's image cache and
+// have no registry to pull from (the kind-based e2e suite, local clusters) set
+// VALIDATION_IMAGE_PULL_POLICY=IfNotPresent (or Never) so the locally-loaded
+// image is used; PullAlways there would fail with ErrImagePull because the
+// mutable tag exists only in the node cache, not in any registry.
+func validationImagePullPolicy() corev1.PullPolicy {
+	switch os.Getenv("VALIDATION_IMAGE_PULL_POLICY") {
+	case string(corev1.PullIfNotPresent):
+		return corev1.PullIfNotPresent
+	case string(corev1.PullNever):
+		return corev1.PullNever
+	default:
+		return corev1.PullAlways
+	}
 }
 
 // nonK8sLabel matches characters not allowed in a Kubernetes label value.

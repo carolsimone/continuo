@@ -73,6 +73,12 @@ spec:
               value: "continuo"
             - name: K8S_NAMESPACE
               value: "default"
+            # Validation Job images are side-loaded into the kind node cache
+            # (kind load), and the mutable service tags exist in no registry, so
+            # validation pods must use the cached image. PullAlways would fail
+            # with ErrImagePull here; production omits this and defaults to Always.
+            - name: VALIDATION_IMAGE_PULL_POLICY
+              value: "IfNotPresent"
             - name: MAX_CONCURRENT_JOBS
               value: "50"
             - name: HTTP_PORT
