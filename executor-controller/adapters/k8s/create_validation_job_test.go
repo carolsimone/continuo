@@ -224,13 +224,14 @@ func TestCreateValidationJob_IsIdempotent_AlreadyExists(t *testing.T) {
 	assert.Equal(t, "true", job.Labels["preexisting"])
 }
 
-// TestCreateValidationJob_UsesPullAlways verifies that validation Jobs are
-// built with imagePullPolicy=Always. A service image is re-baked FROM dbt-base
-// and pushed under the same mutable service tag whenever the validation runner
-// changes; PullIfNotPresent would keep a stale cached image on the node and
-// validate the candidate with an out-of-date runner. PullAlways forces the node
-// to fetch the freshly pushed image for every validation run.
-func TestCreateValidationJob_UsesPullAlways(t *testing.T) {
+// TestCreateValidationJob_DefaultsToPullAlways verifies that, with no override,
+// validation Jobs are built with imagePullPolicy=Always. A service image is
+// re-baked FROM dbt-base and pushed under the same mutable service tag whenever
+// the validation runner changes; PullIfNotPresent would keep a stale cached
+// image on the node and validate the candidate with an out-of-date runner.
+// PullAlways forces the node to fetch the freshly pushed image for every run.
+func TestCreateValidationJob_DefaultsToPullAlways(t *testing.T) {
+	t.Setenv("VALIDATION_IMAGE_PULL_POLICY", "")
 	c := newValidationTestClient()
 	p := validationParams()
 
@@ -239,7 +240,37 @@ func TestCreateValidationJob_UsesPullAlways(t *testing.T) {
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t, corev1.PullAlways, job.Spec.Template.Spec.Containers[0].ImagePullPolicy,
-		"validation job must use PullAlways so a re-pushed mutable service tag is actually re-pulled")
+		"validation job must default to PullAlways so a re-pushed mutable service tag is actually re-pulled")
+}
+
+// TestCreateValidationJob_PullPolicyOverride verifies that environments which
+// side-load images into the node cache and have no registry to pull from (the
+// kind-based e2e suite, local clusters) can set VALIDATION_IMAGE_PULL_POLICY to
+// IfNotPresent (or Never) so the locally-loaded image is used instead of an
+// ErrImagePull. Any unrecognized value falls back to the prod-safe PullAlways.
+func TestCreateValidationJob_PullPolicyOverride(t *testing.T) {
+	cases := []struct {
+		env  string
+		want corev1.PullPolicy
+	}{
+		{"IfNotPresent", corev1.PullIfNotPresent},
+		{"Never", corev1.PullNever},
+		{"Always", corev1.PullAlways},
+		{"bogus", corev1.PullAlways},
+	}
+	for _, tc := range cases {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv("VALIDATION_IMAGE_PULL_POLICY", tc.env)
+			c := newValidationTestClient()
+			p := validationParams()
+
+			require.NoError(t, c.CreateValidationJob(context.Background(), p))
+
+			job := fetchJob(t, c, p.Namespace, p.JobName)
+			require.Len(t, job.Spec.Template.Spec.Containers, 1)
+			assert.Equal(t, tc.want, job.Spec.Template.Spec.Containers[0].ImagePullPolicy)
+		})
+	}
 }
 
 func TestCreateValidationJob_FailsPermanentOnEmptyImageTag(t *testing.T) {
