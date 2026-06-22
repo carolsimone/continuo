@@ -9,6 +9,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
+	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -50,9 +51,19 @@ func validationDedupKey(releaseID string) uuid.UUID {
 // message for an already-processed release enqueues no extra nodes. Per-node
 // uniqueness is additionally enforced at the DB level by the partial unique
 // index uq_executor_deployments_validation_release_node.
+//
+// Before enqueuing nodes, the binding creates the release's candidate schema in
+// the dbt warehouse exactly once via schemaCreator. Doing it here — once per
+// release, ahead of any job — means every validation job (including seeds, which
+// run `dbt seed --empty` and create the schema through dbt's own non-race-safe
+// path) finds the schema already present, so no two parallel root jobs race
+// `CREATE SCHEMA` on pg_namespace. Schema creation runs against the warehouse
+// outside the executor's Unit-of-Work transaction; a failure returns before any
+// deployment row is enqueued and the message is retried.
 func NewValidationRequestedBinding(
 	uowFactory func() uow.UnitOfWork,
 	handler *handlers.ValidationRequestedHandler,
+	schemaCreator ports.CandidateSchemaCreator,
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
@@ -96,6 +107,19 @@ func NewValidationRequestedBinding(
 			}
 			committed = true
 			return nil
+		}
+
+		// Create the candidate schema once, race-safely, before any node is
+		// enqueued. A non-empty candidate_schema is always present on a real
+		// validation request; if absent (a malformed/legacy message) skip the
+		// pre-create and let the per-node paths fall back to their own creation.
+		if evt.CandidateSchema != "" {
+			if err := schemaCreator.EnsureCandidateSchema(ctx, evt.CandidateSchema); err != nil {
+				logger.Error("validation.requested: candidate schema pre-create failed",
+					"message_id", msg.ID, "release_id", evt.ReleaseID,
+					"candidate_schema", evt.CandidateSchema, "error", err)
+				return fmt.Errorf("ensure candidate schema %s: %w", evt.CandidateSchema, err)
+			}
 		}
 
 		if err := handler.Handle(ctx, u, evt, msgProcID); err != nil {

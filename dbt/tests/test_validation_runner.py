@@ -6,7 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from base.validation_runner import load_candidate_sql, _parse_s3_uri, main
+from psycopg2 import errors as pg_errors
+
+from base.validation_runner import load_candidate_sql, _parse_s3_uri, _ensure_schema, main
 
 
 # ---------------------------------------------------------------------------
@@ -128,3 +130,79 @@ def test_load_candidate_sql_empty_uri_returns_empty(monkeypatch):
 
     assert result == ""
     mock_client.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _ensure_schema: race-safe candidate-schema creation
+# ---------------------------------------------------------------------------
+
+
+class _FakeCursor:
+    """Records every execute() call and optionally raises on the CREATE SCHEMA.
+
+    A statement is the CREATE when it is a psycopg2 Composed (not the advisory
+    lock/unlock, which are plain SQL strings).
+    """
+
+    def __init__(self, raise_on_create=None):
+        self._raise_on_create = raise_on_create
+        self.calls = []  # list of statement objects passed to execute()
+
+    def execute(self, statement, params=None):
+        self.calls.append(statement)
+        # The lock/unlock statements are plain strings; the CREATE is a Composed.
+        if self._raise_on_create is not None and not isinstance(statement, str):
+            raise self._raise_on_create
+
+
+def _call_strings(cur):
+    """Render each recorded statement as a string for assertions."""
+    return [s if isinstance(s, str) else s.__class__.__name__ for s in cur.calls]
+
+
+def test_ensure_schema_locks_before_create_and_unlocks_after():
+    """The candidate schema create is wrapped in advisory lock then unlock."""
+    cur = _FakeCursor()
+
+    _ensure_schema(cur, "_candidate_relA")
+
+    rendered = _call_strings(cur)
+    # Order: take advisory lock -> create schema (a Composed) -> release lock.
+    assert "pg_advisory_lock" in rendered[0]
+    assert rendered[1] == "Composed"  # the CREATE SCHEMA statement
+    assert "pg_advisory_unlock" in rendered[2]
+    assert len(cur.calls) == 3
+
+
+def test_ensure_schema_tolerates_concurrent_duplicate_schema():
+    """A racing creator raising DuplicateSchema is swallowed; the lock is still
+    released and the function returns normally (the schema now exists)."""
+    cur = _FakeCursor(raise_on_create=pg_errors.DuplicateSchema("already exists"))
+
+    # Must not raise — a concurrent create reaches the desired end state.
+    _ensure_schema(cur, "_candidate_relB")
+
+    rendered = _call_strings(cur)
+    assert "pg_advisory_lock" in rendered[0]
+    assert "pg_advisory_unlock" in rendered[-1], "lock must be released even when create raced"
+
+
+def test_ensure_schema_tolerates_concurrent_unique_violation():
+    """A racing creator raising UniqueViolation on pg_namespace is swallowed and
+    the advisory lock is released."""
+    cur = _FakeCursor(raise_on_create=pg_errors.UniqueViolation("pg_namespace"))
+
+    _ensure_schema(cur, "_candidate_relC")
+
+    assert "pg_advisory_unlock" in _call_strings(cur)[-1]
+
+
+def test_ensure_schema_propagates_unexpected_error_but_releases_lock():
+    """An error that is NOT a duplicate/unique violation propagates, but the
+    advisory lock is still released first (finally block)."""
+    cur = _FakeCursor(raise_on_create=RuntimeError("connection reset"))
+
+    with pytest.raises(RuntimeError, match="connection reset"):
+        _ensure_schema(cur, "_candidate_relD")
+
+    assert "pg_advisory_unlock" in _call_strings(cur)[-1]

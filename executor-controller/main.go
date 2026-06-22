@@ -96,6 +96,7 @@ func main() {
 	})
 
 	candidateSchemaCleaner := postgres.NewCandidateSchemaCleaner(dbtDB, logger)
+	candidateSchemaCreator := postgres.NewCandidateSchemaCreator(dbtDB, logger)
 
 	// 3. Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
@@ -150,7 +151,7 @@ func main() {
 	scheduleCancelledBinding := redis.NewScheduleCancelledBinding(
 		uowFactory, scheduleCancelledHandler, logger)
 	validationReqBinding := redis.NewValidationRequestedBinding(
-		uowFactory, validationReqHandler, logger)
+		uowFactory, validationReqHandler, candidateSchemaCreator, logger)
 	validationNodeBinding := redis.NewValidationNodeCompletedBinding(
 		uowFactory, validationNodeHandler, logger)
 	validationCompletedTeardownBinding := redis.NewValidationCompletedTeardownBinding(

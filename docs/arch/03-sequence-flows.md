@@ -438,7 +438,7 @@ sequenceDiagram
 
   Note over EC,KC: Phase 4 — self-contained validation (one empty-build Job per node, gated in dependency order)
   R->>EC: consume validation.requested:v1
-  Note over EC: per node → executor_deployments (mode=validation)<br/>roots → pending, nodes with upstreams → blocked<br/>(inbound dedup is per-release)
+  Note over EC: create _candidate_{id} schema once (advisory lock, before fan-out)<br/>per node → executor_deployments (mode=validation)<br/>roots → pending, nodes with upstreams → blocked<br/>(inbound dedup is per-release)
   loop dispatch pending rows, unblocking downstream as upstreams settle ok
     Note over EC: model/snapshot → validation_runner.py (CANDIDATE_SQL_URI env):<br/>fetch SQL from S3 via boto3 → CREATE TABLE {candidate}.{table} AS (fetched SQL) WITH NO DATA<br/>seed (empty CANDIDATE_SQL_URI) → dbt seed --select {table} --empty
     EC->>R: publish node.deployed:v1 (synthetic ids — routes by mode=validation label)

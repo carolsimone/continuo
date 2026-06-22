@@ -97,7 +97,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | gRPC server methods owned | none |
 | Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.completed:v1` |
 | Redis produces | `node.deployed:v1`, `task.status.updated:v1` (FAILED only, on the never-deployed terminal dispatch failure — k8s-controller owns RUNNING and the pod terminal), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.completed:v1` (per-release validation aggregate) |
-| External DB writes | dbt warehouse (`DBT_POSTGRES_DB`) — drops `_candidate_<release>` schema on `validation.completed:v1` via `CandidateSchemaCleaner` |
+| External DB writes | dbt warehouse (`DBT_POSTGRES_DB`) — creates the `_candidate_<release>` schema on `validation.requested:v1` via `CandidateSchemaCreator`; drops it on `validation.completed:v1` via `CandidateSchemaCleaner` |
 | Outbound gRPC calls | none |
 
 ### Invariants
@@ -109,6 +109,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 - **Permanent dispatch failures bypass the retry budget.** `dispatchRow` classifies `CreateQueryJob` errors via `errors.Is(err, events.ErrPermanent)`. On match, `writeFailed` is called immediately regardless of remaining retries, writing `task.status.updated:v1` FAILED + `node.updated:v1` FAILED outbox rows and marking the deployment `failed`.
 - **Retry-exhaustion uses the same propagation.** When `retry_count + 1 >= max_retries` on a transient error, `writeFailed` is called, so transient errors that exhaust the retry budget also reach orchestrator's `HandleNodeCompleted` (via `node.updated:v1`) and state's `TaskStatusUpdatedHandler` (via `task.status.updated:v1`).
 - **Uniform outbox publisher.** The executor `OutboxPublisher` is a marshal-and-XADD; it has no `TerminalFailureHook` and carries no K8s logic. All failure signalling is performed upstream by the dispatcher.
+- **Candidate schema is created once, race-safely.** The `validation.requested:v1` binding calls `CandidateSchemaCreator.EnsureCandidateSchema` against `DBT_POSTGRES_DB` before enqueuing any node. Creation takes a transaction-scoped advisory lock (`pg_advisory_xact_lock`) on the schema name and tolerates a unique-violation, so parallel root validation Jobs — including seeds, whose `dbt seed --empty` path creates the schema non-atomically — never race `CREATE SCHEMA` on `pg_namespace`. A creation failure aborts the message before any deployment row is written, and the message is retried.
 - **Candidate schema teardown.** A dedicated consumer on `validation.completed:v1` (group `executor-validation-completed`) calls `CandidateSchemaCleaner.DropCandidateSchema` against `DBT_POSTGRES_DB`; this drops the shared `_candidate_<release>` schema regardless of pass/fail outcome.
 
 ## `k8s-controller`

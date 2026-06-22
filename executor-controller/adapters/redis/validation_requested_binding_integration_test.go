@@ -21,15 +21,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// recordingSchemaCreator is a no-op CandidateSchemaCreator that records the
+// schemas it was asked to ensure. The binding's candidate-schema pre-create runs
+// against the dbt warehouse, which these executor-DB integration tests do not
+// provision, so creation is stubbed; the recorded names let a test assert the
+// pre-create fired exactly once per release.
+type recordingSchemaCreator struct {
+	ensured []string
+}
+
+func (r *recordingSchemaCreator) EnsureCandidateSchema(_ context.Context, schema string) error {
+	r.ensured = append(r.ensured, schema)
+	return nil
+}
+
 // buildValidationBinding constructs a ValidationRequestedBinding backed by the
-// given *sqlx.DB, mirroring buildBinding for the query.model path.
-func buildValidationBinding(db *sqlx.DB) func(ctx context.Context, msg goredis.XMessage) error {
+// given *sqlx.DB, mirroring buildBinding for the query.model path. The returned
+// recordingSchemaCreator captures the candidate-schema pre-create calls.
+func buildValidationBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) error, *recordingSchemaCreator) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {
 		return uow.NewPostgresUnitOfWork(db, logger)
 	}
 	handler := handlers.NewValidationRequestedHandler(logger)
-	return executorredis.NewValidationRequestedBinding(uowFactory, handler, logger)
+	creator := &recordingSchemaCreator{}
+	binding := executorredis.NewValidationRequestedBinding(uowFactory, handler, creator, logger)
+	return binding, creator
 }
 
 // validationNode is the per-node shape release-controller emits inside the
@@ -65,7 +82,7 @@ func validationRequestedXMessage(t *testing.T, msgID, releaseID string, nodeIDs 
 		"mode":              "validation",
 		"nodes":             nodes,
 		"node_ids_in_order": nodeIDs,
-		"candidate_schema":  "candidate_" + releaseID,
+		"candidate_schema":  "_candidate_" + releaseID,
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -78,13 +95,15 @@ func TestValidationRequestedBinding_HappyPath_EnqueuesAllNodes(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	binding := buildValidationBinding(db)
+	binding, creator := buildValidationBinding(db)
 	releaseID := "rel-happy-1"
 	msg := validationRequestedXMessage(t, "100-0", releaseID,
 		"model.shop.orders", "model.shop.customers", "model.shop.line_items")
 
 	require.NoError(t, binding(context.Background(), msg))
 
+	assert.Equal(t, []string{"_candidate_" + releaseID}, creator.ensured,
+		"candidate schema is pre-created exactly once before any node is enqueued")
 	assert.Equal(t, 3, countRows(t, db,
 		`SELECT COUNT(*) FROM executor_deployments WHERE mode = 'validation' AND release_id = $1`, releaseID),
 		"one validation deployment row per node")
@@ -104,7 +123,7 @@ func TestValidationRequestedBinding_RedeliveredMessageIsDedupedAndAcked(t *testi
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	binding := buildValidationBinding(db)
+	binding, creator := buildValidationBinding(db)
 	releaseID := "rel-redeliver-1"
 	nodeIDs := []string{"model.shop.orders", "model.shop.customers"}
 
@@ -115,6 +134,9 @@ func TestValidationRequestedBinding_RedeliveredMessageIsDedupedAndAcked(t *testi
 	// catch it; ACK (nil) and no duplicate rows.
 	msg2 := validationRequestedXMessage(t, "201-0", releaseID, nodeIDs...)
 	require.NoError(t, binding(context.Background(), msg2))
+
+	assert.Equal(t, []string{"_candidate_" + releaseID}, creator.ensured,
+		"a redelivered (deduped) message must not re-run the candidate-schema pre-create")
 
 	assert.Equal(t, 2, countRows(t, db,
 		`SELECT COUNT(*) FROM executor_deployments WHERE mode = 'validation' AND release_id = $1`, releaseID),
@@ -128,7 +150,7 @@ func TestValidationRequestedBinding_ParseFailureReturnsPermanent(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	binding := buildValidationBinding(db)
+	binding, _ := buildValidationBinding(db)
 	// Missing the "payload" field entirely → permanent parse failure.
 	msg := goredis.XMessage{ID: "300-0", Values: map[string]interface{}{
 		"not_payload": "garbage",
