@@ -46,9 +46,13 @@ class Consumer:
             self._redis.xack(self._stream, self._group, msg_id)
             logger.info("Message ACKed", extra={"msg_id": msg_id})
         except Exception as e:
-            logger.error(
-                "Failed to process message, not ACKing",
-                extra={"msg_id": msg_id, "error": str(e)},
+            # Render the cause into the message (and attach the traceback via
+            # exc_info) rather than only into `extra`: the process log format is
+            # plain `%(message)s`, so an `extra`-only detail is invisible and a
+            # fatal misconfig (e.g. an S3 SignatureDoesNotMatch) reads as an
+            # opaque, infinitely-retrying failure.
+            logger.exception(
+                "Failed to process message %s, not ACKing: %s", msg_id, e,
             )
 
     def _consume_once(self) -> None:
@@ -99,7 +103,7 @@ class Consumer:
                 self._reclaim_stale_pending()
                 self._consume_once()
             except Exception as e:
-                logger.error("Consumer loop error", extra={"error": str(e)})
+                logger.exception("Consumer loop error: %s", e)
                 if "NOGROUP" in str(e):
                     logger.warning("Consumer group lost, recreating", extra={"stream": self._stream})
                     self._create_group()

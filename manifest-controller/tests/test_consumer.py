@@ -1,3 +1,4 @@
+import logging
 import pytest
 from unittest.mock import MagicMock
 from adapters.redis.consumer import Consumer
@@ -56,6 +57,38 @@ def test_process_message_propagates_handler_exception():
     )
     with pytest.raises(RuntimeError, match="nope"):
         c._process_message(msg_id="1-0", fields={})
+
+
+def test_dispatch_failure_logs_the_actual_exception_with_traceback(caplog):
+    """When the handler raises, the failure log must render the real exception
+    detail in the message AND capture a traceback (exc_info). A misconfig such
+    as an S3 SignatureDoesNotMatch is otherwise invisible if the detail only
+    lives in a `extra={}` field the log format does not render."""
+    redis_mock = MagicMock()
+    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP")
+
+    def boom(_fields):
+        raise RuntimeError("SignatureDoesNotMatch calling GetObject")
+
+    c = Consumer(
+        redis_client=redis_mock, stream_name="s", group_name="g",
+        message_handler=boom,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="adapters.redis.consumer"):
+        c._dispatch(msg_id="9-0", msg_fields={b"payload": b"x"})
+
+    redis_mock.xack.assert_not_called()
+    failures = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert failures, "expected an ERROR log on dispatch failure"
+    rec = failures[-1]
+    # The rendered message (what a plain `%(message)s` format prints) must carry
+    # the underlying cause and the message id.
+    rendered = rec.getMessage()
+    assert "SignatureDoesNotMatch calling GetObject" in rendered
+    assert "9-0" in rendered
+    # And a traceback must be attached so the failure is fully diagnosable.
+    assert rec.exc_info is not None and rec.exc_info[0] is RuntimeError
 
 
 def _consumer(redis_mock, handler):
