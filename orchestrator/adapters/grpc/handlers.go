@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
@@ -20,6 +21,7 @@ type ScheduleAndRunListReader interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
 	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
+	GetNodeAncestry(ctx context.Context, nodeUniqueID string, maxDepth int) ([]*domain.NodeAncestor, error)
 }
 
 // DriftAwareRunReader returns view-shaped run data composed from Neo4j
@@ -78,6 +80,10 @@ const (
 	defaultListRunsPageSize = 50
 	maxListRunsPageSize     = 200
 )
+
+// maxAncestryDepth caps GetNodeAncestry's hop count so a single call cannot walk
+// an unbounded path; mirrors the page-size clamp philosophy.
+const maxAncestryDepth = 100
 
 func clampPageSize(requested int32) int {
 	size := int(requested)
@@ -191,6 +197,53 @@ func (h *QueryHandler) ListScheduleTopologies(ctx context.Context, _ *orchestrat
 		resp.Schedules = append(resp.Schedules, item)
 	}
 	return resp, nil
+}
+
+func (h *QueryHandler) GetNodeAncestry(ctx context.Context, req *orchestratorv1.GetNodeAncestryRequest) (*orchestratorv1.GetNodeAncestryResponse, error) {
+	if req.NodeUniqueId == "" {
+		return nil, status.Error(codes.InvalidArgument, "node_unique_id is required")
+	}
+	if req.MaxDepth < 0 {
+		return nil, status.Error(codes.InvalidArgument, "max_depth must be >= 0")
+	}
+	depth := int(req.MaxDepth)
+	if depth > maxAncestryDepth {
+		depth = maxAncestryDepth
+	}
+	ancestors, err := h.scheduleAndRunLists.GetNodeAncestry(ctx, req.NodeUniqueId, depth)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return nil, status.Errorf(codes.NotFound, "node %q not found", req.NodeUniqueId)
+		}
+		h.logger.Error("GetNodeAncestry failed", "node", req.NodeUniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetNodeAncestry: %v", err)
+	}
+	resp := &orchestratorv1.GetNodeAncestryResponse{
+		Ancestors: make([]*orchestratorv1.AncestorNode, 0, len(ancestors)),
+	}
+	for _, a := range ancestors {
+		resp.Ancestors = append(resp.Ancestors, domainToProtoAncestor(a))
+	}
+	return resp, nil
+}
+
+func domainToProtoAncestor(a *domain.NodeAncestor) *orchestratorv1.AncestorNode {
+	node := &orchestratorv1.AncestorNode{
+		UniqueId:      a.UniqueID,
+		SchemaName:    a.SchemaName,
+		TableName:     a.TableName,
+		ServiceName:   a.ServiceName,
+		NodeType:      a.NodeType,
+		Depth:         int32(a.Depth),
+		LastCommitSha: a.LastCommitSHA,
+		LastRepo:      a.LastRepo,
+		LastReleaseId: a.LastReleaseID,
+		FilePath:      a.FilePath,
+	}
+	if a.LastChangedAt != nil {
+		node.LastChangedAt = timestamppb.New(*a.LastChangedAt)
+	}
+	return node
 }
 
 func domainToProtoNode(n *domain.TableNode) *orchestratorv1.TableNode {

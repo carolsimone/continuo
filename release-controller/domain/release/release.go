@@ -42,6 +42,7 @@ type Node struct {
 	ImageTag          string   `json:"image_tag"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Schedule          string   `json:"schedule"`
+	OriginalFilePath  string   `json:"original_file_path"`
 	// CandidateSQLURI is an S3 URI pointing to the node's compiled SQL with
 	// schema-qualified references rewritten to the candidate schema (produced by
 	// manifest-controller). It is carried only into validation.requested so the

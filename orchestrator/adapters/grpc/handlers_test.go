@@ -59,6 +59,9 @@ func (f *fakeScheduleAndRunLists) ListRuns(_ context.Context, _ string, limit, o
 func (fakeScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
+func (fakeScheduleAndRunLists) GetNodeAncestry(context.Context, string, int) ([]*domain.NodeAncestor, error) {
+	return nil, nil
+}
 
 func newHandler(rq *fakeDriftAwareRuns) *grpcadapter.QueryHandler {
 	return grpcadapter.NewQueryHandler(&fakeScheduleAndRunLists{}, rq, slog.New(slog.NewTextHandler(os.Stderr, nil)))

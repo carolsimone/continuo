@@ -39,6 +39,9 @@ func (s *spyScheduleGraphProvider) ListRuns(_ context.Context, _ string, _, _ in
 func (s *spyScheduleGraphProvider) ListScheduleTopologies(_ context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
+func (s *spyScheduleGraphProvider) GetNodeAncestry(_ context.Context, _ string, _ int) ([]*domain.NodeAncestor, error) {
+	return nil, nil
+}
 
 // stubGeneration returns a generation the test controls between calls.
 type stubGeneration struct {

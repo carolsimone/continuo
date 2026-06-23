@@ -332,6 +332,7 @@ type promotedNodeWire struct {
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Schedule          string   `json:"schedule"`
 	Changed           bool     `json:"changed"`
+	OriginalFilePath  string   `json:"original_file_path"`
 }
 
 // promotedPayload is the JSON shape released into release.promoted:v1.
@@ -407,4 +408,34 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 	assert.True(t, changedByID["b"], "b changed (hash differs from prior prod)")
 	assert.Equal(t, "new", contentHashByID["b"], "b's content_hash must match candidate (verifies field is emitted)")
 	assert.Equal(t, "h", contentHashByID["a"], "a's content_hash must match candidate")
+}
+
+// TestHandleValidationResult_Promote_EmitsOriginalFilePath verifies that promotion
+// carries the original_file_path field from the candidate topology through to the
+// release.promoted:v1 event, allowing the orchestrator to persist ancestry metadata.
+func TestHandleValidationResult_Promote_EmitsOriginalFilePath(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA", Status: "ok",
+		Topology: release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a", OriginalFilePath: "models/a.sql", UpstreamUniqueIDs: []string{}},
+		},
+	}))
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA", PerNodeResults: []handlers.NodeResult{{NodeID: "a", Status: "ok"}}, AggregateStatus: "ok",
+	}))
+
+	entries := outboxEntries(store)
+	last := entries[len(entries)-1]
+	require.Equal(t, streams.ReleasePromotedV1, last.StreamName)
+	var p promotedPayload
+	require.NoError(t, json.Unmarshal(last.Payload, &p))
+	require.Len(t, p.Topology, 1)
+	assert.Equal(t, "models/a.sql", p.Topology[0].OriginalFilePath)
 }

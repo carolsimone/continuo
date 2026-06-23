@@ -24,4 +24,5 @@ type ReleasePromotedTopologyNode struct {
 	LastCommitSHA     string
 	LastRepo          string
 	LastChangedAt     time.Time
+	OriginalFilePath  string
 }

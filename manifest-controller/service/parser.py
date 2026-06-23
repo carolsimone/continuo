@@ -126,5 +126,6 @@ def parse_manifest(manifest_path: str, manifest_version: str, image_tag: str = "
             content_hash=_content_hash(node, macros),
             manifest_version=manifest_version,
             image_tag=image_tag,
+            original_file_path=node.get("original_file_path", ""),
         ))
     return nodes

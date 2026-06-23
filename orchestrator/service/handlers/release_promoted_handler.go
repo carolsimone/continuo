@@ -265,6 +265,7 @@ func toDomainNodes(wire []domainEvent.ReleasePromotedNode, repo, commitSHA strin
 			LastCommitSHA:     commitSHA,
 			LastRepo:          repo,
 			LastChangedAt:     promotedAt,
+			OriginalFilePath:  n.OriginalFilePath,
 		})
 	}
 	return out

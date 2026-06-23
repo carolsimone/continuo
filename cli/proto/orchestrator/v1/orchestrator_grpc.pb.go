@@ -24,6 +24,7 @@ const (
 	OrchestratorQuery_GetRunGraph_FullMethodName            = "/orchestrator.v1.OrchestratorQuery/GetRunGraph"
 	OrchestratorQuery_ListActiveRunDrifts_FullMethodName    = "/orchestrator.v1.OrchestratorQuery/ListActiveRunDrifts"
 	OrchestratorQuery_ListScheduleTopologies_FullMethodName = "/orchestrator.v1.OrchestratorQuery/ListScheduleTopologies"
+	OrchestratorQuery_GetNodeAncestry_FullMethodName        = "/orchestrator.v1.OrchestratorQuery/GetNodeAncestry"
 )
 
 // OrchestratorQueryClient is the client API for OrchestratorQuery service.
@@ -35,6 +36,7 @@ type OrchestratorQueryClient interface {
 	GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error)
 	ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error)
 	ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error)
+	GetNodeAncestry(ctx context.Context, in *GetNodeAncestryRequest, opts ...grpc.CallOption) (*GetNodeAncestryResponse, error)
 }
 
 type orchestratorQueryClient struct {
@@ -95,6 +97,16 @@ func (c *orchestratorQueryClient) ListScheduleTopologies(ctx context.Context, in
 	return out, nil
 }
 
+func (c *orchestratorQueryClient) GetNodeAncestry(ctx context.Context, in *GetNodeAncestryRequest, opts ...grpc.CallOption) (*GetNodeAncestryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetNodeAncestryResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_GetNodeAncestry_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrchestratorQueryServer is the server API for OrchestratorQuery service.
 // All implementations must embed UnimplementedOrchestratorQueryServer
 // for forward compatibility.
@@ -104,6 +116,7 @@ type OrchestratorQueryServer interface {
 	GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error)
 	ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error)
 	ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error)
+	GetNodeAncestry(context.Context, *GetNodeAncestryRequest) (*GetNodeAncestryResponse, error)
 	mustEmbedUnimplementedOrchestratorQueryServer()
 }
 
@@ -128,6 +141,9 @@ func (UnimplementedOrchestratorQueryServer) ListActiveRunDrifts(context.Context,
 }
 func (UnimplementedOrchestratorQueryServer) ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListScheduleTopologies not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) GetNodeAncestry(context.Context, *GetNodeAncestryRequest) (*GetNodeAncestryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetNodeAncestry not implemented")
 }
 func (UnimplementedOrchestratorQueryServer) mustEmbedUnimplementedOrchestratorQueryServer() {}
 func (UnimplementedOrchestratorQueryServer) testEmbeddedByValue()                           {}
@@ -240,6 +256,24 @@ func _OrchestratorQuery_ListScheduleTopologies_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorQuery_GetNodeAncestry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetNodeAncestryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).GetNodeAncestry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_GetNodeAncestry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).GetNodeAncestry(ctx, req.(*GetNodeAncestryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrchestratorQuery_ServiceDesc is the grpc.ServiceDesc for OrchestratorQuery service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -266,6 +300,10 @@ var OrchestratorQuery_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListScheduleTopologies",
 			Handler:    _OrchestratorQuery_ListScheduleTopologies_Handler,
+		},
+		{
+			MethodName: "GetNodeAncestry",
+			Handler:    _OrchestratorQuery_GetNodeAncestry_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

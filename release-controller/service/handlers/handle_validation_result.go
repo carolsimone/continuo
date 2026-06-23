@@ -162,6 +162,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 		Schedule          string   `json:"schedule"`
 		Changed           bool     `json:"changed"`
+		OriginalFilePath  string   `json:"original_file_path"`
 	}
 	wireTopo := make([]promotedNodeWire, len(promotedTopo))
 	for i, n := range promotedTopo {
@@ -176,6 +177,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 			UpstreamUniqueIDs: n.UpstreamUniqueIDs,
 			Schedule:          n.Schedule,
 			Changed:           changedSet[n.UniqueID],
+			OriginalFilePath:  n.OriginalFilePath,
 		}
 	}
 	payload, err := json.Marshal(map[string]any{

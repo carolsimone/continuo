@@ -16,6 +16,7 @@ type ReleasePromotedNode struct {
 	Schedule          string   `json:"schedule"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Changed           bool     `json:"changed"`
+	OriginalFilePath  string   `json:"original_file_path"`
 }
 
 // ReleasePromoted is the full release.promoted:v1 payload as published by
