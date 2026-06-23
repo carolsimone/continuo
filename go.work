@@ -8,6 +8,7 @@ use (
 	./pkg
 	./release-controller
 	./remediation
+	./remediation-agent
 	./state
 	./tests/e2e
 )
