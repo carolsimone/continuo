@@ -13,6 +13,7 @@ flowchart LR
     RC[release-controller]
     UI[ui-service]
     AR[agent-runner]
+    REM[remediation]
   end
 
   subgraph Storage
@@ -22,6 +23,7 @@ flowchart LR
     ECPG[(Postgres: executor_deployments/executor_outbox/message_processing/cancelled_schedules)]
     KCPG[(Postgres: k8s_outbox/message_processing)]
     AGPG[(Postgres: continuo_agent)]
+    REMPG[(Postgres: continuo_remediation)]
     S3[(S3/LocalStack)]
     K8S[(Kubernetes API)]
     R[(Redis)]
@@ -34,6 +36,7 @@ flowchart LR
   EC --> ECPG
   KC --> KCPG
   AR --> AGPG
+  REM --> REMPG
 
   ST <--> R
   OR <--> R
@@ -42,6 +45,7 @@ flowchart LR
   MC <--> R
   RC <--> R
   UI --> R
+  REM <--> R
 
   OR --> ST
   EC --> ST
@@ -57,6 +61,7 @@ flowchart LR
   RC --> S3
   AR -.-> S3
   AR --> LLM
+  REM --> S3
 ```
 
 ## Redis Topology
@@ -66,6 +71,8 @@ flowchart TD
   RR[release.requested:v1]
   MLC[manifest.loaded.candidate:v1]
   RP[release.promoted:v1]
+  RREJ[release.rejected:v1]
+  REMREQ[remediation.requested:v1]
   SL[schedules.loaded:v1]
   SS[scheduler.started:v1]
   RED[run.entries.dispatched:v1]
@@ -84,6 +91,9 @@ flowchart TD
   MC --> MLC
   MLC --> RC
   RC --> RP
+  RC --> RREJ
+  RREJ --> REM[remediation]
+  REM --> REMREQ
   RP --> OR[orchestrator]
   OR --> SL
   SL --> ST[state]
@@ -140,6 +150,7 @@ flowchart TD
 | UI/API facade + login sessions | `ui-service` | Redis (plain `uisession:` keys, `AUTH_MODE=oidc`); gRPC reads/writes to `state` and `orchestrator` |
 | LLM agent conversations and tool execution | `agent-runner` | Postgres `continuo_agent` (`threads`, `messages`, `pending_actions`) |
 | `topology_generation` counter and run-isolation snapshot | `orchestrator` | Postgres (`topology_state`) + Neo4j (`:TopologyRoot`, `Run`, `EXECUTES`) |
+| Failed-node triage and remediation triggers | `remediation` | Postgres `continuo_remediation` (`classification_decision`, `remediation_outbox`, `message_processing`) |
 
 ## Key Architectural Rules
 

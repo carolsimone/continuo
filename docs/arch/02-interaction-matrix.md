@@ -19,6 +19,7 @@ Legend:
 | `release-controller` | `RW` | `-` | `RW` | `-` | `-` | server | `-` | `W` (prune-time delete of `candidate-sql/<release_id>/`) | `-` | `-` | `-` |
 | `ui-service` | `-` | `-` | `RW` | `RW` | `R` | `R` | `-` | `R` | `-` | `-` | `RW` (bidi stream) |
 | `agent-runner` | `RW` (`continuo_agent`) | `-` | `RW` (optional, rate limiter) | `-` | `-` | `-` | `-` | `W` (optional archive) | `-` | `W` (tool-use loop) | server |
+| `remediation` | `RW` (`continuo_remediation`) | `-` | `RW` | `-` | `-` | `-` | `-` | `R` (dbt log fetch from `logs/` prefix) | `-` | `-` | `-` |
 | `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` | `-` | `-` | `-` |
 
 > `ui-service` uses Redis only for server-side login sessions (`AUTH_MODE=oidc`): plain `uisession:<id>` keys with TTLs, created at the OIDC (OpenID Connect) callback, read and refreshed on every authenticated request, deleted on logout. They are ordinary keys, not Redis Streams — `ui-service` produces and consumes no stream events, and `pkg/streams/contract.yaml` is unaffected. In `AUTH_MODE=dev` it constructs no Redis client.
@@ -54,7 +55,8 @@ Legend:
 | `validation.node.completed:v1` | `k8s-controller` | `executor-controller` | Per-node validation Job terminal status; executor-controller records the outcome, unblocks or skips in-set downstreams, and runs the per-release aggregate-emit gate. |
 | `validation.completed:v1` | `executor-controller` | `release-controller` (result), `executor-controller` (group `executor-validation-completed`, candidate schema teardown) | Per-release validation aggregate; consumed by release-controller to advance the release state machine and by executor-controller to drop `_candidate_<release>` from the dbt warehouse. |
 | `release.promoted:v1` | `release-controller` | `orchestrator` | A release is promoted to production; orchestrator swaps schedules, topology, and image tags. |
-| `release.rejected:v1` | `release-controller` | (observers) | A release failed parsing, validation, or pre-validation checks (e.g. `unbuildable_cross_service_upstream`). |
+| `release.rejected:v1` | `release-controller` | `remediation` (group `remediation-release-rejected`) | A release failed parsing, validation, or pre-validation checks (e.g. `unbuildable_cross_service_upstream`); consumed by the remediation classifier to triage each failing node. |
+| `remediation.requested:v1` | `remediation` | (heal agent) | Per-node remediation trigger for each healable validation failure; pointer-only payload (no error text). |
 
 ## Outbound gRPC Calls by Service
 
@@ -99,6 +101,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `release-controller` | delete | `DeleteObjects` — prune-time delete of `candidate-sql/<release_id>/` prefix for each expired release (soft-fail; lifecycle rule is the backstop) |
 | `ui-service` | read | `GetObject` — task-execution pod logs (proxied via `GET /api/task-executions/:id/logs`) and dbt validation logs (proxied via `GET /api/releases/log`) |
 | `agent-runner` | write (optional) | `PutObject` — conversation archive to `chat-archive/<user>/<thread>.json` before a thread is deleted by the retention job; enabled when `RETENTION_ARCHIVE_S3=true` |
+| `remediation` | read | `GetObject` — dbt execution log per failing node (`logs/` prefix, URI supplied by `release.rejected:v1`); fetch failure on a missing key is treated as an empty log and classified `unknown:log_unavailable` |
 
 ## Local Durable State by Service
 
@@ -112,3 +115,4 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `manifest-controller` | none |
 | `ui-service` | Redis `uisession:<id>` plain keys (server-side login sessions, `AUTH_MODE=oidc`; TTL-bound, not streams) |
 | `agent-runner` | Postgres `continuo_agent`: `threads` (conversation metadata per user), `messages` (full turn history), `pending_actions` (tool calls awaiting human confirmation) |
+| `remediation` | Postgres `continuo_remediation`: `classification_decision` (audit of every triage outcome, emit and drop alike), `remediation_outbox`, `message_processing` |

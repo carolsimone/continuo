@@ -48,9 +48,25 @@ Add new emitters to this table as they land.
 - **Programmer errors** (panics, nil pointer derefs). Let the runtime
   handle those — wrapping with a sentinel hides the stack trace.
 
+## Remediation service: dbt failure taxonomy
+
+The `remediation` service applies a separate, domain-level classification to failed dbt nodes (distinct from the `ErrPermanent` sentinel above, which governs message-consumer routing). Its classifier (`remediation/domain/failure/classify.go`) deterministically sorts each failure into one of four categories:
+
+| Category | Routing decision | Signals |
+|---|---|---|
+| `infra_transient` | `drop` (not emitted) | Exactly four families: connection refused / could not connect to database; OOMKilled; ImagePullBackOff / back-off pulling image; InvalidAccessKeyId / AccessDenied (S3 credentials). |
+| `test` | `emit` | dbt test assertion failures. |
+| `logic` | `emit` | SQL/model defects (missing relation, compilation error, syntax error, missing ref, type mismatch, ambiguous column). |
+| `unknown` | `emit` | Everything else, including the ambiguous resource/permission class (statement timeout, permission denied, deadlock, out-of-memory) and an unreachable log. |
+
+**Under-drop policy**: only the four confidently-infra signal families are dropped. Ambiguous cases — signals that could be either infrastructure or a model problem — fall through to `unknown` and are emitted. Uncertainty flows to the heal agent; only confident infrastructure failures are silenced.
+
+The `remediation` consumer does use `ErrPermanent` at the transport layer: a malformed `release.rejected:v1` payload is wrapped with `ErrPermanent` and ACKed (dropped from the PEL); a transient S3 fetch error is not wrapped and causes the message to stay in the PEL for retry.
+
 ## See also
 
 - `docs/arch/03-sequence-flows.md` §3 (permanent fast-path note in the
   retry/terminal flow) and §8 (dispatch watchdog termination).
 - `docs/arch/04-service-ownership.md` (per-service invariants under
   orchestrator, executor-controller, and manifest-controller).
+- `docs/arch/services/remediation.md` (full remediation service documentation).

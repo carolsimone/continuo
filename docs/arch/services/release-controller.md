@@ -50,7 +50,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | `release.requested:v1` | manifest-controller | A release becomes active; carries the assembled `manifest_keys` set (the changed service plus every other service's current prod manifest) to parse. |
 | `validation.requested:v1` | executor-controller | A candidate has changed nodes to validate. |
 | `release.promoted:v1` | orchestrator | A release is promoted to production. Payload: `{release_id, topology, image_tags, repo, commit_sha, promoted_at}`. Each entry in `topology` carries the standard node fields plus a `changed` boolean that is `true` when the node's `content_hash` differs from the prior `current_prod` (or when `current_prod` was empty). The top-level `repo`, `commit_sha`, and `promoted_at` are the source-change provenance for this release; orchestrator stamps them onto each changed `:Table` node. |
-| `release.rejected:v1` | (observers) | A release fails parsing or validation. |
+| `release.rejected:v1` | `remediation` (group `remediation-release-rejected`) | A release fails parsing or validation; the remediation classifier fetches the dbt log for each failing node and emits a `remediation.requested:v1` trigger for healable failures. |
 
 All events are written to the outbox inside the same transaction as the state change and published with an injected `outbox_entry_id` for consumer-side dedup.
 
