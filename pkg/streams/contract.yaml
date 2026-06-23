@@ -250,4 +250,15 @@ streams:
     const: RemediationRequestedV1
     description: Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent.
     producers: [remediation]
+    consumers:
+      - service: remediation-agent
+        group: remediation-agent-remediation-requested
+        const: RemediationAgentRemediationRequested
+
+  # ---------------- remediation-agent streams ----------------
+
+  - name: remediation.proposed:v1
+    const: RemediationProposedV1
+    description: Per-node fix proposal emitted by the remediation agent for a healable failure; consumed by the PR creator and approval surfaces.
+    producers: [remediation-agent]
     consumers: []

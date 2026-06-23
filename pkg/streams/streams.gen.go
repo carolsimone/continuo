@@ -54,6 +54,8 @@ const (
 	ReleaseRejectedV1 = "release.rejected:v1"
 	// RemediationRequestedV1 — Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent.
 	RemediationRequestedV1 = "remediation.requested:v1"
+	// RemediationProposedV1 — Per-node fix proposal emitted by the remediation agent for a healable failure; consumed by the PR creator and approval surfaces.
+	RemediationProposedV1 = "remediation.proposed:v1"
 )
 
 // Consumer groups.
@@ -110,4 +112,6 @@ const (
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
+	// RemediationAgentRemediationRequested — remediation-agent consumer group on remediation.requested:v1.
+	RemediationAgentRemediationRequested = "remediation-agent-remediation-requested"
 )

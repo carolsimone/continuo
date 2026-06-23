@@ -32,6 +32,7 @@ func PkgConstantsForTest() map[string]string {
 		"ReleasePromotedV1": ReleasePromotedV1,
 		"ReleaseRejectedV1": ReleaseRejectedV1,
 		"RemediationRequestedV1": RemediationRequestedV1,
+		"RemediationProposedV1": RemediationProposedV1,
 		"OrchestratorSchedulerStarted": OrchestratorSchedulerStarted,
 		"StateScheduleCatalog": StateScheduleCatalog,
 		"StateRunEntriesDispatched": StateRunEntriesDispatched,
@@ -58,5 +59,6 @@ func PkgConstantsForTest() map[string]string {
 		"ExecutorValidationCompleted": ExecutorValidationCompleted,
 		"OrchestratorReleasePromoted": OrchestratorReleasePromoted,
 		"RemediationReleaseRejected": RemediationReleaseRejected,
+		"RemediationAgentRemediationRequested": RemediationAgentRemediationRequested,
 	}
 }
