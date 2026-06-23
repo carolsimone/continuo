@@ -46,7 +46,7 @@ The domain classifier (`remediation/domain/failure/classify.go`) applies a fixed
 |---|---|---|
 | `infra_transient` | `drop` | Unambiguously infrastructure: connection refused, could not connect to database, OOMKilled, ImagePullBackOff / back-off pulling image, InvalidAccessKeyId / AccessDenied (S3 credentials). Exactly four hard-drop families. |
 | `test` | `emit` | dbt test assertion failures: "failure in test", "configured to fail if". |
-| `logic` | `emit` | SQL/model defects: missing relation, compilation error, syntax error, missing ref, type mismatch, ambiguous column. |
+| `logic` | `emit` | SQL/model defects: relation/object does not exist, compilation error, syntax error, missing ref, type mismatch, ambiguous column. |
 | `unknown` | `emit` | Everything else — including the ambiguous resource/permission class (statement timeout, permission denied, deadlock, generic out-of-memory) and an unreachable log (`unknown:log_unavailable`). |
 
 **Under-drop policy**: only the four confidently infrastructure signal families are dropped. All ambiguous cases, including signals that might be infra-related but could also be a model problem, fall through to `unknown` and are emitted. Uncertainty flows to the agent; only confident infra is silenced.
@@ -113,7 +113,7 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 
 - `release.rejected:v1` messages are deduped via `message_processing` (idempotent on the upstream `outbox_entry_id`), so a redelivered message from release-controller is absorbed at the stream layer.
 - The natural key `(source, release_id, node_id)` in `classification_decision` provides a second idempotency guard at the application layer: even if dedup is bypassed, the handler path produces the same outcome.
-- A transient S3 fetch error is not wrapped in `ErrPermanent` and causes the message to stay in the PEL for retry. A permanent decode failure (malformed payload) is wrapped in `ErrPermanent`, ACKed, and logged.
+- A transient S3 fetch error is not wrapped in `ErrPermanent` and causes the message to stay in the PEL for retry. A permanent decode failure (malformed payload) is ACKed by returning nil from the handler (not retried).
 - The `classification_decision` insert and the `remediation_outbox` enqueue are performed in one transaction, so a crash between them cannot produce a trigger without a decision record, or a decision record without a trigger.
 
 ## Non-Responsibilities
@@ -123,7 +123,7 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 - Hold or query any proposed fix, patch, or rewrite.
 - Track which remediations succeeded or failed.
 - Rank, prioritize, or deduplicate triggers across releases.
-- Consume production-run failures (production-run ingress is a future adapter reusing the same domain classifier and `FailureEvidence` value object).
+- Consume production-run failures.
 - Own any lifecycle past emitting the trigger.
 
 All solution state — proposals, what-worked history, agent conversations — belongs to downstream services.

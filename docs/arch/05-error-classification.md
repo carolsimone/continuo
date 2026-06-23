@@ -56,12 +56,12 @@ The `remediation` service applies a separate, domain-level classification to fai
 |---|---|---|
 | `infra_transient` | `drop` (not emitted) | Exactly four families: connection refused / could not connect to database; OOMKilled; ImagePullBackOff / back-off pulling image; InvalidAccessKeyId / AccessDenied (S3 credentials). |
 | `test` | `emit` | dbt test assertion failures. |
-| `logic` | `emit` | SQL/model defects (missing relation, compilation error, syntax error, missing ref, type mismatch, ambiguous column). |
+| `logic` | `emit` | SQL/model defects (relation/object does not exist, compilation error, syntax error, missing ref, type mismatch, ambiguous column). |
 | `unknown` | `emit` | Everything else, including the ambiguous resource/permission class (statement timeout, permission denied, deadlock, out-of-memory) and an unreachable log. |
 
 **Under-drop policy**: only the four confidently-infra signal families are dropped. Ambiguous cases — signals that could be either infrastructure or a model problem — fall through to `unknown` and are emitted. Uncertainty flows to the heal agent; only confident infrastructure failures are silenced.
 
-The `remediation` consumer does use `ErrPermanent` at the transport layer: a malformed `release.rejected:v1` payload is wrapped with `ErrPermanent` and ACKed (dropped from the PEL); a transient S3 fetch error is not wrapped and causes the message to stay in the PEL for retry.
+The `remediation` consumer does use `ErrPermanent` at the transport layer: a malformed `release.rejected:v1` payload is ACKed by returning nil from the handler (not retried); a transient S3 fetch error is not wrapped and causes the message to stay in the PEL for retry.
 
 ## See also
 
