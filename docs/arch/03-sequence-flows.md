@@ -410,7 +410,7 @@ sequenceDiagram
   Note over MC,RC: Phase 2 — candidate parse
   R->>MC: consume release.requested:v1
   MC->>S3: download each manifest named in manifest_keys (explicit key list)
-  Note over MC: parse model/seed/snapshot nodes<br/>content_hash = dbt checksum (sha256 fallback, never empty)<br/>resolve upstreams via sqlglot (qualified refs only)<br/>rewrite SQL to _candidate_{release} schema refs via sqlglot<br/>upload rewritten SQL → S3 candidate-sql/{release_id}/{unique_id}.sql<br/>(upload failure is fatal; seeds → empty candidate_sql_uri)
+  Note over MC: parse model/seed/snapshot nodes<br/>content_hash = dbt checksum folded with transitive macro checksums (sha256 fallback, never empty)<br/>resolve upstreams via sqlglot (qualified refs only)<br/>rewrite SQL to _candidate_{release} schema refs via sqlglot<br/>upload rewritten SQL → S3 candidate-sql/{release_id}/{unique_id}.sql<br/>(upload failure is fatal; seeds → empty candidate_sql_uri)
   alt manifest malformed / unqualified table ref / S3 upload failure
     MC->>R: publish manifest.loaded.candidate:v1 {status=failed, error_class}
     R->>RC: consume manifest.loaded.candidate:v1 (failed)

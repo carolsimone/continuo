@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 SUPPORTED_RESOURCE_TYPES = {"model", "seed", "snapshot"}
 
 
-def _content_hash(node: dict) -> str:
-    """Return a non-empty, change-sensitive fingerprint for a dbt node.
+def _node_source_hash(node: dict) -> str:
+    """Return a non-empty, change-sensitive fingerprint for a dbt node's own source.
 
     Prefers dbt's own per-node `checksum.checksum` (a sha256 of the node's source
     file). release-controller uses content_hash as the SOLE change detector, so an
@@ -25,6 +25,49 @@ def _content_hash(node: dict) -> str:
     if not basis:
         basis = json.dumps(node, sort_keys=True, default=str)
     return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
+
+
+def _transitive_macro_ids(direct_ids: list[str], macros: dict) -> set[str]:
+    """Resolve the transitive closure of a node's macro dependencies.
+
+    Walks macro->macro edges (each macro's own `depends_on.macros`) so a change to
+    a macro reached only through another macro still affects the dependent node,
+    mirroring dbt's transitive `state:modified.macros` behaviour. Ids absent from
+    the manifest's macro map (e.g. unresolved built-ins) stay in the closure but
+    contribute no checksum.
+    """
+    seen: set[str] = set()
+    stack = list(direct_ids)
+    while stack:
+        mid = stack.pop()
+        if mid in seen:
+            continue
+        seen.add(mid)
+        macro = macros.get(mid)
+        if macro:
+            stack.extend(macro.get("depends_on", {}).get("macros", []))
+    return seen
+
+
+def _content_hash(node: dict, macros: dict) -> str:
+    """Return a macro-aware, change-sensitive fingerprint for a dbt node.
+
+    Folds the source checksums of every macro the node transitively depends on into
+    its own source hash, so a shared-macro edit re-fingerprints the dependent nodes
+    even when their `.sql` did not change. Without this, dbt's per-file checksum
+    misses macro changes and release-controller would promote those nodes on a stale
+    validation. A node with no macro dependencies keeps its verbatim source hash, so
+    only macro-dependent nodes pick up the new scheme.
+    """
+    base = _node_source_hash(node)
+    macro_ids = _transitive_macro_ids(node.get("depends_on", {}).get("macros", []), macros)
+    macro_hashes = sorted(
+        hashlib.sha256((macros[mid].get("macro_sql") or "").encode()).hexdigest()
+        for mid in macro_ids if mid in macros
+    )
+    if not macro_hashes:
+        return base
+    return "sha256:" + hashlib.sha256((base + "".join(macro_hashes)).encode()).hexdigest()
 
 _RESOURCE_TYPE_TO_NODE_TYPE = {
     "model":    "dbt-model",
@@ -45,6 +88,7 @@ def parse_manifest(manifest_path: str, manifest_version: str, image_tag: str = "
     with open(manifest_path) as f:
         manifest = json.load(f)
 
+    macros = manifest.get("macros", {})
     nodes = []
     for node_id, node in manifest["nodes"].items():
         resource_type = node["resource_type"]
@@ -79,7 +123,7 @@ def parse_manifest(manifest_path: str, manifest_version: str, image_tag: str = "
             criticality=criticality,
             compiled_sql=node.get("compiled_code", ""),
             node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
-            content_hash=_content_hash(node),
+            content_hash=_content_hash(node, macros),
             manifest_version=manifest_version,
             image_tag=image_tag,
         ))

@@ -139,6 +139,99 @@ def test_parse_fallback_hash_is_deterministic_and_change_sensitive(tmp_path):
     assert h1 != h2, "different source -> different fallback hash (change-sensitive)"
 
 
+def _manifest_with_macros(model_macros: dict[str, str]) -> dict:
+    """Build a single-model manifest plus a macro graph.
+
+    model_macros maps a macro unique_id the model directly depends on to that
+    macro's source SQL. Macro-to-macro edges are added separately by the tests
+    that exercise transitive resolution.
+    """
+    model = {
+        "resource_type": "model",
+        "name": "orders",
+        "schema": "public",
+        "fqn": ["svc_a"],
+        "config": {"meta": {"owner": "team-a"}},
+        "tags": ["nightly"],
+        "checksum": {"name": "sha256", "checksum": "modelsource0001"},
+        "depends_on": {"macros": list(model_macros.keys())},
+    }
+    macros = {
+        mid: {"unique_id": mid, "macro_sql": sql, "depends_on": {"macros": []}}
+        for mid, sql in model_macros.items()
+    }
+    return {"nodes": {"model.svc.orders": model}, "macros": macros}
+
+
+def _hash_of(manifest: dict, tmp_path, fname: str) -> str:
+    p = tmp_path / fname
+    p.write_text(json.dumps(manifest))
+    return parse_manifest(str(p), manifest_version="v1")[0].content_hash
+
+
+def test_macro_change_flips_dependent_model_hash(tmp_path):
+    # A model that depends on a macro must re-fingerprint when that macro's
+    # source changes, even though the model's own .sql (and dbt checksum) did not.
+    before = _manifest_with_macros({"macro.svc.cents_to_dollars": "{% macro x() %}a{% endmacro %}"})
+    after = _manifest_with_macros({"macro.svc.cents_to_dollars": "{% macro x() %}b{% endmacro %}"})
+
+    h_before = _hash_of(before, tmp_path, "before.json")
+    h_after = _hash_of(after, tmp_path, "after.json")
+
+    assert h_before != h_after, "macro-only change must flip the dependent model's content_hash"
+
+
+def test_unrelated_macro_change_leaves_model_hash_untouched(tmp_path):
+    # Changing a macro the model does NOT depend on must not move its hash.
+    base = _manifest_with_macros({"macro.svc.used": "{% macro u() %}same{% endmacro %}"})
+    # Add an unrelated macro and then change it; the model still only depends on `used`.
+    with_unrelated_v1 = json.loads(json.dumps(base))
+    with_unrelated_v1["macros"]["macro.svc.unused"] = {
+        "unique_id": "macro.svc.unused", "macro_sql": "v1", "depends_on": {"macros": []},
+    }
+    with_unrelated_v2 = json.loads(json.dumps(with_unrelated_v1))
+    with_unrelated_v2["macros"]["macro.svc.unused"]["macro_sql"] = "v2"
+
+    h1 = _hash_of(with_unrelated_v1, tmp_path, "u1.json")
+    h2 = _hash_of(with_unrelated_v2, tmp_path, "u2.json")
+
+    assert h1 == h2, "a change to an unrelated macro must not move the model's content_hash"
+
+
+def test_transitive_macro_change_flips_model_hash(tmp_path):
+    # model -> macro A -> macro B. A change to B (reached only through A) must flip
+    # the model's hash, mirroring dbt's transitive state:modified.macros behaviour.
+    def manifest(b_sql: str) -> dict:
+        return {
+            "nodes": {
+                "model.svc.orders": {
+                    "resource_type": "model", "name": "orders", "schema": "public",
+                    "fqn": ["svc_a"], "config": {"meta": {"owner": "team-a"}},
+                    "tags": ["nightly"], "checksum": {"name": "sha256", "checksum": "modelsource0001"},
+                    "depends_on": {"macros": ["macro.svc.a"]},
+                }
+            },
+            "macros": {
+                "macro.svc.a": {"unique_id": "macro.svc.a", "macro_sql": "calls b",
+                                "depends_on": {"macros": ["macro.svc.b"]}},
+                "macro.svc.b": {"unique_id": "macro.svc.b", "macro_sql": b_sql,
+                                "depends_on": {"macros": []}},
+            },
+        }
+
+    h_before = _hash_of(manifest("leaf v1"), tmp_path, "t1.json")
+    h_after = _hash_of(manifest("leaf v2"), tmp_path, "t2.json")
+
+    assert h_before != h_after, "a change to a transitively-reached macro must flip the model's hash"
+
+
+def test_node_without_macros_keeps_raw_dbt_checksum(tmp_path):
+    # The macro-aware scheme must not alter the fingerprint of a model with no
+    # macro dependencies: it stays the verbatim dbt checksum (no extra churn).
+    h = _hash_of(_manifest_with_macros({}), tmp_path, "n.json")
+    assert h == "modelsource0001"
+
+
 def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
     manifest = {
         "nodes": {
