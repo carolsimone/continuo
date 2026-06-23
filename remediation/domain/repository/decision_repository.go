@@ -6,8 +6,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/jmoiron/sqlx"
-
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 )
 
@@ -29,6 +27,10 @@ type ClassificationDecision struct {
 // is idempotent on (source, release_id, node_id): a redelivered rejection is a
 // no-op. It returns inserted=true only when a new row was written, so callers
 // can skip re-emitting a trigger for an already-classified node.
+//
+// The repository is bound to its transaction at construction by the UnitOfWork
+// (matching the release-controller repository pattern), so the method takes
+// only ctx and domain types — no infrastructure type leaks into the domain port.
 type ClassificationDecisionRepository interface {
-	Upsert(ctx context.Context, tx *sqlx.Tx, d ClassificationDecision) (inserted bool, err error)
+	Upsert(ctx context.Context, d ClassificationDecision) (inserted bool, err error)
 }
