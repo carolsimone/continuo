@@ -90,7 +90,7 @@ jobs:
 
       - name: Wait for service containers to be running
         run: |
-          for container in state orchestrator executor-controller k8s-controller manifest-controller release-controller remediation; do
+          for container in state orchestrator executor-controller k8s-controller manifest-controller release-controller remediation remediation-agent; do
             echo "Waiting for $container..."
             for i in $(seq 1 30); do
               if docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
@@ -216,6 +216,24 @@ jobs:
             if [ "$i" -eq 30 ]; then
               echo "✗ remediation HTTP not ready after 60s"
               docker logs remediation --tail 30 || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Building and starting remediation-agent (HTTP :8092)..."
+          docker exec remediation-agent go build -o bin/remediation-agent .
+          docker exec -d remediation-agent ./bin/remediation-agent
+
+          echo "Waiting for remediation-agent HTTP port 8092..."
+          for i in $(seq 1 30); do
+            if docker exec remediation-agent bash -c 'echo > /dev/tcp/localhost/8092' 2>/dev/null; then
+              echo "✓ remediation-agent HTTP ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "✗ remediation-agent HTTP not ready after 60s"
+              docker logs remediation-agent --tail 30 || true
               exit 1
             fi
             sleep 2
