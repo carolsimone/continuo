@@ -1,7 +1,9 @@
+# Build stage
 FROM carolsimone/continuo-base:latest AS builder
 
 WORKDIR /app
 
+# Copy workspace and all go.mod files (required by go.work)
 COPY go.work go.work.sum* ./
 COPY state/go.mod state/go.sum ./state/
 COPY pkg/go.mod pkg/go.sum ./pkg/
@@ -9,30 +11,30 @@ COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
 COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
 COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
-COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 COPY agent-runner/go.mod agent-runner/go.sum ./agent-runner/
 COPY remediation/go.mod remediation/go.sum ./remediation/
+COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 
+# Download dependencies with cache
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-COPY release-controller/ ./release-controller/
+# Copy source code
+COPY remediation/ ./remediation/
 COPY pkg/ ./pkg/
 
-WORKDIR /app/release-controller
+# Build static binary
+WORKDIR /app/remediation
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/bin/release-controller .
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/bin/remediation .
 
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/bin/seed-service-prod ./cmd/seed-service-prod
-
+# Runtime stage
 FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 
-COPY --from=builder /app/bin/release-controller /usr/local/bin/release-controller
-COPY --from=builder /app/bin/seed-service-prod /usr/local/bin/seed-service-prod
+COPY --from=builder /app/bin/remediation /usr/local/bin/remediation
 
-EXPOSE 8088
+EXPOSE 8090
 
-CMD ["release-controller"]
+CMD ["remediation"]

@@ -90,6 +90,9 @@ check_health "orchestrator" 8087 || exit 1
 start_service "release-controller" "release-controller" "release-controller"
 check_health "release-controller" 8088 "/healthz" || exit 1
 
+start_service "remediation" "remediation" "remediation"
+check_health "remediation" 8090 "/healthz" || exit 1
+
 log_info "Starting manifest-controller..."
 docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"
 sleep 3

@@ -16,6 +16,7 @@ COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller
 COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
+COPY remediation/go.mod remediation/go.sum ./remediation/
 
 # Layer 2: Drop unused use-directives so `go build` does not require the
 # other services' source trees to be present in this image.
@@ -24,6 +25,7 @@ RUN go work edit -dropuse=./orchestrator \
     && go work edit -dropuse=./executor-controller \
     && go work edit -dropuse=./k8s-controller \
     && go work edit -dropuse=./release-controller \
+    && go work edit -dropuse=./remediation \
     && go work edit -dropuse=./tests/e2e
 
 # Layer 3: Download dependencies with cache mount. Cache persists across

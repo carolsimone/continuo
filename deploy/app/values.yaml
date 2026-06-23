@@ -290,3 +290,23 @@ services:
     env:
       POSTGRES_DB: continuo_release
       HTTP_PORT: "8088"
+
+  - name: remediation
+    enabled: true
+    replicas: 1
+    httpPort: 8090
+    probePath: /healthz
+    secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
+      - name: REDIS_PASSWORD
+        secretKey: REDIS_PASSWORD
+      - name: AWS_ACCESS_KEY_ID
+        secretKey: AWS_ACCESS_KEY_ID
+      - name: AWS_SECRET_ACCESS_KEY
+        secretKey: AWS_SECRET_ACCESS_KEY
+    env:
+      POSTGRES_DB: continuo_remediation
+      HTTP_PORT: "8090"
