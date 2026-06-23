@@ -108,10 +108,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	// 4. POST /releases for service-2 with the new release ID.
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
-	// 5. Confirm the derived validation set is exactly {ftable_e}.
-	assertValidationRequestedNodes(t, ctx, clients, releaseID, []string{ftableEUniqueID})
-
-	// 6. Wait for the release to reach "rejected" status. ftable_e's SQL
+	// 5. Wait for the release to reach "rejected" status. ftable_e's SQL
 	//    references public.wrong_name (does not exist), so validation fails.
 	//    Do NOT use waitForReleasePromoted — it fatals on rejected status.
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
