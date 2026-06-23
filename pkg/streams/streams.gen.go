@@ -50,8 +50,10 @@ const (
 	ValidationCompletedV1 = "validation.completed:v1"
 	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
 	ReleasePromotedV1 = "release.promoted:v1"
-	// ReleaseRejectedV1 — Release rejected (parse or validation failure); emitted for telemetry and UI surfaces. No service-side consumer in Phase 1.
+	// ReleaseRejectedV1 — Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
 	ReleaseRejectedV1 = "release.rejected:v1"
+	// RemediationRequestedV1 — Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent.
+	RemediationRequestedV1 = "remediation.requested:v1"
 )
 
 // Consumer groups.
@@ -106,4 +108,6 @@ const (
 	ExecutorValidationCompleted = "executor-validation-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
+	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
+	RemediationReleaseRejected = "remediation-release-rejected"
 )

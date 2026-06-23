@@ -33,6 +33,9 @@ build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-executor-controller:prod -f executor-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-k8s-controller:prod -f k8s-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-release-controller:prod -f release-controller/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-agent-runner:prod -f agent-runner/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-remediation:prod -f remediation/Dockerfile.prod .
 
 # Build single production service
 .PHONY: build-prod-service
@@ -101,7 +104,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release flyway-agent-runner; do \
+	@for svc in flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release flyway-agent-runner flyway-remediation; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done

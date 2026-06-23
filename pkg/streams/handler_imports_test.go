@@ -28,6 +28,7 @@ var handlerDirs = []string{
 	"release-controller/service/handlers",
 	"agent-runner/service/chat",
 	"agent-runner/service/retention",
+	"remediation/service/handlers",
 }
 
 // forbiddenAppImports are import-path fragments the application layer must not

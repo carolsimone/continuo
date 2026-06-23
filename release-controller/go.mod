@@ -10,7 +10,7 @@ require (
 	github.com/carolsimone/continuo/pkg v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.12.3
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/stretchr/testify v1.11.1
 )

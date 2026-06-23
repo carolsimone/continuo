@@ -237,6 +237,17 @@ streams:
 
   - name: release.rejected:v1
     const: ReleaseRejectedV1
-    description: Release rejected (parse or validation failure); emitted for telemetry and UI surfaces. No service-side consumer in Phase 1.
+    description: Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
     producers: [release-controller]
+    consumers:
+      - service: remediation
+        group: remediation-release-rejected
+        const: RemediationReleaseRejected
+
+  # ---------------- remediation-classifier streams ----------------
+
+  - name: remediation.requested:v1
+    const: RemediationRequestedV1
+    description: Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent.
+    producers: [remediation]
     consumers: []
