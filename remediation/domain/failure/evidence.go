@@ -1,0 +1,49 @@
+// Package failure holds the event-agnostic domain model for classifying a
+// failed dbt node: the evidence gathered about a failure, the category it is
+// sorted into, and the decision (emit a remediation trigger, or drop).
+package failure
+
+// Source identifies which pipeline produced the failure. Phase 1 only
+// classifies validation-time (blue/green) failures; production-run failures
+// reuse the same domain via a different ingress adapter later.
+type Source string
+
+const SourceValidation Source = "validation"
+
+// Category is the deterministic classification of a failed node.
+type Category string
+
+const (
+	CategoryLogic          Category = "logic"
+	CategoryTest           Category = "test"
+	CategoryUnknown        Category = "unknown"
+	CategoryInfraTransient Category = "infra_transient"
+)
+
+// Decision is the routing outcome: emit a remediation trigger or drop it.
+type Decision string
+
+const (
+	DecisionEmit Decision = "emit"
+	DecisionDrop Decision = "drop"
+)
+
+// Healable reports whether a category warrants a remediation trigger. Only
+// confidently-infrastructure failures are dropped; everything else — including
+// the catch-all unknown bucket — flows to the agent (under-drop policy).
+func (c Category) Healable() bool {
+	return c != CategoryInfraTransient
+}
+
+// FailureEvidence is the event-agnostic input to the classifier. Ingress
+// adapters translate a source event (e.g. release.rejected:v1) into this
+// value object; the classifier never sees the originating event.
+type FailureEvidence struct {
+	Source          Source
+	ReleaseID       string
+	NodeID          string
+	DBTLogURI       string
+	CandidateSQLURI string
+	Repo            string
+	CommitSHA       string
+}
