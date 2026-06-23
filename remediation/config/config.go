@@ -34,7 +34,7 @@ func Load(v *pkgconfig.Validator) Config {
 		Redis: Redis{
 			Host:     v.Require("REDIS_HOST"),
 			Port:     pkgconfig.EnvOrDefault("REDIS_PORT", "6379"),
-			Password: pkgconfig.EnvOrDefault("REDIS_PASSWORD", ""),
+			Password: v.Require("REDIS_PASSWORD"),
 		},
 		S3:       pkgconfig.LoadS3(v),
 		HTTPPort: pkgconfig.EnvOrDefault("REMEDIATION_HTTP_PORT", "8090"),

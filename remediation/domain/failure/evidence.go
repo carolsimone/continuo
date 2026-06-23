@@ -3,9 +3,9 @@
 // sorted into, and the decision (emit a remediation trigger, or drop).
 package failure
 
-// Source identifies which pipeline produced the failure. Phase 1 only
-// classifies validation-time (blue/green) failures; production-run failures
-// reuse the same domain via a different ingress adapter later.
+// Source identifies which pipeline produced the failure. Validation-time
+// (blue/green) failures are classified; production-run failures enter through
+// a separate ingress adapter.
 type Source string
 
 const SourceValidation Source = "validation"

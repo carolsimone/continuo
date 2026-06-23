@@ -16,7 +16,7 @@ var (
 	reTimestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[t ]\d{2}:\d{2}:\d{2}[.,0-9]*z?`)
 	// "got 14 results" → "got N results".
 	reGotResults = regexp.MustCompile(`got \d+ results?`)
-	// trailing "(line 12, col 3)" style positions.
+	// "line N" / "col N" / "column N" position markers anywhere in the error text.
 	reLineCol = regexp.MustCompile(`(line|col(umn)?)\s+\d+`)
 	// any standalone run of digits left over.
 	reDigits = regexp.MustCompile(`\d+`)

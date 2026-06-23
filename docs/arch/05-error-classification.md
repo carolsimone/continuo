@@ -61,7 +61,7 @@ The `remediation` service applies a separate, domain-level classification to fai
 
 **Under-drop policy**: only the four confidently-infra signal families are dropped. Ambiguous cases — signals that could be either infrastructure or a model problem — fall through to `unknown` and are emitted. Uncertainty flows to the heal agent; only confident infrastructure failures are silenced.
 
-The `remediation` consumer does use `ErrPermanent` at the transport layer: a malformed `release.rejected:v1` payload is ACKed by returning nil from the handler (not retried); a transient S3 fetch error is not wrapped and causes the message to stay in the PEL for retry.
+The remediation binding ACKs a malformed `release.rejected:v1` payload by returning nil from the handler (it does not use `ErrPermanent`); a transient S3 fetch error is returned unwrapped so the message stays in the PEL for retry.
 
 ## See also
 

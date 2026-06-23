@@ -115,4 +115,4 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `manifest-controller` | none |
 | `ui-service` | Redis `uisession:<id>` plain keys (server-side login sessions, `AUTH_MODE=oidc`; TTL-bound, not streams) |
 | `agent-runner` | Postgres `continuo_agent`: `threads` (conversation metadata per user), `messages` (full turn history), `pending_actions` (tool calls awaiting human confirmation) |
-| `remediation` | Postgres `continuo_remediation`: `classification_decision` (audit of every triage outcome, emit and drop alike), `remediation_outbox`, `message_processing` |
+| `remediation` | Postgres `continuo_remediation`: `classification_decision` (audit of every triage outcome, emit and drop alike; natural key `(source, release_id, node_id)` enforces inbound idempotency), `remediation_outbox`, `message_processing` (FK target of outbox, not used for inbound consumer dedup) |

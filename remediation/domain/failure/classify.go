@@ -16,9 +16,8 @@ type rule struct {
 	reason string
 }
 
-// Hard-drop infra signals. Deliberately narrow: only unambiguous
-// infrastructure failures are dropped (under-drop policy). Order does not
-// matter — first match wins per group.
+// Hard-drop infra signals. Only unambiguous infrastructure signals are dropped
+// (under-drop policy). First match wins.
 var infraRules = []rule{
 	{"connection refused", "infra:connection_refused"},
 	{"could not connect to database", "infra:could_not_connect"},

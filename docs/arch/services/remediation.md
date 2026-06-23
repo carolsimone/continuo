@@ -14,7 +14,7 @@ Postgres database `continuo_remediation`. Tables:
 |---|---|
 | `classification_decision` | One row per classified node. Records `source`, `release_id`, `node_id`, `category`, `error_signature`, `decision` (`emit` or `drop`), `reason` (matched rule, e.g. `infra:connection_refused`), `dbt_log_uri`, and `created_at`. Natural key `(source, release_id, node_id)` gives idempotency: a redelivered rejection neither re-records nor re-emits. |
 | `remediation_outbox` | Transactional outbox; one row per `remediation.requested:v1` trigger, drained by the outbox publisher. |
-| `message_processing` | Inbound dedup ledger for idempotent `release.rejected:v1` consumption. |
+| `message_processing` | FK target of `remediation_outbox.message_processing_id` (canonical outbox table shape). Not used for inbound consumer dedup; inbound idempotency is enforced by the `classification_decision` natural key `(source, release_id, node_id)`. |
 
 The `classification_decision` table is append-only and auditable: it contains every decision, including dropped infra failures, so the full triage history is queryable without needing downstream systems.
 
@@ -111,8 +111,7 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 
 ## Consumer Reliability
 
-- `release.rejected:v1` messages are deduped via `message_processing` (idempotent on the upstream `outbox_entry_id`), so a redelivered message from release-controller is absorbed at the stream layer.
-- The natural key `(source, release_id, node_id)` in `classification_decision` provides a second idempotency guard at the application layer: even if dedup is bypassed, the handler path produces the same outcome.
+- Inbound idempotency is enforced by the natural key `(source, release_id, node_id)` in `classification_decision`. A redelivered `release.rejected:v1` message produces the same outcome: the Upsert detects the existing row (`inserted=false`) and skips re-enqueue. The `message_processing` table is present as the FK target of `remediation_outbox.message_processing_id` and is not used for inbound consumer dedup.
 - A transient S3 fetch error is not wrapped in `ErrPermanent` and causes the message to stay in the PEL for retry. A permanent decode failure (malformed payload) is ACKed by returning nil from the handler (not retried).
 - The `classification_decision` insert and the `remediation_outbox` enqueue are performed in one transaction, so a crash between them cannot produce a trigger without a decision record, or a decision record without a trigger.
 
