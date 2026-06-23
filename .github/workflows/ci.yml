@@ -90,7 +90,7 @@ jobs:
 
       - name: Wait for service containers to be running
         run: |
-          for container in state orchestrator executor-controller k8s-controller manifest-controller release-controller; do
+          for container in state orchestrator executor-controller k8s-controller manifest-controller release-controller remediation; do
             echo "Waiting for $container..."
             for i in $(seq 1 30); do
               if docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
@@ -198,6 +198,24 @@ jobs:
             if [ "$i" -eq 30 ]; then
               echo "✗ release-controller HTTP not ready after 60s"
               docker logs release-controller --tail 30 || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Building and starting remediation (HTTP :8090)..."
+          docker exec remediation go build -o bin/remediation .
+          docker exec -d remediation ./bin/remediation
+
+          echo "Waiting for remediation HTTP port 8090..."
+          for i in $(seq 1 30); do
+            if docker exec remediation bash -c 'echo > /dev/tcp/localhost/8090' 2>/dev/null; then
+              echo "✓ remediation HTTP ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "✗ remediation HTTP not ready after 60s"
+              docker logs remediation --tail 30 || true
               exit 1
             fi
             sleep 2

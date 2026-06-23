@@ -20,7 +20,7 @@ postgresql:
           set -e
           export PGPASSWORD="$POSTGRESQL_INITSCRIPTS_PASSWORD"
 
-          DATABASES="continuo_state continuo_executor continuo_orchestrator continuo_k8s continuo_dbt continuo_release continuo_agent"
+          DATABASES="continuo_state continuo_executor continuo_orchestrator continuo_k8s continuo_dbt continuo_release continuo_agent continuo_remediation"
 
           psql -v ON_ERROR_STOP=1 --username "$POSTGRESQL_INITSCRIPTS_USERNAME" --dbname postgres <<-EOSQL
               $(for db in $DATABASES; do echo "CREATE DATABASE ${db};"; done)
