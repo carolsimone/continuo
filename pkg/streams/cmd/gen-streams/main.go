@@ -316,6 +316,7 @@ func validate(c *Contract) error {
 		"k8s-controller":      {},
 		"manifest-controller": {},
 		"release-controller":  {},
+		"remediation":         {},
 	}
 
 	streamNames := map[string]int{}
