@@ -430,6 +430,11 @@ func (r *OrchestratorQueryRepository) GetNodeAncestry(ctx context.Context, uniqu
 		// other topology queries in this repository; do not tighten to n.active = true.
 		WHERE COALESCE(n.active, true)
 		OPTIONAL MATCH path = (n)-[:DEPENDS_ON%s]->(anc:Table)
+		// Constrain EVERY node on the path to active, not just the terminal ancestor:
+		// retired :Table nodes are kept for run history but are not part of the current
+		// topology, and an active node reachable only THROUGH a retired one is a severed
+		// dependency. Mirrors the active-upstream filter in GetScheduleGraph.
+		WHERE ALL(m IN nodes(path) WHERE COALESCE(m.active, true))
 		WITH n, anc, min(length(path)) AS depth
 		RETURN n AS self,
 		       collect(CASE WHEN anc IS NULL THEN null ELSE {node: anc, depth: depth} END) AS ancestors

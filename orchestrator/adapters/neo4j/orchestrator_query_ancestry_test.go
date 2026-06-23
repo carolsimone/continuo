@@ -167,3 +167,47 @@ func TestGetNodeAncestry_RetiredNodeNotFound(t *testing.T) {
 	require.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
 
+// TestGetNodeAncestry_ExcludesRetiredAncestors verifies the walk reflects the
+// CURRENT topology: a retired (active=false) :Table retained for run history must
+// not appear as an ancestor, and a node reachable only THROUGH a retired node
+// (a severed dependency) must also be excluded — while active ancestors on a
+// fully-active path remain.
+func TestGetNodeAncestry_ExcludesRetiredAncestors(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := s.Run(ctx, `MATCH (n:Table) DETACH DELETE n`, nil)
+	require.NoError(t, err)
+	// c (active) -> b (active);  c -> rb (RETIRED) -> a (active).
+	// "a" is reachable from "c" only through the retired "rb".
+	_, err = s.Run(ctx, `
+		CREATE (c:Table  {unique_id:'c',  schema_name:'p', table_name:'c',  service_name:'s', node_type:'dbt-model', active:true})
+		CREATE (b:Table  {unique_id:'b',  schema_name:'p', table_name:'b',  service_name:'s', node_type:'dbt-model', active:true})
+		CREATE (rb:Table {unique_id:'rb', schema_name:'p', table_name:'rb', service_name:'s', node_type:'dbt-model', active:false})
+		CREATE (a:Table  {unique_id:'a',  schema_name:'p', table_name:'a',  service_name:'s', node_type:'dbt-model', active:true})
+		CREATE (c)-[:DEPENDS_ON]->(b)
+		CREATE (c)-[:DEPENDS_ON]->(rb)
+		CREATE (rb)-[:DEPENDS_ON]->(a)
+	`, nil)
+	require.NoError(t, err)
+	s.Close(ctx)
+
+	t.Cleanup(func() {
+		ws := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer ws.Close(ctx)
+		_, _ = ws.Run(ctx, `MATCH (n:Table) DETACH DELETE n`, nil)
+	})
+
+	got, err := newQueryRepo(client).GetNodeAncestry(ctx, "c", 0)
+	require.NoError(t, err)
+	ids := map[string]bool{}
+	for _, n := range got {
+		ids[n.UniqueID] = true
+	}
+	assert.True(t, ids["c"], "queried node present at depth 0")
+	assert.True(t, ids["b"], "active direct upstream present")
+	assert.False(t, ids["rb"], "retired ancestor must be excluded from current-topology ancestry")
+	assert.False(t, ids["a"], "node reachable only through a retired node must be excluded (severed dependency)")
+}
+
