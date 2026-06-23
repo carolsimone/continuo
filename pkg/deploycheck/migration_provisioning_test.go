@@ -53,6 +53,87 @@ func toSet(items []string) map[string]bool {
 	return s
 }
 
+// TestDockerfileMigrateCoversAllDatabases is the regression guard for the
+// production outage where db/Dockerfile.migrate did not COPY the remediation
+// and remediation_agent migration directories, so Flyway silently skipped
+// those databases on a fresh Hetzner deploy (non-existent filesystem location
+// = no migrations applied, tables never created).
+//
+// The test asserts a 1-to-1 relationship: every token in migrate-all.sh's
+// DATABASES list must have a matching
+//
+//	COPY migration/<token> /flyway/sql/<token>
+//
+// line in db/Dockerfile.migrate, and vice-versa, so the two files cannot
+// drift in either direction.
+func TestDockerfileMigrateCoversAllDatabases(t *testing.T) {
+	root := repoRoot(t)
+
+	// --- read migrate-all.sh DATABASES list ---
+	scriptPath := filepath.Join(root, "db", "migrate-all.sh")
+	scriptRaw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", scriptPath, err)
+	}
+	dbs := databasesAssignment(t, string(scriptRaw), "db/migrate-all.sh")
+	if len(dbs) == 0 {
+		t.Fatal("db/migrate-all.sh DATABASES list is empty")
+	}
+
+	// --- read Dockerfile.migrate COPY lines ---
+	dockerfilePath := filepath.Join(root, "db", "Dockerfile.migrate")
+	dfRaw, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", dockerfilePath, err)
+	}
+	// Match lines of the form: COPY migration/<token> /flyway/sql/<token>
+	copyRe := regexp.MustCompile(`(?m)^COPY\s+migration/(\S+)\s+/flyway/sql/(\S+)`)
+	copyMatches := copyRe.FindAllStringSubmatch(string(dfRaw), -1)
+
+	// Build the set of tokens covered by the Dockerfile.
+	dockerfileTokens := make(map[string]bool)
+	for _, m := range copyMatches {
+		src, dst := m[1], m[2]
+		if src != dst {
+			t.Errorf("db/Dockerfile.migrate: COPY migration/%s /flyway/sql/%s — "+
+				"source and destination token mismatch; they must be identical", src, dst)
+		}
+		dockerfileTokens[src] = true
+	}
+
+	scriptSet := toSet(dbs)
+
+	// Every migrate-all.sh token must be in the Dockerfile.
+	var missingInDockerfile []string
+	for _, db := range dbs {
+		if !dockerfileTokens[db] {
+			missingInDockerfile = append(missingInDockerfile, db)
+		}
+	}
+	if len(missingInDockerfile) > 0 {
+		sort.Strings(missingInDockerfile)
+		t.Errorf("db/migrate-all.sh DATABASES tokens missing a "+
+			"`COPY migration/<token> /flyway/sql/<token>` line in "+
+			"db/Dockerfile.migrate: %v — Flyway silently skips non-existent "+
+			"locations, so these databases would receive zero migrations on a "+
+			"fresh deploy", missingInDockerfile)
+	}
+
+	// Every Dockerfile COPY token must be in migrate-all.sh (no orphan dirs).
+	var orphanInDockerfile []string
+	for tok := range dockerfileTokens {
+		if !scriptSet[tok] {
+			orphanInDockerfile = append(orphanInDockerfile, tok)
+		}
+	}
+	if len(orphanInDockerfile) > 0 {
+		sort.Strings(orphanInDockerfile)
+		t.Errorf("db/Dockerfile.migrate COPY migration/<token> lines with no "+
+			"matching entry in db/migrate-all.sh DATABASES: %v — remove stale "+
+			"COPY lines or add the token to DATABASES", orphanInDockerfile)
+	}
+}
+
 // TestMigrateAllProvisionsEveryDatabaseItMigrates is the regression guard for
 // the production outage where the migration job ran Flyway against
 // `continuo_release` before that database existed on the long-lived Hetzner
