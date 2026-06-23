@@ -408,7 +408,9 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
     ports:
-      - "8090:8090"
+      # Host port 8093 avoids collision with ui-service which also binds 8090.
+      # The container-internal port remains 8090 (REMEDIATION_HTTP_PORT).
+      - "8093:8090"
     networks:
       - default
 
