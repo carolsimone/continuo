@@ -133,7 +133,7 @@ services:
       CONTINUO_STATE_ADDR: state:50051
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
       LLM_PROVIDER: anthropic
-      LLM_MODEL: claude-sonnet-4-6
+      LLM_MODEL: claude-haiku-4-5
       CHAT_MAX_CONCURRENT_SESSIONS: "100"
 
   - name: executor-controller
@@ -335,4 +335,4 @@ services:
       REMEDIATION_AGENT_HTTP_PORT: "8092"
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
       LLM_PROVIDER: anthropic
-      LLM_MODEL: claude-sonnet-4-6
+      LLM_MODEL: claude-haiku-4-5

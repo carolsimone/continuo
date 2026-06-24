@@ -105,7 +105,7 @@ The `LLMProvider` port is backed by one of three adapters selected at boot via `
 
 | Value | Target | Notes |
 |---|---|---|
-| `anthropic` | Anthropic API (`https://api.anthropic.com`) | Model from `LLM_MODEL` env var (e.g. `claude-opus-4-8`). |
+| `anthropic` | Anthropic API (`https://api.anthropic.com`) | Model from `LLM_MODEL` env var (e.g. `claude-haiku-4-5`). |
 | `openai` | OpenAI API (`https://api.openai.com`) | Model from `LLM_MODEL`. |
 | `openai-compatible` | Operator-supplied endpoint (`LLM_BASE_URL`) | Used for local stub-llm in dev and e2e environments; model from `LLM_MODEL`. |
 
