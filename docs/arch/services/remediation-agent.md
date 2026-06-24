@@ -55,7 +55,7 @@ All events are written to `remediation_agent_outbox` inside the same transaction
 |---|---|
 | `OrchestratorQuery.GetNodeAncestry` | Called twice per successful proposal. First call (depth > 0): fetch ranked upstream ancestors for the prompt; best-effort, degrades to empty list on failure. Second call (depth 0, self-node): extract `file_path` for the failing node so Step 2 can locate the real model source; also best-effort. |
 
-Exposes no gRPC services of its own.
+Its own inbound gRPC surface (`RemediationProposals`) is described in the inbound interfaces section above.
 
 ### Outbound HTTP — GitHub Contents API
 
