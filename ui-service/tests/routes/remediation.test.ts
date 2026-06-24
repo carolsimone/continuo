@@ -259,6 +259,27 @@ describe('remediation router', () => {
     );
   });
 
+  // ── POST — recordPullRequest failure → still 200 (PR already open) ──────
+
+  it('returns 200 with pr_url/pr_number even when recordPullRequest rejects', async () => {
+    // The GitHub PR has already been created when recordPullRequest is called.
+    // A failure there must not hang the request or return an error — the operator
+    // must receive their PR link regardless.
+    const remediation = makeRemediation({
+      recordPullRequest: vi.fn().mockRejectedValue(new Error('gRPC unavailable')),
+    });
+    const prCreator = makePrCreator();
+    const getObject = makeGetObject('SELECT 1');
+    const app = appWith({ remediation, prCreator, getObject });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(200);
+    expect(res.body.pr_url).toBe('https://github.com/owner/repo/pull/42');
+    expect(res.body.pr_number).toBe(42);
+    // The PR was opened — failPullRequest must NOT be called.
+    expect(remediation.failPullRequest).not.toHaveBeenCalled();
+  });
+
   // ── POST — S3 fetch failure → failPullRequest + 502, no GitHub call ──────
 
   it('calls failPullRequest and returns 502 when proposed SQL fetch from S3 rejects', async () => {

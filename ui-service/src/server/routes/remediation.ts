@@ -145,13 +145,24 @@ export function createRemediationRouter(
       return res.status(502).json({ error: 'failed to open pull request' });
     }
 
-    // Record the opened PR against the proposal.
-    await remediation.recordPullRequest({
-      id,
-      pr_url: pr.url,
-      pr_number: pr.number,
-      opened_by: (req as any).user?.userId ?? '',
-    });
+    // Record the opened PR against the proposal. This is best-effort bookkeeping:
+    // the PR already exists on GitHub at this point, so a recording failure must
+    // not prevent the client from receiving the PR link. Log loudly on failure
+    // so an operator can reconcile the proposal state manually if needed.
+    try {
+      await remediation.recordPullRequest({
+        id,
+        pr_url: pr.url,
+        pr_number: pr.number,
+        opened_by: (req as any).user?.userId ?? '',
+      });
+    } catch (err) {
+      console.error(
+        `[remediation] recordPullRequest failed for proposal ${id} (PR ${pr.url}); ` +
+          `proposal may remain in pr_state=opening — reconcile manually:`,
+        err,
+      );
+    }
 
     res.json({ pr_url: pr.url, pr_number: pr.number });
   });
