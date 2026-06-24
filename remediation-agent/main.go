@@ -12,6 +12,7 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	ragithub "github.com/carolsimone/continuo/remediation-agent/adapters/github"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/grpc"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/llm"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/postgres"
@@ -88,6 +89,7 @@ func main() {
 		LLM:         llmProvider,
 		Evidence:    store,
 		Ancestry:    ancestryClient,
+		Source:      ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, http.DefaultClient),
 		Sanitizer:   sanitizer.Passthrough{},
 		Artifacts:   store,
 		Clock:       ports.SystemClock{},
