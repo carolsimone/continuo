@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +64,10 @@ type Deps struct {
 	Logger      *slog.Logger
 	MaxAttempts int
 	Bucket      string
+	// ServiceRepoPaths maps a dbt service_name to its project root within the
+	// source repo, e.g. "service-1" → "services/service-1". Used to construct
+	// the full GitHub file path for Step-2 source resolution.
+	ServiceRepoPaths map[string]string
 }
 
 // ProposeFix turns one healable failure trigger into a fix proposal. It counts
@@ -100,12 +106,15 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	}
 	dbtLog := deps.Sanitizer.Sanitize(rawLog)
 
-	_, ancestors, err := deps.Ancestry.NodeContext(ctx, t.NodeID)
+	// Ancestry is best-effort: proceed without upstream context on error.
+	// filePath and serviceName are forwarded to resolveSource so it does not
+	// need a second NodeContext call.
+	filePath, serviceName, ancestors, err := deps.Ancestry.NodeContext(ctx, t.NodeID)
 	if err != nil {
-		// Ancestry is best-effort: proceed without upstream context.
 		deps.Logger.Warn("ancestry unavailable; proceeding without upstream context",
 			"node", t.NodeID, "error", err)
 		ancestors = nil
+		filePath, serviceName = "", ""
 	}
 
 	res, err := deps.LLM.Propose(ctx, prompt.Assemble(prompt.Evidence{
@@ -148,8 +157,9 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 
 	// Step 2 — real-source fix. Fetches the model source from version control
 	// and asks the LLM to apply the Step-1 diagnosis to it. Degrades silently
-	// when the file path, source read, or LLM result is unavailable.
-	if src, ok := deps.resolveSource(ctx, t, res); ok {
+	// when the file path, service mapping, source read, or LLM result is
+	// unavailable, or when the LLM did not improve the source.
+	if src, ok := deps.resolveSource(ctx, t, filePath, serviceName, res); ok {
 		srcDiff := proposal.ComputeUnifiedDiff(src.original, src.corrected, t.NodeID)
 		srcSQLURI, err := deps.Artifacts.Write(ctx,
 			fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", t.ReleaseID, t.NodeID, attempt),
@@ -184,26 +194,44 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 type resolvedSource struct{ original, corrected string }
 
 // resolveSource performs Step 2: fetch the real model source from version
-// control and ask the LLM to apply the Step-1 diagnosis to it. Returns
-// ok=false on any degraded path (missing file path, source read error, or
-// empty LLM result); the caller then keeps the candidate proposal.
-func (d Deps) resolveSource(ctx context.Context, t Trigger, step1 ports.ProposeResult) (resolvedSource, bool) {
-	filePath, _, err := d.Ancestry.NodeContext(ctx, t.NodeID)
-	if err != nil || filePath == "" {
-		d.Logger.Warn("source fix: file path unavailable; using candidate proposal",
-			"node", t.NodeID, "error", err)
+// control and ask the LLM to apply the Step-1 diagnosis to it. filePath and
+// serviceName come from the single NodeContext call already made by the caller.
+// Returns ok=false on any degraded path (missing file path or service name, no
+// repo mapping, source read error, empty/unchanged LLM result, or
+// low-confidence LLM result); the caller then keeps the candidate proposal.
+func (d Deps) resolveSource(ctx context.Context, t Trigger, filePath, serviceName string, step1 ports.ProposeResult) (resolvedSource, bool) {
+	if filePath == "" || serviceName == "" {
+		d.Logger.Warn("source fix: file path or service name unavailable; using candidate proposal",
+			"node", t.NodeID, "file_path", filePath, "service_name", serviceName)
 		return resolvedSource{}, false
 	}
-	original, err := d.Source.ReadFile(ctx, t.Repo, t.CommitSHA, filePath)
+	repoPrefix, ok := d.ServiceRepoPaths[serviceName]
+	if !ok {
+		d.Logger.Warn("source fix: no repo path mapping for service; using candidate proposal",
+			"node", t.NodeID, "service_name", serviceName)
+		return resolvedSource{}, false
+	}
+	fullPath := path.Join(repoPrefix, filePath)
+	original, err := d.Source.ReadFile(ctx, t.Repo, t.CommitSHA, fullPath)
 	if err != nil {
 		d.Logger.Warn("source fix: github read failed; using candidate proposal",
-			"node", t.NodeID, "path", filePath, "error", err)
+			"node", t.NodeID, "path", fullPath, "error", err)
 		return resolvedSource{}, false
 	}
 	out, err := d.LLM.Propose(ctx, prompt.AssembleSourceFix(d.Sanitizer.Sanitize(original), t.NodeID, step1.Rationale))
-	if err != nil || out.ProposedSQL == "" {
-		d.Logger.Warn("source fix: llm step 2 unavailable; using candidate proposal",
+	if err != nil {
+		d.Logger.Warn("source fix: llm step 2 failed; using candidate proposal",
 			"node", t.NodeID, "error", err)
+		return resolvedSource{}, false
+	}
+	if out.ProposedSQL == "" || out.ProposedSQL == original {
+		d.Logger.Warn("source fix: llm step 2 produced no improvement; using candidate proposal",
+			"node", t.NodeID)
+		return resolvedSource{}, false
+	}
+	if strings.EqualFold(out.Confidence, "low") {
+		d.Logger.Warn("source fix: llm step 2 low confidence; using candidate proposal",
+			"node", t.NodeID)
 		return resolvedSource{}, false
 	}
 	return resolvedSource{original: original, corrected: out.ProposedSQL}, true

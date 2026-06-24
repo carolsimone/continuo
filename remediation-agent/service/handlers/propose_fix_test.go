@@ -34,15 +34,17 @@ func (f fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
 	return f.vals[uri], nil
 }
 
-// fakeAncestry returns a fixed file path and ancestor slice, or an error if set.
+// fakeAncestry returns a fixed file path, service name, and ancestor slice,
+// or an error if set.
 type fakeAncestry struct {
 	fp  string
+	svc string
 	a   []prompt.Ancestor
 	err error
 }
 
-func (f fakeAncestry) NodeContext(_ context.Context, _ string) (string, []prompt.Ancestor, error) {
-	return f.fp, f.a, f.err
+func (f fakeAncestry) NodeContext(_ context.Context, _ string) (string, string, []prompt.Ancestor, error) {
+	return f.fp, f.svc, f.a, f.err
 }
 
 // fakeSanitizer is a pass-through log sanitizer.
@@ -89,13 +91,16 @@ func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, e
 	return "s3://bucket/" + key, nil
 }
 
-// fakeSource returns a fixed file content or an error.
+// fakeSource returns a fixed file content or an error. readPath records the
+// last path argument passed to ReadFile so tests can assert the full path.
 type fakeSource struct {
-	content string
-	err     error
+	content  string
+	err      error
+	readPath string
 }
 
-func (f fakeSource) ReadFile(_ context.Context, _, _, _ string) (string, error) {
+func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, error) {
+	f.readPath = path
 	return f.content, f.err
 }
 
@@ -242,17 +247,18 @@ func newFakeUoW() *fakeUoW {
 
 func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
 	return Deps{
-		NewUoW:      func() uow.UnitOfWork { return u },
-		LLM:         llm,
-		Evidence:    ev,
-		Ancestry:    fakeAncestry{},
-		Source:      fakeSource{},
-		Sanitizer:   fakeSanitizer{},
-		Artifacts:   art,
-		Clock:       fakeClock{},
-		Logger:      slog.Default(),
-		MaxAttempts: 3,
-		Bucket:      "bucket",
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              llm,
+		Evidence:         ev,
+		Ancestry:         fakeAncestry{},
+		Source:           &fakeSource{},
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		Bucket:           "bucket",
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 }
 
@@ -440,18 +446,20 @@ func TestProposeFix_Step2_SourceResolved(t *testing.T) {
 	}
 	art := &fakeArtifacts{}
 
+	src := &fakeSource{content: "{{ config(materialized='table') }}\nselect custmer_id from {{ ref('t') }}"}
 	d := Deps{
-		NewUoW:    func() uow.UnitOfWork { return u },
-		LLM:       &llm,
-		Evidence:  ev,
-		Ancestry:  fakeAncestry{fp: "models/table_e.sql", a: []prompt.Ancestor{}},
-		Source:    fakeSource{content: "{{ config(materialized='table') }}\nselect custmer_id from {{ ref('t') }}"},
-		Sanitizer: fakeSanitizer{},
-		Artifacts: art,
-		Clock:     fakeClock{},
-		Logger:    slog.Default(),
-		MaxAttempts: 3,
-		Bucket:    "bucket",
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "svc", a: []prompt.Ancestor{}},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		Bucket:           "bucket",
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 
 	if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
@@ -468,6 +476,11 @@ func TestProposeFix_Step2_SourceResolved(t *testing.T) {
 	}
 	if !p.SourceResolved {
 		t.Fatal("expected SourceResolved=true")
+	}
+
+	// The source must be read at the full path: prefix + filePath.
+	if src.readPath != "services/svc/models/table_e.sql" {
+		t.Fatalf("ReadFile called with path %q, want %q", src.readPath, "services/svc/models/table_e.sql")
 	}
 
 	// Final proposed SQL URI must point to the source artifact.
@@ -530,17 +543,18 @@ func TestProposeFix_Step2_FallbackOnSourceError(t *testing.T) {
 	art := &fakeArtifacts{}
 
 	d := Deps{
-		NewUoW:    func() uow.UnitOfWork { return u },
-		LLM:       &llm,
-		Evidence:  ev,
-		Ancestry:  fakeAncestry{fp: "models/table_e.sql"},
-		Source:    fakeSource{err: fmt.Errorf("github 503")},
-		Sanitizer: fakeSanitizer{},
-		Artifacts: art,
-		Clock:     fakeClock{},
-		Logger:    slog.Default(),
-		MaxAttempts: 3,
-		Bucket:    "bucket",
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "svc"},
+		Source:           &fakeSource{err: fmt.Errorf("github 503")},
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		Bucket:           "bucket",
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 
 	if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
@@ -590,18 +604,20 @@ func TestProposeFix_Step2_FallbackOnEmptyFilePath(t *testing.T) {
 	// test failure if ReadFile were called, but it won't be because filePath=="".
 	art := &fakeArtifacts{}
 
+	src := &fakeSource{err: fmt.Errorf("must not be called")}
 	d := Deps{
-		NewUoW:    func() uow.UnitOfWork { return u },
-		LLM:       &llm,
-		Evidence:  ev,
-		Ancestry:  fakeAncestry{fp: ""}, // empty file path → skip Step 2.
-		Source:    fakeSource{err: fmt.Errorf("must not be called")},
-		Sanitizer: fakeSanitizer{},
-		Artifacts: art,
-		Clock:     fakeClock{},
-		Logger:    slog.Default(),
-		MaxAttempts: 3,
-		Bucket:    "bucket",
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Ancestry:         fakeAncestry{fp: "", svc: "svc"}, // empty file path → skip Step 2.
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		Bucket:           "bucket",
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 
 	if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
@@ -618,4 +634,151 @@ func TestProposeFix_Step2_FallbackOnEmptyFilePath(t *testing.T) {
 	if len(art.written) != 2 {
 		t.Fatalf("expected 2 artifacts (candidate only) when file path empty, got %d", len(art.written))
 	}
+	// ReadFile must not have been called if filePath is empty.
+	if src.readPath != "" {
+		t.Fatalf("ReadFile must not be called when filePath is empty, but was called with %q", src.readPath)
+	}
+}
+
+// TestProposeFix_Step2_FallbackOnUnmappedService verifies that when the
+// node's service name has no entry in ServiceRepoPaths, Step 2 degrades:
+// SourceResolved=false and ReadFile is never called.
+func TestProposeFix_Step2_FallbackOnUnmappedService(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t",
+		Rationale:   "typo",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	src := &fakeSource{content: "should not be called"}
+
+	d := Deps{
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "unknown-service"},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		Bucket:           "bucket",
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"}, // "unknown-service" not present
+	}
+
+	if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+
+	p := u.pr.inserted[0]
+	if p.SourceResolved {
+		t.Fatal("expected SourceResolved=false when service name not in ServiceRepoPaths")
+	}
+	if !strings.HasSuffix(p.ProposedSQLURI, "attempt-1.sql") {
+		t.Fatalf("ProposedSQLURI %q must be the candidate URI on unmapped service", p.ProposedSQLURI)
+	}
+	if len(art.written) != 2 {
+		t.Fatalf("expected 2 artifacts (candidate only), got %d: %v", len(art.written), art.written)
+	}
+	// ReadFile must not have been called.
+	if src.readPath != "" {
+		t.Fatalf("ReadFile must not be called for unmapped service, but was called with %q", src.readPath)
+	}
+}
+
+// TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence verifies that when
+// the Step-2 LLM returns the same SQL as the original source, or returns a
+// low-confidence result, the handler degrades to the candidate proposal:
+// SourceResolved=false, only 2 artifacts written.
+func TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence(t *testing.T) {
+	originalSQL := "{{ config(materialized='table') }}\nselect custmer_id from {{ ref('t') }}"
+
+	t.Run("unchanged_sql", func(t *testing.T) {
+		u := newFakeUoW()
+		ev := fakeEvidence{vals: map[string]string{
+			"s3://b/sql": "select custmer_id from t",
+			"s3://b/log": "column does not exist",
+		}}
+		llm := fakeLLM{
+			queue: []ports.ProposeResult{
+				{ProposedSQL: "select customer_id from t", Rationale: "typo fix", Confidence: "high", Model: "m"},
+				// Step-2 returns the same source unchanged — not a fix.
+				{ProposedSQL: originalSQL, Rationale: "no change", Confidence: "high", Model: "m"},
+			},
+			errs: []error{nil, nil},
+		}
+		art := &fakeArtifacts{}
+		d := Deps{
+			NewUoW:           func() uow.UnitOfWork { return u },
+			LLM:              &llm,
+			Evidence:         ev,
+			Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "svc", a: []prompt.Ancestor{}},
+			Source:           &fakeSource{content: originalSQL},
+			Sanitizer:        fakeSanitizer{},
+			Artifacts:        art,
+			Clock:            fakeClock{},
+			Logger:           slog.Default(),
+			MaxAttempts:      3,
+			Bucket:           "bucket",
+			ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		}
+		if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
+			t.Fatal(err)
+		}
+		p := u.pr.inserted[0]
+		if p.SourceResolved {
+			t.Fatal("expected SourceResolved=false when Step-2 SQL equals original")
+		}
+		if len(art.written) != 2 {
+			t.Fatalf("expected 2 candidate-only artifacts, got %d: %v", len(art.written), art.written)
+		}
+	})
+
+	t.Run("low_confidence", func(t *testing.T) {
+		u := newFakeUoW()
+		ev := fakeEvidence{vals: map[string]string{
+			"s3://b/sql": "select custmer_id from t",
+			"s3://b/log": "column does not exist",
+		}}
+		llm := fakeLLM{
+			queue: []ports.ProposeResult{
+				{ProposedSQL: "select customer_id from t", Rationale: "typo fix", Confidence: "high", Model: "m"},
+				// Step-2 returns a different SQL but with low confidence.
+				{ProposedSQL: "select fixed_id from t", Rationale: "maybe", Confidence: "low", Model: "m"},
+			},
+			errs: []error{nil, nil},
+		}
+		art := &fakeArtifacts{}
+		d := Deps{
+			NewUoW:           func() uow.UnitOfWork { return u },
+			LLM:              &llm,
+			Evidence:         ev,
+			Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "svc", a: []prompt.Ancestor{}},
+			Source:           &fakeSource{content: originalSQL},
+			Sanitizer:        fakeSanitizer{},
+			Artifacts:        art,
+			Clock:            fakeClock{},
+			Logger:           slog.Default(),
+			MaxAttempts:      3,
+			Bucket:           "bucket",
+			ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		}
+		if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
+			t.Fatal(err)
+		}
+		p := u.pr.inserted[0]
+		if p.SourceResolved {
+			t.Fatal("expected SourceResolved=false when Step-2 confidence is low")
+		}
+		if len(art.written) != 2 {
+			t.Fatalf("expected 2 candidate-only artifacts, got %d: %v", len(art.written), art.written)
+		}
+	})
 }

@@ -37,9 +37,10 @@ func TestMapNodeContext_ReturnsSelfFilePathAndUpstreamAncestors(t *testing.T) {
 		},
 	}
 
-	filePath, ancestors := grpcadapter.MapNodeContext(resp)
+	filePath, serviceName, ancestors := grpcadapter.MapNodeContext(resp)
 
 	assert.Equal(t, "models/table_e.sql", filePath, "depth-0 node's file path must be returned as filePath")
+	assert.Equal(t, "service_a", serviceName, "depth-0 node's service_name must be returned as serviceName")
 
 	require.Len(t, ancestors, 1, "depth-0 self entry must be excluded from ancestors")
 	a := ancestors[0]
@@ -73,9 +74,10 @@ func TestMapNodeContext_NilTimestamp(t *testing.T) {
 		},
 	}
 
-	filePath, ancestors := grpcadapter.MapNodeContext(resp)
+	filePath, serviceName, ancestors := grpcadapter.MapNodeContext(resp)
 
 	assert.Equal(t, "models/self_node.sql", filePath)
+	assert.Equal(t, "service_a", serviceName)
 	require.Len(t, ancestors, 1)
 	assert.Equal(t, "", ancestors[0].LastChangedAt, "nil timestamp must produce empty string")
 }
@@ -85,9 +87,10 @@ func TestMapNodeContext_EmptyResponse(t *testing.T) {
 		Ancestors: []*orchestratorv1.AncestorNode{},
 	}
 
-	filePath, ancestors := grpcadapter.MapNodeContext(resp)
+	filePath, serviceName, ancestors := grpcadapter.MapNodeContext(resp)
 
 	assert.Equal(t, "", filePath, "empty response must return empty filePath")
+	assert.Equal(t, "", serviceName, "empty response must return empty serviceName")
 	assert.Empty(t, ancestors)
 }
 
@@ -105,9 +108,10 @@ func TestMapNodeContext_NoDepthZeroNode(t *testing.T) {
 		},
 	}
 
-	filePath, ancestors := grpcadapter.MapNodeContext(resp)
+	filePath, serviceName, ancestors := grpcadapter.MapNodeContext(resp)
 
 	assert.Equal(t, "", filePath, "no depth-0 node means empty filePath")
+	assert.Equal(t, "", serviceName, "no depth-0 node means empty serviceName")
 	require.Len(t, ancestors, 1)
 	assert.Equal(t, "service_b.schema.upstream_node", ancestors[0].NodeID)
 }

@@ -85,17 +85,18 @@ func main() {
 	}
 
 	deps := handlers.Deps{
-		NewUoW:      func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
-		LLM:         llmProvider,
-		Evidence:    store,
-		Ancestry:    ancestryClient,
-		Source:      ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, http.DefaultClient),
-		Sanitizer:   sanitizer.Passthrough{},
-		Artifacts:   store,
-		Clock:       ports.SystemClock{},
-		Logger:      logger,
-		MaxAttempts: cfg.MaxAttempts,
-		Bucket:      cfg.S3.Bucket,
+		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		LLM:              llmProvider,
+		Evidence:         store,
+		Ancestry:         ancestryClient,
+		Source:           ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, http.DefaultClient),
+		Sanitizer:        sanitizer.Passthrough{},
+		Artifacts:        store,
+		Clock:            ports.SystemClock{},
+		Logger:           logger,
+		MaxAttempts:      cfg.MaxAttempts,
+		Bucket:           cfg.S3.Bucket,
+		ServiceRepoPaths: cfg.ServiceRepoPaths,
 	}
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs

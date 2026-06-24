@@ -35,37 +35,39 @@ func NewAncestryClient(addr string) (*AncestryClient, error) {
 	}, nil
 }
 
-// NodeContext returns the queried node's own file path (depth-0) and its
-// upstream ancestors ranked by depth. A NOT_FOUND response from the
+// NodeContext returns the queried node's own file path, service name (depth-0),
+// and its upstream ancestors ranked by depth. A NOT_FOUND response from the
 // orchestrator means the node has no recorded ancestry; the handler treats
 // this as a degraded (not error) path and proceeds without context. Other
 // gRPC errors are returned to the caller.
-func (c *AncestryClient) NodeContext(ctx context.Context, nodeID string) (string, []prompt.Ancestor, error) {
+func (c *AncestryClient) NodeContext(ctx context.Context, nodeID string) (string, string, []prompt.Ancestor, error) {
 	resp, err := c.client.GetNodeAncestry(ctx, &orchestratorv1.GetNodeAncestryRequest{
 		NodeUniqueId: nodeID,
 		MaxDepth:     0,
 	})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			return "", nil, nil
+			return "", "", nil, nil
 		}
-		return "", nil, err
+		return "", "", nil, err
 	}
-	filePath, ancestors := MapNodeContext(resp)
-	return filePath, ancestors, nil
+	filePath, serviceName, ancestors := MapNodeContext(resp)
+	return filePath, serviceName, ancestors, nil
 }
 
 // MapNodeContext converts a GetNodeAncestryResponse into the queried node's
-// file path and its upstream prompt.Ancestor values. The depth-0 entry
-// represents the queried node itself: its FilePath is returned as filePath and
-// it is excluded from the ancestors slice. Only depth>0 nodes are mapped to
-// ancestors. LastChangedAt is formatted as RFC3339; an unset proto timestamp
-// produces an empty string.
-func MapNodeContext(resp *orchestratorv1.GetNodeAncestryResponse) (filePath string, ancestors []prompt.Ancestor) {
+// file path, service name, and its upstream prompt.Ancestor values. The
+// depth-0 entry represents the queried node itself: its FilePath and
+// ServiceName are returned as filePath and serviceName, and it is excluded
+// from the ancestors slice. Only depth>0 nodes are mapped to ancestors.
+// LastChangedAt is formatted as RFC3339; an unset proto timestamp produces an
+// empty string.
+func MapNodeContext(resp *orchestratorv1.GetNodeAncestryResponse) (filePath string, serviceName string, ancestors []prompt.Ancestor) {
 	result := make([]prompt.Ancestor, 0, len(resp.Ancestors))
 	for _, n := range resp.Ancestors {
 		if n.Depth == 0 {
 			filePath = n.FilePath
+			serviceName = n.ServiceName
 			continue
 		}
 		var lastChangedAt string
@@ -81,5 +83,5 @@ func MapNodeContext(resp *orchestratorv1.GetNodeAncestryResponse) (filePath stri
 			Depth:         int(n.Depth),
 		})
 	}
-	return filePath, result
+	return filePath, serviceName, result
 }
