@@ -46,6 +46,11 @@ global:
     # and serves gRPC, but chat sessions will fail until the key is supplied.
     apiKey: ""
 
+  github:
+    # Read-only fine-grained PAT — Contents: Read on continuo-dbt-demo; set at
+    # deploy time; empty disables Step-2 source fetch (agent degrades to candidate).
+    token: ""
+
   s3:
     endpointUrl: https://nbg1.your-objectstorage.com
     bucket: continuo-dev
@@ -340,3 +345,12 @@ services:
       LLM_PROVIDER: anthropic
       LLM_MODEL: claude-haiku-4-5
       GITHUB_BASE_URL: https://api.github.com
+      SERVICE_REPO_MAP_PATH: /etc/continuo/service_repos.yaml
+    volumeMounts:
+      - name: service-repos
+        mountPath: /etc/continuo
+        readOnly: true
+    volumes:
+      - name: service-repos
+        configMap:
+          name: ""
