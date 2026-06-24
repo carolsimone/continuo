@@ -174,13 +174,16 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
 /**
  * Creates a PullRequestCreator authenticated as a GitHub App installation.
  * Builds a real Octokit client with App authentication and delegates to makePullRequestCreator.
+ * Pass baseUrl to override the GitHub API endpoint (useful for e2e stubs).
  */
 export function createGithubAppPullRequestCreator(cfg: {
   appId: string;
   privateKey: string;
   installationId: string;
+  baseUrl?: string;
 }): PullRequestCreator {
   const octokit = new Octokit({
+    ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
     authStrategy: createAppAuth,
     auth: {
       appId: cfg.appId,

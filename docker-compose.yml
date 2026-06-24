@@ -600,6 +600,11 @@ services:
       - AUTH_MODE=dev
       - AGENT_RUNNER_GRPC_ADDR=agent-runner:50053
       - CHAT_BRIDGE_ENABLED=true
+      - REMEDIATION_GRPC_ADDR=remediation-agent:50054
+      - GITHUB_APP_ID=
+      - GITHUB_APP_PRIVATE_KEY=
+      - GITHUB_APP_INSTALLATION_ID=
+      - GITHUB_API_BASE_URL=
     ports:
       - "8090:8090"
     volumes:

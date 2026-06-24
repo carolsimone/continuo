@@ -228,6 +228,8 @@ services:
         secretKey: REDIS_PASSWORD
       - name: AUTH_OIDC_CLIENT_SECRET
         secretKey: AUTH_OIDC_CLIENT_SECRET
+      - name: GITHUB_APP_PRIVATE_KEY
+        secretKey: GITHUB_APP_PRIVATE_KEY
     ingress:
       enabled: true
       host: dev.yourdomain.com
@@ -250,6 +252,10 @@ services:
       AUTH_OPERATOR_EMAILS: __AUTH_OPERATOR_EMAILS__
       AUTH_VIEWER_EMAILS: __AUTH_VIEWER_EMAILS__
       REDIS_URL: __REDIS_URL_FROM_AUTH__
+      REMEDIATION_GRPC_ADDR: remediation-agent:50054
+      GITHUB_APP_ID: ""
+      GITHUB_APP_INSTALLATION_ID: ""
+      GITHUB_API_BASE_URL: https://api.github.com
     volumeMounts:
       - name: cancel-config
         mountPath: /app/config
