@@ -96,7 +96,6 @@ export default function RemediationPanel() {
               {proposals.map(p => (
                 <tr
                   key={p.id}
-                  style={{ cursor: 'pointer' }}
                   onClick={() => setSelected(prev => (prev?.id === p.id ? null : p))}
                 >
                   <td>{p.node_id}</td>
@@ -112,7 +111,7 @@ export default function RemediationPanel() {
       )}
 
       {selected && (
-        <div className="detail-card" style={{ marginTop: 16 }}>
+        <div className="detail-card remediation-detail">
           <div className="section-header">
             <div className="section-header__main">
               <span className="section-header__title">{selected.node_id}</span>
@@ -122,19 +121,19 @@ export default function RemediationPanel() {
             </div>
           </div>
 
-          <div style={{ padding: '12px 16px' }}>
-            <p style={{ margin: '0 0 12px', fontSize: 13, color: '#374151' }}>
+          <div className="detail-card__body">
+            <p className="detail-card__rationale">
               {selected.rationale}
             </p>
 
             {selected.diff_uri && (
-              <div style={{ marginBottom: 12 }}>
+              <div className="detail-card__row">
                 <DiffView uri={selected.diff_uri} />
               </div>
             )}
 
             {!selected.source_resolved && (
-              <div className="info-strip info-strip--warning" style={{ marginBottom: 12 }}>
+              <div className="info-strip info-strip--warning detail-card__row">
                 <span className="info-strip__icon">⚠</span>
                 No real-source fix — a PR cannot be opened for this proposal.
               </div>

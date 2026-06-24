@@ -1003,3 +1003,21 @@ body {
 /* User menu (see .claude/design-guideline/ui.md "User menu") */
 .user-menu          { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .user-menu__email   { font-size: 12px; color: #6b7280; }
+
+/* ---- Remediation panel ---- */
+/* Scoped top-spacing for the proposal detail card so other .detail-card usages are unaffected. */
+.remediation-detail { margin-top: 16px; }
+
+.detail-card__body {
+  padding: 12px 16px;
+}
+
+.detail-card__rationale {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.detail-card__row {
+  margin-bottom: 12px;
+}
