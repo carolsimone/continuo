@@ -103,7 +103,7 @@ The `LLMProvider` port is backed by one of three adapters selected at boot via `
 | `openai` | OpenAI API (`https://api.openai.com`) | Model from `LLM_MODEL`. |
 | `openai-compatible` | Operator-supplied endpoint (`LLM_BASE_URL`) | Used for local stub-llm in dev and e2e environments; model from `LLM_MODEL`. |
 
-Each adapter issues a single non-streaming HTTP request with the `propose_fix` tool forced — the LLM must invoke it. The adapter parses the `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node` fields from the tool-call arguments and returns a `ProposeResult`. A structurally empty response (no tool call or no SQL) causes the adapter to return without error; the handler records the attempt as `failed`.
+Each adapter issues a single non-streaming HTTP request with the `propose_fix` tool forced — the LLM must invoke it. The adapter parses the `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node` fields from the tool-call arguments and returns a `ProposeResult`. If the response contains no tool call (or no choices), the adapter returns an error; the handler propagates it so the Redis message is redelivered and retried. If the tool call is present but `proposed_sql` is empty, the adapter returns a zero-value `ProposeResult` without error; the handler detects the empty field and records the attempt as `failed` with no outbox emission.
 
 ## LogSanitizer Seam
 
