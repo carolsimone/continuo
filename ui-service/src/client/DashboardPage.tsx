@@ -5,6 +5,7 @@ import SnapshotTile from './SnapshotTile';
 import Tabs, { useActiveTab } from './Tabs';
 import ReleasesPanel from './ReleasesPanel';
 import NodesCatalogPanel from './NodesCatalogPanel';
+import RemediationPanel from './RemediationPanel';
 import UserMenu from './auth/UserMenu';
 
 export default function DashboardPage() {
@@ -51,6 +52,7 @@ export default function DashboardPage() {
     { slug: 'topology', label: 'Topology', count: topologies.length },
     { slug: 'releases', label: 'Releases' },
     { slug: 'nodes', label: 'Nodes', count: nodeTotal },
+    { slug: 'remediation', label: 'Remediation' },
   ];
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
 
@@ -111,6 +113,7 @@ export default function DashboardPage() {
         )}
         {activeTab === 'releases' && <ReleasesPanel />}
         {activeTab === 'nodes' && <NodesCatalogPanel />}
+        {activeTab === 'remediation' && <RemediationPanel />}
       </main>
     </div>
   );
