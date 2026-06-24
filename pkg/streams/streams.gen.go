@@ -56,6 +56,8 @@ const (
 	RemediationRequestedV1 = "remediation.requested:v1"
 	// RemediationProposedV1 — Per-node fix proposal emitted by the remediation agent for a healable failure; consumed by the PR creator and approval surfaces.
 	RemediationProposedV1 = "remediation.proposed:v1"
+	// RemediationPrOpenedV1 — Audit event emitted when an operator opens a GitHub PR from a fix proposal; pointer-only, no consumer in this slice.
+	RemediationPrOpenedV1 = "remediation.pr_opened:v1"
 )
 
 // Consumer groups.
