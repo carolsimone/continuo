@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -560,6 +561,7 @@ func newPendingRun(scheduleID uuid.UUID, name string) *run.Run {
 		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
+		identity.SystemUserID,
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
@@ -615,6 +617,7 @@ func TestCancelScheduler_AlreadyTerminal(t *testing.T) {
 		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
+		identity.SystemUserID,
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
@@ -786,6 +789,7 @@ func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
 		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
+		identity.SystemUserID,
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,

@@ -201,6 +201,7 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 		run.InitStatus(tr.InitializationStatus),
 		run.Kind(tr.Kind),
 		tr.SourceRunID,
+		tr.InitiatedBy,
 		tr.CreatedAt,
 		tr.StartedAt, tr.CompletedAt, tr.LastHeartbeatAt, tr.CancelledAt,
 		tr.CancelledBy, tr.CancellationReason,
@@ -254,6 +255,7 @@ func dehydrateRun(r *run.Run) (*SchedulerTracker, error) {
 		TerminalTaskCount:    r.TerminalTaskCount(),
 		Kind:                 string(r.Kind()),
 		SourceRunID:          r.SourceRunID(),
+		InitiatedBy:          r.InitiatedBy(),
 	}, nil
 }
 

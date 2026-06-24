@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/policy"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -49,6 +50,7 @@ func (h *ActivateScheduleHandler) Handle(
 	name string,
 	kind run.Kind,
 	sourceRunID *uuid.UUID,
+	initiator identity.Identity,
 ) (uuid.UUID, ActivationOutcome, error) {
 	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), name); err != nil {
 		return uuid.Nil, 0, err
@@ -74,7 +76,7 @@ func (h *ActivateScheduleHandler) Handle(
 		}
 	}()
 
-	newRun, evt, err := run.NewPendingRun(name, kind, sourceRunID, metadata, u.Clock().Now())
+	newRun, evt, err := run.NewPendingRun(name, kind, sourceRunID, initiator.UserID, metadata, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, 0, err
 	}

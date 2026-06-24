@@ -306,6 +306,91 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 	}
 }
 
+// TestOutboxPublisher_InitiatedByProvenance pins the provenance contract: every
+// run-creation event carries initiated_by on the wire, and an empty initiator
+// (a platform-initiated run) is recorded as the "system" sentinel rather than a
+// blank string.
+func TestOutboxPublisher_InitiatedByProvenance(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sourceID := uuid.New()
+
+	cases := []struct {
+		name       string
+		event      func(id uuid.UUID) run.DomainEvent
+		wantStream string
+		want       string
+	}{
+		{
+			name: "RunStarted carries the user",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.RunStarted{ID: id, Name: "sched", K: run.KindTrigger, InitiatedBy: "okta|alice", ServiceMetadata: map[string]run.ServiceMetadata{}}
+			},
+			wantStream: streams.SchedulerStartedV1,
+			want:       "okta|alice",
+		},
+		{
+			name: "RunStarted empty initiator becomes system",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.RunStarted{ID: id, Name: "sched", K: run.KindCron, InitiatedBy: "", ServiceMetadata: map[string]run.ServiceMetadata{}}
+			},
+			wantStream: streams.SchedulerStartedV1,
+			want:       "system",
+		},
+		{
+			name: "RerunRequested carries the user",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.RerunRequested{ID: id, Name: "sched", SourceID: sourceID, InitiatedBy: "okta|bob"}
+			},
+			wantStream: streams.TriggerRerunV1,
+			want:       "okta|bob",
+		},
+		{
+			name: "RebaseRequested carries the user",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.RebaseRequested{ID: id, Name: "sched", SourceID: sourceID, InitiatedBy: "okta|carol"}
+			},
+			wantStream: streams.TriggerRebaseV1,
+			want:       "okta|carol",
+		},
+		{
+			name: "SingleNodeRunRequested carries the user",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.SingleNodeRunRequested{
+					ID: id, Name: "sched",
+					Target:         run.NodeID{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"},
+					MetadataSource: run.MetadataSourceLatest,
+					InitiatedBy:    "okta|dave",
+				}
+			},
+			wantStream: streams.TriggerSingleNodeRunV1,
+			want:       "okta|dave",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			aggID := uuid.New()
+			tx, err := db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+
+			pub := postgres.NewOutboxPublisher(tx, discardLogger())
+			require.NoError(t, pub.Append(ctx, []run.DomainEvent{tc.event(aggID)}, uuid.Nil))
+			require.NoError(t, tx.Commit())
+			defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", aggID)
+
+			var raw []byte
+			require.NoError(t, db.GetContext(ctx, &raw,
+				`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+				aggID, tc.wantStream,
+			))
+			var payload map[string]interface{}
+			require.NoError(t, json.Unmarshal(raw, &payload))
+			assert.Equal(t, tc.want, payload["initiated_by"], "initiated_by on %s", tc.wantStream)
+		})
+	}
+}
+
 // patchEventID returns a copy of evt with its ID field replaced by newID.
 // This lets each sub-test use a unique aggregate_id so they don't pollute each other.
 func patchEventID(evt run.DomainEvent, newID uuid.UUID) run.DomainEvent {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -72,6 +73,7 @@ func (h *SingleNodeRunHandler) TriggerSingleNodeRun(ctx context.Context, req *st
 		Target:         run.NodeID{ServiceName: req.ServiceName, SchemaName: req.SchemaName, TableName: req.TableName},
 		MetadataSource: run.MetadataSource(req.MetadataSource),
 		SourceRunID:    srcPtr,
+		Initiator:      identity.FromContext(ctx),
 	}
 
 	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), in)

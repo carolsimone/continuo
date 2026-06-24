@@ -81,6 +81,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		ScheduleName: evt.ScheduleName,
 		Kind:         evt.Kind,
 		SourceRunID:  evt.SourceRunID,
+		InitiatedBy:  evt.InitiatedBy,
 		Selector:     snapshot.LatestFullDAG{},
 	})
 	if err != nil {

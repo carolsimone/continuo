@@ -5,6 +5,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/google/uuid"
 )
 
@@ -42,10 +43,16 @@ func ParseSchedulerStartedEvent(values map[string]interface{}) (domain.Scheduler
 		sourceRunID = &parsed
 	}
 
+	initiatedBy, _ := values["initiated_by"].(string)
+	if initiatedBy == "" {
+		initiatedBy = identity.SystemUserID
+	}
+
 	return domain.SchedulerStarted{
 		ScheduleID:   schedulerID,
 		ScheduleName: scheduleName,
 		Kind:         kind,
 		SourceRunID:  sourceRunID,
+		InitiatedBy:  initiatedBy,
 	}, nil
 }

@@ -3,6 +3,7 @@ import request from 'supertest';
 import express from 'express';
 import * as grpc from '@grpc/grpc-js';
 import { createSchedulesRouter } from '../../src/server/routes/schedules';
+import { USER_ID_METADATA_KEY } from '../../src/server/grpc-client';
 
 const mockTriggerSchedule = vi.fn();
 const mockListAllSchedules = vi.fn();
@@ -72,7 +73,7 @@ describe('POST /api/schedules/:name/trigger', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns 200 with schedule_id on success', async () => {
-    mockTriggerSchedule.mockImplementation((_req: any, cb: any) =>
+    mockTriggerSchedule.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(null, { schedule_id: 'aaa-bbb-ccc' })
     );
 
@@ -82,15 +83,50 @@ describe('POST /api/schedules/:name/trigger', () => {
     expect(res.body.schedule_id).toBe('aaa-bbb-ccc');
     expect(mockTriggerSchedule).toHaveBeenCalledWith(
       { schedule_name: 'hourly' },
+      expect.any(Object),
       expect.any(Function)
     );
+  });
+
+  it('forwards the authenticated user id as gRPC metadata', async () => {
+    let seenUserId: string | undefined;
+    mockTriggerSchedule.mockImplementation((_req: any, md: any, cb: any) => {
+      seenUserId = md.get(USER_ID_METADATA_KEY)[0];
+      cb(null, { schedule_id: 'r1' });
+    });
+
+    // Mount a tiny app that injects an authenticated user before the router,
+    // mirroring how the auth middleware attaches req.user in production.
+    const authedApp = express();
+    authedApp.use(express.json());
+    authedApp.use((req, _res, next) => {
+      req.user = { userId: 'okta|alice', email: 'a@x', name: 'A', role: 'operator' };
+      next();
+    });
+    authedApp.use('/api/schedules', createSchedulesRouter(mockStateClient as any, mockGraphClient));
+
+    const res = await request(authedApp).post('/api/schedules/hourly/trigger');
+    expect(res.status).toBe(200);
+    expect(seenUserId).toBe('okta|alice');
+  });
+
+  it('records the system sentinel when no user is authenticated', async () => {
+    let seenUserId: string | undefined;
+    mockTriggerSchedule.mockImplementation((_req: any, md: any, cb: any) => {
+      seenUserId = md.get(USER_ID_METADATA_KEY)[0];
+      cb(null, { schedule_id: 'r1' });
+    });
+
+    const res = await request(app).post('/api/schedules/hourly/trigger');
+    expect(res.status).toBe(200);
+    expect(seenUserId).toBe('system');
   });
 
   it('returns 404 when schedule not in catalog', async () => {
     const err = Object.assign(new Error('schedule "nope" not found in catalog'), {
       code: grpc.status.NOT_FOUND,
     });
-    mockTriggerSchedule.mockImplementation((_req: any, cb: any) => cb(err));
+    mockTriggerSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
 
     const res = await request(app).post('/api/schedules/nope/trigger');
 
@@ -102,7 +138,7 @@ describe('POST /api/schedules/:name/trigger', () => {
     const err = Object.assign(new Error('schedule "hourly" already has an active run'), {
       code: grpc.status.FAILED_PRECONDITION,
     });
-    mockTriggerSchedule.mockImplementation((_req: any, cb: any) => cb(err));
+    mockTriggerSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
 
     const res = await request(app).post('/api/schedules/hourly/trigger');
 
@@ -112,7 +148,7 @@ describe('POST /api/schedules/:name/trigger', () => {
 
   it('returns 500 on unexpected gRPC error', async () => {
     const err = Object.assign(new Error('internal'), { code: grpc.status.INTERNAL });
-    mockTriggerSchedule.mockImplementation((_req: any, cb: any) => cb(err));
+    mockTriggerSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
 
     const res = await request(app).post('/api/schedules/hourly/trigger');
 
@@ -124,7 +160,7 @@ describe('POST /api/schedules/:name/cancel', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns 200 with schedule_id on success', async () => {
-    mockCancelSchedule.mockImplementation((_req: any, cb: any) =>
+    mockCancelSchedule.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(null, { schedule_id: 'abc-123' })
     );
 
@@ -140,6 +176,7 @@ describe('POST /api/schedules/:name/cancel', () => {
         cancelled_by: 'operator',
         cancellation_reason: 'manual',
       },
+      expect.any(Object),
       expect.any(Function)
     );
   });
@@ -148,7 +185,7 @@ describe('POST /api/schedules/:name/cancel', () => {
     const err = Object.assign(new Error('no active run'), {
       code: grpc.status.FAILED_PRECONDITION,
     });
-    mockCancelSchedule.mockImplementation((_req: any, cb: any) => cb(err));
+    mockCancelSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
 
     const res = await request(app)
       .post('/api/schedules/no-run/cancel')
@@ -162,7 +199,7 @@ describe('POST /api/schedules/:name/cancel', () => {
     const err = Object.assign(new Error('schedule not found'), {
       code: grpc.status.NOT_FOUND,
     });
-    mockCancelSchedule.mockImplementation((_req: any, cb: any) => cb(err));
+    mockCancelSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
 
     const res = await request(app)
       .post('/api/schedules/unknown/cancel')
@@ -174,7 +211,7 @@ describe('POST /api/schedules/:name/cancel', () => {
 
   it('returns 500 on unexpected gRPC error', async () => {
     const err = Object.assign(new Error('internal'), { code: grpc.status.INTERNAL });
-    mockCancelSchedule.mockImplementation((_req: any, cb: any) => cb(err));
+    mockCancelSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
 
     const res = await request(app)
       .post('/api/schedules/hourly/cancel')

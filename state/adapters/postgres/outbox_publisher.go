@@ -72,6 +72,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"service_metadata": toServiceMetadataDTOs(e.ServiceMetadata),
 			"kind":             string(e.K),
 			"source_run_id":    sourceIDStr(e.SourceID),
+			"initiated_by":     initiatedByWithDefault(e.InitiatedBy),
 		})
 		if err != nil {
 			return nil, false, err
@@ -105,6 +106,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"schedule_name": e.Name,
 			"kind":          "rerun",
 			"source_run_id": e.SourceID.String(),
+			"initiated_by":  initiatedByWithDefault(e.InitiatedBy),
 		})
 		if err != nil {
 			return nil, false, err
@@ -117,6 +119,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"schedule_name": e.Name,
 			"kind":          "rebase",
 			"source_run_id": e.SourceID.String(),
+			"initiated_by":  initiatedByWithDefault(e.InitiatedBy),
 		})
 		if err != nil {
 			return nil, false, err
@@ -133,6 +136,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"kind":            "single_node_run",
 			"metadata_source": string(e.MetadataSource),
 			"source_run_id":   sourceIDStr(e.SourceID),
+			"initiated_by":    initiatedByWithDefault(e.InitiatedBy),
 		})
 		if err != nil {
 			return nil, false, err

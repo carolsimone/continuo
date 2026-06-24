@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -49,7 +50,7 @@ func (h *RebaseHandler) TriggerRebase(ctx context.Context, req *statev1.TriggerR
 		return nil, status.Errorf(codes.InvalidArgument, "invalid source_run_id format")
 	}
 
-	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), srcID)
+	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), srcID, identity.FromContext(ctx))
 	if err != nil {
 		switch {
 		case errors.Is(err, postgres.ErrNotFound):

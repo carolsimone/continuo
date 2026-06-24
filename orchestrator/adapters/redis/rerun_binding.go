@@ -29,6 +29,7 @@ func NewRerunBinding(
 			ScheduleName: cmd.ScheduleName,
 			RunID:        cmd.RunID,
 			SourceRunID:  cmd.SourceRunID,
+			InitiatedBy:  cmd.InitiatedBy,
 		}, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 }

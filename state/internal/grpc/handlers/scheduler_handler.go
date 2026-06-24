@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
@@ -89,7 +90,7 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 
 	r, gerr := h.cancelRunTx(ctx, cancelParams{
 		scheduleID:         scheduleID,
-		cancelledBy:        req.CancelledBy,
+		cancelledBy:        effectiveCancelledBy(ctx, req.CancelledBy),
 		cancellationReason: req.CancellationReason,
 		loadNotFoundCode:   codes.NotFound,
 		loadNotFoundMsg:    "scheduler not found",
@@ -99,6 +100,19 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 		return nil, gerr
 	}
 	return &statev1.SchedulerResponse{Scheduler: runToProto(r)}, nil
+}
+
+// effectiveCancelledBy resolves who to record as the cancelling user. The
+// authenticated initiator carried in gRPC metadata is authoritative when it is
+// a real user; an unauthenticated/system caller (no metadata) falls back to the
+// request's cancelled_by so internal callers (e.g. the stuck-run watchdog) that
+// supply their own label keep recording it.
+func effectiveCancelledBy(ctx context.Context, requestCancelledBy string) string {
+	id := identity.FromContext(ctx)
+	if !id.IsSystem() {
+		return id.UserID
+	}
+	return requestCancelledBy
 }
 
 // cancelParams carries the per-call inputs to cancelRunTx.
@@ -184,7 +198,7 @@ func (h *SchedulerHandler) CancelSchedule(
 
 	r, gerr := h.cancelRunTx(ctx, cancelParams{
 		scheduleID:         active.ScheduleID(),
-		cancelledBy:        req.CancelledBy,
+		cancelledBy:        effectiveCancelledBy(ctx, req.CancelledBy),
 		cancellationReason: req.CancellationReason,
 		loadNotFoundCode:   codes.Internal,
 		loadNotFoundMsg:    "load: run not found",
@@ -295,7 +309,7 @@ func (h *SchedulerHandler) ActivateSchedule(
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
 	u := h.uowFactory()
-	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil)
+	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil, identity.FromContext(ctx))
 	if err != nil {
 		switch {
 		case errors.Is(err, run.ErrScheduleNotInCatalog):
@@ -391,7 +405,7 @@ func (h *SchedulerHandler) TriggerSchedule(
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
 	u := h.uowFactory()
-	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindTrigger, nil)
+	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindTrigger, nil, identity.FromContext(ctx))
 	if err != nil {
 		switch {
 		case errors.Is(err, run.ErrScheduleNotInCatalog):

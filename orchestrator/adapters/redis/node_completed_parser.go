@@ -5,6 +5,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -67,6 +68,18 @@ func requireString(msg goredis.XMessage, field string) (string, error) {
 		return "", fmt.Errorf("%w: message %s has empty field %q", events.ErrPermanent, msg.ID, field)
 	}
 	return raw, nil
+}
+
+// optionalInitiatedBy extracts the initiating-user provenance from a trigger
+// message. The field is optional: messages from a state version predating
+// provenance tracking omit it, and the run is then recorded as the "system"
+// sentinel rather than rejected.
+func optionalInitiatedBy(msg goredis.XMessage) string {
+	raw, ok := msg.Values["initiated_by"].(string)
+	if !ok || raw == "" {
+		return identity.SystemUserID
+	}
+	return raw
 }
 
 // requireUUID extracts a string field and parses it as a UUID, returning an

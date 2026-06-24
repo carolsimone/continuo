@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -22,10 +23,10 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 // WriteRunAndExecutesEdges writes the :Run node and one :EXECUTES edge per
 // projection entry. Idempotent on rerun.
 //
-// :Run properties: run_id, schedule_name, kind, created_at, source_run_id?,
+// :Run properties: run_id, schedule_name, kind, initiated_by, created_at,
 //
-//	topology_generation, service_metadata, total_nodes, terminal_count,
-//	version
+//	source_run_id?, topology_generation, service_metadata, total_nodes,
+//	terminal_count, version
 //
 // :EXECUTES edge:  task_id, status, image_tag, manifest_version,
 //
@@ -79,6 +80,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		ON CREATE SET run.schedule_name      = $schedule_name,
 		              run.created_at         = datetime(),
 		              run.kind               = $kind,
+		              run.initiated_by        = $initiated_by,
 		              run.topology_generation = topo_gen,
 		              run.service_metadata    = svc_meta,
 		              run.total_nodes         = $total_nodes,
@@ -107,10 +109,15 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		)
 		RETURN count(e) AS edges_created
 	`
+	initiatedBy := p.InitiatedBy
+	if initiatedBy == "" {
+		initiatedBy = identity.SystemUserID
+	}
 	result, err := w.tx.Run(ctx, query, map[string]interface{}{
 		"run_id":        p.RunID,
 		"schedule_name": p.ScheduleName,
 		"kind":          p.Kind,
+		"initiated_by":  initiatedBy,
 		"source_run_id": sourceRunIDParam,
 		"tasks":         tasks,
 		"total_nodes":   len(projection),

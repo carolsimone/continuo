@@ -18,10 +18,14 @@ type Run struct {
 	scheduleName string
 
 	// scheduler_tracker columns
-	status             SchedulerStatus
-	initStatus         InitStatus
-	kind               Kind
-	sourceRunID        *uuid.UUID
+	status      SchedulerStatus
+	initStatus  InitStatus
+	kind        Kind
+	sourceRunID *uuid.UUID
+	// initiatedBy records the user who triggered this run, or the "system"
+	// sentinel for cron / platform-initiated runs. Stamped at creation and
+	// immutable thereafter.
+	initiatedBy        string
 	createdAt          time.Time
 	startedAt          *time.Time
 	completedAt        *time.Time
@@ -64,6 +68,7 @@ func HydrateRun(
 	initStatus InitStatus,
 	kind Kind,
 	sourceRunID *uuid.UUID,
+	initiatedBy string,
 	createdAt time.Time,
 	startedAt, completedAt, lastHeartbeatAt, cancelledAt *time.Time,
 	cancelledBy, cancellationReason *string,
@@ -78,6 +83,7 @@ func HydrateRun(
 		initStatus:         initStatus,
 		kind:               kind,
 		sourceRunID:        sourceRunID,
+		initiatedBy:        initiatedBy,
 		createdAt:          createdAt,
 		startedAt:          startedAt,
 		completedAt:        completedAt,
@@ -98,6 +104,7 @@ func NewPendingRun(
 	scheduleName string,
 	kind Kind,
 	sourceRunID *uuid.UUID,
+	initiatedBy string,
 	metadata map[string]ServiceMetadata,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
@@ -118,11 +125,12 @@ func NewPendingRun(
 		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     sourceRunID,
+		initiatedBy:     initiatedBy,
 		createdAt:       now,
 		serviceMetadata: metadata,
 	}
 	r.changes.created = true
-	evt := RunStarted{ID: id, Name: scheduleName, K: kind, SourceID: sourceRunID, ServiceMetadata: metadata}
+	evt := RunStarted{ID: id, Name: scheduleName, K: kind, SourceID: sourceRunID, InitiatedBy: initiatedBy, ServiceMetadata: metadata}
 	return r, evt, nil
 }
 
@@ -132,6 +140,7 @@ func NewDerivedRun(
 	scheduleName string,
 	kind Kind,
 	sourceRunID uuid.UUID,
+	initiatedBy string,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
 	if scheduleName == "" {
@@ -148,6 +157,7 @@ func NewDerivedRun(
 		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     &sourceRunID,
+		initiatedBy:     initiatedBy,
 		createdAt:       now,
 		lastHeartbeatAt: &now,
 		serviceMetadata: map[string]ServiceMetadata{},
@@ -155,9 +165,9 @@ func NewDerivedRun(
 	r.changes.created = true
 	var evt DomainEvent
 	if kind == KindRerun {
-		evt = RerunRequested{ID: id, Name: scheduleName, SourceID: sourceRunID}
+		evt = RerunRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}
 	} else {
-		evt = RebaseRequested{ID: id, Name: scheduleName, SourceID: sourceRunID}
+		evt = RebaseRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}
 	}
 	return r, evt, nil
 }
@@ -168,6 +178,7 @@ func NewSingleNodeRun(
 	target NodeID,
 	metadataSource MetadataSource,
 	sourceRunID *uuid.UUID,
+	initiatedBy string,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
 	if scheduleName == "" {
@@ -181,6 +192,7 @@ func NewSingleNodeRun(
 		initStatus:      InitStatusInProgress,
 		kind:            KindSingleNodeRun,
 		sourceRunID:     sourceRunID,
+		initiatedBy:     initiatedBy,
 		createdAt:       now,
 		lastHeartbeatAt: &now,
 		serviceMetadata: map[string]ServiceMetadata{},
@@ -188,7 +200,7 @@ func NewSingleNodeRun(
 	r.changes.created = true
 	evt := SingleNodeRunRequested{
 		ID: id, Name: scheduleName, Target: target,
-		MetadataSource: metadataSource, SourceID: sourceRunID,
+		MetadataSource: metadataSource, SourceID: sourceRunID, InitiatedBy: initiatedBy,
 	}
 	return r, evt, nil
 }
@@ -202,6 +214,7 @@ func (r *Run) ScheduleName() string             { return r.scheduleName }
 func (r *Run) Status() SchedulerStatus          { return r.status }
 func (r *Run) Kind() Kind                       { return r.kind }
 func (r *Run) SourceRunID() *uuid.UUID          { return r.sourceRunID }
+func (r *Run) InitiatedBy() string              { return r.initiatedBy }
 func (r *Run) InitializationStatus() InitStatus { return r.initStatus }
 func (r *Run) CreatedAt() time.Time             { return r.createdAt }
 func (r *Run) StartedAt() *time.Time            { return r.startedAt }

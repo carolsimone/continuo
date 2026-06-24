@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 )
@@ -18,7 +19,7 @@ func TestNewPendingRun_RecordsRunStarted(t *testing.T) {
 		"orders": {ManifestVersion: "v1", ImageTag: "abc"},
 	}
 
-	r, evt, err := run.NewPendingRun("daily_orders", run.KindCron, nil, meta, now)
+	r, evt, err := run.NewPendingRun("daily_orders", run.KindCron, nil, identity.SystemUserID, meta, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -46,15 +47,60 @@ func TestNewPendingRun_RecordsRunStarted(t *testing.T) {
 	}
 }
 
+func TestNewRun_StampsInitiatorOnAggregateAndEvent(t *testing.T) {
+	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+	src := uuid.New()
+
+	t.Run("pending run", func(t *testing.T) {
+		r, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|alice", nil, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if r.InitiatedBy() != "okta|alice" {
+			t.Fatalf("aggregate InitiatedBy: got %q want okta|alice", r.InitiatedBy())
+		}
+		if started := evt.(run.RunStarted); started.InitiatedBy != "okta|alice" {
+			t.Fatalf("RunStarted.InitiatedBy: got %q want okta|alice", started.InitiatedBy)
+		}
+	})
+
+	t.Run("derived rerun", func(t *testing.T) {
+		r, evt, err := run.NewDerivedRun("daily", run.KindRerun, src, "okta|bob", now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if r.InitiatedBy() != "okta|bob" {
+			t.Fatalf("aggregate InitiatedBy: got %q want okta|bob", r.InitiatedBy())
+		}
+		if rr := evt.(run.RerunRequested); rr.InitiatedBy != "okta|bob" {
+			t.Fatalf("RerunRequested.InitiatedBy: got %q want okta|bob", rr.InitiatedBy)
+		}
+	})
+
+	t.Run("single node run", func(t *testing.T) {
+		target := run.NodeID{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"}
+		r, evt, err := run.NewSingleNodeRun("single-node-run-abcd1234", target, run.MetadataSourceLatest, nil, "okta|carol", now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if r.InitiatedBy() != "okta|carol" {
+			t.Fatalf("aggregate InitiatedBy: got %q want okta|carol", r.InitiatedBy())
+		}
+		if sn := evt.(run.SingleNodeRunRequested); sn.InitiatedBy != "okta|carol" {
+			t.Fatalf("SingleNodeRunRequested.InitiatedBy: got %q want okta|carol", sn.InitiatedBy)
+		}
+	})
+}
+
 func TestNewPendingRun_RejectsEmptyName(t *testing.T) {
-	_, _, err := run.NewPendingRun("", run.KindCron, nil, nil, time.Now())
+	_, _, err := run.NewPendingRun("", run.KindCron, nil, identity.SystemUserID, nil, time.Now())
 	if err != run.ErrScheduleNameRequired {
 		t.Fatalf("err: got %v want %v", err, run.ErrScheduleNameRequired)
 	}
 }
 
 func TestNewPendingRun_RejectsInvalidKind(t *testing.T) {
-	_, _, err := run.NewPendingRun("x", run.Kind("bogus"), nil, nil, time.Now())
+	_, _, err := run.NewPendingRun("x", run.Kind("bogus"), nil, identity.SystemUserID, nil, time.Now())
 	if err != run.ErrInvalidKind {
 		t.Fatalf("err: got %v want %v", err, run.ErrInvalidKind)
 	}
@@ -146,7 +192,7 @@ func (f *fakeTaskCollection) Update(_ context.Context, t run.Task) error {
 // zero counters — the state on entry to AcceptDispatch.
 func freshPendingRun(t *testing.T) *run.Run {
 	t.Helper()
-	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, nil, time.Now())
+	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}

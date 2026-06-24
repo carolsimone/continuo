@@ -98,7 +98,7 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 			InheritedFromTaskID: &rootB,
 		},
 	}
-	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "rebase", SourceRunID: &srcRun}
+	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "rebase", SourceRunID: &srcRun, InitiatedBy: "okta|alice"}
 
 	session := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(context.Background())
@@ -113,7 +113,7 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	rec, err := read.ExecuteRead(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		r, err := tx.Run(context.Background(), `
 			MATCH (run:Run {run_id: $run_id})
-			RETURN run.kind AS kind, run.source_run_id AS source_run_id, run.schedule_name AS schedule_name`,
+			RETURN run.kind AS kind, run.source_run_id AS source_run_id, run.schedule_name AS schedule_name, run.initiated_by AS initiated_by`,
 			map[string]interface{}{"run_id": runID})
 		if err != nil {
 			return nil, err
@@ -133,6 +133,7 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	require.Equal(t, "rebase", runRec["kind"])
 	require.Equal(t, srcRun.String(), runRec["source_run_id"])
 	require.Equal(t, scheduleName, runRec["schedule_name"])
+	require.Equal(t, "okta|alice", runRec["initiated_by"])
 
 	// Assert :EXECUTES edge properties for each task.
 	rec2, err := read.ExecuteRead(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
