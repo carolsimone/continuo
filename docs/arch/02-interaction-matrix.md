@@ -9,25 +9,27 @@ Legend:
 - `RW` = both
 - `-` = no direct interaction found
 
-| Service | Own Postgres | Own Neo4j | Redis | state gRPC | orchestrator gRPC | release-controller HTTP | K8s API | S3 | dbt Postgres | LLM provider HTTPS | agent-runner gRPC |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `state` | `RW` | `-` | `RW` | server | `-` | `-` | `-` | `-` | `-` | `-` | `-` |
-| `orchestrator` | `RW` (`topology_state` also read on query path) | `RW` | `RW` | `R` (watchdog) | server | `-` | `-` | `-` | `-` | `-` | `-` |
-| `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `W` | `-` | `W` (candidate schema teardown) | `-` | `-` |
-| `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `R` | `W` | `-` | `-` | `-` |
-| `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `-` | `RW` | `-` | `-` | `-` |
-| `release-controller` | `RW` | `-` | `RW` | `-` | `-` | server | `-` | `W` (prune-time delete of `candidate-sql/<release_id>/`) | `-` | `-` | `-` |
-| `ui-service` | `-` | `-` | `RW` | `RW` | `R` | `R` | `-` | `R` | `-` | `-` | `RW` (bidi stream) |
-| `agent-runner` | `RW` (`continuo_agent`) | `-` | `RW` (optional, rate limiter) | `-` | `-` | `-` | `-` | `W` (optional archive) | `-` | `W` (tool-use loop) | server |
-| `remediation` | `RW` (`continuo_remediation`) | `-` | `RW` | `-` | `-` | `-` | `-` | `R` (dbt log fetch from `logs/` prefix) | `-` | `-` | `-` |
-| `remediation-agent` | `RW` (`continuo_remediation_agent`) | `-` | `RW` | `-` | `R` (`GetNodeAncestry`, best-effort) | `-` | `-` | `RW` (read candidate SQL + dbt log; write `proposed-fix/` artifacts) | `-` | `W` (Anthropic or OpenAI-compatible HTTPS) | `-` |
-| `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` | `-` | `-` | `-` |
+| Service | Own Postgres | Own Neo4j | Redis | state gRPC | orchestrator gRPC | release-controller HTTP | K8s API | S3 | dbt Postgres | LLM provider HTTPS | GitHub HTTPS | agent-runner gRPC |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `state` | `RW` | `-` | `RW` | server | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` |
+| `orchestrator` | `RW` (`topology_state` also read on query path) | `RW` | `RW` | `R` (watchdog) | server | `-` | `-` | `-` | `-` | `-` | `-` | `-` |
+| `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `W` | `-` | `W` (candidate schema teardown) | `-` | `-` | `-` |
+| `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `R` | `W` | `-` | `-` | `-` | `-` |
+| `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `-` | `RW` | `-` | `-` | `-` | `-` |
+| `release-controller` | `RW` | `-` | `RW` | `-` | `-` | server | `-` | `W` (prune-time delete of `candidate-sql/<release_id>/`) | `-` | `-` | `-` | `-` |
+| `ui-service` | `-` | `-` | `RW` | `RW` | `R` | `R` | `-` | `R` | `-` | `-` | `-` | `RW` (bidi stream) |
+| `agent-runner` | `RW` (`continuo_agent`) | `-` | `RW` (optional, rate limiter) | `-` | `-` | `-` | `-` | `W` (optional archive) | `-` | `W` (tool-use loop) | `-` | server |
+| `remediation` | `RW` (`continuo_remediation`) | `-` | `RW` | `-` | `-` | `-` | `-` | `R` (dbt log fetch from `logs/` prefix) | `-` | `-` | `-` | `-` |
+| `remediation-agent` | `RW` (`continuo_remediation_agent`) | `-` | `RW` | `-` | `R` (`GetNodeAncestry`, best-effort; called twice per proposal) | `-` | `-` | `RW` (read candidate SQL + dbt log; write `proposed-fix/` artifacts) | `-` | `W` (Anthropic or OpenAI-compatible HTTPS) | `R` (Contents API, read-only; model source at `commit_sha`) | `-` |
+| `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` | `-` | `-` | `-` | `-` |
 
 > `ui-service` uses Redis only for server-side login sessions (`AUTH_MODE=oidc`): plain `uisession:<id>` keys with TTLs, created at the OIDC (OpenID Connect) callback, read and refreshed on every authenticated request, deleted on logout. They are ordinary keys, not Redis Streams — `ui-service` produces and consumes no stream events, and `pkg/streams/contract.yaml` is unaffected. In `AUTH_MODE=dev` it constructs no Redis client.
 
 > `continuo CLI` is an external consumer (not a Docker Compose service). It is invoked by humans or LLM agents and makes direct gRPC calls to `state` (port 50051) and `orchestrator` (port 50052). It produces no Redis events and holds no durable state.
 
 > `agent-runner` reaches `state` and `orchestrator` indirectly: it spawns the bundled `continuo` CLI binary via direct argv exec (no shell) and that subprocess makes the gRPC calls. `agent-runner` itself holds no gRPC stubs for those services and never imports their internals. Its S3 writes are optional chat-archive uploads to `chat-archive/<user>/<thread>.json`. Chat conversations involve no Redis Streams — the `AgentChat.Chat` RPC is a synchronous bidirectional gRPC stream between `ui-service` and `agent-runner`. When `REDIS_ADDR` is set, `agent-runner` holds one Redis connection used solely for the shared per-user rate limiter (plain sorted-set keys, not a stream).
+
+> `remediation-agent` GitHub access is read-only: it calls the Contents API (`GET /repos/{repo}/contents/{path}?ref={commit_sha}`) with `Accept: application/vnd.github.raw+json` to fetch a dbt model source file at the release commit SHA. It never writes to, commits to, or opens pull requests against any repository. The call is authenticated with a fine-grained PAT (`GITHUB_TOKEN`, `Contents: Read` on the dbt repo) when the token is set; without a token the request is unauthenticated (subject to rate limits). GitHub is a Step-2 best-effort dependency: any failure degrades to the candidate proposal (`source_resolved=false`) without affecting trigger reliability.
 
 ## Redis Stream Matrix
 
@@ -104,7 +106,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `ui-service` | read | `GetObject` — task-execution pod logs (proxied via `GET /api/task-executions/:id/logs`) and dbt validation logs (proxied via `GET /api/releases/log`) |
 | `agent-runner` | write (optional) | `PutObject` — conversation archive to `chat-archive/<user>/<thread>.json` before a thread is deleted by the retention job; enabled when `RETENTION_ARCHIVE_S3=true` |
 | `remediation` | read | `GetObject` — dbt execution log per failing node (`logs/` prefix, URI supplied by `release.rejected:v1`); fetch failure on a missing key is treated as an empty log and classified `unknown:log_unavailable` |
-| `remediation-agent` | read + write | `GetObject` — candidate SQL (from `candidate_sql_uri` in the trigger) and dbt log (from `dbt_log_uri`); `PutObject` — proposed SQL to `proposed-fix/<release_id>/<node_id>/attempt-<attempt>.sql` and unified diff to `proposed-fix/<release_id>/<node_id>/attempt-<attempt>.diff` |
+| `remediation-agent` | read + write | `GetObject` — candidate SQL (from `candidate_sql_uri` in the trigger) and dbt log (from `dbt_log_uri`); `PutObject` — candidate artifacts: `proposed-fix/<release_id>/<node_id>/attempt-<attempt>.sql` and `attempt-<attempt>.diff` (always written); real-source artifacts (written when Step 2 succeeds): `attempt-<attempt>.source.sql` and `attempt-<attempt>.source.diff` |
 
 ## Local Durable State by Service
 
