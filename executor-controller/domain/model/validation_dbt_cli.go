@@ -11,8 +11,11 @@ import (
 // ValidationCommand returns the container command for a single validation node.
 //
 // Seeds have no SELECT to rewrite: dbt builds an empty seed table in the
-// candidate schema (DBT_TARGET_SCHEMA) from the CSV's column definitions, so they
-// keep `dbt seed --select <table> --empty`.
+// candidate schema (DBT_TARGET_SCHEMA) from the CSV's column definitions. They
+// run through seed_validation_runner.py, which executes
+// `dbt seed --select <table> --empty` and then projects target/run_results.json
+// into the structured validation-result block, so seed nodes emit the same
+// structured result as model/snapshot nodes.
 //
 // Models and snapshots are built by validation_runner.py, which fetches the
 // compiled SQL from S3 via the CANDIDATE_SQL_URI env var and executes
@@ -22,8 +25,7 @@ import (
 // dependency order — no model edits, no dbt recompile from production-schema refs.
 func ValidationCommand(nt pkg_model.NodeType, tableName string) []string {
 	if nt == pkg_model.NodeTypeDbtSeed {
-		args := append([]string{}, nt.Command(tableName)...) // dbt seed --select <table>
-		return append(args, "--empty")
+		return []string{"python", "/seed_validation_runner.py", "--select", tableName}
 	}
 	return []string{"python", "/validation_runner.py"}
 }

@@ -21,6 +21,13 @@ COPY macros/ /project/macros/
 # model/snapshot nodes instead of `dbt run`.
 COPY validation_runner.py /validation_runner.py
 
+# Shared structured-result contract + the seed validation wrapper. Both validation
+# entrypoints print a sentinel-framed result block on stdout; the seed wrapper runs
+# `dbt seed --empty` and projects target/run_results.json into that contract. Run
+# flat at /, so the contract module is imported via the import shim in each script.
+COPY validation_result.py /validation_result.py
+COPY seed_validation_runner.py /seed_validation_runner.py
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
