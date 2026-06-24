@@ -50,7 +50,9 @@ Exposes no gRPC services of its own.
 |---|---|
 | `GET /repos/{repo}/contents/{path}?ref={commit_sha}` | Read-only fetch of the real dbt model source file at the release commit. `Accept: application/vnd.github.raw+json`. Authenticated with `Authorization: Bearer <GITHUB_TOKEN>` when the token is set; unauthenticated otherwise. 404 → `ErrSourceNotFound` (degrades to candidate proposal). Any non-2xx or network error also degrades gracefully. |
 
-No write requests are issued. The agent holds no GitHub write permissions.
+The `{path}` is formed by joining the service's `repo_path` from `service_repos.yaml` with the dbt node's `original_file_path` from the orchestrator topology. The `{repo}` comes from the `remediation.requested:v1` trigger payload. No write requests are issued. The agent holds no GitHub write permissions.
+
+`GITHUB_TOKEN` is injected at deploy time from the chart-managed secret `continuo-app-credentials` (key `GITHUB_TOKEN`, sourced from `global.github.token` in Helm values). No out-of-band secret mechanism is used.
 
 ## Data Flow
 
@@ -98,15 +100,20 @@ No write requests are issued. The agent holds no GitHub write permissions.
 
 ── Step 2: real-source fix ────────────────────────────────────────────────────
 
-12. Call orchestrator GetNodeAncestry(node_id, depth=0) → file_path of the
-    failing node itself.
+12. Call orchestrator GetNodeAncestry(node_id, depth=0) → file_path (original_file_path)
+    of the failing node itself.
     - file_path empty or call fails: skip Step 2, keep candidate proposal
       (logged warning; no error returned).
+    - Look up the node's service_name in the service→repo mapping loaded from
+      SERVICE_REPO_MAP_PATH (service_repos.yaml). If the service is unmapped or
+      SERVICE_REPO_MAP_PATH is empty: skip Step 2, keep candidate proposal.
+    - Build the GitHub content path as: <repo_path>/<original_file_path>.
 
 13. Read real model source from GitHub Contents API:
-      GET /repos/{repo}/contents/{file_path}?ref={commit_sha}
-    - 404, empty GITHUB_TOKEN, or any HTTP/network error: skip Step 2, keep
-      candidate proposal (logged warning; no error returned).
+      GET /repos/{repo}/contents/{path}?ref={commit_sha}
+    where {repo} comes from the trigger and {path} is constructed in step 12.
+    - 404, empty GITHUB_TOKEN, unmapped service, or any HTTP/network error: skip
+      Step 2, keep candidate proposal (logged warning; no error returned).
 
 14. Forced single-shot LLM tool call (propose_fix) with the real source and the
     Step-1 rationale as context. Result is a corrected real-source SQL.
@@ -227,7 +234,8 @@ All downstream actions — review, approval, and PR creation — are human actio
 | `LLM_MODEL` | yes | — | Model identifier (e.g. `claude-haiku-4-5`) |
 | `LLM_API_KEY` | no | `""` | API key for `anthropic`/`openai` providers |
 | `LLM_BASE_URL` | conditional | `""` | Base URL; required when `LLM_PROVIDER=openai-compatible` |
-| `GITHUB_TOKEN` | no | `""` | Personal access token (PAT) with `Contents: Read` on the dbt repo. Empty → unauthenticated requests (rate-limited); Step 2 degrades to candidate proposal if reads fail |
+| `GITHUB_TOKEN` | no | `""` | Read-only fine-grained PAT with `Contents: Read` on the dbt repo. In Helm, sourced from `global.github.token` in the chart-managed secret `continuo-app-credentials`. Empty disables Step-2 source fetch; the agent degrades to the candidate proposal. |
+| `SERVICE_REPO_MAP_PATH` | no | `""` | Path to `service_repos.yaml`, which maps each dbt service name to its project root within the source repo. In Helm, set to `/etc/continuo/service_repos.yaml` and backed by the `continuo-app-service-repos` ConfigMap (built from `deploy/app/files/service_repos.yaml`). In docker-compose (dev/e2e), bind-mounted from `remediation-agent/config/service_repos.yaml`. Empty disables the lookup and causes Step 2 to degrade to the candidate proposal. |
 | `GITHUB_BASE_URL` | no | `https://api.github.com` | GitHub REST API root; override for e2e stub (`stub-github`) |
 | `CONTINUO_ORCHESTRATOR_ADDR` | no | `orchestrator:50052` | Orchestrator gRPC endpoint |
 | `REMEDIATION_AGENT_HTTP_PORT` | no | `8092` | `/healthz` port |
@@ -246,6 +254,9 @@ All downstream actions — review, approval, and PR creation — are human actio
 | S3 evidence reader + artifact writer | `remediation-agent/adapters/s3/` |
 | gRPC ancestry client | `remediation-agent/adapters/grpc/ancestry_client.go` |
 | GitHub read-only source reader | `remediation-agent/adapters/github/source_reader.go` |
+| Service→repo map config loader | `remediation-agent/config.go` (reads `SERVICE_REPO_MAP_PATH`, parses `service_repos.yaml`) |
+| Service→repo map file (dev + e2e) | `remediation-agent/config/service_repos.yaml` |
+| Service→repo map file (Helm chart) | `deploy/app/files/service_repos.yaml` (rendered into `continuo-app-service-repos` ConfigMap, mounted at `/etc/continuo`) |
 | Anthropic LLM adapter | `remediation-agent/adapters/llm/anthropic.go` |
 | OpenAI-compatible LLM adapter | `remediation-agent/adapters/llm/openai.go` |
 | Pass-through log sanitizer | `remediation-agent/adapters/sanitizer/passthrough.go` |
