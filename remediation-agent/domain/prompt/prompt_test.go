@@ -5,6 +5,35 @@ import (
 	"testing"
 )
 
+func TestAssembleSourceFix_EmbedsSourceAndDiagnosis(t *testing.T) {
+	req := AssembleSourceFix(
+		"select * from {{ ref('table_b') }} join {{ ref('table_c') }} using (id) join public.silly_error using (id)",
+		"analytics.table_e",
+		"Remove the invalid join to public.silly_error which does not exist.",
+	)
+	if req.ToolName != "propose_fix" {
+		t.Fatalf("tool name = %q, want propose_fix", req.ToolName)
+	}
+	if !strings.Contains(req.User, "silly_error") || !strings.Contains(req.User, "ref('table_b')") {
+		t.Errorf("user content missing original source:\n%s", req.User)
+	}
+	if !strings.Contains(req.User, "Remove the invalid join") {
+		t.Errorf("user content missing diagnosis:\n%s", req.User)
+	}
+	if !strings.Contains(req.System, "complete corrected") {
+		t.Errorf("system prompt must require the complete corrected source:\n%s", req.System)
+	}
+	hasProposedSQL := false
+	for _, p := range req.ToolParams {
+		if p.Name == "proposed_sql" {
+			hasProposedSQL = true
+		}
+	}
+	if !hasProposedSQL {
+		t.Errorf("tool must keep proposed_sql param so the adapters parse it unchanged")
+	}
+}
+
 func TestAssemble_IncludesEvidenceAndForcesTool(t *testing.T) {
 	req := Assemble(Evidence{
 		NodeID:       "e2e_schema.ftable_e",

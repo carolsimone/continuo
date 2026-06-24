@@ -44,6 +44,39 @@ type ProposeRequest struct {
 	ToolParams      []ToolParam
 }
 
+const sourceFixSystemPrompt = `You are a data-engineering assistant that applies a diagnosed fix to a dbt model's ACTUAL source file.
+You are given the original model source (which may use dbt {{ ref(...) }} / {{ source(...) }} and real schema names) and a diagnosis of the fix to apply.
+
+Rules:
+- Apply the diagnosed fix to the original source, preserving its real refs, schemas, macros, and formatting style.
+- Return the complete corrected source for the model, not a diff and not a fragment.
+- Do not rewrite refs to physical schema names; keep {{ ref(...) }} / {{ source(...) }} exactly as in the original.
+- If the diagnosis cannot be safely applied, return the original source unchanged with low confidence and an explanation.
+- Always respond by calling the propose_fix tool.`
+
+// AssembleSourceFix builds the Step-2 request: apply the Step-1 diagnosis to the
+// real model source. It reuses the propose_fix tool schema (proposed_sql holds
+// the complete corrected source) so the provider adapters parse it unchanged.
+func AssembleSourceFix(originalSource, nodeID, diagnosis string) ProposeRequest {
+	var u strings.Builder
+	fmt.Fprintf(&u, "Model: %s\n\n", nodeID)
+	fmt.Fprintf(&u, "Original model source:\n```sql\n%s\n```\n\n", originalSource)
+	fmt.Fprintf(&u, "Diagnosis to apply:\n%s\n\n", diagnosis)
+	u.WriteString("Return the complete corrected source for this model.")
+
+	return ProposeRequest{
+		System:          sourceFixSystemPrompt,
+		User:            u.String(),
+		ToolName:        "propose_fix",
+		ToolDescription: "Return the complete corrected source for the dbt model.",
+		ToolParams: []ToolParam{
+			{Name: "proposed_sql", Type: "string", Description: "The complete corrected model source.", Required: true},
+			{Name: "rationale", Type: "string", Description: "A short explanation of the change. No warehouse data values.", Required: true},
+			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
+		},
+	}
+}
+
 const systemPrompt = `You are a data-engineering assistant that proposes a fix for a failed dbt model.
 You are given the failed model's SQL, the dbt error, and metadata about which upstream
 models changed recently. Propose a corrected version of the failed model's SQL that makes
