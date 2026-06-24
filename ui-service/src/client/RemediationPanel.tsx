@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ProposalDTO } from './types';
 import { fetchProposals } from './remediation-api';
+import { useCurrentUser } from './auth/AuthContext';
+import CreatePrModal from './CreatePrModal';
 
 // DiffView mirrors the LogView component in ReleaseDetailPage: toggle view/hide,
 // fetch content from /api/releases/log?key=<uri>, and link out to the full source.
@@ -47,9 +49,11 @@ function statusLabel(proposal: ProposalDTO): string {
 }
 
 export default function RemediationPanel() {
+  const currentUser = useCurrentUser();
   const [proposals, setProposals] = useState<ProposalDTO[]>([]);
   const [selected, setSelected] = useState<ProposalDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showCreatePrModal, setShowCreatePrModal] = useState(false);
 
   useEffect(() => {
     fetchProposals()
@@ -150,7 +154,27 @@ export default function RemediationPanel() {
               </a>
             )}
 
-            {/* Task 16 adds the Create-PR operator action here */}
+            {currentUser?.role === 'operator' && selected.source_resolved && !selected.pr_url && (
+              <button
+                type="button"
+                className="btn btn--secondary"
+                onClick={() => setShowCreatePrModal(true)}
+              >
+                Create PR
+              </button>
+            )}
+
+            {showCreatePrModal && selected && (
+              <CreatePrModal
+                proposal={selected}
+                onClose={() => setShowCreatePrModal(false)}
+                onCreated={(prUrl) => {
+                  setSelected(prev => prev ? { ...prev, pr_url: prUrl } : prev);
+                  setProposals(prev => prev.map(p => p.id === selected.id ? { ...p, pr_url: prUrl } : p));
+                  setShowCreatePrModal(false);
+                }}
+              />
+            )}
           </div>
         </div>
       )}
