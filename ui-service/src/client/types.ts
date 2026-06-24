@@ -187,3 +187,30 @@ export interface NodesResponse {
 export type NodeDetailFrom =
   | { type: 'schedule'; name: string; mode: 'run' | 'latest' }
   | { type: 'nodes' };
+
+export interface ProposalDTO {
+  id: string;
+  source: string;
+  release_id: string;
+  node_id: string;
+  error_signature: string;
+  attempt: number;
+  status: string;
+  confidence: string;
+  rationale: string;
+  proposed_sql_uri: string;
+  diff_uri: string;
+  candidate_fix_sql_uri: string;
+  candidate_fix_diff_uri: string;
+  source_resolved: boolean;
+  repo: string;
+  commit_sha: string;
+  file_path: string;
+  model: string;
+  created_at: string;
+  pr_url: string;
+  pr_number: number;
+  pr_state: string;
+  pr_opened_at: string;
+  pr_opened_by: string;
+}
