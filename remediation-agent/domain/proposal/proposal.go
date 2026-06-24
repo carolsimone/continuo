@@ -46,6 +46,15 @@ type Proposal struct {
 	// SourceResolved indicates that the real-source fix step produced a
 	// confident result; false when the step was skipped or inconclusive.
 	SourceResolved      bool
+	// Repo is the version-control repository (owner/name) from which the source
+	// file was fetched (e.g. "owner/continuo-dbt-demo"). Empty when not resolved.
+	Repo                string
+	// CommitSHA is the git commit hash at which the source file was fetched.
+	// Empty when not resolved.
+	CommitSHA           string
+	// FilePath is the repository-relative path of the dbt model source file
+	// (e.g. "services/service-3/models/orders_d.sql"). Empty when not resolved.
+	FilePath            string
 	Model               string
 	CreatedAt           time.Time
 }

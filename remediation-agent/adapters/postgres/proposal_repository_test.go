@@ -252,3 +252,39 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 
 	require.NoError(t, tx.Commit())
 }
+
+// TestInsert_PersistsSourceLocation inserts a proposal with repo, commit_sha,
+// and file_path set and verifies they are written to and read back from the DB.
+func TestInsert_PersistsSourceLocation(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	repo := NewProposalRepository(db)
+
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-1",
+		NodeID:         "model.p.orders_d",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		SourceResolved: true,
+		Repo:           "owner/continuo-dbt-demo",
+		CommitSHA:      "abc123",
+		FilePath:       "services/service-3/models/orders_d.sql",
+		CreatedAt:      time.Now(),
+	}
+	require.NoError(t, repo.Insert(ctx, p))
+
+	var got struct {
+		Repo      string `db:"repo"`
+		CommitSha string `db:"commit_sha"`
+		FilePath  string `db:"file_path"`
+	}
+	require.NoError(t, db.GetContext(ctx, &got,
+		`SELECT repo, commit_sha, file_path FROM proposal WHERE release_id=$1 AND node_id=$2 AND attempt=$3`,
+		"r-1", "model.p.orders_d", 1))
+	require.Equal(t, "owner/continuo-dbt-demo", got.Repo)
+	require.Equal(t, "abc123", got.CommitSha)
+	require.Equal(t, "services/service-3/models/orders_d.sql", got.FilePath)
+}
