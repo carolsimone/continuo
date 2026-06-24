@@ -30,7 +30,7 @@ flowchart LR
     K8S[(Kubernetes API)]
     R[(Redis)]
     LLM[(LLM provider HTTPS)]
-    GH[(GitHub Contents API)]
+    GH[(GitHub HTTPS)]
   end
 
   ST --> STDB
@@ -58,6 +58,8 @@ flowchart LR
   UI --> ST
   UI --> OR
   UI --> AR
+  UI --> REMA
+  UI --> GH
 
   EC --> K8S
   KC --> K8S
@@ -71,6 +73,7 @@ flowchart LR
   REMA --> LLM
   REMA -.-> GH
   REMA --> OR
+  UI --> S3
 ```
 
 ## Redis Topology

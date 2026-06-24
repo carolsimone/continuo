@@ -16,6 +16,7 @@ It provides:
 - rebase triggering: proxies `POST /api/schedulers/:id/rebase` to the `TriggerRebase` gRPC method on `state`
 - single-node run triggering: proxies `POST /api/nodes/:service/:schema/:table/run` to the `TriggerSingleNodeRun` gRPC method on `state`
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`
+- a **Remediation** tab (5th dashboard tab): lists fix proposals from `remediation-agent` with diff, rationale, confidence, and source lineage; `operator` users can click **Create PR** to open a GitHub pull request applying the corrected real-source SQL; `viewer` users see the surface read-only. ui-service holds the GitHub App write credential, reads the corrected source from S3, and records the PR result back to remediation-agent over gRPC. The release detail page carries a lightweight back-link to any associated proposal.
 - a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): an operator-only WebSocket (WS) endpoint that relays browser messages over a bidirectional gRPC stream to `agent-runner`, which runs the LLM (Large Language Model) tool-use loop; the WebSocket upgrade is operator-only and the endpoint is gated off by default
 
 Its only datastore is Redis, used in `AUTH_MODE=oidc` for server-side login sessions under plain `uisession:` keys (not Redis Streams). It owns no Postgres or Neo4j storage.
@@ -236,6 +237,16 @@ All `/api` routes below require an authenticated session; mutating methods (ever
 |---|---|---|
 | `/api/features` | GET | Returns `{ "chatBridgeEnabled": boolean }`, reflecting `CHAT_BRIDGE_ENABLED`. The SPA reads this on load to decide whether to mount the chat panel and open `/ws/chat`. |
 
+#### Remediation API
+
+| Route | Method | Auth | Backend |
+|---|---|---|---|
+| `/api/remediation/proposals` | GET | authenticated | `ListProposals` → remediation-agent gRPC. Returns proposals ordered `created_at DESC`. Supports `status` and `pr_state` filter query params for the inbox view. |
+| `/api/remediation/proposals/:id` | GET | authenticated | `GetProposal` → remediation-agent gRPC. |
+| `/api/remediation/proposals/:id/pull-request` | POST | `operator` | `BeginPullRequest` → claim; S3 read of `proposed_sql_uri`; GitHub App: create branch + commit file + open PR; `RecordPullRequest` on success or `FailPullRequest` on GitHub error. Returns `{ pr_url }`. Returns 409 when the proposal is already `opening`/`open` (with existing `pr_url`). Returns 422 when `source_resolved=false`. |
+
+The Create PR route requires the GitHub App to be provisioned (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`); without them it returns a clear configuration-error response while the read/list paths remain functional.
+
 #### Chat WebSocket
 
 | Route | Protocol | Description |
@@ -278,6 +289,29 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 | `AgentChat.Chat` (bidirectional streaming) | `/ws/chat` WebSocket connection (operator-only, `CHAT_BRIDGE_ENABLED=true`) |
 
 Each WebSocket connection opens one bidirectional `AgentChat.Chat` gRPC stream. The authenticated `user_id` is forwarded in the first `Open` event written to the stream (alongside the optional `thread_id` taken from the WebSocket URL query parameter). WebSocket frames are translated to `ClientEvent` proto messages on the request side; `ServerEvent` proto messages are translated back to JSON WebSocket frames on the response side.
+
+### gRPC to `remediation-agent` (`REMEDIATION_AGENT_GRPC_ADDR`, default `localhost:50054`)
+
+| Method | Route that calls it |
+|---|---|
+| `ListProposals` | `GET /api/remediation/proposals` |
+| `GetProposal` | `GET /api/remediation/proposals/:id` |
+| `BeginPullRequest` | `POST /api/remediation/proposals/:id/pull-request` (claim step) |
+| `RecordPullRequest` | `POST /api/remediation/proposals/:id/pull-request` (after GitHub PR created) |
+| `FailPullRequest` | `POST /api/remediation/proposals/:id/pull-request` (on GitHub error, to reset `pr_state` to `failed`) |
+
+### GitHub App (write credential, minted per-request)
+
+ui-service holds the GitHub App ID, private key, and installation ID (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`). For each Create PR request it mints a short-lived (~1h) installation token and performs:
+
+1. Fetch `main` branch HEAD SHA (to base the new branch on).
+2. Create branch `remediation/<release_id>/<node_id>-attempt<n>` (deterministic; a 422 "Reference already exists" is treated as idempotent).
+3. Create or update `file_path` with the corrected source SQL read from S3.
+4. Open a PR (`base=main`, `head=<branch>`). A 422 "PR already exists for head" is handled by looking up and returning the existing PR.
+
+The App is installed on the single dbt-demo repo only (`contents:write` + `pull-requests:write`). It never calls merge or delete APIs and never targets `main` directly. `main` branch protection (require PR + review) is the final gate.
+
+Implemented via the `PullRequestCreator` interface in `ui-service/src/server/github/pull-request-creator.ts`.
 
 ### HTTP to `release-controller` (`RELEASE_CONTROLLER_URL`, default `http://release-controller:8088`)
 
@@ -327,6 +361,8 @@ Beyond the session keyspace above, `ui-service` reaches backends through gRPC (`
 | Current production release + topology snapshot | `release-controller GET /current-prod` |
 | Pod logs | S3 (via `log_s3_key` from task execution records) |
 | dbt validation logs | S3 (via `dbt_log_uri` from per-node validation results) |
+| Remediation proposals (list + detail, incl. PR state) | `remediation-agent.ListProposals` / `GetProposal` |
+| Corrected real-source SQL (for PR creation) | S3 (`proposed_sql_uri` → `.source.sql`) |
 | Login session records | Redis `uisession:<id>` keys (oidc mode) |
 
 ## What It Writes
@@ -337,6 +373,8 @@ Beyond the session keyspace above, `ui-service` reaches backends through gRPC (`
 | Rebase trigger (re-execute failed/cancelled tasks + new arrivals against latest topology) | `state.TriggerRebase` via `POST /api/schedulers/:id/rebase` |
 | Single-node run trigger (one-task ad-hoc run for a specific dbt node) | `state.TriggerSingleNodeRun` via `POST /api/nodes/:service/:schema/:table/run` |
 | Schedule trigger (start full DAG run) | `state.TriggerSchedule` via `POST /api/schedules/:name/trigger` |
+| PR claim (BeginPullRequest), PR record (RecordPullRequest), PR failure reset (FailPullRequest) | `remediation-agent` gRPC (operator-only) |
+| GitHub pull request (branch + file commit + PR open) | GitHub App API (operator-only, single dbt-demo repo) |
 | Login session records (create at callback, sliding-TTL refresh per request, delete on logout) | Redis `uisession:<id>` keys (oidc mode) |
 
 ## Data Transformations
@@ -356,7 +394,7 @@ Beyond the session keyspace above, `ui-service` reaches backends through gRPC (`
 
 - React SPA (TypeScript + Vite)
 - Auth shell: `useAuth` bootstraps identity from `GET /auth/me` on load and flips to unauthenticated when any later `/api` call returns 401 (server-side session expiry); the unauthenticated state renders `SignInPage` (which links to `/auth/login`) instead of the app; the authenticated state renders a `UserMenu` (the user's email and a sign-out action via `POST /auth/logout`). The chat panel mounts only for `operator` users (and only when the chat bridge is enabled).
-- `DashboardPage`: three URL-routed tabs under the page header — `Runs` (default, `/?tab=runs`) shows the `SchedulerCard` list, `Topology` (`/?tab=topology`) shows the `SnapshotTile` grid, and `Releases` (`/?tab=releases`) shows `ReleasesPanel`. Schedule and topology data sources poll every 5 seconds regardless of active tab: `/api/schedules` feeds the `Runs` tab and the `Runs` count pill; `/api/topology/schedules` feeds the `Topology` tab and its count pill. Each snapshot tile navigates to `/schedule/:name/latest`.
+- `DashboardPage`: five URL-routed tabs under the page header — `Runs` (default, `/?tab=runs`) shows the `SchedulerCard` list, `Topology` (`/?tab=topology`) shows the `SnapshotTile` grid, `Releases` (`/?tab=releases`) shows `ReleasesPanel`, `Nodes` (`/?tab=nodes`), and `Remediation` (`/?tab=remediation`) shows the `RemediationPage` proposal inbox. Schedule and topology data sources poll every 5 seconds regardless of active tab: `/api/schedules` feeds the `Runs` tab and the `Runs` count pill; `/api/topology/schedules` feeds the `Topology` tab and its count pill. Each snapshot tile navigates to `/schedule/:name/latest`. The `Remediation` tab carries a count badge showing the number of proposals awaiting a human (`status='proposed'` AND `pr_state IN ('', 'failed')`).
 - `ReleasesPanel`: displays the live `current_prod` release, the first in-flight candidate (parsing or validating), and a paginated release history list with status filtering. Fetches `/api/releases/current-prod` and `/api/releases` (with optional `status` and `cursor` params); supports load-more pagination via `next_cursor`. Each release row links to `ReleaseDetailPage`.
 - `ReleaseDetailPage`: full detail view for a single release at `/releases/:id`. Fetches `/api/releases/:id`. Shows status, bootstrap flag, reject reason, and a per-node validation results table. Each row with a `dbt_log_uri` includes an inline log viewer that fetches `/api/releases/log?key=<uri>` on demand.
 - `SchedulerCard`: displays schedule name, running status, cron expression, last run time and progress; polls `/api/schedulers/:last_run_id/tasks` for task progress and `/api/runs/:last_run_id/graph` for topology-drift information (both every 5 s); shows a warning strip when the last run's `run_topology_generation` is older than the orchestrator's `latest_topology_generation`, matching the drift logic used on the schedule detail page; includes a "Trigger run" button to start a full DAG run (disabled while a run is active) and a "Cancel" button while a run is in flight
@@ -365,10 +403,11 @@ Beyond the session keyspace above, `ui-service` reaches backends through gRPC (`
 - `PastRunsPanel`: lists historical runs from `orchestrator.ListRuns`
 - `NodeDetailPage`: per-node detail page; fetches recent run history via `GET /api/nodes/:service/:schema/:table/runs`; provides a "Trigger run" control that opens `RunSourcePickerDialog` to select between latest metadata and a pinned source run
 - `RunSourcePickerDialog`: modal for choosing `metadata_source` (`latest` or `snapshot_of_run`) before calling `POST /api/nodes/:service/:schema/:table/run`
+- `RemediationPage`: the Remediation tab surface. Lists all proposals from `/api/remediation/proposals`, each row expandable to a detail card showing diff, rationale, confidence, `source_resolved`, and origin (release + node). `operator` users see an active **Create PR** button (disabled with tooltip when `source_resolved=false`); `viewer` users see the surface read-only. Clicking Create PR calls `POST /api/remediation/proposals/:id/pull-request` and displays the returned `pr_url` as a link. `ReleaseDetailPage` carries a lightweight "Proposed fix available →" back-link for releases that have at least one associated proposal.
 
 ## Reliability Notes
 
-- Mostly read-only; write-side effects are `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), `TriggerRebase` (via `POST /api/schedulers/:id/rebase`), `TriggerSingleNodeRun` (via `POST /api/nodes/:service/:schema/:table/run`), and `TriggerSchedule` (via `POST /api/schedules/:name/trigger`). All trigger calls delegate atomicity and error semantics to `state`.
+- Mostly read-only; write-side effects are `TriggerRerun` (via `POST /api/schedulers/:id/rerun`), `TriggerRebase` (via `POST /api/schedulers/:id/rebase`), `TriggerSingleNodeRun` (via `POST /api/nodes/:service/:schema/:table/run`), and `TriggerSchedule` (via `POST /api/schedules/:name/trigger`). All trigger calls delegate atomicity and error semantics to `state`. The Create PR route (`POST /api/remediation/proposals/:id/pull-request`) is the only path that calls an external write API (GitHub); on GitHub error the handler calls `FailPullRequest` on remediation-agent to reset `pr_state` to `failed` before returning an error to the browser.
 - gRPC errors are surfaced as HTTP 500 with the gRPC error message.
 - S3 errors are surfaced as HTTP 502.
 - Auth fails closed: a session-store (Redis) error returns 503 `auth_unavailable`; a request is never passed through unauthenticated.
