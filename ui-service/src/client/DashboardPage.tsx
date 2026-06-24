@@ -7,6 +7,7 @@ import ReleasesPanel from './ReleasesPanel';
 import NodesCatalogPanel from './NodesCatalogPanel';
 import RemediationPanel from './RemediationPanel';
 import UserMenu from './auth/UserMenu';
+import { fetchProposals } from './remediation-api';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -15,6 +16,7 @@ export default function DashboardPage() {
   const [topologies, setTopologies] = useState<ScheduleTopologySummary[]>([]);
   const [topologiesError, setTopologiesError] = useState<string | null>(null);
   const [nodeTotal, setNodeTotal] = useState(0);
+  const [pendingRemediationCount, setPendingRemediationCount] = useState(0);
 
   useEffect(() => {
     const fetch_ = () =>
@@ -52,7 +54,7 @@ export default function DashboardPage() {
     { slug: 'topology', label: 'Topology', count: topologies.length },
     { slug: 'releases', label: 'Releases' },
     { slug: 'nodes', label: 'Nodes', count: nodeTotal },
-    { slug: 'remediation', label: 'Remediation' },
+    { slug: 'remediation', label: 'Remediation', count: pendingRemediationCount },
   ];
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
 
@@ -64,6 +66,14 @@ export default function DashboardPage() {
       .then((data: { total_count?: number }) => setNodeTotal(data.total_count || 0))
       .catch(() => {});
   }, [activeTab]);
+
+  // Remediation-tab count badge: number of pending proposals.
+  // Fetched on mount only; no poll — proposal arrivals are infrequent.
+  useEffect(() => {
+    fetchProposals('proposed')
+      .then(proposals => setPendingRemediationCount(proposals.length))
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="page">

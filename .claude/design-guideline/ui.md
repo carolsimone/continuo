@@ -261,8 +261,10 @@ Rules:
 - Active tab is encoded in the URL. Use `?tab=<slug>` for page-level
   tabs and `?panel=<slug>` for panel-level tabs. The default tab
   emits no query string. Unknown values fall back to the default.
-- Maximum four tabs per row at either scale. Above four, the surface
-  needs a different pattern — propose it in this file first.
+- Maximum five tabs per row at either scale. The dashboard's fifth tab
+  is `Remediation` — the cross-cutting healing surface that spans all
+  services and releases. Above five, the surface needs a different
+  pattern — propose it in this file first.
 - Always paired with `.tabs__count` when the tabs index a countable
   collection. Same rule as `.section-header__count`.
 

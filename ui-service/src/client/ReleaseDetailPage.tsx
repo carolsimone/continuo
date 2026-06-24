@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ReleaseDetail, NodeValidationResult } from './types';
 import { releasePillClass } from './release-helpers';
+import { fetchProposals } from './remediation-api';
 
 function LogView({ uri }: { uri: string }) {
   const [open, setOpen] = useState(false);
@@ -37,12 +38,31 @@ export default function ReleaseDetailPage() {
   const navigate = useNavigate();
   const [rel, setRel] = useState<ReleaseDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // node_ids that have at least one remediation proposal for this release
+  const [proposedNodeIds, setProposedNodeIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetch(`/api/releases/${id}`)
       .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(setRel)
       .catch(e => setError(e.message));
+  }, [id]);
+
+  // Best-effort: fetch all proposals and build a set of node_ids that have a
+  // proposal for this release. Used to render the "Proposed fix available →" link
+  // on per-node rows. Failures are silently swallowed so they never break the page.
+  useEffect(() => {
+    if (!id) return;
+    fetchProposals()
+      .then(proposals => {
+        const ids = new Set(
+          proposals
+            .filter(p => p.release_id === id)
+            .map(p => p.node_id)
+        );
+        setProposedNodeIds(ids);
+      })
+      .catch(() => {});
   }, [id]);
 
   if (error) {
@@ -95,7 +115,7 @@ export default function ReleaseDetailPage() {
         {perNode.length === 0 ? <p className="empty">No per-node results.</p> : (
           <table className="nodes-table">
             <thead>
-              <tr><th>Node</th><th>Status</th><th>Duration</th><th>Log</th></tr>
+              <tr><th>Node</th><th>Status</th><th>Duration</th><th>Log</th><th>Fix</th></tr>
             </thead>
             <tbody>
               {perNode.map(n => (
@@ -108,6 +128,13 @@ export default function ReleaseDetailPage() {
                   </td>
                   <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
                   <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
+                  <td>
+                    {proposedNodeIds.has(n.node_id) && (
+                      <Link to="/?tab=remediation" className="btn btn--secondary">
+                        Proposed fix available →
+                      </Link>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
