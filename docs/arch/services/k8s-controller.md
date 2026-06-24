@@ -10,7 +10,7 @@ It is responsible for:
 - deciding: still running → re-check, failed → retry or permanent failure, succeeded → complete
 - publishing `task.status.updated:v1` so `state` can update task status
 - publishing `task.execution.recorded:v1` so `state` can persist execution records
-- uploading full pod logs to S3
+- uploading full pod logs to S3 (and, for validation Jobs, the structured validation-result artifact)
 - publishing terminal status updates to `orchestrator` (via `node.updated:v1`)
 
 ## Package Structure
@@ -76,7 +76,7 @@ Both production and `mode=validation` Jobs are observed over these same `node.de
 |---|---|
 | Kubernetes API | `GetJobStatus` — read job/pod status and termination message |
 | Kubernetes API | `GetPodLogs` — fetch full log + configurable tail (default configured) |
-| S3 | `PutObject` — upload full pod log; key format: `logs/task-executions/{service_name}/{schema_name}/{table_name}/{execution_id}.log` |
+| S3 | `PutObject` — upload full pod log; key format: `logs/task-executions/{service_name}/{schema_name}/{table_name}/{execution_id}.log`. For validation Jobs whose pod emitted a structured result block, a second `PutObject` uploads that JSON under the parallel key `run-results/task-executions/{service_name}/{schema_name}/{table_name}/{execution_id}.json`. |
 
 `k8s-controller` does not call `state` gRPC. All state mutations flow via `task.status.updated:v1` and `task.execution.recorded:v1` Redis events.
 
@@ -127,7 +127,7 @@ Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single tr
 
 - **Running** — handled by the shared re-poll before the terminal mode branch: the handler writes one `check_delayed` row (→ `check.k8s:v1`) with a `check_after` delay. On the first observation it reads the Job's `mode`, and because the Job is `mode=validation` it **suppresses** the RUNNING `task_status_updated` announcement (validation rows have no real task/schedule) while still setting `running_announced=true` on the forward ticket so metadata is not re-read every poll. On the next check the Job's `mode` is re-read and routing recurs. A validation Job is always Running on the first check fired by the `node.deployed:v1` trigger, so this re-poll is what carries it to a terminal status instead of being checked once and dropped.
 - **Unknown** — also not terminal (e.g. pods not yet scheduled); the validation branch re-polls via the same `check.k8s:v1` ticket rather than emitting a premature failure. (Production treats Unknown as a permanent failure — `task_status_updated` (FAILED) + `task_failed`.)
-- **Succeeded / Failed** — the handler uploads pod logs (soft-fail) and writes exactly ONE `validation_node_completed` outbox row (→ `validation.node.completed:v1`) carrying `{release_id, node_id, outcome, dbt_log_uri}`. `outcome` is `ok` when the Job succeeded, else `failed`. This single row replaces the three production task-status rows — no `task_status_updated`, `task_execution_recorded`, or `node_status_updated` is written for validation Jobs.
+- **Succeeded / Failed** — the handler uploads pod logs (soft-fail) and writes exactly ONE `validation_node_completed` outbox row (→ `validation.node.completed:v1`) carrying `{release_id, node_id, outcome, dbt_log_uri, run_results_uri}`. `outcome` is `ok` when the Job succeeded, else `failed`. The validation pod prints a structured result block (`===CONTINUO_VALIDATION_RESULT_BEGIN===` … `===CONTINUO_VALIDATION_RESULT_END===`) as its last stdout; the handler splits that block out of the fetched log, uploads it under the `run-results/` key, strips it from the text log before uploading that, and sets `run_results_uri` (omitted when no block is present — old image / production Job). This single row replaces the three production task-status rows — no `task_status_updated`, `task_execution_recorded`, or `node_status_updated` is written for validation Jobs.
 
 `release_id` and `node_id` are read from the Job **annotations** (`continuo.dev/release-id`, `continuo.dev/node-id`), not the labels. The executor stamps the raw, unmodified dbt `unique_id`/release id in those annotations; the matching labels are sanitized for K8s (out-of-charset characters replaced, truncated to 63 chars) and serve only routing/selection. Reading the raw annotation values keeps the payload lossless, so `executor-controller`'s outcome lookup (keyed on the unmodified `executor_deployments` row) matches even when the sanitized label would differ.
 
