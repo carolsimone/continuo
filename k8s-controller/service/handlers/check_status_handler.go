@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
@@ -25,6 +26,30 @@ import (
 // It must never change: deriving the aggregate ID deterministically lets a
 // re-observed terminal Job map to the same aggregate for downstream dedup.
 var validationLabelNamespace = uuid.MustParse("a4f1c2e6-8b3d-4f7a-9c1e-2d6b5a0f3e8c")
+
+const (
+	validationResultBegin = "===CONTINUO_VALIDATION_RESULT_BEGIN==="
+	validationResultEnd   = "===CONTINUO_VALIDATION_RESULT_END==="
+)
+
+// SplitValidationResult removes the structured-result sentinel block from a
+// validation pod log and returns the cleaned log plus the inner single-line
+// JSON. When no well-formed block is present (production jobs, old images,
+// truncated logs) it returns the log unchanged and an empty structured string —
+// the caller then degrades to the text-log-only path.
+func SplitValidationResult(log string) (cleanLog, structuredJSON string) {
+	bi := strings.Index(log, validationResultBegin)
+	if bi < 0 {
+		return log, ""
+	}
+	ei := strings.Index(log, validationResultEnd)
+	if ei < 0 || ei < bi {
+		return log, ""
+	}
+	inner := strings.TrimSpace(log[bi+len(validationResultBegin) : ei])
+	clean := log[:bi] + log[ei+len(validationResultEnd):]
+	return clean, strings.TrimSpace(inner)
+}
 
 // K8sStatusChecker defines interface for checking K8s job status
 type K8sStatusChecker interface {
@@ -201,7 +226,7 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
+	_, logS3Key, runResultsS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -210,12 +235,16 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 
 	releaseID := annotations[pkgmodel.AnnotationReleaseID]
 	nodeID := annotations[pkgmodel.AnnotationNodeID]
-	payload, err := json.Marshal(map[string]any{
+	payloadMap := map[string]any{
 		"release_id":  releaseID,
 		"node_id":     nodeID,
 		"outcome":     outcome,
 		"dbt_log_uri": logS3Key,
-	})
+	}
+	if runResultsS3Key != "" {
+		payloadMap["run_results_uri"] = runResultsS3Key
+	}
+	payload, err := json.Marshal(payloadMap)
 	if err != nil {
 		return fmt.Errorf("marshal validation_node_completed payload: %w", err)
 	}
@@ -240,13 +269,16 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 	return nil
 }
 
-// fetchAndUploadLogs fetches pod logs and uploads the full log to S3.
-// Returns the log tail (for error_message), the S3 key, and a pre-generated execution ID.
-// On S3 upload failure it logs a warning and returns an empty key (soft fail).
+// fetchAndUploadLogs fetches pod logs and uploads them to S3. The text log (with
+// any structured-result sentinel block stripped) is uploaded under logs/...; for
+// validation Jobs whose pod emitted a structured block, that JSON is uploaded
+// separately under run-results/... and its key returned as runResultsS3Key.
+// Returns the log tail (for error_message), both S3 keys, and a pre-generated
+// execution ID. Each upload soft-fails independently to an empty key on error.
 func (h *CheckStatusHandler) fetchAndUploadLogs(
 	ctx context.Context,
 	cmd command.CheckJobStatus,
-) (executionID uuid.UUID, logS3Key, tail string) {
+) (executionID uuid.UUID, logS3Key, runResultsS3Key, tail string) {
 	executionID = uuid.New()
 
 	fullLog, logTail, err := h.k8sClient.GetPodLogs(ctx, h.config.K8sNamespace, cmd.JobName, h.config.LogTailLines)
@@ -255,30 +287,48 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 			"job_name", cmd.JobName,
 			"error", err,
 		)
-		return executionID, "", ""
+		return executionID, "", "", ""
 	}
 
 	tail = logTail
 
-	if fullLog == "" {
+	// Separate the structured validation-result block (if any) from the text log.
+	// Production jobs never emit the block, so cleanLog == fullLog there.
+	cleanLog, structured := SplitValidationResult(fullLog)
+
+	if cleanLog == "" {
 		h.logger.Warn("Pod log is empty, skipping S3 upload", "job_name", cmd.JobName)
-		return executionID, "", tail
+	} else {
+		key := fmt.Sprintf("logs/task-executions/%s/%s/%s/%s.log",
+			cmd.ServiceName, cmd.SchemaName, cmd.TableName, executionID.String())
+		if err := h.logUploader.UploadLog(ctx, key, cleanLog); err != nil {
+			h.logger.Warn("Failed to upload pod log to S3 — continuing without full log",
+				"job_name", cmd.JobName,
+				"key", key,
+				"error", err,
+			)
+		} else {
+			logS3Key = key
+			h.logger.Info("Uploaded pod log to S3", "key", key, "job_name", cmd.JobName)
+		}
 	}
 
-	key := fmt.Sprintf("logs/task-executions/%s/%s/%s/%s.log",
-		cmd.ServiceName, cmd.SchemaName, cmd.TableName, executionID.String())
-
-	if err := h.logUploader.UploadLog(ctx, key, fullLog); err != nil {
-		h.logger.Warn("Failed to upload pod log to S3 — continuing without full log",
-			"job_name", cmd.JobName,
-			"key", key,
-			"error", err,
-		)
-		return executionID, "", tail
+	if structured != "" {
+		rrKey := fmt.Sprintf("run-results/task-executions/%s/%s/%s/%s.json",
+			cmd.ServiceName, cmd.SchemaName, cmd.TableName, executionID.String())
+		if err := h.logUploader.UploadLog(ctx, rrKey, structured); err != nil {
+			h.logger.Warn("Failed to upload run-results to S3 — continuing without structured result",
+				"job_name", cmd.JobName,
+				"key", rrKey,
+				"error", err,
+			)
+		} else {
+			runResultsS3Key = rrKey
+			h.logger.Info("Uploaded run-results to S3", "key", rrKey, "job_name", cmd.JobName)
+		}
 	}
 
-	h.logger.Info("Uploaded pod log to S3", "key", key, "job_name", cmd.JobName)
-	return executionID, key, tail
+	return executionID, logS3Key, runResultsS3Key, tail
 }
 
 // handleFailedPermanent handles permanently failed jobs (retry_count >= max_retries).
@@ -290,7 +340,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount
 
-	executionID, logS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, _, logTail := h.fetchAndUploadLogs(ctx, cmd)
 
 	errorMsg := h.truncateErrorMessage(logTail)
 	if errorMsg == "" {
@@ -342,7 +392,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
 
-	executionID, logS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, _, logTail := h.fetchAndUploadLogs(ctx, cmd)
 
 	errorMsg := h.truncateErrorMessage(logTail)
 	if errorMsg == "" {

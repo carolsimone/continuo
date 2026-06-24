@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,6 +30,7 @@ type fakeK8sClient struct {
 	err         error
 	labels      map[string]string
 	annotations map[string]string
+	podLog      string // full pod log returned by GetPodLogs (tail mirrors it)
 }
 
 func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
@@ -36,16 +38,22 @@ func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8s
 }
 
 func (f *fakeK8sClient) GetPodLogs(_ context.Context, _, _ string, _ int64) (string, string, error) {
-	return "", "", nil
+	return f.podLog, f.podLog, nil
 }
 
 func (f *fakeK8sClient) GetJobMeta(_ context.Context, _, _ string) (labels, annotations map[string]string, err error) {
 	return f.labels, f.annotations, nil
 }
 
-type fakeLogUploader struct{}
+type fakeLogUploader struct{ uploaded map[string]string }
 
-func (f *fakeLogUploader) UploadLog(_ context.Context, _ string, _ string) error { return nil }
+func (f *fakeLogUploader) UploadLog(_ context.Context, key, content string) error {
+	if f.uploaded == nil {
+		f.uploaded = map[string]string{}
+	}
+	f.uploaded[key] = content
+	return nil
+}
 
 // fakeOutboxRepo records Create calls using canonical pkgoutbox.Entry.
 type fakeOutboxRepo struct {
@@ -193,6 +201,11 @@ func failedResult() *model.K8sPodResult {
 }
 
 func newHandler(k8s handlers.K8sStatusChecker, cancelledSchedules repository.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
+	h, _ := newHandlerWithUploader(k8s, cancelledSchedules, defaultMaxRetries)
+	return h
+}
+
+func newHandlerWithUploader(k8s handlers.K8sStatusChecker, cancelledSchedules repository.CancelledSchedulesRepository, defaultMaxRetries int) (*handlers.CheckStatusHandler, *fakeLogUploader) {
 	cfg := &handlers.HandlerConfig{
 		K8sNamespace:          "default",
 		CheckDelaySeconds:     30,
@@ -200,7 +213,8 @@ func newHandler(k8s handlers.K8sStatusChecker, cancelledSchedules repository.Can
 		LogTailLines:          50,
 		DefaultTaskMaxRetries: defaultMaxRetries,
 	}
-	return handlers.NewCheckStatusHandler(k8s, &fakeLogUploader{}, cfg, cancelledSchedules, slog.Default())
+	up := &fakeLogUploader{}
+	return handlers.NewCheckStatusHandler(k8s, up, cfg, cancelledSchedules, slog.Default()), up
 }
 
 // eventTypeOf returns the event_type of the i-th outbox entry.
@@ -1058,6 +1072,107 @@ func TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations(t *testing.T) 
 	}
 	if payload["release_id"] != rawReleaseID {
 		t.Errorf("release_id not round-tripped: want %q, got %v", rawReleaseID, payload["release_id"])
+	}
+}
+
+// TestValidationTerminal_UploadsRunResultsAndSetsURI verifies that a validation
+// Job whose pod log carries the structured-result sentinel block uploads that JSON
+// to a run-results/ key, strips it from the text log, and surfaces run_results_uri
+// on the validation_node_completed payload.
+func TestValidationTerminal_UploadsRunResultsAndSetsURI(t *testing.T) {
+	podLog := "build failed\n" +
+		"===CONTINUO_VALIDATION_RESULT_BEGIN===\n" +
+		`{"schema_version":1,"status":"error","message":"relation x does not exist","failures":0,"unique_id":"model.svc.x"}` + "\n" +
+		"===CONTINUO_VALIDATION_RESULT_END===\n"
+
+	k8s := &fakeK8sClient{
+		status: &model.K8sPodResult{Status: model.JobStatusFailed},
+		labels: map[string]string{"mode": "validation"},
+		annotations: map[string]string{
+			pkgmodel.AnnotationReleaseID: "rel-1",
+			pkgmodel.AnnotationNodeID:    "svc.schema.x",
+		},
+		podLog: podLog,
+	}
+	handler, up := newHandlerWithUploader(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "validate-node-rr",
+		MaxRetries: 3,
+	}
+
+	outbox := &fakeOutboxRepo{}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	// 1. A run-results artifact was uploaded; its body is the structured JSON.
+	var rrKey, rrBody string
+	for k, v := range up.uploaded {
+		if strings.HasPrefix(k, "run-results/task-executions/") {
+			rrKey, rrBody = k, v
+		}
+	}
+	if rrKey == "" {
+		t.Fatalf("expected a run-results/ artifact upload, got keys %v", keysOf(up.uploaded))
+	}
+	if !strings.Contains(rrBody, `"status":"error"`) {
+		t.Fatalf("run-results body not the structured JSON: %q", rrBody)
+	}
+	if !strings.HasSuffix(rrKey, ".json") {
+		t.Fatalf("run-results key should end .json: %q", rrKey)
+	}
+
+	// 2. The text log uploaded under logs/ must NOT contain the sentinel block.
+	for k, v := range up.uploaded {
+		if strings.HasPrefix(k, "logs/task-executions/") && strings.Contains(v, "CONTINUO_VALIDATION_RESULT") {
+			t.Fatalf("text log still carries the sentinel block: %q", v)
+		}
+	}
+
+	// 3. The validation_node_completed payload carries run_results_uri == rrKey.
+	if len(outbox.entries) != 1 || outbox.entries[0].EventType != "validation_node_completed" {
+		t.Fatalf("expected 1 validation_node_completed, got %v", eventTypesOf(outbox.entries))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(outbox.entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["run_results_uri"] != rrKey {
+		t.Errorf("run_results_uri = %v, want %q", payload["run_results_uri"], rrKey)
+	}
+}
+
+// keysOf returns the keys of an upload map, for failure messages.
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func TestSplitValidationResult(t *testing.T) {
+	log := "line a\nline b\n" +
+		"===CONTINUO_VALIDATION_RESULT_BEGIN===\n" +
+		`{"schema_version":1,"status":"error","message":"boom","failures":0,"unique_id":"model.svc.x"}` + "\n" +
+		"===CONTINUO_VALIDATION_RESULT_END===\n"
+	clean, structured := handlers.SplitValidationResult(log)
+	if strings.Contains(clean, "CONTINUO_VALIDATION_RESULT") {
+		t.Fatalf("clean log still contains sentinel: %q", clean)
+	}
+	if !strings.Contains(structured, `"status":"error"`) {
+		t.Fatalf("structured JSON not extracted: %q", structured)
+	}
+
+	clean2, structured2 := handlers.SplitValidationResult("just a normal log\n")
+	if structured2 != "" {
+		t.Fatalf("expected no structured block, got %q", structured2)
+	}
+	if clean2 != "just a normal log\n" {
+		t.Fatalf("clean log altered when no block present: %q", clean2)
 	}
 }
 
