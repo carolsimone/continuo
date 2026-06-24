@@ -74,6 +74,36 @@ func Classify(ev FailureEvidence, logText string) Classification {
 	return Classification{CategoryUnknown, NormalizeSignature(CategoryUnknown, line), DecisionEmit, "unknown:unmatched"}
 }
 
+// ClassifyWithStructured prefers the structured validation result when present:
+// a dbt "fail" status is a test assertion (deterministic, no heuristic); an
+// "error" status routes the structured message through the same infra/logic
+// rules used for the text log, but against the exact error message rather than
+// scraped console output. When structured is nil (no run_results_uri, or the
+// fetch/parse failed) — or the structured record carries no message — it degrades
+// to the text-log Classify path unchanged.
+func ClassifyWithStructured(ev FailureEvidence, structured *StructuredResult, logText string) Classification {
+	if structured == nil {
+		return Classify(ev, logText)
+	}
+	msg := strings.TrimSpace(structured.Message)
+	if structured.Status == "fail" {
+		return Classification{CategoryTest, NormalizeSignature(CategoryTest, msg), DecisionEmit, "test:status_fail"}
+	}
+	if msg == "" {
+		// Structured record present but no message — fall back to the text log
+		// rather than emitting a contentless unknown.
+		return Classify(ev, logText)
+	}
+	lower := strings.ToLower(msg)
+	if r, ok := firstMatch(lower, infraRules); ok {
+		return Classification{CategoryInfraTransient, NormalizeSignature(CategoryInfraTransient, msg), DecisionDrop, r.reason}
+	}
+	if r, ok := firstMatch(lower, logicRules); ok {
+		return Classification{CategoryLogic, NormalizeSignature(CategoryLogic, msg), DecisionEmit, r.reason}
+	}
+	return Classification{CategoryUnknown, NormalizeSignature(CategoryUnknown, msg), DecisionEmit, "unknown:unmatched"}
+}
+
 func firstMatch(lower string, rules []rule) (rule, bool) {
 	for _, r := range rules {
 		if strings.Contains(lower, r.needle) {

@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/remediation/domain/event"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/domain/repository"
+	"github.com/carolsimone/continuo/remediation/service/ports"
 	"github.com/carolsimone/continuo/remediation/service/uow"
 )
 
@@ -24,6 +25,17 @@ type fakeLogReader struct {
 }
 
 func (f fakeLogReader) Fetch(_ context.Context, _ string) (string, error) { return f.text, f.err }
+
+// mapLogReader returns a different body per URI, so a test can give the dbt log
+// and the run-results artifact distinct contents.
+type mapLogReader struct{ byURI map[string]string }
+
+func (m mapLogReader) Fetch(_ context.Context, uri string) (string, error) {
+	if v, ok := m.byURI[uri]; ok {
+		return v, nil
+	}
+	return "", ports.ErrLogNotFound
+}
 
 type fakeClock struct{}
 
@@ -106,6 +118,38 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	}
 	if !u.committed {
 		t.Fatal("tx not committed")
+	}
+}
+
+func TestClassifyFailure_StructuredBranchWinsOverLog(t *testing.T) {
+	// The text log alone would classify infra (drop, no trigger); the structured
+	// run_results says status=fail (a test), which is healable and must emit.
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	ev := failure.FailureEvidence{
+		Source:        failure.SourceValidation,
+		ReleaseID:     "r1",
+		NodeID:        "s.n",
+		DBTLogURI:     "s3://b/log",
+		RunResultsURI: "run-results/x.json",
+	}
+	reader := mapLogReader{byURI: map[string]string{
+		"s3://b/log":         "could not connect to database: connection refused",
+		"run-results/x.json": `{"schema_version":1,"status":"fail","message":"Failure in test not_null_x","failures":3,"unique_id":"test.svc.x"}`,
+	}}
+	deps := Deps{
+		NewUoW:    func() uow.UnitOfWork { return u },
+		LogReader: reader,
+		Clock:     fakeClock{},
+		Logger:    slog.Default(),
+	}
+	if err := ClassifyFailure(context.Background(), deps, ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.dec.saved) != 1 || u.dec.saved[0].Category != failure.CategoryTest {
+		t.Fatalf("expected structured test classification, got %+v", u.dec.saved)
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("test category is healable → expected 1 trigger, got %d", len(u.ob.entries))
 	}
 }
 

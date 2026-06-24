@@ -40,10 +40,28 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 		if err != ports.ErrLogNotFound {
 			return fmt.Errorf("fetch dbt log %q: %w", ev.DBTLogURI, err)
 		}
-		logText = "" // not found → classify unknown:log_unavailable
+		logText = "" // not found → classify unknown:log_unavailable (or structured, below)
 	}
 
-	c := failure.Classify(ev, logText)
+	// Prefer the structured validation result when present; a fetch/parse failure
+	// degrades to the text log rather than failing the message.
+	var structured *failure.StructuredResult
+	if ev.RunResultsURI != "" {
+		body, ferr := deps.LogReader.Fetch(ctx, ev.RunResultsURI)
+		if ferr != nil && ferr != ports.ErrLogNotFound {
+			return fmt.Errorf("fetch run results %q: %w", ev.RunResultsURI, ferr)
+		}
+		if ferr == nil {
+			if sr, perr := failure.ParseStructuredResult([]byte(body)); perr != nil {
+				deps.Logger.Warn("run_results parse failed — falling back to text log",
+					"uri", ev.RunResultsURI, "error", perr)
+			} else {
+				structured = sr
+			}
+		}
+	}
+
+	c := failure.ClassifyWithStructured(ev, structured, logText)
 
 	u := deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {
