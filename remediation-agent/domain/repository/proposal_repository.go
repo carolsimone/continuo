@@ -4,9 +4,31 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 )
+
+// Sentinel errors returned by ProposalRepository methods.
+var (
+	// ErrNotFound is returned when a proposal row does not exist for the given id.
+	ErrNotFound = errors.New("proposal not found")
+	// ErrPRConflict is returned by BeginPR when the proposal is already claimed
+	// for PR creation (pr_state is 'opening' or 'open').
+	ErrPRConflict = errors.New("proposal PR already claimed")
+	// ErrNotSourceResolved is returned by BeginPR when the proposal has not
+	// completed source resolution (source_resolved=false), so a PR cannot be opened.
+	ErrNotSourceResolved = errors.New("proposal source not resolved")
+)
+
+// ProposalFilter constrains the rows returned by ProposalRepository.List.
+// Zero-value fields are treated as "no filter" for that dimension.
+type ProposalFilter struct {
+	Status  string
+	PRState string
+	Limit   int
+}
 
 // ProposalRepository persists fix-proposal attempts and answers the attempt-cap
 // query. The repository is bound to its transaction at construction by the
@@ -14,4 +36,26 @@ import (
 type ProposalRepository interface {
 	CountAttempts(ctx context.Context, source, nodeID, errorSignature string) (int, error)
 	Insert(ctx context.Context, p proposal.Proposal) error
+
+	// Get returns the full View for the given proposal id.
+	// Returns ErrNotFound if no row exists for the id.
+	Get(ctx context.Context, id string) (proposal.View, error)
+
+	// List returns proposals matching the filter, ordered by created_at DESC.
+	// A zero ProposalFilter returns all rows (up to Limit, if set).
+	List(ctx context.Context, filter ProposalFilter) ([]proposal.View, error)
+
+	// BeginPR atomically claims a proposal for PR creation by transitioning
+	// pr_state from '' or 'failed' to 'opening'. It returns the data needed
+	// to open the PR. Returns ErrNotSourceResolved if source_resolved=false,
+	// ErrPRConflict if already claimed, ErrNotFound if the id is unknown.
+	BeginPR(ctx context.Context, id, branch string) (proposal.PRClaim, error)
+
+	// RecordPR records a successfully opened PR: sets pr_state='open', pr_url,
+	// pr_number, pr_opened_by, and pr_opened_at on the proposal row.
+	RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) error
+
+	// FailPR resets a stuck 'opening' claim back to 'failed' so the action can
+	// be retried. It is a no-op when pr_state is not 'opening'.
+	FailPR(ctx context.Context, id string) error
 }

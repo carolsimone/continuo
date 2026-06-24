@@ -13,6 +13,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/testmigrations"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
+	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
@@ -287,4 +288,165 @@ func TestInsert_PersistsSourceLocation(t *testing.T) {
 	require.Equal(t, "owner/continuo-dbt-demo", got.Repo)
 	require.Equal(t, "abc123", got.CommitSha)
 	require.Equal(t, "services/service-3/models/orders_d.sql", got.FilePath)
+}
+
+// seedProposal inserts a proposal and returns the generated UUID id.
+// It reads back the id via SELECT after the insert so callers don't need DB knowledge.
+func seedProposal(t *testing.T, repo *ProposalRepository, db *sqlx.DB, p proposal.Proposal) string {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, repo.Insert(ctx, p))
+	var id string
+	require.NoError(t, db.GetContext(ctx, &id,
+		`SELECT id FROM proposal WHERE release_id=$1 AND node_id=$2 AND attempt=$3`,
+		p.ReleaseID, p.NodeID, p.Attempt,
+	))
+	return id
+}
+
+// TestBeginPR_SingleWinner verifies that exactly one concurrent BeginPR call
+// succeeds; the second receives ErrPRConflict.
+func TestBeginPR_SingleWinner(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-beginpr-1",
+		NodeID:         "model.orders_d",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "rationale",
+		ProposedSQLURI: "s3://bucket/sql/1",
+		DiffURI:        "s3://bucket/diff/1",
+		SourceResolved: true,
+		Repo:           "owner/continuo-dbt-demo",
+		CommitSHA:      "abc123",
+		FilePath:       "services/service-3/models/orders_d.sql",
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+	}
+	id := seedProposal(t, repo, db, p)
+
+	c1, err := repo.BeginPR(ctx, id, "remediation/r-1/orders_d-attempt1")
+	require.NoError(t, err)
+	require.Equal(t, "owner/continuo-dbt-demo", c1.Repo)
+	require.Equal(t, "remediation/r-1/orders_d-attempt1", c1.Branch)
+	require.Equal(t, id, c1.ID)
+
+	// Second claim on the same proposal must return ErrPRConflict.
+	_, err = repo.BeginPR(ctx, id, "remediation/r-1/orders_d-attempt1")
+	require.ErrorIs(t, err, repository.ErrPRConflict)
+}
+
+// TestBeginPR_RejectsUnresolvedSource verifies that BeginPR returns
+// ErrNotSourceResolved when source_resolved=false.
+func TestBeginPR_RejectsUnresolvedSource(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-unresolved-1",
+		NodeID:         "model.orders_d",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceLow,
+		Rationale:      "rationale",
+		ProposedSQLURI: "s3://bucket/sql/1",
+		DiffURI:        "s3://bucket/diff/1",
+		SourceResolved: false, // not resolved
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+	}
+	id := seedProposal(t, repo, db, p)
+
+	_, err := repo.BeginPR(ctx, id, "b")
+	require.ErrorIs(t, err, repository.ErrNotSourceResolved)
+}
+
+// TestRecordPR_ThenGet verifies that RecordPR flips pr_state to 'open' and that
+// Get returns the updated row with the PR details.
+func TestRecordPR_ThenGet(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-recordpr-1",
+		NodeID:         "model.orders_d",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "rationale",
+		ProposedSQLURI: "s3://bucket/sql/1",
+		DiffURI:        "s3://bucket/diff/1",
+		SourceResolved: true,
+		Repo:           "owner/continuo-dbt-demo",
+		CommitSHA:      "abc123",
+		FilePath:       "services/service-3/models/orders_d.sql",
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+	}
+	id := seedProposal(t, repo, db, p)
+
+	_, err := repo.BeginPR(ctx, id, "b")
+	require.NoError(t, err)
+
+	openedAt := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(t, repo.RecordPR(ctx, id, "https://gh/pr/7", 7, "dev|local", openedAt))
+
+	v, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "open", v.PrState)
+	require.Equal(t, "https://gh/pr/7", v.PrURL)
+	require.Equal(t, 7, v.PrNumber)
+	require.Equal(t, "dev|local", v.PrOpenedBy)
+	require.NotNil(t, v.PrOpenedAt)
+
+	// FailPR on an 'open' row is a no-op (0 rows updated), should not error.
+	require.NoError(t, repo.FailPR(ctx, id))
+	v2, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "open", v2.PrState, "FailPR must not affect an 'open' row")
+}
+
+// TestList_FilterAwaitingHuman verifies that List returns only rows matching
+// the given Status filter.
+func TestList_FilterAwaitingHuman(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-list-1",
+		NodeID:         "model.orders_d",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "rationale",
+		ProposedSQLURI: "s3://bucket/sql/1",
+		DiffURI:        "s3://bucket/diff/1",
+		SourceResolved: true,
+		Repo:           "owner/continuo-dbt-demo",
+		CommitSHA:      "abc123",
+		FilePath:       "services/service-3/models/orders_d.sql",
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+	}
+	_ = seedProposal(t, repo, db, p)
+
+	views, err := repo.List(ctx, repository.ProposalFilter{Status: "proposed", PRState: ""})
+	require.NoError(t, err)
+	require.Len(t, views, 1)
+	require.Equal(t, "proposed", string(views[0].Status))
 }

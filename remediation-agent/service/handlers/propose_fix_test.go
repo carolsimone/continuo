@@ -124,6 +124,26 @@ func (r *fakeProposalRepo) Insert(_ context.Context, p proposal.Proposal) error 
 	return nil
 }
 
+func (r *fakeProposalRepo) Get(_ context.Context, _ string) (proposal.View, error) {
+	return proposal.View{}, repository.ErrNotFound
+}
+
+func (r *fakeProposalRepo) List(_ context.Context, _ repository.ProposalFilter) ([]proposal.View, error) {
+	return nil, nil
+}
+
+func (r *fakeProposalRepo) BeginPR(_ context.Context, _, _ string) (proposal.PRClaim, error) {
+	return proposal.PRClaim{}, nil
+}
+
+func (r *fakeProposalRepo) RecordPR(_ context.Context, _ string, _ string, _ int, _ string, _ time.Time) error {
+	return nil
+}
+
+func (r *fakeProposalRepo) FailPR(_ context.Context, _ string) error {
+	return nil
+}
+
 // fakeOutbox satisfies outbox.Repository in memory. Create takes a pointer to
 // match the real pkg/outbox.Repository interface. The read-path and retry
 // methods are no-ops as they are not exercised by ProposeFix.
