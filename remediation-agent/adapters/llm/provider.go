@@ -32,6 +32,9 @@ func NewProvider(provider, apiKey, model, baseURL string, hc *http.Client) (port
 		}
 		return newOpenAI(u, apiKey, model, hc), nil
 	case "openai-compatible":
+		if baseURL == "" {
+			return nil, fmt.Errorf("openai-compatible provider requires LLM_BASE_URL")
+		}
 		return newOpenAI(baseURL, apiKey, model, hc), nil
 	default:
 		return nil, fmt.Errorf("unsupported LLM provider %q", provider)

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/remediation-agent/adapters/llm"
@@ -172,12 +171,14 @@ func TestAnthropic_NonOKStatus(t *testing.T) {
 }
 
 // TestAnthropic_CorrectHeaders verifies that the Anthropic adapter sends the
-// required authentication and version headers.
+// required authentication and version headers, and POSTs to /v1/messages.
 func TestAnthropic_CorrectHeaders(t *testing.T) {
 	var capturedHeaders http.Header
+	var capturedPath string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedHeaders = r.Header.Clone()
+		capturedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(anthropicRecordedResponse))
@@ -194,7 +195,6 @@ func TestAnthropic_CorrectHeaders(t *testing.T) {
 	assert.Equal(t, "sk-test-key", capturedHeaders.Get("X-Api-Key"))
 	assert.Equal(t, "2023-06-01", capturedHeaders.Get("Anthropic-Version"))
 
-	// Verify path.
-	// (srv.URL already tested by the test server; just ensuring no double-slash etc.)
-	assert.True(t, strings.HasSuffix("/v1/messages", "/v1/messages"))
+	// Verify the adapter POSTs to the correct API path.
+	assert.Equal(t, "/v1/messages", capturedPath)
 }
