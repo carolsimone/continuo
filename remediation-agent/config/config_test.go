@@ -33,6 +33,18 @@ func TestLoad_DefaultsAndRequired(t *testing.T) {
 	assert.Equal(t, "8092", cfg.HTTPPort)
 	assert.Equal(t, 3, cfg.MaxAttempts)
 	assert.Equal(t, "orchestrator:50052", cfg.OrchestratorAddr)
+	assert.Equal(t, "redacted", cfg.LogSanitizerLevel, "log sanitizer defaults to the strict redacted level")
+}
+
+// TestLoad_LogSanitizerLevelOverride verifies that
+// REMEDIATION_AGENT_LOG_SANITIZER_LEVEL overrides the strict default.
+func TestLoad_LogSanitizerLevelOverride(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("REMEDIATION_AGENT_LOG_SANITIZER_LEVEL", "summary")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "summary", cfg.LogSanitizerLevel)
 }
 
 // TestLoad_GitHubDefaults verifies that when neither GITHUB_TOKEN nor
