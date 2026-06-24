@@ -80,8 +80,8 @@ Exposes no gRPC services of its own.
 
 11. Write proposed SQL to S3: proposed-fix/<release_id>/<node_id>/attempt-<attempt>.sql
     Write unified diff to S3: proposed-fix/<release_id>/<node_id>/attempt-<attempt>.diff
-    The attempt number is part of the key so a later attempt never overwrites an
-    earlier attempt's artifacts that a prior proposal row still references.
+    The attempt number is part of the key so a higher-numbered attempt never
+    overwrites a prior attempt's artifacts that an existing proposal row references.
 
 12. Open one Postgres transaction:
     a. Claim the inbound message in message_processing (keyed on the Redis
