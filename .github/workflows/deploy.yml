@@ -45,6 +45,8 @@ jobs:
               - 'release-controller/**'
               - 'agent-runner/**'
               - 'cli/**'
+              - 'remediation/**'
+              - 'remediation-agent/**'
             state:
               - 'Dockerfile.base'
               - 'go.work'
@@ -86,6 +88,19 @@ jobs:
               - 'pkg/**'
               - 'agent-runner/**'
               - 'cli/**'
+            remediation:
+              - 'Dockerfile.base'
+              - 'go.work'
+              - 'go.work.sum'
+              - 'pkg/**'
+              - 'remediation/**'
+            remediation_agent:
+              - 'Dockerfile.base'
+              - 'go.work'
+              - 'go.work.sum'
+              - 'pkg/**'
+              - 'orchestrator/**'
+              - 'remediation-agent/**'
             migrations:
               - 'db/**'
 
@@ -100,6 +115,8 @@ jobs:
           MANIFEST_CHANGED: ${{ steps.filter.outputs.manifest_controller }}
           RELEASE_CONTROLLER_CHANGED: ${{ steps.filter.outputs.release_controller }}
           AGENT_RUNNER_CHANGED: ${{ steps.filter.outputs.agent_runner }}
+          REMEDIATION_CHANGED: ${{ steps.filter.outputs.remediation }}
+          REMEDIATION_AGENT_CHANGED: ${{ steps.filter.outputs.remediation_agent }}
           MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations }}
         run: |
           matrix="$(
@@ -112,6 +129,8 @@ jobs:
               --arg manifest "$MANIFEST_CHANGED" \
               --arg release_controller "$RELEASE_CONTROLLER_CHANGED" \
               --arg agent_runner "$AGENT_RUNNER_CHANGED" \
+              --arg remediation "$REMEDIATION_CHANGED" \
+              --arg remediation_agent "$REMEDIATION_AGENT_CHANGED" \
               --arg migrations "$MIGRATIONS_CHANGED" \
               '{
                 include: [
@@ -123,6 +142,8 @@ jobs:
                   {service: "manifest-controller", changed: $manifest, dockerfile: "manifest-controller/Dockerfile.prod", context: "manifest-controller"},
                   {service: "release-controller", changed: $release_controller, dockerfile: "release-controller/Dockerfile.prod", context: "."},
                   {service: "agent-runner", changed: $agent_runner, dockerfile: "agent-runner/Dockerfile.prod", context: "."},
+                  {service: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
+                  {service: "remediation-agent", changed: $remediation_agent, dockerfile: "remediation-agent/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"}
                 ]
               }'
