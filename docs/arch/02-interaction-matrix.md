@@ -104,7 +104,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `ui-service` | read | `GetObject` — task-execution pod logs (proxied via `GET /api/task-executions/:id/logs`) and dbt validation logs (proxied via `GET /api/releases/log`) |
 | `agent-runner` | write (optional) | `PutObject` — conversation archive to `chat-archive/<user>/<thread>.json` before a thread is deleted by the retention job; enabled when `RETENTION_ARCHIVE_S3=true` |
 | `remediation` | read | `GetObject` — dbt execution log per failing node (`logs/` prefix, URI supplied by `release.rejected:v1`); fetch failure on a missing key is treated as an empty log and classified `unknown:log_unavailable` |
-| `remediation-agent` | read + write | `GetObject` — candidate SQL (from `candidate_sql_uri` in the trigger) and dbt log (from `dbt_log_uri`); `PutObject` — proposed SQL to `proposed-fix/<release_id>/<node_id>.sql` and unified diff to `proposed-fix/<release_id>/<node_id>.diff` |
+| `remediation-agent` | read + write | `GetObject` — candidate SQL (from `candidate_sql_uri` in the trigger) and dbt log (from `dbt_log_uri`); `PutObject` — proposed SQL to `proposed-fix/<release_id>/<node_id>/attempt-<attempt>.sql` and unified diff to `proposed-fix/<release_id>/<node_id>/attempt-<attempt>.diff` |
 
 ## Local Durable State by Service
 

@@ -78,14 +78,20 @@ Exposes no gRPC services of its own.
 
 10. ProposedSQL is empty: insert proposal(status=failed), emit nothing, done.
 
-11. Write proposed SQL to S3: proposed-fix/<release_id>/<node_id>.sql
-    Write unified diff to S3: proposed-fix/<release_id>/<node_id>.diff
+11. Write proposed SQL to S3: proposed-fix/<release_id>/<node_id>/attempt-<attempt>.sql
+    Write unified diff to S3: proposed-fix/<release_id>/<node_id>/attempt-<attempt>.diff
+    The attempt number is part of the key so a later attempt never overwrites an
+    earlier attempt's artifacts that a prior proposal row still references.
 
 12. Open one Postgres transaction:
-    a. Insert proposal(status=proposed, confidence, rationale, proposed_sql_uri,
+    a. Claim the inbound message in message_processing (keyed on the Redis
+       message id and the upstream outbox_entry_id); if the claim conflicts the
+       trigger was already handled, so roll back and ACK without re-proposing.
+    b. Insert proposal(status=proposed, confidence, rationale, proposed_sql_uri,
        diff_uri, model).
-    b. Enqueue remediation_agent_outbox row (stream=remediation.proposed:v1,
-       event_id = deterministic SHA1 UUID keyed on release_id+"|"+node_id+"|"+attempt).
+    c. Enqueue remediation_agent_outbox row (stream=remediation.proposed:v1,
+       message_processing_id = the claim row, event_id = deterministic SHA1 UUID
+       keyed on release_id+"|"+node_id+"|"+attempt).
 13. Commit.
 ```
 
@@ -120,8 +126,8 @@ The trigger is pointer-only: it carries no SQL text, no log content, and no ware
 | `release_id` | The release identifier from the inbound trigger. |
 | `node_id` | The unique_id of the failing dbt node. |
 | `error_signature` | Release-stable normalized dedup key from the classifier (SHA-256 hex). |
-| `proposed_sql_uri` | S3 URI of the proposed SQL file (`proposed-fix/<release_id>/<node_id>.sql`). |
-| `diff_uri` | S3 URI of the unified diff (`proposed-fix/<release_id>/<node_id>.diff`). |
+| `proposed_sql_uri` | S3 URI of the proposed SQL file (`proposed-fix/<release_id>/<node_id>/attempt-<attempt>.sql`). |
+| `diff_uri` | S3 URI of the unified diff (`proposed-fix/<release_id>/<node_id>/attempt-<attempt>.diff`). |
 | `rationale` | Short rationale from the LLM (no warehouse data). |
 | `confidence` | `low`, `medium`, or `high`. |
 | `suspected_root_cause_node` | Optional node_id the LLM identified as the root cause. |
@@ -135,8 +141,8 @@ For each `(source, node_id, error_signature)` triple the service enforces a cap 
 
 ## Consumer Reliability
 
-- **Inbound idempotency**: the `proposal` table has no inbound dedup key. The handler is designed to be retried on transient error: S3 fetch failures and transient LLM errors return a non-nil error, leaving the message in the PEL for redelivery. Permanent decode failures (malformed payload) are ACKed by returning nil (not retried).
-- **Transactional consistency**: the `proposal` row insert and the `remediation_agent_outbox` enqueue are performed in one transaction. A crash between them cannot produce an outbox entry without a proposal record, or a proposal record without an outbox entry.
+- **Inbound idempotency**: the write transaction first claims the inbound message in `message_processing`, keyed on both the Redis message id and the upstream `outbox_entry_id`. The first key catches a Redis replay (a message redelivered after the work committed but before the ACK); the second catches an outbox republish (the classifier re-emitting the same row with a fresh Redis message id). On either conflict the transaction rolls back and the message is ACKed, so a redelivered trigger produces no second `proposal` row and no second `remediation.proposed` emit. A transient error before commit rolls the claim back with the rest of the work, so the message stays in the PEL for a clean retry. Permanent decode failures (malformed payload) are ACKed by returning nil (not retried).
+- **Transactional consistency**: the `message_processing` claim, the `proposal` row insert, and the `remediation_agent_outbox` enqueue are performed in one transaction. The LLM call and S3 writes happen before the transaction opens, so no transaction is held across the external call. A crash between the proposal insert and the outbox enqueue cannot occur — both commit together or not at all.
 - **Outbox dedup**: the `remediation.proposed:v1` entry carries a deterministic `event_id` (SHA1 UUID on `release_id|node_id|attempt`) so a redelivered downstream consumer can detect and suppress duplicates.
 
 ## Non-Responsibilities
