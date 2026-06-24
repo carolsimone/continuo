@@ -111,6 +111,9 @@ func emitAggregateIfComplete(
 		if uri := r.DBTLogURI(); uri != "" { // omitempty: absent when no log was produced
 			node["dbt_log_uri"] = uri
 		}
+		if uri := r.DBTRunResultsURI(); uri != "" { // omitempty: absent when no structured block
+			node["run_results_uri"] = uri
+		}
 		perNode = append(perNode, node)
 		if r.Outcome() != "ok" {
 			aggregate = "failed"

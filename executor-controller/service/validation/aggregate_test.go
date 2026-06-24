@@ -108,3 +108,34 @@ func TestEmitValidationAggregate_IncludesCandidateSchema(t *testing.T) {
 	require.NotNil(t, outboxRepo.last, "expected an outbox entry to be created")
 	require.Contains(t, string(outboxRepo.last.Payload), `"candidate_schema":"_candidate_rel"`)
 }
+
+func TestEmitValidationAggregate_IncludesRunResultsURI(t *testing.T) {
+	cmd := command.ValidationDeployTask{
+		ReleaseID:       "rel",
+		NodeID:          "n1",
+		CandidateSchema: "_candidate_rel",
+		JobName:         "j",
+		NodeType:        "dbt-model",
+		ImageTag:        "t",
+	}
+	dep := model.NewValidationDeployment(cmd, nil, time.Now(), false)
+	require.NoError(t, dep.MarkDeployed(time.Now()))
+	require.NoError(t, dep.RecordOutcome("failed", "s3://logs/n1", "run-results/n1.json", time.Now()))
+
+	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
+	outboxRepo := &captureOutbox{}
+	aggRepo := &fakeAggRepo{won: true}
+
+	err := validation.EmitValidationAggregateIfComplete(
+		context.Background(),
+		depRepo,
+		outboxRepo,
+		aggRepo,
+		validation.DedupNamespace,
+		"rel",
+		time.Now(),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, outboxRepo.last, "expected an outbox entry to be created")
+	require.Contains(t, string(outboxRepo.last.Payload), `"run_results_uri":"run-results/n1.json"`)
+}
