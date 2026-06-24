@@ -320,6 +320,7 @@ services:
     enabled: true
     replicas: 1
     httpPort: 8092
+    grpcPort: 50054
     probePath: /healthz
     secretEnv:
       - name: POSTGRES_USER
@@ -341,6 +342,7 @@ services:
       POSTGRES_DB: continuo_remediation_agent
       HTTP_PORT: "8092"
       REMEDIATION_AGENT_HTTP_PORT: "8092"
+      REMEDIATION_AGENT_GRPC_PORT: "50054"
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
       LLM_PROVIDER: anthropic
       LLM_MODEL: claude-haiku-4-5

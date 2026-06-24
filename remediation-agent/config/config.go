@@ -23,6 +23,7 @@ type Config struct {
 	GitHubBaseURL string // GitHub REST API base URL; defaults to the public API
 
 	HTTPPort         string
+	GRPCPort         string
 	MaxAttempts      int
 	OrchestratorAddr string
 
@@ -61,6 +62,7 @@ func Load(v *pkgconfig.Validator) Config {
 		GitHubToken:        pkgconfig.EnvOrDefault("GITHUB_TOKEN", ""),
 		GitHubBaseURL:      pkgconfig.EnvOrDefault("GITHUB_BASE_URL", "https://api.github.com"),
 		HTTPPort:           pkgconfig.EnvOrDefault("REMEDIATION_AGENT_HTTP_PORT", "8092"),
+		GRPCPort:           pkgconfig.EnvOrDefault("REMEDIATION_AGENT_GRPC_PORT", "50054"),
 		MaxAttempts:        pkgconfig.EnvIntOrDefault("REMEDIATION_AGENT_MAX_ATTEMPTS", 3),
 		OrchestratorAddr:   pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
 		ServiceRepoMapPath: pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
