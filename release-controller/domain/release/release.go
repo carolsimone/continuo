@@ -24,10 +24,11 @@ type Transition struct {
 // NodeValidationResult is the persisted per-node outcome of a candidate's dbt
 // validation run. It is recorded for both the promote and reject paths.
 type NodeValidationResult struct {
-	NodeID     string `json:"node_id"`
-	Status     string `json:"status"` // "ok" | "failed"
-	DBTLogURI  string `json:"dbt_log_uri,omitempty"`
-	DurationMS int64  `json:"duration_ms,omitempty"`
+	NodeID        string `json:"node_id"`
+	Status        string `json:"status"` // "ok" | "failed"
+	DBTLogURI     string `json:"dbt_log_uri,omitempty"`
+	RunResultsURI string `json:"run_results_uri,omitempty"`
+	DurationMS    int64  `json:"duration_ms,omitempty"`
 }
 
 type Topology []Node

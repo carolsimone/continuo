@@ -61,7 +61,9 @@ The `remediation` service applies a separate, domain-level classification to fai
 
 **Under-drop policy**: only the four confidently-infra signal families are dropped. Ambiguous cases — signals that could be either infrastructure or a model problem — fall through to `unknown` and are emitted. Uncertainty flows to the heal agent; only confident infrastructure failures are silenced.
 
-The remediation binding ACKs a malformed `release.rejected:v1` payload by returning nil from the handler (it does not use `ErrPermanent`); a transient S3 fetch error is returned unwrapped so the message stays in the PEL for retry.
+**Structured-first signal.** Each per-node entry on `release.rejected:v1` carries an optional `run_results_uri` — the S3 key of a structured validation-result record (`status` in dbt's `success | error | fail | skipped` vocabulary, plus `message`, `failures`, `unique_id`) emitted by the validation pod and uploaded by k8s-controller. When present, `ClassifyWithStructured` (`remediation/domain/failure/classify.go`) keys off it: a `fail` status is deterministically `test` (no heuristic); an `error` status routes the structured `message` through the same infra/logic substring rules used for the text log. When `run_results_uri` is absent, empty, or unfetchable — or the structured record carries no message — classification falls back to parsing the dbt text log at `dbt_log_uri`. The category vocabulary and routing decisions above are identical on either path.
+
+The remediation binding ACKs a malformed `release.rejected:v1` payload by returning nil from the handler (it does not use `ErrPermanent`); a transient S3 fetch error (for either the text log or the structured result) is returned unwrapped so the message stays in the PEL for retry.
 
 ## See also
 

@@ -24,6 +24,7 @@ type rejectedPayload struct {
 		NodeID          string `json:"node_id"`
 		Status          string `json:"status"`
 		DBTLogURI       string `json:"dbt_log_uri"`
+		RunResultsURI   string `json:"run_results_uri"`
 		CandidateSQLURI string `json:"candidate_sql_uri"`
 	} `json:"per_node"`
 }
@@ -45,6 +46,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			ReleaseID:       p.ReleaseID,
 			NodeID:          n.NodeID,
 			DBTLogURI:       n.DBTLogURI,
+			RunResultsURI:   n.RunResultsURI,
 			CandidateSQLURI: n.CandidateSQLURI,
 			Repo:            p.Repo,
 			CommitSHA:       p.CommitSHA,

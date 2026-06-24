@@ -87,7 +87,7 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t,
-		[]string{"dbt", "seed", "--select", "country_codes", "--empty"},
+		[]string{"python", "/seed_validation_runner.py", "--select", "country_codes"},
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 

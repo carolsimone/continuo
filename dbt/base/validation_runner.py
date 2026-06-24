@@ -18,6 +18,13 @@ import os
 import sys
 
 import boto3
+import psycopg2
+from psycopg2 import sql as pg_sql
+
+try:
+    from base import validation_result  # repo/test context (pythonpath=".")
+except ModuleNotFoundError:  # pragma: no cover - flat layout inside the image
+    import validation_result
 
 
 def _require(name: str) -> str:
@@ -102,6 +109,10 @@ def _ensure_schema(cur, schema: str) -> None:
 def main() -> None:
     schema = _require("DBT_TARGET_SCHEMA")
     table = _require("TABLE_NAME")
+    # Best-effort node identity for the structured block; the runner knows only the
+    # table name (not the service or true node type). The validation event already
+    # carries the authoritative node_id, so this is supplementary.
+    unique_id = f"model.{table}"
 
     try:
         raw_sql = load_candidate_sql()
@@ -111,6 +122,7 @@ def main() -> None:
             f"validation_runner: ERROR fetching candidate SQL from {uri!r}: {exc}",
             file=sys.stderr,
         )
+        print(validation_result.result_block("error", str(exc), unique_id=unique_id), flush=True)
         sys.exit(1)
     if not raw_sql:
         # This runner is only ever the model/snapshot validation command; seeds use
@@ -122,23 +134,40 @@ def main() -> None:
             "model/snapshot node; cannot validate",
             file=sys.stderr,
         )
+        print(
+            validation_result.result_block(
+                "error", "CANDIDATE_SQL_URI is missing or empty", unique_id=unique_id
+            ),
+            flush=True,
+        )
         sys.exit(2)
 
     # Strip any trailing terminator so it embeds cleanly inside CREATE TABLE AS (...).
     candidate_sql = raw_sql.strip().rstrip(";").strip()
 
-    import psycopg2
-    from psycopg2 import sql as pg_sql
-
-    conn = psycopg2.connect(
-        host=_require("DBT_POSTGRES_HOST"),
-        port=os.environ.get("DBT_POSTGRES_PORT", "5432"),
-        dbname=_require("DBT_POSTGRES_DB"),
-        user=_require("DBT_POSTGRES_USER"),
-        password=os.environ.get("DBT_POSTGRES_PASSWORD", ""),
-    )
-    conn.autocommit = True
+    # Connection setup lives inside the try so a missing DBT_POSTGRES_* env var or a
+    # warehouse connection failure — both common validation failure modes — surface
+    # as a structured error block rather than a bare exit. Without this, the pod
+    # would exit with no sentinel block and k8s-controller could not upload
+    # run_results_uri, bypassing the structured-first remediation path.
+    conn = None
     try:
+        missing = [
+            name
+            for name in ("DBT_POSTGRES_HOST", "DBT_POSTGRES_DB", "DBT_POSTGRES_USER")
+            if not os.environ.get(name)
+        ]
+        if missing:
+            raise RuntimeError(f"missing required env var(s): {', '.join(missing)}")
+
+        conn = psycopg2.connect(
+            host=os.environ["DBT_POSTGRES_HOST"],
+            port=os.environ.get("DBT_POSTGRES_PORT", "5432"),
+            dbname=os.environ["DBT_POSTGRES_DB"],
+            user=os.environ["DBT_POSTGRES_USER"],
+            password=os.environ.get("DBT_POSTGRES_PASSWORD", ""),
+        )
+        conn.autocommit = True
         with conn.cursor() as cur:
             _ensure_schema(cur, schema)
             # The candidate SQL is the compiled model SELECT fetched from S3, with
@@ -162,11 +191,14 @@ def main() -> None:
                 print(f"-- executing:\n{stmt.as_string(conn)}", flush=True)
                 cur.execute(stmt)
         print(f"validation_runner: built {schema}.{table} (empty)", flush=True)
+        print(validation_result.result_block("success", unique_id=unique_id), flush=True)
     except Exception as exc:  # surface any DB/exec error as the per-node validation log
         print(f"validation_runner: ERROR building {schema}.{table}: {exc}", file=sys.stderr)
+        print(validation_result.result_block("error", str(exc), unique_id=unique_id), flush=True)
         sys.exit(1)
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 if __name__ == "__main__":

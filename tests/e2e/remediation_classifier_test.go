@@ -113,6 +113,45 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	//    Do NOT use waitForReleasePromoted — it fatals on rejected status.
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
+	// 6. Assert release.rejected:v1 carries run_results_uri for the failing node.
+	//    validation_runner.py emits a structured result block (status=error,
+	//    message "...does not exist") which k8s-controller uploads to S3; the URI
+	//    threads through validation.completed:v1 → release.rejected:v1. Its presence
+	//    is what makes the classifier take the structured branch below.
+	var rejectedRunResultsURI string
+	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
+		msgs, err := clients.redisClient.XRange(ctx, streams.ReleaseRejectedV1, "-", "+").Result()
+		if err != nil {
+			return false, nil
+		}
+		for _, msg := range msgs {
+			raw, ok := msg.Values["payload"].(string)
+			if !ok || raw == "" {
+				continue
+			}
+			var p struct {
+				ReleaseID string `json:"release_id"`
+				PerNode   []struct {
+					NodeID        string `json:"node_id"`
+					RunResultsURI string `json:"run_results_uri"`
+				} `json:"per_node"`
+			}
+			if json.Unmarshal([]byte(raw), &p) != nil || p.ReleaseID != releaseID {
+				continue
+			}
+			for _, n := range p.PerNode {
+				if n.NodeID == ftableEUniqueID && n.RunResultsURI != "" {
+					rejectedRunResultsURI = n.RunResultsURI
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}, fmt.Sprintf("timeout waiting for release.rejected:v1 with run_results_uri for node %s", ftableEUniqueID))
+	require.NotEmpty(t, rejectedRunResultsURI,
+		"ftable_e must carry run_results_uri on release.rejected:v1 (structured validation result)")
+	t.Logf("✅ release.rejected:v1 carries run_results_uri=%s for ftable_e", rejectedRunResultsURI)
+
 	// 7. Poll remediation.requested:v1 for a trigger whose payload matches this
 	//    release + node. The classifier receives release.rejected:v1, fetches the
 	//    dbt log from S3, classifies the "does not exist" error as logic, and
@@ -144,7 +183,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	require.Equal(t, releaseID, trigger.ReleaseID, "trigger release_id")
 	require.Equal(t, ftableEUniqueID, trigger.NodeID, "trigger node_id")
 	require.Equal(t, "logic", trigger.Category,
-		"ftable_e references public.wrong_name → 'does not exist' → category=logic")
+		"ftable_e references public.wrong_name → structured status=error, message 'does not exist' → category=logic")
 	require.Equal(t, "validation", trigger.Source,
 		"trigger source must be the literal 'validation', not the stream name")
 	require.NotEmpty(t, trigger.ErrorSignature, "trigger must carry a non-empty error_signature")

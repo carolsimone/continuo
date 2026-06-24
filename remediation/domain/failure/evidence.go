@@ -43,6 +43,7 @@ type FailureEvidence struct {
 	ReleaseID       string
 	NodeID          string
 	DBTLogURI       string
+	RunResultsURI   string
 	CandidateSQLURI string
 	Repo            string
 	CommitSHA       string

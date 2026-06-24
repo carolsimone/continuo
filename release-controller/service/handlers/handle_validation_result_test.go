@@ -235,7 +235,7 @@ func TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance(t *
 		ReleaseID: "rA",
 		PerNodeResults: []handlers.NodeResult{
 			{NodeID: "a", Status: "ok"},
-			{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/rA/b.log"},
+			{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/rA/b.log", RunResultsURI: "run-results/rA/b.json"},
 		},
 		AggregateStatus: "failed",
 	})
@@ -268,19 +268,24 @@ func TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance(t *
 		NodeID          string `json:"node_id"`
 		Status          string `json:"status"`
 		DBTLogURI       string `json:"dbt_log_uri,omitempty"`
+		RunResultsURI   string `json:"run_results_uri,omitempty"`
 		CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
 	}
 	require.NoError(t, json.Unmarshal(topLevel["per_node"], &perNode))
 	require.Len(t, perNode, 2)
 
 	byID := map[string]string{}
+	runResultsByID := map[string]string{}
 	for _, pn := range perNode {
 		byID[pn.NodeID] = pn.CandidateSQLURI
+		runResultsByID[pn.NodeID] = pn.RunResultsURI
 	}
 	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a.sql", byID["a"],
 		"ok nodes must also carry candidate_sql_uri (pointer, not inline SQL)")
 	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_b.sql", byID["b"],
 		"failing node must carry candidate_sql_uri")
+	assert.Equal(t, "run-results/rA/b.json", runResultsByID["b"],
+		"failing node must carry run_results_uri through to release.rejected:v1")
 }
 
 // TestHandleValidationResult_AggregateStatusFailed_Rejects covers the edge case

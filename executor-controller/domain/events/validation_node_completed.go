@@ -21,4 +21,5 @@ type ValidationNodeCompleted struct {
 	NodeID        string
 	Outcome       string
 	DBTLogURI     string
+	RunResultsURI string // S3 key of the structured validation result; "" when absent
 }

@@ -72,11 +72,17 @@ After stripping, it folds the category with the normalized error text and return
 
 ```
 1. Parse the event; extract FailureEvidence (release_id, node_id, dbt_log_uri,
-   candidate_sql_uri, repo, commit_sha).
+   run_results_uri, candidate_sql_uri, repo, commit_sha).
 2. Fetch dbt log text from S3 at dbt_log_uri.
    - If not found: logText = "" (→ unknown:log_unavailable).
    - If transient S3 error: return error (message stays in PEL, retried).
-3. Classify(ev, logText) → Category, Signature, Decision, Reason (pure, deterministic).
+2b. If run_results_uri is set: fetch + parse the structured validation result
+    (status/message/failures/unique_id). A transient S3 error returns (retried);
+    a parse failure logs and leaves structured=nil (text-log fallback).
+3. ClassifyWithStructured(ev, structured, logText) → Category, Signature, Decision,
+   Reason (pure, deterministic). Prefers the structured record: status=fail → test;
+   status=error → message through the infra/logic rules. Falls back to the text-log
+   Classify path when structured is nil or carries no message.
 4. Open transaction:
    a. Upsert classification_decision (source, release_id, node_id).
       - If already exists (redelivery): inserted=false → skip enqueue, commit, done.

@@ -383,7 +383,7 @@ func TestPendingValidationCount_PendingDeployedDoneMix(t *testing.T) {
 	done := model.NewValidationDeployment(validValidationCmd("rel-3", "n3"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, done))
 	require.NoError(t, done.MarkDeployed(now))
-	require.NoError(t, done.RecordOutcome("ok", "s3://logs/n3", now))
+	require.NoError(t, done.RecordOutcome("ok", "s3://logs/n3", "", now))
 	require.NoError(t, repo.Save(ctx, done))
 
 	// a different release's pending row must not leak into the count
@@ -406,14 +406,14 @@ func TestListValidationResults_OnlyOutcomedRows(t *testing.T) {
 	okDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n1"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, okDep))
 	require.NoError(t, okDep.MarkDeployed(now))
-	require.NoError(t, okDep.RecordOutcome("ok", "s3://logs/n1", now))
+	require.NoError(t, okDep.RecordOutcome("ok", "s3://logs/n1", "", now))
 	require.NoError(t, repo.Save(ctx, okDep))
 
 	// outcomed failed (later outcome_at so it orders second)
 	failDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n2"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, failDep))
 	require.NoError(t, failDep.MarkDeployed(now))
-	require.NoError(t, failDep.RecordOutcome("failed", "s3://logs/n2", now.Add(time.Second)))
+	require.NoError(t, failDep.RecordOutcome("failed", "s3://logs/n2", "run-results/n2.json", now.Add(time.Second)))
 	require.NoError(t, repo.Save(ctx, failDep))
 
 	// pending, no outcome — excluded
@@ -428,6 +428,8 @@ func TestListValidationResults_OnlyOutcomedRows(t *testing.T) {
 	require.NotNil(t, results[0].OutcomeAt())
 	assert.Equal(t, "failed", results[1].Outcome())
 	assert.Equal(t, "n2", results[1].NodeID())
+	assert.Equal(t, "run-results/n2.json", results[1].DBTRunResultsURI(), "run_results_uri round-trips")
+	assert.Equal(t, "", results[0].DBTRunResultsURI(), "absent run_results_uri reconstitutes empty")
 }
 
 func TestClaimEmission_FirstCallerWins_SecondReturnsFalse(t *testing.T) {
@@ -473,7 +475,7 @@ func runGateInTx(t *testing.T, tx *sqlx.Tx, releaseID, nodeID string, now time.T
 	depRepo := postgres.NewDeploymentsRepository(tx, logger)
 	dep, err := depRepo.GetByReleaseNode(context.Background(), releaseID, nodeID)
 	require.NoError(t, err)
-	require.NoError(t, dep.RecordOutcome("ok", "", now))
+	require.NoError(t, dep.RecordOutcome("ok", "", "", now))
 	require.NoError(t, depRepo.Save(context.Background(), dep))
 
 	return validation.EmitValidationAggregateIfComplete(

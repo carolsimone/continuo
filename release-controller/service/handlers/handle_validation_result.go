@@ -20,10 +20,11 @@ import (
 // recording it on the aggregate. The outbox payload (perNodeEntry) is likewise a
 // distinct boundary DTO that deliberately omits duration_ms.
 type NodeResult struct {
-	NodeID     string `json:"node_id"`
-	Status     string `json:"status"` // "ok" or "failed"
-	DBTLogURI  string `json:"dbt_log_uri,omitempty"`
-	DurationMS int64  `json:"duration_ms,omitempty"`
+	NodeID        string `json:"node_id"`
+	Status        string `json:"status"` // "ok" or "failed"
+	DBTLogURI     string `json:"dbt_log_uri,omitempty"`
+	RunResultsURI string `json:"run_results_uri,omitempty"`
+	DurationMS    int64  `json:"duration_ms,omitempty"`
 }
 
 // HandleValidationResultInput carries the aggregated validation outcome from
@@ -66,10 +67,11 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	results := make([]release.NodeValidationResult, len(in.PerNodeResults))
 	for i, n := range in.PerNodeResults {
 		results[i] = release.NodeValidationResult{
-			NodeID:     n.NodeID,
-			Status:     n.Status,
-			DBTLogURI:  n.DBTLogURI,
-			DurationMS: n.DurationMS,
+			NodeID:        n.NodeID,
+			Status:        n.Status,
+			DBTLogURI:     n.DBTLogURI,
+			RunResultsURI: n.RunResultsURI,
+			DurationMS:    n.DurationMS,
 		}
 	}
 	r.RecordValidationResults(results)
@@ -248,6 +250,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		NodeID          string `json:"node_id"`
 		Status          string `json:"status"`
 		DBTLogURI       string `json:"dbt_log_uri,omitempty"`
+		RunResultsURI   string `json:"run_results_uri,omitempty"`
 		CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
 	}
 	perNode := make([]perNodeEntry, len(in.PerNodeResults))
@@ -256,6 +259,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 			NodeID:          nr.NodeID,
 			Status:          nr.Status,
 			DBTLogURI:       nr.DBTLogURI,
+			RunResultsURI:   nr.RunResultsURI,
 			CandidateSQLURI: uriByNodeID[nr.NodeID],
 		}
 	}

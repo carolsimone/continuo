@@ -26,12 +26,13 @@ func TestValidationCommand_Snapshot(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-// TestValidationCommand_Seed verifies that seed nodes keep the dbt seed --empty
-// path, since seeds have no SELECT to rewrite and dbt builds the empty table
-// from CSV column definitions.
+// TestValidationCommand_Seed verifies that seed nodes run the seed validation
+// wrapper, which executes `dbt seed --select <table> --empty` and then projects
+// target/run_results.json into the structured validation-result block. Seeds have
+// no SELECT to rewrite; dbt builds the empty table from CSV column definitions.
 func TestValidationCommand_Seed(t *testing.T) {
 	got := model.ValidationCommand(pkg_model.NodeTypeDbtSeed, "customers")
-	want := []string{"dbt", "seed", "--select", "customers", "--empty"}
+	want := []string{"python", "/seed_validation_runner.py", "--select", "customers"}
 	require.Equal(t, want, got)
 }
 
