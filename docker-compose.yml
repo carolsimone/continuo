@@ -458,6 +458,9 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-http://stub-llm:9100}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GITHUB_BASE_URL=${GITHUB_BASE_URL:-http://stub-github:9200}
+      - SERVICE_REPO_MAP_PATH=/etc/continuo/service_repos.yaml
+    volumes:
+      - ./remediation-agent/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
     ports:
       # Host port 8094 avoids collision with other services.
       # The container-internal port remains 8092 (REMEDIATION_AGENT_HTTP_PORT).
