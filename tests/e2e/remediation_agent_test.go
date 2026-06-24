@@ -1,10 +1,12 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -216,6 +218,52 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 		"proposed SQL at %s must contain {{ ref('table_b') }} (real source, not candidate schema); got %q",
 		proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 	t.Logf("proposed SQL object fetched from %s: %q", proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
+
+	// (f) SELECT the proposal's id from the DB so we can call the PR-creation endpoint.
+	var proposalID string
+	pollUntil(t, ctx, 10*time.Second, 1*time.Second, func() (bool, error) {
+		err := clients.remediationAgentDB.GetContext(ctx, &proposalID,
+			`SELECT id FROM proposal WHERE release_id = $1 AND node_id = $2 AND attempt = 1 LIMIT 1`,
+			releaseID, ftableEUniqueID)
+		return err == nil && proposalID != "", nil
+	}, fmt.Sprintf("timeout fetching proposal id for release %s node %s", releaseID, ftableEUniqueID))
+	t.Logf("proposal id: %s", proposalID)
+
+	// (g) POST /api/remediation/proposals/{id}/pull-request — expect 200 with
+	//     pr_url and pr_number from stub-github.
+	createPRResp := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
+	require.NotEmpty(t, createPRResp.PRUrl, "pr_url must be non-empty on first create")
+	require.Equal(t, 1, createPRResp.PRNumber, "pr_number must be 1 (stub-github)")
+	t.Logf("PR created: pr_url=%s pr_number=%d", createPRResp.PRUrl, createPRResp.PRNumber)
+
+	// (h) Idempotency: a second POST to the same endpoint must not create a second
+	//     PR. The proposal's pr_state is now 'open', so beginPullRequest CAS
+	//     conflicts and the service returns FAILED_PRECONDITION. The route maps
+	//     this to 409 and echoes the existing pr_url in the body.
+	dupResp := callCreatePREndpoint409(t, ctx, clients.uiBase, proposalID)
+	require.NotEmpty(t, dupResp.PRUrl, "409 body must carry the existing pr_url")
+	require.Equal(t, createPRResp.PRUrl, dupResp.PRUrl,
+		"idempotent 409 must return the SAME pr_url as the first call")
+	t.Logf("idempotency confirmed: second POST returned 409 with pr_url=%s", dupResp.PRUrl)
+
+	// (i) Assert the DB proposal row now reflects pr_state='open', a non-empty
+	//     pr_url, and pr_number=1.
+	var finalRow prRow
+	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
+		err := clients.remediationAgentDB.GetContext(ctx, &finalRow,
+			`SELECT pr_state, pr_url, pr_number FROM proposal WHERE id = $1`,
+			proposalID)
+		if err != nil {
+			return false, nil
+		}
+		return finalRow.PRState == "open", nil
+	}, fmt.Sprintf("timeout waiting for proposal %s to reach pr_state='open'", proposalID))
+
+	require.Equal(t, "open", finalRow.PRState, "proposal pr_state must be 'open'")
+	require.NotEmpty(t, finalRow.PRUrl, "proposal pr_url must be non-empty")
+	require.Equal(t, 1, finalRow.PRNumber, "proposal pr_number must be 1")
+	t.Logf("proposal PR state confirmed: pr_state=%s pr_url=%s pr_number=%d",
+		finalRow.PRState, finalRow.PRUrl, finalRow.PRNumber)
 }
 
 // remediationProposedPayload mirrors the remediation.proposed:v1 wire shape
@@ -245,6 +293,78 @@ type proposalRow struct {
 	Attempt        int    `db:"attempt"`
 	SourceResolved bool   `db:"source_resolved"`
 	ProposedSQLURI string `db:"proposed_sql_uri"`
+}
+
+// prRow captures the PR-state fields asserted after calling the create-PR endpoint.
+type prRow struct {
+	PRState  string `db:"pr_state"`
+	PRUrl    string `db:"pr_url"`
+	PRNumber int    `db:"pr_number"`
+}
+
+// createPRResponse captures the JSON body returned by a successful POST
+// /api/remediation/proposals/:id/pull-request (HTTP 200).
+type createPRResponse struct {
+	PRUrl    string `json:"pr_url"`
+	PRNumber int    `json:"pr_number"`
+}
+
+// createPR409Response captures the JSON body returned by a conflicting POST
+// /api/remediation/proposals/:id/pull-request (HTTP 409).
+type createPR409Response struct {
+	Error string `json:"error"`
+	PRUrl string `json:"pr_url"`
+}
+
+// callCreatePREndpoint POSTs to POST /api/remediation/proposals/{id}/pull-request,
+// asserts the given expected status code, and returns the parsed 200-response body.
+// It is called with wantStatus=200 for the first (successful) invocation.
+func callCreatePREndpoint(t *testing.T, ctx context.Context, uiBase, proposalID string, wantStatus int) createPRResponse {
+	t.Helper()
+	url := fmt.Sprintf("%s/api/remediation/proposals/%s/pull-request", uiBase, proposalID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte{}))
+	require.NoError(t, err, "build POST pull-request request")
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	require.NoError(t, err, "POST %s", url)
+	defer resp.Body.Close()
+
+	require.Equal(t, wantStatus, resp.StatusCode,
+		"unexpected status from POST %s (want %d)", url, wantStatus)
+
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "read body from POST %s", url)
+
+	var result createPRResponse
+	require.NoError(t, json.Unmarshal(raw, &result), "unmarshal 200 body from POST %s: %s", url, raw)
+	return result
+}
+
+// callCreatePREndpoint409 POSTs to the create-PR endpoint a second time,
+// asserts 409, and returns the conflict-response body (carries the existing pr_url).
+func callCreatePREndpoint409(t *testing.T, ctx context.Context, uiBase, proposalID string) createPR409Response {
+	t.Helper()
+	url := fmt.Sprintf("%s/api/remediation/proposals/%s/pull-request", uiBase, proposalID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte{}))
+	require.NoError(t, err, "build duplicate POST pull-request request")
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	require.NoError(t, err, "duplicate POST %s", url)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusConflict, resp.StatusCode,
+		"second POST to %s must return 409 (pr_state already 'open')", url)
+
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "read body from duplicate POST %s", url)
+
+	var result createPR409Response
+	require.NoError(t, json.Unmarshal(raw, &result), "unmarshal 409 body from POST %s: %s", url, raw)
+	return result
 }
 
 // getS3ObjectByKey downloads an S3 object from the e2e bucket by key (no s3:// prefix).

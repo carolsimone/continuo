@@ -20,7 +20,10 @@ const CONFIG_FILE = process.env.CONFIG_FILE;
 const RELEASE_CONTROLLER_URL = process.env.RELEASE_CONTROLLER_URL || 'http://release-controller:8088';
 const CHAT_BRIDGE_ENABLED = process.env.CHAT_BRIDGE_ENABLED === 'true';
 const GITHUB_APP_ID = process.env.GITHUB_APP_ID || '';
-const GITHUB_APP_PRIVATE_KEY = process.env.GITHUB_APP_PRIVATE_KEY || '';
+// Replace literal \n sequences with real newlines so a single-line env value
+// (e.g. from docker-compose) is accepted as valid PEM. This is a no-op for
+// real multiline keys from prod secrets, which contain no backslash-n.
+const GITHUB_APP_PRIVATE_KEY = (process.env.GITHUB_APP_PRIVATE_KEY ?? '').replace(/\\n/g, '\n');
 const GITHUB_APP_INSTALLATION_ID = process.env.GITHUB_APP_INSTALLATION_ID || '';
 const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL || undefined;
 
