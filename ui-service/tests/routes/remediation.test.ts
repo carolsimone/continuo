@@ -54,13 +54,24 @@ function makeGetObject(content = 'SELECT 1') {
   return vi.fn().mockResolvedValue(content);
 }
 
-function appWith(deps: {
-  remediation: RemediationClient;
-  prCreator?: PullRequestCreator;
-  getObject: (key: string) => Promise<string>;
-}) {
+function appWith(
+  deps: {
+    remediation: RemediationClient;
+    prCreator?: PullRequestCreator;
+    getObject: (key: string) => Promise<string>;
+  },
+  user?: { userId: string; role: string; email: string; name: string },
+) {
   const app = express();
   app.use(express.json());
+  // Inject a synthetic req.user when the caller supplies one, mimicking the
+  // app-level auth middleware that normally does this.
+  if (user) {
+    app.use((req: any, _res: any, next: any) => {
+      req.user = user;
+      next();
+    });
+  }
   // Mount without apiGuards — operator gating is tested separately via the
   // app-level auth middleware; here we verify route behaviour in isolation.
   app.use('/api/remediation', createRemediationRouter(deps.remediation, deps.prCreator, deps.getObject));
@@ -227,6 +238,41 @@ describe('remediation router', () => {
     expect(res.status).toBe(502);
     expect(res.body.error).toMatch(/pull request/i);
     expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1' });
+    expect(remediation.recordPullRequest).not.toHaveBeenCalled();
+  });
+
+  // ── POST — opened_by forwarded from authenticated user ────────────────────
+
+  it('forwards the authenticated user id as opened_by in recordPullRequest', async () => {
+    const remediation = makeRemediation();
+    const prCreator = makePrCreator();
+    const getObject = makeGetObject('SELECT 1');
+    const app = appWith(
+      { remediation, prCreator, getObject },
+      { userId: 'u42', role: 'operator', email: 'x@example.com', name: 'Test User' },
+    );
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(200);
+    expect(remediation.recordPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ opened_by: 'u42' }),
+    );
+  });
+
+  // ── POST — S3 fetch failure → failPullRequest + 502, no GitHub call ──────
+
+  it('calls failPullRequest and returns 502 when proposed SQL fetch from S3 rejects', async () => {
+    const remediation = makeRemediation();
+    const prCreator = makePrCreator();
+    // First call (proposed SQL) rejects; second call (diff) should never happen.
+    const getObject = vi.fn().mockRejectedValue(new Error('S3 NoSuchKey'));
+    const app = appWith({ remediation, prCreator, getObject });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(502);
+    expect(res.body.error).toMatch(/S3/i);
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1' });
+    expect(prCreator.create).not.toHaveBeenCalled();
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();
   });
 });

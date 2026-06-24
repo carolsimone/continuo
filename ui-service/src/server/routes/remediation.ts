@@ -80,7 +80,13 @@ export function createRemediationRouter(
     }
 
     // Fetch the proposed SQL content from S3.
-    const content = await getObject(normalizeKey(claim.proposed_sql_uri));
+    let content: string;
+    try {
+      content = await getObject(normalizeKey(claim.proposed_sql_uri));
+    } catch {
+      await remediation.failPullRequest({ id });
+      return res.status(502).json({ error: 'failed to fetch proposed SQL from S3' });
+    }
 
     // Build the PR title and body.
     const nodeId = claim.node_id ?? id;
