@@ -61,6 +61,20 @@ func TestParseValidationNodeCompleted_DBTLogURIOptional(t *testing.T) {
 	assert.Equal(t, "", evt.DBTLogURI, "dbt_log_uri is optional")
 }
 
+func TestParseValidationNodeCompleted_RunResultsURI(t *testing.T) {
+	p := nodeCompletedPayload()
+	p["run_results_uri"] = "run-results/rel-123/orders.json"
+	evt, err := ParseValidationNodeCompleted(nodeCompletedMsg(t, p, ""))
+	require.NoError(t, err)
+	assert.Equal(t, "run-results/rel-123/orders.json", evt.RunResultsURI)
+}
+
+func TestParseValidationNodeCompleted_RunResultsURIOptional(t *testing.T) {
+	evt, err := ParseValidationNodeCompleted(nodeCompletedMsg(t, nodeCompletedPayload(), ""))
+	require.NoError(t, err)
+	assert.Equal(t, "", evt.RunResultsURI, "run_results_uri is optional")
+}
+
 func TestParseValidationNodeCompleted_OutboxEntryIDAbsentIsNilUUID(t *testing.T) {
 	evt, err := ParseValidationNodeCompleted(nodeCompletedMsg(t, nodeCompletedPayload(), ""))
 	require.NoError(t, err)

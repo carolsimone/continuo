@@ -65,9 +65,10 @@ type Deployment struct {
 	errorMessage        *string
 
 	// Validation-only terminal outcome, attached by RecordOutcome after dispatch.
-	outcome   string
-	dbtLogURI string
-	outcomeAt *time.Time
+	outcome          string
+	dbtLogURI        string
+	dbtRunResultsURI string
+	outcomeAt        *time.Time
 }
 
 // NewDeployment starts a fresh pending Deployment due immediately.
@@ -145,7 +146,7 @@ func ReconstituteValidation(
 	nextAttemptAt, createdAt time.Time,
 	deployedAt *time.Time,
 	errorMessage *string,
-	outcome, dbtLogURI string,
+	outcome, dbtLogURI, runResultsURI string,
 	outcomeAt *time.Time,
 ) *Deployment {
 	return &Deployment{
@@ -162,6 +163,7 @@ func ReconstituteValidation(
 		errorMessage:        errorMessage,
 		outcome:             outcome,
 		dbtLogURI:           dbtLogURI,
+		dbtRunResultsURI:    runResultsURI,
 		outcomeAt:           outcomeAt,
 	}
 }
@@ -215,7 +217,7 @@ func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason strin
 // dispatched (status=deployed) validation deployment. It is validation-only:
 // production deployments announce their result through a different path. Only
 // "ok" and "failed" are accepted outcomes.
-func (d *Deployment) RecordOutcome(outcome, logURI string, now time.Time) error {
+func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI string, now time.Time) error {
 	if d.mode != ModeValidation {
 		return fmt.Errorf("RecordOutcome called on non-validation deployment %s", d.id)
 	}
@@ -230,6 +232,7 @@ func (d *Deployment) RecordOutcome(outcome, logURI string, now time.Time) error 
 	}
 	d.outcome = outcome
 	d.dbtLogURI = logURI
+	d.dbtRunResultsURI = runResultsURI
 	ts := now
 	d.outcomeAt = &ts
 	return nil
@@ -319,6 +322,7 @@ func (d *Deployment) NextAttemptAt() time.Time { return d.nextAttemptAt }
 func (d *Deployment) CreatedAt() time.Time     { return d.createdAt }
 func (d *Deployment) DeployedAt() *time.Time   { return d.deployedAt }
 func (d *Deployment) ErrorMessage() *string    { return d.errorMessage }
-func (d *Deployment) Outcome() string          { return d.outcome }
-func (d *Deployment) DBTLogURI() string        { return d.dbtLogURI }
-func (d *Deployment) OutcomeAt() *time.Time    { return d.outcomeAt }
+func (d *Deployment) Outcome() string           { return d.outcome }
+func (d *Deployment) DBTLogURI() string         { return d.dbtLogURI }
+func (d *Deployment) DBTRunResultsURI() string  { return d.dbtRunResultsURI }
+func (d *Deployment) OutcomeAt() *time.Time     { return d.outcomeAt }

@@ -89,7 +89,7 @@ func TestEmitValidationAggregate_IncludesCandidateSchema(t *testing.T) {
 	// Drive it to a terminal ok outcome so ListValidationResults would include it
 	// and Outcome() == "ok".
 	require.NoError(t, dep.MarkDeployed(time.Now()))
-	require.NoError(t, dep.RecordOutcome("ok", "", time.Now()))
+	require.NoError(t, dep.RecordOutcome("ok", "", "", time.Now()))
 
 	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
 	outboxRepo := &captureOutbox{}

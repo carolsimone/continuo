@@ -51,6 +51,7 @@ type deploymentRow struct {
 	NodeID              *string    `db:"node_id"`
 	Outcome             *string    `db:"outcome"`
 	DBTLogURI           *string    `db:"dbt_log_uri"`
+	RunResultsURI       *string    `db:"run_results_uri"`
 	OutcomeAt           *time.Time `db:"outcome_at"`
 }
 
@@ -103,7 +104,7 @@ func (r *deploymentsRepository) GetDueBatch(ctx context.Context, limit int) ([]*
 		SELECT id, message_processing_id, task_id, schedule_id, job_params,
 		       status, retry_count, max_retries, next_attempt_at,
 		       created_at, deployed_at, error_message,
-		       mode, release_id, node_id, outcome, dbt_log_uri, outcome_at
+		       mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri
 		FROM executor_deployments
 		WHERE status = 'pending' AND next_attempt_at <= NOW()
 		ORDER BY next_attempt_at ASC
@@ -124,11 +125,11 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 	const query = `
 		UPDATE executor_deployments
 		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6,
-		    outcome = $7, dbt_log_uri = $8, outcome_at = $9
+		    outcome = $7, dbt_log_uri = $8, outcome_at = $9, run_results_uri = $10
 		WHERE id = $1`
 	res, err := r.exec.ExecContext(ctx, query,
 		d.ID(), string(d.Status()), d.RetryCount(), d.NextAttemptAt(), d.DeployedAt(), d.ErrorMessage(),
-		nullableStr(d.Outcome()), nullableStr(d.DBTLogURI()), d.OutcomeAt(),
+		nullableStr(d.Outcome()), nullableStr(d.DBTLogURI()), d.OutcomeAt(), nullableStr(d.DBTRunResultsURI()),
 	)
 	if err != nil {
 		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
@@ -145,7 +146,7 @@ const validationSelectColumns = `
 	id, message_processing_id, task_id, schedule_id, job_params,
 	status, retry_count, max_retries, next_attempt_at,
 	created_at, deployed_at, error_message,
-	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at`
+	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri`
 
 func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID, nodeID string) (*model.Deployment, error) {
 	const query = `
@@ -157,7 +158,7 @@ func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID,
 		&row.ID, &row.MessageProcessingID, &row.TaskID, &row.ScheduleID, &row.JobParams,
 		&row.Status, &row.RetryCount, &row.MaxRetries, &row.NextAttemptAt,
 		&row.CreatedAt, &row.DeployedAt, &row.ErrorMessage,
-		&row.Mode, &row.ReleaseID, &row.NodeID, &row.Outcome, &row.DBTLogURI, &row.OutcomeAt,
+		&row.Mode, &row.ReleaseID, &row.NodeID, &row.Outcome, &row.DBTLogURI, &row.OutcomeAt, &row.RunResultsURI,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, sql.ErrNoRows
@@ -234,7 +235,7 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 			row.ID, row.MessageProcessingID, vcmd, model.Status(row.Status),
 			row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 			row.DeployedAt, row.ErrorMessage,
-			derefStr(row.Outcome), derefStr(row.DBTLogURI), row.OutcomeAt,
+			derefStr(row.Outcome), derefStr(row.DBTLogURI), derefStr(row.RunResultsURI), row.OutcomeAt,
 		)
 	}
 

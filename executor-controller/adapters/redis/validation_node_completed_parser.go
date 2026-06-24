@@ -13,10 +13,11 @@ import (
 // validationNodeCompletedDTO mirrors the flat JSON body k8s-controller emits in
 // the "payload" field of a validation.node.completed:v1 message.
 type validationNodeCompletedDTO struct {
-	ReleaseID string `json:"release_id"`
-	NodeID    string `json:"node_id"`
-	Outcome   string `json:"outcome"`
-	DBTLogURI string `json:"dbt_log_uri"`
+	ReleaseID     string `json:"release_id"`
+	NodeID        string `json:"node_id"`
+	Outcome       string `json:"outcome"`
+	DBTLogURI     string `json:"dbt_log_uri"`
+	RunResultsURI string `json:"run_results_uri"`
 }
 
 // ParseValidationNodeCompleted translates a validation.node.completed:v1
@@ -67,5 +68,6 @@ func ParseValidationNodeCompleted(msg goredis.XMessage) (events.ValidationNodeCo
 		NodeID:        dto.NodeID,
 		Outcome:       dto.Outcome,
 		DBTLogURI:     dto.DBTLogURI,
+		RunResultsURI: dto.RunResultsURI,
 	}, nil
 }

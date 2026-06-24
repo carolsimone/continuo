@@ -146,7 +146,7 @@ func validationNode(t *testing.T, releaseID, nodeID string, status model.Status,
 // markOk drives a deployed node to a terminal ok outcome (records it back).
 func markOk(t *testing.T, d *model.Deployment) {
 	t.Helper()
-	require.NoError(t, d.RecordOutcome("ok", "", time.Now()))
+	require.NoError(t, d.RecordOutcome("ok", "", "", time.Now()))
 }
 
 // --- tests -----------------------------------------------------------------

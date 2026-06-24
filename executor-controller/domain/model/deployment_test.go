@@ -129,10 +129,10 @@ func TestRecordOutcome_OnlyFromDeployed(t *testing.T) {
 	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 
 	// pending => rejected
-	assert.Error(t, d.RecordOutcome("ok", "s3://logs/run", now))
+	assert.Error(t, d.RecordOutcome("ok", "s3://logs/run", "", now))
 
 	require.NoError(t, d.MarkDeployed(now))
-	require.NoError(t, d.RecordOutcome("ok", "s3://logs/run", now))
+	require.NoError(t, d.RecordOutcome("ok", "s3://logs/run", "", now))
 	assert.Equal(t, "ok", d.Outcome())
 	assert.Equal(t, "s3://logs/run", d.DBTLogURI())
 	require.NotNil(t, d.OutcomeAt())
@@ -143,15 +143,23 @@ func TestRecordOutcome_AcceptsFailed(t *testing.T) {
 	now := time.Now()
 	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 	require.NoError(t, d.MarkDeployed(now))
-	require.NoError(t, d.RecordOutcome("failed", "s3://logs/run", now))
+	require.NoError(t, d.RecordOutcome("failed", "s3://logs/run", "", now))
 	assert.Equal(t, "failed", d.Outcome())
+}
+
+func TestRecordOutcome_StoresRunResultsURI(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
+	require.NoError(t, d.MarkDeployed(now))
+	require.NoError(t, d.RecordOutcome("failed", "s3://logs/run", "run-results/x.json", now))
+	assert.Equal(t, "run-results/x.json", d.DBTRunResultsURI())
 }
 
 func TestRecordOutcome_RejectsInvalidOutcome(t *testing.T) {
 	now := time.Now()
 	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 	require.NoError(t, d.MarkDeployed(now))
-	assert.Error(t, d.RecordOutcome("maybe", "s3://logs/run", now))
+	assert.Error(t, d.RecordOutcome("maybe", "s3://logs/run", "", now))
 	assert.Equal(t, "", d.Outcome(), "rejected outcome is not stored")
 	assert.Nil(t, d.OutcomeAt())
 }
@@ -160,11 +168,11 @@ func TestRecordOutcome_RejectsSecondRecording(t *testing.T) {
 	now := time.Now()
 	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
 	require.NoError(t, d.MarkDeployed(now))
-	require.NoError(t, d.RecordOutcome("ok", "s3://logs/first", now))
+	require.NoError(t, d.RecordOutcome("ok", "s3://logs/first", "", now))
 
 	// A second recording is rejected and leaves the first outcome intact.
 	later := now.Add(time.Minute)
-	assert.Error(t, d.RecordOutcome("failed", "s3://logs/second", later), "outcome recorded once")
+	assert.Error(t, d.RecordOutcome("failed", "s3://logs/second", "", later), "outcome recorded once")
 	assert.Equal(t, "ok", d.Outcome(), "first outcome unchanged")
 	assert.Equal(t, "s3://logs/first", d.DBTLogURI(), "first logURI unchanged")
 	require.NotNil(t, d.OutcomeAt())
@@ -175,7 +183,7 @@ func TestRecordOutcome_RejectsOnProductionDeployment(t *testing.T) {
 	now := time.Now()
 	d := model.NewDeployment(deployableCmd(), nil, now)
 	require.NoError(t, d.MarkDeployed(now))
-	assert.Error(t, d.RecordOutcome("ok", "s3://logs/run", now), "RecordOutcome is validation-only")
+	assert.Error(t, d.RecordOutcome("ok", "s3://logs/run", "", now), "RecordOutcome is validation-only")
 }
 
 func TestReconstituteValidation_RestoresOutcome(t *testing.T) {
@@ -184,13 +192,14 @@ func TestReconstituteValidation_RestoresOutcome(t *testing.T) {
 	ts := now
 	d := model.ReconstituteValidation(
 		uuid.New(), nil, cmd, model.StatusDeployed, 0, 3, now, now, &now, nil,
-		"ok", "s3://logs/run", &ts,
+		"ok", "s3://logs/run", "run-results/run.json", &ts,
 	)
 	assert.Equal(t, model.ModeValidation, d.Mode())
 	assert.Equal(t, cmd.ReleaseID, d.ReleaseID())
 	assert.Equal(t, cmd.NodeID, d.NodeID())
 	assert.Equal(t, "ok", d.Outcome())
 	assert.Equal(t, "s3://logs/run", d.DBTLogURI())
+	assert.Equal(t, "run-results/run.json", d.DBTRunResultsURI())
 	require.NotNil(t, d.OutcomeAt())
 	assert.Equal(t, cmd, d.ValidationCommand())
 }

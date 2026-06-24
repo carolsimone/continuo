@@ -391,7 +391,7 @@ func recordedResult(t *testing.T, nodeID, outcome, logURI string) *model.Deploym
 	now := time.Now()
 	d := model.NewValidationDeployment(cmd, nil, now, false)
 	require.NoError(t, d.MarkDeployed(now))
-	require.NoError(t, d.RecordOutcome(outcome, logURI, now))
+	require.NoError(t, d.RecordOutcome(outcome, logURI, "", now))
 	return d
 }
 
