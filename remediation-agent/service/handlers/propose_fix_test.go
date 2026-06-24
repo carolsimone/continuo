@@ -693,6 +693,124 @@ func TestProposeFix_Step2_FallbackOnUnmappedService(t *testing.T) {
 	}
 }
 
+// TestProposeFix_SourceResolved_PersistsSourceLocation verifies that when Step
+// 2 succeeds, the inserted proposal carries the three source-location fields:
+// Repo, CommitSHA, and FilePath (the full repo-relative path passed to
+// ReadFile). On the candidate-fallback path these fields must remain empty.
+func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
+	t.Run("source_resolved_fields_populated", func(t *testing.T) {
+		u := newFakeUoW()
+		ev := fakeEvidence{vals: map[string]string{
+			"s3://b/sql": "select custmer_id from t",
+			"s3://b/log": "column does not exist",
+		}}
+		// Step-1 returns the candidate fix; Step-2 returns the corrected source.
+		llm := fakeLLM{
+			queue: []ports.ProposeResult{
+				{ProposedSQL: "select customer_id from t", Rationale: "typo fix", Confidence: "high", Model: "m"},
+				{ProposedSQL: "{{ config() }}\nselect customer_id from {{ ref('t') }}", Rationale: "typo fix", Confidence: "high", Model: "m"},
+			},
+			errs: []error{nil, nil},
+		}
+		art := &fakeArtifacts{}
+		src := &fakeSource{content: "{{ config() }}\nselect custmer_id from {{ ref('t') }}"}
+		d := Deps{
+			NewUoW:           func() uow.UnitOfWork { return u },
+			LLM:              &llm,
+			Evidence:         ev,
+			Ancestry:         fakeAncestry{fp: "models/orders_d.sql", svc: "service-3", a: []prompt.Ancestor{}},
+			Source:           src,
+			Sanitizer:        fakeSanitizer{},
+			Artifacts:        art,
+			Clock:            fakeClock{},
+			Logger:           slog.Default(),
+			MaxAttempts:      3,
+			Bucket:           "bucket",
+			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
+		}
+		tr := baseTrigger()
+		tr.Repo = "owner/continuo-dbt-demo"
+		tr.CommitSHA = "abc123"
+
+		if err := ProposeFix(context.Background(), d, tr); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(u.pr.inserted) != 1 {
+			t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+		}
+		p := u.pr.inserted[0]
+
+		if !p.SourceResolved {
+			t.Fatal("expected SourceResolved=true")
+		}
+		if p.Repo != "owner/continuo-dbt-demo" {
+			t.Errorf("Repo = %q, want %q", p.Repo, "owner/continuo-dbt-demo")
+		}
+		if p.CommitSHA != "abc123" {
+			t.Errorf("CommitSHA = %q, want %q", p.CommitSHA, "abc123")
+		}
+		if p.FilePath != "services/service-3/models/orders_d.sql" {
+			t.Errorf("FilePath = %q, want %q", p.FilePath, "services/service-3/models/orders_d.sql")
+		}
+	})
+
+	t.Run("candidate_fallback_fields_empty", func(t *testing.T) {
+		u := newFakeUoW()
+		ev := fakeEvidence{vals: map[string]string{
+			"s3://b/sql": "select custmer_id from t",
+			"s3://b/log": "column does not exist",
+		}}
+		llm := newFakeLLM(ports.ProposeResult{
+			ProposedSQL: "select customer_id from t",
+			Rationale:   "typo",
+			Confidence:  "high",
+			Model:       "m",
+		}, nil)
+		art := &fakeArtifacts{}
+		// Source read error forces candidate fallback.
+		d := Deps{
+			NewUoW:           func() uow.UnitOfWork { return u },
+			LLM:              &llm,
+			Evidence:         ev,
+			Ancestry:         fakeAncestry{fp: "models/orders_d.sql", svc: "service-3"},
+			Source:           &fakeSource{err: fmt.Errorf("github 503")},
+			Sanitizer:        fakeSanitizer{},
+			Artifacts:        art,
+			Clock:            fakeClock{},
+			Logger:           slog.Default(),
+			MaxAttempts:      3,
+			Bucket:           "bucket",
+			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
+		}
+		tr := baseTrigger()
+		tr.Repo = "owner/continuo-dbt-demo"
+		tr.CommitSHA = "abc123"
+
+		if err := ProposeFix(context.Background(), d, tr); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(u.pr.inserted) != 1 {
+			t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+		}
+		p := u.pr.inserted[0]
+
+		if p.SourceResolved {
+			t.Fatal("expected SourceResolved=false on candidate fallback path")
+		}
+		if p.Repo != "" {
+			t.Errorf("Repo must be empty on fallback path, got %q", p.Repo)
+		}
+		if p.CommitSHA != "" {
+			t.Errorf("CommitSHA must be empty on fallback path, got %q", p.CommitSHA)
+		}
+		if p.FilePath != "" {
+			t.Errorf("FilePath must be empty on fallback path, got %q", p.FilePath)
+		}
+	})
+}
+
 // TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence verifies that when
 // the Step-2 LLM returns the same SQL as the original source, or returns a
 // low-confidence result, the handler degrades to the candidate proposal:
