@@ -20,6 +20,7 @@ Legend:
 | `ui-service` | `-` | `-` | `RW` | `RW` | `R` | `R` | `-` | `R` | `-` | `-` | `RW` (bidi stream) |
 | `agent-runner` | `RW` (`continuo_agent`) | `-` | `RW` (optional, rate limiter) | `-` | `-` | `-` | `-` | `W` (optional archive) | `-` | `W` (tool-use loop) | server |
 | `remediation` | `RW` (`continuo_remediation`) | `-` | `RW` | `-` | `-` | `-` | `-` | `R` (dbt log fetch from `logs/` prefix) | `-` | `-` | `-` |
+| `remediation-agent` | `RW` (`continuo_remediation_agent`) | `-` | `RW` | `-` | `R` (`GetNodeAncestry`, best-effort) | `-` | `-` | `RW` (read candidate SQL + dbt log; write `proposed-fix/` artifacts) | `-` | `W` (Anthropic or OpenAI-compatible HTTPS) | `-` |
 | `continuo CLI` | `-` | `-` | `-` | `R` | `R` | `-` | `-` | `-` | `-` | `-` | `-` |
 
 > `ui-service` uses Redis only for server-side login sessions (`AUTH_MODE=oidc`): plain `uisession:<id>` keys with TTLs, created at the OIDC (OpenID Connect) callback, read and refreshed on every authenticated request, deleted on logout. They are ordinary keys, not Redis Streams — `ui-service` produces and consumes no stream events, and `pkg/streams/contract.yaml` is unaffected. In `AUTH_MODE=dev` it constructs no Redis client.
@@ -56,7 +57,8 @@ Legend:
 | `validation.completed:v1` | `executor-controller` | `release-controller` (result), `executor-controller` (group `executor-validation-completed`, candidate schema teardown) | Per-release validation aggregate; consumed by release-controller to advance the release state machine and by executor-controller to drop `_candidate_<release>` from the dbt warehouse. |
 | `release.promoted:v1` | `release-controller` | `orchestrator` | A release is promoted to production; orchestrator swaps schedules, topology, and image tags. |
 | `release.rejected:v1` | `release-controller` | `remediation` (group `remediation-release-rejected`) | A release failed parsing, validation, or pre-validation checks (e.g. `unbuildable_cross_service_upstream`); consumed by the remediation classifier to triage each failing node. |
-| `remediation.requested:v1` | `remediation` | (heal agent) | Per-node remediation trigger for each healable validation failure; pointer-only payload (no error text). |
+| `remediation.requested:v1` | `remediation` | `remediation-agent` (group `remediation-agent-remediation-requested`) | Per-node remediation trigger for each healable validation failure; pointer-only payload (no error text). |
+| `remediation.proposed:v1` | `remediation-agent` | (approval surface) | Per-node fix proposal; pointer-only payload (S3 URIs for proposed SQL and unified diff, short rationale, confidence). |
 
 ## Outbound gRPC Calls by Service
 
@@ -102,6 +104,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `ui-service` | read | `GetObject` — task-execution pod logs (proxied via `GET /api/task-executions/:id/logs`) and dbt validation logs (proxied via `GET /api/releases/log`) |
 | `agent-runner` | write (optional) | `PutObject` — conversation archive to `chat-archive/<user>/<thread>.json` before a thread is deleted by the retention job; enabled when `RETENTION_ARCHIVE_S3=true` |
 | `remediation` | read | `GetObject` — dbt execution log per failing node (`logs/` prefix, URI supplied by `release.rejected:v1`); fetch failure on a missing key is treated as an empty log and classified `unknown:log_unavailable` |
+| `remediation-agent` | read + write | `GetObject` — candidate SQL (from `candidate_sql_uri` in the trigger) and dbt log (from `dbt_log_uri`); `PutObject` — proposed SQL to `proposed-fix/<release_id>/<node_id>.sql` and unified diff to `proposed-fix/<release_id>/<node_id>.diff` |
 
 ## Local Durable State by Service
 
@@ -116,3 +119,4 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `ui-service` | Redis `uisession:<id>` plain keys (server-side login sessions, `AUTH_MODE=oidc`; TTL-bound, not streams) |
 | `agent-runner` | Postgres `continuo_agent`: `threads` (conversation metadata per user), `messages` (full turn history), `pending_actions` (tool calls awaiting human confirmation) |
 | `remediation` | Postgres `continuo_remediation`: `classification_decision` (audit of every triage outcome, emit and drop alike; natural key `(source, release_id, node_id)` enforces inbound idempotency), `remediation_outbox`, `message_processing` (FK target of outbox, not used for inbound consumer dedup) |
+| `remediation-agent` | Postgres `continuo_remediation_agent`: `proposal` (one row per attempt; unique on `(release_id, node_id, attempt)`; status: `proposed`, `skipped`, `failed`, `escalated`), `remediation_agent_outbox`, `message_processing` |
