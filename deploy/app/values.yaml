@@ -329,6 +329,9 @@ services:
         secretKey: AWS_SECRET_ACCESS_KEY
       - name: LLM_API_KEY
         secretKey: LLM_API_KEY
+      # Read-only fine-grained PAT with Contents: Read on continuo-dbt-demo.
+      - name: GITHUB_TOKEN
+        secretKey: GITHUB_TOKEN
     env:
       POSTGRES_DB: continuo_remediation_agent
       HTTP_PORT: "8092"
@@ -336,3 +339,4 @@ services:
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
       LLM_PROVIDER: anthropic
       LLM_MODEL: claude-haiku-4-5
+      GITHUB_BASE_URL: https://api.github.com
