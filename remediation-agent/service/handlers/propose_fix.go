@@ -99,7 +99,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	}
 	dbtLog := deps.Sanitizer.Sanitize(rawLog)
 
-	ancestors, err := deps.Ancestry.Ancestors(ctx, t.NodeID)
+	_, ancestors, err := deps.Ancestry.NodeContext(ctx, t.NodeID)
 	if err != nil {
 		// Ancestry is best-effort: proceed without upstream context.
 		deps.Logger.Warn("ancestry unavailable; proceeding without upstream context",

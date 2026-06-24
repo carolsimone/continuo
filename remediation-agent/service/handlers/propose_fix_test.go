@@ -32,14 +32,15 @@ func (f fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
 	return f.vals[uri], nil
 }
 
-// fakeAncestry returns a fixed ancestor slice, or an error if set.
+// fakeAncestry returns a fixed file path and ancestor slice, or an error if set.
 type fakeAncestry struct {
+	fp  string
 	a   []prompt.Ancestor
 	err error
 }
 
-func (f fakeAncestry) Ancestors(_ context.Context, _ string) ([]prompt.Ancestor, error) {
-	return f.a, f.err
+func (f fakeAncestry) NodeContext(_ context.Context, _ string) (string, []prompt.Ancestor, error) {
+	return f.fp, f.a, f.err
 }
 
 // fakeSanitizer is a pass-through log sanitizer.
