@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
+	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,6 +92,14 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+
+	// 3b. Seed the ftable_e :Table topology node in Neo4j so that the
+	//     remediation-agent's NodeContext (GetNodeAncestry gRPC) can resolve the
+	//     node's file path and service name. In a cold e2e no release has been
+	//     promoted yet, so Neo4j is empty; without this seed, NodeContext returns
+	//     NOT_FOUND and Step-2 source resolution degrades silently to
+	//     source_resolved=false.
+	seedFTableETopologyNode(t, ctx, clients)
 
 	// 4. POST /releases for service-2. ftable_e's SQL references
 	//    public.wrong_name (a relation that does not exist), so validation fails.
@@ -263,4 +272,56 @@ func stripS3Prefix(uri string) string {
 		return rest[i+1:]
 	}
 	return ""
+}
+
+// seedFTableETopologyNode inserts a minimal :Table node for e2e_schema.ftable_e
+// into Neo4j. In a cold e2e no release has been promoted, so Neo4j is empty.
+// The remediation-agent's Step-2 source resolution calls GetNodeAncestry to
+// obtain the node's original_file_path and service_name; without this seed,
+// the gRPC call returns NOT_FOUND and source_resolved stays false.
+//
+// The node uses the same unique_id key format that the release-promotion handler
+// writes: "{schema_name}.{table_name}" (e.g. "e2e_schema.ftable_e"). The
+// original_file_path matches the dbt manifest value ("models/ftable_e.sql"),
+// which the remediation-agent joins with the service_repos.yaml prefix
+// ("services/service-2") to form the full path passed to stub-github.
+//
+// The node is cleaned up via t.Cleanup so it does not leak into other tests.
+func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testClients) {
+	t.Helper()
+	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeWrite,
+	})
+	defer session.Close(ctx)
+
+	_, err := session.Run(ctx, `
+		MERGE (t:Table {unique_id: $uid})
+		SET t.schema_name        = $schema_name,
+		    t.table_name         = $table_name,
+		    t.service_name       = $service_name,
+		    t.original_file_path = $file_path,
+		    t.node_type          = 'model',
+		    t.active             = true
+	`, map[string]interface{}{
+		"uid":          "e2e_schema.ftable_e",
+		"schema_name":  "e2e_schema",
+		"table_name":   "ftable_e",
+		"service_name": "service-2",
+		"file_path":    "models/ftable_e.sql",
+	})
+	require.NoError(t, err, "seed ftable_e topology node in Neo4j")
+
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cleanupSession := clients.neo4jDriver.NewSession(cleanupCtx, neo4jdriver.SessionConfig{
+			AccessMode: neo4jdriver.AccessModeWrite,
+		})
+		defer cleanupSession.Close(cleanupCtx)
+		_, _ = cleanupSession.Run(cleanupCtx,
+			`MATCH (t:Table {unique_id: 'e2e_schema.ftable_e'}) DETACH DELETE t`,
+			nil,
+		)
+	})
+	t.Log("seeded ftable_e topology node in Neo4j (unique_id=e2e_schema.ftable_e, service_name=service-2)")
 }
