@@ -13,6 +13,7 @@ import { createReleasesRouter } from './routes/releases';
 import { createReleaseClient } from './release-client';
 import { getLogObject } from './s3';
 import type { AppAuth } from './auth/types';
+import type { RemediationClient } from './remediation-client';
 
 export function createApp(
   client: GrpcClient,
@@ -21,6 +22,7 @@ export function createApp(
   configFilePath = '/app/config/cancel-config.json',
   releaseControllerUrl = 'http://release-controller:8088',
   chatBridgeEnabled = false,
+  _remediationClient?: RemediationClient,
 ) {
   const app = express();
   app.use(express.json());

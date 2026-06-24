@@ -4,6 +4,7 @@ import express from 'express';
 import { createGrpcClient } from './grpc-client';
 import { createGrpcGraphClient } from './grpc-graph-client';
 import { createAgentClient } from './agent-client';
+import { createRemediationClient } from './remediation-client';
 import { createApp } from './app';
 import { attachChatWebSocket } from './ws/chat';
 import { loadAuthConfig } from './auth/config';
@@ -13,6 +14,7 @@ const PORT = parseInt(process.env.PORT || '8090', 10);
 const STATE_GRPC_ADDR = process.env.STATE_GRPC_ADDR || 'localhost:50051';
 const ORCHESTRATOR_GRPC_ADDR = process.env.ORCHESTRATOR_GRPC_ADDR || 'localhost:50052';
 const AGENT_RUNNER_GRPC_ADDR = process.env.AGENT_RUNNER_GRPC_ADDR || 'localhost:50053';
+const REMEDIATION_GRPC_ADDR = process.env.REMEDIATION_GRPC_ADDR || 'localhost:50054';
 const CONFIG_FILE = process.env.CONFIG_FILE;
 const RELEASE_CONTROLLER_URL = process.env.RELEASE_CONTROLLER_URL || 'http://release-controller:8088';
 const CHAT_BRIDGE_ENABLED = process.env.CHAT_BRIDGE_ENABLED === 'true';
@@ -24,7 +26,8 @@ async function main() {
 
   const client = createGrpcClient(STATE_GRPC_ADDR);
   const graphClient = createGrpcGraphClient(ORCHESTRATOR_GRPC_ADDR);
-  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED);
+  const remediationClient = createRemediationClient(REMEDIATION_GRPC_ADDR);
+  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient);
 
   if (process.env.NODE_ENV === 'production') {
     const staticDir = path.join(__dirname, '../dist');
