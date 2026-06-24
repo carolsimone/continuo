@@ -277,3 +277,43 @@ def test_main_emits_success_block_on_build(monkeypatch, capsys):
     doc = _emitted_doc(capsys.readouterr().out)
     assert doc["status"] == "success"
     assert doc["unique_id"] == "model.orders"
+
+
+def test_main_emits_error_block_on_connection_failure(monkeypatch, capsys):
+    """A warehouse connection failure emits an error block (exit 1), not a bare exit.
+
+    psycopg2.connect must be inside the structured error-handling path so a common
+    infra failure still produces the run_results artifact for the classifier.
+    """
+    _set_build_env(monkeypatch)
+
+    def _boom(**_k):
+        raise RuntimeError("could not connect to server: Connection refused")
+    monkeypatch.setattr("base.validation_runner.psycopg2.connect", _boom)
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 1
+    doc = _emitted_doc(capsys.readouterr().out)
+    assert doc["status"] == "error"
+    assert "Connection refused" in doc["message"]
+    assert doc["unique_id"] == "model.orders"
+
+
+def test_main_emits_error_block_on_missing_db_env(monkeypatch, capsys):
+    """A missing DBT_POSTGRES_* env var emits an error block (exit 1), not sys.exit(2)."""
+    _set_build_env(monkeypatch)
+    monkeypatch.delenv("DBT_POSTGRES_HOST", raising=False)
+    # connect must not be reached when a required connection var is missing.
+    monkeypatch.setattr(
+        "base.validation_runner.psycopg2.connect",
+        lambda **_k: pytest.fail("connect should not be called when DB env is missing"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 1
+    doc = _emitted_doc(capsys.readouterr().out)
+    assert doc["status"] == "error"
+    assert "DBT_POSTGRES_HOST" in doc["message"]
+    assert doc["unique_id"] == "model.orders"

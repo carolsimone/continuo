@@ -145,15 +145,29 @@ def main() -> None:
     # Strip any trailing terminator so it embeds cleanly inside CREATE TABLE AS (...).
     candidate_sql = raw_sql.strip().rstrip(";").strip()
 
-    conn = psycopg2.connect(
-        host=_require("DBT_POSTGRES_HOST"),
-        port=os.environ.get("DBT_POSTGRES_PORT", "5432"),
-        dbname=_require("DBT_POSTGRES_DB"),
-        user=_require("DBT_POSTGRES_USER"),
-        password=os.environ.get("DBT_POSTGRES_PASSWORD", ""),
-    )
-    conn.autocommit = True
+    # Connection setup lives inside the try so a missing DBT_POSTGRES_* env var or a
+    # warehouse connection failure — both common validation failure modes — surface
+    # as a structured error block rather than a bare exit. Without this, the pod
+    # would exit with no sentinel block and k8s-controller could not upload
+    # run_results_uri, bypassing the structured-first remediation path.
+    conn = None
     try:
+        missing = [
+            name
+            for name in ("DBT_POSTGRES_HOST", "DBT_POSTGRES_DB", "DBT_POSTGRES_USER")
+            if not os.environ.get(name)
+        ]
+        if missing:
+            raise RuntimeError(f"missing required env var(s): {', '.join(missing)}")
+
+        conn = psycopg2.connect(
+            host=os.environ["DBT_POSTGRES_HOST"],
+            port=os.environ.get("DBT_POSTGRES_PORT", "5432"),
+            dbname=os.environ["DBT_POSTGRES_DB"],
+            user=os.environ["DBT_POSTGRES_USER"],
+            password=os.environ.get("DBT_POSTGRES_PASSWORD", ""),
+        )
+        conn.autocommit = True
         with conn.cursor() as cur:
             _ensure_schema(cur, schema)
             # The candidate SQL is the compiled model SELECT fetched from S3, with
@@ -183,7 +197,8 @@ def main() -> None:
         print(validation_result.result_block("error", str(exc), unique_id=unique_id), flush=True)
         sys.exit(1)
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 if __name__ == "__main__":
