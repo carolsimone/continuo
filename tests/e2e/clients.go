@@ -23,21 +23,22 @@ import (
 
 // testClients holds all client connections
 type testClients struct {
-	orchestratorClient orchestratorv1.OrchestratorQueryClient
-	stateClient        statev1.StateServiceClient
-	redisClient        *goredis.Client
-	neo4jDriver        neo4jdriver.DriverWithContext
-	executorDB         *sqlx.DB
-	orchestratorDB     *sqlx.DB
-	k8sDB              *sqlx.DB
-	stateDB            *sqlx.DB
-	releaseDB          *sqlx.DB
-	dbtDB              *sqlx.DB
-	remediationDB      *sqlx.DB
-	s3Client           *s3.Client
-	releaseBase        string
-	logger             *slog.Logger
-	uiBase             string
+	orchestratorClient  orchestratorv1.OrchestratorQueryClient
+	stateClient         statev1.StateServiceClient
+	redisClient         *goredis.Client
+	neo4jDriver         neo4jdriver.DriverWithContext
+	executorDB          *sqlx.DB
+	orchestratorDB      *sqlx.DB
+	k8sDB               *sqlx.DB
+	stateDB             *sqlx.DB
+	releaseDB           *sqlx.DB
+	dbtDB               *sqlx.DB
+	remediationDB       *sqlx.DB
+	remediationAgentDB  *sqlx.DB
+	s3Client            *s3.Client
+	releaseBase         string
+	logger              *slog.Logger
+	uiBase              string
 }
 
 // setupClients initializes all client connections
@@ -91,6 +92,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
 	dbtDB := connectPostgres(t, pgHost, getEnv("DBT_POSTGRES_DB", "continuo_dbt"))
 	remediationDB := connectPostgres(t, pgHost, "continuo_remediation")
+	remediationAgentDB := connectPostgres(t, pgHost, "continuo_remediation_agent")
 
 	return &testClients{
 		orchestratorClient: orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
@@ -104,6 +106,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		releaseDB:          releaseDB,
 		dbtDB:              dbtDB,
 		remediationDB:      remediationDB,
+		remediationAgentDB: remediationAgentDB,
 		s3Client:           newLocalstackS3Client(),
 		releaseBase:        getEnv("RELEASE_CONTROLLER_BASE", "http://release-controller:8088"),
 		logger:             logger,
@@ -152,6 +155,7 @@ func (c *testClients) close(ctx context.Context) {
 	c.releaseDB.Close()
 	c.dbtDB.Close()
 	c.remediationDB.Close()
+	c.remediationAgentDB.Close()
 }
 
 // getEnv returns environment variable or default value

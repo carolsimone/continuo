@@ -1,21 +1,25 @@
-// Package main is a deterministic OpenAI-compatible SSE server used in e2e
-// tests. It listens on :9100 and responds to POST /v1/chat/completions with
-// scripted streaming chunks so the agent-runner's openai adapter can be
+// Package main is a deterministic OpenAI-compatible server used in e2e tests.
+// It listens on :9100 and responds to POST /v1/chat/completions with scripted
+// responses so the agent-runner and remediation-agent openai adapters can be
 // exercised without a real LLM.
 //
-// Behavior:
-//   - If the last message role is "tool" (a tool result), respond with a final
-//     text chunk: "DONE: ok" normally, or "DONE: error" when the content
-//     contains "denied", "error", or "is_error". Then finish_reason="stop".
-//   - Otherwise (user message): take the last word of the user text as the
-//     schedule name. If the text contains "trigger" (case-insensitive) emit a
-//     tool_call for "schedule_trigger", else "schedule_status". Then
-//     finish_reason="tool_calls".
+// Routing logic (evaluated in order):
 //
-// The chunk shapes match what the agent-runner openai adapter expects:
+//  1. propose_fix mode: when the request body contains a tool named "propose_fix"
+//     in its tools array, the server returns a NON-STREAMING (stream:false) JSON
+//     response with choices[0].message.tool_calls[0] for propose_fix. This is
+//     what the remediation-agent's openai adapter expects.
+//
+//  2. tool-result mode: when the last message role is "tool", respond with a
+//     final streaming text chunk ("DONE: ok" or "DONE: error"), finish_reason="stop".
+//
+//  3. user-message mode: take the last word of the user text as the schedule name.
+//     If the text contains "trigger" emit a tool_call for "schedule_trigger", else
+//     "schedule_status". finish_reason="tool_calls". Both are SSE streaming.
+//
+// The SSE chunk shapes match what the agent-runner openai adapter expects:
 //   - Text: choices[].delta.content, finish_reason "stop"
-//   - Tool call: choices[].delta.tool_calls[{index,id,function:{name,arguments}}],
-//     finish_reason "tool_calls"
+//   - Tool call: choices[].delta.tool_calls[{index,id,function:{name,arguments}}]
 //   - Stream terminated with "data: [DONE]\n\n"
 package main
 
@@ -38,13 +42,25 @@ func main() {
 // requestPayload is the subset of the OpenAI chat completions request body
 // that the stub needs to inspect.
 type requestPayload struct {
-	Messages []message `json:"messages"`
+	Messages []message    `json:"messages"`
+	Tools    []toolDef    `json:"tools"`
 }
 
 // message is one entry in the messages array.
 type message struct {
 	Role    string `json:"role"`
 	Content any    `json:"content"` // string or []map[string]any for tool results
+}
+
+// toolDef is one entry in the tools array.
+type toolDef struct {
+	Type     string       `json:"type"`
+	Function toolFunction `json:"function"`
+}
+
+// toolFunction holds the function name from a tool definition.
+type toolFunction struct {
+	Name string `json:"name"`
 }
 
 func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +75,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// propose_fix mode: when the request tools include propose_fix, return a
+	// non-streaming JSON completion. The remediation-agent openai adapter sends
+	// stream:false and parses choices[0].message.tool_calls[0].function.
+	if hasTool(req.Tools, "propose_fix") {
+		writeProposeFixResponse(w)
+		return
+	}
+
+	// All other requests use SSE streaming (agent-runner chat e2e path).
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -101,6 +126,56 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	writeSSEDone(w)
 	flush(w)
+}
+
+// hasTool reports whether any entry in tools has the given function name.
+func hasTool(tools []toolDef, name string) bool {
+	for _, t := range tools {
+		if t.Function.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// writeProposeFixResponse returns a deterministic, non-streaming OpenAI
+// chat-completions response that forces the propose_fix tool call. The
+// remediation-agent openai adapter reads choices[0].message.tool_calls[0].
+func writeProposeFixResponse(w http.ResponseWriter) {
+	args, _ := json.Marshal(map[string]string{
+		"proposed_sql": "select c.id from e2e_schema.ftable_c c",
+		"rationale":    "removed reference to nonexistent relation public.wrong_name",
+		"confidence":   "high",
+	})
+	resp := map[string]any{
+		"choices": []map[string]any{
+			{
+				"message": map[string]any{
+					"role": "assistant",
+					"tool_calls": []map[string]any{
+						{
+							"id":   "call_stub_propose_001",
+							"type": "function",
+							"function": map[string]any{
+								"name":      "propose_fix",
+								"arguments": string(args),
+							},
+						},
+					},
+				},
+				"finish_reason": "tool_calls",
+			},
+		},
+	}
+	body, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("stub-llm: marshal propose_fix response: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 // extractStringContent coerces a message Content (string or structured) to string.
