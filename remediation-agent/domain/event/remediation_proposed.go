@@ -48,5 +48,6 @@ type RemediationProposed struct {
 	SuspectedRootCauseNode string `json:"suspected_root_cause_node,omitempty"`
 	Model                  string `json:"model"`
 	Attempt                int    `json:"attempt"`
+	SourceResolved         bool   `json:"source_resolved"`
 	ProposedAt             string `json:"proposed_at"`
 }

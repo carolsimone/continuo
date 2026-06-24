@@ -44,11 +44,15 @@ func (r *ProposalRepository) Insert(ctx context.Context, p proposal.Proposal) er
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, node_id, error_signature, attempt,
-			 status, confidence, rationale, proposed_sql_uri, diff_uri, model, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`
+			 status, confidence, rationale, proposed_sql_uri, diff_uri,
+			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
+			 model, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`
 	_, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, p.NodeID, p.ErrorSignature, p.Attempt,
-		p.Status, p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI, p.Model, p.CreatedAt,
+		p.Status, p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
+		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
+		p.Model, p.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert proposal: %w", err)

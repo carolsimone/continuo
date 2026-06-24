@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
+	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
@@ -92,6 +93,14 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
+	// 3b. Seed the ftable_e :Table topology node in Neo4j so that the
+	//     remediation-agent's NodeContext (GetNodeAncestry gRPC) can resolve the
+	//     node's file path and service name. In a cold e2e no release has been
+	//     promoted yet, so Neo4j is empty; without this seed, NodeContext returns
+	//     NOT_FOUND and Step-2 source resolution degrades silently to
+	//     source_resolved=false.
+	seedFTableETopologyNode(t, ctx, clients)
+
 	// 4. POST /releases for service-2. ftable_e's SQL references
 	//    public.wrong_name (a relation that does not exist), so validation fails.
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
@@ -162,7 +171,8 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	var row proposalRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
 		err := clients.remediationAgentDB.GetContext(ctx, &row,
-			`SELECT source, release_id, node_id, status, attempt
+			`SELECT source, release_id, node_id, status, attempt,
+			        source_resolved, proposed_sql_uri
 			   FROM proposal
 			  WHERE release_id = $1 AND node_id = $2
 			  LIMIT 1`,
@@ -177,13 +187,34 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	require.Equal(t, 1, row.Attempt, "first proposal attempt must be 1")
 	t.Logf("proposal row confirmed: status=%s attempt=%d", row.Status, row.Attempt)
 
-	// (c) Assert the proposed-SQL S3 object exists at proposed_sql_uri.
-	//     The URI is "s3://continuo/proposed-fix/{releaseID}/{nodeID}.sql".
-	//     Strip the "s3://<bucket>/" prefix to get the object key.
+	// (d) Assert the source-resolved path succeeded: stub-github served the real
+	//     model source and stub-llm (Step-2 branch) returned the corrected source.
+	//     The proposal row must reflect source_resolved=true and the URI must end
+	//     with ".source.sql" (the key suffix written by the handler for Step-2).
+	require.True(t, row.SourceResolved, "proposal row must have source_resolved=true (stub-github served real source)")
+	require.True(t,
+		strings.HasSuffix(row.ProposedSQLURI, ".source.sql"),
+		"proposed_sql_uri must end with .source.sql when source_resolved=true; got %s", row.ProposedSQLURI)
+	t.Logf("source-resolved confirmed: proposed_sql_uri=%s", row.ProposedSQLURI)
+
+	// (e) Assert the remediation.proposed:v1 event carries source_resolved=true.
+	//     This field is set by the handler's enqueue call and is forwarded on
+	//     the wire so downstream consumers can distinguish source-level proposals
+	//     from candidate-SQL proposals.
+	require.True(t, proposed.SourceResolved,
+		"remediation.proposed:v1 must carry source_resolved=true; stream=%s", streams.RemediationProposedV1)
+
+	// (c) Assert the proposed-SQL S3 object exists at proposed_sql_uri and
+	//     contains real dbt {{ ref(...) }} macros — confirming the Step-2 source
+	//     fix (not the Step-1 candidate SQL) was stored as the final proposal.
 	sqlKey := stripS3Prefix(proposed.ProposedSQLURI)
 	require.NotEmpty(t, sqlKey, "could not parse key from proposed_sql_uri=%s", proposed.ProposedSQLURI)
 	sqlBody := getS3ObjectByKey(t, ctx, clients, sqlKey)
 	require.NotEmpty(t, sqlBody, "proposed SQL object at %s must not be empty", proposed.ProposedSQLURI)
+	require.True(t,
+		strings.Contains(string(sqlBody), "{{ ref('table_b') }}"),
+		"proposed SQL at %s must contain {{ ref('table_b') }} (real source, not candidate schema); got %q",
+		proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 	t.Logf("proposed SQL object fetched from %s: %q", proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 }
 
@@ -201,16 +232,19 @@ type remediationProposedPayload struct {
 	Confidence     string `json:"confidence"`
 	Model          string `json:"model"`
 	Attempt        int    `json:"attempt"`
+	SourceResolved bool   `json:"source_resolved"`
 	ProposedAt     string `json:"proposed_at"`
 }
 
 // proposalRow captures the fields asserted from continuo_remediation_agent.proposal.
 type proposalRow struct {
-	Source    string `db:"source"`
-	ReleaseID string `db:"release_id"`
-	NodeID    string `db:"node_id"`
-	Status    string `db:"status"`
-	Attempt   int    `db:"attempt"`
+	Source         string `db:"source"`
+	ReleaseID      string `db:"release_id"`
+	NodeID         string `db:"node_id"`
+	Status         string `db:"status"`
+	Attempt        int    `db:"attempt"`
+	SourceResolved bool   `db:"source_resolved"`
+	ProposedSQLURI string `db:"proposed_sql_uri"`
 }
 
 // getS3ObjectByKey downloads an S3 object from the e2e bucket by key (no s3:// prefix).
@@ -238,4 +272,56 @@ func stripS3Prefix(uri string) string {
 		return rest[i+1:]
 	}
 	return ""
+}
+
+// seedFTableETopologyNode inserts a minimal :Table node for e2e_schema.ftable_e
+// into Neo4j. In a cold e2e no release has been promoted, so Neo4j is empty.
+// The remediation-agent's Step-2 source resolution calls GetNodeAncestry to
+// obtain the node's original_file_path and service_name; without this seed,
+// the gRPC call returns NOT_FOUND and source_resolved stays false.
+//
+// The node uses the same unique_id key format that the release-promotion handler
+// writes: "{schema_name}.{table_name}" (e.g. "e2e_schema.ftable_e"). The
+// original_file_path matches the dbt manifest value ("models/ftable_e.sql"),
+// which the remediation-agent joins with the service_repos.yaml prefix
+// ("services/service-2") to form the full path passed to stub-github.
+//
+// The node is cleaned up via t.Cleanup so it does not leak into other tests.
+func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testClients) {
+	t.Helper()
+	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeWrite,
+	})
+	defer session.Close(ctx)
+
+	_, err := session.Run(ctx, `
+		MERGE (t:Table {unique_id: $uid})
+		SET t.schema_name        = $schema_name,
+		    t.table_name         = $table_name,
+		    t.service_name       = $service_name,
+		    t.original_file_path = $file_path,
+		    t.node_type          = 'model',
+		    t.active             = true
+	`, map[string]interface{}{
+		"uid":          "e2e_schema.ftable_e",
+		"schema_name":  "e2e_schema",
+		"table_name":   "ftable_e",
+		"service_name": "service-2",
+		"file_path":    "models/ftable_e.sql",
+	})
+	require.NoError(t, err, "seed ftable_e topology node in Neo4j")
+
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cleanupSession := clients.neo4jDriver.NewSession(cleanupCtx, neo4jdriver.SessionConfig{
+			AccessMode: neo4jdriver.AccessModeWrite,
+		})
+		defer cleanupSession.Close(cleanupCtx)
+		_, _ = cleanupSession.Run(cleanupCtx,
+			`MATCH (t:Table {unique_id: 'e2e_schema.ftable_e'}) DETACH DELETE t`,
+			nil,
+		)
+	})
+	t.Log("seeded ftable_e topology node in Neo4j (unique_id=e2e_schema.ftable_e, service_name=service-2)")
 }

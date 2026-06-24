@@ -8,7 +8,11 @@
 //  1. propose_fix mode: when the request body contains a tool named "propose_fix"
 //     in its tools array, the server returns a NON-STREAMING (stream:false) JSON
 //     response with choices[0].message.tool_calls[0] for propose_fix. This is
-//     what the remediation-agent's openai adapter expects.
+//     what the remediation-agent's openai adapter expects. The response branches
+//     on whether the user message contains "Original model source" (Step-2 marker
+//     from prompt.AssembleSourceFix): if so, the response returns the corrected
+//     real model source (using {{ ref(...) }} macros); otherwise it returns the
+//     Step-1 candidate-SQL fix (compiled SQL, no macros).
 //
 //  2. tool-result mode: when the last message role is "tool", respond with a
 //     final streaming text chunk ("DONE: ok" or "DONE: error"), finish_reason="stop".
@@ -78,8 +82,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// propose_fix mode: when the request tools include propose_fix, return a
 	// non-streaming JSON completion. The remediation-agent openai adapter sends
 	// stream:false and parses choices[0].message.tool_calls[0].function.
+	// Branch on the user-content marker to distinguish Step-1 (candidate SQL)
+	// from Step-2 (real source fix via stub-github).
 	if hasTool(req.Tools, "propose_fix") {
-		writeProposeFixResponse(w)
+		userContent := lastUserContent(req.Messages)
+		writeProposeFixResponse(w, userContent)
 		return
 	}
 
@@ -138,13 +145,53 @@ func hasTool(tools []toolDef, name string) bool {
 	return false
 }
 
+// step2Marker is the string present in the user message when the
+// remediation-agent sends a Step-2 (real-source fix) request. It is produced
+// by prompt.AssembleSourceFix, which prefixes the user body with
+// "Original model source:".
+const step2Marker = "Original model source"
+
+// step2SourceFix is the corrected dbt model source returned by the stub when
+// the Step-2 marker is detected. It removes the bad join (public.silly_error /
+// public.wrong_name) while preserving the real {{ ref(...) }} macros from the
+// stub-github canned source.
+const step2SourceFix = `{{ config(materialized='table') }}
+select *
+from {{ ref('table_b') }}
+join {{ ref('table_c') }} using (id)`
+
+// lastUserContent scans messages in reverse to find the most recent user-role
+// message and returns its string content. Returns "" if none is found.
+func lastUserContent(messages []message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return extractStringContent(messages[i].Content)
+		}
+	}
+	return ""
+}
+
 // writeProposeFixResponse returns a deterministic, non-streaming OpenAI
 // chat-completions response that forces the propose_fix tool call. The
 // remediation-agent openai adapter reads choices[0].message.tool_calls[0].
-func writeProposeFixResponse(w http.ResponseWriter) {
+//
+// When userContent contains step2Marker (Step-2 real-source request), the
+// proposed_sql is the corrected model source with real {{ ref(...) }} macros.
+// Otherwise (Step-1 candidate request), it returns the compiled SQL fix.
+func writeProposeFixResponse(w http.ResponseWriter, userContent string) {
+	var proposedSQL, rationale string
+	if strings.Contains(userContent, step2Marker) {
+		// Step-2: return the corrected real model source (preserves dbt macros).
+		proposedSQL = step2SourceFix
+		rationale = "removed join to nonexistent relation; preserved {{ ref(...) }} macros"
+	} else {
+		// Step-1: return the candidate SQL fix (compiled SQL, no macros).
+		proposedSQL = "select c.id from e2e_schema.ftable_c c"
+		rationale = "removed reference to nonexistent relation public.wrong_name"
+	}
 	args, _ := json.Marshal(map[string]string{
-		"proposed_sql": "select c.id from e2e_schema.ftable_c c",
-		"rationale":    "removed reference to nonexistent relation public.wrong_name",
+		"proposed_sql": proposedSQL,
+		"rationale":    rationale,
 		"confidence":   "high",
 	})
 	resp := map[string]any{

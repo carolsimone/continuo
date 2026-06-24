@@ -104,6 +104,90 @@ func newTestDB(t *testing.T) *sqlx.DB {
 	return db
 }
 
+// TestProposalRepositorySourceFixFields inserts a proposal with all three
+// source-fix columns populated and verifies they round-trip through the DB.
+// A second row with SourceResolved=true verifies the boolean is persisted
+// independently of the URI fields.
+func TestProposalRepositorySourceFixFields(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	repo := NewProposalRepository(tx)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	// Insert a proposal with all three source-fix fields set.
+	p := proposal.Proposal{
+		Source:              "validation",
+		ReleaseID:           "release-sf-1",
+		NodeID:              "schema.model_sf",
+		ErrorSignature:      "err-sig-sf",
+		Attempt:             1,
+		Status:              proposal.StatusProposed,
+		Confidence:          proposal.ConfidenceHigh,
+		Rationale:           "source fix rationale",
+		ProposedSQLURI:      "s3://bucket/sql/sf1",
+		DiffURI:             "s3://bucket/diff/sf1",
+		CandidateFixSQLURI:  "s3://bucket/candidate/sql/sf1",
+		CandidateFixDiffURI: "s3://bucket/candidate/diff/sf1",
+		SourceResolved:      true,
+		Model:               "claude-3-5-sonnet",
+		CreatedAt:           now,
+	}
+	require.NoError(t, repo.Insert(ctx, p), "insert proposal with source-fix fields")
+
+	// Read back and verify round-trip.
+	type row struct {
+		CandidateFixSQLURI  string `db:"candidate_fix_sql_uri"`
+		CandidateFixDiffURI string `db:"candidate_fix_diff_uri"`
+		SourceResolved      bool   `db:"source_resolved"`
+	}
+	var got row
+	require.NoError(t, tx.GetContext(ctx, &got,
+		`SELECT candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved
+		 FROM proposal WHERE release_id=$1 AND node_id=$2 AND attempt=$3`,
+		p.ReleaseID, p.NodeID, p.Attempt,
+	), "read back source-fix fields")
+	require.Equal(t, p.CandidateFixSQLURI, got.CandidateFixSQLURI, "candidate_fix_sql_uri round-trip")
+	require.Equal(t, p.CandidateFixDiffURI, got.CandidateFixDiffURI, "candidate_fix_diff_uri round-trip")
+	require.True(t, got.SourceResolved, "source_resolved must be true")
+
+	// Insert a second row with SourceResolved=true and non-empty CandidateFixSQLURI
+	// to verify the column stores distinct true values across rows.
+	p2 := proposal.Proposal{
+		Source:              "validation",
+		ReleaseID:           "release-sf-1",
+		NodeID:              "schema.model_sf",
+		ErrorSignature:      "err-sig-sf",
+		Attempt:             2,
+		Status:              proposal.StatusProposed,
+		Confidence:          proposal.ConfidenceMedium,
+		Rationale:           "source fix rationale attempt 2",
+		ProposedSQLURI:      "s3://bucket/sql/sf2",
+		DiffURI:             "s3://bucket/diff/sf2",
+		CandidateFixSQLURI:  "s3://bucket/candidate/sql/sf2",
+		CandidateFixDiffURI: "",
+		SourceResolved:      true,
+		Model:               "claude-3-5-sonnet",
+		CreatedAt:           now,
+	}
+	require.NoError(t, repo.Insert(ctx, p2), "insert second proposal with SourceResolved=true")
+
+	var got2 row
+	require.NoError(t, tx.GetContext(ctx, &got2,
+		`SELECT candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved
+		 FROM proposal WHERE release_id=$1 AND node_id=$2 AND attempt=$3`,
+		p2.ReleaseID, p2.NodeID, p2.Attempt,
+	), "read back second source-fix row")
+	require.Equal(t, "s3://bucket/candidate/sql/sf2", got2.CandidateFixSQLURI, "candidate_fix_sql_uri second row")
+	require.True(t, got2.SourceResolved, "source_resolved must be true on second row")
+
+	require.NoError(t, tx.Commit())
+}
+
 // TestProposalRepositoryCountAttempts inserts 3 proposal attempts for one
 // (source, node_id, error_signature) triplet and 1 for a different node,
 // verifying that CountAttempts returns the correct count per triplet.

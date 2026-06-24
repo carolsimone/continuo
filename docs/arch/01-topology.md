@@ -30,6 +30,7 @@ flowchart LR
     K8S[(Kubernetes API)]
     R[(Redis)]
     LLM[(LLM provider HTTPS)]
+    GH[(GitHub Contents API)]
   end
 
   ST --> STDB
@@ -68,6 +69,7 @@ flowchart LR
   REM --> S3
   REMA --> S3
   REMA --> LLM
+  REMA -.-> GH
   REMA --> OR
 ```
 

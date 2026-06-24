@@ -434,6 +434,7 @@ services:
       - flyway-remediation-agent
       - localstack
       - stub-llm
+      - stub-github
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -455,6 +456,11 @@ services:
       - LLM_API_KEY=${LLM_API_KEY:-stub}
       - LLM_MODEL=${LLM_MODEL:-stub-model}
       - LLM_BASE_URL=${LLM_BASE_URL:-http://stub-llm:9100}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GITHUB_BASE_URL=${GITHUB_BASE_URL:-http://stub-github:9200}
+      - SERVICE_REPO_MAP_PATH=/etc/continuo/service_repos.yaml
+    volumes:
+      - ./remediation-agent/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
     ports:
       # Host port 8094 avoids collision with other services.
       # The container-internal port remains 8092 (REMEDIATION_AGENT_HTTP_PORT).
@@ -468,6 +474,15 @@ services:
     container_name: stub-llm
     ports:
       - "9100:9100"
+    networks:
+      - default
+
+  stub-github:
+    build:
+      context: ./tests/e2e/stub-github
+    container_name: stub-github
+    ports:
+      - "9200:9200"
     networks:
       - default
 

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,12 +57,17 @@ type Deps struct {
 	LLM         ports.LLMProvider
 	Evidence    ports.EvidenceReader
 	Ancestry    ports.AncestryClient
+	Source      ports.SourceReader
 	Sanitizer   ports.LogSanitizer
 	Artifacts   ports.ArtifactWriter
 	Clock       ports.Clock
 	Logger      *slog.Logger
 	MaxAttempts int
 	Bucket      string
+	// ServiceRepoPaths maps a dbt service_name to its project root within the
+	// source repo, e.g. "service-1" → "services/service-1". Used to construct
+	// the full GitHub file path for Step-2 source resolution.
+	ServiceRepoPaths map[string]string
 }
 
 // ProposeFix turns one healable failure trigger into a fix proposal. It counts
@@ -79,14 +86,14 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	if attempts >= deps.MaxAttempts {
 		return record(ctx, deps, t, attempt, proposal.Proposal{
 			Status: proposal.StatusEscalated,
-		}, false)
+		}, false, false)
 	}
 
 	// No candidate SQL (e.g. seed nodes): record skipped, emit nothing.
 	if t.CandidateSQLURI == "" {
 		return record(ctx, deps, t, attempt, proposal.Proposal{
 			Status: proposal.StatusSkipped,
-		}, false)
+		}, false, false)
 	}
 
 	candidateSQL, err := deps.Evidence.Fetch(ctx, t.CandidateSQLURI)
@@ -99,12 +106,15 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	}
 	dbtLog := deps.Sanitizer.Sanitize(rawLog)
 
-	ancestors, err := deps.Ancestry.Ancestors(ctx, t.NodeID)
+	// Ancestry is best-effort: proceed without upstream context on error.
+	// filePath and serviceName are forwarded to resolveSource so it does not
+	// need a second NodeContext call.
+	filePath, serviceName, ancestors, err := deps.Ancestry.NodeContext(ctx, t.NodeID)
 	if err != nil {
-		// Ancestry is best-effort: proceed without upstream context.
 		deps.Logger.Warn("ancestry unavailable; proceeding without upstream context",
 			"node", t.NodeID, "error", err)
 		ancestors = nil
+		filePath, serviceName = "", ""
 	}
 
 	res, err := deps.LLM.Propose(ctx, prompt.Assemble(prompt.Evidence{
@@ -123,33 +133,108 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	if res.ProposedSQL == "" {
 		return record(ctx, deps, t, attempt, proposal.Proposal{
 			Status: proposal.StatusFailed,
-		}, false)
+		}, false, false)
 	}
 
-	// Write proposed SQL and its unified diff to object storage. The attempt
-	// number is included in the key so successive attempts for the same
-	// (release, node) do not overwrite each other's artifacts.
-	sqlKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.sql", t.ReleaseID, t.NodeID, attempt)
-	diffKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.diff", t.ReleaseID, t.NodeID, attempt)
+	// Step 1 — candidate artifacts. Written unconditionally for audit: the
+	// candidate is the LLM's fix applied to the pre-compiled SQL extracted from
+	// object storage (not the real model source).
+	candSQLKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.sql", t.ReleaseID, t.NodeID, attempt)
+	candDiffKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.diff", t.ReleaseID, t.NodeID, attempt)
 
-	sqlURI, err := deps.Artifacts.Write(ctx, sqlKey, res.ProposedSQL, "text/plain")
+	candSQLURI, err := deps.Artifacts.Write(ctx, candSQLKey, res.ProposedSQL, "text/plain")
 	if err != nil {
-		return fmt.Errorf("write proposed sql: %w", err)
+		return fmt.Errorf("write candidate sql: %w", err)
 	}
-	diffBody := proposal.ComputeUnifiedDiff(candidateSQL, res.ProposedSQL, t.NodeID)
-	diffURI, err := deps.Artifacts.Write(ctx, diffKey, diffBody, "text/plain")
+	candDiffURI, err := deps.Artifacts.Write(ctx, candDiffKey, proposal.ComputeUnifiedDiff(candidateSQL, res.ProposedSQL, t.NodeID), "text/plain")
 	if err != nil {
-		return fmt.Errorf("write diff: %w", err)
+		return fmt.Errorf("write candidate diff: %w", err)
+	}
+
+	// Defaults: final URIs fall back to the candidate unless Step 2 succeeds.
+	finalSQLURI, finalDiffURI := candSQLURI, candDiffURI
+	sourceResolved := false
+
+	// Step 2 — real-source fix. Fetches the model source from version control
+	// and asks the LLM to apply the Step-1 diagnosis to it. Degrades silently
+	// when the file path, service mapping, source read, or LLM result is
+	// unavailable, or when the LLM did not improve the source.
+	if src, ok := deps.resolveSource(ctx, t, filePath, serviceName, res); ok {
+		srcDiff := proposal.ComputeUnifiedDiff(src.original, src.corrected, t.NodeID)
+		srcSQLURI, err := deps.Artifacts.Write(ctx,
+			fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", t.ReleaseID, t.NodeID, attempt),
+			src.corrected, "text/plain")
+		if err != nil {
+			return fmt.Errorf("write source sql: %w", err)
+		}
+		srcDiffURI, err := deps.Artifacts.Write(ctx,
+			fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.diff", t.ReleaseID, t.NodeID, attempt),
+			srcDiff, "text/plain")
+		if err != nil {
+			return fmt.Errorf("write source diff: %w", err)
+		}
+		finalSQLURI, finalDiffURI, sourceResolved = srcSQLURI, srcDiffURI, true
 	}
 
 	return record(ctx, deps, t, attempt, proposal.Proposal{
-		Status:         proposal.StatusProposed,
-		Confidence:     normalizeConfidence(res.Confidence),
-		Rationale:      res.Rationale,
-		ProposedSQLURI: sqlURI,
-		DiffURI:        diffURI,
-		Model:          res.Model,
-	}, true, res.SuspectedRootCauseNode)
+		Status:              proposal.StatusProposed,
+		Confidence:          normalizeConfidence(res.Confidence),
+		Rationale:           res.Rationale,
+		ProposedSQLURI:      finalSQLURI,
+		DiffURI:             finalDiffURI,
+		CandidateFixSQLURI:  candSQLURI,
+		CandidateFixDiffURI: candDiffURI,
+		SourceResolved:      sourceResolved,
+		Model:               res.Model,
+	}, true, sourceResolved, res.SuspectedRootCauseNode)
+}
+
+// resolvedSource holds the original model source and the Step-2 corrected
+// version produced by the LLM.
+type resolvedSource struct{ original, corrected string }
+
+// resolveSource performs Step 2: fetch the real model source from version
+// control and ask the LLM to apply the Step-1 diagnosis to it. filePath and
+// serviceName come from the single NodeContext call already made by the caller.
+// Returns ok=false on any degraded path (missing file path or service name, no
+// repo mapping, source read error, empty/unchanged LLM result, or
+// low-confidence LLM result); the caller then keeps the candidate proposal.
+func (d Deps) resolveSource(ctx context.Context, t Trigger, filePath, serviceName string, step1 ports.ProposeResult) (resolvedSource, bool) {
+	if filePath == "" || serviceName == "" {
+		d.Logger.Warn("source fix: file path or service name unavailable; using candidate proposal",
+			"node", t.NodeID, "file_path", filePath, "service_name", serviceName)
+		return resolvedSource{}, false
+	}
+	repoPrefix, ok := d.ServiceRepoPaths[serviceName]
+	if !ok {
+		d.Logger.Warn("source fix: no repo path mapping for service; using candidate proposal",
+			"node", t.NodeID, "service_name", serviceName)
+		return resolvedSource{}, false
+	}
+	fullPath := path.Join(repoPrefix, filePath)
+	original, err := d.Source.ReadFile(ctx, t.Repo, t.CommitSHA, fullPath)
+	if err != nil {
+		d.Logger.Warn("source fix: github read failed; using candidate proposal",
+			"node", t.NodeID, "path", fullPath, "error", err)
+		return resolvedSource{}, false
+	}
+	out, err := d.LLM.Propose(ctx, prompt.AssembleSourceFix(d.Sanitizer.Sanitize(original), t.NodeID, step1.Rationale))
+	if err != nil {
+		d.Logger.Warn("source fix: llm step 2 failed; using candidate proposal",
+			"node", t.NodeID, "error", err)
+		return resolvedSource{}, false
+	}
+	if out.ProposedSQL == "" || out.ProposedSQL == original {
+		d.Logger.Warn("source fix: llm step 2 produced no improvement; using candidate proposal",
+			"node", t.NodeID)
+		return resolvedSource{}, false
+	}
+	if strings.EqualFold(out.Confidence, "low") {
+		d.Logger.Warn("source fix: llm step 2 low confidence; using candidate proposal",
+			"node", t.NodeID)
+		return resolvedSource{}, false
+	}
+	return resolvedSource{original: original, corrected: out.ProposedSQL}, true
 }
 
 // countAttempts opens a read-only transaction to count prior proposals for
@@ -169,8 +254,9 @@ func countAttempts(ctx context.Context, deps Deps, t Trigger) (int, error) {
 
 // record inserts the proposal row and, when emit is true, enqueues the
 // remediation.proposed:v1 outbox trigger — all in a single transaction.
-// The variadic suspectedRoot lets successful proposals forward the optional
-// LLM field without a separate struct.
+// sourceResolved indicates whether the real-source Step-2 fix succeeded; it is
+// threaded into the outbox event. The variadic suspectedRoot lets successful
+// proposals forward the optional LLM field without a separate struct.
 //
 // Inbound dedup is performed atomically inside the transaction: the
 // message_processing claim, the proposal insert, and the optional outbox enqueue
@@ -178,7 +264,7 @@ func countAttempts(ctx context.Context, deps Deps, t Trigger) (int, error) {
 // and causes a rollback with a nil return (consumer ACKs, no duplicate written).
 // A transient error rolls back without persisting the claim, so the message is
 // cleanly retried.
-func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.Proposal, emit bool, suspectedRoot ...string) error {
+func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.Proposal, emit bool, sourceResolved bool, suspectedRoot ...string) error {
 	p.Source = t.Source
 	p.ReleaseID = t.ReleaseID
 	p.NodeID = t.NodeID
@@ -217,7 +303,7 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 		if len(suspectedRoot) > 0 {
 			root = suspectedRoot[0]
 		}
-		if err := enqueue(ctx, u, deps, t, p, root, msgProcID); err != nil {
+		if err := enqueue(ctx, u, deps, t, p, root, sourceResolved, msgProcID); err != nil {
 			return err
 		}
 	}
@@ -232,9 +318,10 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 
 // enqueue builds the deterministic remediation.proposed:v1 outbox entry and
 // creates it on the repository bound to the caller's transaction.
+// sourceResolved indicates whether the real-source Step-2 fix succeeded.
 // msgProcID is the message_processing row UUID for the inbound trigger;
 // it is stored on the outbox entry for provenance.
-func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p proposal.Proposal, suspectedRoot string, msgProcID uuid.UUID) error {
+func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p proposal.Proposal, suspectedRoot string, sourceResolved bool, msgProcID uuid.UUID) error {
 	eventID := event.RemediationEventID(t.ReleaseID, t.NodeID, p.Attempt)
 	payload := event.RemediationProposed{
 		EventID:                eventID.String(),
@@ -249,6 +336,7 @@ func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p prop
 		SuspectedRootCauseNode: suspectedRoot,
 		Model:                  p.Model,
 		Attempt:                p.Attempt,
+		SourceResolved:         sourceResolved,
 		ProposedAt:             deps.Clock.Now().Format(time.RFC3339),
 	}
 	body, err := json.Marshal(payload)

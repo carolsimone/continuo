@@ -22,12 +22,13 @@ func TestRemediationProposedJSON(t *testing.T) {
 		EventID: "id", Source: "validation", ReleaseID: "r1", NodeID: "s.n",
 		ErrorSignature: "sig", ProposedSQLURI: "s3://b/p.sql", DiffURI: "s3://b/p.diff",
 		Rationale: "fix typo", Confidence: "high", Model: "claude-opus-4-8", Attempt: 1,
-		ProposedAt: "2026-06-23T00:00:00Z",
+		ProposedAt: "2026-06-23T00:00:00Z", SourceResolved: true,
 	})
 	var m map[string]any
 	_ = json.Unmarshal(b, &m)
 	for _, k := range []string{"event_id", "source", "release_id", "node_id", "error_signature",
-		"proposed_sql_uri", "diff_uri", "rationale", "confidence", "model", "attempt", "proposed_at"} {
+		"proposed_sql_uri", "diff_uri", "rationale", "confidence", "model", "attempt", "proposed_at",
+		"source_resolved"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("missing key %q", k)
 		}
