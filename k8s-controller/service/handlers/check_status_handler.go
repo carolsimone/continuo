@@ -18,6 +18,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
 )
 
@@ -27,27 +28,24 @@ import (
 // re-observed terminal Job map to the same aggregate for downstream dedup.
 var validationLabelNamespace = uuid.MustParse("a4f1c2e6-8b3d-4f7a-9c1e-2d6b5a0f3e8c")
 
-const (
-	validationResultBegin = "===CONTINUO_VALIDATION_RESULT_BEGIN==="
-	validationResultEnd   = "===CONTINUO_VALIDATION_RESULT_END==="
-)
-
 // SplitValidationResult removes the structured-result sentinel block from a
 // validation pod log and returns the cleaned log plus the inner single-line
-// JSON. When no well-formed block is present (production jobs, old images,
+// JSON. The sentinel markers are the shared cross-language contract in
+// pkg/validationresult (the Python pod emits them; a guard test binds the two
+// sides). When no well-formed block is present (production jobs, old images,
 // truncated logs) it returns the log unchanged and an empty structured string —
 // the caller then degrades to the text-log-only path.
 func SplitValidationResult(log string) (cleanLog, structuredJSON string) {
-	bi := strings.Index(log, validationResultBegin)
+	bi := strings.Index(log, validationresult.SentinelBegin)
 	if bi < 0 {
 		return log, ""
 	}
-	ei := strings.Index(log, validationResultEnd)
+	ei := strings.Index(log, validationresult.SentinelEnd)
 	if ei < 0 || ei < bi {
 		return log, ""
 	}
-	inner := strings.TrimSpace(log[bi+len(validationResultBegin) : ei])
-	clean := log[:bi] + log[ei+len(validationResultEnd):]
+	inner := strings.TrimSpace(log[bi+len(validationresult.SentinelBegin) : ei])
+	clean := log[:bi] + log[ei+len(validationresult.SentinelEnd):]
 	return clean, strings.TrimSpace(inner)
 }
 
