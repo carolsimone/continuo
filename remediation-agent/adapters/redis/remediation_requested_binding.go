@@ -8,6 +8,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation-agent/service/handlers"
@@ -29,8 +30,9 @@ type requestedPayload struct {
 }
 
 // triggerFromRequested decodes a remediation.requested:v1 payload into a
-// handlers.Trigger. Returns an error if the JSON is malformed.
-func triggerFromRequested(raw []byte) (handlers.Trigger, error) {
+// handlers.Trigger, and populates the dedup fields from the Redis message.
+// Returns an error if the JSON is malformed.
+func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, error) {
 	var p requestedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return handlers.Trigger{}, fmt.Errorf("unmarshal remediation.requested payload: %w", err)
@@ -45,6 +47,9 @@ func triggerFromRequested(raw []byte) (handlers.Trigger, error) {
 		CandidateSQLURI: p.CandidateSQLURI,
 		Repo:            p.Repo,
 		CommitSHA:       p.CommitSHA,
+		MessageID:       msg.ID,
+		OutboxEntryID:   messageprocessing.ExtractOutboxEntryID(msg.Values),
+		RawPayload:      raw,
 	}, nil
 }
 
@@ -59,7 +64,7 @@ func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, log
 			logger.Error("remediation.requested:v1 missing payload — discarding", "message_id", msg.ID)
 			return nil // permanent: ACK by returning nil so the message is not left in the PEL
 		}
-		trigger, err := triggerFromRequested([]byte(raw))
+		trigger, err := triggerFromRequested(msg, []byte(raw))
 		if err != nil {
 			logger.Error("remediation.requested:v1 decode failure — discarding", "message_id", msg.ID, "error", err)
 			return nil // permanent: malformed payload cannot be retried

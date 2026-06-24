@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/remediation-agent/domain/event"
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
@@ -113,10 +114,85 @@ func (o *fakeOutbox) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error 
 
 func (o *fakeOutbox) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
 
+// fakeMsgProcRepo satisfies messageprocessing.Repository in memory.
+// InsertIfNotExists returns (newUUID, true, nil) on the first call for a given
+// (messageID, outboxEntryID) combination, and (existingUUID, false, nil) on
+// subsequent calls for the same combination, mimicking the DB unique-constraint
+// dedup behaviour.
+type fakeMsgProcRepo struct {
+	// seen maps the dedup key to the assigned UUID (populated on first insert).
+	seen map[string]uuid.UUID
+	// rows stores inserted rows keyed by UUID for GetByID.
+	rows map[uuid.UUID]*messageprocessing.MessageProcessing
+}
+
+func newFakeMsgProcRepo() *fakeMsgProcRepo {
+	return &fakeMsgProcRepo{
+		seen: map[string]uuid.UUID{},
+		rows: map[uuid.UUID]*messageprocessing.MessageProcessing{},
+	}
+}
+
+// dedupKey produces the string used to detect a repeat call. It combines
+// messageID and outboxEntryID (if non-nil) so both dedup axes are covered.
+func (r *fakeMsgProcRepo) dedupKey(m *messageprocessing.MessageProcessing) string {
+	if m.OutboxEntryID != nil {
+		return "oe:" + m.OutboxEntryID.String()
+	}
+	return "mid:" + m.MessageID + ":" + m.StreamName
+}
+
+func (r *fakeMsgProcRepo) InsertIfNotExists(
+	ctx context.Context, m *messageprocessing.MessageProcessing,
+) (uuid.UUID, bool, error) {
+	key := r.dedupKey(m)
+	if id, exists := r.seen[key]; exists {
+		return id, false, nil
+	}
+	id := uuid.New()
+	r.seen[key] = id
+	stored := *m
+	stored.ID = id
+	r.rows[id] = &stored
+	return id, true, nil
+}
+
+func (r *fakeMsgProcRepo) GetByMessageIDAndStream(
+	_ context.Context, messageID, streamName string,
+) (*messageprocessing.MessageProcessing, error) {
+	for _, m := range r.rows {
+		if m.MessageID == messageID && m.StreamName == streamName {
+			return m, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *fakeMsgProcRepo) GetByID(
+	_ context.Context, id uuid.UUID,
+) (*messageprocessing.MessageProcessing, error) {
+	m, ok := r.rows[id]
+	if !ok {
+		return nil, nil
+	}
+	return m, nil
+}
+
+func (r *fakeMsgProcRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+
+func (r *fakeMsgProcRepo) DeleteTerminalOlderThan(
+	_ context.Context, _ time.Duration, _ int,
+) (int64, error) {
+	return 0, nil
+}
+
 // fakeUoW satisfies uow.UnitOfWork in memory.
 type fakeUoW struct {
 	pr        *fakeProposalRepo
 	ob        *fakeOutbox
+	mp        *fakeMsgProcRepo
 	committed bool
 }
 
@@ -125,6 +201,15 @@ func (u *fakeUoW) Commit() error                                     { u.committ
 func (u *fakeUoW) Rollback() error                                   { return nil }
 func (u *fakeUoW) ProposalRepo() repository.ProposalRepository       { return u.pr }
 func (u *fakeUoW) OutboxRepo() outbox.Repository                     { return u.ob }
+func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return u.mp }
+
+func newFakeUoW() *fakeUoW {
+	return &fakeUoW{
+		pr: &fakeProposalRepo{count: 0},
+		ob: &fakeOutbox{},
+		mp: newFakeMsgProcRepo(),
+	}
+}
 
 func deps(u *fakeUoW, ev fakeEvidence, llm fakeLLM, art *fakeArtifacts) Deps {
 	return Deps{
@@ -152,11 +237,12 @@ func baseTrigger() Trigger {
 		CandidateSQLURI: "s3://b/sql",
 		Repo:            "o/r",
 		CommitSHA:       "abc",
+		MessageID:       "1-0",
 	}
 }
 
 func TestProposeFix_HappyPath(t *testing.T) {
-	u := &fakeUoW{pr: &fakeProposalRepo{count: 0}, ob: &fakeOutbox{}}
+	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
 		"s3://b/sql": "select custmer_id from t",
 		"s3://b/log": "column does not exist",
@@ -187,13 +273,25 @@ func TestProposeFix_HappyPath(t *testing.T) {
 	if len(art.written) != 2 {
 		t.Fatalf("expected 2 artifacts (.sql + .diff), got %d", len(art.written))
 	}
+	// Artifact keys must include attempt number.
+	if _, ok := art.written["proposed-fix/r1/s.n/attempt-1.sql"]; !ok {
+		t.Fatalf("expected attempt-scoped sql key; got keys %v", art.written)
+	}
+	if _, ok := art.written["proposed-fix/r1/s.n/attempt-1.diff"]; !ok {
+		t.Fatalf("expected attempt-scoped diff key; got keys %v", art.written)
+	}
+	// The outbox entry must carry the message_processing row ID.
+	if u.ob.entries[0].MessageProcessingID == nil {
+		t.Fatal("outbox entry MessageProcessingID must be set on happy path")
+	}
 	if !u.committed {
 		t.Fatal("not committed")
 	}
 }
 
 func TestProposeFix_AttemptCapEscalates(t *testing.T) {
-	u := &fakeUoW{pr: &fakeProposalRepo{count: 3}, ob: &fakeOutbox{}}
+	u := newFakeUoW()
+	u.pr.count = 3
 	ev := fakeEvidence{vals: map[string]string{"s3://b/sql": "x", "s3://b/log": "y"}}
 
 	if err := ProposeFix(context.Background(), deps(u, ev, fakeLLM{}, &fakeArtifacts{}), baseTrigger()); err != nil {
@@ -208,7 +306,7 @@ func TestProposeFix_AttemptCapEscalates(t *testing.T) {
 }
 
 func TestProposeFix_EmptyCandidateSQLSkips(t *testing.T) {
-	u := &fakeUoW{pr: &fakeProposalRepo{}, ob: &fakeOutbox{}}
+	u := newFakeUoW()
 	tr := baseTrigger()
 	tr.CandidateSQLURI = ""
 
@@ -224,7 +322,7 @@ func TestProposeFix_EmptyCandidateSQLSkips(t *testing.T) {
 }
 
 func TestProposeFix_LLMEmptyFails(t *testing.T) {
-	u := &fakeUoW{pr: &fakeProposalRepo{}, ob: &fakeOutbox{}}
+	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{"s3://b/sql": "x", "s3://b/log": "y"}}
 	llm := fakeLLM{res: ports.ProposeResult{ProposedSQL: ""}}
 
@@ -236,5 +334,56 @@ func TestProposeFix_LLMEmptyFails(t *testing.T) {
 	}
 	if len(u.ob.entries) != 0 {
 		t.Fatal("failed must not emit an outbox entry")
+	}
+}
+
+// TestProposeFix_DuplicateTriggerIsDeduped calls ProposeFix twice with
+// identical trigger data (same MessageID / OutboxEntryID). The second call
+// must be recognised as a duplicate and return nil without inserting a second
+// proposal row or enqueuing a second outbox entry.
+func TestProposeFix_DuplicateTriggerIsDeduped(t *testing.T) {
+	// Both calls share the same UoW factory state (fakeMsgProcRepo is reused
+	// across calls, which is what the fake is designed for).
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := fakeLLM{res: ports.ProposeResult{
+		ProposedSQL: "select customer_id from t",
+		Rationale:   "typo",
+		Confidence:  "high",
+		Model:       "m",
+	}}
+	art := &fakeArtifacts{}
+	d := deps(u, ev, llm, art)
+
+	oeID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	tr := baseTrigger()
+	tr.MessageID = "42-0"
+	tr.OutboxEntryID = &oeID
+
+	// First call: must succeed and produce exactly one proposal + one outbox entry.
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("first call: expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("first call: expected 1 outbox entry, got %d", len(u.ob.entries))
+	}
+
+	// Second call with the same trigger (simulates redelivery).
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatalf("second call (dup) must return nil, got: %v", err)
+	}
+
+	// Counts must not have grown — the duplicate was suppressed.
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("after dup: expected still 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("after dup: expected still 1 outbox entry, got %d", len(u.ob.entries))
 	}
 }

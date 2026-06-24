@@ -5,6 +5,7 @@ package uow
 import (
 	"context"
 
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 )
@@ -20,4 +21,7 @@ type UnitOfWork interface {
 	ProposalRepo() repository.ProposalRepository
 	// OutboxRepo returns the outbox.Repository bound to the active transaction.
 	OutboxRepo() outbox.Repository
+	// MessageProcessingRepo returns the messageprocessing.Repository bound to the
+	// active transaction, used for inbound dedup of remediation.requested:v1.
+	MessageProcessingRepo() messageprocessing.Repository
 }

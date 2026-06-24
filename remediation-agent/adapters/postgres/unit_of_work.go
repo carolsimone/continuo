@@ -7,6 +7,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 	"github.com/carolsimone/continuo/remediation-agent/service/uow"
@@ -63,4 +64,10 @@ func (u *UnitOfWork) ProposalRepo() repository.ProposalRepository {
 // on the current transaction.
 func (u *UnitOfWork) OutboxRepo() outbox.Repository {
 	return outbox.NewPostgresRepository(u.tx, "remediation_agent_outbox", u.logger)
+}
+
+// MessageProcessingRepo returns the messageprocessing.Repository bound to the
+// current transaction, used for inbound dedup of remediation.requested:v1.
+func (u *UnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
+	return messageprocessing.NewPostgresRepository(u.tx, u.logger)
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation-agent/domain/event"
@@ -33,6 +34,18 @@ type Trigger struct {
 	CandidateSQLURI string
 	Repo            string
 	CommitSHA       string
+	// MessageID is the Redis Stream message ID of the inbound
+	// remediation.requested:v1 message. It is the primary dedup key.
+	MessageID string
+	// OutboxEntryID, when non-nil, is the upstream pkg/outbox row UUID carried
+	// in the message's outbox_entry_id field. It provides a secondary dedup axis
+	// that catches the case where the classifier's outbox Processor crashed
+	// between XADD and MarkProcessed and republished the same outbox row with a
+	// fresh Redis message_id.
+	OutboxEntryID *uuid.UUID
+	// RawPayload is the raw bytes of the message payload, stored in the
+	// message_processing row for audit/replay purposes.
+	RawPayload []byte
 }
 
 // Deps holds every collaborator ProposeFix needs, all behind ports so the
@@ -113,9 +126,11 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		}, false)
 	}
 
-	// Write proposed SQL and its unified diff to object storage.
-	sqlKey := fmt.Sprintf("proposed-fix/%s/%s.sql", t.ReleaseID, t.NodeID)
-	diffKey := fmt.Sprintf("proposed-fix/%s/%s.diff", t.ReleaseID, t.NodeID)
+	// Write proposed SQL and its unified diff to object storage. The attempt
+	// number is included in the key so successive attempts for the same
+	// (release, node) do not overwrite each other's artifacts.
+	sqlKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.sql", t.ReleaseID, t.NodeID, attempt)
+	diffKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.diff", t.ReleaseID, t.NodeID, attempt)
 
 	sqlURI, err := deps.Artifacts.Write(ctx, sqlKey, res.ProposedSQL, "text/plain")
 	if err != nil {
@@ -156,6 +171,13 @@ func countAttempts(ctx context.Context, deps Deps, t Trigger) (int, error) {
 // remediation.proposed:v1 outbox trigger — all in a single transaction.
 // The variadic suspectedRoot lets successful proposals forward the optional
 // LLM field without a separate struct.
+//
+// Inbound dedup is performed atomically inside the transaction: the
+// message_processing claim, the proposal insert, and the optional outbox enqueue
+// all commit or roll back together. A redelivered trigger collides on the claim
+// and causes a rollback with a nil return (consumer ACKs, no duplicate written).
+// A transient error rolls back without persisting the claim, so the message is
+// cleanly retried.
 func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.Proposal, emit bool, suspectedRoot ...string) error {
 	p.Source = t.Source
 	p.ReleaseID = t.ReleaseID
@@ -170,6 +192,23 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	}
 	defer func() { _ = u.Rollback() }()
 
+	// Claim this inbound trigger atomically within the write transaction. A
+	// duplicate (redelivered or replayed message) returns dup=true: log and
+	// return nil so the consumer ACKs without writing anything. The rollback
+	// deferred above discards the tx without persisting the claim.
+	msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
+		ctx, u.MessageProcessingRepo(), deps.Logger,
+		t.MessageID, streams.RemediationRequestedV1, t.RawPayload, t.OutboxEntryID,
+	)
+	if err != nil {
+		return fmt.Errorf("dedup: %w", err)
+	}
+	if dup {
+		deps.Logger.Info("duplicate remediation.requested trigger — skipping",
+			"message_id", t.MessageID, "node", t.NodeID, "release", t.ReleaseID)
+		return nil
+	}
+
 	if err := u.ProposalRepo().Insert(ctx, p); err != nil {
 		return fmt.Errorf("insert proposal: %w", err)
 	}
@@ -178,7 +217,7 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 		if len(suspectedRoot) > 0 {
 			root = suspectedRoot[0]
 		}
-		if err := enqueue(ctx, u, deps, t, p, root); err != nil {
+		if err := enqueue(ctx, u, deps, t, p, root, msgProcID); err != nil {
 			return err
 		}
 	}
@@ -193,7 +232,9 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 
 // enqueue builds the deterministic remediation.proposed:v1 outbox entry and
 // creates it on the repository bound to the caller's transaction.
-func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p proposal.Proposal, suspectedRoot string) error {
+// msgProcID is the message_processing row UUID for the inbound trigger;
+// it is stored on the outbox entry for provenance.
+func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p proposal.Proposal, suspectedRoot string, msgProcID uuid.UUID) error {
 	eventID := event.RemediationEventID(t.ReleaseID, t.NodeID, p.Attempt)
 	payload := event.RemediationProposed{
 		EventID:                eventID.String(),
@@ -215,7 +256,7 @@ func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p prop
 		return fmt.Errorf("marshal proposed event: %w", err)
 	}
 	now := deps.Clock.Now()
-	return u.OutboxRepo().Create(ctx, &outbox.Entry{
+	entry := &outbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
 		AggregateType: "remediation_agent",
 		AggregateID:   event.AggregateIDForRelease(t.ReleaseID),
@@ -225,7 +266,12 @@ func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p prop
 		Status:        "pending",
 		MaxRetries:    outbox.DefaultMaxRetries,
 		CreatedAt:     now,
-	})
+	}
+	if msgProcID != uuid.Nil {
+		id := msgProcID
+		entry.MessageProcessingID = &id
+	}
+	return u.OutboxRepo().Create(ctx, entry)
 }
 
 // normalizeConfidence maps the LLM's free-form confidence string to the

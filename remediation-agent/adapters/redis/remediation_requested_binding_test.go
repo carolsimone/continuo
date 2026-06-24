@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,7 +27,12 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 	raw, err := json.Marshal(requestedPayloadFixture)
 	require.NoError(t, err)
 
-	trigger, err := triggerFromRequested(raw)
+	msg := goredis.XMessage{
+		ID:     "1-0",
+		Values: map[string]interface{}{},
+	}
+
+	trigger, err := triggerFromRequested(msg, raw)
 	require.NoError(t, err)
 
 	require.Equal(t, "validation", trigger.Source)
@@ -38,9 +44,12 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 	require.Equal(t, "s3://bucket/sql/orders_daily.sql", trigger.CandidateSQLURI)
 	require.Equal(t, "acme/dbt-project", trigger.Repo)
 	require.Equal(t, "deadbeef1234", trigger.CommitSHA)
+	require.Equal(t, "1-0", trigger.MessageID)
+	require.Nil(t, trigger.OutboxEntryID) // no outbox_entry_id in Values
 }
 
 func TestTriggerFromRequested_InvalidJSON(t *testing.T) {
-	_, err := triggerFromRequested([]byte("not-json"))
+	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{}}
+	_, err := triggerFromRequested(msg, []byte("not-json"))
 	require.Error(t, err)
 }
