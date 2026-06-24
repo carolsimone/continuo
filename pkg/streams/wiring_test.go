@@ -21,6 +21,7 @@ var servicesWithMainGo = []string{
 	"k8s-controller/main.go",
 	"release-controller/main.go",
 	"remediation/main.go",
+	"remediation-agent/main.go",
 }
 
 // streamLiteralRe matches versioned stream literals (e.g. "node.updated:v1",
@@ -82,7 +83,7 @@ func TestNoStreamOrGroupLiteralsInMains(t *testing.T) {
 }
 
 func looksLikeServicePrefixedGroup(s string) bool {
-	for _, p := range []string{"state-", "orchestrator-", "executor-", "k8s-", "manifest-", "remediation-"} {
+	for _, p := range []string{"state-", "orchestrator-", "executor-", "k8s-", "manifest-", "remediation-agent-", "remediation-"} {
 		if strings.HasPrefix(s, p) {
 			return true
 		}

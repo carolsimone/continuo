@@ -79,6 +79,15 @@ services:
       - postgres
     tty: true
 
+  flyway-remediation-agent:
+    image: flyway/flyway
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_remediation_agent -user=continuo_svc -password=continuo -connectRetries=30
+    volumes:
+      - ./db/migration/remediation_agent:/flyway/sql
+    depends_on:
+      - postgres
+    tty: true
+
   redis:
     image: redis:7.2-alpine
     ports:
@@ -411,6 +420,45 @@ services:
       # Host port 8093 avoids collision with ui-service which also binds 8090.
       # The container-internal port remains 8090 (REMEDIATION_HTTP_PORT).
       - "8093:8090"
+    networks:
+      - default
+
+  remediation-agent:
+    build:
+      context: .
+      dockerfile: remediation-agent/Dockerfile.dev
+    container_name: remediation-agent
+    depends_on:
+      - postgres
+      - redis
+      - flyway-remediation-agent
+      - localstack
+      - stub-llm
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=continuo_svc
+      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_DB=continuo_remediation_agent
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=continuo
+      - REMEDIATION_AGENT_HTTP_PORT=8092
+      - REMEDIATION_AGENT_MAX_ATTEMPTS=3
+      - S3_BUCKET=continuo
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - CONTINUO_ORCHESTRATOR_ADDR=orchestrator:50052
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai-compatible}
+      - LLM_API_KEY=${LLM_API_KEY:-stub}
+      - LLM_MODEL=${LLM_MODEL:-stub-model}
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://stub-llm:9100}
+    ports:
+      # Host port 8094 avoids collision with other services.
+      # The container-internal port remains 8092 (REMEDIATION_AGENT_HTTP_PORT).
+      - "8094:8092"
     networks:
       - default
 

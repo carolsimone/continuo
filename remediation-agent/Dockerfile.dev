@@ -1,0 +1,53 @@
+FROM continuo-base:latest
+
+WORKDIR /app
+
+# Layer 1: Workspace stub. All go.mod / go.sum files are copied so
+# `go mod download` can satisfy every dependency cited by go.work, but
+# only the modules this image builds against (pkg, orchestrator,
+# remediation-agent) get their source trees later. Limiting the
+# source-copy layers to the service-owned dirs means a change to another
+# service does not invalidate this image's cache.
+COPY go.work go.work.sum* ./
+COPY state/go.mod state/go.sum ./state/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
+COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY release-controller/go.mod release-controller/go.sum ./release-controller/
+COPY agent-runner/go.mod agent-runner/go.sum ./agent-runner/
+COPY remediation/go.mod remediation/go.sum ./remediation/
+COPY remediation-agent/go.mod remediation-agent/go.sum ./remediation-agent/
+COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
+
+# Layer 2: Drop unused use-directives so `go build` does not require the
+# other services' source trees to be present in this image. pkg and
+# orchestrator stay because remediation-agent imports both directly.
+RUN go work edit -dropuse=./state \
+    && go work edit -dropuse=./agent-runner \
+    && go work edit -dropuse=./executor-controller \
+    && go work edit -dropuse=./k8s-controller \
+    && go work edit -dropuse=./release-controller \
+    && go work edit -dropuse=./remediation \
+    && go work edit -dropuse=./tests/e2e
+
+# Layer 3: Download dependencies with cache mount. Cache persists across
+# builds; rebuild only re-runs when go.mod files change.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Layer 4: Source for the modules this service builds against. pkg/ and
+# orchestrator/ first (lower churn) so a change in remediation-agent/
+# does not invalidate those layers.
+COPY pkg/ ./pkg/
+COPY orchestrator/ ./orchestrator/
+COPY remediation-agent/ ./remediation-agent/
+
+WORKDIR /app/remediation-agent
+
+# Pre-compile the binary for faster startup in docker-compose.
+RUN go build -o /app/remediation-agent/bin/remediation-agent main.go
+
+EXPOSE 8092
+
+CMD ["tail", "-f", "/dev/null"]

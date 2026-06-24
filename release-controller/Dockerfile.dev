@@ -11,6 +11,7 @@ COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 COPY remediation/go.mod remediation/go.sum ./remediation/
+COPY remediation-agent/go.mod remediation-agent/go.sum ./remediation-agent/
 
 RUN go work edit -dropuse=./state \
     && go work edit -dropuse=./agent-runner \
@@ -18,6 +19,7 @@ RUN go work edit -dropuse=./state \
     && go work edit -dropuse=./executor-controller \
     && go work edit -dropuse=./k8s-controller \
     && go work edit -dropuse=./remediation \
+    && go work edit -dropuse=./remediation-agent \
     && go work edit -dropuse=./tests/e2e
 
 RUN --mount=type=cache,target=/go/pkg/mod \

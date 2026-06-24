@@ -29,6 +29,7 @@ var handlerDirs = []string{
 	"agent-runner/service/chat",
 	"agent-runner/service/retention",
 	"remediation/service/handlers",
+	"remediation-agent/service/handlers",
 }
 
 // forbiddenAppImports are import-path fragments the application layer must not

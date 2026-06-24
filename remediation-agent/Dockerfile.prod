@@ -1,0 +1,45 @@
+# Build stage
+FROM carolsimone/continuo-base:latest AS builder
+
+WORKDIR /app
+
+# Copy workspace and all go.mod files (required by go.work)
+COPY go.work go.work.sum* ./
+COPY state/go.mod state/go.sum ./state/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
+COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY release-controller/go.mod release-controller/go.sum ./release-controller/
+COPY agent-runner/go.mod agent-runner/go.sum ./agent-runner/
+COPY remediation/go.mod remediation/go.sum ./remediation/
+COPY remediation-agent/go.mod remediation-agent/go.sum ./remediation-agent/
+COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
+
+# Download dependencies with cache
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Copy source code — pkg and orchestrator (gRPC stubs) are dependencies
+# of remediation-agent and must be present for the build.
+COPY pkg/ ./pkg/
+COPY orchestrator/ ./orchestrator/
+COPY remediation-agent/ ./remediation-agent/
+
+# Build static binary
+WORKDIR /app/remediation-agent
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/bin/remediation-agent .
+
+# Runtime stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates tzdata
+
+# Explicit COPY allowlist — only the service binary; new builder artifacts
+# are absent from the runtime image unless added here.
+COPY --from=builder /app/bin/remediation-agent /usr/local/bin/remediation-agent
+
+EXPOSE 8092
+
+CMD ["remediation-agent"]

@@ -32,7 +32,7 @@ The `classification_decision` table is append-only and auditable: it contains ev
 
 | Stream | Consumed by | Emitted when |
 |---|---|---|
-| `remediation.requested:v1` | (heal agent) | A classified node is healable (`category != infra_transient`) and has not been seen before (first insertion in `classification_decision`). |
+| `remediation.requested:v1` | `remediation-agent` (group `remediation-agent-remediation-requested`) | A classified node is healable (`category != infra_transient`) and has not been seen before (first insertion in `classification_decision`). |
 
 All events are written to the outbox inside the same transaction as the `classification_decision` insert and published with a deterministic `event_id` for consumer-side dedup.
 

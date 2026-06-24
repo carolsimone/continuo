@@ -310,3 +310,29 @@ services:
     env:
       POSTGRES_DB: continuo_remediation
       HTTP_PORT: "8090"
+
+  - name: remediation-agent
+    enabled: true
+    replicas: 1
+    httpPort: 8092
+    probePath: /healthz
+    secretEnv:
+      - name: POSTGRES_USER
+        secretKey: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        secretKey: POSTGRES_PASSWORD
+      - name: REDIS_PASSWORD
+        secretKey: REDIS_PASSWORD
+      - name: AWS_ACCESS_KEY_ID
+        secretKey: AWS_ACCESS_KEY_ID
+      - name: AWS_SECRET_ACCESS_KEY
+        secretKey: AWS_SECRET_ACCESS_KEY
+      - name: LLM_API_KEY
+        secretKey: LLM_API_KEY
+    env:
+      POSTGRES_DB: continuo_remediation_agent
+      HTTP_PORT: "8092"
+      REMEDIATION_AGENT_HTTP_PORT: "8092"
+      CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
+      LLM_PROVIDER: anthropic
+      LLM_MODEL: claude-sonnet-4-6
