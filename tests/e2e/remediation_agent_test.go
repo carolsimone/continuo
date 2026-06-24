@@ -162,7 +162,8 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	var row proposalRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
 		err := clients.remediationAgentDB.GetContext(ctx, &row,
-			`SELECT source, release_id, node_id, status, attempt
+			`SELECT source, release_id, node_id, status, attempt,
+			        source_resolved, proposed_sql_uri
 			   FROM proposal
 			  WHERE release_id = $1 AND node_id = $2
 			  LIMIT 1`,
@@ -177,13 +178,34 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	require.Equal(t, 1, row.Attempt, "first proposal attempt must be 1")
 	t.Logf("proposal row confirmed: status=%s attempt=%d", row.Status, row.Attempt)
 
-	// (c) Assert the proposed-SQL S3 object exists at proposed_sql_uri.
-	//     The URI is "s3://continuo/proposed-fix/{releaseID}/{nodeID}.sql".
-	//     Strip the "s3://<bucket>/" prefix to get the object key.
+	// (d) Assert the source-resolved path succeeded: stub-github served the real
+	//     model source and stub-llm (Step-2 branch) returned the corrected source.
+	//     The proposal row must reflect source_resolved=true and the URI must end
+	//     with ".source.sql" (the key suffix written by the handler for Step-2).
+	require.True(t, row.SourceResolved, "proposal row must have source_resolved=true (stub-github served real source)")
+	require.True(t,
+		strings.HasSuffix(row.ProposedSQLURI, ".source.sql"),
+		"proposed_sql_uri must end with .source.sql when source_resolved=true; got %s", row.ProposedSQLURI)
+	t.Logf("source-resolved confirmed: proposed_sql_uri=%s", row.ProposedSQLURI)
+
+	// (e) Assert the remediation.proposed:v1 event carries source_resolved=true.
+	//     This field is set by the handler's enqueue call and is forwarded on
+	//     the wire so downstream consumers can distinguish source-level proposals
+	//     from candidate-SQL proposals.
+	require.True(t, proposed.SourceResolved,
+		"remediation.proposed:v1 must carry source_resolved=true; stream=%s", streams.RemediationProposedV1)
+
+	// (c) Assert the proposed-SQL S3 object exists at proposed_sql_uri and
+	//     contains real dbt {{ ref(...) }} macros — confirming the Step-2 source
+	//     fix (not the Step-1 candidate SQL) was stored as the final proposal.
 	sqlKey := stripS3Prefix(proposed.ProposedSQLURI)
 	require.NotEmpty(t, sqlKey, "could not parse key from proposed_sql_uri=%s", proposed.ProposedSQLURI)
 	sqlBody := getS3ObjectByKey(t, ctx, clients, sqlKey)
 	require.NotEmpty(t, sqlBody, "proposed SQL object at %s must not be empty", proposed.ProposedSQLURI)
+	require.True(t,
+		strings.Contains(string(sqlBody), "{{ ref('table_b') }}"),
+		"proposed SQL at %s must contain {{ ref('table_b') }} (real source, not candidate schema); got %q",
+		proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 	t.Logf("proposed SQL object fetched from %s: %q", proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 }
 
@@ -201,16 +223,19 @@ type remediationProposedPayload struct {
 	Confidence     string `json:"confidence"`
 	Model          string `json:"model"`
 	Attempt        int    `json:"attempt"`
+	SourceResolved bool   `json:"source_resolved"`
 	ProposedAt     string `json:"proposed_at"`
 }
 
 // proposalRow captures the fields asserted from continuo_remediation_agent.proposal.
 type proposalRow struct {
-	Source    string `db:"source"`
-	ReleaseID string `db:"release_id"`
-	NodeID    string `db:"node_id"`
-	Status    string `db:"status"`
-	Attempt   int    `db:"attempt"`
+	Source         string `db:"source"`
+	ReleaseID      string `db:"release_id"`
+	NodeID         string `db:"node_id"`
+	Status         string `db:"status"`
+	Attempt        int    `db:"attempt"`
+	SourceResolved bool   `db:"source_resolved"`
+	ProposedSQLURI string `db:"proposed_sql_uri"`
 }
 
 // getS3ObjectByKey downloads an S3 object from the e2e bucket by key (no s3:// prefix).
