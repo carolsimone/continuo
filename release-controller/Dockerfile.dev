@@ -22,8 +22,10 @@ RUN go work edit -dropuse=./state \
     && go work edit -dropuse=./remediation-agent \
     && go work edit -dropuse=./tests/e2e
 
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+# Resolve dependencies. continuo-base pre-populates /go/pkg/mod with the whole
+# workspace's modules, so this verifies they are present and fetches only the
+# deltas introduced by this service's go.mod — a near-no-op on a warm base.
+RUN go mod download
 
 COPY pkg/ ./pkg/
 COPY release-controller/ ./release-controller/

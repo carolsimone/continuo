@@ -38,9 +38,10 @@ RUN go work edit -dropuse=./executor-controller \
     && go work edit -dropuse=./remediation-agent \
     && go work edit -dropuse=./tests/e2e
 
-# Layer 3: Download dependencies with cache mount.
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+# Layer 3: Resolve dependencies. continuo-base pre-populates /go/pkg/mod with the whole
+# workspace's modules, so this verifies they are present and fetches only the
+# deltas introduced by this service's go.mod — a near-no-op on a warm base.
+RUN go mod download
 
 # Layer 4: Source. pkg/ and state/proto/ are lower-churn dependencies of
 # orchestrator (state/proto/ is the gRPC client stubs imported by the
