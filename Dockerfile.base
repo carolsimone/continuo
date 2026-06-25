@@ -9,4 +9,30 @@ RUN apt-get update && apt-get install -y \
 # Install golangci-lint once in the base image
 RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
+# Pre-warm the Go module cache for the entire workspace. Every dev image is
+# FROM this base, so a populated /go/pkg/mod means each dev image's own
+# `go mod download` is a near-no-op and runtime `go build`/`go test` skip
+# fetching. The download is baked as a real layer (no cache mount) so it
+# persists in the published image. The workspace go.mod/go.sum files are copied
+# into a throwaway directory mirroring the go.work layout, then deleted; only
+# the GOPATH module cache survives. This base is republished whenever any
+# go.mod/go.sum/go.work changes (see .github/workflows/publish-base.yml).
+WORKDIR /go/src/modcache
+COPY go.work go.work.sum* ./
+COPY agent-runner/go.mod agent-runner/go.sum ./agent-runner/
+COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
+COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY release-controller/go.mod release-controller/go.sum ./release-controller/
+COPY remediation/go.mod remediation/go.sum ./remediation/
+COPY remediation-agent/go.mod remediation-agent/go.sum ./remediation-agent/
+COPY state/go.mod state/go.sum ./state/
+COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
+RUN for m in agent-runner executor-controller k8s-controller orchestrator pkg \
+        release-controller remediation remediation-agent state tests/e2e; do \
+        (cd "$m" && go mod download) || exit 1; \
+    done \
+    && cd / && rm -rf /go/src/modcache
+
 WORKDIR /app
