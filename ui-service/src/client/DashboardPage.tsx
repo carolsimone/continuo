@@ -5,7 +5,9 @@ import SnapshotTile from './SnapshotTile';
 import Tabs, { useActiveTab } from './Tabs';
 import ReleasesPanel from './ReleasesPanel';
 import NodesCatalogPanel from './NodesCatalogPanel';
+import RemediationPanel from './RemediationPanel';
 import UserMenu from './auth/UserMenu';
+import { fetchProposals } from './remediation-api';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -14,6 +16,7 @@ export default function DashboardPage() {
   const [topologies, setTopologies] = useState<ScheduleTopologySummary[]>([]);
   const [topologiesError, setTopologiesError] = useState<string | null>(null);
   const [nodeTotal, setNodeTotal] = useState(0);
+  const [pendingRemediationCount, setPendingRemediationCount] = useState(0);
 
   useEffect(() => {
     const fetch_ = () =>
@@ -51,6 +54,7 @@ export default function DashboardPage() {
     { slug: 'topology', label: 'Topology', count: topologies.length },
     { slug: 'releases', label: 'Releases' },
     { slug: 'nodes', label: 'Nodes', count: nodeTotal },
+    { slug: 'remediation', label: 'Remediation', count: pendingRemediationCount > 0 ? pendingRemediationCount : undefined },
   ];
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
 
@@ -62,6 +66,20 @@ export default function DashboardPage() {
       .then((data: { total_count?: number }) => setNodeTotal(data.total_count || 0))
       .catch(() => {});
   }, [activeTab]);
+
+  // Remediation-tab count badge: proposals awaiting a human — status=proposed
+  // and no PR yet (pr_state '' or 'failed'); proposals whose PR is already open
+  // are not pending. The pill is omitted when the count is zero.
+  // Fetched on mount only; no poll — proposal arrivals are infrequent.
+  useEffect(() => {
+    fetchProposals('proposed')
+      .then(proposals =>
+        setPendingRemediationCount(
+          (proposals || []).filter(p => !p.pr_state || p.pr_state === 'failed').length,
+        ),
+      )
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="page">
@@ -111,6 +129,7 @@ export default function DashboardPage() {
         )}
         {activeTab === 'releases' && <ReleasesPanel />}
         {activeTab === 'nodes' && <NodesCatalogPanel />}
+        {activeTab === 'remediation' && <RemediationPanel />}
       </main>
     </div>
   );

@@ -154,12 +154,13 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	// Defaults: final URIs fall back to the candidate unless Step 2 succeeds.
 	finalSQLURI, finalDiffURI := candSQLURI, candDiffURI
 	sourceResolved := false
+	var resolvedFilePath string
 
 	// Step 2 — real-source fix. Fetches the model source from version control
 	// and asks the LLM to apply the Step-1 diagnosis to it. Degrades silently
 	// when the file path, service mapping, source read, or LLM result is
 	// unavailable, or when the LLM did not improve the source.
-	if src, ok := deps.resolveSource(ctx, t, filePath, serviceName, res); ok {
+	if src, fullPath, ok := deps.resolveSource(ctx, t, filePath, serviceName, res); ok {
 		srcDiff := proposal.ComputeUnifiedDiff(src.original, src.corrected, t.NodeID)
 		srcSQLURI, err := deps.Artifacts.Write(ctx,
 			fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", t.ReleaseID, t.NodeID, attempt),
@@ -174,9 +175,10 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 			return fmt.Errorf("write source diff: %w", err)
 		}
 		finalSQLURI, finalDiffURI, sourceResolved = srcSQLURI, srcDiffURI, true
+		resolvedFilePath = fullPath
 	}
 
-	return record(ctx, deps, t, attempt, proposal.Proposal{
+	p := proposal.Proposal{
 		Status:              proposal.StatusProposed,
 		Confidence:          normalizeConfidence(res.Confidence),
 		Rationale:           res.Rationale,
@@ -186,7 +188,14 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		CandidateFixDiffURI: candDiffURI,
 		SourceResolved:      sourceResolved,
 		Model:               res.Model,
-	}, true, sourceResolved, res.SuspectedRootCauseNode)
+	}
+	// Populate source-location fields only when the real-source step succeeded.
+	if sourceResolved {
+		p.Repo = t.Repo
+		p.CommitSHA = t.CommitSHA
+		p.FilePath = resolvedFilePath
+	}
+	return record(ctx, deps, t, attempt, p, true, sourceResolved, res.SuspectedRootCauseNode)
 }
 
 // resolvedSource holds the original model source and the Step-2 corrected
@@ -196,45 +205,47 @@ type resolvedSource struct{ original, corrected string }
 // resolveSource performs Step 2: fetch the real model source from version
 // control and ask the LLM to apply the Step-1 diagnosis to it. filePath and
 // serviceName come from the single NodeContext call already made by the caller.
-// Returns ok=false on any degraded path (missing file path or service name, no
-// repo mapping, source read error, empty/unchanged LLM result, or
-// low-confidence LLM result); the caller then keeps the candidate proposal.
-func (d Deps) resolveSource(ctx context.Context, t Trigger, filePath, serviceName string, step1 ports.ProposeResult) (resolvedSource, bool) {
+// Returns the resolved source, the full repository-relative file path used for
+// the read, and ok=true on success. Returns ok=false on any degraded path
+// (missing file path or service name, no repo mapping, source read error,
+// empty/unchanged LLM result, or low-confidence LLM result); the caller then
+// keeps the candidate proposal. fullPath is empty when ok=false.
+func (d Deps) resolveSource(ctx context.Context, t Trigger, filePath, serviceName string, step1 ports.ProposeResult) (resolvedSource, string, bool) {
 	if filePath == "" || serviceName == "" {
 		d.Logger.Warn("source fix: file path or service name unavailable; using candidate proposal",
 			"node", t.NodeID, "file_path", filePath, "service_name", serviceName)
-		return resolvedSource{}, false
+		return resolvedSource{}, "", false
 	}
 	repoPrefix, ok := d.ServiceRepoPaths[serviceName]
 	if !ok {
 		d.Logger.Warn("source fix: no repo path mapping for service; using candidate proposal",
 			"node", t.NodeID, "service_name", serviceName)
-		return resolvedSource{}, false
+		return resolvedSource{}, "", false
 	}
 	fullPath := path.Join(repoPrefix, filePath)
 	original, err := d.Source.ReadFile(ctx, t.Repo, t.CommitSHA, fullPath)
 	if err != nil {
 		d.Logger.Warn("source fix: github read failed; using candidate proposal",
 			"node", t.NodeID, "path", fullPath, "error", err)
-		return resolvedSource{}, false
+		return resolvedSource{}, "", false
 	}
 	out, err := d.LLM.Propose(ctx, prompt.AssembleSourceFix(d.Sanitizer.Sanitize(original), t.NodeID, step1.Rationale))
 	if err != nil {
 		d.Logger.Warn("source fix: llm step 2 failed; using candidate proposal",
 			"node", t.NodeID, "error", err)
-		return resolvedSource{}, false
+		return resolvedSource{}, "", false
 	}
 	if out.ProposedSQL == "" || out.ProposedSQL == original {
 		d.Logger.Warn("source fix: llm step 2 produced no improvement; using candidate proposal",
 			"node", t.NodeID)
-		return resolvedSource{}, false
+		return resolvedSource{}, "", false
 	}
 	if strings.EqualFold(out.Confidence, "low") {
 		d.Logger.Warn("source fix: llm step 2 low confidence; using candidate proposal",
 			"node", t.NodeID)
-		return resolvedSource{}, false
+		return resolvedSource{}, "", false
 	}
-	return resolvedSource{original: original, corrected: out.ProposedSQL}, true
+	return resolvedSource{original: original, corrected: out.ProposedSQL}, fullPath, true
 }
 
 // countAttempts opens a read-only transaction to count prior proposals for

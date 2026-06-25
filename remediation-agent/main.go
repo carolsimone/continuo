@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,17 +12,21 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	ragithub "github.com/carolsimone/continuo/remediation-agent/adapters/github"
-	"github.com/carolsimone/continuo/remediation-agent/adapters/grpc"
+	grpcadapter "github.com/carolsimone/continuo/remediation-agent/adapters/grpc"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/llm"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/postgres"
 	rredis "github.com/carolsimone/continuo/remediation-agent/adapters/redis"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/s3"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/sanitizer"
+	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
 	"github.com/carolsimone/continuo/remediation-agent/config"
 	"github.com/carolsimone/continuo/remediation-agent/service/handlers"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
+	"github.com/carolsimone/continuo/remediation-agent/service/proposals"
 	"github.com/carolsimone/continuo/remediation-agent/service/uow"
 )
 
@@ -72,7 +77,7 @@ func main() {
 		cfg.S3.SecretAccessKey,
 	)
 
-	ancestryClient, err := grpc.NewAncestryClient(cfg.OrchestratorAddr)
+	ancestryClient, err := grpcadapter.NewAncestryClient(cfg.OrchestratorAddr)
 	if err != nil {
 		logger.Error("grpc ancestry client dial", "error", err)
 		os.Exit(1)
@@ -119,11 +124,34 @@ func main() {
 	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux}
 	go func() { _ = srv.ListenAndServe() }()
 
-	logger.Info("remediation-agent started", "http_port", cfg.HTTPPort)
+	// Start the RemediationProposals gRPC server. The proposal service uses a
+	// DB-bound (non-transactional) repository for reads and the UoW factory for
+	// write operations, matching the consumer's wiring above.
+	proposalRepo := postgres.NewProposalRepository(db)
+	proposalSvc := proposals.New(proposals.Deps{
+		Repo:   proposalRepo,
+		NewUoW: func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		Clock:  ports.SystemClock{},
+	})
+	lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+	if err != nil {
+		logger.Error("grpc listen", "error", err)
+		os.Exit(1)
+	}
+	grpcSrv := grpc.NewServer()
+	remediationv1.RegisterRemediationProposalsServer(grpcSrv, grpcadapter.NewProposalsServer(proposalSvc))
+	go func() {
+		if err := grpcSrv.Serve(lis); err != nil && ctx.Err() == nil {
+			logger.Error("grpc server stopped", "error", err)
+		}
+	}()
+
+	logger.Info("remediation-agent started", "http_port", cfg.HTTPPort, "grpc_port", cfg.GRPCPort)
 	<-ctx.Done()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
+	grpcSrv.GracefulStop()
 	_ = srv.Shutdown(shutdownCtx)
 	logger.Info("remediation-agent stopped")
 }

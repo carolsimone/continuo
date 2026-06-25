@@ -262,3 +262,9 @@ streams:
     description: Per-node fix proposal emitted by the remediation agent for a healable failure; consumed by the PR creator and approval surfaces.
     producers: [remediation-agent]
     consumers: []
+
+  - name: remediation.pr_opened:v1
+    const: RemediationPrOpenedV1
+    description: Audit event emitted when an operator opens a GitHub PR from a fix proposal; pointer-only, no consumer in this slice.
+    producers: [remediation-agent]
+    consumers: []

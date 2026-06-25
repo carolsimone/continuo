@@ -10,9 +10,12 @@ import { createConfigRouter } from './routes/config';
 import { createFeaturesRouter } from './routes/features';
 import { createTopologyRouter } from './routes/topology';
 import { createReleasesRouter } from './routes/releases';
+import { createRemediationRouter } from './routes/remediation';
 import { createReleaseClient } from './release-client';
 import { getLogObject } from './s3';
 import type { AppAuth } from './auth/types';
+import type { RemediationClient } from './remediation-client';
+import type { PullRequestCreator } from './github/pull-request-creator';
 
 export function createApp(
   client: GrpcClient,
@@ -21,6 +24,8 @@ export function createApp(
   configFilePath = '/app/config/cancel-config.json',
   releaseControllerUrl = 'http://release-controller:8088',
   chatBridgeEnabled = false,
+  remediationClient?: RemediationClient,
+  prCreator?: PullRequestCreator,
 ) {
   const app = express();
   app.use(express.json());
@@ -45,6 +50,9 @@ export function createApp(
   app.use('/api/config', createConfigRouter(configFilePath));
   app.use('/api/features', createFeaturesRouter(chatBridgeEnabled));
   app.use('/api/releases', createReleasesRouter(createReleaseClient(releaseControllerUrl), getLogObject));
+  if (remediationClient) {
+    app.use('/api/remediation', createRemediationRouter(remediationClient, prCreator, getLogObject));
+  }
 
   app.use(auth.errorHandler);
   return app;

@@ -4,7 +4,7 @@
 
 `remediation-agent` acts on healable validation failures surfaced by the `remediation` classifier. It consumes `remediation.requested:v1` — one trigger per failing dbt node — and produces a fix proposal using a two-step LLM flow. For each successful proposal it enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
-**Runtime**: Go service. HTTP `/healthz` on port 8092. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (`GetNodeAncestry`, port 50052), and the GitHub Contents API (read-only).
+**Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (`GetNodeAncestry`, port 50052), and the GitHub Contents API (read-only).
 
 ## Owned Storage
 
@@ -12,7 +12,7 @@ Postgres database `continuo_remediation_agent`. Tables:
 
 | Table | Purpose |
 |---|---|
-| `proposal` | One row per attempt. Records `source`, `release_id`, `node_id`, `error_signature`, `attempt`, `status` (`proposed`, `skipped`, `failed`, `escalated`), `confidence`, `rationale`, `proposed_sql_uri`, `diff_uri`, `candidate_fix_sql_uri`, `candidate_fix_diff_uri`, `source_resolved`, `model`, and `created_at`. Unique on `(release_id, node_id, attempt)`. A secondary index on `(source, node_id, error_signature)` supports the attempt-count lookup. |
+| `proposal` | One row per attempt. Records `source`, `release_id`, `node_id`, `error_signature`, `attempt`, `status` (`proposed`, `skipped`, `failed`, `escalated`), `confidence`, `rationale`, `proposed_sql_uri`, `diff_uri`, `candidate_fix_sql_uri`, `candidate_fix_diff_uri`, `source_resolved`, `model`, `created_at`, and source-location columns (`repo`, `commit_sha`, `file_path` — populated when `source_resolved=true`). PR-tracking columns: `pr_url`, `pr_number`, `pr_state` (lifecycle: `'' → opening → open` or `failed`), `pr_opened_at`, `pr_opened_by`. Unique on `(release_id, node_id, attempt)`. A secondary index on `(source, node_id, error_signature)` supports the attempt-count lookup. |
 | `remediation_agent_outbox` | Transactional outbox; one row per `remediation.proposed:v1` trigger, drained by the outbox publisher. Status: `pending`, `processed`, `failed`. |
 | `message_processing` | Shared shape consumed by `pkg/messageprocessing`; FK target of `remediation_agent_outbox.message_processing_id`. |
 
@@ -26,6 +26,18 @@ The `proposal` table is append-only: all outcomes, including escalations, skips,
 |---|---|---|
 | `remediation.requested:v1` | `remediation-agent-remediation-requested` | Emitted by the `remediation` classifier for each healable failing node. Each message drives one `ProposeFix` invocation. |
 
+### gRPC server — `RemediationProposals` (port 50054)
+
+Exposes proposal data and the PR lifecycle to ui-service. Handlers are thin and delegate to application services; all persistence goes through the `ProposalRepository` port.
+
+| Method | Description |
+|---|---|
+| `ListProposals(filter)` | Returns proposals ordered `created_at DESC`, all fields including `pr_*`. Supports filtering by `status` and/or `pr_state` (inbox view: `status='proposed'` AND `pr_state IN ('', 'failed')`). |
+| `GetProposal(id)` | Returns a single proposal. Returns `NOT_FOUND` when the id is unknown. |
+| `BeginPullRequest(id)` | Atomic compare-and-set: transitions `pr_state` from `''` or `'failed'` to `'opening'`, allowed only when `source_resolved=true`. Returns `{repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, rationale, confidence, diff_uri, model}` on success. Returns `FAILED_PRECONDITION` with the existing `pr_url` when the proposal is already `opening` or `open`; also returns `FAILED_PRECONDITION` when `source_resolved=false`. This is the single-winner idempotency guard that prevents concurrent duplicate PRs. |
+| `RecordPullRequest(id, pr_url, pr_number, opened_by)` | Sets `pr_state='open'`, `pr_url`, `pr_number`, `pr_opened_at=now()`, `pr_opened_by`. Emits `remediation.pr_opened:v1` via the transactional outbox. |
+| `FailPullRequest(id)` | Resets `pr_state` from `'opening'` to `'failed'`, making the action retryable. Called by ui-service when the GitHub step errors after a successful `BeginPullRequest` claim. |
+
 ## Outbound Interfaces
 
 ### Redis producer
@@ -33,6 +45,7 @@ The `proposal` table is append-only: all outcomes, including escalations, skips,
 | Stream | Consumed by | Emitted when |
 |---|---|---|
 | `remediation.proposed:v1` | (approval surface) | The LLM returns non-empty proposed SQL for the node. |
+| `remediation.pr_opened:v1` | (no consumer; audit seam for future close-loop) | `RecordPullRequest` is called; payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `opened_by`, `opened_at`. |
 
 All events are written to `remediation_agent_outbox` inside the same transaction as the `proposal` row insert and published with a deterministic `event_id` for consumer-side dedup.
 
@@ -42,7 +55,7 @@ All events are written to `remediation_agent_outbox` inside the same transaction
 |---|---|
 | `OrchestratorQuery.GetNodeAncestry` | Called twice per successful proposal. First call (depth > 0): fetch ranked upstream ancestors for the prompt; best-effort, degrades to empty list on failure. Second call (depth 0, self-node): extract `file_path` for the failing node so Step 2 can locate the real model source; also best-effort. |
 
-Exposes no gRPC services of its own.
+Its own inbound gRPC surface (`RemediationProposals`) is described in the inbound interfaces section above.
 
 ### Outbound HTTP — GitHub Contents API
 
@@ -134,7 +147,9 @@ The `{path}` is formed by joining the service's `repo_path` from `service_repos.
        trigger was already handled, so roll back and ACK without re-proposing.
     b. Insert proposal(status=proposed, confidence, rationale, proposed_sql_uri,
        diff_uri, candidate_fix_sql_uri, candidate_fix_diff_uri,
-       source_resolved, model).
+       source_resolved, model, repo, commit_sha, file_path). repo/commit_sha
+       come from the trigger; file_path is the path built in step 12 (non-empty
+       only when source_resolved=true; empty string otherwise).
     c. Enqueue remediation_agent_outbox row (stream=remediation.proposed:v1,
        message_processing_id = the claim row, event_id = deterministic SHA1 UUID
        keyed on release_id+"|"+node_id+"|"+attempt).
@@ -201,22 +216,22 @@ For each `(source, node_id, error_signature)` triple the service enforces a cap 
 
 ## Non-Responsibilities
 
-`remediation-agent` generates proposals only. It does not:
+`remediation-agent` generates proposals and exposes their lifecycle over gRPC. It does not:
 
-- Create GitHub pull requests or open code review branches.
+- Create GitHub pull requests or open code review branches. PR creation is performed by ui-service, which holds the GitHub App write credential.
 - Write to, commit to, or push any git repository. GitHub access is read-only.
 - Auto-apply or merge any proposed SQL change.
-- Expose a UI or any gRPC service to external callers.
+- Track PR state beyond `open` (merged/closed webhook/polling is out of scope for this service).
 - Track whether a proposal was accepted or resulted in a passing release.
 
-All downstream actions — review, approval, and PR creation — are human actions.
+All code-change decisions — review, approval, and PR creation — are human actions.
 
 ## Background Loops
 
 | Loop | Description |
 |---|---|
 | `remediation.requested:v1` consumer | Dispatches each inbound message to the `ProposeFix` handler. |
-| Outbox publisher | Drains `remediation_agent_outbox` and XADDs each pending row to `remediation.proposed:v1`. |
+| Outbox publisher | Drains `remediation_agent_outbox` and XADDs each pending row to `remediation.proposed:v1` or `remediation.pr_opened:v1` depending on the row's stream field. |
 
 ## Configuration Reference
 
@@ -239,6 +254,7 @@ All downstream actions — review, approval, and PR creation — are human actio
 | `GITHUB_BASE_URL` | no | `https://api.github.com` | GitHub REST API root; override for e2e stub (`stub-github`) |
 | `CONTINUO_ORCHESTRATOR_ADDR` | no | `orchestrator:50052` | Orchestrator gRPC endpoint |
 | `REMEDIATION_AGENT_HTTP_PORT` | no | `8092` | `/healthz` port |
+| `REMEDIATION_AGENT_GRPC_PORT` | no | `50054` | `RemediationProposals` gRPC server port |
 | `REMEDIATION_AGENT_MAX_ATTEMPTS` | no | `3` | Per-`(source, node_id, error_signature)` attempt cap |
 
 ## Key Code Paths
@@ -247,12 +263,14 @@ All downstream actions — review, approval, and PR creation — are human actio
 |---|---|
 | Proposal entity + unified diff | `remediation-agent/domain/proposal/proposal.go` |
 | Prompt assembly (candidate + real-source) | `remediation-agent/domain/prompt/` |
-| Event payload + deterministic IDs | `remediation-agent/domain/event/remediation_proposed.go` |
+| Event payloads + deterministic IDs | `remediation-agent/domain/event/` (proposed + pr_opened) |
 | Application handler (two-step flow) | `remediation-agent/service/handlers/propose_fix.go` |
+| PR lifecycle application service (claim/record/fail + outbox) | `remediation-agent/service/` |
 | Port interfaces | `remediation-agent/service/ports/` |
-| Postgres UoW + proposal repo | `remediation-agent/adapters/postgres/` |
+| Postgres UoW + proposal repo (incl. CAS for BeginPR) | `remediation-agent/adapters/postgres/` |
 | S3 evidence reader + artifact writer | `remediation-agent/adapters/s3/` |
 | gRPC ancestry client | `remediation-agent/adapters/grpc/ancestry_client.go` |
+| gRPC `RemediationProposals` server | `remediation-agent/adapters/grpc/server.go` |
 | GitHub read-only source reader | `remediation-agent/adapters/github/source_reader.go` |
 | Service→repo map config loader | `remediation-agent/config.go` (reads `SERVICE_REPO_MAP_PATH`, parses `service_repos.yaml`) |
 | Service→repo map file (dev + e2e) | `remediation-agent/config/service_repos.yaml` |

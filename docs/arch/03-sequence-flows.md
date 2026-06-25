@@ -483,6 +483,58 @@ sequenceDiagram
 
 **Promotion is a lazy generation switch.** `PromoteRelease` swaps the live `:Table` topology using retire-then-orphan-cleanup — retired nodes still referenced by a `:Run-[:EXECUTES]` edge are kept, preserving run history; only truly orphaned retired nodes are deleted. The handler never reads or writes `:Run` nodes or `EXECUTES` edges, so in-flight runs are unaffected: an existing run keeps its `topology_generation` and its edges keep their pinned `image_tag`. The next scheduled run's `Snapshot(LatestFullDAG)` reads `:TopologyRoot` at call time and picks up the new generation and image tags. See **Flow 7 (Topology Versioning — Lazy Generation Switch)** for the consumption-side detail. `node_type` is threaded through the promotion MERGE so promoted seeds are typed correctly and seed-backed schedules dispatch their `dbt seed` jobs without stalling.
 
+## 12. Human-Gated Create PR (Remediation Surface)
+
+An operator reviews a fix proposal in the Remediation tab and clicks **Create PR**. ui-service orchestrates the claim, GitHub PR creation, and result recording; remediation-agent enforces single-winner idempotency.
+
+```mermaid
+sequenceDiagram
+  participant OP as operator (browser)
+  participant UI as ui-service
+  participant RA as remediation-agent (gRPC 50054)
+  participant S3 as S3
+  participant GH as GitHub App API
+
+  OP->>UI: POST /api/remediation/proposals/:id/pull-request (operator role required)
+  UI->>RA: BeginPullRequest(id)
+  Note over RA: CAS: pr_state '' or 'failed' → 'opening' (atomic, source_resolved=true guard)<br/>Returns repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id<br/>Returns FAILED_PRECONDITION + existing pr_url if already opening/open<br/>Returns FAILED_PRECONDITION if source_resolved=false
+
+  alt already opening or open
+    RA-->>UI: FAILED_PRECONDITION { pr_url }
+    UI-->>OP: 409 { pr_url }
+  else source_resolved=false
+    RA-->>UI: FAILED_PRECONDITION (no source)
+    UI-->>OP: 422 (button should have been disabled)
+  else claim granted
+    RA-->>UI: { repo, commit_sha, file_path, proposed_sql_uri, branch_name, ... }
+
+    UI->>S3: GetObject(proposed_sql_uri → .source.sql)
+    S3-->>UI: corrected SQL content
+
+    UI->>GH: mint installation token (App JWT → /installations/:id/access_tokens)
+    UI->>GH: GET /repos/{repo}/git/refs/heads/main → main SHA
+    UI->>GH: POST /repos/{repo}/git/refs (branch_name off main SHA)
+    Note over GH: deterministic branch: remediation/<release_id>/<node>-attempt<n><br/>422 "Reference already exists" treated as idempotent
+    UI->>GH: PUT /repos/{repo}/contents/{file_path} (create/update file with corrected SQL)
+    UI->>GH: POST /repos/{repo}/pulls (base=main, head=branch_name)
+    Note over GH: 422 "PR already exists for head" → GET existing PR
+
+    alt GitHub step errors
+      UI->>RA: FailPullRequest(id)
+      Note over RA: pr_state 'opening' → 'failed' (retryable)
+      UI-->>OP: 502 error
+    else GitHub step succeeds
+      GH-->>UI: { pr_url, pr_number }
+      UI->>RA: RecordPullRequest(id, pr_url, pr_number, opened_by=session.user_id)
+      Note over RA: pr_state 'opening' → 'open'<br/>pr_opened_at = now(), pr_opened_by = user_id<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1, pointer-only)
+      RA-->>UI: ok
+      UI-->>OP: 200 { pr_url }
+    end
+  end
+```
+
+> The deterministic branch name and the GitHub-level "PR already exists for head" guard together make the full flow safe to retry: a double-click or browser reload issues a second `BeginPullRequest`, which — if the first already reached `opening`/`open` — short-circuits with the existing `pr_url` before touching GitHub again. `FailPullRequest` resets `pr_state` to `failed` so a subsequent click by the same or a different operator can retry cleanly. The `remediation.pr_opened:v1` outbox event is an audit seam for future close-loop or notification consumers; none are wired today.
+
 ## Why These Diagrams Are Not Enough On Their Own
 
 These diagrams show timing and ordering well, but they do not fully show:
