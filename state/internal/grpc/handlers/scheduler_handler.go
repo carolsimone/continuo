@@ -106,13 +106,19 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 // authenticated initiator carried in gRPC metadata is authoritative when it is
 // a real user; an unauthenticated/system caller (no metadata) falls back to the
 // request's cancelled_by so internal callers (e.g. the stuck-run watchdog) that
-// supply their own label keep recording it.
+// supply their own label keep recording it. When neither is present — a
+// platform cancel with no metadata and no request label — it resolves to the
+// system sentinel so the authoritative scheduler_tracker.cancelled_by row keeps
+// provenance rather than going blank.
 func effectiveCancelledBy(ctx context.Context, requestCancelledBy string) string {
 	id := identity.FromContext(ctx)
 	if !id.IsSystem() {
 		return id.UserID
 	}
-	return requestCancelledBy
+	if requestCancelledBy != "" {
+		return requestCancelledBy
+	}
+	return identity.SystemUserID
 }
 
 // cancelParams carries the per-call inputs to cancelRunTx.

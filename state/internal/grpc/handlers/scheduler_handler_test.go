@@ -21,10 +21,45 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// TestEffectiveCancelledBy pins how the cancelling actor is resolved: the
+// authenticated metadata user wins; a system caller keeps a request-supplied
+// label (e.g. the watchdog); and a system caller with no label falls back to
+// the system sentinel so the persisted row never goes blank.
+func TestEffectiveCancelledBy(t *testing.T) {
+	// ctxWithUser threads userID through the real identity interceptor so
+	// FromContext returns a non-system Identity, mirroring an authenticated RPC.
+	ctxWithUser := func(userID string) context.Context {
+		in := metadata.NewIncomingContext(context.Background(),
+			metadata.New(map[string]string{identity.MetadataKey: userID}))
+		var out context.Context
+		_, _ = identity.UnaryServerInterceptor()(in, nil, &grpc.UnaryServerInfo{},
+			func(c context.Context, _ any) (any, error) { out = c; return nil, nil })
+		return out
+	}
+
+	cases := []struct {
+		name      string
+		ctx       context.Context
+		requestBy string
+		want      string
+	}{
+		{"authenticated user is authoritative", ctxWithUser("okta|alice"), "ignored-body", "okta|alice"},
+		{"system caller keeps request label", context.Background(), "watchdog", "watchdog"},
+		{"system caller with empty request defaults to system", context.Background(), "", identity.SystemUserID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, effectiveCancelledBy(tc.ctx, tc.requestBy))
+		})
+	}
+}
 
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
