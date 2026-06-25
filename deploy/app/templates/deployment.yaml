@@ -62,6 +62,10 @@ spec:
               value: {{ $.Values.global.auth.viewerEmails | quote }}
               {{- else if and (eq $key "AUTH_ROLE_MAPPING") (eq $val "__AUTH_ROLE_MAPPING__") }}
               value: {{ $.Values.global.auth.roleMapping | quote }}
+              {{- else if and (eq $key "GITHUB_APP_ID") (eq $val "__GITHUB_APP_ID__") }}
+              value: {{ $.Values.global.github.appId | default "" | quote }}
+              {{- else if and (eq $key "GITHUB_APP_INSTALLATION_ID") (eq $val "__GITHUB_APP_INSTALLATION_ID__") }}
+              value: {{ $.Values.global.github.installationId | default "" | quote }}
               {{- else }}
               value: {{ $val | quote }}
               {{- end }}

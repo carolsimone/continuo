@@ -50,10 +50,14 @@ global:
     # Read-only fine-grained PAT — Contents: Read on continuo-dbt-demo; set at
     # deploy time; empty disables Step-2 source fetch (agent degrades to candidate).
     token: ""
-    # GitHub App private key (PEM) for ui-service PR creation — contents+pull-requests:write.
-    # Empty leaves the credentials Secret key present but blank, so the pod boots and the
-    # Create-PR action returns "not configured" until provisioned at deploy time.
+    # GitHub App credentials for ui-service PR creation — contents + pull-requests:write,
+    # installed on the dbt-demo repo only. All three are empty by default: the ui-service
+    # pod boots and the Create-PR action returns "not configured" (503) until set at deploy
+    # time in the on-box values. appPrivateKey is the PEM (goes into the credentials Secret);
+    # appId + installationId are non-secret identifiers (plain env via the deployment template).
     appPrivateKey: ""
+    appId: ""
+    installationId: ""
 
   s3:
     endpointUrl: https://nbg1.your-objectstorage.com
@@ -257,8 +261,8 @@ services:
       AUTH_VIEWER_EMAILS: __AUTH_VIEWER_EMAILS__
       REDIS_URL: __REDIS_URL_FROM_AUTH__
       REMEDIATION_GRPC_ADDR: remediation-agent:50054
-      GITHUB_APP_ID: ""
-      GITHUB_APP_INSTALLATION_ID: ""
+      GITHUB_APP_ID: __GITHUB_APP_ID__
+      GITHUB_APP_INSTALLATION_ID: __GITHUB_APP_INSTALLATION_ID__
       GITHUB_API_BASE_URL: https://api.github.com
     volumeMounts:
       - name: cancel-config
