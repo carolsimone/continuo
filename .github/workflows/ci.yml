@@ -99,14 +99,16 @@ jobs:
         run: docker buildx use default
 
       - name: Set up infrastructure
-        # COMPOSE_FILE merges docker-compose.ci.yml so that docker compose build
-        # uses GHA layer cache for all service images.
-        # setup.sh inherits this env var and passes it to docker compose build.
-        # Hard 30-minute cap: this phase should complete in well under that with a
-        # warm module-baked base; the timeout exists so a regression (e.g. an
-        # uncached cold module download) fails fast instead of burning minutes.
+        # Build images the same way local dev does (plain scripts/setup.sh, no
+        # compose override). Image build speed comes from continuo-base, which
+        # carries the prebuilt Go module cache; per-service GHA layer cache was
+        # removed because, when the base is built locally (any PR touching the
+        # base or a go.mod), exporting its large module layers to the GHA cache
+        # for every service stalled the build.
+        # Hard 30-minute cap: this phase should complete well under that; the
+        # timeout exists so a regression fails fast instead of burning minutes.
         timeout-minutes: 30
-        run: COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" bash scripts/setup.sh
+        run: bash scripts/setup.sh
 
       - name: Wait for service containers to be running
         run: |
