@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - Dockerfile.base
+      - go.work
+      - go.work.sum
+      - '**/go.mod'
+      - '**/go.sum'
   workflow_dispatch:  # allows manual trigger from the Actions UI
 
 jobs:
