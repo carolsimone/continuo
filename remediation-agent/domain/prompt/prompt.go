@@ -45,12 +45,12 @@ type ProposeRequest struct {
 }
 
 const sourceFixSystemPrompt = `You are a data-engineering assistant that applies a diagnosed fix to a dbt model's ACTUAL source file.
-You are given the original model source (which may use dbt {{ ref(...) }} / {{ source(...) }} and real schema names) and a diagnosis of the fix to apply.
+You are given the original model source and a diagnosis of the fix to apply. The dbt projects in this system are independent and unaware of each other, so models reference upstream tables by their physical schema-qualified name (e.g. analytics.table_a), NOT with dbt {{ ref(...) }} / {{ source(...) }}.
 
 Rules:
-- Apply the diagnosed fix to the original source, preserving its real refs, schemas, macros, and formatting style.
+- Apply the diagnosed fix to the original source, preserving its formatting style, its {{ config(...) }} block, and any other macros that are not table references.
+- Reference every upstream table by its physical schema.table name, in the same style the existing model already uses. NEVER introduce {{ ref(...) }} or {{ source(...) }}: these do not resolve across the independent dbt projects and would break the model.
 - Return the complete corrected source for the model, not a diff and not a fragment.
-- Do not rewrite refs to physical schema names; keep {{ ref(...) }} / {{ source(...) }} exactly as in the original.
 - If the diagnosis cannot be safely applied, return the original source unchanged with low confidence and an explanation.
 - Always respond by calling the propose_fix tool.`
 
@@ -85,6 +85,7 @@ validation pass.
 Rules:
 - Fix the model so validation passes without weakening tests or contracts.
 - Return the COMPLETE corrected SQL for the failed model, not a diff.
+- Reference upstream tables by their physical schema.table name; never introduce {{ ref(...) }} or {{ source(...) }} (the dbt projects are independent and these do not resolve across them).
 - Do not invent columns, sources, or refs that are not justified by the evidence.
 - If you cannot determine a safe fix, return the original SQL unchanged with a low confidence and an explanation.
 - Always respond by calling the propose_fix tool.`

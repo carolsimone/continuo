@@ -62,3 +62,22 @@ func TestAssemble_IncludesEvidenceAndForcesTool(t *testing.T) {
 		t.Errorf("system prompt must instruct not to weaken tests:\n%s", req.System)
 	}
 }
+
+// TestPrompts_ForbidJinjaRefs locks in the cross-project rule: the independent
+// dbt projects cannot resolve {{ ref(...) }} / {{ source(...) }} across each
+// other, so both prompts must require physical schema.table references and
+// forbid introducing ref()/source().
+func TestPrompts_ForbidJinjaRefs(t *testing.T) {
+	cases := map[string]string{
+		"step 1 (Assemble)":          Assemble(Evidence{NodeID: "analytics.table_g"}).System,
+		"step 2 (AssembleSourceFix)": AssembleSourceFix("select 1", "analytics.table_g", "fix it").System,
+	}
+	for name, sys := range cases {
+		if !strings.Contains(sys, "physical schema.table name") {
+			t.Errorf("%s: prompt must require physical schema.table names:\n%s", name, sys)
+		}
+		if !strings.Contains(sys, "{{ ref(...) }}") || !strings.Contains(sys, "{{ source(...) }}") {
+			t.Errorf("%s: prompt must explicitly forbid {{ ref(...) }} / {{ source(...) }}:\n%s", name, sys)
+		}
+	}
+}
