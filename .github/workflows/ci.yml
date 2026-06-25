@@ -8,6 +8,10 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    # Backstop against runaway runs burning Actions minutes. The default job
+    # timeout is 6 hours; cap the whole job well below that. Individual slow
+    # phases carry their own tighter timeouts (see "Set up infrastructure").
+    timeout-minutes: 60
 
     env:
       DOCKER_BUILDKIT: "1"
@@ -28,6 +32,11 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history so the PR base commit is present for the changed-file
+          # diff in "Pull or build base image" (a shallow clone has no base ref,
+          # which previously made that check always fall through to a pull).
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -57,19 +66,26 @@ jobs:
 
       - name: Pull or build base image
         # Normally pull continuo-base from Docker Hub (published by publish-base.yml).
-        # Fall back to a local build only when Dockerfile.base itself changed in
-        # this PR, because the published image hasn't been updated yet.
+        # Build it locally when this PR changes Dockerfile.base or any Go module
+        # file: the published image is only refreshed on merge to main, so for
+        # such PRs the registry copy is stale and would lack the baked module
+        # cache the dev images now rely on (they no longer carry a build cache
+        # mount). The diff is taken against the PR base commit, which requires the
+        # full-history checkout above.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          if git diff --name-only origin/main..HEAD | grep -q "^Dockerfile\.base$"; then
-            echo "Dockerfile.base changed in this PR — building locally..."
-            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
+          if git diff --name-only "$BASE_SHA" HEAD \
+              | grep -qE '(^Dockerfile\.base$|^go\.work$|^go\.work\.sum$|/go\.mod$|/go\.sum$)'; then
+            echo "Base image or a Go module file changed in this PR — building continuo-base locally..."
+            DOCKER_BUILDKIT=1 docker build --load -t continuo-base:latest -f Dockerfile.base .
           else
             echo "Pulling continuo-base from Docker Hub..."
             if docker pull ${{ secrets.DOCKERHUB_USERNAME }}/continuo-base:latest; then
               docker tag ${{ secrets.DOCKERHUB_USERNAME }}/continuo-base:latest continuo-base:latest
             else
               echo "Docker Hub pull failed (image may not exist yet) — building locally as fallback..."
-              DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
+              DOCKER_BUILDKIT=1 docker build --load -t continuo-base:latest -f Dockerfile.base .
             fi
           fi
 
@@ -86,6 +102,10 @@ jobs:
         # COMPOSE_FILE merges docker-compose.ci.yml so that docker compose build
         # uses GHA layer cache for all service images.
         # setup.sh inherits this env var and passes it to docker compose build.
+        # Hard 30-minute cap: this phase should complete in well under that with a
+        # warm module-baked base; the timeout exists so a regression (e.g. an
+        # uncached cold module download) fails fast instead of burning minutes.
+        timeout-minutes: 30
         run: COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" bash scripts/setup.sh
 
       - name: Wait for service containers to be running
