@@ -50,6 +50,10 @@ global:
     # Read-only fine-grained PAT — Contents: Read on continuo-dbt-demo; set at
     # deploy time; empty disables Step-2 source fetch (agent degrades to candidate).
     token: ""
+    # GitHub App private key (PEM) for ui-service PR creation — contents+pull-requests:write.
+    # Empty leaves the credentials Secret key present but blank, so the pod boots and the
+    # Create-PR action returns "not configured" until provisioned at deploy time.
+    appPrivateKey: ""
 
   s3:
     endpointUrl: https://nbg1.your-objectstorage.com
