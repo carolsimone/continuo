@@ -132,6 +132,10 @@ export function createRemediationRouter(
       pr = await prCreator.create({
         repo: claim.repo,
         baseBranch: 'main',
+        // Branch from the commit the proposal was generated against, so the diff
+        // is exactly the proposed change and GitHub flags a conflict if the file
+        // drifted on main since — rather than silently reverting that drift.
+        baseSha: claim.commit_sha,
         headBranch: claim.branch,
         filePath: claim.file_path,
         content,

@@ -6,6 +6,14 @@ export interface CreatePRInput {
   repo: string;
   /** Branch to merge into */
   baseBranch: string;
+  /**
+   * Commit the head branch is cut from. When set (the proposal's commit_sha),
+   * the branch is created from this exact commit so the PR diff is precisely the
+   * proposed change and GitHub surfaces a conflict if the file drifted on the
+   * base branch since the proposal was generated. When omitted, the base branch
+   * HEAD is used.
+   */
+  baseSha?: string;
   /** Branch to create for the PR */
   headBranch: string;
   /** Path of the file to create or update inside the repository */
@@ -74,7 +82,8 @@ export interface OctokitLike {
  * Returns a PullRequestCreator backed by the provided octokit-compatible client.
  *
  * Sequence for each `create` call:
- *   1. Resolve the base branch HEAD sha via git.getRef.
+ *   1. Resolve the commit to branch from — input.baseSha when set (the proposal's
+ *      commit), otherwise the base branch HEAD via git.getRef.
  *   2. Create the head branch via git.createRef — on 422 (already exists) continue.
  *   3. Resolve the existing file sha on the head branch via repos.getContent — on 404 (new file) omit sha.
  *   4. Upsert the file via repos.createOrUpdateFileContents.
@@ -85,13 +94,17 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
     async create(input: CreatePRInput): Promise<{ url: string; number: number }> {
       const [owner, repoName] = input.repo.split('/');
 
-      // Step 1: resolve base branch HEAD sha
-      const refData = await octokit.git.getRef({
-        owner,
-        repo: repoName,
-        ref: `heads/${input.baseBranch}`,
-      });
-      const baseSha = refData.data.object.sha;
+      // Step 1: resolve the commit to branch from — the proposal's commit when
+      // provided, otherwise the base branch HEAD.
+      let baseSha = input.baseSha;
+      if (!baseSha) {
+        const refData = await octokit.git.getRef({
+          owner,
+          repo: repoName,
+          ref: `heads/${input.baseBranch}`,
+        });
+        baseSha = refData.data.object.sha;
+      }
 
       // Step 2: create the head branch — ignore 422 (branch already exists)
       try {

@@ -107,6 +107,24 @@ describe('makePullRequestCreator', () => {
     });
   });
 
+  describe('baseSha provided — branches from the proposal commit, not base HEAD', () => {
+    it('creates the branch from baseSha and does not resolve base branch HEAD', async () => {
+      const octokit = buildFakeOctokit({ defaultBranchSha: 'base1', fileSha: 'f1' });
+      const creator = makePullRequestCreator(octokit);
+      await creator.create({ ...baseInput, baseSha: 'commit-abc' });
+
+      // Branch is cut from the proposal's commit, not the (different) base HEAD.
+      expect(octokit.git.createRef).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ref: 'refs/heads/remediation/r-1/orders_d-attempt1',
+          sha: 'commit-abc',
+        })
+      );
+      // No need to look up the base branch HEAD when the commit is known.
+      expect(octokit.git.getRef).not.toHaveBeenCalled();
+    });
+  });
+
   describe('new file — getContent returns 404, no sha passed to createOrUpdateFileContents', () => {
     it('calls createOrUpdateFileContents WITHOUT sha when file does not exist', async () => {
       const octokit = buildFakeOctokit({ defaultBranchSha: 'base1', getContent404: true });

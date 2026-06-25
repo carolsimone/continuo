@@ -36,6 +36,7 @@ function makeRemediation(overrides: Partial<RemediationClient> = {}): Remediatio
       branch: 'remediation/p1',
       file_path: 'models/mymodel.sql',
       repo: 'owner/repo',
+      commit_sha: 'abc123',
     }),
     recordPullRequest: vi.fn().mockResolvedValue({}),
     failPullRequest: vi.fn().mockResolvedValue({}),
@@ -194,6 +195,7 @@ describe('remediation router', () => {
         repo: 'owner/repo',
         headBranch: 'remediation/p1',
         baseBranch: 'main',
+        baseSha: 'abc123',
         filePath: 'models/mymodel.sql',
       }),
     );
