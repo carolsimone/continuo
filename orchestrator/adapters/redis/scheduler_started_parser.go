@@ -43,10 +43,8 @@ func ParseSchedulerStartedEvent(values map[string]interface{}) (domain.Scheduler
 		sourceRunID = &parsed
 	}
 
-	initiatedBy, _ := values["initiated_by"].(string)
-	if initiatedBy == "" {
-		initiatedBy = identity.SystemUserID
-	}
+	rawInitiatedBy, _ := values["initiated_by"].(string)
+	initiatedBy := identity.OrSystem(rawInitiatedBy)
 
 	return domain.SchedulerStarted{
 		ScheduleID:   schedulerID,

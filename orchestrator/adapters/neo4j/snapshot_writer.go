@@ -89,7 +89,8 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              run.version             = 0,
 		              run.terminal_status     = CASE WHEN $cancelled THEN 'cancelled' ELSE null END,
 		              run.completed_at        = CASE WHEN $cancelled THEN datetime() ELSE null END
-		ON MATCH SET  run.kind = COALESCE(run.kind, $kind)
+		ON MATCH SET  run.kind         = COALESCE(run.kind, $kind),
+		              run.initiated_by = COALESCE(run.initiated_by, $initiated_by)
 		FOREACH (_ IN CASE WHEN $source_run_id IS NULL THEN [] ELSE [1] END |
 		    SET run.source_run_id = $source_run_id
 		)
@@ -109,10 +110,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		)
 		RETURN count(e) AS edges_created
 	`
-	initiatedBy := p.InitiatedBy
-	if initiatedBy == "" {
-		initiatedBy = identity.SystemUserID
-	}
+	initiatedBy := identity.OrSystem(p.InitiatedBy)
 	result, err := w.tx.Run(ctx, query, map[string]interface{}{
 		"run_id":        p.RunID,
 		"schedule_name": p.ScheduleName,

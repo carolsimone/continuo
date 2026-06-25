@@ -70,16 +70,15 @@ func requireString(msg goredis.XMessage, field string) (string, error) {
 	return raw, nil
 }
 
-// optionalInitiatedBy extracts the initiating-user provenance from a trigger
-// message. The field is optional: messages from a state version predating
-// provenance tracking omit it, and the run is then recorded as the "system"
-// sentinel rather than rejected.
-func optionalInitiatedBy(msg goredis.XMessage) string {
-	raw, ok := msg.Values["initiated_by"].(string)
-	if !ok || raw == "" {
-		return identity.SystemUserID
-	}
-	return raw
+// optionalUserField extracts a user-provenance field (initiated_by /
+// cancelled_by) from a stream message. The field is optional: messages from a
+// state version predating provenance tracking omit it, and the user is then
+// recorded as the "system" sentinel rather than rejected. The empty/whitespace
+// collapse is delegated to identity.OrSystem so the sentinel rule lives in one
+// place.
+func optionalUserField(msg goredis.XMessage, field string) string {
+	raw, _ := msg.Values[field].(string)
+	return identity.OrSystem(raw)
 }
 
 // requireUUID extracts a string field and parses it as a UUID, returning an

@@ -141,7 +141,7 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
 		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
-		kindWithDefault(tracker.Kind), tracker.SourceRunID, initiatedByWithDefault(tracker.InitiatedBy),
+		kindWithDefault(tracker.Kind), tracker.SourceRunID, identity.OrSystem(tracker.InitiatedBy),
 	)
 	if err != nil {
 		// Check for duplicate key error (PostgreSQL error code 23505)
@@ -208,7 +208,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
 		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
-		kindWithDefault(tracker.Kind), tracker.SourceRunID, initiatedByWithDefault(tracker.InitiatedBy),
+		kindWithDefault(tracker.Kind), tracker.SourceRunID, identity.OrSystem(tracker.InitiatedBy),
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -576,27 +576,6 @@ func kindWithDefault(kind string) string {
 		return "cron"
 	}
 	return kind
-}
-
-// initiatedByWithDefault returns the "system" sentinel if initiatedBy is empty,
-// else initiatedBy — matching the schema-level default applied by the
-// migration. A run with no recorded initiator is platform-initiated.
-func initiatedByWithDefault(initiatedBy string) string {
-	if initiatedBy == "" {
-		return identity.SystemUserID
-	}
-	return initiatedBy
-}
-
-// cancelledByWithDefault returns the "system" sentinel if cancelledBy is empty,
-// else cancelledBy. A cancellation with no recorded actor is platform-initiated
-// (e.g. the watchdog draining a stuck schedule), so it carries provenance on the
-// wire rather than a blank string.
-func cancelledByWithDefault(cancelledBy string) string {
-	if cancelledBy == "" {
-		return identity.SystemUserID
-	}
-	return cancelledBy
 }
 
 // GetLastRunPerSchedule returns the most recent row per schedule_name.

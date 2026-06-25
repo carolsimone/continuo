@@ -8,6 +8,26 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+func TestOrSystem(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"real user", "okta|alice", "okta|alice"},
+		{"trims whitespace", "  okta|bob  ", "okta|bob"},
+		{"empty becomes system", "", "system"},
+		{"whitespace-only becomes system", "   ", "system"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := identity.OrSystem(tc.in); got != tc.want {
+				t.Fatalf("OrSystem(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFromUserID_TrimsAndSentinels(t *testing.T) {
 	cases := []struct {
 		name string

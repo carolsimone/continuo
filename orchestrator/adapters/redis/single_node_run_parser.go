@@ -62,6 +62,6 @@ func ParseSingleNodeRun(msg goredis.XMessage) (model.SingleNodeRunInput, error) 
 		TableName:      tableName,
 		MetadataSource: metadataSource,
 		SourceRunID:    sourceRunID,
-		InitiatedBy:    optionalInitiatedBy(msg),
+		InitiatedBy:    optionalUserField(msg, "initiated_by"),
 	}, nil
 }

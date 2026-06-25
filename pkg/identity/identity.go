@@ -52,3 +52,10 @@ func FromUserID(userID string) Identity {
 // IsSystem reports whether the identity is the platform sentinel rather than a
 // real authenticated user.
 func (i Identity) IsSystem() bool { return i.UserID == SystemUserID }
+
+// OrSystem normalises a raw user_id to a non-empty identifier: a real value is
+// trimmed and returned, an empty or whitespace-only value collapses to the
+// system sentinel. It is the single source of truth for the "string or system"
+// rule that persistence and wire-parsing code apply, so the sentinel and the
+// trimming behaviour live in exactly one place.
+func OrSystem(userID string) string { return FromUserID(userID).UserID }

@@ -39,7 +39,7 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 | `terminal_task_count` | `integer` | Incremented by the finalization state machine each time a task reaches a terminal state |
 | `kind` | `character varying(20)` NOT NULL DEFAULT `'cron'` | Run discriminator. CHECK constraint allows: `cron`, `trigger`, `rerun`, `rebase`, `single_node_run`. Set when the row is inserted and immutable thereafter — `rerun` and `rebase` rows are minted as fresh trackers, never by mutating an existing one. Migration: V15. |
 | `source_run_id` | `uuid` NULL | Lineage pointer to a parent run. NULL for `cron`/`trigger`. Populated for `rerun`, `rebase`, and stale-mode `single_node_run`. Not a foreign key — orphans are fine. Migration: V15. |
-| `initiated_by` | `character varying(255)` NOT NULL DEFAULT `'system'` | The user who initiated the run, or the `system` sentinel for cron / platform-initiated runs. Stamped at row creation from the gRPC `x-continuo-user-id` metadata header (see "User provenance" below); immutable thereafter. Migration: V26. |
+| `initiated_by` | `text` NOT NULL DEFAULT `'system'` | The user who initiated the run, or the `system` sentinel for cron / platform-initiated runs. Stamped at row creation from the gRPC `x-continuo-user-id` metadata header (see "User provenance" below); immutable thereafter. `text` (not a fixed width) because an OIDC `issuer-host\|sub` identifier can exceed 255 characters. Migration: V26. |
 
 ### New columns on `task_tracker`
 

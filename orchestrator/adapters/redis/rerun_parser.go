@@ -27,6 +27,6 @@ func ParseRerun(msg goredis.XMessage) (model.RerunInput, error) {
 		RunID:        scheduleID,
 		ScheduleName: scheduleName,
 		SourceRunID:  sourceRunID,
-		InitiatedBy:  optionalInitiatedBy(msg),
+		InitiatedBy:  optionalUserField(msg, "initiated_by"),
 	}, nil
 }

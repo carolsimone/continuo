@@ -24,7 +24,5 @@ ALTER TABLE scheduler_tracker ALTER COLUMN cancelled_by TYPE text;
 ALTER TABLE task_tracker      ALTER COLUMN cancelled_by TYPE text;
 ALTER TABLE task_execution    ALTER COLUMN cancelled_by TYPE text;
 
-CREATE INDEX idx_scheduler_tracker_initiated_by ON scheduler_tracker (initiated_by);
-
 COMMENT ON COLUMN scheduler_tracker.initiated_by IS
     'User who initiated the run, or ''system'' for cron / platform-initiated runs. Stamped at creation from the gRPC initiating-user metadata header; immutable thereafter.';
