@@ -54,7 +54,7 @@ export default function DashboardPage() {
     { slug: 'topology', label: 'Topology', count: topologies.length },
     { slug: 'releases', label: 'Releases' },
     { slug: 'nodes', label: 'Nodes', count: nodeTotal },
-    { slug: 'remediation', label: 'Remediation', count: pendingRemediationCount },
+    { slug: 'remediation', label: 'Remediation', count: pendingRemediationCount > 0 ? pendingRemediationCount : undefined },
   ];
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
 
@@ -67,11 +67,17 @@ export default function DashboardPage() {
       .catch(() => {});
   }, [activeTab]);
 
-  // Remediation-tab count badge: number of pending proposals.
+  // Remediation-tab count badge: proposals awaiting a human — status=proposed
+  // and no PR yet (pr_state '' or 'failed'); proposals whose PR is already open
+  // are not pending. The pill is omitted when the count is zero.
   // Fetched on mount only; no poll — proposal arrivals are infrequent.
   useEffect(() => {
     fetchProposals('proposed')
-      .then(proposals => setPendingRemediationCount(proposals.length))
+      .then(proposals =>
+        setPendingRemediationCount(
+          (proposals || []).filter(p => !p.pr_state || p.pr_state === 'failed').length,
+        ),
+      )
       .catch(() => {});
   }, []);
 

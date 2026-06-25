@@ -69,32 +69,30 @@ function renderDashboard() {
 }
 
 describe('DashboardPage — Remediation tab count badge', () => {
-  it('renders the Remediation tab with a .tabs__count badge matching the number of pending proposals', async () => {
+  it('counts only proposals awaiting a human (pr_state empty or failed), excluding opened PRs', async () => {
     const proposals = [
-      makeProposal({ id: 'p1' }),
-      makeProposal({ id: 'p2' }),
-      makeProposal({ id: 'p3' }),
+      makeProposal({ id: 'p1', pr_state: '' }),       // awaiting → counted
+      makeProposal({ id: 'p2', pr_state: 'failed' }),  // retryable → counted
+      makeProposal({ id: 'p3', pr_state: 'open' }),    // PR already open → NOT counted
     ];
     mockFetchProposals.mockResolvedValue(proposals);
 
     renderDashboard();
 
-    // Wait for the Remediation tab to appear with the count badge
+    // Two of the three proposals are awaiting a human, so the badge shows 2.
     await waitFor(() => {
-      const countBadge = document.querySelector('.tabs__count');
-      // Find the Remediation tab specifically
       const remediationTab = screen.getByRole('tab', { name: /remediation/i });
       expect(remediationTab).toBeInTheDocument();
       const badge = remediationTab.querySelector('.tabs__count');
       expect(badge).toBeInTheDocument();
-      expect(badge?.textContent).toBe('3');
+      expect(badge?.textContent).toBe('2');
     });
 
     // Ensure fetchProposals was called with 'proposed'
     expect(mockFetchProposals).toHaveBeenCalledWith('proposed');
   });
 
-  it('shows count 0 on the Remediation tab when there are no pending proposals', async () => {
+  it('omits the count badge on the Remediation tab when there are no pending proposals', async () => {
     mockFetchProposals.mockResolvedValue([]);
 
     renderDashboard();
@@ -102,13 +100,12 @@ describe('DashboardPage — Remediation tab count badge', () => {
     await waitFor(() => {
       const remediationTab = screen.getByRole('tab', { name: /remediation/i });
       expect(remediationTab).toBeInTheDocument();
-      const badge = remediationTab.querySelector('.tabs__count');
-      expect(badge).toBeInTheDocument();
-      expect(badge?.textContent).toBe('0');
+      // No pending proposals → no pill (like the count-less Releases tab).
+      expect(remediationTab.querySelector('.tabs__count')).toBeNull();
     });
   });
 
-  it('shows count 0 on the Remediation tab when the fetch fails (best-effort, no crash)', async () => {
+  it('omits the count badge on the Remediation tab when the fetch fails (best-effort, no crash)', async () => {
     mockFetchProposals.mockRejectedValue(new Error('network error'));
 
     renderDashboard();
@@ -118,10 +115,8 @@ describe('DashboardPage — Remediation tab count badge', () => {
       expect(remediationTab).toBeInTheDocument();
     });
 
-    // After failure, badge shows 0 (default state)
+    // Fetch failed → count stays 0 → no pill.
     const remediationTab = screen.getByRole('tab', { name: /remediation/i });
-    const badge = remediationTab.querySelector('.tabs__count');
-    expect(badge).toBeInTheDocument();
-    expect(badge?.textContent).toBe('0');
+    expect(remediationTab.querySelector('.tabs__count')).toBeNull();
   });
 });
