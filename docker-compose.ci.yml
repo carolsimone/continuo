@@ -36,3 +36,45 @@ services:
         - "type=gha,scope=ui"
       cache_to:
         - "type=gha,scope=ui,mode=max"
+
+  release-controller:
+    build:
+      cache_from:
+        - "type=gha,scope=release-controller"
+      cache_to:
+        - "type=gha,scope=release-controller,mode=max"
+
+  remediation:
+    build:
+      cache_from:
+        - "type=gha,scope=remediation"
+      cache_to:
+        - "type=gha,scope=remediation,mode=max"
+
+  remediation-agent:
+    build:
+      cache_from:
+        - "type=gha,scope=remediation-agent"
+      cache_to:
+        - "type=gha,scope=remediation-agent,mode=max"
+
+  agent-runner:
+    build:
+      cache_from:
+        - "type=gha,scope=agent-runner"
+      cache_to:
+        - "type=gha,scope=agent-runner,mode=max"
+
+  manifest-controller:
+    build:
+      cache_from:
+        - "type=gha,scope=manifest-controller"
+      cache_to:
+        - "type=gha,scope=manifest-controller,mode=max"
+
+  dbt-compile-and-load:
+    build:
+      cache_from:
+        - "type=gha,scope=dbt-compile-and-load"
+      cache_to:
+        - "type=gha,scope=dbt-compile-and-load,mode=max"
