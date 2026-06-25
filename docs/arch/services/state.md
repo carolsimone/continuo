@@ -90,7 +90,9 @@ self-supplied label is preserved).
 
 The four run-creation events carry `initiated_by` on the wire so the orchestrator can
 record the same provenance on its `:Run` projection: `scheduler.started:v1`,
-`trigger.rerun:v1`, `trigger.rebase:v1`, and `trigger.single_node_run:v1`.
+`trigger.rerun:v1`, `trigger.rebase:v1`, and `trigger.single_node_run:v1`. The
+`schedule.cancelled:v1` event likewise carries `cancelled_by`, defaulting to the
+`system` sentinel when no actor was recorded.
 
 ## Inbound Interfaces
 

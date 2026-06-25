@@ -18,6 +18,9 @@ type SchedulerStarted struct {
 // ScheduleCancelled is the typed form of schedule.cancelled:v1.
 type ScheduleCancelled struct {
 	ScheduleID uuid.UUID
+	// CancelledBy is the user who cancelled the schedule, or the "system"
+	// sentinel for a platform-initiated cancellation (e.g. the watchdog).
+	CancelledBy string
 }
 
 // RunFinalized is the typed form of run.finalized:v1.

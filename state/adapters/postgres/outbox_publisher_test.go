@@ -38,12 +38,12 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 
 	// Read back the row directly from the table.
 	type outboxRow struct {
-		StreamName    string    `db:"stream_name"`
-		AggregateType string    `db:"aggregate_type"`
-		EventType     string    `db:"event_type"`
-		MaxRetries    int       `db:"max_retries"`
+		StreamName    string     `db:"stream_name"`
+		AggregateType string     `db:"aggregate_type"`
+		EventType     string     `db:"event_type"`
+		MaxRetries    int        `db:"max_retries"`
 		MsgProcID     *uuid.UUID `db:"message_processing_id"`
-		Payload       []byte    `db:"payload"`
+		Payload       []byte     `db:"payload"`
 	}
 	var found outboxRow
 	err = db.GetContext(ctx, &found,
@@ -159,12 +159,48 @@ func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 	assert.Contains(t, streamNames, streams.ScheduleCancelledV1, "missing schedule.cancelled:v1 row")
 	assert.Contains(t, streamNames, streams.RunFinalizedV1, "missing run.finalized:v1 row")
 
+	// The schedule.cancelled:v1 row carries the cancelling user (provenance).
+	cancelledPayload, ok := streamNames[streams.ScheduleCancelledV1]
+	require.True(t, ok, "schedule.cancelled:v1 row must be present")
+	var cancelled map[string]string
+	require.NoError(t, json.Unmarshal(cancelledPayload, &cancelled))
+	assert.Equal(t, "tester", cancelled["cancelled_by"], "schedule.cancelled:v1 must carry cancelled_by")
+
 	// Verify the finalized row carries status "cancelled".
 	finalizedPayload, ok := streamNames[streams.RunFinalizedV1]
 	require.True(t, ok, "run.finalized:v1 row must be present")
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal(finalizedPayload, &payload))
 	assert.Equal(t, "cancelled", payload["status"], "run.finalized:v1 status must be 'cancelled'")
+}
+
+// TestOutboxPublisher_CancelledBy_EmptyBecomesSystem verifies a cancellation
+// with no recorded actor (a platform-initiated cancel) carries the "system"
+// sentinel on the wire rather than a blank string.
+func TestOutboxPublisher_CancelledBy_EmptyBecomesSystem(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	pub := postgres.NewOutboxPublisher(tx, discardLogger())
+	id := uuid.New()
+	require.NoError(t, pub.Append(ctx, []run.DomainEvent{
+		run.RunCancelled{ID: id, Name: "sched", By: "", CancellationReason: "drift"},
+	}, uuid.Nil))
+	require.NoError(t, tx.Commit())
+	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id)
+
+	var raw []byte
+	require.NoError(t, db.GetContext(ctx, &raw,
+		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+		id, streams.ScheduleCancelledV1,
+	))
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(raw, &payload))
+	assert.Equal(t, "system", payload["cancelled_by"])
 }
 
 func TestOutboxPublisher_AllEventTypes(t *testing.T) {

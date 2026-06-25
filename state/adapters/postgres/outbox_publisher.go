@@ -94,6 +94,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		payload, err := json.Marshal(map[string]string{
 			"schedule_id":   e.ID.String(),
 			"schedule_name": e.Name,
+			"cancelled_by":  cancelledByWithDefault(e.By),
 		})
 		if err != nil {
 			return nil, false, err

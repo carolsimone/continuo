@@ -588,6 +588,17 @@ func initiatedByWithDefault(initiatedBy string) string {
 	return initiatedBy
 }
 
+// cancelledByWithDefault returns the "system" sentinel if cancelledBy is empty,
+// else cancelledBy. A cancellation with no recorded actor is platform-initiated
+// (e.g. the watchdog draining a stuck schedule), so it carries provenance on the
+// wire rather than a blank string.
+func cancelledByWithDefault(cancelledBy string) string {
+	if cancelledBy == "" {
+		return identity.SystemUserID
+	}
+	return cancelledBy
+}
+
 // GetLastRunPerSchedule returns the most recent row per schedule_name.
 // Uses DISTINCT ON for efficient per-group latest-row selection.
 func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) (map[string]LastRunData, error) {
