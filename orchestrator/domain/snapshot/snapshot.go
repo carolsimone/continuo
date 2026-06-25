@@ -33,6 +33,7 @@ type Params struct {
 	ScheduleName string     // required by LatestFullDAG and RebasePartition; ignored by SourcePinnedDAG and SingleNode
 	Kind         string     // "cron" | "trigger" | "rerun" | "single_node_run" | "rebase"
 	SourceRunID  *uuid.UUID // nil for cron/trigger and latest-mode single-node-run
+	InitiatedBy  string     // user who initiated the run, or "system"; stamped on the :Run node
 	Selector     Selector
 	Cancelled    bool // schedule was already cancelled at snapshot time → writer stamps the :Run terminal on create
 }

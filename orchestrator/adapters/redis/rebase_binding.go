@@ -29,6 +29,7 @@ func NewRebaseBinding(
 			RunID:        cmd.RunID,
 			ScheduleName: cmd.ScheduleName,
 			SourceRunID:  cmd.SourceRunID,
+			InitiatedBy:  cmd.InitiatedBy,
 		}, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 }

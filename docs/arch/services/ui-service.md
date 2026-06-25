@@ -19,6 +19,8 @@ It provides:
 - a **Remediation** tab (5th dashboard tab): lists fix proposals from `remediation-agent` with diff, rationale, confidence, and source lineage; `operator` users can click **Create PR** to open a GitHub pull request applying the corrected real-source SQL; `viewer` users see the surface read-only. ui-service holds the GitHub App write credential, reads the corrected source from S3, and records the PR result back to remediation-agent over gRPC. The release detail page carries a lightweight back-link to any associated proposal.
 - a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): an operator-only WebSocket (WS) endpoint that relays browser messages over a bidirectional gRPC stream to `agent-runner`, which runs the LLM (Large Language Model) tool-use loop; the WebSocket upgrade is operator-only and the endpoint is gated off by default
 
+Every mutation proxied to `state` (trigger, cancel, rerun, rebase, single-node run) forwards the authenticated user's id as the `x-continuo-user-id` gRPC metadata header so `state` and `orchestrator` record the initiating user for full provenance. The header key and the `userMetadata(req)` helper live in `src/server/grpc-client.ts`; the key value matches `pkg/identity.MetadataKey` on the Go side. An unauthenticated request records the `system` sentinel.
+
 Its only datastore is Redis, used in `AUTH_MODE=oidc` for server-side login sessions under plain `uisession:` keys (not Redis Streams). It owns no Postgres or Neo4j storage.
 
 **Runtime**: Node.js / Express / TypeScript (port 8090).

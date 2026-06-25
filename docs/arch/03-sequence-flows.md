@@ -14,7 +14,7 @@ sequenceDiagram
   Cron->>ST: CronScheduler.activateSchedule(name)
   Note over ST: ScheduleActivationService.ActivateSchedule (1 tx)<br/>scheduler_tracker INSERT — status=PENDING, init_status=in_progress, kind='cron'<br/>state_outbox INSERT for scheduler.started v1
   ST->>R: publish scheduler.started v1 (via pkg/outbox.Processor)
-  Note right of R: payload — runner_id, schedule_name, service_metadata, kind='cron', source_run_id=''
+  Note right of R: payload — runner_id, schedule_name, service_metadata, kind='cron', source_run_id='', initiated_by
 
   R->>OR: consume scheduler.started v1
   Note over OR: HandleSchedulerStartedHandler.Handle (1 tx)<br/>Snapshot(LatestFullDAG) in Neo4j — Run + EXECUTES with pre-assigned task UUIDs<br/>frontier (ReadyToDispatch: seeds-first-else-roots) computed by the selector — no second Neo4j read
@@ -134,7 +134,7 @@ sequenceDiagram
 
   U->>UI: POST /api/schedulers/{id}/rerun (empty body)
   UI->>ST: TriggerRerun(source_run_id)
-  Note over ST: RerunHandler.TriggerRerun (sync, 1 tx) — delegates to<br/>synthesiseDerivedRun(kind='rerun', stream='trigger.rerun:v1'):<br/>validations — source exists / source FAILED|CANCELLED / source has ≥1 non-SUCCEEDED task / no active run on schedule_name<br/>scheduler_tracker INSERT — new row, kind='rerun', source_run_id=src, schedule_name=src.schedule_name, status=PENDING<br/>state_outbox INSERT for trigger.rerun:v1 with payload {schedule_id, schedule_name, kind, source_run_id}<br/>source row left untouched — stays at terminal status forever
+  Note over ST: RerunHandler.TriggerRerun (sync, 1 tx) — delegates to<br/>synthesiseDerivedRun(kind='rerun', stream='trigger.rerun:v1'):<br/>validations — source exists / source FAILED|CANCELLED / source has ≥1 non-SUCCEEDED task / no active run on schedule_name<br/>scheduler_tracker INSERT — new row, kind='rerun', source_run_id=src, schedule_name=src.schedule_name, status=PENDING<br/>state_outbox INSERT for trigger.rerun:v1 with payload {schedule_id, schedule_name, kind, source_run_id, initiated_by}<br/>source row left untouched — stays at terminal status forever
   ST-->>UI: TriggerRerunResponse { run_id, schedule_name }
 
   ST->>R: publish trigger.rerun:v1 (via pkg/outbox.Processor)
@@ -315,7 +315,7 @@ sequenceDiagram
   UI-->>U: 200 OK
 
   ST->>R: publish trigger.single_node_run:v1 (via pkg/outbox.Processor)
-  Note right of R: payload — schedule_id, schedule_name, service_name,<br/>schema_name, table_name, metadata_source, source_run_id?
+  Note right of R: payload — schedule_id, schedule_name, service_name,<br/>schema_name, table_name, metadata_source, source_run_id?, initiated_by
 
   R->>OR: consume trigger.single_node_run:v1
   Note over OR: HandleSingleNodeRunHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Neo4j: Snapshot(SingleNode{Target, MetadataSource, SourceRunID?})<br/>  latest mode → selector reads :TopologyRoot + :Table for metadata, new :Run inherits from :TopologyRoot<br/>  stale mode  → selector reads source :Run's EXECUTES edge, new :Run inherits topology_generation + service_metadata from source :Run
@@ -363,7 +363,7 @@ sequenceDiagram
   ST-->>UI: TriggerRebaseResponse { run_id, schedule_name }
   UI-->>U: 200 OK
   ST->>R: publish trigger.rebase v1 (via pkg/outbox.Processor)
-  Note right of R: payload — schedule_id (NEW run), schedule_name, source_run_id
+  Note right of R: payload — schedule_id (NEW run), schedule_name, source_run_id, initiated_by
 
   R->>OR: consume trigger.rebase v1
   Note over OR: DerivedRunHandler.Handle (rebase config, 1 tx)<br/>dedup on message_processing<br/>Snapshot(RebasePartition)

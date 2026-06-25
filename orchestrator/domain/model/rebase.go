@@ -13,4 +13,5 @@ type RebaseInput struct {
 	RunID        string // == new ScheduleID.String()
 	ScheduleName string // copied from source
 	SourceRunID  string // schedule_id of the failed/cancelled source run
+	InitiatedBy  string // user who triggered the rebase, or "system"
 }

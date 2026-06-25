@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -123,14 +124,14 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id
+			kind, source_run_id, initiated_by
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
 			$11, $12,
 			$13, $14,
-			$15, $16
+			$15, $16, $17
 		)
 	`
 
@@ -140,7 +141,7 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
 		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
-		kindWithDefault(tracker.Kind), tracker.SourceRunID,
+		kindWithDefault(tracker.Kind), tracker.SourceRunID, identity.OrSystem(tracker.InitiatedBy),
 	)
 	if err != nil {
 		// Check for duplicate key error (PostgreSQL error code 23505)
@@ -192,14 +193,14 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id
+			kind, source_run_id, initiated_by
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
 			$11, $12,
 			$13, $14,
-			$15, $16
+			$15, $16, $17
 		)
 	`,
 		tracker.ScheduleID, tracker.ScheduleName, tracker.Status, tracker.CreatedAt,
@@ -207,7 +208,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 		tracker.CancelledAt, tracker.CancelledBy, tracker.CancellationReason,
 		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
-		kindWithDefault(tracker.Kind), tracker.SourceRunID,
+		kindWithDefault(tracker.Kind), tracker.SourceRunID, identity.OrSystem(tracker.InitiatedBy),
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -230,7 +231,7 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id
+			kind, source_run_id, initiated_by
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 	`
@@ -331,7 +332,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id
+			kind, source_run_id, initiated_by
 		FROM scheduler_tracker
 		WHERE schedule_name = $1
 		  AND status IN ('pending', 'running')
@@ -440,7 +441,7 @@ func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx 
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id
+			kind, source_run_id, initiated_by
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 		FOR UPDATE

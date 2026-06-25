@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -22,10 +23,10 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 // WriteRunAndExecutesEdges writes the :Run node and one :EXECUTES edge per
 // projection entry. Idempotent on rerun.
 //
-// :Run properties: run_id, schedule_name, kind, created_at, source_run_id?,
+// :Run properties: run_id, schedule_name, kind, initiated_by, created_at,
 //
-//	topology_generation, service_metadata, total_nodes, terminal_count,
-//	version
+//	source_run_id?, topology_generation, service_metadata, total_nodes,
+//	terminal_count, version
 //
 // :EXECUTES edge:  task_id, status, image_tag, manifest_version,
 //
@@ -79,6 +80,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		ON CREATE SET run.schedule_name      = $schedule_name,
 		              run.created_at         = datetime(),
 		              run.kind               = $kind,
+		              run.initiated_by        = $initiated_by,
 		              run.topology_generation = topo_gen,
 		              run.service_metadata    = svc_meta,
 		              run.total_nodes         = $total_nodes,
@@ -87,7 +89,8 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              run.version             = 0,
 		              run.terminal_status     = CASE WHEN $cancelled THEN 'cancelled' ELSE null END,
 		              run.completed_at        = CASE WHEN $cancelled THEN datetime() ELSE null END
-		ON MATCH SET  run.kind = COALESCE(run.kind, $kind)
+		ON MATCH SET  run.kind         = COALESCE(run.kind, $kind),
+		              run.initiated_by = COALESCE(run.initiated_by, $initiated_by)
 		FOREACH (_ IN CASE WHEN $source_run_id IS NULL THEN [] ELSE [1] END |
 		    SET run.source_run_id = $source_run_id
 		)
@@ -107,10 +110,12 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		)
 		RETURN count(e) AS edges_created
 	`
+	initiatedBy := identity.OrSystem(p.InitiatedBy)
 	result, err := w.tx.Run(ctx, query, map[string]interface{}{
 		"run_id":        p.RunID,
 		"schedule_name": p.ScheduleName,
 		"kind":          p.Kind,
+		"initiated_by":  initiatedBy,
 		"source_run_id": sourceRunIDParam,
 		"tasks":         tasks,
 		"total_nodes":   len(projection),

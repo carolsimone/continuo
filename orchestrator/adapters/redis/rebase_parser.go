@@ -27,5 +27,6 @@ func ParseRebase(msg goredis.XMessage) (model.RebaseInput, error) {
 		RunID:        scheduleID,
 		ScheduleName: scheduleName,
 		SourceRunID:  sourceRunID,
+		InitiatedBy:  optionalUserField(msg, "initiated_by"),
 	}, nil
 }

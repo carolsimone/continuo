@@ -20,6 +20,7 @@ type RunStarted struct {
 	Name            string
 	K               Kind
 	SourceID        *uuid.UUID
+	InitiatedBy     string
 	ServiceMetadata map[string]ServiceMetadata
 }
 
@@ -53,9 +54,10 @@ func (e RunCancelled) ScheduleID() uuid.UUID { return e.ID }
 // RerunRequested is recorded by NewDerivedRun when Kind == KindRerun.
 // Translated to trigger.rerun:v1.
 type RerunRequested struct {
-	ID       uuid.UUID
-	Name     string
-	SourceID uuid.UUID
+	ID          uuid.UUID
+	Name        string
+	SourceID    uuid.UUID
+	InitiatedBy string
 }
 
 func (RerunRequested) runDomainEvent()         {}
@@ -64,9 +66,10 @@ func (e RerunRequested) ScheduleID() uuid.UUID { return e.ID }
 // RebaseRequested is recorded by NewDerivedRun when Kind == KindRebase.
 // Translated to trigger.rebase:v1.
 type RebaseRequested struct {
-	ID       uuid.UUID
-	Name     string
-	SourceID uuid.UUID
+	ID          uuid.UUID
+	Name        string
+	SourceID    uuid.UUID
+	InitiatedBy string
 }
 
 func (RebaseRequested) runDomainEvent()         {}
@@ -80,6 +83,7 @@ type SingleNodeRunRequested struct {
 	Target         NodeID
 	MetadataSource MetadataSource
 	SourceID       *uuid.UUID
+	InitiatedBy    string
 }
 
 func (SingleNodeRunRequested) runDomainEvent()         {}

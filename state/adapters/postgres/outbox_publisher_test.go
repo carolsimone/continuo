@@ -38,12 +38,12 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 
 	// Read back the row directly from the table.
 	type outboxRow struct {
-		StreamName    string    `db:"stream_name"`
-		AggregateType string    `db:"aggregate_type"`
-		EventType     string    `db:"event_type"`
-		MaxRetries    int       `db:"max_retries"`
+		StreamName    string     `db:"stream_name"`
+		AggregateType string     `db:"aggregate_type"`
+		EventType     string     `db:"event_type"`
+		MaxRetries    int        `db:"max_retries"`
 		MsgProcID     *uuid.UUID `db:"message_processing_id"`
-		Payload       []byte    `db:"payload"`
+		Payload       []byte     `db:"payload"`
 	}
 	var found outboxRow
 	err = db.GetContext(ctx, &found,
@@ -159,12 +159,48 @@ func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 	assert.Contains(t, streamNames, streams.ScheduleCancelledV1, "missing schedule.cancelled:v1 row")
 	assert.Contains(t, streamNames, streams.RunFinalizedV1, "missing run.finalized:v1 row")
 
+	// The schedule.cancelled:v1 row carries the cancelling user (provenance).
+	cancelledPayload, ok := streamNames[streams.ScheduleCancelledV1]
+	require.True(t, ok, "schedule.cancelled:v1 row must be present")
+	var cancelled map[string]string
+	require.NoError(t, json.Unmarshal(cancelledPayload, &cancelled))
+	assert.Equal(t, "tester", cancelled["cancelled_by"], "schedule.cancelled:v1 must carry cancelled_by")
+
 	// Verify the finalized row carries status "cancelled".
 	finalizedPayload, ok := streamNames[streams.RunFinalizedV1]
 	require.True(t, ok, "run.finalized:v1 row must be present")
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal(finalizedPayload, &payload))
 	assert.Equal(t, "cancelled", payload["status"], "run.finalized:v1 status must be 'cancelled'")
+}
+
+// TestOutboxPublisher_CancelledBy_EmptyBecomesSystem verifies a cancellation
+// with no recorded actor (a platform-initiated cancel) carries the "system"
+// sentinel on the wire rather than a blank string.
+func TestOutboxPublisher_CancelledBy_EmptyBecomesSystem(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	pub := postgres.NewOutboxPublisher(tx, discardLogger())
+	id := uuid.New()
+	require.NoError(t, pub.Append(ctx, []run.DomainEvent{
+		run.RunCancelled{ID: id, Name: "sched", By: "", CancellationReason: "drift"},
+	}, uuid.Nil))
+	require.NoError(t, tx.Commit())
+	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id)
+
+	var raw []byte
+	require.NoError(t, db.GetContext(ctx, &raw,
+		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+		id, streams.ScheduleCancelledV1,
+	))
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(raw, &payload))
+	assert.Equal(t, "system", payload["cancelled_by"])
 }
 
 func TestOutboxPublisher_AllEventTypes(t *testing.T) {
@@ -302,6 +338,91 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			assert.Equal(t, tc.wantEventType, found.EventType, "event_type")
 			assert.Equal(t, tc.wantAggType, found.AggregateType, "aggregate_type")
 			assert.Equal(t, tc.wantRetries, found.MaxRetries, "max_retries")
+		})
+	}
+}
+
+// TestOutboxPublisher_InitiatedByProvenance pins the provenance contract: every
+// run-creation event carries initiated_by on the wire, and an empty initiator
+// (a platform-initiated run) is recorded as the "system" sentinel rather than a
+// blank string.
+func TestOutboxPublisher_InitiatedByProvenance(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sourceID := uuid.New()
+
+	cases := []struct {
+		name       string
+		event      func(id uuid.UUID) run.DomainEvent
+		wantStream string
+		want       string
+	}{
+		{
+			name: "RunStarted carries the user",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.RunStarted{ID: id, Name: "sched", K: run.KindTrigger, InitiatedBy: "okta|alice", ServiceMetadata: map[string]run.ServiceMetadata{}}
+			},
+			wantStream: streams.SchedulerStartedV1,
+			want:       "okta|alice",
+		},
+		{
+			name: "RunStarted empty initiator becomes system",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.RunStarted{ID: id, Name: "sched", K: run.KindCron, InitiatedBy: "", ServiceMetadata: map[string]run.ServiceMetadata{}}
+			},
+			wantStream: streams.SchedulerStartedV1,
+			want:       "system",
+		},
+		{
+			name: "RerunRequested carries the user",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.RerunRequested{ID: id, Name: "sched", SourceID: sourceID, InitiatedBy: "okta|bob"}
+			},
+			wantStream: streams.TriggerRerunV1,
+			want:       "okta|bob",
+		},
+		{
+			name: "RebaseRequested carries the user",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.RebaseRequested{ID: id, Name: "sched", SourceID: sourceID, InitiatedBy: "okta|carol"}
+			},
+			wantStream: streams.TriggerRebaseV1,
+			want:       "okta|carol",
+		},
+		{
+			name: "SingleNodeRunRequested carries the user",
+			event: func(id uuid.UUID) run.DomainEvent {
+				return run.SingleNodeRunRequested{
+					ID: id, Name: "sched",
+					Target:         run.NodeID{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"},
+					MetadataSource: run.MetadataSourceLatest,
+					InitiatedBy:    "okta|dave",
+				}
+			},
+			wantStream: streams.TriggerSingleNodeRunV1,
+			want:       "okta|dave",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			aggID := uuid.New()
+			tx, err := db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+
+			pub := postgres.NewOutboxPublisher(tx, discardLogger())
+			require.NoError(t, pub.Append(ctx, []run.DomainEvent{tc.event(aggID)}, uuid.Nil))
+			require.NoError(t, tx.Commit())
+			defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", aggID)
+
+			var raw []byte
+			require.NoError(t, db.GetContext(ctx, &raw,
+				`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+				aggID, tc.wantStream,
+			))
+			var payload map[string]interface{}
+			require.NoError(t, json.Unmarshal(raw, &payload))
+			assert.Equal(t, tc.want, payload["initiated_by"], "initiated_by on %s", tc.wantStream)
 		})
 	}
 }

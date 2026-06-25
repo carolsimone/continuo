@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -43,6 +44,7 @@ func TestRunToProto_PopulatesStartedAt(t *testing.T) {
 		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
+		identity.SystemUserID,
 		created,
 		&started, nil, nil, nil,
 		nil, nil,

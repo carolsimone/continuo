@@ -85,7 +85,7 @@ describe('POST /api/schedulers/:id/rerun', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns 200 on success and forwards source_run_id from path', async () => {
-    mockTriggerRerun.mockImplementation((req: any, cb: any) => {
+    mockTriggerRerun.mockImplementation((req: any, _md: any, cb: any) => {
       expect(req).toEqual({ source_run_id: VALID_ID });
       cb(null);
     });
@@ -93,6 +93,7 @@ describe('POST /api/schedulers/:id/rerun', () => {
     expect(res.status).toBe(200);
     expect(mockTriggerRerun).toHaveBeenCalledWith(
       { source_run_id: VALID_ID },
+      expect.any(Object),
       expect.any(Function),
     );
   });
@@ -101,7 +102,7 @@ describe('POST /api/schedulers/:id/rerun', () => {
     const err = Object.assign(new Error('invalid schedule_id format'), {
       code: grpc.status.INVALID_ARGUMENT,
     });
-    mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(err));
+    mockTriggerRerun.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
     const res = await request(app)
       .post(`/api/schedulers/not-a-uuid/rerun`)
       .send({});
@@ -113,7 +114,7 @@ describe('POST /api/schedulers/:id/rerun', () => {
     const err = Object.assign(new Error('schedule not found'), {
       code: grpc.status.NOT_FOUND,
     });
-    mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(err));
+    mockTriggerRerun.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
     const res = await request(app)
       .post(`/api/schedulers/${VALID_ID}/rerun`)
       .send({});
@@ -125,7 +126,7 @@ describe('POST /api/schedulers/:id/rerun', () => {
     const err = Object.assign(new Error('schedule has running tasks'), {
       code: grpc.status.FAILED_PRECONDITION,
     });
-    mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(err));
+    mockTriggerRerun.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
     const res = await request(app)
       .post(`/api/schedulers/${VALID_ID}/rerun`)
       .send({});
@@ -137,7 +138,7 @@ describe('POST /api/schedulers/:id/rerun', () => {
     const err = Object.assign(new Error('internal error'), {
       code: grpc.status.INTERNAL,
     });
-    mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(err));
+    mockTriggerRerun.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
     const res = await request(app)
       .post(`/api/schedulers/${VALID_ID}/rerun`)
       .send({});
@@ -146,7 +147,7 @@ describe('POST /api/schedulers/:id/rerun', () => {
 
   it('returns 500 for unknown gRPC code', async () => {
     const err = Object.assign(new Error('something weird'), { code: 999 });
-    mockTriggerRerun.mockImplementation((_req: any, cb: any) => cb(err));
+    mockTriggerRerun.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
     const res = await request(app)
       .post(`/api/schedulers/${VALID_ID}/rerun`)
       .send({});
@@ -160,7 +161,7 @@ describe('POST /api/schedulers/:id/rebase', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('forwards source_run_id and returns 200 on success', async () => {
-    mockTriggerRebase.mockImplementation((req: any, cb: any) => {
+    mockTriggerRebase.mockImplementation((req: any, _md: any, cb: any) => {
       expect(req).toEqual({ source_run_id: VALID_ID });
       cb(null);
     });
@@ -170,6 +171,7 @@ describe('POST /api/schedulers/:id/rebase', () => {
     expect(res.status).toBe(200);
     expect(mockTriggerRebase).toHaveBeenCalledWith(
       { source_run_id: VALID_ID },
+      expect.any(Object),
       expect.any(Function),
     );
   });
@@ -178,7 +180,7 @@ describe('POST /api/schedulers/:id/rebase', () => {
     const err = Object.assign(new Error('source not terminal'), {
       code: grpc.status.FAILED_PRECONDITION,
     });
-    mockTriggerRebase.mockImplementation((_req: any, cb: any) => cb(err));
+    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
 
     const res = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send({});
     expect(res.status).toBe(409);

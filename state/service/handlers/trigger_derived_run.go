@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/policy"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -68,7 +69,7 @@ func NewTriggerRebaseHandler(logger *slog.Logger) *TriggerDerivedRunHandler {
 
 // Handle synthesises a fresh derived Run from a source. Returns
 // (newRunID, scheduleName).
-func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork, sourceID uuid.UUID) (uuid.UUID, string, error) {
+func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork, sourceID uuid.UUID, initiator identity.Identity) (uuid.UUID, string, error) {
 	src, err := u.Run().GetRun(ctx, sourceID)
 	if err != nil {
 		return uuid.Nil, "", fmt.Errorf("get source: %w", err)
@@ -90,7 +91,7 @@ func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork,
 		}
 	}()
 
-	newRun, evt, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, u.Clock().Now())
+	newRun, evt, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, initiator.UserID, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}

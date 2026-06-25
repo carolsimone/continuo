@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/identity"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -72,6 +73,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"service_metadata": toServiceMetadataDTOs(e.ServiceMetadata),
 			"kind":             string(e.K),
 			"source_run_id":    sourceIDStr(e.SourceID),
+			"initiated_by":     identity.OrSystem(e.InitiatedBy),
 		})
 		if err != nil {
 			return nil, false, err
@@ -93,6 +95,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		payload, err := json.Marshal(map[string]string{
 			"schedule_id":   e.ID.String(),
 			"schedule_name": e.Name,
+			"cancelled_by":  identity.OrSystem(e.By),
 		})
 		if err != nil {
 			return nil, false, err
@@ -105,6 +108,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"schedule_name": e.Name,
 			"kind":          "rerun",
 			"source_run_id": e.SourceID.String(),
+			"initiated_by":  identity.OrSystem(e.InitiatedBy),
 		})
 		if err != nil {
 			return nil, false, err
@@ -117,6 +121,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"schedule_name": e.Name,
 			"kind":          "rebase",
 			"source_run_id": e.SourceID.String(),
+			"initiated_by":  identity.OrSystem(e.InitiatedBy),
 		})
 		if err != nil {
 			return nil, false, err
@@ -133,6 +138,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"kind":            "single_node_run",
 			"metadata_source": string(e.MetadataSource),
 			"source_run_id":   sourceIDStr(e.SourceID),
+			"initiated_by":    identity.OrSystem(e.InitiatedBy),
 		})
 		if err != nil {
 			return nil, false, err

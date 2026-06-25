@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"google.golang.org/grpc"
@@ -44,8 +45,14 @@ func NewServer(
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
 
+	// The identity interceptor runs first so it converts the initiating-user
+	// metadata header into an identity.Identity on the context before any
+	// handler (or the logging interceptor) observes the request.
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(loggingInterceptor(logger)),
+		grpc.ChainUnaryInterceptor(
+			identity.UnaryServerInterceptor(),
+			loggingInterceptor(logger),
+		),
 	)
 
 	server := &Server{

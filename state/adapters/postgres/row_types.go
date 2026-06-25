@@ -29,6 +29,7 @@ type SchedulerTracker struct {
 	TerminalTaskCount    int32                      `json:"terminal_task_count" db:"terminal_task_count"`
 	Kind                 string                     `json:"kind" db:"kind"`
 	SourceRunID          *uuid.UUID                 `json:"source_run_id,omitempty" db:"source_run_id"`
+	InitiatedBy          string                     `json:"initiated_by" db:"initiated_by"`
 	ServiceMetadata      map[string]run.ServiceMetadata `json:"service_metadata"`
 	ServiceMetadataRaw   []byte                         `json:"-" db:"service_metadata"`
 }

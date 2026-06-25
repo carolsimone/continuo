@@ -107,6 +107,7 @@ func (h *DerivedRunHandler) Handle(ctx context.Context, cmd domainModel.DerivedR
 		ScheduleName: cmd.ScheduleName,
 		Kind:         h.cfg.kind,
 		SourceRunID:  &sourceRunUUID,
+		InitiatedBy:  cmd.InitiatedBy,
 		Selector:     h.cfg.selector,
 	})
 	if snapErr != nil {

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as grpc from '@grpc/grpc-js';
-import { GrpcClient } from '../grpc-client';
+import { GrpcClient, userMetadata } from '../grpc-client';
 
 function grpcToHttpStatus(code: number): number {
   switch (code) {
@@ -108,6 +108,7 @@ export function createNodesRouter(stateClient: GrpcClient) {
         metadata_source: metadataSource,
         source_run_id:   sourceRunID,
       },
+      userMetadata(req),
       (err: any, response: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
         res.json({ run_id: response.run_id, schedule_name: response.schedule_name });

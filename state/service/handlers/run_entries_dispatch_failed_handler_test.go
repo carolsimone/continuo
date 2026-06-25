@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
@@ -86,6 +87,7 @@ func newPendingTestRun(id uuid.UUID, name string) *run.Run {
 		run.InitStatusInProgress,
 		run.KindCron,
 		nil,
+		identity.SystemUserID,
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
@@ -105,6 +107,7 @@ func newTerminalTestRun(id uuid.UUID, name string, status run.SchedulerStatus) *
 		run.InitStatusInProgress,
 		run.KindCron,
 		nil,
+		identity.SystemUserID,
 		now,
 		nil, &now, nil, nil,
 		nil, nil,

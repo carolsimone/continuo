@@ -10,4 +10,7 @@ type DerivedRunInput struct {
 	ScheduleName string
 	RunID        string // schedule_id of the NEW run (target of Snapshot)
 	SourceRunID  string // schedule_id of the SOURCE run (read by the selector)
+	// InitiatedBy is the user who triggered the derived run, or the "system"
+	// sentinel when absent on the incoming message.
+	InitiatedBy string
 }

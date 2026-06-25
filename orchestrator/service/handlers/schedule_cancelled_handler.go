@@ -28,6 +28,6 @@ func (h *ScheduleCancelledHandler) Handle(ctx context.Context, evt domain.Schedu
 	if err := h.repo.Insert(ctx, evt.ScheduleID); err != nil {
 		return fmt.Errorf("insert cancelled schedule %s: %w", evt.ScheduleID, err)
 	}
-	h.logger.Info("Recorded cancelled schedule", "schedule_id", evt.ScheduleID)
+	h.logger.Info("Recorded cancelled schedule", "schedule_id", evt.ScheduleID, "cancelled_by", evt.CancelledBy)
 	return nil
 }

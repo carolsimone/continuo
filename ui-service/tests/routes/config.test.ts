@@ -15,12 +15,11 @@ describe('GET /api/config', () => {
     writeFileSync(
       VALID_CONFIG_PATH,
       JSON.stringify({
-        cancel_by_emails: ['alice@example.com'],
         cancellation_reasons: ['Incorrect trigger', 'Other'],
       }),
     );
     writeFileSync(BAD_CONFIG_PATH, 'not valid json {{{');
-    writeFileSync(MISSING_FIELDS_CONFIG_PATH, JSON.stringify({ cancel_by_emails: ['a@b.com'] }));
+    writeFileSync(MISSING_FIELDS_CONFIG_PATH, JSON.stringify({ unrelated: true }));
   });
 
   afterAll(() => {
@@ -33,7 +32,6 @@ describe('GET /api/config', () => {
     app.use('/api/config', createConfigRouter(VALID_CONFIG_PATH));
     const res = await request(app).get('/api/config');
     expect(res.status).toBe(200);
-    expect(res.body.cancel_by_emails).toEqual(['alice@example.com']);
     expect(res.body.cancellation_reasons).toEqual(['Incorrect trigger', 'Other']);
   });
 

@@ -22,6 +22,21 @@ func TestParseSchedulerStartedEvent_Defaults(t *testing.T) {
 	assert.Equal(t, "test_schedule", evt.ScheduleName)
 	assert.Equal(t, "cron", evt.Kind)
 	assert.Nil(t, evt.SourceRunID)
+	// A message without initiated_by (or with it empty) is recorded as the
+	// system sentinel rather than a blank provenance.
+	assert.Equal(t, "system", evt.InitiatedBy)
+}
+
+func TestParseSchedulerStartedEvent_CarriesInitiatedBy(t *testing.T) {
+	runnerID := uuid.New()
+	msg := map[string]interface{}{
+		"runner_id":     runnerID.String(),
+		"schedule_name": "test_schedule",
+		"initiated_by":  "okta|alice",
+	}
+	evt, err := redis.ParseSchedulerStartedEvent(msg)
+	require.NoError(t, err)
+	assert.Equal(t, "okta|alice", evt.InitiatedBy)
 }
 
 func TestParseSchedulerStartedEvent_KindAndSource(t *testing.T) {

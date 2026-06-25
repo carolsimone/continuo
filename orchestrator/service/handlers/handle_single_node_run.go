@@ -87,6 +87,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		ScheduleName: cmd.ScheduleName,
 		Kind:         "single_node_run",
 		SourceRunID:  sourceRunUUID,
+		InitiatedBy:  cmd.InitiatedBy,
 		Selector: snapshot.SingleNode{
 			ServiceName:    cmd.ServiceName,
 			SchemaName:     cmd.SchemaName,

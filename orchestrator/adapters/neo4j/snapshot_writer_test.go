@@ -98,7 +98,7 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 			InheritedFromTaskID: &rootB,
 		},
 	}
-	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "rebase", SourceRunID: &srcRun}
+	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "rebase", SourceRunID: &srcRun, InitiatedBy: "okta|alice"}
 
 	session := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(context.Background())
@@ -113,7 +113,7 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	rec, err := read.ExecuteRead(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		r, err := tx.Run(context.Background(), `
 			MATCH (run:Run {run_id: $run_id})
-			RETURN run.kind AS kind, run.source_run_id AS source_run_id, run.schedule_name AS schedule_name`,
+			RETURN run.kind AS kind, run.source_run_id AS source_run_id, run.schedule_name AS schedule_name, run.initiated_by AS initiated_by`,
 			map[string]interface{}{"run_id": runID})
 		if err != nil {
 			return nil, err
@@ -133,6 +133,7 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	require.Equal(t, "rebase", runRec["kind"])
 	require.Equal(t, srcRun.String(), runRec["source_run_id"])
 	require.Equal(t, scheduleName, runRec["schedule_name"])
+	require.Equal(t, "okta|alice", runRec["initiated_by"])
 
 	// Assert :EXECUTES edge properties for each task.
 	rec2, err := read.ExecuteRead(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
@@ -253,4 +254,76 @@ func TestSnapshotWriter_CancelledStampsTerminalOnCreate(t *testing.T) {
 	runRec := rec.(map[string]interface{})
 	require.Equal(t, "cancelled", runRec["terminal_status"], "cancelled snapshot must stamp terminal_status")
 	require.NotNil(t, runRec["completed_at"], "cancelled snapshot must stamp completed_at so the run leaves the active set")
+}
+
+// TestSnapshotWriter_BackfillsInitiatedByOnMatch verifies that re-snapshotting a
+// :Run that predates provenance tracking (a node created without initiated_by)
+// backfills the property from the event, while an already-recorded initiator is
+// preserved. This mirrors how `kind` is backfilled via COALESCE on ON MATCH.
+func TestSnapshotWriter_BackfillsInitiatedByOnMatch(t *testing.T) {
+	driver := newDriver(t)
+	scheduleName := "test-mat-" + uuid.New().String()[:8]
+	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1", "v1")
+
+	runID := uuid.New().String()
+	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })
+
+	// Simulate a pre-provenance :Run: created by an older orchestrator with no
+	// initiated_by property at all.
+	write := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer write.Close(context.Background())
+	_, err := write.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		_, err := tx.Run(context.Background(),
+			`CREATE (r:Run {run_id: $run_id, schedule_name: $sched})`,
+			map[string]interface{}{"run_id": runID, "sched": scheduleName})
+		return nil, err
+	})
+	require.NoError(t, err)
+
+	projection := []snapshot.TaskProjection{{
+		TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "a",
+		ScheduleName: scheduleName, NodeType: "dbt-model", InitialStatus: "PENDING",
+		ImageTag: "img:1", ManifestVersion: "v1", MaxRetries: 2,
+	}}
+	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "rerun", InitiatedBy: "okta|carol"}
+
+	_, err = write.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return nil, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(context.Background(), params, projection)
+	})
+	require.NoError(t, err)
+
+	got := readRunInitiatedBy(t, driver, runID)
+	require.Equal(t, "okta|carol", got, "ON MATCH must backfill initiated_by on a pre-provenance node")
+
+	// A second re-snapshot with a different user must NOT overwrite the now-set value.
+	params2 := params
+	params2.InitiatedBy = "okta|dave"
+	_, err = write.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return nil, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(context.Background(), params2, projection)
+	})
+	require.NoError(t, err)
+	require.Equal(t, "okta|carol", readRunInitiatedBy(t, driver, runID), "initiated_by must be immutable once set")
+}
+
+// readRunInitiatedBy returns the initiated_by property of the :Run with runID.
+func readRunInitiatedBy(t *testing.T, driver neo4j.DriverWithContext, runID string) string {
+	t.Helper()
+	read := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer read.Close(context.Background())
+	v, err := read.ExecuteRead(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(context.Background(),
+			`MATCH (run:Run {run_id: $run_id}) RETURN run.initiated_by AS initiated_by`,
+			map[string]interface{}{"run_id": runID})
+		if err != nil {
+			return nil, err
+		}
+		if !r.Next(context.Background()) {
+			return "", nil
+		}
+		val, _ := r.Record().Get("initiated_by")
+		s, _ := val.(string)
+		return s, nil
+	})
+	require.NoError(t, err)
+	return v.(string)
 }

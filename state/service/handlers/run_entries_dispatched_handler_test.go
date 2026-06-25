@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
@@ -132,6 +133,7 @@ func newPendingDispatchedRun(id uuid.UUID, name string) *run.Run {
 		run.InitStatusInProgress,
 		run.KindCron,
 		nil,
+		identity.SystemUserID,
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
@@ -151,6 +153,7 @@ func newTerminalDispatchedRun(id uuid.UUID, name string, status run.SchedulerSta
 		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
+		identity.SystemUserID,
 		now,
 		nil, &now, nil, nil,
 		nil, nil,

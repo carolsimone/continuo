@@ -39,6 +39,7 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 | `terminal_task_count` | `integer` | Incremented by the finalization state machine each time a task reaches a terminal state |
 | `kind` | `character varying(20)` NOT NULL DEFAULT `'cron'` | Run discriminator. CHECK constraint allows: `cron`, `trigger`, `rerun`, `rebase`, `single_node_run`. Set when the row is inserted and immutable thereafter — `rerun` and `rebase` rows are minted as fresh trackers, never by mutating an existing one. Migration: V15. |
 | `source_run_id` | `uuid` NULL | Lineage pointer to a parent run. NULL for `cron`/`trigger`. Populated for `rerun`, `rebase`, and stale-mode `single_node_run`. Not a foreign key — orphans are fine. Migration: V15. |
+| `initiated_by` | `text` NOT NULL DEFAULT `'system'` | The user who initiated the run, or the `system` sentinel for cron / platform-initiated runs. Stamped at row creation from the gRPC `x-continuo-user-id` metadata header (see "User provenance" below); immutable thereafter. `text` (not a fixed width) because an OIDC `issuer-host\|sub` identifier can exceed 255 characters. Migration: V26. |
 
 ### New columns on `task_tracker`
 
@@ -66,6 +67,33 @@ The `scheduler_tracker.kind` enum (also surfaced as the `kind` field on `:Run` i
 - `rebase` — re-execute failed/cancelled tasks + their descendants + new arrivals against latest topology; inherit successful tasks with their pinned metadata. `TriggerRebase` mints a new `scheduler_tracker` row on the source's schedule (`kind='rebase'`, `source_run_id=<source>`).
 - `single_node_run` — exactly one task; latest metadata by default, stale via picker.
 
+### User provenance
+
+Every run records the user who initiated it. The authenticated identity originates
+at the HTTP edge (`ui-service`, the OIDC relying party) as the stable
+`issuer-host|sub` user id and is carried into `state` as the gRPC metadata header
+`x-continuo-user-id` (the single canonical key, defined in `pkg/identity`). A unary
+server interceptor (`identity.UnaryServerInterceptor`) extracts the header at the
+gRPC boundary and places an `identity.Identity` value on the request context; the
+gRPC handlers read it via `identity.FromContext` and pass it into the
+application/use-case layer, which stamps it onto the `run.Run` aggregate at creation
+(`NewPendingRun` / `NewDerivedRun` / `NewSingleNodeRun`). It persists to
+`scheduler_tracker.initiated_by`.
+
+When no authenticated user is present — the cron loop's `ActivateSchedule`, internal
+callers, or any client that does not set the header — the identity resolves to the
+`system` sentinel, so every row carries a non-null initiator. The cancel path
+(`CancelSchedule` / `CancelScheduler`) records the same authenticated identity into
+`cancelled_by`: when the metadata header names a real user it is authoritative;
+otherwise the request's `cancelled_by` field is used (so the dispatch watchdog's
+self-supplied label is preserved).
+
+The four run-creation events carry `initiated_by` on the wire so the orchestrator can
+record the same provenance on its `:Run` projection: `scheduler.started:v1`,
+`trigger.rerun:v1`, `trigger.rebase:v1`, and `trigger.single_node_run:v1`. The
+`schedule.cancelled:v1` event likewise carries `cancelled_by`, defaulting to the
+`system` sentinel when no actor was recorded.
+
 ## Inbound Interfaces
 
 ### gRPC — `StateService` (port 50051)
@@ -78,7 +106,7 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 |---|---|---|---|
 | `ActivateSchedule` | Yes (NotFound if absent) | Yes (skips if active) | Yes — transactional via `ScheduleActivationService` |
 | `TriggerSchedule` | Yes (NotFound if absent) | Yes (FailedPrecondition if active) | Yes — transactional via `ScheduleActivationService` |
-| `CancelSchedule` | No | Looks up active run | No — direct cancel via `scheduler_tracker` |
+| `CancelSchedule` | No | Looks up active run | No — direct cancel via `scheduler_tracker`; records the authenticated user (metadata header, else request `cancelled_by`) into `cancelled_by` |
 | `ListAllSchedules` | Reads catalog | — | No |
 | `ListStuckCandidates` | No | — | No — read-only, one indexed query |
 

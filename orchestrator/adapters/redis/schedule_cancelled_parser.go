@@ -21,5 +21,5 @@ func ParseScheduleCancelled(msg goredis.XMessage) (domain.ScheduleCancelled, err
 	if err != nil {
 		return domain.ScheduleCancelled{}, fmt.Errorf("%w: invalid schedule_id %q: %v", events.ErrPermanent, idStr, err)
 	}
-	return domain.ScheduleCancelled{ScheduleID: id}, nil
+	return domain.ScheduleCancelled{ScheduleID: id, CancelledBy: optionalUserField(msg, "cancelled_by")}, nil
 }

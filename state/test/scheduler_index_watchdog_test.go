@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -104,7 +105,7 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-start
-			_, outcome, err := handler.Handle(context.Background(), factory(), "race-schedule", run.KindCron, nil)
+			_, outcome, err := handler.Handle(context.Background(), factory(), "race-schedule", run.KindCron, nil, identity.System())
 			outcomes[idx] = outcome
 			errs[idx] = err
 		}(i)

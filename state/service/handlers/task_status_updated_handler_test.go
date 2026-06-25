@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
@@ -170,6 +171,7 @@ func newRunningTaskStatusRun(id uuid.UUID, name string, total, terminal int32) *
 		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
+		identity.SystemUserID,
 		time.Now(),
 		nil, nil, nil, nil,
 		nil, nil,
@@ -188,6 +190,7 @@ func newTerminalTaskStatusRun(id uuid.UUID, name string, status run.SchedulerSta
 		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
+		identity.SystemUserID,
 		now,
 		nil, &now, nil, nil,
 		nil, nil,

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as grpc from '@grpc/grpc-js';
-import { GrpcClient } from '../grpc-client';
+import { GrpcClient, userMetadata } from '../grpc-client';
 
 interface ProtoTimestamp {
   seconds: string;
@@ -76,6 +76,7 @@ export function createSchedulersRouter(client: GrpcClient) {
   router.post('/:id/rerun', (req, res) => {
     client.triggerRerun(
       { source_run_id: req.params.id },
+      userMetadata(req),
       (err: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
         res.sendStatus(200);
@@ -86,6 +87,7 @@ export function createSchedulersRouter(client: GrpcClient) {
   router.post('/:id/rebase', (req, res) => {
     client.triggerRebase(
       { source_run_id: req.params.id },
+      userMetadata(req),
       (err: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
         res.sendStatus(200);

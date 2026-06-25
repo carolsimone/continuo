@@ -62,7 +62,7 @@ describe('nodes router', () => {
   });
 
   it('POST /:svc/:schema/:table/run (latest mode) calls TriggerSingleNodeRun', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, cb) =>
+    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'new-r', schedule_name: 'single-node-run-abc12345' }),
     );
 
@@ -77,12 +77,13 @@ describe('nodes router', () => {
         service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
         metadata_source: 'latest', source_run_id: '',
       },
+      expect.any(Object),
       expect.any(Function),
     );
   });
 
   it('POST /:svc/:schema/:table/run with source_run_id uses snapshot_of_run', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, cb) =>
+    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'new-r', schedule_name: 'single-node-run-abc12345' }),
     );
 
@@ -95,6 +96,7 @@ describe('nodes router', () => {
         metadata_source: 'snapshot_of_run',
         source_run_id: 'src-run-id',
       }),
+      expect.any(Object),
       expect.any(Function),
     );
   });
@@ -157,7 +159,7 @@ describe('nodes router', () => {
   });
 
   it('maps gRPC NOT_FOUND to HTTP 404', async () => {
-    mockTriggerSingleNodeRun.mockImplementation((_req, cb) =>
+    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb({ code: grpc.status.NOT_FOUND, message: 'source run missing' }),
     );
 
