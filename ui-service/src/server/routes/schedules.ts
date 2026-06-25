@@ -101,16 +101,17 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
     );
   });
 
-  // POST /api/schedules/:name/cancel — cancel an active DAG run
+  // POST /api/schedules/:name/cancel — cancel an active DAG run.
+  // The cancelling user is the authenticated caller, forwarded as gRPC metadata
+  // (userMetadata); the client no longer supplies a cancelled_by identity.
   router.post('/:name/cancel', (req, res) => {
-    const { cancelled_by, cancellation_reason } = req.body ?? {};
-    if (!cancelled_by || !cancellation_reason) {
-      return res.status(400).json({ error: 'cancelled_by and cancellation_reason are required' });
+    const { cancellation_reason } = req.body ?? {};
+    if (!cancellation_reason) {
+      return res.status(400).json({ error: 'cancellation_reason is required' });
     }
     stateClient.cancelSchedule(
       {
         schedule_name:       req.params.name,
-        cancelled_by,
         cancellation_reason,
       },
       userMetadata(req),

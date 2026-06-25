@@ -4,7 +4,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import CancelDialog from '../../src/client/CancelDialog';
 
 const stubConfig = {
-  cancel_by_emails: ['alice@example.com', 'bob@example.com'],
   cancellation_reasons: ['Broken data', 'Planned maintenance', 'Other'],
 };
 

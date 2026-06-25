@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 
 interface CancelConfig {
-  cancel_by_emails: string[];
   cancellation_reasons: string[];
 }
 
@@ -13,7 +12,6 @@ interface Props {
 export default function CancelDialog({ scheduleName, onClose }: Props) {
   const [config, setConfig] = useState<CancelConfig | null>(null);
   const [configError, setConfigError] = useState(false);
-  const [cancelledBy, setCancelledBy] = useState('');
   const [reason, setReason] = useState('');
   const [otherText, setOtherText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -41,7 +39,6 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
   const effectiveReason = isOther ? otherText.trim() : reason;
   const canSubmit =
     !submitting &&
-    cancelledBy !== '' &&
     reason !== '' &&
     (!isOther || otherText.trim() !== '');
 
@@ -52,7 +49,7 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
       const res = await fetch(`/api/schedules/${encodeURIComponent(scheduleName)}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cancelled_by: cancelledBy, cancellation_reason: effectiveReason }),
+        body: JSON.stringify({ cancellation_reason: effectiveReason }),
       });
       if (res.ok) {
         onClose();
@@ -84,25 +81,12 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
         ) : (
           <>
             <label className="dialog-label">
-              Cancelled by
-              <select
-                className="dialog-select"
-                value={cancelledBy}
-                onChange={e => setCancelledBy(e.target.value)}
-                autoFocus
-              >
-                <option value="">Select…</option>
-                {config.cancel_by_emails.map(email => (
-                  <option key={email} value={email}>{email}</option>
-                ))}
-              </select>
-            </label>
-            <label className="dialog-label">
               Reason
               <select
                 className="dialog-select"
                 value={reason}
                 onChange={e => { setReason(e.target.value); setOtherText(''); }}
+                autoFocus
               >
                 <option value="">Select…</option>
                 {config.cancellation_reasons.map(r => (

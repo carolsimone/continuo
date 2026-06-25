@@ -166,14 +166,13 @@ describe('POST /api/schedules/:name/cancel', () => {
 
     const res = await request(app)
       .post('/api/schedules/my-schedule/cancel')
-      .send({ cancelled_by: 'operator', cancellation_reason: 'manual' });
+      .send({ cancellation_reason: 'manual' });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ schedule_id: 'abc-123' });
     expect(mockCancelSchedule).toHaveBeenCalledWith(
       {
         schedule_name: 'my-schedule',
-        cancelled_by: 'operator',
         cancellation_reason: 'manual',
       },
       expect.any(Object),
@@ -189,7 +188,7 @@ describe('POST /api/schedules/:name/cancel', () => {
 
     const res = await request(app)
       .post('/api/schedules/no-run/cancel')
-      .send({ cancelled_by: 'operator', cancellation_reason: 'manual' });
+      .send({ cancellation_reason: 'manual' });
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/no active run/);
@@ -203,7 +202,7 @@ describe('POST /api/schedules/:name/cancel', () => {
 
     const res = await request(app)
       .post('/api/schedules/unknown/cancel')
-      .send({ cancelled_by: 'operator', cancellation_reason: 'manual' });
+      .send({ cancellation_reason: 'manual' });
 
     expect(res.status).toBe(404);
     expect(res.body.error).toMatch(/not found/);
@@ -215,15 +214,15 @@ describe('POST /api/schedules/:name/cancel', () => {
 
     const res = await request(app)
       .post('/api/schedules/hourly/cancel')
-      .send({ cancelled_by: 'operator', cancellation_reason: 'manual' });
+      .send({ cancellation_reason: 'manual' });
 
     expect(res.status).toBe(500);
   });
 
-  it('returns 400 when cancelled_by or cancellation_reason is missing', async () => {
+  it('returns 400 when cancellation_reason is missing', async () => {
     const res = await request(app)
       .post('/api/schedules/my-schedule/cancel')
-      .send({ cancelled_by: 'operator' });
+      .send({});
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/required/i);
