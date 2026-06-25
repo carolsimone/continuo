@@ -66,38 +66,123 @@ func (r *ProposalRepository) Insert(ctx context.Context, p proposal.Proposal) er
 	return nil
 }
 
-// Get returns the full View for the given proposal id.
-// Returns ErrNotFound if no row exists.
-func (r *ProposalRepository) Get(ctx context.Context, id string) (proposal.View, error) {
-	const query = `
-		SELECT id, source, release_id, node_id, error_signature, attempt,
+// proposalRow is the persistence DTO for a full proposal projection. The db
+// tags (a persistence concern) live here in the adapter so the domain
+// proposal.View stays free of storage annotations.
+type proposalRow struct {
+	ID                  string     `db:"id"`
+	Source              string     `db:"source"`
+	ReleaseID           string     `db:"release_id"`
+	NodeID              string     `db:"node_id"`
+	ErrorSignature      string     `db:"error_signature"`
+	Attempt             int        `db:"attempt"`
+	Status              string     `db:"status"`
+	Confidence          string     `db:"confidence"`
+	Rationale           string     `db:"rationale"`
+	ProposedSQLURI      string     `db:"proposed_sql_uri"`
+	DiffURI             string     `db:"diff_uri"`
+	CandidateFixSQLURI  string     `db:"candidate_fix_sql_uri"`
+	CandidateFixDiffURI string     `db:"candidate_fix_diff_uri"`
+	SourceResolved      bool       `db:"source_resolved"`
+	Repo                string     `db:"repo"`
+	CommitSHA           string     `db:"commit_sha"`
+	FilePath            string     `db:"file_path"`
+	Model               string     `db:"model"`
+	CreatedAt           time.Time  `db:"created_at"`
+	PrURL               string     `db:"pr_url"`
+	PrNumber            int        `db:"pr_number"`
+	PrState             string     `db:"pr_state"`
+	PrOpenedAt          *time.Time `db:"pr_opened_at"`
+	PrOpenedBy          string     `db:"pr_opened_by"`
+}
+
+func (row proposalRow) toView() proposal.View {
+	return proposal.View{
+		ID:                  row.ID,
+		Source:              row.Source,
+		ReleaseID:           row.ReleaseID,
+		NodeID:              row.NodeID,
+		ErrorSignature:      row.ErrorSignature,
+		Attempt:             row.Attempt,
+		Status:              proposal.Status(row.Status),
+		Confidence:          proposal.Confidence(row.Confidence),
+		Rationale:           row.Rationale,
+		ProposedSQLURI:      row.ProposedSQLURI,
+		DiffURI:             row.DiffURI,
+		CandidateFixSQLURI:  row.CandidateFixSQLURI,
+		CandidateFixDiffURI: row.CandidateFixDiffURI,
+		SourceResolved:      row.SourceResolved,
+		Repo:                row.Repo,
+		CommitSHA:           row.CommitSHA,
+		FilePath:            row.FilePath,
+		Model:               row.Model,
+		CreatedAt:           row.CreatedAt,
+		PrURL:               row.PrURL,
+		PrNumber:            row.PrNumber,
+		PrState:             row.PrState,
+		PrOpenedAt:          row.PrOpenedAt,
+		PrOpenedBy:          row.PrOpenedBy,
+	}
+}
+
+const proposalColumns = `id, source, release_id, node_id, error_signature, attempt,
 		       status, confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, model, created_at,
-		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by
-		FROM proposal
-		WHERE id = $1`
-	var v proposal.View
-	if err := r.q.GetContext(ctx, &v, query, id); err != nil {
+		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by`
+
+// claimRow is the persistence DTO for the BeginPR RETURNING projection.
+type claimRow struct {
+	ID             string `db:"id"`
+	Repo           string `db:"repo"`
+	CommitSHA      string `db:"commit_sha"`
+	FilePath       string `db:"file_path"`
+	ProposedSQLURI string `db:"proposed_sql_uri"`
+	DiffURI        string `db:"diff_uri"`
+	ReleaseID      string `db:"release_id"`
+	NodeID         string `db:"node_id"`
+	Attempt        int    `db:"attempt"`
+	Rationale      string `db:"rationale"`
+	Confidence     string `db:"confidence"`
+	Model          string `db:"model"`
+}
+
+func (row claimRow) toClaim(branch string) proposal.PRClaim {
+	return proposal.PRClaim{
+		ID:             row.ID,
+		Repo:           row.Repo,
+		CommitSHA:      row.CommitSHA,
+		FilePath:       row.FilePath,
+		ProposedSQLURI: row.ProposedSQLURI,
+		DiffURI:        row.DiffURI,
+		ReleaseID:      row.ReleaseID,
+		NodeID:         row.NodeID,
+		Attempt:        row.Attempt,
+		Rationale:      row.Rationale,
+		Confidence:     proposal.Confidence(row.Confidence),
+		Model:          row.Model,
+		Branch:         branch,
+	}
+}
+
+// Get returns the full View for the given proposal id.
+// Returns ErrNotFound if no row exists.
+func (r *ProposalRepository) Get(ctx context.Context, id string) (proposal.View, error) {
+	query := `SELECT ` + proposalColumns + ` FROM proposal WHERE id = $1`
+	var row proposalRow
+	if err := r.q.GetContext(ctx, &row, query, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.View{}, repository.ErrNotFound
 		}
 		return proposal.View{}, fmt.Errorf("get proposal: %w", err)
 	}
-	return v, nil
+	return row.toView(), nil
 }
 
 // List returns proposals matching the filter, ordered by created_at DESC.
 // Empty filter fields are treated as "no constraint". Limit=0 means no limit.
 func (r *ProposalRepository) List(ctx context.Context, filter repository.ProposalFilter) ([]proposal.View, error) {
-	q := `
-		SELECT id, source, release_id, node_id, error_signature, attempt,
-		       status, confidence, rationale, proposed_sql_uri, diff_uri,
-		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
-		       repo, commit_sha, file_path, model, created_at,
-		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by
-		FROM proposal
-		WHERE 1=1`
+	q := `SELECT ` + proposalColumns + ` FROM proposal WHERE 1=1`
 	args := make([]any, 0, 3)
 
 	if filter.Status != "" {
@@ -114,12 +199,13 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 		q += fmt.Sprintf(" LIMIT $%d", len(args))
 	}
 
-	var views []proposal.View
-	if err := r.q.SelectContext(ctx, &views, q, args...); err != nil {
+	var rows []proposalRow
+	if err := r.q.SelectContext(ctx, &rows, q, args...); err != nil {
 		return nil, fmt.Errorf("list proposals: %w", err)
 	}
-	if views == nil {
-		views = []proposal.View{}
+	views := make([]proposal.View, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, row.toView())
 	}
 	return views, nil
 }
@@ -148,15 +234,14 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string) (pr
 		  AND pr_state IN ('', 'failed')
 		RETURNING id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
 		          release_id, node_id, attempt, rationale, confidence, model`
-	var c proposal.PRClaim
-	if err := r.q.GetContext(ctx, &c, stmt, id); err != nil {
+	var row claimRow
+	if err := r.q.GetContext(ctx, &row, stmt, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrPRConflict
 		}
 		return proposal.PRClaim{}, fmt.Errorf("begin pr cas: %w", err)
 	}
-	c.Branch = branch
-	return c, nil
+	return row.toClaim(branch), nil
 }
 
 // RecordPR records the opened PR and flips pr_state to 'open'.
