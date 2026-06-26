@@ -226,4 +226,47 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     await vi.advanceTimersByTimeAsync(30000);
     expect(proposalCallCount(fetchMock)).toBe(beforeUnmount); // no polling after unmount
   });
+
+  it('discards a stale proposal response that resolves after a newer poll stopped polling', async () => {
+    vi.useFakeTimers();
+    // Manually-resolvable responses for the proposals endpoint, so overlapping
+    // polls can be made to resolve out of order.
+    const deferreds: Array<(proposals: any[]) => void> = [];
+    const fetchMock = vi.fn((url: any) => {
+      if (String(url).includes('/api/remediation/proposals')) {
+        let resolveResponse!: (v: any) => void;
+        const p = new Promise<any>(res => { resolveResponse = res; });
+        deferreds.push((proposals: any[]) =>
+          resolveResponse({ ok: true, json: async () => ({ proposals }) }));
+        return p;
+      }
+      return Promise.resolve({ ok: true, json: async () => DETAIL_FAILED });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderDetail();
+    await flush();
+
+    // Resolve the initial fetch with no proposal yet — link hidden, polling continues.
+    deferreds[deferreds.length - 1]([]);
+    await flush();
+    expect(screen.queryByText(/Proposed fix available/)).not.toBeInTheDocument();
+
+    // Two polls fire while both responses are still in flight (overlapping).
+    await vi.advanceTimersByTimeAsync(5000); // poll A (older)
+    const pollA = deferreds[deferreds.length - 1];
+    await vi.advanceTimersByTimeAsync(5000); // poll B (newer)
+    const pollB = deferreds[deferreds.length - 1];
+
+    // Newer poll B resolves first: finds the proposal, shows the link, stops polling.
+    pollB([PROPOSAL_G]);
+    await flush();
+    expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
+
+    // Older poll A resolves last with a stale empty set — it must be discarded,
+    // not overwrite proposedNodeIds and hide the link.
+    pollA([]);
+    await flush();
+    expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
+  });
 });

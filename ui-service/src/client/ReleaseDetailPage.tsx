@@ -76,6 +76,12 @@ export default function ReleaseDetailPage() {
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | undefined;
     let polls = 0;
+    // Overlapping polls can resolve out of order. Apply only a response newer
+    // than the last one already applied, so a slow stale response cannot
+    // overwrite proposedNodeIds (and hide the link) after a newer poll has
+    // already found every proposal and stopped polling.
+    let issued = 0;
+    let applied = 0;
 
     const stop = () => {
       if (timer !== undefined) {
@@ -84,10 +90,12 @@ export default function ReleaseDetailPage() {
       }
     };
 
-    const refresh = () =>
-      fetchProposals()
+    const refresh = () => {
+      const seq = ++issued;
+      return fetchProposals()
         .then(proposals => {
-          if (cancelled) return;
+          if (cancelled || seq <= applied) return;
+          applied = seq;
           const ids = new Set(
             proposals.filter(p => p.release_id === id).map(p => p.node_id),
           );
@@ -95,6 +103,7 @@ export default function ReleaseDetailPage() {
           if (failed.every(nid => ids.has(nid))) stop();
         })
         .catch(() => {});
+    };
 
     // Always fetch once so an already-existing proposal shows immediately.
     refresh();
