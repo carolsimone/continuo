@@ -21,6 +21,11 @@ COPY macros/ /project/macros/
 # model/snapshot nodes instead of `dbt run`.
 COPY validation_runner.py /validation_runner.py
 
+# Warehouse adapter (engine DDL behind a port). validation_runner.py imports it
+# via the flat-layout shim (`from warehouse import adapter_from_env`), so it must
+# sit flat at / alongside the runner.
+COPY warehouse.py /warehouse.py
+
 # Shared structured-result contract + the seed validation wrapper. Both validation
 # entrypoints print a sentinel-framed result block on stdout; the seed wrapper runs
 # `dbt seed --empty` and projects target/run_results.json into that contract. Run
