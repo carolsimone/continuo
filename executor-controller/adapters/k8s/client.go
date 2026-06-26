@@ -264,11 +264,6 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // of truth for the validation CLI. VALIDATION_OP selects the runner operation
 // (default "build_from_sql"); PROD_SCHEMA is the clone source for Plan 3.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
-	// Validation runs the continuo-owned validation image (which carries
-	// validation_runner.py + the warehouse adapter), NOT the per-service team
-	// image — so the per-service ImageTag is unused here and an empty tag is no
-	// longer an error. VALIDATION_IMAGE overrides verbatim; otherwise default to
-	// dbt-base:latest, prefixed with DOCKERHUB_USERNAME when set.
 	image := os.Getenv("VALIDATION_IMAGE")
 	if image == "" {
 		image = "dbt-base:latest"
