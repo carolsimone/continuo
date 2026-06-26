@@ -54,7 +54,21 @@ class PostgresAdapter(WarehouseAdapter):
                 cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (schema,))
 
     def build_empty_from_sql(self, schema: str, table: str, compiled_sql: str) -> None:
-        raise NotImplementedError  # Task 2
+        # Strip any trailing terminator so the SELECT nests cleanly inside AS ( ... ).
+        inner = compiled_sql.strip().rstrip(";").strip()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                pg_sql.SQL("DROP TABLE IF EXISTS {}.{}").format(
+                    pg_sql.Identifier(schema), pg_sql.Identifier(table)
+                )
+            )
+            cur.execute(
+                pg_sql.SQL("CREATE TABLE {}.{} AS ({}) WITH NO DATA").format(
+                    pg_sql.Identifier(schema),
+                    pg_sql.Identifier(table),
+                    pg_sql.SQL(inner),
+                )
+            )
 
     def clone_empty_from_prod(self, candidate_schema: str, prod_schema: str, table: str) -> None:
         raise NotImplementedError  # Task 3

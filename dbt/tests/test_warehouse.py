@@ -78,3 +78,27 @@ def test_ensure_schema_propagates_unexpected_error_but_unlocks():
     with pytest.raises(RuntimeError, match="connection reset"):
         PostgresAdapter(_FakeConn(cur)).ensure_schema("_candidate_relC")
     assert "pg_advisory_unlock" in _rendered(cur)[-1]
+
+
+def test_build_empty_from_sql_drops_then_ctas_with_no_data():
+    cur = _FakeCursor()
+    PostgresAdapter(_FakeConn(cur)).build_empty_from_sql(
+        "_candidate_relA", "orders", "SELECT 1 AS id"
+    )
+    assert _rendered(cur) == ["Composed", "Composed"]
+    drop, create = cur.calls[0][0], cur.calls[1][0]
+    assert "DROP TABLE IF EXISTS" in _stmt_text(drop)
+    create_text = _stmt_text(create)
+    assert "CREATE TABLE" in create_text
+    assert "WITH NO DATA" in create_text
+
+
+def test_build_empty_from_sql_strips_trailing_semicolon():
+    cur = _FakeCursor()
+    PostgresAdapter(_FakeConn(cur)).build_empty_from_sql(
+        "_candidate_relA", "orders", "SELECT 1 AS id ;  "
+    )
+    # The inner SQL is embedded as a pg_sql.SQL part of the CREATE Composed; the
+    # trailing ';' must be stripped so it nests inside AS ( ... ).
+    inner = [p.string for p in cur.calls[1][0].seq if isinstance(p, pg_sql.SQL)]
+    assert any(s.strip() == "SELECT 1 AS id" for s in inner)
