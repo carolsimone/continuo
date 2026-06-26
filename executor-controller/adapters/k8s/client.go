@@ -323,10 +323,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 
 // validationImagePullPolicy resolves the pull policy for validation Job pods.
 //
-// In production a service image is re-baked FROM dbt-base whenever
-// validation_runner.py changes and is re-pushed under the same mutable service
-// tag, so a node must re-pull or it would validate the candidate with a stale
-// cached runner. The default is therefore PullAlways.
+// Validation runs a continuo-owned image pinned to a mutable tag (dbt-base:latest
+// by default), which is re-pushed when the validator changes. PullAlways ensures
+// the node fetches the freshly pushed image rather than a stale cached layer.
 //
 // Environments that side-load images directly into the node's image cache and
 // have no registry to pull from (the kind-based e2e suite, local clusters) set
