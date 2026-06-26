@@ -111,13 +111,14 @@ jobs:
         run: |
           source scripts/lib/common.sh
           for c in state orchestrator executor-controller k8s-controller \
-                   manifest-controller release-controller remediation remediation-agent; do
+                   manifest-controller release-controller remediation remediation-agent agent-runner; do
             wait_for_container_running "$c"
           done
 
       - name: Test all Go services
         run: |
-          for s in state orchestrator executor-controller k8s-controller; do
+          for s in state orchestrator executor-controller k8s-controller \
+                   release-controller remediation remediation-agent agent-runner; do
             docker exec $s make test-ci || exit 1
           done
 
