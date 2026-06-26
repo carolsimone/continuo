@@ -71,7 +71,22 @@ class PostgresAdapter(WarehouseAdapter):
             )
 
     def clone_empty_from_prod(self, candidate_schema: str, prod_schema: str, table: str) -> None:
-        raise NotImplementedError  # Task 3
+        with self._conn.cursor() as cur:
+            cur.execute(
+                pg_sql.SQL("DROP TABLE IF EXISTS {}.{}").format(
+                    pg_sql.Identifier(candidate_schema), pg_sql.Identifier(table)
+                )
+            )
+            cur.execute(
+                pg_sql.SQL(
+                    "CREATE TABLE {}.{} AS SELECT * FROM {}.{} WHERE 1=0"
+                ).format(
+                    pg_sql.Identifier(candidate_schema),
+                    pg_sql.Identifier(table),
+                    pg_sql.Identifier(prod_schema),
+                    pg_sql.Identifier(table),
+                )
+            )
 
     def close(self) -> None:
         self._conn.close()

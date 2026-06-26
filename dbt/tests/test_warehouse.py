@@ -102,3 +102,15 @@ def test_build_empty_from_sql_strips_trailing_semicolon():
     # trailing ';' must be stripped so it nests inside AS ( ... ).
     inner = [p.string for p in cur.calls[1][0].seq if isinstance(p, pg_sql.SQL)]
     assert any(s.strip() == "SELECT 1 AS id" for s in inner)
+
+
+def test_clone_empty_from_prod_drops_then_ctas_where_false():
+    cur = _FakeCursor()
+    PostgresAdapter(_FakeConn(cur)).clone_empty_from_prod(
+        "_candidate_relA", "analytics", "seed_fx_transactions"
+    )
+    assert _rendered(cur) == ["Composed", "Composed"]
+    create_text = _stmt_text(cur.calls[1][0])
+    assert "CREATE TABLE" in create_text
+    assert "SELECT * FROM" in create_text
+    assert "WHERE 1=0" in create_text
