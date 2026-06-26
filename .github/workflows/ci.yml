@@ -8,6 +8,11 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    # Hard backstop against runaway runs. Without this the job inherits GitHub's
+    # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
+    # hours of Actions minutes. A healthy run is ~55 min; cap well below the
+    # default. The slow setup phase carries its own tighter cap below.
+    timeout-minutes: 75
 
     env:
       DOCKER_BUILDKIT: "1"
@@ -86,7 +91,14 @@ jobs:
         # COMPOSE_FILE merges docker-compose.ci.yml so that docker compose build
         # uses GHA layer cache for all service images.
         # setup.sh inherits this env var and passes it to docker compose build.
-        run: COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" bash scripts/setup.sh
+        #
+        # Wrap in `timeout` as the reliable cap for this phase: GitHub's
+        # step-level `timeout-minutes` has proven unreliable here, so the GNU
+        # `timeout` command (32-minute limit, SIGKILL 60s after the SIGTERM
+        # grace) is the primary guard, with step-level timeout-minutes as a
+        # belt-and-suspenders backstop. A healthy setup is ~24 min.
+        timeout-minutes: 35
+        run: COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" timeout --kill-after=60s 32m bash scripts/setup.sh
 
       - name: Wait for service containers to be running
         run: |
