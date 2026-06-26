@@ -120,7 +120,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
 GO_SERVICES := state orchestrator executor-controller k8s-controller \
                release-controller remediation remediation-agent agent-runner
-FLYWAY_JOBS := flyway-state flyway-executor flyway-orchestrator flyway-release \
+FLYWAY_JOBS := flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release \
                flyway-agent-runner flyway-remediation flyway-remediation-agent
 
 # Data dependencies for Go tests: Postgres+Neo4j+Redis up and migrated. No service

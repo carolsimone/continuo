@@ -58,18 +58,7 @@ check_health "agent-runner" 8091 || exit 1
 # Also wait for the gRPC listener (50053): the chat e2e dials it through the
 # ui-service relay, and /health (always 200) can come up before the port binds.
 log_info "Waiting for agent-runner gRPC port 50053..."
-for i in $(seq 1 30); do
-  if docker exec agent-runner bash -c 'echo > /dev/tcp/localhost/50053' 2>/dev/null; then
-    log_info "agent-runner gRPC ready"
-    break
-  fi
-  if [ "$i" -eq 30 ]; then
-    log_info "agent-runner gRPC not ready after 60s"
-    docker exec agent-runner tail -40 /tmp/agent-runner.log || true
-    exit 1
-  fi
-  sleep 2
-done
+wait_for_tcp_port agent-runner 50053
 
 log_info "Compiling and uploading dbt manifests..."
 docker exec dbt-compile-and-load \

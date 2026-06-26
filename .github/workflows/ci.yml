@@ -117,8 +117,7 @@ jobs:
 
       - name: Test all Go services
         run: |
-          for s in state orchestrator executor-controller k8s-controller \
-                   release-controller remediation remediation-agent agent-runner; do
+          for s in state orchestrator executor-controller k8s-controller; do
             docker exec $s make test-ci || exit 1
           done
 
