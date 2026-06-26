@@ -60,8 +60,24 @@ fi
 # depends on it and is now in the default (non-profiled) service set.
 echo "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
-echo "Building service images..."
-DOCKER_BUILDKIT=1 docker compose build
+echo "Building service images (batched)..."
+# Build in small batches instead of all ~13 services at once. On a 2-CPU/7.75GB
+# CI runner, building everything in parallel thrashes memory and disk I/O so badly
+# that layer export stalls (observed: one image export hung ~27 min). Batches of
+# BUILD_BATCH (default 2, ≈ the runner's CPU count) keep memory/disk in budget.
+# The buildable service list is derived from the merged compose config so it
+# tracks COMPOSE_FILE (CI adds docker-compose.ci.yml).
+# Portable array build (macOS bash 3.2 has no `mapfile`).
+_buildable=()
+while IFS= read -r _svc; do [ -n "$_svc" ] && _buildable+=("$_svc"); done < <(docker compose config --format json \
+  | python3 -c "import sys,json; print('\n'.join(k for k,v in json.load(sys.stdin)['services'].items() if 'build' in v))")
+_batch=()
+_build_batch() { [ "${#_batch[@]}" -gt 0 ] && { echo "  building: ${_batch[*]}"; DOCKER_BUILDKIT=1 docker compose build "${_batch[@]}"; }; }
+for _svc in "${_buildable[@]}"; do
+    _batch+=("$_svc")
+    if [ "${#_batch[@]}" -ge "${BUILD_BATCH:-2}" ]; then _build_batch; _batch=(); fi
+done
+_build_batch
 
 # Build dbt service images and load into KIND
 
@@ -101,37 +117,17 @@ if [ -n "$KIND_PID" ]; then
     wait $KIND_PID
     echo "✓ Kind cluster ready"
 fi
-echo "Loading images into kind (parallel)..."
-# DIAGNOSTIC (gated by KIND_LOAD_DIAG=1): snapshot the kind node every 20s while
-# images load, so a stall in `kind load` is captured (disk/mem exhaustion vs a
-# containerd deadlock). Temporary — remove once the kind-load hang is understood.
-KIND_DIAG_PID=""
-if [ "${KIND_LOAD_DIAG:-0}" = "1" ]; then
-    NODE="${CLUSTER_NAME}-control-plane"
-    ( while true; do
-        echo "=== KIND-DIAG $(date -u +%H:%M:%S) ==="
-        docker exec "$NODE" df -h / 2>&1 | tail -1
-        docker stats --no-stream --format 'node mem={{.MemUsage}} cpu={{.CPUPerc}}' "$NODE" 2>&1
-        echo "images-in-node: $(docker exec "$NODE" crictl images 2>/dev/null | wc -l)"
-        docker exec "$NODE" sh -c 'crictl version >/dev/null 2>&1 && echo "containerd: OK" || echo "containerd: UNRESPONSIVE"' 2>&1
-        docker exec "$NODE" sh -c 'journalctl -u containerd --no-pager -n 6 2>/dev/null | tail -6' 2>&1
-        sleep 20
-      done ) &
-    KIND_DIAG_PID=$!
-fi
-load_pids=()
+echo "Loading images into kind (sequential)..."
+# Load one image at a time. `kind load` imports a tarball into the node's
+# containerd, which is disk-write-bound; on a 2-CPU/7.75GB CI runner, loading
+# all images at once thrashes disk I/O and can stall the import. Sequential
+# loading keeps disk pressure bounded — the same reason the image build above
+# is batched.
 for svc in "${DBT_SERVICES[@]}"; do
-    kind load docker-image "${svc}:${IMAGE_TAG}" --name "${CLUSTER_NAME}" &
-    load_pids+=("$!")
+    kind load docker-image "${svc}:${IMAGE_TAG}" --name "${CLUSTER_NAME}"
 done
-kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME} &
-load_pids+=("$!")
-kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME} &
-load_pids+=("$!")
-# Wait only for the load jobs, NOT the diagnostic monitor (an infinite loop) — a
-# bare `wait` would block on the monitor forever.
-wait "${load_pids[@]}"
-[ -n "$KIND_DIAG_PID" ] && kill "$KIND_DIAG_PID" 2>/dev/null
+kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME}
+kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME}
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 

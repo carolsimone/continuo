@@ -94,24 +94,25 @@ jobs:
 
       - name: Set up infrastructure
         # COMPOSE_FILE merges docker-compose.ci.yml so docker compose build uses
-        # GHA layer cache. A healthy setup is ~24-29 min.
+        # GHA layer cache. setup.sh builds images in small batches and loads them
+        # into kind sequentially, because building/loading everything at once
+        # thrashes the 2-CPU/7.75GB runner's memory and disk I/O badly enough to
+        # stall (observed: a single image export hung ~27 min). The batched path
+        # trades a few minutes of wall-clock for reliability.
         #
-        # Hard 30-minute cap via a process-GROUP watchdog. A plain `timeout` only
-        # kills the foreground shell; setup.sh backgrounds `kind create &`, so on a
-        # hang the orphaned kind keeps the step's output open and the cap never
-        # fires (this burned hours before). `set -m` puts setup.sh in its own
-        # process group; the watchdog SIGKILLs the whole group (negative PID) at
-        # 30 min, terminating kind/docker children too, so the step always ends.
-        # Step-level timeout-minutes is a backstop; the job has its own backstop.
-        timeout-minutes: 35
+        # Hard cap via a process-GROUP watchdog. A plain `timeout` only kills the
+        # foreground shell; setup.sh backgrounds `kind create &`, so on a hang the
+        # orphaned kind keeps the step's output open and the cap never fires (this
+        # burned hours before). `set -m` puts setup.sh in its own process group;
+        # the watchdog SIGKILLs the whole group (negative PID), terminating
+        # kind/docker children too, so the step always ends. Step-level
+        # timeout-minutes is a backstop; the job has its own backstop.
+        timeout-minutes: 50
         run: |
           set -m
-          # KIND_LOAD_DIAG=1 turns on the kind-node monitor in setup.sh to capture
-          # WHY `kind load` stalls; watchdog raised to 40m for this diagnostic run
-          # so the stall is observed (revert both once understood).
-          COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" KIND_LOAD_DIAG=1 bash scripts/setup.sh &
+          COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" bash scripts/setup.sh &
           setup_pid=$!
-          ( sleep 2400; echo "::error::Set up infrastructure exceeded 40m — killing process group"; \
+          ( sleep 2700; echo "::error::Set up infrastructure exceeded 45m — killing process group"; \
             kill -KILL -"$setup_pid" 2>/dev/null ) &
           watchdog_pid=$!
           set +e
