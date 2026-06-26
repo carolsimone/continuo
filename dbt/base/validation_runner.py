@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """Build a single node as an empty table in the candidate schema (blue/green validation).
 
-The executor passes ``CANDIDATE_SQL_URI`` — an ``s3://bucket/key`` reference to the
-node's compiled SQL with every schema-qualified reference already rewritten to the
-candidate schema. We fetch the SQL at runtime, then materialize it ``WITH NO DATA``
-so the SQL is validated against the (empty) upstream tables built earlier in
-dependency order, without touching production. stdout is captured as the per-node
-validation log; a non-zero exit marks the node failed.
+Dispatches on ``VALIDATION_OP`` env var (default ``build_from_sql``):
+- ``build_from_sql``: fetch node's compiled SQL from S3 via ``CANDIDATE_SQL_URI``,
+  then materialize it ``WITH NO DATA`` (models/snapshots).
+- ``clone_from_prod``: clone an existing prod table's shape empty from ``PROD_SCHEMA``
+  (unchanged upstreams, including seeds).
 
-Seeds run ``dbt seed --empty`` via a separate code path and never invoke this
-runner (the executor only uses it as the model/snapshot validation command). A
-missing or empty ``CANDIDATE_SQL_URI`` therefore means the producer never uploaded
-this node's compiled SQL — that is a validation error, not a no-op: the node fails
-rather than being silently reported as validated.
+The DDL itself lives behind the warehouse adapter (``base.warehouse``). stdout is the
+per-node validation log; the runner prints exactly one structured ``result_block`` as
+its last line. A non-zero exit marks the node failed.
 """
 import os
 import sys

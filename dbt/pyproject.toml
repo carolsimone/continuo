@@ -10,9 +10,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
-    # validation_runner._ensure_schema composes identifiers with psycopg2.sql and
-    # catches psycopg2.errors; its unit test imports these (using a mock cursor,
-    # so no database connection is opened).
+    # base.warehouse composes identifiers with psycopg2.sql and catches psycopg2.errors;
+    # its unit tests import these (using a mock cursor, so no database connection is opened).
     "psycopg2-binary>=2.9.0",
 ]
 
