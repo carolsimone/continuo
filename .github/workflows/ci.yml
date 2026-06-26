@@ -116,11 +116,12 @@ jobs:
           done
 
       - name: Test all Go services
-        run: |
-          for s in state orchestrator executor-controller k8s-controller \
-                   release-controller remediation remediation-agent agent-runner; do
-            docker exec $s make test-ci || exit 1
-          done
+        # Run on the runner via the shared Make target (not in-container): brings up
+        # the data deps and runs `go test -tags integration` for all 8 services with
+        # the full per-service DB env. Running on the runner (clean env) avoids the
+        # container's ambient env leaking into config tests, and covers the 4 services
+        # plus the -tags integration files that the old in-container path missed.
+        run: make test-go
 
       - name: Test manifest-controller
         run: docker exec manifest-controller uv run pytest -v
