@@ -102,12 +102,36 @@ if [ -n "$KIND_PID" ]; then
     echo "✓ Kind cluster ready"
 fi
 echo "Loading images into kind (parallel)..."
+# DIAGNOSTIC (gated by KIND_LOAD_DIAG=1): snapshot the kind node every 20s while
+# images load, so a stall in `kind load` is captured (disk/mem exhaustion vs a
+# containerd deadlock). Temporary — remove once the kind-load hang is understood.
+KIND_DIAG_PID=""
+if [ "${KIND_LOAD_DIAG:-0}" = "1" ]; then
+    NODE="${CLUSTER_NAME}-control-plane"
+    ( while true; do
+        echo "=== KIND-DIAG $(date -u +%H:%M:%S) ==="
+        docker exec "$NODE" df -h / 2>&1 | tail -1
+        docker stats --no-stream --format 'node mem={{.MemUsage}} cpu={{.CPUPerc}}' "$NODE" 2>&1
+        echo "images-in-node: $(docker exec "$NODE" crictl images 2>/dev/null | wc -l)"
+        docker exec "$NODE" sh -c 'crictl version >/dev/null 2>&1 && echo "containerd: OK" || echo "containerd: UNRESPONSIVE"' 2>&1
+        docker exec "$NODE" sh -c 'journalctl -u containerd --no-pager -n 6 2>/dev/null | tail -6' 2>&1
+        sleep 20
+      done ) &
+    KIND_DIAG_PID=$!
+fi
+load_pids=()
 for svc in "${DBT_SERVICES[@]}"; do
     kind load docker-image "${svc}:${IMAGE_TAG}" --name "${CLUSTER_NAME}" &
+    load_pids+=("$!")
 done
 kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME} &
+load_pids+=("$!")
 kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME} &
-wait
+load_pids+=("$!")
+# Wait only for the load jobs, NOT the diagnostic monitor (an infinite loop) — a
+# bare `wait` would block on the monitor forever.
+wait "${load_pids[@]}"
+[ -n "$KIND_DIAG_PID" ] && kill "$KIND_DIAG_PID" 2>/dev/null
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 

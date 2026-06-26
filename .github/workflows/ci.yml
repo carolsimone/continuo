@@ -106,9 +106,12 @@ jobs:
         timeout-minutes: 35
         run: |
           set -m
-          COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" bash scripts/setup.sh &
+          # KIND_LOAD_DIAG=1 turns on the kind-node monitor in setup.sh to capture
+          # WHY `kind load` stalls; watchdog raised to 40m for this diagnostic run
+          # so the stall is observed (revert both once understood).
+          COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" KIND_LOAD_DIAG=1 bash scripts/setup.sh &
           setup_pid=$!
-          ( sleep 1800; echo "::error::Set up infrastructure exceeded 30m — killing process group"; \
+          ( sleep 2400; echo "::error::Set up infrastructure exceeded 40m — killing process group"; \
             kill -KILL -"$setup_pid" 2>/dev/null ) &
           watchdog_pid=$!
           set +e
