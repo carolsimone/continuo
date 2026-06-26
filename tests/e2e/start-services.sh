@@ -1,61 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RED="\033[0;31m"
-GREEN="\033[0;32m"
-YELLOW="\033[1;33m"
-NC="\033[0m"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/common.sh"
 
-# Logging functions
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-check_health() {
-  local service=$1
-  local port=$2
-  local path=${3:-/health}
-  local max_retries=30
-
-  log_info "Waiting for $service to become healthy (port $port$path)..."
-
-  for i in $(seq 1 $max_retries); do
-    if docker exec "$service" curl -sf "http://localhost:${port}${path}" >/dev/null; then
-      log_info "$service is healthy!"
-      return 0
-    else
-      log_warn "Attempt $i: ${service} is not healthy yet. Retrying in 2 seconds..."
-      sleep 2
-    fi
-  done
-
-  docker exec "$service" ps aux | grep "go run" || true
-  log_error "Recent logs:"
-  docker logs --tail 20 "$service" 2>&1 || true
-  return 1
-}
-
-start_service() {
-  local container=$1
-  local service=$2
-  local service_path=$3
-
-  log_info "Starting $service in container $container..."
-  docker exec -d "$container" bash -c "cd /app/$service_path && go run main.go" || {
-    log_error "Failed to start $container..."
-    return 1
-  }
-  log_info "Waiting for $service to compile and start (this may take 20-30 seconds)..."
-  sleep 20
-}
+check_health(){ check_container_health "$1" "$2" "${3:-/health}"; }
+start_service(){ start_go_service "$1" "$3"; }
 
 log_info "Starting all services..."
 
