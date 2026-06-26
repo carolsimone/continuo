@@ -184,6 +184,13 @@ type ValidationJobParams struct {
 	NodeType    pkg_model.NodeType
 	ImageTag    string
 
+	// ValidationOp selects the runner operation: "build_from_sql" (default) or
+	// "clone_from_prod". ProdSchema is the source schema for clone_from_prod.
+	// Both are set per node by release-controller (Plan 3); empty here defaults
+	// VALIDATION_OP to build_from_sql.
+	ValidationOp string
+	ProdSchema   string
+
 	CandidateSchema string
 	CandidateSQLURI string
 
@@ -248,21 +255,31 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 }
 
 // buildValidationPodSpec constructs the PodSpec for a validation node job.
-// Image construction and the dbt-profile env conventions mirror the production
-// buildPodSpec; the container command comes from model.ValidationCommand, the
-// single source of truth for the validation CLI. Model/snapshot nodes run
-// validation_runner.py (fetching SQL from S3 via CANDIDATE_SQL_URI); seed nodes
-// use `dbt seed --select <table> --empty`. An empty ImageTag is a permanent
-// error — content-addressed tags must be explicit.
+// Validation runs the continuo-owned validation image (which carries
+// validation_runner.py + the warehouse adapter), NOT the per-service team
+// image — so the per-service ImageTag is unused here and an empty tag is no
+// longer an error. VALIDATION_IMAGE overrides verbatim; otherwise default to
+// dbt-base:latest, prefixed with DOCKERHUB_USERNAME when set.
+// The container command comes from model.ValidationCommand, the single source
+// of truth for the validation CLI. VALIDATION_OP selects the runner operation
+// (default "build_from_sql"); PROD_SCHEMA is the clone source for Plan 3.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
-	if p.ImageTag == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing for service %s",
-			events.ErrPermanent, p.ServiceName)
+	// Validation runs the continuo-owned validation image (which carries
+	// validation_runner.py + the warehouse adapter), NOT the per-service team
+	// image — so the per-service ImageTag is unused here and an empty tag is no
+	// longer an error. VALIDATION_IMAGE overrides verbatim; otherwise default to
+	// dbt-base:latest, prefixed with DOCKERHUB_USERNAME when set.
+	image := os.Getenv("VALIDATION_IMAGE")
+	if image == "" {
+		image = "dbt-base:latest"
+		if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+			image = user + "/" + image
+		}
 	}
 
-	image := p.ServiceName + ":" + p.ImageTag
-	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
-		image = user + "/" + image
+	op := p.ValidationOp
+	if op == "" {
+		op = "build_from_sql"
 	}
 
 	envVars := []corev1.EnvVar{
@@ -276,7 +293,6 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		// CANDIDATE_SQL_URI is an S3 URI pointing to the node's compiled SQL with
 		// schema refs already rewritten to the candidate schema. validation_runner.py
 		// fetches this object from S3 and builds the node as an empty CTAS table.
-		// Empty for seeds (they use `dbt seed --empty` instead).
 		{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI},
 		// S3 credentials — forwarded from executor-controller environment so the
 		// validation runner can boto3-GET the candidate SQL object.
@@ -291,6 +307,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
 		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
 		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+		// Selects the runner operation; PROD_SCHEMA is the clone source (Plan 3).
+		{Name: "VALIDATION_OP", Value: op},
+		{Name: "PROD_SCHEMA", Value: p.ProdSchema},
 	}
 
 	return corev1.PodSpec{
