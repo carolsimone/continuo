@@ -26,25 +26,13 @@ func TestValidationCommand_Snapshot(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-// TestValidationCommand_Seed verifies that seed nodes run the seed validation
-// wrapper, which executes `dbt seed --select <table> --empty` and then projects
-// target/run_results.json into the structured validation-result block. Seeds have
-// no SELECT to rewrite; dbt builds the empty table from CSV column definitions.
+// TestValidationCommand_Seed verifies that seed nodes now run validation_runner.py,
+// like models and snapshots. The operation (build_from_sql vs clone_from_prod) is
+// selected by the VALIDATION_OP env var, not by a distinct seed command.
 func TestValidationCommand_Seed(t *testing.T) {
 	got := model.ValidationCommand(pkg_model.NodeTypeDbtSeed, "customers")
-	want := []string{"python", "/seed_validation_runner.py", "--select", "customers"}
+	want := []string{"python", "/validation_runner.py"}
 	require.Equal(t, want, got)
-}
-
-// TestValidationCommand_Seed_NoDeferArgs ensures seeds do not carry --defer or
-// --state flags, which would force a manifest lookup at validation time.
-func TestValidationCommand_Seed_NoDeferArgs(t *testing.T) {
-	got := model.ValidationCommand(pkg_model.NodeTypeDbtSeed, "customers")
-	for _, a := range got {
-		if a == "--defer" || a == "--state" {
-			t.Fatalf("defer args must not appear in seed command: %v", got)
-		}
-	}
 }
 
 // TestValidationCommand_NoTargetSchemaFlag asserts that neither path emits
