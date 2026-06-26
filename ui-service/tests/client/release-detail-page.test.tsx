@@ -17,6 +17,34 @@ const DETAIL = {
   image_tags: { 'service-1': 'sha123' },
 };
 
+// Release with a failed node eligible for a remediation proposal.
+const DETAIL_FAILED = {
+  release_id: 'rel_abc',
+  status: 'rejected',
+  transitions: [{ to: 'rejected', at: '2026-06-25T14:30:29Z' }],
+  validation_node_ids: null,
+  reject_reason: 'node failed',
+  failing_nodes: null,
+  per_node_results: [
+    { node_id: 'analytics.table_a', status: 'ok', duration_ms: 10, dbt_log_uri: 's3://logs/a' },
+    { node_id: 'analytics.table_g', status: 'failed', duration_ms: 0, dbt_log_uri: null },
+  ],
+  image_tags: {},
+};
+
+// Healthy release: no failed nodes, so no node is eligible for a proposal.
+const DETAIL_OK = {
+  ...DETAIL_FAILED,
+  status: 'promoted',
+  reject_reason: null,
+  per_node_results: [
+    { node_id: 'analytics.table_a', status: 'ok', duration_ms: 10, dbt_log_uri: 's3://logs/a' },
+    { node_id: 'analytics.table_i', status: 'skipped', duration_ms: 0, dbt_log_uri: null },
+  ],
+};
+
+const PROPOSAL_G = { release_id: 'rel_abc', node_id: 'analytics.table_g' };
+
 function renderDetail() {
   return render(
     <MemoryRouter initialEntries={['/releases/rel_abc']}>
@@ -27,7 +55,30 @@ function renderDetail() {
   );
 }
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+// fetch mock: release detail for /api/releases/:id, and the current proposal set
+// (read live from proposalsRef) for /api/remediation/proposals.
+function mockFetch(detail: any, proposalsRef: { current: any[] }) {
+  return vi.fn((url: any) => {
+    const u = String(url);
+    if (u.includes('/api/remediation/proposals')) {
+      return Promise.resolve({ ok: true, json: async () => ({ proposals: proposalsRef.current }) });
+    }
+    return Promise.resolve({ ok: true, json: async () => detail });
+  });
+}
+
+function proposalCallCount(fetchMock: ReturnType<typeof vi.fn>): number {
+  return fetchMock.mock.calls.filter(c => String(c[0]).includes('/api/remediation/proposals')).length;
+}
+
+// Flush pending microtasks + zero-delay timers so React applies state updates.
+async function flush() {
+  await vi.advanceTimersByTimeAsync(0);
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('ReleaseDetailPage', () => {
   it('renders a compliant header, section-headers, nodes-table, and reject-reason strip', async () => {
@@ -94,5 +145,128 @@ describe('ReleaseDetailPage', () => {
     const { container } = renderDetail();
     await waitFor(() =>
       expect(container.querySelector('.info-strip--error')?.textContent).toContain('HTTP 404'));
+  });
+});
+
+describe('ReleaseDetailPage — proposal link polling', () => {
+  it('surfaces the fix link on a later poll without a manual refresh', async () => {
+    vi.useFakeTimers();
+    const proposals = { current: [] as any[] };
+    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderDetail();
+    await flush();
+    expect(screen.queryByText(/Proposed fix available/)).not.toBeInTheDocument();
+
+    // Proposal lands after the page is already open.
+    proposals.current = [PROPOSAL_G];
+    await vi.advanceTimersByTimeAsync(5000);
+    await flush();
+
+    expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
+  });
+
+  it('stops polling once every failed node has a proposal', async () => {
+    vi.useFakeTimers();
+    const proposals = { current: [PROPOSAL_G] };
+    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderDetail();
+    await flush();
+    expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
+    const settled = proposalCallCount(fetchMock);
+
+    await vi.advanceTimersByTimeAsync(30000); // 6 poll intervals
+    expect(proposalCallCount(fetchMock)).toBe(settled); // no further polling
+  });
+
+  it('stops polling at the cap when the failed node never gets a proposal', async () => {
+    vi.useFakeTimers();
+    const proposals = { current: [] as any[] };
+    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderDetail();
+    await vi.advanceTimersByTimeAsync(190000); // past the 180s cap
+    const capped = proposalCallCount(fetchMock);
+    expect(capped).toBeGreaterThanOrEqual(36); // interval delivered the full cap, not a short-circuit
+
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(proposalCallCount(fetchMock)).toBe(capped); // capped, no more polling
+  });
+
+  it('does not poll when the release has no failed nodes', async () => {
+    vi.useFakeTimers();
+    const proposals = { current: [] as any[] };
+    const fetchMock = mockFetch(DETAIL_OK, proposals);
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderDetail();
+    await flush();
+    const afterMount = proposalCallCount(fetchMock);
+    expect(afterMount).toBeLessThanOrEqual(1); // single best-effort fetch, no interval
+
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(proposalCallCount(fetchMock)).toBe(afterMount);
+  });
+
+  it('stops polling after the page unmounts', async () => {
+    vi.useFakeTimers();
+    const proposals = { current: [] as any[] };
+    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { unmount } = renderDetail();
+    await flush();
+    const beforeUnmount = proposalCallCount(fetchMock);
+
+    unmount();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(proposalCallCount(fetchMock)).toBe(beforeUnmount); // no polling after unmount
+  });
+
+  it('discards a stale proposal response that resolves after a newer poll stopped polling', async () => {
+    vi.useFakeTimers();
+    // Manually-resolvable responses for the proposals endpoint, so overlapping
+    // polls can be made to resolve out of order.
+    const deferreds: Array<(proposals: any[]) => void> = [];
+    const fetchMock = vi.fn((url: any) => {
+      if (String(url).includes('/api/remediation/proposals')) {
+        let resolveResponse!: (v: any) => void;
+        const p = new Promise<any>(res => { resolveResponse = res; });
+        deferreds.push((proposals: any[]) =>
+          resolveResponse({ ok: true, json: async () => ({ proposals }) }));
+        return p;
+      }
+      return Promise.resolve({ ok: true, json: async () => DETAIL_FAILED });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderDetail();
+    await flush();
+
+    // Resolve the initial fetch with no proposal yet — link hidden, polling continues.
+    deferreds[deferreds.length - 1]([]);
+    await flush();
+    expect(screen.queryByText(/Proposed fix available/)).not.toBeInTheDocument();
+
+    // Two polls fire while both responses are still in flight (overlapping).
+    await vi.advanceTimersByTimeAsync(5000); // poll A (older)
+    const pollA = deferreds[deferreds.length - 1];
+    await vi.advanceTimersByTimeAsync(5000); // poll B (newer)
+    const pollB = deferreds[deferreds.length - 1];
+
+    // Newer poll B resolves first: finds the proposal, shows the link, stops polling.
+    pollB([PROPOSAL_G]);
+    await flush();
+    expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
+
+    // Older poll A resolves last with a stale empty set — it must be discarded,
+    // not overwrite proposedNodeIds and hide the link.
+    pollA([]);
+    await flush();
+    expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
   });
 });
