@@ -93,17 +93,28 @@ jobs:
         run: docker buildx use default
 
       - name: Set up infrastructure
-        # COMPOSE_FILE merges docker-compose.ci.yml so that docker compose build
-        # uses GHA layer cache for all service images.
-        # setup.sh inherits this env var and passes it to docker compose build.
+        # COMPOSE_FILE merges docker-compose.ci.yml so docker compose build uses
+        # GHA layer cache. A healthy setup is ~24-29 min.
         #
-        # Wrap in `timeout` as the reliable cap for this phase: GitHub's
-        # step-level `timeout-minutes` has proven unreliable here, so the GNU
-        # `timeout` command (32-minute limit, SIGKILL 60s after the SIGTERM
-        # grace) is the primary guard, with step-level timeout-minutes as a
-        # belt-and-suspenders backstop. A healthy setup is ~24 min.
+        # Hard 30-minute cap via a process-GROUP watchdog. A plain `timeout` only
+        # kills the foreground shell; setup.sh backgrounds `kind create &`, so on a
+        # hang the orphaned kind keeps the step's output open and the cap never
+        # fires (this burned hours before). `set -m` puts setup.sh in its own
+        # process group; the watchdog SIGKILLs the whole group (negative PID) at
+        # 30 min, terminating kind/docker children too, so the step always ends.
+        # Step-level timeout-minutes is a backstop; the job has its own backstop.
         timeout-minutes: 35
-        run: COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" timeout --kill-after=60s 32m bash scripts/setup.sh
+        run: |
+          set -m
+          COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" bash scripts/setup.sh &
+          setup_pid=$!
+          ( sleep 1800; echo "::error::Set up infrastructure exceeded 30m — killing process group"; \
+            kill -KILL -"$setup_pid" 2>/dev/null ) &
+          watchdog_pid=$!
+          set +e
+          wait "$setup_pid"; rc=$?
+          kill -KILL -"$watchdog_pid" 2>/dev/null
+          exit "$rc"
 
       - name: Wait for service containers
         # Block until all long-running service containers report Running=true.
