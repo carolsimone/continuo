@@ -47,6 +47,11 @@ jobs:
         working-directory: pkg
         run: go test ./...
 
+      - name: Run guards
+        # Fail fast if ci.yml contains inline build/run/wait logic that should
+        # live in shared scripts. Keeps CI and local dev on the same primitives.
+        run: bash scripts/check-ci-alignment.sh
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -88,88 +93,50 @@ jobs:
         run: docker buildx use default
 
       - name: Set up infrastructure
-        # COMPOSE_FILE merges docker-compose.ci.yml so that docker compose build
-        # uses GHA layer cache for all service images.
-        # setup.sh inherits this env var and passes it to docker compose build.
+        # COMPOSE_FILE merges docker-compose.ci.yml so docker compose build uses
+        # GHA layer cache. setup.sh builds images in small batches and loads them
+        # into kind sequentially, because building/loading everything at once
+        # thrashes the 2-CPU/7.75GB runner's memory and disk I/O badly enough to
+        # stall (observed: a single image export hung ~27 min). The batched path
+        # trades a few minutes of wall-clock for reliability.
         #
-        # Wrap in `timeout` as the reliable cap for this phase: GitHub's
-        # step-level `timeout-minutes` has proven unreliable here, so the GNU
-        # `timeout` command (32-minute limit, SIGKILL 60s after the SIGTERM
-        # grace) is the primary guard, with step-level timeout-minutes as a
-        # belt-and-suspenders backstop. A healthy setup is ~24 min.
-        timeout-minutes: 35
-        run: COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" timeout --kill-after=60s 32m bash scripts/setup.sh
-
-      - name: Wait for service containers to be running
+        # Hard cap via a process-GROUP watchdog. A plain `timeout` only kills the
+        # foreground shell; setup.sh backgrounds `kind create &`, so on a hang the
+        # orphaned kind keeps the step's output open and the cap never fires (this
+        # burned hours before). `set -m` puts setup.sh in its own process group;
+        # the watchdog SIGKILLs the whole group (negative PID), terminating
+        # kind/docker children too, so the step always ends. Step-level
+        # timeout-minutes is a backstop; the job has its own backstop.
+        timeout-minutes: 50
         run: |
-          for container in state orchestrator executor-controller k8s-controller manifest-controller release-controller remediation remediation-agent; do
-            echo "Waiting for $container..."
-            for i in $(seq 1 30); do
-              if docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
-                echo "✓ $container is running"
-                break
-              fi
-              if [ "$i" -eq 30 ]; then
-                echo "✗ $container failed to start within 60s"
-                docker logs "$container" --tail 50 || true
-                exit 1
-              fi
-              sleep 2
-            done
-          done
+          set -m
+          COMPOSE_FILE="docker-compose.yml:docker-compose.ci.yml" bash scripts/setup.sh &
+          setup_pid=$!
+          ( sleep 2700; echo "::error::Set up infrastructure exceeded 45m — killing process group"; \
+            kill -KILL -"$setup_pid" 2>/dev/null ) &
+          watchdog_pid=$!
+          set +e
+          wait "$setup_pid"; rc=$?
+          kill -KILL -"$watchdog_pid" 2>/dev/null
+          exit "$rc"
 
-      - name: Start state and orchestrator service processes
-        # Containers run `tail -f /dev/null` by default (dev mode).
-        # Build and start the service binaries so that gRPC ports are open
-        # before dependent controller tests run.
+      - name: Wait for service containers
+        # Block until all long-running service containers report Running=true.
+        # wait_for_container_running is defined in scripts/lib/common.sh.
         run: |
-          echo "Building and starting state service (gRPC :50051)..."
-          docker exec state go build -o bin/state .
-          docker exec -d state ./bin/state
-
-          echo "Building and starting orchestrator service (gRPC :50052)..."
-          docker exec orchestrator go build -o bin/orchestrator .
-          docker exec -d orchestrator ./bin/orchestrator
-
-          echo "Waiting for state gRPC port 50051..."
-          for i in $(seq 1 30); do
-            if docker exec state bash -c 'echo > /dev/tcp/localhost/50051' 2>/dev/null; then
-              echo "✓ state gRPC ready"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "✗ state gRPC not ready after 60s"
-              docker logs state --tail 30 || true
-              exit 1
-            fi
-            sleep 2
+          source scripts/lib/common.sh
+          for c in state orchestrator executor-controller k8s-controller \
+                   manifest-controller release-controller remediation remediation-agent agent-runner; do
+            wait_for_container_running "$c"
           done
 
-          echo "Waiting for orchestrator gRPC port 50052..."
-          for i in $(seq 1 30); do
-            if docker exec orchestrator bash -c 'echo > /dev/tcp/localhost/50052' 2>/dev/null; then
-              echo "✓ orchestrator gRPC ready"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "✗ orchestrator gRPC not ready after 60s"
-              docker logs orchestrator --tail 30 || true
-              exit 1
-            fi
-            sleep 2
-          done
-
-      - name: Test state
-        run: docker exec state make test-ci
-
-      - name: Test orchestrator
-        run: docker exec orchestrator make test-ci
-
-      - name: Test executor-controller
-        run: docker exec executor-controller make test-ci
-
-      - name: Test k8s-controller
-        run: docker exec k8s-controller make test-ci
+      - name: Test all Go services
+        # Run on the runner via the shared Make target (not in-container): brings up
+        # the data deps and runs `go test -tags integration` for all 8 services with
+        # the full per-service DB env. Running on the runner (clean env) avoids the
+        # container's ambient env leaking into config tests, and covers the 4 services
+        # plus the -tags integration files that the old in-container path missed.
+        run: make test-go
 
       - name: Test manifest-controller
         run: docker exec manifest-controller uv run pytest -v
@@ -188,114 +155,20 @@ jobs:
 
       # ── E2E test ────────────────────────────────────────────────────────────
       - name: Start services for e2e
-        # Flyway migrations already ran as part of "docker compose up -d" in
-        # setup.sh.  Build and start the remaining service binaries that the
-        # e2e test needs beyond state/graph (which are already running above).
-        run: |
-          echo "Starting manifest-controller..."
-          docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"
-          sleep 3
-          echo "✓ manifest-controller started"
+        # Build and start all service binaries the e2e suite depends on.
+        # All build/run/wait logic lives in tests/e2e/start-services.sh.
+        run: bash tests/e2e/start-services.sh
 
-          echo "Building and starting release-controller (HTTP :8088)..."
-          docker exec release-controller go build -o bin/release-controller .
-          docker exec -d release-controller ./bin/release-controller
-
-          echo "Waiting for release-controller HTTP port 8088..."
-          for i in $(seq 1 30); do
-            if docker exec release-controller bash -c 'echo > /dev/tcp/localhost/8088' 2>/dev/null; then
-              echo "✓ release-controller HTTP ready"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "✗ release-controller HTTP not ready after 60s"
-              docker logs release-controller --tail 30 || true
-              exit 1
-            fi
-            sleep 2
-          done
-
-          echo "Building and starting remediation (HTTP :8090)..."
-          docker exec remediation go build -o bin/remediation .
-          docker exec -d remediation ./bin/remediation
-
-          echo "Waiting for remediation HTTP port 8090..."
-          for i in $(seq 1 30); do
-            if docker exec remediation bash -c 'echo > /dev/tcp/localhost/8090' 2>/dev/null; then
-              echo "✓ remediation HTTP ready"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "✗ remediation HTTP not ready after 60s"
-              docker logs remediation --tail 30 || true
-              exit 1
-            fi
-            sleep 2
-          done
-
-          echo "Building and starting remediation-agent (HTTP :8092)..."
-          docker exec remediation-agent go build -o bin/remediation-agent .
-          docker exec -d remediation-agent ./bin/remediation-agent
-
-          echo "Waiting for remediation-agent HTTP port 8092..."
-          for i in $(seq 1 30); do
-            if docker exec remediation-agent bash -c 'echo > /dev/tcp/localhost/8092' 2>/dev/null; then
-              echo "✓ remediation-agent HTTP ready"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "✗ remediation-agent HTTP not ready after 60s"
-              docker logs remediation-agent --tail 30 || true
-              exit 1
-            fi
-            sleep 2
-          done
-
-          echo "Starting agent-runner (gRPC :50053, health :8091)..."
-          docker exec -d agent-runner bash -c "cd /app/agent-runner && go run . > /tmp/agent-runner.log 2>&1"
-
-          # Wait for the gRPC listener itself, not just /health (which is the
-          # always-200 liveness probe): the chat e2e dials 50053 through the
-          # ui-service relay, so the port must be accepting before tests run.
-          echo "Waiting for agent-runner gRPC port 50053 (go run compiles cold ~30-60s)..."
-          for i in $(seq 1 60); do
-            if docker exec agent-runner bash -c 'echo > /dev/tcp/localhost/50053' 2>/dev/null; then
-              echo "✓ agent-runner gRPC ready"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "✗ agent-runner gRPC not ready after 120s"
-              docker exec agent-runner tail -40 /tmp/agent-runner.log || true
-              exit 1
-            fi
-            sleep 2
-          done
-
-      - name: Start ui-service container
-        run: |
-          echo "Starting ui container (HTTP :8090)..."
-          docker compose up -d ui
-
-          echo "Waiting for ui :8090..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8090/api/schedulers > /dev/null 2>&1; then
-              echo "✓ ui-service ready"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "✗ ui-service not ready after 60s"
-              docker logs ui --tail 30 || true
-              exit 1
-            fi
-            sleep 2
-          done
-
-      - name: Deploy k8s controllers
-        run: bash tests/e2e/deploy-k8s-controllers.sh
-
-      - name: Run e2e test
+      - name: Start ui + deploy + e2e
+        # Start the ui container, wait for it to become healthy, deploy k8s
+        # controllers, then run the full e2e suite inside the orchestrator
+        # container where the test code lives.
         timeout-minutes: 30
-        run: docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 25m /app/tests/e2e/...
+        run: |
+          source scripts/lib/common.sh
+          docker compose up -d ui && wait_for_http_host http://localhost:8090/api/schedulers
+          bash tests/e2e/deploy-k8s-controllers.sh
+          docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 25m /app/tests/e2e/...
 
       - name: Cleanup k8s controllers
         if: always()

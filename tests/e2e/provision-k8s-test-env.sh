@@ -1,24 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Logging functions
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/common.sh"
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -167,8 +150,8 @@ log_info "Deployments are ready"
 
 log_info "Verifying controller health endpoints..."
 
-# Function to check health for all services
-check_health() {
+# Function to check health for k8s-deployed services via kubectl port-forward
+check_k8s_health() {
   local deployment=$1
   local port=$2
   local service_name=$3
@@ -196,13 +179,13 @@ check_health() {
   fi
 }
 
-check_health "executor-controller" "8084" "executor-controller" || {
+check_k8s_health "executor-controller" "8084" "executor-controller" || {
     log_error "executor-controller health check failed"
     kubectl logs -l app=executor-controller -n default --tail=50
     exit 1
 }
 
-check_health "k8s-controller" "8085" "k8s-controller" || {
+check_k8s_health "k8s-controller" "8085" "k8s-controller" || {
     log_error "k8s-controller health check failed"
     kubectl logs -l app=k8s-controller -n default --tail=50
     exit 1

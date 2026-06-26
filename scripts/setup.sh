@@ -60,8 +60,24 @@ fi
 # depends on it and is now in the default (non-profiled) service set.
 echo "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
-echo "Building service images..."
-DOCKER_BUILDKIT=1 docker compose build
+echo "Building service images (batched)..."
+# Build in small batches instead of all ~13 services at once. On a 2-CPU/7.75GB
+# CI runner, building everything in parallel thrashes memory and disk I/O so badly
+# that layer export stalls (observed: one image export hung ~27 min). Batches of
+# BUILD_BATCH (default 2, ≈ the runner's CPU count) keep memory/disk in budget.
+# The buildable service list is derived from the merged compose config so it
+# tracks COMPOSE_FILE (CI adds docker-compose.ci.yml).
+# Portable array build (macOS bash 3.2 has no `mapfile`).
+_buildable=()
+while IFS= read -r _svc; do [ -n "$_svc" ] && _buildable+=("$_svc"); done < <(docker compose config --format json \
+  | python3 -c "import sys,json; print('\n'.join(k for k,v in json.load(sys.stdin)['services'].items() if 'build' in v))")
+_batch=()
+_build_batch() { [ "${#_batch[@]}" -gt 0 ] && { echo "  building: ${_batch[*]}"; DOCKER_BUILDKIT=1 docker compose build "${_batch[@]}"; }; }
+for _svc in "${_buildable[@]}"; do
+    _batch+=("$_svc")
+    if [ "${#_batch[@]}" -ge "${BUILD_BATCH:-2}" ]; then _build_batch; _batch=(); fi
+done
+_build_batch
 
 # Build dbt service images and load into KIND
 
@@ -101,13 +117,17 @@ if [ -n "$KIND_PID" ]; then
     wait $KIND_PID
     echo "✓ Kind cluster ready"
 fi
-echo "Loading images into kind (parallel)..."
+echo "Loading images into kind (sequential)..."
+# Load one image at a time. `kind load` imports a tarball into the node's
+# containerd, which is disk-write-bound; on a 2-CPU/7.75GB CI runner, loading
+# all images at once thrashes disk I/O and can stall the import. Sequential
+# loading keeps disk pressure bounded — the same reason the image build above
+# is batched.
 for svc in "${DBT_SERVICES[@]}"; do
-    kind load docker-image "${svc}:${IMAGE_TAG}" --name "${CLUSTER_NAME}" &
+    kind load docker-image "${svc}:${IMAGE_TAG}" --name "${CLUSTER_NAME}"
 done
-kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME} &
-kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME} &
-wait
+kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME}
+kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME}
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 
