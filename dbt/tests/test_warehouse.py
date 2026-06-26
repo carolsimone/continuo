@@ -2,8 +2,9 @@
 import pytest
 from psycopg2 import errors as pg_errors
 from psycopg2 import sql as pg_sql
+from unittest.mock import MagicMock, patch
 
-from base.warehouse import PostgresAdapter
+from base.warehouse import PostgresAdapter, adapter_from_env, WarehouseAdapter
 
 
 class _FakeCursor:
@@ -114,3 +115,24 @@ def test_clone_empty_from_prod_drops_then_ctas_where_false():
     assert "CREATE TABLE" in create_text
     assert "SELECT * FROM" in create_text
     assert "WHERE 1=0" in create_text
+
+
+def test_adapter_from_env_builds_postgres(monkeypatch):
+    for k, v in {
+        "DBT_POSTGRES_HOST": "h", "DBT_POSTGRES_DB": "d", "DBT_POSTGRES_USER": "u",
+        "DBT_POSTGRES_PASSWORD": "p",
+    }.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("WAREHOUSE_ENGINE", raising=False)
+    with patch("base.warehouse.psycopg2.connect", return_value=MagicMock()) as conn:
+        adapter = adapter_from_env()
+    assert isinstance(adapter, WarehouseAdapter)
+    conn.assert_called_once()
+    assert conn.call_args.kwargs["host"] == "h"
+    assert conn.call_args.kwargs["dbname"] == "d"
+
+
+def test_adapter_from_env_rejects_unknown_engine(monkeypatch):
+    monkeypatch.setenv("WAREHOUSE_ENGINE", "snowflake")
+    with pytest.raises(ValueError, match="unsupported WAREHOUSE_ENGINE"):
+        adapter_from_env()

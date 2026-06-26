@@ -93,4 +93,16 @@ class PostgresAdapter(WarehouseAdapter):
 
 
 def adapter_from_env() -> WarehouseAdapter:
-    raise NotImplementedError  # Task 4
+    engine = os.environ.get("WAREHOUSE_ENGINE", "postgres")
+    if engine != "postgres":
+        raise ValueError(
+            f"unsupported WAREHOUSE_ENGINE: {engine!r} (only 'postgres' is implemented)"
+        )
+    conn = psycopg2.connect(
+        host=os.environ["DBT_POSTGRES_HOST"],
+        port=os.environ.get("DBT_POSTGRES_PORT", "5432"),
+        dbname=os.environ["DBT_POSTGRES_DB"],
+        user=os.environ["DBT_POSTGRES_USER"],
+        password=os.environ.get("DBT_POSTGRES_PASSWORD", ""),
+    )
+    return PostgresAdapter(conn)
