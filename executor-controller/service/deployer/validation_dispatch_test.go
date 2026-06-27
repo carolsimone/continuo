@@ -38,6 +38,10 @@ func (f *fakeValidationDeployer) DeployValidation(context.Context, deploy.Valida
 	f.validationCalls++
 	return f.deployErr
 }
+func (f *fakeValidationDeployer) DeploySeedBuild(context.Context, deploy.ValidationJobSpec) error {
+	f.validationCalls++
+	return f.deployErr
+}
 func (f *fakeValidationDeployer) CountActive(context.Context) (int, error) { return 0, nil }
 
 // fakeDeploymentRepo is an in-memory DeploymentRepository sufficient for the
@@ -66,17 +70,17 @@ func (r *fakeDeploymentRepo) Save(_ context.Context, d *model.Deployment) error 
 	r.saved = append(r.saved, d)
 	return nil
 }
-func (r *fakeDeploymentRepo) GetByReleaseNode(context.Context, string, string) (*model.Deployment, error) {
+func (r *fakeDeploymentRepo) GetByReleaseNode(context.Context, string, string, model.Mode) (*model.Deployment, error) {
 	return nil, nil
 }
-func (r *fakeDeploymentRepo) PendingValidationCount(context.Context, string) (int, error) {
+func (r *fakeDeploymentRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
 	r.calls = append(r.calls, "PendingValidationCount")
 	return r.pending, r.pendingErr
 }
-func (r *fakeDeploymentRepo) ListValidationResults(context.Context, string) ([]*model.Deployment, error) {
+func (r *fakeDeploymentRepo) ListValidationResults(context.Context, string, model.Mode) ([]*model.Deployment, error) {
 	return r.results, r.resultsErr
 }
-func (r *fakeDeploymentRepo) ListValidationByRelease(context.Context, string) ([]*model.Deployment, error) {
+func (r *fakeDeploymentRepo) ListValidationByRelease(context.Context, string, model.Mode) ([]*model.Deployment, error) {
 	return nil, nil
 }
 
@@ -93,13 +97,13 @@ type fakeAggRepo struct {
 	calls []string
 }
 
-func (r *fakeAggRepo) LockRelease(context.Context, string) error {
+func (r *fakeAggRepo) LockRelease(context.Context, string, model.Mode) error {
 	r.lockCalls++
 	r.calls = append(r.calls, "LockRelease")
 	return r.lockErr
 }
 
-func (r *fakeAggRepo) ClaimEmission(context.Context, string, time.Time) (bool, error) {
+func (r *fakeAggRepo) ClaimEmission(context.Context, string, model.Mode, time.Time) (bool, error) {
 	r.claimCalls++
 	r.calls = append(r.calls, "ClaimEmission")
 	return r.won, r.claimErr
@@ -125,7 +129,7 @@ func (r *fakeOutboxRepo) GetPendingBatch(context.Context, int) ([]*outbox.Entry,
 func (r *fakeOutboxRepo) MarkProcessed(context.Context, uuid.UUID) error        { return nil }
 func (r *fakeOutboxRepo) MarkProcessedBatch(context.Context, []uuid.UUID) error { return nil }
 func (r *fakeOutboxRepo) MarkFailed(context.Context, uuid.UUID, string) error   { return nil }
-func (r *fakeOutboxRepo) IncrementRetry(context.Context, uuid.UUID) error     { return nil }
+func (r *fakeOutboxRepo) IncrementRetry(context.Context, uuid.UUID) error       { return nil }
 
 var _ outbox.Repository = (*fakeOutboxRepo)(nil)
 
@@ -291,10 +295,10 @@ func (r *chainDeploymentRepo) Save(_ context.Context, d *model.Deployment) error
 	r.nodes[d.NodeID()] = d
 	return nil
 }
-func (r *chainDeploymentRepo) GetByReleaseNode(_ context.Context, _ string, nodeID string) (*model.Deployment, error) {
+func (r *chainDeploymentRepo) GetByReleaseNode(_ context.Context, _ string, nodeID string, _ model.Mode) (*model.Deployment, error) {
 	return r.nodes[nodeID], nil
 }
-func (r *chainDeploymentRepo) PendingValidationCount(context.Context, string) (int, error) {
+func (r *chainDeploymentRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
 	count := 0
 	for _, d := range r.nodes {
 		switch d.Status() {
@@ -304,14 +308,14 @@ func (r *chainDeploymentRepo) PendingValidationCount(context.Context, string) (i
 	}
 	return count, nil
 }
-func (r *chainDeploymentRepo) ListValidationResults(_ context.Context, _ string) ([]*model.Deployment, error) {
+func (r *chainDeploymentRepo) ListValidationResults(_ context.Context, _ string, _ model.Mode) ([]*model.Deployment, error) {
 	out := make([]*model.Deployment, 0, len(r.nodes))
 	for _, d := range r.nodes {
 		out = append(out, d)
 	}
 	return out, nil
 }
-func (r *chainDeploymentRepo) ListValidationByRelease(_ context.Context, _ string) ([]*model.Deployment, error) {
+func (r *chainDeploymentRepo) ListValidationByRelease(_ context.Context, _ string, _ model.Mode) ([]*model.Deployment, error) {
 	out := make([]*model.Deployment, 0, len(r.nodes))
 	for _, d := range r.nodes {
 		out = append(out, d)

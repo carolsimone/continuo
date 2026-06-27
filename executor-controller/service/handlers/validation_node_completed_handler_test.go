@@ -38,7 +38,7 @@ func (r *nodeCompletedDeploymentsRepo) Save(_ context.Context, d *model.Deployme
 	r.saved = append(r.saved, d)
 	return nil
 }
-func (r *nodeCompletedDeploymentsRepo) GetByReleaseNode(context.Context, string, string) (*model.Deployment, error) {
+func (r *nodeCompletedDeploymentsRepo) GetByReleaseNode(context.Context, string, string, model.Mode) (*model.Deployment, error) {
 	if r.getErr != nil {
 		return nil, r.getErr
 	}
@@ -47,13 +47,13 @@ func (r *nodeCompletedDeploymentsRepo) GetByReleaseNode(context.Context, string,
 	}
 	return r.byReleaseNode, nil
 }
-func (r *nodeCompletedDeploymentsRepo) PendingValidationCount(context.Context, string) (int, error) {
+func (r *nodeCompletedDeploymentsRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
 	return r.pending, nil
 }
-func (r *nodeCompletedDeploymentsRepo) ListValidationResults(context.Context, string) ([]*model.Deployment, error) {
+func (r *nodeCompletedDeploymentsRepo) ListValidationResults(context.Context, string, model.Mode) ([]*model.Deployment, error) {
 	return r.results, nil
 }
-func (r *nodeCompletedDeploymentsRepo) ListValidationByRelease(context.Context, string) ([]*model.Deployment, error) {
+func (r *nodeCompletedDeploymentsRepo) ListValidationByRelease(context.Context, string, model.Mode) ([]*model.Deployment, error) {
 	return nil, nil
 }
 
@@ -73,14 +73,14 @@ func (r *chainedDeploymentsRepo) Save(_ context.Context, d *model.Deployment) er
 	r.nodes[d.NodeID()] = d
 	return nil
 }
-func (r *chainedDeploymentsRepo) GetByReleaseNode(_ context.Context, _ string, nodeID string) (*model.Deployment, error) {
+func (r *chainedDeploymentsRepo) GetByReleaseNode(_ context.Context, _ string, nodeID string, _ model.Mode) (*model.Deployment, error) {
 	d, ok := r.nodes[nodeID]
 	if !ok {
 		return nil, sql.ErrNoRows
 	}
 	return d, nil
 }
-func (r *chainedDeploymentsRepo) PendingValidationCount(context.Context, string) (int, error) {
+func (r *chainedDeploymentsRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
 	// For gating tests the aggregate gate should not fire: return a non-zero count
 	// so EmitValidationAggregateIfComplete exits early (pending nodes still exist).
 	count := 0
@@ -91,10 +91,10 @@ func (r *chainedDeploymentsRepo) PendingValidationCount(context.Context, string)
 	}
 	return count, nil
 }
-func (r *chainedDeploymentsRepo) ListValidationResults(context.Context, string) ([]*model.Deployment, error) {
+func (r *chainedDeploymentsRepo) ListValidationResults(context.Context, string, model.Mode) ([]*model.Deployment, error) {
 	return nil, nil
 }
-func (r *chainedDeploymentsRepo) ListValidationByRelease(_ context.Context, _ string) ([]*model.Deployment, error) {
+func (r *chainedDeploymentsRepo) ListValidationByRelease(_ context.Context, _ string, _ model.Mode) ([]*model.Deployment, error) {
 	out := make([]*model.Deployment, 0, len(r.nodes))
 	for _, d := range r.nodes {
 		out = append(out, d)
@@ -131,7 +131,7 @@ func newFakeUoWWithChain(t *testing.T, releaseID string, chain []chainNode) *fak
 			NodeID:          cn.node,
 			ServiceName:     "dbt",
 			SchemaName:      "public",
-			TableName:        cn.node,
+			TableName:       cn.node,
 			NodeType:        "dbt-model",
 			ImageTag:        "sha-test",
 			JobName:         "validate-" + cn.node,
@@ -187,7 +187,7 @@ func (r *fakeOutboxRepo) GetPendingBatch(context.Context, int) ([]*outbox.Entry,
 func (r *fakeOutboxRepo) MarkProcessed(context.Context, uuid.UUID) error        { return nil }
 func (r *fakeOutboxRepo) MarkProcessedBatch(context.Context, []uuid.UUID) error { return nil }
 func (r *fakeOutboxRepo) MarkFailed(context.Context, uuid.UUID, string) error   { return nil }
-func (r *fakeOutboxRepo) IncrementRetry(context.Context, uuid.UUID) error     { return nil }
+func (r *fakeOutboxRepo) IncrementRetry(context.Context, uuid.UUID) error       { return nil }
 
 type fakeAggRepo struct {
 	won        bool
@@ -195,12 +195,12 @@ type fakeAggRepo struct {
 	lockCalls  int
 }
 
-func (r *fakeAggRepo) LockRelease(context.Context, string) error {
+func (r *fakeAggRepo) LockRelease(context.Context, string, model.Mode) error {
 	r.lockCalls++
 	return nil
 }
 
-func (r *fakeAggRepo) ClaimEmission(context.Context, string, time.Time) (bool, error) {
+func (r *fakeAggRepo) ClaimEmission(context.Context, string, model.Mode, time.Time) (bool, error) {
 	r.claimCalls++
 	return r.won, nil
 }

@@ -42,10 +42,10 @@ func (r *chainDepRepo) Save(_ context.Context, d *model.Deployment) error {
 	r.nodes[d.NodeID()] = d
 	return nil
 }
-func (r *chainDepRepo) GetByReleaseNode(_ context.Context, _ string, nodeID string) (*model.Deployment, error) {
+func (r *chainDepRepo) GetByReleaseNode(_ context.Context, _ string, nodeID string, _ model.Mode) (*model.Deployment, error) {
 	return r.nodes[nodeID], nil
 }
-func (r *chainDepRepo) PendingValidationCount(context.Context, string) (int, error) {
+func (r *chainDepRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
 	count := 0
 	for _, d := range r.nodes {
 		switch d.Status() {
@@ -55,14 +55,14 @@ func (r *chainDepRepo) PendingValidationCount(context.Context, string) (int, err
 	}
 	return count, nil
 }
-func (r *chainDepRepo) ListValidationResults(_ context.Context, _ string) ([]*model.Deployment, error) {
+func (r *chainDepRepo) ListValidationResults(_ context.Context, _ string, _ model.Mode) ([]*model.Deployment, error) {
 	out := make([]*model.Deployment, 0, len(r.nodes))
 	for _, d := range r.nodes {
 		out = append(out, d)
 	}
 	return out, nil
 }
-func (r *chainDepRepo) ListValidationByRelease(_ context.Context, _ string) ([]*model.Deployment, error) {
+func (r *chainDepRepo) ListValidationByRelease(_ context.Context, _ string, _ model.Mode) ([]*model.Deployment, error) {
 	out := make([]*model.Deployment, 0, len(r.nodes))
 	for _, d := range r.nodes {
 		out = append(out, d)
@@ -102,11 +102,11 @@ type orderedAggRepo struct {
 	log *callLog
 }
 
-func (r *orderedAggRepo) LockRelease(context.Context, string) error {
+func (r *orderedAggRepo) LockRelease(context.Context, string, model.Mode) error {
 	r.log.record("LockRelease")
 	return nil
 }
-func (r *orderedAggRepo) ClaimEmission(context.Context, string, time.Time) (bool, error) {
+func (r *orderedAggRepo) ClaimEmission(context.Context, string, model.Mode, time.Time) (bool, error) {
 	r.log.record("ClaimEmission")
 	return r.won, nil
 }

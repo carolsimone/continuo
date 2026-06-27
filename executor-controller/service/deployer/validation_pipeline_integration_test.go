@@ -46,6 +46,13 @@ func (c *capturingDeployer) DeployValidation(_ context.Context, spec deploy.Vali
 	return nil
 }
 
+func (c *capturingDeployer) DeploySeedBuild(_ context.Context, spec deploy.ValidationJobSpec) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.validations = append(c.validations, spec)
+	return nil
+}
+
 func (c *capturingDeployer) CountActive(context.Context) (int, error) { return 0, nil }
 
 func (c *capturingDeployer) specs() []deploy.ValidationJobSpec {

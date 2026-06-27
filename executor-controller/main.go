@@ -145,6 +145,8 @@ func main() {
 	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	validationNodeHandler := handlers.NewValidationNodeCompletedHandler(logger)
+	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
+	seedBuildNodeHandler := handlers.NewSeedBuildNodeCompletedHandler(logger)
 
 	queryBinding := redis.NewQueryModelBinding(uowFactory, queryHandler, logger)
 	retryBinding := redis.NewRetryTaskBinding(uowFactory, retryHandler, logger)
@@ -154,6 +156,10 @@ func main() {
 		uowFactory, validationReqHandler, candidateSchemaCreator, logger)
 	validationNodeBinding := redis.NewValidationNodeCompletedBinding(
 		uowFactory, validationNodeHandler, logger)
+	seedBuildReqBinding := redis.NewSeedBuildRequestedBinding(
+		uowFactory, seedBuildReqHandler, candidateSchemaCreator, logger)
+	seedBuildNodeBinding := redis.NewSeedBuildNodeCompletedBinding(
+		uowFactory, seedBuildNodeHandler, logger)
 	validationCompletedTeardownBinding := redis.NewValidationCompletedTeardownBinding(
 		candidateSchemaCleaner, logger)
 
@@ -190,6 +196,18 @@ func main() {
 		validationNodeBinding, logger)
 	logger.Info("validation.node.completed consumer initialized",
 		"stream", streams.ValidationNodeCompletedV1, "group", streams.ExecutorValidationNodeCompleted)
+
+	seedBuildReqConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.SeedBuildRequestedV1, streams.ExecutorSeedBuildRequested,
+		seedBuildReqBinding, logger)
+	logger.Info("seed.build.requested consumer initialized",
+		"stream", streams.SeedBuildRequestedV1, "group", streams.ExecutorSeedBuildRequested)
+
+	seedBuildNodeConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.SeedBuildNodeCompletedV1, streams.ExecutorSeedBuildNodeCompleted,
+		seedBuildNodeBinding, logger)
+	logger.Info("seed.build.node.completed consumer initialized",
+		"stream", streams.SeedBuildNodeCompletedV1, "group", streams.ExecutorSeedBuildNodeCompleted)
 
 	validationCompletedTeardownConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.ValidationCompletedV1, streams.ExecutorValidationCompleted,
@@ -308,6 +326,16 @@ func main() {
 	go func() {
 		if err := validationNodeConsumer.Start(ctx); err != nil {
 			logger.Error("validation.node.completed consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := seedBuildReqConsumer.Start(ctx); err != nil {
+			logger.Error("seed.build.requested consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := seedBuildNodeConsumer.Start(ctx); err != nil {
+			logger.Error("seed.build.node.completed consumer error", "error", err)
 		}
 	}()
 	go func() {

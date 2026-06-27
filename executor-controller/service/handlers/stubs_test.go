@@ -23,15 +23,15 @@ func (r *stubDeploymentsRepo) GetDueBatch(_ context.Context, _ int) ([]*model.De
 	return nil, nil
 }
 func (r *stubDeploymentsRepo) Save(_ context.Context, _ *model.Deployment) error { return nil }
-func (r *stubDeploymentsRepo) GetByReleaseNode(_ context.Context, _, _ string) (*model.Deployment, error) {
+func (r *stubDeploymentsRepo) GetByReleaseNode(_ context.Context, _, _ string, _ model.Mode) (*model.Deployment, error) {
 	return nil, nil
 }
-func (r *stubDeploymentsRepo) PendingValidationCount(_ context.Context, _ string) (int, error) {
+func (r *stubDeploymentsRepo) PendingValidationCount(_ context.Context, _ string, _ model.Mode) (int, error) {
 	return 0, nil
 }
-func (r *stubDeploymentsRepo) ListValidationResults(_ context.Context, _ string) ([]*model.Deployment, error) {
+func (r *stubDeploymentsRepo) ListValidationResults(_ context.Context, _ string, _ model.Mode) ([]*model.Deployment, error) {
 	return nil, nil
 }
-func (r *stubDeploymentsRepo) ListValidationByRelease(_ context.Context, _ string) ([]*model.Deployment, error) {
+func (r *stubDeploymentsRepo) ListValidationByRelease(_ context.Context, _ string, _ model.Mode) ([]*model.Deployment, error) {
 	return nil, nil
 }

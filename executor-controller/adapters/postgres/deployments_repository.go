@@ -148,13 +148,13 @@ const validationSelectColumns = `
 	created_at, deployed_at, error_message,
 	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri`
 
-func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID, nodeID string) (*model.Deployment, error) {
+func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID, nodeID string, mode model.Mode) (*model.Deployment, error) {
 	const query = `
 		SELECT` + validationSelectColumns + `
 		FROM executor_deployments
-		WHERE mode = 'validation' AND release_id = $1 AND node_id = $2`
+		WHERE mode = $3 AND release_id = $1 AND node_id = $2`
 	var row deploymentRow
-	if err := r.exec.QueryRowContext(ctx, query, releaseID, nodeID).Scan(
+	if err := r.exec.QueryRowContext(ctx, query, releaseID, nodeID, string(mode)).Scan(
 		&row.ID, &row.MessageProcessingID, &row.TaskID, &row.ScheduleID, &row.JobParams,
 		&row.Status, &row.RetryCount, &row.MaxRetries, &row.NextAttemptAt,
 		&row.CreatedAt, &row.DeployedAt, &row.ErrorMessage,
@@ -168,27 +168,27 @@ func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID,
 	return r.toAggregate(&row), nil
 }
 
-func (r *deploymentsRepository) PendingValidationCount(ctx context.Context, releaseID string) (int, error) {
+func (r *deploymentsRepository) PendingValidationCount(ctx context.Context, releaseID string, mode model.Mode) (int, error) {
 	const query = `
 		SELECT COUNT(*)
 		FROM executor_deployments
-		WHERE mode = 'validation' AND release_id = $1
+		WHERE mode = $2 AND release_id = $1
 		  AND status IN ('pending','blocked','deployed') AND outcome IS NULL`
 	var n int
-	if err := r.exec.QueryRowContext(ctx, query, releaseID).Scan(&n); err != nil {
+	if err := r.exec.QueryRowContext(ctx, query, releaseID, string(mode)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count pending validations for release %s: %w", releaseID, err)
 	}
 	return n, nil
 }
 
-func (r *deploymentsRepository) ListValidationResults(ctx context.Context, releaseID string) ([]*model.Deployment, error) {
+func (r *deploymentsRepository) ListValidationResults(ctx context.Context, releaseID string, mode model.Mode) ([]*model.Deployment, error) {
 	const query = `
 		SELECT` + validationSelectColumns + `
 		FROM executor_deployments
-		WHERE mode = 'validation' AND release_id = $1 AND outcome IS NOT NULL
+		WHERE mode = $2 AND release_id = $1 AND outcome IS NOT NULL
 		ORDER BY outcome_at ASC`
 	var rows []*deploymentRow
-	if err := r.exec.SelectContext(ctx, &rows, query, releaseID); err != nil && err != sql.ErrNoRows {
+	if err := r.exec.SelectContext(ctx, &rows, query, releaseID, string(mode)); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("list validation results for release %s: %w", releaseID, err)
 	}
 	out := make([]*model.Deployment, len(rows))
@@ -198,14 +198,14 @@ func (r *deploymentsRepository) ListValidationResults(ctx context.Context, relea
 	return out, nil
 }
 
-func (r *deploymentsRepository) ListValidationByRelease(ctx context.Context, releaseID string) ([]*model.Deployment, error) {
+func (r *deploymentsRepository) ListValidationByRelease(ctx context.Context, releaseID string, mode model.Mode) ([]*model.Deployment, error) {
 	const query = `
 		SELECT` + validationSelectColumns + `
 		FROM executor_deployments
-		WHERE mode = 'validation' AND release_id = $1
+		WHERE mode = $2 AND release_id = $1
 		ORDER BY created_at ASC`
 	var rows []*deploymentRow
-	if err := r.exec.SelectContext(ctx, &rows, query, releaseID); err != nil && err != sql.ErrNoRows {
+	if err := r.exec.SelectContext(ctx, &rows, query, releaseID, string(mode)); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("list validation deployments for release %s: %w", releaseID, err)
 	}
 	out := make([]*model.Deployment, len(rows))
