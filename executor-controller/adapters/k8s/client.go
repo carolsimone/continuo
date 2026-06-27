@@ -377,6 +377,109 @@ func (c *K8sClient) CountActiveJobs(ctx context.Context, namespace, labelSelecto
 	return active, nil
 }
 
+// CreateSeedBuildJob builds and creates a mode=seed_build K8s Job (idempotent
+// by job name). The Job uses the team image (same as production) and runs
+// `dbt seed --select <TableName>`, materializing into the candidate schema via
+// DBT_TARGET_SCHEMA so the generate_schema_name macro routes the output there.
+// The mode=seed_build label lets k8s-controller route its terminal status to
+// seed.build.node.completed:v1.
+func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJobParams) error {
+	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		c.logger.Info("Seed-build K8s job already exists, skipping creation",
+			"namespace", params.Namespace,
+			"job_name", params.JobName,
+		)
+		return nil
+	}
+
+	podSpec, err := buildSeedBuildPodSpec(params)
+	if err != nil {
+		return fmt.Errorf("failed to build seed-build pod spec: %w", err)
+	}
+
+	backoffLimit := int32(0)
+	labels := map[string]string{
+		"app":          "dbt-job",
+		"mode":         "seed_build",
+		"release-id":   sanitizeK8sLabel(params.ReleaseID),
+		"node-id":      sanitizeK8sLabel(params.NodeID),
+		"service_name": params.ServiceName,
+		"schema_name":  params.SchemaName,
+		"table_name":   params.TableName,
+	}
+	annotations := map[string]string{
+		pkg_model.AnnotationReleaseID: params.ReleaseID,
+		pkg_model.AnnotationNodeID:    params.NodeID,
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        params.JobName,
+			Namespace:   params.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+				Spec:       podSpec,
+			},
+		},
+	}
+
+	return c.CreateJob(ctx, job)
+}
+
+// buildSeedBuildPodSpec constructs the PodSpec for a seed-build Job.
+// It mirrors buildPodSpec (production team image + standard DBT_POSTGRES_* +
+// SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
+// generate_schema_name macro materializes the seed into the candidate schema.
+// ImageTag must be non-empty — the team image must be explicitly versioned.
+func buildSeedBuildPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
+	if p.ImageTag == "" {
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from seed-build job params for service %s",
+			events.ErrPermanent, p.ServiceName)
+	}
+
+	image := p.ServiceName + ":" + p.ImageTag
+	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+		image = user + "/" + image
+	}
+
+	envVars := []corev1.EnvVar{
+		{Name: "RELEASE_ID", Value: p.ReleaseID},
+		{Name: "NODE_ID", Value: p.NodeID},
+		{Name: "SERVICE_NAME", Value: p.ServiceName},
+		{Name: "SCHEMA", Value: p.SchemaName},
+		{Name: "TABLE_NAME", Value: p.TableName},
+		{Name: "JOB_NAME", Value: p.JobName},
+		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
+		// dbt profile connection — forwarded from executor-controller environment
+		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
+		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
+		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
+		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
+		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+	}
+
+	return corev1.PodSpec{
+		RestartPolicy: corev1.RestartPolicyNever,
+		Containers: []corev1.Container{
+			{
+				Name:            "dbt-job",
+				Image:           image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Command:         p.NodeType.Command(p.TableName),
+				Env:             envVars,
+			},
+		},
+	}, nil
+}
+
 // setClientsetForTest swaps the clientset for a fake in unit tests.
 func (c *K8sClient) setClientsetForTest(cs kubernetes.Interface) { c.clientset = cs }
 

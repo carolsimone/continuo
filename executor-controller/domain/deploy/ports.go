@@ -51,6 +51,11 @@ type Deployer interface {
 	// Implementations must be idempotent by job name so a redelivery is a
 	// no-op.
 	DeployValidation(ctx context.Context, spec ValidationJobSpec) error
+	// DeploySeedBuild executes the mode=seed_build job described by spec.
+	// The job uses the team image and runs `dbt seed --select <TableName>`,
+	// materializing into the candidate schema. Implementations must be
+	// idempotent by job name so a redelivery is a no-op.
+	DeploySeedBuild(ctx context.Context, spec ValidationJobSpec) error
 	// CountActive returns the number of deploys currently running.
 	CountActive(ctx context.Context) (int, error)
 }
