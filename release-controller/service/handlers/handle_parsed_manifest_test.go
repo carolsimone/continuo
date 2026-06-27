@@ -165,12 +165,14 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 		Mode           string   `json:"mode"`
 		NodeIDsInOrder []string `json:"node_ids_in_order"`
 		Nodes          []struct {
-			UniqueID    string `json:"unique_id"`
-			ServiceName string `json:"service_name"`
-			NodeType    string `json:"node_type"`
-			SchemaName  string `json:"schema_name"`
-			TableName   string `json:"table_name"`
-			ImageTag    string `json:"image_tag"`
+			UniqueID     string `json:"unique_id"`
+			ServiceName  string `json:"service_name"`
+			NodeType     string `json:"node_type"`
+			SchemaName   string `json:"schema_name"`
+			TableName    string `json:"table_name"`
+			ImageTag     string `json:"image_tag"`
+			ValidationOp string `json:"validation_op"`
+			ProdSchema   string `json:"prod_schema"`
 		} `json:"nodes"`
 	}
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &payload))
@@ -195,12 +197,18 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 	assert.Equal(t, "schema_a", a.SchemaName)
 	assert.Equal(t, "table_a", a.TableName)
 	assert.Equal(t, "sha-a", a.ImageTag, "image_tag was joined from Release.ImageTags before publishing")
+	// No prod snapshot is seeded, so every candidate node is new -> in the
+	// changed-closure -> build_from_sql with empty prod_schema.
+	assert.Equal(t, "build_from_sql", a.ValidationOp, "a is new (no prod) -> built from candidate SQL")
+	assert.Equal(t, "", a.ProdSchema, "build_from_sql nodes carry no prod_schema")
 
 	assert.Equal(t, "svc-a", b.ServiceName)
 	assert.Equal(t, "dbt-seed", b.NodeType, "node_type is forwarded from the candidate topology")
 	assert.Equal(t, "schema_b", b.SchemaName)
 	assert.Equal(t, "table_b", b.TableName)
 	assert.Equal(t, "sha-a", b.ImageTag, "b is in svc-a so it gets svc-a's image tag")
+	assert.Equal(t, "build_from_sql", b.ValidationOp, "b is new (no prod) -> built from candidate SQL")
+	assert.Equal(t, "", b.ProdSchema, "build_from_sql nodes carry no prod_schema")
 }
 
 // TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff seeds a
@@ -506,14 +514,27 @@ func TestHandleParseOK_EmitsCandidateSQLURIPerNode(t *testing.T) {
 	var nodes []struct {
 		UniqueID        string `json:"unique_id"`
 		CandidateSQLURI string `json:"candidate_sql_uri"`
+		ValidationOp    string `json:"validation_op"`
+		ProdSchema      string `json:"prod_schema"`
 	}
 	require.NoError(t, json.Unmarshal(rawPayload["nodes"], &nodes))
 	got := map[string]string{}
+	op := map[string]string{}
+	prodSchema := map[string]string{}
 	for _, n := range nodes {
 		got[n.UniqueID] = n.CandidateSQLURI
+		op[n.UniqueID] = n.ValidationOp
+		prodSchema[n.UniqueID] = n.ProdSchema
 	}
 	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a1.sql", got["a1"])
 	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a2.sql", got["a2"])
+
+	// No prod snapshot is seeded, so both nodes are new -> in the changed-closure
+	// -> build_from_sql with empty prod_schema.
+	assert.Equal(t, "build_from_sql", op["a1"])
+	assert.Equal(t, "", prodSchema["a1"])
+	assert.Equal(t, "build_from_sql", op["a2"])
+	assert.Equal(t, "", prodSchema["a2"])
 }
 
 // TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI verifies that the
@@ -665,4 +686,65 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	assert.Equal(t, "rBoot", sp.ReleaseID())
 	assert.Equal(t, "s3://continuo/svc-a/rBoot/manifest.json", sp.ManifestS3Key())
 	assert.Equal(t, "sha-a", sp.ImageTag())
+}
+
+// TestHandleParsedManifest_AssignsPerNodeValidationOp asserts:
+// A changed model gets build_from_sql; its unchanged upstream (pulled in by the
+// ancestors closure) gets clone_from_prod with prod_schema = its schema_name.
+func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
+	deps, store := seedToParsing(t, "rel-op-1", map[string]string{"shop": "sha-shop"})
+
+	// prod has upstream "model.core.dim" (unchanged); candidate adds changed
+	// "model.shop.orders" depending on it.
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+		{UniqueID: "model.core.dim", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "analytics", TableName: "dim", ContentHash: "hash-dim-OLD"},
+	}, time.Unix(50, 0).UTC()))
+
+	topo := release.Topology{
+		{UniqueID: "model.core.dim", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "analytics", TableName: "dim", ContentHash: "hash-dim-OLD"},
+		{UniqueID: "model.shop.orders", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "shop", TableName: "orders", ContentHash: "hash-orders-NEW",
+			UpstreamUniqueIDs: []string{"model.core.dim"}},
+	}
+
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-op-1", Status: "ok", Topology: topo,
+	})
+	require.NoError(t, err)
+
+	nodes := decodeValidationRequestedNodes(t, store)
+	byID := indexNodesByUniqueID(t, nodes)
+
+	assert.Equal(t, "build_from_sql", byID["model.shop.orders"]["validation_op"])
+	assert.Equal(t, "", byID["model.shop.orders"]["prod_schema"])
+
+	assert.Equal(t, "clone_from_prod", byID["model.core.dim"]["validation_op"])
+	assert.Equal(t, "analytics", byID["model.core.dim"]["prod_schema"])
+}
+
+// decodeValidationRequestedNodes finds the validation.requested:v1 outbox entry
+// and unmarshals its "nodes" array as []map[string]any.
+func decodeValidationRequestedNodes(t *testing.T, store *fakeStore) []map[string]any {
+	t.Helper()
+	entry := findEntry(t, store, streams.ValidationRequestedV1)
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry.Payload, &raw))
+	var nodes []map[string]any
+	require.NoError(t, json.Unmarshal(raw["nodes"], &nodes))
+	return nodes
+}
+
+// indexNodesByUniqueID indexes a []map[string]any by the "unique_id" key. A node
+// whose unique_id is missing or not a string is a malformed payload and fails
+// the test loudly rather than being silently dropped.
+func indexNodesByUniqueID(t *testing.T, nodes []map[string]any) map[string]map[string]any {
+	t.Helper()
+	out := make(map[string]map[string]any, len(nodes))
+	for i, n := range nodes {
+		id, ok := n["unique_id"].(string)
+		if !ok {
+			t.Fatalf("node[%d] has missing or non-string unique_id: %#v", i, n["unique_id"])
+		}
+		out[id] = n
+	}
+	return out
 }

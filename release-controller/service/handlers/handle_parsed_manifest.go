@@ -173,10 +173,15 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 		inSet[id] = true
 	}
 
+	changedClosureSet := make(map[string]bool, len(changedClosure))
+	for _, id := range changedClosure {
+		changedClosureSet[id] = true
+	}
+
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,
 		"mode":              "validation",
-		"nodes":             validationNodesInOrder(topo, validationIDs, inSet),
+		"nodes":             validationNodesInOrder(topo, validationIDs, inSet, changedClosureSet),
 		"node_ids_in_order": validationIDs,
 		"image_tags":        r.ImageTags(),
 		"candidate_schema":  candidateSchema,
@@ -254,7 +259,7 @@ func joinImageTags(topo release.Topology, imageTags map[string]string) release.T
 // schema build. Dispatch ordering is deterministic but NOT topological; per-node
 // execution sequencing is enforced at runtime by the executor's gating on
 // upstream_node_ids, not by position in this list.
-func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet map[string]bool) []map[string]any {
+func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet, changedClosureSet map[string]bool) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
 		byID[n.UniqueID] = n
@@ -265,18 +270,33 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 		if !ok {
 			continue
 		}
+		op, prodSchema := validationOpFor(n, changedClosureSet)
 		out = append(out, map[string]any{
-			"unique_id":          n.UniqueID,
-			"service_name":       n.ServiceName,
-			"node_type":          n.NodeType,
-			"schema_name":        n.SchemaName,
-			"table_name":         n.TableName,
-			"image_tag":          n.ImageTag,
-			"upstream_node_ids":  release.InSetUpstreams(topo, id, inSet),
-			"candidate_sql_uri":  n.CandidateSQLURI,
+			"unique_id":         n.UniqueID,
+			"service_name":      n.ServiceName,
+			"node_type":         n.NodeType,
+			"schema_name":       n.SchemaName,
+			"table_name":        n.TableName,
+			"image_tag":         n.ImageTag,
+			"upstream_node_ids": release.InSetUpstreams(topo, id, inSet),
+			"candidate_sql_uri": n.CandidateSQLURI,
+			"validation_op":     op,
+			"prod_schema":       prodSchema,
 		})
 	}
 	return out
+}
+
+// validationOpFor returns the runner op and the prod source schema for a
+// validation node. A node in the changed-closure has compiled SQL rewritten to
+// the candidate schema, so it is built via build_from_sql (prod_schema empty).
+// Every other node in the validation set is an unchanged upstream — there is no
+// candidate SQL for it — so it is cloned empty from its production schema.
+func validationOpFor(n release.Node, changedClosureSet map[string]bool) (op, prodSchema string) {
+	if changedClosureSet[n.UniqueID] {
+		return "build_from_sql", ""
+	}
+	return "clone_from_prod", n.SchemaName
 }
 
 var nonAlphanumUnderscore = regexp.MustCompile(`[^a-zA-Z0-9_]`)
