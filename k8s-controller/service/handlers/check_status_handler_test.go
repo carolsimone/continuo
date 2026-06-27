@@ -1247,6 +1247,120 @@ func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testin
 	}
 }
 
+// TestHandle_SeedBuildModeLabel_WritesSeeBuildNodeCompletedOutboxRowOnly verifies
+// that a terminal Job carrying mode=seed_build emits exactly one
+// seed_build_node_completed row (stream=seed.build.node.completed:v1, outcome=ok
+// on Succeeded / outcome=failed on Failed, release_id/node_id from annotations)
+// and none of the three production task-status rows.
+func TestHandle_SeedBuildModeLabel_WritesSeeBuildNodeCompletedOutboxRowOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		status          model.JobStatus
+		expectedOutcome string
+	}{
+		{"succeeded", model.JobStatusSucceeded, "ok"},
+		{"failed", model.JobStatusFailed, "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outbox := &fakeOutboxRepo{}
+			handler := newHandler(
+				&fakeK8sClient{
+					status: &model.K8sPodResult{Status: tc.status},
+					labels: map[string]string{"mode": "seed_build"},
+					annotations: map[string]string{
+						pkgmodel.AnnotationReleaseID: "rel-sb-1",
+						pkgmodel.AnnotationNodeID:    "seed-node-abc",
+					},
+				},
+				noopCancelledRepo(), 3,
+			)
+
+			cmd := command.CheckJobStatus{
+				TaskID:     uuid.New(),
+				ScheduleID: uuid.New(),
+				JobName:    "seed-build-node-abc",
+				MaxRetries: 3,
+			}
+
+			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+
+			entries := outbox.entries
+			if len(entries) != 1 {
+				t.Fatalf("expected exactly 1 outbox entry (seed_build_node_completed), got %d: %v", len(entries), eventTypesOf(entries))
+			}
+			entry := entries[0]
+			if entry.EventType != "seed_build_node_completed" {
+				t.Errorf("expected event_type=seed_build_node_completed, got %q", entry.EventType)
+			}
+			if entry.StreamName != streams.SeedBuildNodeCompletedV1 {
+				t.Errorf("expected stream=%s, got %q", streams.SeedBuildNodeCompletedV1, entry.StreamName)
+			}
+			if entry.AggregateType != "release" {
+				t.Errorf("expected aggregate_type=release, got %q", entry.AggregateType)
+			}
+
+			// Ensure no production rows leaked in.
+			for _, e := range entries {
+				switch e.EventType {
+				case "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+					t.Errorf("unexpected production outbox row %q for seed_build Job", e.EventType)
+				}
+			}
+
+			var payload map[string]any
+			if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal seed_build_node_completed: %v", err)
+			}
+			if payload["release_id"] != "rel-sb-1" {
+				t.Errorf("expected release_id=rel-sb-1, got %v", payload["release_id"])
+			}
+			if payload["node_id"] != "seed-node-abc" {
+				t.Errorf("expected node_id=seed-node-abc, got %v", payload["node_id"])
+			}
+			if payload["outcome"] != tc.expectedOutcome {
+				t.Errorf("expected outcome=%s, got %v", tc.expectedOutcome, payload["outcome"])
+			}
+		})
+	}
+}
+
+// TestHandle_SeedBuildModeLabel_SuppressesRunningAnnouncement verifies a
+// mode=seed_build Job observed running for the first time writes only the
+// check_delayed re-poll and never a task_status_updated row (seed_build Jobs
+// use synthetic task IDs and carry no real task status, same as validation).
+func TestHandle_SeedBuildModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusRunning},
+			labels: map[string]string{"mode": "seed_build"},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		JobName:          "seed-build-node-1",
+		MaxRetries:       3,
+		RunningAnnounced: false,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	if len(entries) != 1 || entries[0].EventType != "check_delayed" {
+		t.Fatalf("expected 1 check_delayed entry, got %v", eventTypesOf(entries))
+	}
+	if findEntryByEventType(entries, "task_status_updated") != nil {
+		t.Error("seed_build Job must not emit task_status_updated RUNNING")
+	}
+}
+
 // Compile-time interface checks.
 var _ ports.LogUploader = (*fakeLogUploader)(nil)
 var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)
