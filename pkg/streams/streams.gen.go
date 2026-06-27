@@ -48,6 +48,12 @@ const (
 	ValidationNodeCompletedV1 = "validation.node.completed:v1"
 	// ValidationCompletedV1 — Per-node validation results from executor-controller back to release-controller.
 	ValidationCompletedV1 = "validation.completed:v1"
+	// SeedBuildRequestedV1 — release-controller requests candidate seed builds; executor dispatches per-seed team-image jobs.
+	SeedBuildRequestedV1 = "seed.build.requested:v1"
+	// SeedBuildNodeCompletedV1 — per-seed build terminal status from k8s-controller back to executor-controller.
+	SeedBuildNodeCompletedV1 = "seed.build.node.completed:v1"
+	// SeedBuildCompletedV1 — aggregated candidate seed-build result from executor-controller back to release-controller.
+	SeedBuildCompletedV1 = "seed.build.completed:v1"
 	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
 	ReleasePromotedV1 = "release.promoted:v1"
 	// ReleaseRejectedV1 — Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
@@ -110,6 +116,12 @@ const (
 	ReleaseControllerValidationCompleted = "release-controller-validation-completed"
 	// ExecutorValidationCompleted — executor-controller consumer group on validation.completed:v1.
 	ExecutorValidationCompleted = "executor-validation-completed"
+	// ExecutorSeedBuildRequested — executor-controller consumer group on seed.build.requested:v1.
+	ExecutorSeedBuildRequested = "executor-seed-build-requested"
+	// ExecutorSeedBuildNodeCompleted — executor-controller consumer group on seed.build.node.completed:v1.
+	ExecutorSeedBuildNodeCompleted = "executor-seed-build-node-completed"
+	// ReleaseControllerSeedBuildCompleted — release-controller consumer group on seed.build.completed:v1.
+	ReleaseControllerSeedBuildCompleted = "release-controller-seed-build-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
