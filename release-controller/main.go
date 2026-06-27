@@ -103,6 +103,13 @@ func main() {
 		}
 	}()
 
+	seedBuildConsumer := redisadapter.NewSeedBuildCompletedConsumer(rc, deps, logger)
+	go func() {
+		if err := seedBuildConsumer.Start(ctx); err != nil && ctx.Err() == nil {
+			logger.Error("seed.build.completed consumer stopped", "error", err)
+		}
+	}()
+
 	// Retention loop: prune terminal releases older than the retention window on
 	// the janitor interval. current_prod is never pruned.
 	retentionDays, err := strconv.Atoi(cfg.RetentionDays)
