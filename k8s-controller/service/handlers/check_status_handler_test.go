@@ -1247,12 +1247,12 @@ func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testin
 	}
 }
 
-// TestHandle_SeedBuildModeLabel_WritesSeeBuildNodeCompletedOutboxRowOnly verifies
+// TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly verifies
 // that a terminal Job carrying mode=seed_build emits exactly one
 // seed_build_node_completed row (stream=seed.build.node.completed:v1, outcome=ok
 // on Succeeded / outcome=failed on Failed, release_id/node_id from annotations)
 // and none of the three production task-status rows.
-func TestHandle_SeedBuildModeLabel_WritesSeeBuildNodeCompletedOutboxRowOnly(t *testing.T) {
+func TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		status          model.JobStatus

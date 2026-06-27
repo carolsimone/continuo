@@ -799,14 +799,3 @@ func TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation(t *testing.T) {
 	}
 	assert.True(t, found, "no new/changed seeds → validation.requested must be emitted directly")
 }
-
-// decodeSeedBuildSeeds is a helper that decodes the "seeds" field from a
-// seed.build.requested:v1 outbox entry's payload.
-func decodeSeedBuildSeeds(t *testing.T, entry *pkgoutbox.Entry) []map[string]any {
-	t.Helper()
-	var raw map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(entry.Payload, &raw))
-	var seeds []map[string]any
-	require.NoError(t, json.Unmarshal(raw["seeds"], &seeds))
-	return seeds
-}

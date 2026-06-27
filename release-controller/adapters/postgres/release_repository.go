@@ -97,8 +97,8 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 	return rowToRelease(row)
 }
 
-// ActiveRelease returns the single Release that is currently parsing or
-// validating, or nil if there is none.
+// ActiveRelease returns the single Release that is currently parsing,
+// seed_building, or validating, or nil if there is none.
 func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release, error) {
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,

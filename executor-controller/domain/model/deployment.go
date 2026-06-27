@@ -376,8 +376,8 @@ func (d *Deployment) MessageProcessingID() *uuid.UUID { return d.messageProcessi
 func (d *Deployment) Mode() Mode                      { return d.mode }
 func (d *Deployment) Command() command.DeployTask     { return d.command }
 
-// ValidationCommand is meaningful only when Mode() == ModeValidation; for
-// production deployments it returns the zero ValidationDeployTask.
+// ValidationCommand is meaningful only when Mode() == ModeValidation or
+// ModeSeedBuild; for production deployments it returns the zero ValidationDeployTask.
 func (d *Deployment) ValidationCommand() command.ValidationDeployTask {
 	return d.validationCmd
 }
