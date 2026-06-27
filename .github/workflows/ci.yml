@@ -5,6 +5,13 @@ on:
     branches:
       - main
 
+# A new push to a PR cancels any still-running build for that same PR. The single
+# self-hosted runner serializes jobs, so without this it would tie up finishing a
+# build for a commit that has already been superseded.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     # Fork-gated runner. Maintainer PRs (branches pushed inside this repo) run on
