@@ -48,6 +48,8 @@ type ValidationDeployTask struct {
 	JobName          string   `json:"job_name"`
 	CandidateSchema  string   `json:"candidate_schema"`
 	CandidateSQLURI  string   `json:"candidate_sql_uri"`
+	ValidationOp     string   `json:"validation_op"`
+	ProdSchema       string   `json:"prod_schema"`
 	UpstreamNodeIDs  []string `json:"upstream_node_ids"`
 }
 
@@ -86,5 +88,7 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		ImageTag:        c.ImageTag,
 		CandidateSchema: c.CandidateSchema,
 		CandidateSQLURI: c.CandidateSQLURI,
+		ValidationOp:    c.ValidationOp,
+		ProdSchema:      c.ProdSchema,
 	}
 }

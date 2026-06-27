@@ -139,6 +139,31 @@ func TestValidationRequestedHandler_BlocksGatedNodes(t *testing.T) {
 	assert.Equal(t, []string{"a1"}, a2.ValidationCommand().UpstreamNodeIDs)
 }
 
+func TestValidationRequestedHandler_ThreadsOp(t *testing.T) {
+	depl := &stubDeploymentsRepo{}
+	u := &uow.FakeUnitOfWork{Deployments: depl}
+
+	evt := events.ValidationRequested{
+		ReleaseID:       "rel",
+		CandidateSchema: "_candidate_rel",
+		Nodes: []events.ValidationNode{
+			{
+				NodeID: "model.core.dim", ServiceName: "s", SchemaName: "sc",
+				TableName: "dim", NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t",
+				ValidationOp: "clone_from_prod", ProdSchema: "analytics",
+			},
+		},
+	}
+
+	h := handlers.NewValidationRequestedHandler(discardLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.Nil))
+	require.Len(t, depl.added, 1)
+
+	cmd := depl.added[0].ValidationCommand()
+	assert.Equal(t, "clone_from_prod", cmd.ValidationOp)
+	assert.Equal(t, "analytics", cmd.ProdSchema)
+}
+
 func TestBuildValidationJobName_TruncationKeepsDeterministicHash(t *testing.T) {
 	longRelease := "release-abcdefghijklmnopqrstuvwxyz0123456789"
 	longNode := "model.very_long_service_name.an_extremely_long_table_identifier_indeed"
