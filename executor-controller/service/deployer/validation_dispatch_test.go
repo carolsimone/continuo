@@ -25,9 +25,10 @@ import (
 // --- fakes -----------------------------------------------------------------
 
 type fakeValidationDeployer struct {
-	deployErr       error
-	deployCalls     int
-	validationCalls int
+	deployErr        error
+	deployCalls      int
+	validationCalls  int
+	seedBuildCalls   int
 }
 
 func (f *fakeValidationDeployer) Deploy(context.Context, deploy.JobSpec) error {
@@ -39,7 +40,7 @@ func (f *fakeValidationDeployer) DeployValidation(context.Context, deploy.Valida
 	return f.deployErr
 }
 func (f *fakeValidationDeployer) DeploySeedBuild(context.Context, deploy.ValidationJobSpec) error {
-	f.validationCalls++
+	f.seedBuildCalls++
 	return f.deployErr
 }
 func (f *fakeValidationDeployer) CountActive(context.Context) (int, error) { return 0, nil }
@@ -524,4 +525,116 @@ func TestMaybeEmit_LockErrorAbortsBeforeClaim(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 0, agg.claimCalls, "lock failure aborts before any claim")
 	assert.Empty(t, outboxRepo.created, "no emission when the lock cannot be taken")
+}
+
+// --- Task B11: dispatchSeedBuild -------------------------------------------
+
+func deployableSeedBuild() command.ValidationDeployTask {
+	return command.ValidationDeployTask{
+		ReleaseID: "rel_sb_1", NodeID: "seed_node_1", ServiceName: "dbt",
+		SchemaName: "public", TableName: "my_seed", NodeType: "dbt-seed",
+		ImageTag: "sha-sb1", JobName: "seed-build-public-my-seed",
+		CandidateSchema: "_cand_rel_sb_1",
+	}
+}
+
+func TestDispatcher_DispatchOne_SeedBuildMode_CallsDeploySeedBuild(t *testing.T) {
+	fk := &fakeValidationDeployer{}
+	d := silentDispatcher(fk)
+	repo := &fakeDeploymentRepo{}
+	dep := model.NewSeedBuildDeployment(deployableSeedBuild(), nil, time.Now())
+
+	require.NoError(t, d.dispatchOne(context.Background(), repo, &fakeOutboxRepo{}, &fakeAggRepo{}, dep))
+
+	assert.Equal(t, 1, fk.seedBuildCalls, "DeploySeedBuild invoked once")
+	assert.Equal(t, 0, fk.validationCalls, "DeployValidation never invoked for a seed-build row")
+	assert.Equal(t, 0, fk.deployCalls, "production Deploy never invoked for a seed-build row")
+}
+
+func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksDeployedAndWritesNodeDeployedTrigger(t *testing.T) {
+	fk := &fakeValidationDeployer{}
+	d := silentDispatcher(fk)
+	repo := &fakeDeploymentRepo{}
+	outboxRepo := &fakeOutboxRepo{}
+	vc := deployableSeedBuild()
+	dep := model.NewSeedBuildDeployment(vc, nil, time.Now())
+
+	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
+
+	require.Len(t, repo.saved, 1)
+	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
+	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives via seed.build.node.completed:v1")
+
+	// Success writes exactly one outbox row: the node.deployed:v1 trigger.
+	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
+	e := outboxRepo.created[0]
+	assert.Equal(t, "node_deployed", e.EventType)
+	assert.Equal(t, streams.NodeDeployedV1, e.StreamName)
+	assert.Equal(t, "task", e.AggregateType)
+
+	// Trigger carries deterministic synthetic task/schedule UUIDs from (release_id, node_id).
+	wantTaskID, wantScheduleID := model.ValidationSyntheticIDs(vc.ReleaseID, vc.NodeID)
+	assert.Equal(t, wantTaskID, e.AggregateID, "outbox aggregate id is the synthetic task id")
+	var payload struct {
+		TaskID     string `json:"task_id"`
+		ScheduleID string `json:"schedule_id"`
+		JobName    string `json:"job_name"`
+		NodeType   string `json:"node_type"`
+		ImageTag   string `json:"image_tag"`
+	}
+	require.NoError(t, json.Unmarshal(e.Payload, &payload))
+	assert.Equal(t, wantTaskID.String(), payload.TaskID)
+	assert.Equal(t, wantScheduleID.String(), payload.ScheduleID)
+	assert.Equal(t, vc.JobName, payload.JobName)
+	assert.Equal(t, vc.NodeType, payload.NodeType)
+	assert.Equal(t, vc.ImageTag, payload.ImageTag)
+}
+
+func TestDispatcher_DispatchOne_SeedBuildMode_OnPermanentFailure_RecordsOutcomeFailedAndAggregates(t *testing.T) {
+	fk := &fakeValidationDeployer{deployErr: errors.Join(errors.New("bad image"), pkgevents.ErrPermanent)}
+	d := silentDispatcher(fk)
+	failed := model.NewSeedBuildDeployment(deployableSeedBuild(), nil, time.Now())
+	require.NoError(t, failed.FailSeedBuild("bad image", time.Now()))
+	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
+	outboxRepo := &fakeOutboxRepo{}
+	agg := &fakeAggRepo{won: true}
+	dep := model.NewSeedBuildDeployment(deployableSeedBuild(), nil, time.Now())
+
+	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
+
+	require.Len(t, repo.saved, 1)
+	assert.Equal(t, model.StatusFailed, repo.saved[0].Status(), "permanent deploy failure is terminal")
+	assert.Equal(t, "failed", repo.saved[0].Outcome(), "terminal outcome recorded as failed")
+	assert.Equal(t, 1, agg.claimCalls, "aggregate emit attempted once last node is terminal")
+	require.Len(t, outboxRepo.created, 1, "aggregate seed.build.completed:v1 row written")
+	assert.Equal(t, streams.SeedBuildCompletedV1, outboxRepo.created[0].StreamName)
+}
+
+func TestDispatcher_DispatchOne_SeedBuildMode_NotDeployable_SavesFailedBeforeGate(t *testing.T) {
+	d := silentDispatcher(&fakeValidationDeployer{})
+	failed := model.NewSeedBuildDeployment(deployableSeedBuild(), nil, time.Now())
+	require.NoError(t, failed.FailSeedBuild("not deployable", time.Now()))
+	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
+	outboxRepo := &fakeOutboxRepo{}
+	agg := &fakeAggRepo{won: true}
+
+	// Non-deployable seed-build row (empty command → IsDeployable() == false).
+	dep := model.NewSeedBuildDeployment(command.ValidationDeployTask{
+		ReleaseID: "rel_sb_1", NodeID: "seed_node_1",
+	}, nil, time.Now())
+	require.False(t, dep.IsDeployable())
+
+	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
+
+	require.Len(t, repo.saved, 1)
+	assert.Equal(t, "failed", repo.saved[0].Outcome(), "terminal outcome persisted")
+	// Save must come before PendingValidationCount read so the gate counts correctly.
+	saveIdx := indexOf(repo.calls, "Save")
+	countIdx := indexOf(repo.calls, "PendingValidationCount")
+	require.GreaterOrEqual(t, saveIdx, 0, "Save was called")
+	require.GreaterOrEqual(t, countIdx, 0, "gate counted pending")
+	assert.Less(t, saveIdx, countIdx, "outcome is persisted before the aggregate gate counts pending")
+	// With no other nodes pending the aggregate fires.
+	require.Len(t, outboxRepo.created, 1, "aggregate seed.build.completed:v1 emitted for the last (failed) node")
+	assert.Equal(t, streams.SeedBuildCompletedV1, outboxRepo.created[0].StreamName)
 }

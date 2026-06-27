@@ -186,6 +186,9 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	if dep.Mode() == model.ModeValidation {
 		return d.dispatchValidation(ctx, repo, outboxRepo, aggRepo, dep)
 	}
+	if dep.Mode() == model.ModeSeedBuild {
+		return d.dispatchSeedBuild(ctx, repo, outboxRepo, aggRepo, dep)
+	}
 
 	now := d.now()
 
@@ -293,6 +296,73 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 func (d *Dispatcher) settleFailedValidation(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
 	return validation.SettleNodeTerminal(
 		ctx, repo, outboxRepo, aggRepo, validation.DedupNamespace,
+		dep.ReleaseID(), dep.NodeID(), "failed", now)
+}
+
+// dispatchSeedBuild handles a mode=seed_build row. It is structurally identical
+// to dispatchValidation: on success it marks the row deployed and emits a
+// node.deployed:v1 trigger so k8s-controller status-checks the seed-build Job;
+// on terminal failure it fails the row and settles the per-release seed-build
+// aggregate. Seeds are flat roots with no blocked downstreams so
+// SettleSeedBuildNodeTerminal's propagateGating call is a no-op — but the
+// aggregate gate still fires to emit seed.build.completed:v1.
+func (d *Dispatcher) dispatchSeedBuild(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
+	now := d.now()
+
+	if !dep.IsDeployable() {
+		if err := dep.FailSeedBuild("seed-build deployment not deployable", now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate. The gate reads
+		// PendingValidationCount and must see this node as terminal (its own
+		// uncommitted write is visible within this transaction); otherwise it
+		// counts the row as still pending, skips the emission, and no later
+		// seed.build.node.completed event will re-run the gate for this release.
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.settleFailedSeedBuild(ctx, repo, outboxRepo, aggRepo, dep, now)
+	}
+
+	deployErr := d.deployer.DeploySeedBuild(ctx, dep.ValidationCommand().ToValidationJobSpec())
+	if deployErr == nil {
+		if err := dep.MarkDeployed(now); err != nil {
+			return err
+		}
+		if err := d.writeValidationDeployedTrigger(ctx, outboxRepo, dep); err != nil {
+			return err
+		}
+		return repo.Save(ctx, dep)
+	}
+
+	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
+	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) { // terminal
+		d.logger.Error("Seed-build deploy terminal failure",
+			"deployment_id", dep.ID(), "release_id", dep.ReleaseID(), "node_id", dep.NodeID(), "cause", deployErr)
+		if err := dep.FailSeedBuild(deployErr.Error(), now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate so PendingValidationCount
+		// sees this node as terminal (see the not-deployable branch above).
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.settleFailedSeedBuild(ctx, repo, outboxRepo, aggRepo, dep, now)
+	}
+	d.logger.Warn("Seed-build deploy transient failure — rescheduling",
+		"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
+	return repo.Save(ctx, dep)
+}
+
+// settleFailedSeedBuild settles a seed-build node that failed AT dispatch: it
+// runs the per-release aggregate-emit gate under the per-release advisory lock
+// so the aggregate can fire. Seeds are flat roots so propagateGating is a no-op,
+// but the aggregate gate still emits seed.build.completed:v1 once all rows
+// for the release are terminal. The failed node's own outcome is already
+// persisted before this call.
+func (d *Dispatcher) settleFailedSeedBuild(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
+	return validation.SettleSeedBuildNodeTerminal(
+		ctx, repo, outboxRepo, aggRepo,
 		dep.ReleaseID(), dep.NodeID(), "failed", now)
 }
 
