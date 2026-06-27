@@ -35,6 +35,12 @@ type ValidationNode struct {
 	ImageTag        string
 	UpstreamNodeIDs []string
 	CandidateSQLURI string
+	// ValidationOp selects the runner operation for this node:
+	// "build_from_sql" (default) | "clone_from_prod". ProdSchema is the source
+	// schema for clone_from_prod (empty otherwise). Set per node by
+	// release-controller from the changed-closure membership.
+	ValidationOp string
+	ProdSchema   string
 }
 
 // ValidationRequested is the parsed validation.requested:v1 stream payload —

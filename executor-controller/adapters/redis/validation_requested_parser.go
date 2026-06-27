@@ -33,6 +33,8 @@ type validationRequestedNode struct {
 	ImageTag        string   `json:"image_tag"`
 	UpstreamNodeIDs []string `json:"upstream_node_ids"`
 	CandidateSQLURI string   `json:"candidate_sql_uri"`
+	ValidationOp    string   `json:"validation_op"`
+	ProdSchema      string   `json:"prod_schema"`
 }
 
 // ParseValidationRequested translates a validation.requested:v1 XMessage into
@@ -94,6 +96,8 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 			ImageTag:        n.ImageTag,
 			UpstreamNodeIDs: n.UpstreamNodeIDs,
 			CandidateSQLURI: n.CandidateSQLURI,
+			ValidationOp:    n.ValidationOp,
+			ProdSchema:      n.ProdSchema,
 		})
 		nodeIDSet[n.UniqueID] = struct{}{}
 	}
