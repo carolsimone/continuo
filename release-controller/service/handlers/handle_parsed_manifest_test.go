@@ -135,12 +135,16 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 }
 
 // TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields asserts
-// the validation.requested:v1 payload carries a `nodes` array of full per-node
-// objects (unique_id, service_name, schema_name, table_name, image_tag) in
-// topological order. executor-controller needs these to build candidate dbt
-// jobs without re-deriving fields from the unique_id string.
-// Single-service topology is used to avoid cross-service upstream rejection on
-// bootstrap (no prod snapshot).
+// per-node fields are forwarded correctly in the outbound event. When the
+// topology contains a new dbt-seed (no prod snapshot → in the changed-closure),
+// B5 routing applies: the release routes to seed_building and
+// seed.build.requested:v1 is emitted instead of validation.requested:v1. The
+// seed node's per-node fields (unique_id, service_name, node_type, schema_name,
+// table_name, image_tag) must appear in the "seeds" array.
+//
+// Note: the dbt-model node "a" is also new (no prod snapshot), but it is NOT a
+// seed, so it does not appear in seed.build.requested. The model node will
+// appear in validation.requested once seed.build.completed is handled (B6).
 func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{
 		"svc-a": "sha-a",
@@ -156,59 +160,41 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 		Topology:  topo,
 	}))
 
+	// B5: a new dbt-seed routes to seed_building, not validating.
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusSeedBuilding, r.Status())
+
+	// seed.build.requested:v1 must be emitted; validation.requested must not.
 	entries := outboxEntries(store)
-	require.Len(t, entries, 2)
-	require.Equal(t, streams.ValidationRequestedV1, entries[1].StreamName)
+	require.Len(t, entries, 2) // ReleaseRequested + SeedBuildRequested
+	require.Equal(t, streams.SeedBuildRequestedV1, entries[1].StreamName)
 
 	var payload struct {
-		ReleaseID      string   `json:"release_id"`
-		Mode           string   `json:"mode"`
-		NodeIDsInOrder []string `json:"node_ids_in_order"`
-		Nodes          []struct {
-			UniqueID     string `json:"unique_id"`
-			ServiceName  string `json:"service_name"`
-			NodeType     string `json:"node_type"`
-			SchemaName   string `json:"schema_name"`
-			TableName    string `json:"table_name"`
-			ImageTag     string `json:"image_tag"`
-			ValidationOp string `json:"validation_op"`
-			ProdSchema   string `json:"prod_schema"`
-		} `json:"nodes"`
+		ReleaseID string `json:"release_id"`
+		Mode      string `json:"mode"`
+		Seeds     []struct {
+			UniqueID    string `json:"unique_id"`
+			ServiceName string `json:"service_name"`
+			NodeType    string `json:"node_type"`
+			SchemaName  string `json:"schema_name"`
+			TableName   string `json:"table_name"`
+			ImageTag    string `json:"image_tag"`
+		} `json:"seeds"`
 	}
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &payload))
 
 	assert.Equal(t, "rA", payload.ReleaseID)
-	assert.Equal(t, "validation", payload.Mode)
-	require.Len(t, payload.Nodes, 2, "nodes array carries one entry per validation node")
+	assert.Equal(t, "seed_build", payload.Mode)
+	require.Len(t, payload.Seeds, 1, "only the seed node appears (model node is not a seed)")
 
-	// The order must match node_ids_in_order (topo sort: a before b).
-	assert.Equal(t, payload.NodeIDsInOrder[0], payload.Nodes[0].UniqueID)
-	assert.Equal(t, payload.NodeIDsInOrder[1], payload.Nodes[1].UniqueID)
-
-	byID := map[string]int{}
-	for i, n := range payload.Nodes {
-		byID[n.UniqueID] = i
-	}
-	a := payload.Nodes[byID["a"]]
-	b := payload.Nodes[byID["b"]]
-
-	assert.Equal(t, "svc-a", a.ServiceName)
-	assert.Equal(t, "dbt-model", a.NodeType, "node_type is forwarded from the candidate topology")
-	assert.Equal(t, "schema_a", a.SchemaName)
-	assert.Equal(t, "table_a", a.TableName)
-	assert.Equal(t, "sha-a", a.ImageTag, "image_tag was joined from Release.ImageTags before publishing")
-	// No prod snapshot is seeded, so every candidate node is new -> in the
-	// changed-closure -> build_from_sql with empty prod_schema.
-	assert.Equal(t, "build_from_sql", a.ValidationOp, "a is new (no prod) -> built from candidate SQL")
-	assert.Equal(t, "", a.ProdSchema, "build_from_sql nodes carry no prod_schema")
-
+	b := payload.Seeds[0]
+	assert.Equal(t, "b", b.UniqueID)
 	assert.Equal(t, "svc-a", b.ServiceName)
 	assert.Equal(t, "dbt-seed", b.NodeType, "node_type is forwarded from the candidate topology")
 	assert.Equal(t, "schema_b", b.SchemaName)
 	assert.Equal(t, "table_b", b.TableName)
 	assert.Equal(t, "sha-a", b.ImageTag, "b is in svc-a so it gets svc-a's image tag")
-	assert.Equal(t, "build_from_sql", b.ValidationOp, "b is new (no prod) -> built from candidate SQL")
-	assert.Equal(t, "", b.ProdSchema, "build_from_sql nodes carry no prod_schema")
 }
 
 // TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff seeds a
@@ -747,4 +733,80 @@ func indexNodesByUniqueID(t *testing.T, nodes []map[string]any) map[string]map[s
 		out[id] = n
 	}
 	return out
+}
+
+// TestHandleParsedManifest_NewSeedRoutesToSeedBuild verifies that when the
+// changed-closure contains at least one dbt-seed node, handleParseOK transitions
+// the release to SeedBuilding and emits seed.build.requested:v1 (seeds only),
+// NOT validation.requested:v1.
+func TestHandleParsedManifest_NewSeedRoutesToSeedBuild(t *testing.T) {
+	deps, store := seedToParsing(t, "rel-seed-1", map[string]string{"core": "sha-core"})
+	// No prod snapshot → the seed is new/changed.
+
+	topo := release.Topology{
+		{UniqueID: "seed.core.fx", ServiceName: "core", NodeType: "dbt-seed", SchemaName: "analytics", TableName: "fx", ContentHash: "hash-fx-NEW"},
+		{UniqueID: "model.fin.report", ServiceName: "core", NodeType: "dbt-model", SchemaName: "fin", TableName: "report", ContentHash: "hash-rep-NEW",
+			UpstreamUniqueIDs: []string{"seed.core.fx"}},
+	}
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-seed-1", Status: "ok", Topology: topo,
+	}))
+
+	// Release must be in seed_building state.
+	r, err := store.GetRelease("rel-seed-1")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusSeedBuilding, r.Status())
+
+	// seed.build.requested:v1 must be emitted with only the seed node.
+	entry := findEntry(t, store, streams.SeedBuildRequestedV1)
+	var payload map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+
+	var seeds []map[string]any
+	require.NoError(t, json.Unmarshal(payload["seeds"], &seeds))
+	require.Len(t, seeds, 1, "only the seed node appears in the seeds array")
+	assert.Equal(t, "seed.core.fx", seeds[0]["unique_id"])
+
+	// validation.requested must NOT be emitted at this stage.
+	for _, e := range outboxEntries(store) {
+		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName,
+			"validation.requested must not be emitted when seeds need building first")
+	}
+}
+
+// TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation verifies that
+// when the changed-closure contains no dbt-seed nodes, the existing Part-A path
+// is taken: release transitions to Validating and validation.requested:v1 is
+// emitted directly.
+func TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation(t *testing.T) {
+	deps, store := seedToParsing(t, "rel-noseed-1", map[string]string{"svc-a": "sha-a"})
+
+	topo := release.Topology{
+		{UniqueID: "model.a", ServiceName: "svc-a", NodeType: "dbt-model", SchemaName: "sc", TableName: "a", ContentHash: "h-new"},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-noseed-1", Status: "ok", Topology: topo,
+	}))
+
+	// validation.requested:v1 must be emitted (Part-A path, unchanged).
+	var found bool
+	for _, e := range outboxEntries(store) {
+		if e.StreamName == streams.ValidationRequestedV1 {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "no new/changed seeds → validation.requested must be emitted directly")
+}
+
+// decodeSeedBuildSeeds is a helper that decodes the "seeds" field from a
+// seed.build.requested:v1 outbox entry's payload.
+func decodeSeedBuildSeeds(t *testing.T, entry *pkgoutbox.Entry) []map[string]any {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry.Payload, &raw))
+	var seeds []map[string]any
+	require.NoError(t, json.Unmarshal(raw["seeds"], &seeds))
+	return seeds
 }

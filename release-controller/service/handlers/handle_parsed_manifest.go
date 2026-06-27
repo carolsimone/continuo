@@ -136,8 +136,10 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 		return rejectUnbuildableCrossServiceUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
 	}
 
-	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
-		return fmt.Errorf("transition to validating: %w", err)
+	// Build changedClosureSet once (also used by validationNodesInOrder, Task A1).
+	changedClosureSet := make(map[string]bool, len(changedClosure))
+	for _, id := range changedClosure {
+		changedClosureSet[id] = true
 	}
 
 	// Nothing to validate: no candidate node is new or content-changed vs prod
@@ -147,6 +149,9 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	// release would block the queue indefinitely. Promote directly instead — an
 	// empty candidate diff trivially passes the gate.
 	if len(validationIDs) == 0 {
+		if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
+			return fmt.Errorf("transition to validating: %w", err)
+		}
 		if err := promoteToProduction(ctx, d, u, r, in.ReleaseID, now); err != nil {
 			return err
 		}
@@ -162,6 +167,20 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 		return nil
 	}
 
+	// New/changed seeds in the validation set must be built into the candidate
+	// schema (real data, team image) BEFORE validation, so dependent candidate
+	// models validate against the correct seed structure. Route to the seed-build
+	// leg; validation.requested is emitted later, on seed.build.completed.
+	seedIDs := newChangedSeedIDs(topo, validationIDs, changedClosureSet)
+	if len(seedIDs) > 0 {
+		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, topo, validationIDs, seedIDs, now)
+	}
+
+	// No new/changed seeds: Part A path (validate directly).
+	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
+		return fmt.Errorf("transition to validating: %w", err)
+	}
+
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
@@ -171,11 +190,6 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	inSet := make(map[string]bool, len(validationIDs))
 	for _, id := range validationIDs {
 		inSet[id] = true
-	}
-
-	changedClosureSet := make(map[string]bool, len(changedClosure))
-	for _, id := range changedClosure {
-		changedClosureSet[id] = true
 	}
 
 	payload, err := json.Marshal(map[string]any{
@@ -209,6 +223,98 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	}
 	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
 	d.Telemetry.ReleaseValidationRequested(ctx, in.ReleaseID, len(validationIDs))
+	return nil
+}
+
+// newChangedSeedIDs returns the validation-set node IDs that are dbt-seeds in the
+// changed-closure (new or content-changed). These cannot be adapter-validated
+// (no compiled SQL) and cannot be cloned (structure may have changed) — they are
+// built into the candidate schema by the seed-build leg. Sorted for determinism.
+func newChangedSeedIDs(topo release.Topology, validationIDs []string, changedClosureSet map[string]bool) []string {
+	inSet := make(map[string]bool, len(validationIDs))
+	for _, id := range validationIDs {
+		inSet[id] = true
+	}
+	var out []string
+	for _, n := range topo {
+		if inSet[n.UniqueID] && changedClosureSet[n.UniqueID] && n.NodeType == "dbt-seed" {
+			out = append(out, n.UniqueID)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// seedBuildNodesInOrder returns one map per seed node (sorted by seedIDs order)
+// carrying the fields executor-controller needs to build the seed into the
+// candidate schema with the team image. No candidate_sql_uri / validation_op:
+// seeds are built, not adapter-validated; no upstreams: seeds are roots.
+func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string]any {
+	byID := make(map[string]release.Node, len(topo))
+	for _, n := range topo {
+		byID[n.UniqueID] = n
+	}
+	out := make([]map[string]any, 0, len(seedIDs))
+	for _, id := range seedIDs {
+		n, ok := byID[id]
+		if !ok {
+			continue
+		}
+		out = append(out, map[string]any{
+			"unique_id":    n.UniqueID,
+			"service_name": n.ServiceName,
+			"node_type":    n.NodeType,
+			"schema_name":  n.SchemaName,
+			"table_name":   n.TableName,
+			"image_tag":    n.ImageTag,
+		})
+	}
+	return out
+}
+
+// emitSeedBuildRequested transitions the release to SeedBuilding (recording the
+// full candidate topology + validation IDs for the later validation.requested),
+// emits seed.build.requested:v1 with ONLY the seed nodes, and commits.
+func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release,
+	releaseID string, topo release.Topology, validationIDs, seedIDs []string, now time.Time) error {
+
+	if err := r.TransitionToSeedBuilding(topo, validationIDs, now); err != nil {
+		return fmt.Errorf("transition to seed building: %w", err)
+	}
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+
+	candidateSchema := "_candidate_" + sanitizeSchemaSuffix(releaseID)
+	payload, err := json.Marshal(map[string]any{
+		"release_id":        releaseID,
+		"mode":              "seed_build",
+		"candidate_schema":  candidateSchema,
+		"image_tags":        r.ImageTags(),
+		"seeds":             seedBuildNodesInOrder(topo, seedIDs),
+		"seed_ids_in_order": seedIDs,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		ID:            uuid.New(),
+		AggregateType: "release-controller",
+		AggregateID:   AggregateIDForRelease(releaseID),
+		EventType:     "seed_build_requested",
+		Payload:       payload,
+		StreamName:    streams.SeedBuildRequestedV1,
+		Status:        "pending",
+		MaxRetries:    3,
+		CreatedAt:     now,
+	}); err != nil {
+		return fmt.Errorf("outbox insert: %w", err)
+	}
+	if err := u.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
+	d.Telemetry.ReleaseSeedBuildRequested(ctx, releaseID, len(seedIDs))
 	return nil
 }
 
