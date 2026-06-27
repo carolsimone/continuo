@@ -161,3 +161,48 @@ func TestTopology_WithoutCandidateSQLURI_ClearsField(t *testing.T) {
 	// original must be unmodified
 	assert.NotEmpty(t, topo[0].CandidateSQLURI, "original topology must not be mutated")
 }
+
+var (
+	t0 = time.Unix(1, 0)
+	t1 = time.Unix(2, 0)
+)
+
+func newReceivedRelease(t *testing.T) *release.Release {
+	t.Helper()
+	return release.New("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", time.Unix(0, 0))
+}
+
+func newParsingRelease(t *testing.T) *release.Release {
+	t.Helper()
+	r := newReceivedRelease(t)
+	require.NoError(t, r.TransitionToParsing(t0))
+	return r
+}
+
+func TestTransitionToSeedBuilding_FromParsing(t *testing.T) {
+	r := newParsingRelease(t)
+	topo := release.Topology{{UniqueID: "seed.core.fx"}}
+	require.NoError(t, r.TransitionToSeedBuilding(topo, []string{"seed.core.fx"}, t0))
+	assert.Equal(t, release.StatusSeedBuilding, r.Status())
+	assert.Equal(t, topo, r.CandidateTopology())
+	assert.Equal(t, []string{"seed.core.fx"}, r.ValidationNodeIDs())
+}
+
+func TestTransitionFromSeedBuilding_ToValidating(t *testing.T) {
+	r := newParsingRelease(t)
+	require.NoError(t, r.TransitionToSeedBuilding(release.Topology{}, nil, t0))
+	require.NoError(t, r.TransitionFromSeedBuilding(t1))
+	assert.Equal(t, release.StatusValidating, r.Status())
+}
+
+func TestTransitionToSeedBuilding_RejectsWrongSource(t *testing.T) {
+	r := newReceivedRelease(t) // status=received
+	require.Error(t, r.TransitionToSeedBuilding(release.Topology{}, nil, t0))
+}
+
+func TestTransitionToRejected_FromSeedBuilding(t *testing.T) {
+	r := newParsingRelease(t)
+	require.NoError(t, r.TransitionToSeedBuilding(release.Topology{}, nil, t0))
+	require.NoError(t, r.TransitionToRejected("seed_build_failed", nil, t1))
+	assert.Equal(t, release.StatusRejected, r.Status())
+}

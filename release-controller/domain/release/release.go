@@ -8,12 +8,13 @@ import (
 type Status string
 
 const (
-	StatusReceived   Status = "received"
-	StatusParsing    Status = "parsing"
-	StatusValidating Status = "validating"
-	StatusPromoted   Status = "promoted"
-	StatusRejected   Status = "rejected"
-	StatusSuperseded Status = "superseded"
+	StatusReceived     Status = "received"
+	StatusParsing      Status = "parsing"
+	StatusSeedBuilding Status = "seed_building"
+	StatusValidating   Status = "validating"
+	StatusPromoted     Status = "promoted"
+	StatusRejected     Status = "rejected"
+	StatusSuperseded   Status = "superseded"
 )
 
 type Transition struct {
@@ -159,6 +160,35 @@ func (r *Release) TransitionToValidating(topology Topology, validationNodeIDs []
 	return nil
 }
 
+// TransitionToSeedBuilding moves a Parsing release into SeedBuilding and records
+// the candidate topology + validation node IDs (the same data Validating needs),
+// so the later seed.build.completed handler can emit validation.requested without
+// re-deriving them. Emitted when the changed-closure contains new/changed seeds
+// that must be built into the candidate schema before validation.
+func (r *Release) TransitionToSeedBuilding(topology Topology, validationNodeIDs []string, now time.Time) error {
+	if r.status != StatusParsing {
+		return fmt.Errorf("cannot transition to seed_building from %s", r.status)
+	}
+	r.status = StatusSeedBuilding
+	r.candidateTopology = topology
+	r.validationNodeIDs = validationNodeIDs
+	r.transitions = append(r.transitions, Transition{To: StatusSeedBuilding, At: now})
+	return nil
+}
+
+// TransitionFromSeedBuilding advances a SeedBuilding release to Validating once
+// candidate seeds are built. It stamps validatingStartedAt; the candidate
+// topology + validation IDs are already set by TransitionToSeedBuilding.
+func (r *Release) TransitionFromSeedBuilding(now time.Time) error {
+	if r.status != StatusSeedBuilding {
+		return fmt.Errorf("cannot transition to validating from %s", r.status)
+	}
+	r.status = StatusValidating
+	r.validatingStartedAt = &now
+	r.transitions = append(r.transitions, Transition{To: StatusValidating, At: now})
+	return nil
+}
+
 func (r *Release) TransitionToPromoted(now time.Time) error {
 	if r.status != StatusValidating {
 		return fmt.Errorf("cannot transition to promoted from %s", r.status)
@@ -170,7 +200,8 @@ func (r *Release) TransitionToPromoted(now time.Time) error {
 }
 
 func (r *Release) TransitionToRejected(reason string, failingNodes []string, now time.Time) error {
-	if r.status != StatusReceived && r.status != StatusParsing && r.status != StatusValidating {
+	if r.status != StatusReceived && r.status != StatusParsing &&
+		r.status != StatusSeedBuilding && r.status != StatusValidating {
 		return fmt.Errorf("cannot transition to rejected from %s", r.status)
 	}
 	r.status = StatusRejected
