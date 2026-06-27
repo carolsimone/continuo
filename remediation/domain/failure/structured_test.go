@@ -12,6 +12,44 @@ func TestParseStructuredResult(t *testing.T) {
 	}
 }
 
+func TestParseStructuredResult_StderrPreamble(t *testing.T) {
+	// The validation pod's uploaded object can carry a stderr/log preamble before
+	// the JSON contract. A strict whole-body unmarshal fails on it, which made the
+	// classifier degrade to the text log and emit "unknown" for genuine logic
+	// failures (issue #203). The parser must locate the JSON object instead.
+	raw := []byte("Running with dbt=1.12.0b1\n[WARNING]: deprecated config\n" +
+		`{"schema_version":1,"status":"error","message":"relation \"x\" does not exist","failures":0,"unique_id":"model.svc.x"}` + "\n")
+	sr, err := ParseStructuredResult(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sr.Status != "error" || sr.UniqueID != "model.svc.x" {
+		t.Fatalf("parsed = %+v", sr)
+	}
+}
+
+func TestParseStructuredResult_BraceInPreambleAndTrailing(t *testing.T) {
+	// A '{' in the preamble must not derail the parser, and trailing output after
+	// the JSON object must be ignored.
+	raw := []byte("log line with {a brace} that is not json\n" +
+		`{"status":"error","message":"compilation error in model","unique_id":"m.x"}` + "\ntrailing stderr noise\n")
+	sr, err := ParseStructuredResult(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sr.Status != "error" || sr.Message != "compilation error in model" {
+		t.Fatalf("parsed = %+v", sr)
+	}
+}
+
+func TestParseStructuredResult_NoJSONIsError(t *testing.T) {
+	// A body with no decodable structured object is still a real error so the
+	// caller falls back to the text log rather than misclassifying.
+	if _, err := ParseStructuredResult([]byte("just stderr, no json object here\n")); err == nil {
+		t.Fatal("expected error for body with no JSON object")
+	}
+}
+
 func TestClassifyWithStructured_FailIsTest(t *testing.T) {
 	sr := &StructuredResult{Status: "fail", Message: "Failure in test not_null_x (models/x.sql)", Failures: 14}
 	c := ClassifyWithStructured(FailureEvidence{}, sr, "")
