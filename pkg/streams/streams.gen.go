@@ -124,6 +124,8 @@ const (
 	ReleaseControllerSeedBuildCompleted = "release-controller-seed-build-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
+	// OrchestratorReleasePromotedSeedBuild — orchestrator consumer group on release.promoted:v1.
+	OrchestratorReleasePromotedSeedBuild = "orchestrator-release-promoted-seed-build"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
 	// RemediationAgentRemediationRequested — remediation-agent consumer group on remediation.requested:v1.

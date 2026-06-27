@@ -65,6 +65,7 @@ func PkgConstantsForTest() map[string]string {
 		"ExecutorSeedBuildNodeCompleted": ExecutorSeedBuildNodeCompleted,
 		"ReleaseControllerSeedBuildCompleted": ReleaseControllerSeedBuildCompleted,
 		"OrchestratorReleasePromoted": OrchestratorReleasePromoted,
+		"OrchestratorReleasePromotedSeedBuild": OrchestratorReleasePromotedSeedBuild,
 		"RemediationReleaseRejected": RemediationReleaseRejected,
 		"RemediationAgentRemediationRequested": RemediationAgentRemediationRequested,
 	}

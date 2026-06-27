@@ -261,6 +261,9 @@ streams:
       - service: orchestrator
         group: orchestrator-release-promoted
         const: OrchestratorReleasePromoted
+      - service: orchestrator
+        group: orchestrator-release-promoted-seed-build
+        const: OrchestratorReleasePromotedSeedBuild
 
   - name: release.rejected:v1
     const: ReleaseRejectedV1
