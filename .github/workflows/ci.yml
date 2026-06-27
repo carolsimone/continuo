@@ -5,9 +5,22 @@ on:
     branches:
       - main
 
+# A new push to a PR cancels any still-running build for that same PR. The single
+# self-hosted runner serializes jobs, so without this it would tie up finishing a
+# build for a commit that has already been superseded.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    # Fork-gated runner. Maintainer PRs (branches pushed inside this repo) run on
+    # the fast self-hosted box (8 vCPU / 16 GB, warm caches); fork PRs from
+    # outside contributors run on free GitHub-hosted (sandboxed) — never on the
+    # self-hosted box, which has prod-deploy reach. This expression is the routing
+    # default; the actual security boundary is the repo setting "Require approval
+    # for all outside collaborators", since a fork could otherwise edit this line.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'self-hosted' }}
     # Hard backstop against runaway runs. Without this the job inherits GitHub's
     # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
     # hours of Actions minutes. A healthy run is ~55 min; cap well below the
@@ -19,9 +32,12 @@ jobs:
 
     steps:
       - name: Free disk space
-        # ubuntu-latest ships ~30 GB of tools we never use (Android SDK, .NET,
-        # Haskell, large apt packages).  Removing them before any Docker work
-        # gives ~20 GB of headroom so kind can save image tarballs to /tmp.
+        # GitHub-hosted only (the fork-PR path). ubuntu-latest ships ~30 GB of
+        # tools we never use (Android SDK, .NET, Haskell, large apt packages);
+        # removing them before any Docker work gives ~20 GB of headroom so kind
+        # can save image tarballs to /tmp. The self-hosted box has ample disk and
+        # no passwordless sudo for these paths, so this step is skipped there.
+        if: ${{ github.event.pull_request.head.repo.fork }}
         run: |
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /usr/share/dotnet
@@ -146,6 +162,14 @@ jobs:
         # wire — @grpc/proto-loader reads this copy at boot, so any divergence
         # from state/proto/state/v1/state.proto must fail loudly here.
         run: diff state/proto/state/v1/state.proto ui-service/proto/state.proto
+
+      - name: Set up Node
+        # ui-service vitest runs directly on the runner. GitHub-hosted preinstalls
+        # Node, but the self-hosted box does not — set it up explicitly on both.
+        # Pinned to 20 to match ui-service's production image (node:20-alpine).
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
       - name: Test ui-service
         # Run vitest unit tests directly on the CI runner (devDependencies are
