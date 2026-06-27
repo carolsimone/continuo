@@ -551,6 +551,58 @@ func TestDeploymentsRepository_ListValidationByRelease_And_BlockedPending(t *tes
 	require.Equal(t, []string{"a1"}, byNode["a2"].ValidationCommand().UpstreamNodeIDs)
 }
 
+func validSeedBuildCmd(releaseID, nodeID string) command.ValidationDeployTask {
+	return command.ValidationDeployTask{
+		ReleaseID: releaseID, NodeID: nodeID,
+		ServiceName: "dbt", SchemaName: "public", TableName: nodeID,
+		NodeType: "dbt-seed", ImageTag: "sha-seed",
+		JobName: "dbt-seed-" + nodeID, CandidateSchema: "_candidate_" + releaseID,
+	}
+}
+
+func TestAdd_SeedBuildRow_RoundTrip(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	now := time.Now()
+	cmd := validSeedBuildCmd("rel-seed-1", "seed.orders")
+	dep := model.NewSeedBuildDeployment(cmd, nil, now)
+	require.NoError(t, repo.Add(context.Background(), dep))
+
+	// Verify the raw row persisted with mode=seed_build and job_params contain the command.
+	var (
+		mode      string
+		releaseID string
+		nodeID    string
+		jobParams []byte
+	)
+	require.NoError(t, db.QueryRow(
+		`SELECT mode, release_id, node_id, job_params FROM executor_deployments WHERE id=$1`, dep.ID(),
+	).Scan(&mode, &releaseID, &nodeID, &jobParams))
+	assert.Equal(t, "seed_build", mode)
+	assert.Equal(t, "rel-seed-1", releaseID)
+	assert.Equal(t, "seed.orders", nodeID)
+	assert.Contains(t, string(jobParams), "dbt-seed-seed.orders", "seed command serialized into job_params")
+
+	// Rehydrate via GetByReleaseNode (query uses mode filter — update expected) via GetDueBatch instead.
+	batch, err := repo.GetDueBatch(context.Background(), 10)
+	require.NoError(t, err)
+	var got *model.Deployment
+	for _, d := range batch {
+		if d.ID() == dep.ID() {
+			got = d
+			break
+		}
+	}
+	require.NotNil(t, got, "seed_build deployment must appear in GetDueBatch")
+	assert.Equal(t, model.ModeSeedBuild, got.Mode())
+	assert.Equal(t, cmd, got.ValidationCommand(), "command round-trips intact")
+	assert.Equal(t, "rel-seed-1", got.ReleaseID())
+	assert.Equal(t, "seed.orders", got.NodeID())
+	assert.Equal(t, model.StatusPending, got.Status())
+}
+
 func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()

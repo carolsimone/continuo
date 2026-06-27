@@ -31,6 +31,7 @@ type Mode string
 const (
 	ModeProduction Mode = "production"
 	ModeValidation Mode = "validation"
+	ModeSeedBuild  Mode = "seed_build"
 )
 
 // BackoffPolicy computes the delay before the next deploy attempt:
@@ -107,6 +108,23 @@ func NewValidationDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.U
 	}
 }
 
+// NewSeedBuildDeployment creates a seed-build deployment: a candidate seed built
+// with the team image (dbt seed) into the candidate schema. Seeds are dbt roots
+// (no in-leg upstreams), so the deployment always starts pending. It reuses the
+// ValidationDeployTask command shape and the outcome columns.
+func NewSeedBuildDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
+	return &Deployment{
+		id:                  uuid.New(),
+		messageProcessingID: msgProcID,
+		mode:                ModeSeedBuild,
+		validationCmd:       cmd,
+		status:              StatusPending,
+		maxRetries:          defaultMaxRetries,
+		nextAttemptAt:       now,
+		createdAt:           now,
+	}
+}
+
 // Reconstitute rebuilds a Deployment from persisted state. Adapters use this to
 // turn a stored row back into an aggregate.
 func Reconstitute(
@@ -168,12 +186,45 @@ func ReconstituteValidation(
 	}
 }
 
+// ReconstituteSeedBuild rebuilds a seed-build-mode Deployment from persisted
+// state. It mirrors ReconstituteValidation but sets mode: ModeSeedBuild.
+func ReconstituteSeedBuild(
+	id uuid.UUID,
+	msgProcID *uuid.UUID,
+	cmd command.ValidationDeployTask,
+	status Status,
+	retryCount, maxRetries int,
+	nextAttemptAt, createdAt time.Time,
+	deployedAt *time.Time,
+	errorMessage *string,
+	outcome, dbtLogURI, runResultsURI string,
+	outcomeAt *time.Time,
+) *Deployment {
+	return &Deployment{
+		id:                  id,
+		messageProcessingID: msgProcID,
+		mode:                ModeSeedBuild,
+		validationCmd:       cmd,
+		status:              status,
+		retryCount:          retryCount,
+		maxRetries:          maxRetries,
+		nextAttemptAt:       nextAttemptAt,
+		createdAt:           createdAt,
+		deployedAt:          deployedAt,
+		errorMessage:        errorMessage,
+		outcome:             outcome,
+		dbtLogURI:           dbtLogURI,
+		dbtRunResultsURI:    runResultsURI,
+		outcomeAt:           outcomeAt,
+	}
+}
+
 // IsDeployable reports whether the command carries the identity and target a
 // deploy needs. A row whose job_params could not be deserialized recovers only
 // its task/schedule identity, so this returns false and the dispatcher fails it
 // permanently rather than attempting a meaningless deploy.
 func (d *Deployment) IsDeployable() bool {
-	if d.mode == ModeValidation {
+	if d.mode == ModeValidation || d.mode == ModeSeedBuild {
 		return d.validationCmd.JobName != "" &&
 			d.validationCmd.NodeID != "" &&
 			d.validationCmd.ReleaseID != "" &&

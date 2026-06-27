@@ -260,6 +260,33 @@ func TestDeployment_Skip(t *testing.T) {
 	assert.Error(t, d.Skip("x", now), "Skip from skipped should error")
 }
 
+func TestNewSeedBuildDeployment_IsPendingValidationMode(t *testing.T) {
+	t0 := time.Now()
+	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "seed.a", ServiceName: "s",
+		SchemaName: "sc", TableName: "a", NodeType: "dbt-seed", ImageTag: "t", JobName: "j",
+		CandidateSchema: "_candidate_r"}
+	dep := model.NewSeedBuildDeployment(cmd, nil, t0)
+	assert.Equal(t, model.ModeSeedBuild, dep.Mode())
+	assert.Equal(t, model.StatusPending, dep.Status())
+	assert.Equal(t, "seed.a", dep.NodeID())
+}
+
+func TestReconstituteSeedBuild_RestoresMode(t *testing.T) {
+	now := time.Now()
+	cmd := command.ValidationDeployTask{ReleaseID: "r2", NodeID: "seed.b", JobName: "j2",
+		NodeType: "dbt-seed", ImageTag: "t2", CandidateSchema: "_candidate_r2"}
+	ts := now
+	d := model.ReconstituteSeedBuild(
+		uuid.New(), nil, cmd, model.StatusDeployed, 0, 3, now, now, &now, nil,
+		"ok", "s3://logs/seed", "run-results/seed.json", &ts,
+	)
+	assert.Equal(t, model.ModeSeedBuild, d.Mode())
+	assert.Equal(t, cmd, d.ValidationCommand())
+	assert.Equal(t, "r2", d.ReleaseID())
+	assert.Equal(t, "seed.b", d.NodeID())
+	assert.Equal(t, "ok", d.Outcome())
+}
+
 func TestBackoff_CapAndOverflow(t *testing.T) {
 	now := time.Now()
 	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 30 * time.Second}
