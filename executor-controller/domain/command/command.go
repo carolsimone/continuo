@@ -91,5 +91,6 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		CandidateSQLURI: c.CandidateSQLURI,
 		ValidationOp:    c.ValidationOp,
 		ProdSchema:      c.ProdSchema,
+		ManifestS3URI:   c.ManifestS3URI,
 	}
 }

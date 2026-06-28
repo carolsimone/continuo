@@ -394,6 +394,28 @@ func (d *Deployment) FailSeedBuild(reason string, now time.Time) error {
 	return nil
 }
 
+// FailCompile drives a compile deployment to a terminal failed state and
+// records outcome="failed" in one step. It is the compile equivalent of
+// FailSeedBuild: a compile row that fails BEFORE it is dispatched (not
+// deployable, or a permanent pre-deploy deployer error) is still pending yet
+// must reach a terminal "failed" outcome so the per-release compile aggregate
+// can be emitted.
+func (d *Deployment) FailCompile(reason string, now time.Time) error {
+	if d.mode != ModeCompile {
+		return fmt.Errorf("FailCompile called on non-compile deployment %s", d.id)
+	}
+	if d.outcomeAt != nil {
+		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
+	}
+	msg := reason
+	d.errorMessage = &msg
+	d.status = StatusFailed
+	d.outcome = "failed"
+	ts := now
+	d.outcomeAt = &ts
+	return nil
+}
+
 // Unblock transitions a gated validation deployment from blocked to pending so
 // the dispatcher can pick it up. Caller decides readiness (all in-set upstreams
 // succeeded); the aggregate only guards the source state.

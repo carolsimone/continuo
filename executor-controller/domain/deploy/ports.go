@@ -39,6 +39,10 @@ type ValidationJobSpec struct {
 	CandidateSQLURI string
 	ValidationOp    string
 	ProdSchema      string
+	// ManifestS3URI is the S3 destination where the compile Job uploads the
+	// compiled manifest.json. Populated only for mode=compile dispatches; empty
+	// for validation and seed-build dispatches.
+	ManifestS3URI string
 }
 
 // Deployer is the driven port the dispatcher uses to deploy work and observe
@@ -56,6 +60,11 @@ type Deployer interface {
 	// materializing into the candidate schema. Implementations must be
 	// idempotent by job name so a redelivery is a no-op.
 	DeploySeedBuild(ctx context.Context, spec ValidationJobSpec) error
+	// DeployCompile executes the mode=compile job described by spec. The job
+	// runs `dbt compile` in the team image (init container) and uploads the
+	// resulting manifest.json to S3 (main container). Implementations must be
+	// idempotent by job name so a redelivery is a no-op.
+	DeployCompile(ctx context.Context, spec ValidationJobSpec) error
 	// CountActive returns the number of deploys currently running.
 	CountActive(ctx context.Context) (int, error)
 }

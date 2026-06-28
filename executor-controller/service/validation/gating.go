@@ -63,6 +63,29 @@ func SettleSeedBuildNodeTerminal(
 	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, seedBuildEmit, releaseID, now)
 }
 
+// SettleCompileNodeTerminal settles a compile node after it reaches a terminal
+// outcome. Compile is a single root node (no in-leg upstreams) so there is no
+// gating to propagate; the settle is just the aggregate-emit gate under the
+// per-(release, compile) advisory lock. It emits compile.completed:v1 once the
+// mode=compile row for the release settles.
+func SettleCompileNodeTerminal(
+	ctx context.Context,
+	depRepo repository.DeploymentRepository,
+	outboxRepo outbox.Repository,
+	aggRepo repository.ValidationAggregateRepository,
+	releaseID, completedNodeID, outcome string,
+	now time.Time,
+) error {
+	if err := aggRepo.LockRelease(ctx, releaseID, compileEmit.mode); err != nil {
+		return fmt.Errorf("lock release for compile settle: %w", err)
+	}
+	// Compile is a single root — no gating to propagate, but kept for symmetry.
+	if err := propagateGating(ctx, depRepo, compileEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
+		return fmt.Errorf("propagate compile gating: %w", err)
+	}
+	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, compileEmit, releaseID, now)
+}
+
 // propagateGating advances the gated downstream rows after one node terminates.
 // On success: every blocked row whose in-set upstreams are now ALL satisfied
 // (outcome="ok") is Unblocked to pending. On failure: every blocked row

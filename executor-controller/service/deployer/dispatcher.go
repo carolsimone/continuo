@@ -189,6 +189,9 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	if dep.Mode() == model.ModeSeedBuild {
 		return d.dispatchSeedBuild(ctx, repo, outboxRepo, aggRepo, dep)
 	}
+	if dep.Mode() == model.ModeCompile {
+		return d.dispatchCompile(ctx, repo, outboxRepo, aggRepo, dep)
+	}
 
 	now := d.now()
 
@@ -362,6 +365,74 @@ func (d *Dispatcher) dispatchSeedBuild(ctx context.Context, repo repository.Depl
 // persisted before this call.
 func (d *Dispatcher) settleFailedSeedBuild(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
 	return validation.SettleSeedBuildNodeTerminal(
+		ctx, repo, outboxRepo, aggRepo,
+		dep.ReleaseID(), dep.NodeID(), "failed", now)
+}
+
+// dispatchCompile handles a mode=compile row. It is structurally identical to
+// dispatchSeedBuild: on success it marks the row deployed and emits a
+// node.deployed:v1 trigger so k8s-controller status-checks the compile Job; on
+// terminal failure it fails the row and settles the per-release compile
+// aggregate via SettleCompileNodeTerminal. Compile is a single root node (no
+// in-leg upstreams) so the gating propagation in SettleCompileNodeTerminal is a
+// no-op — but the aggregate gate fires to emit compile.completed:v1 (wired in
+// Task A7; currently a stub that runs the gate machinery with no stream emit).
+func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
+	now := d.now()
+
+	if !dep.IsDeployable() {
+		if err := dep.FailCompile("compile deployment not deployable", now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate. The gate reads
+		// PendingValidationCount and must see this node as terminal (its own
+		// uncommitted write is visible within this transaction); otherwise it
+		// counts the row as still pending, skips the emission, and no later
+		// compile.node.completed event will re-run the gate for this release.
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.settleFailedCompile(ctx, repo, outboxRepo, aggRepo, dep, now)
+	}
+
+	deployErr := d.deployer.DeployCompile(ctx, dep.ValidationCommand().ToValidationJobSpec())
+	if deployErr == nil {
+		if err := dep.MarkDeployed(now); err != nil {
+			return err
+		}
+		if err := d.writeValidationDeployedTrigger(ctx, outboxRepo, dep); err != nil {
+			return err
+		}
+		return repo.Save(ctx, dep)
+	}
+
+	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
+	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) { // terminal
+		d.logger.Error("Compile deploy terminal failure",
+			"deployment_id", dep.ID(), "release_id", dep.ReleaseID(), "node_id", dep.NodeID(), "cause", deployErr)
+		if err := dep.FailCompile(deployErr.Error(), now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate so PendingValidationCount
+		// sees this node as terminal (see the not-deployable branch above).
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.settleFailedCompile(ctx, repo, outboxRepo, aggRepo, dep, now)
+	}
+	d.logger.Warn("Compile deploy transient failure — rescheduling",
+		"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
+	return repo.Save(ctx, dep)
+}
+
+// settleFailedCompile settles a compile node that failed AT dispatch: it runs
+// the per-release aggregate-emit gate under the per-release advisory lock so the
+// aggregate can fire. Compile is a single root node so propagateGating is a
+// no-op, but the aggregate gate still runs (stream emit is wired in Task A7 via
+// SettleCompileNodeTerminal's TODO). The failed node's own outcome is already
+// persisted before this call.
+func (d *Dispatcher) settleFailedCompile(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
+	return validation.SettleCompileNodeTerminal(
 		ctx, repo, outboxRepo, aggRepo,
 		dep.ReleaseID(), dep.NodeID(), "failed", now)
 }

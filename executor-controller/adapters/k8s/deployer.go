@@ -96,6 +96,33 @@ func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJo
 	})
 }
 
+// DeployCompile maps the domain ValidationJobSpec to K8s compile job params
+// and creates the Job (idempotent by job name). The compile Job runs `dbt
+// compile` in the team image (init container) and uploads the resulting
+// manifest.json to S3 (main container). An unparseable node type is NOT an
+// error here — compile Jobs do not use NodeType (they compile the full service
+// manifest, not a single dbt node). We still forward the field for symmetry.
+func (d *Deployer) DeployCompile(ctx context.Context, spec deploy.ValidationJobSpec) error {
+	var nodeType pkg_model.NodeType
+	if spec.NodeType != "" {
+		var err error
+		nodeType, err = pkg_model.ParseNodeType(spec.NodeType)
+		if err != nil {
+			return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
+		}
+	}
+	return d.client.CreateCompileJob(ctx, ValidationJobParams{
+		JobName:       spec.JobName,
+		ReleaseID:     spec.ReleaseID,
+		NodeID:        spec.NodeID,
+		ServiceName:   spec.ServiceName,
+		NodeType:      nodeType,
+		ImageTag:      spec.ImageTag,
+		ManifestS3URI: spec.ManifestS3URI,
+		Namespace:     d.namespace,
+	})
+}
+
 // CountActive returns the number of executor dbt Jobs currently running.
 func (d *Deployer) CountActive(ctx context.Context) (int, error) {
 	return d.client.CountActiveJobs(ctx, d.namespace, dbtJobLabelSelector)

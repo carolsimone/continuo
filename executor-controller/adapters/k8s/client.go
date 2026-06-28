@@ -194,6 +194,10 @@ type ValidationJobParams struct {
 	CandidateSchema string
 	CandidateSQLURI string
 
+	// ManifestS3URI is the S3 destination where the compile Job uploads the
+	// compiled manifest.json. Populated only for mode=compile Jobs.
+	ManifestS3URI string
+
 	Namespace string
 }
 
@@ -475,6 +479,157 @@ func buildSeedBuildPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         p.NodeType.Command(p.TableName),
 				Env:             envVars,
+			},
+		},
+	}, nil
+}
+
+// CreateCompileJob builds and creates a mode=compile K8s Job (idempotent by
+// job name). The Job pod has a shared emptyDir volume "shared" mounted at
+// /shared in both containers:
+//   - initContainer "compile": team image runs `dbt compile --profiles-dir
+//     /project && cp .../manifest.json /shared/manifest.json` with the
+//     standard DBT_POSTGRES_* warehouse envs.
+//   - main container "upload": validation image (VALIDATION_IMAGE or
+//     <DOCKERHUB_USERNAME>/dbt-base:latest) runs `python /compile_uploader.py`
+//     with COMPILE_MANIFEST_PATH + MANIFEST_S3_URI + the S3 credential envs.
+//
+// The mode=compile label lets k8s-controller route its terminal status to
+// compile.node.completed:v1. release-id/node-id annotations carry the
+// authoritative identity. ImageTag must be non-empty — the team image must be
+// explicitly versioned.
+func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobParams) error {
+	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		c.logger.Info("Compile K8s job already exists, skipping creation",
+			"namespace", params.Namespace,
+			"job_name", params.JobName,
+		)
+		return nil
+	}
+
+	podSpec, err := buildCompilePodSpec(params)
+	if err != nil {
+		return fmt.Errorf("failed to build compile pod spec: %w", err)
+	}
+
+	backoffLimit := int32(0)
+	labels := map[string]string{
+		"app":          "dbt-job",
+		"mode":         "compile",
+		"release-id":   sanitizeK8sLabel(params.ReleaseID),
+		"node-id":      sanitizeK8sLabel(params.NodeID),
+		"service_name": params.ServiceName,
+	}
+	annotations := map[string]string{
+		pkg_model.AnnotationReleaseID: params.ReleaseID,
+		pkg_model.AnnotationNodeID:    params.NodeID,
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        params.JobName,
+			Namespace:   params.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+				Spec:       podSpec,
+			},
+		},
+	}
+
+	return c.CreateJob(ctx, job)
+}
+
+// buildCompilePodSpec constructs the PodSpec for a compile Job. The pod has:
+//   - a shared emptyDir volume "shared" mounted at /shared in both containers;
+//   - an initContainer "compile" using the team image (ImageTag must be
+//     non-empty) that runs `dbt compile --profiles-dir /project` and copies
+//     the resulting manifest.json into /shared/manifest.json;
+//   - a main container "upload" using the validation image (VALIDATION_IMAGE
+//     env, else <DOCKERHUB_USERNAME>/dbt-base:latest) that runs
+//     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH, MANIFEST_S3_URI,
+//     and the S3 credential envs forwarded from the executor-controller env.
+func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
+	if p.ImageTag == "" {
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from compile job params for service %s",
+			events.ErrPermanent, p.ServiceName)
+	}
+
+	// Team image for the init (compile) container.
+	teamImage := p.ServiceName + ":" + p.ImageTag
+	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+		teamImage = user + "/" + teamImage
+	}
+
+	// Validation image for the main (upload) container — mirrors buildValidationPodSpec.
+	uploadImage := os.Getenv("VALIDATION_IMAGE")
+	if uploadImage == "" {
+		uploadImage = "dbt-base:latest"
+		if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+			uploadImage = user + "/" + uploadImage
+		}
+	}
+
+	sharedMount := corev1.VolumeMount{Name: "shared", MountPath: "/shared"}
+
+	initEnvVars := []corev1.EnvVar{
+		// dbt profile connection — forwarded from executor-controller environment
+		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
+		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
+		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
+		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
+		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+	}
+
+	uploadEnvVars := []corev1.EnvVar{
+		{Name: "COMPILE_MANIFEST_PATH", Value: "/shared/manifest.json"},
+		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
+		// S3 credentials — forwarded from executor-controller environment.
+		{Name: "S3_ENDPOINT_URL", Value: os.Getenv("S3_ENDPOINT_URL")},
+		{Name: "S3_BUCKET", Value: os.Getenv("S3_BUCKET")},
+		{Name: "AWS_ACCESS_KEY_ID", Value: os.Getenv("AWS_ACCESS_KEY_ID")},
+		{Name: "AWS_SECRET_ACCESS_KEY", Value: os.Getenv("AWS_SECRET_ACCESS_KEY")},
+		{Name: "AWS_DEFAULT_REGION", Value: os.Getenv("AWS_DEFAULT_REGION")},
+	}
+
+	return corev1.PodSpec{
+		RestartPolicy: corev1.RestartPolicyNever,
+		Volumes: []corev1.Volume{
+			{
+				Name: "shared",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+		},
+		InitContainers: []corev1.Container{
+			{
+				Name:            "compile",
+				Image:           teamImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{
+					"sh", "-c",
+					"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json",
+				},
+				Env:          initEnvVars,
+				VolumeMounts: []corev1.VolumeMount{sharedMount},
+			},
+		},
+		Containers: []corev1.Container{
+			{
+				Name:            "upload",
+				Image:           uploadImage,
+				ImagePullPolicy: validationImagePullPolicy(),
+				Command:         []string{"python", "/compile_uploader.py"},
+				Env:             uploadEnvVars,
+				VolumeMounts:    []corev1.VolumeMount{sharedMount},
 			},
 		},
 	}, nil

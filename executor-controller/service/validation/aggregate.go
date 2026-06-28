@@ -36,6 +36,14 @@ var DedupNamespace = uuid.MustParse("e2a9c7d4-3f1b-4a8e-9c5d-1b6f0a2e8d7c")
 // IMMUTABLE for the same reason as DedupNamespace.
 var SeedBuildDedupNamespace = uuid.MustParse("b7f3d1a8-6c20-4e9d-8a14-2f5e0c9b4a13")
 
+// CompileDedupNamespace is the compile leg's equivalent of DedupNamespace.
+// It MUST be distinct from both DedupNamespace (validation) and
+// SeedBuildDedupNamespace (seed-build) so the three legs of one release derive
+// different outbox aggregate_ids (they share release_id); the consumer-side
+// dedup then treats the three legs' emissions independently.
+// IMMUTABLE for the same reason as DedupNamespace.
+var CompileDedupNamespace = uuid.MustParse("c4e2a1f7-8b3d-4c9e-a0f1-5d8b2c7e4a91")
+
 // emitConfig parametrizes the shared aggregate-emit gate per leg. The validation
 // and seed-build legs share one machinery and one sentinel table, differing only
 // in the stream/event they publish, the dedup namespace, the payload shape, and
@@ -59,6 +67,16 @@ var seedBuildEmit = emitConfig{
 	eventType:  "seed_build_completed",
 	namespace:  SeedBuildDedupNamespace,
 	mode:       model.ModeSeedBuild,
+}
+
+// compileEmit is the compile leg's emitConfig. It emits compile.completed:v1
+// once the per-release compile node settles, scoped to ModeCompile so it never
+// interferes with the co-existing validation/seed-build legs of the same release.
+var compileEmit = emitConfig{
+	streamName: streams.CompileCompletedV1,
+	eventType:  "compile_completed",
+	namespace:  CompileDedupNamespace,
+	mode:       model.ModeCompile,
 }
 
 // EmitValidationAggregateIfComplete emits validation.completed:v1 for releaseID
