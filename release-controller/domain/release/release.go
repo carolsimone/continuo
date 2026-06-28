@@ -9,6 +9,7 @@ type Status string
 
 const (
 	StatusReceived     Status = "received"
+	StatusCompiling    Status = "compiling"
 	StatusParsing      Status = "parsing"
 	StatusSeedBuilding Status = "seed_building"
 	StatusValidating   Status = "validating"
@@ -148,6 +149,30 @@ func (r *Release) TransitionToParsing(now time.Time) error {
 	return nil
 }
 
+// TransitionToCompiling moves a Received release into Compiling — the leg where
+// continuo runs the changed service's dbt compile to produce its manifest before
+// parsing. Replaces the direct Received->Parsing step at activation.
+func (r *Release) TransitionToCompiling(now time.Time) error {
+	if r.status != StatusReceived {
+		return fmt.Errorf("cannot transition to compiling from %s", r.status)
+	}
+	r.status = StatusCompiling
+	r.transitions = append(r.transitions, Transition{To: StatusCompiling, At: now})
+	return nil
+}
+
+// TransitionFromCompiling advances a Compiling release to Parsing once the
+// manifest has been compiled + uploaded.
+func (r *Release) TransitionFromCompiling(now time.Time) error {
+	if r.status != StatusCompiling {
+		return fmt.Errorf("cannot transition to parsing from %s", r.status)
+	}
+	r.status = StatusParsing
+	r.parsingStartedAt = &now
+	r.transitions = append(r.transitions, Transition{To: StatusParsing, At: now})
+	return nil
+}
+
 func (r *Release) TransitionToValidating(topology Topology, validationNodeIDs []string, now time.Time) error {
 	if r.status != StatusParsing {
 		return fmt.Errorf("cannot transition to validating from %s", r.status)
@@ -200,8 +225,8 @@ func (r *Release) TransitionToPromoted(now time.Time) error {
 }
 
 func (r *Release) TransitionToRejected(reason string, failingNodes []string, now time.Time) error {
-	if r.status != StatusReceived && r.status != StatusParsing &&
-		r.status != StatusSeedBuilding && r.status != StatusValidating {
+	if r.status != StatusReceived && r.status != StatusCompiling &&
+		r.status != StatusParsing && r.status != StatusSeedBuilding && r.status != StatusValidating {
 		return fmt.Errorf("cannot transition to rejected from %s", r.status)
 	}
 	r.status = StatusRejected

@@ -206,3 +206,28 @@ func TestTransitionToRejected_FromSeedBuilding(t *testing.T) {
 	require.NoError(t, r.TransitionToRejected("seed_build_failed", nil, t1))
 	assert.Equal(t, release.StatusRejected, r.Status())
 }
+
+func TestTransitionToCompiling_FromReceived(t *testing.T) {
+	r := newReceivedRelease(t)
+	require.NoError(t, r.TransitionToCompiling(t0))
+	assert.Equal(t, release.StatusCompiling, r.Status())
+}
+
+func TestTransitionFromCompiling_ToParsing(t *testing.T) {
+	r := newReceivedRelease(t)
+	require.NoError(t, r.TransitionToCompiling(t0))
+	require.NoError(t, r.TransitionFromCompiling(t1))
+	assert.Equal(t, release.StatusParsing, r.Status())
+}
+
+func TestTransitionToCompiling_RejectsWrongSource(t *testing.T) {
+	r := newParsingRelease(t) // already parsing
+	require.Error(t, r.TransitionToCompiling(t0))
+}
+
+func TestTransitionToRejected_FromCompiling(t *testing.T) {
+	r := newReceivedRelease(t)
+	require.NoError(t, r.TransitionToCompiling(t0))
+	require.NoError(t, r.TransitionToRejected("compile_failed", nil, t1))
+	assert.Equal(t, release.StatusRejected, r.Status())
+}
