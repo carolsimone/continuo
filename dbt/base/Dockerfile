@@ -33,6 +33,11 @@ COPY warehouse.py /warehouse.py
 COPY validation_result.py /validation_result.py
 COPY seed_validation_runner.py /seed_validation_runner.py
 
+# Compile-leg upload helper: the main container of the mode=compile Job reads the
+# manifest the team-image init container produced (COMPILE_MANIFEST_PATH) and
+# uploads it to S3 (MANIFEST_S3_URI). boto3 is already installed.
+COPY compile_uploader.py /compile_uploader.py
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
