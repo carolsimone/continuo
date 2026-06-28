@@ -42,6 +42,10 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	// Simulate the compile leg completing (Compiling → Parsing).
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: releaseID, Status: "ok",
+	}))
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
@@ -99,9 +103,9 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	assert.Equal(t, "rA", cp.ReleaseID())
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 3) // ReleaseRequested + ValidationRequested + ReleasePromoted
+	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ValidationRequested + ReleasePromoted
 
-	third := entries[2]
+	third := entries[3]
 	assert.Equal(t, streams.ReleasePromotedV1, third.StreamName)
 
 	// Assert the changed service's service_prod row carries the correct values.
@@ -136,9 +140,9 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 	assert.Equal(t, "", cp.ReleaseID())
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 3) // ReleaseRequested + ValidationRequested + ReleaseRejected
+	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ValidationRequested + ReleaseRejected
 
-	third := entries[2]
+	third := entries[3]
 	assert.Equal(t, streams.ReleaseRejectedV1, third.StreamName)
 }
 
@@ -181,9 +185,9 @@ func TestHandleValidationResult_MissingNodeInResults_Rejects(t *testing.T) {
 	assert.Contains(t, r.FailingNodes(), "b")
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 3)
+	require.Len(t, entries, 4)
 	var payload rejectedPayload
-	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
+	require.NoError(t, json.Unmarshal(entries[3].Payload, &payload))
 	assert.Empty(t, payload.FailingNodes, "no explicitly-failed nodes in this scenario")
 	assert.Equal(t, []string{"b"}, payload.MissingNodes, "b was expected but never reported")
 	assert.Equal(t, "ok", payload.AggregateStatus, "aggregate_status passed through unchanged")
@@ -205,6 +209,10 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	// Simulate the compile leg completing (Compiling → Parsing).
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: releaseID, Status: "ok",
+	}))
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{},
@@ -246,8 +254,8 @@ func TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance(t *
 	assert.Equal(t, release.StatusRejected, r.Status())
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 3) // ReleaseRequested + ValidationRequested + ReleaseRejected
-	rejEntry := entries[2]
+	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ValidationRequested + ReleaseRejected
+	rejEntry := entries[3]
 	assert.Equal(t, streams.ReleaseRejectedV1, rejEntry.StreamName)
 
 	// Decode top-level payload
@@ -314,9 +322,9 @@ func TestHandleValidationResult_AggregateStatusFailed_Rejects(t *testing.T) {
 	assert.Empty(t, r.FailingNodes(), "no explicitly-failed or missing nodes when only aggregate is bad")
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 3)
+	require.Len(t, entries, 4)
 	var payload rejectedPayload
-	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
+	require.NoError(t, json.Unmarshal(entries[3].Payload, &payload))
 	assert.Empty(t, payload.FailingNodes)
 	assert.Empty(t, payload.MissingNodes)
 	assert.Equal(t, "partial_failed", payload.AggregateStatus,
@@ -372,6 +380,9 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
 
 	// Candidate: a unchanged (hash "h"), b changed (hash "new").
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -393,8 +404,8 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 	}))
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 3) // ReleaseRequested + ValidationRequested + ReleasePromoted
-	promotedEntry := entries[2]
+	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ValidationRequested + ReleasePromoted
+	promotedEntry := entries[3]
 	require.Equal(t, streams.ReleasePromotedV1, promotedEntry.StreamName)
 
 	var p promotedPayload
@@ -426,6 +437,9 @@ func TestHandleValidationResult_Promote_EmitsOriginalFilePath(t *testing.T) {
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA", Status: "ok",
 		Topology: release.Topology{

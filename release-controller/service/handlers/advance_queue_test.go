@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAdvanceQueue_NoActive_PromotesNextReceivedToParsing(t *testing.T) {
+func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "my-bucket"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
@@ -22,34 +22,39 @@ func TestAdvanceQueue_NoActive_PromotesNextReceivedToParsing(t *testing.T) {
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, release.StatusParsing, r.Status())
+	assert.Equal(t, release.StatusCompiling, r.Status())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
-	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName)
+	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
 
 	var payload map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
 
-	// Must carry release_id and manifest_keys; must NOT carry manifests_uri.
+	// Must carry release_id, service, image_tag, bucket; must NOT carry manifest_keys.
 	var releaseID string
 	require.NoError(t, json.Unmarshal(payload["release_id"], &releaseID))
 	assert.Equal(t, "rA", releaseID)
 
+	var service string
+	require.NoError(t, json.Unmarshal(payload["service"], &service))
+	assert.Equal(t, "svc-a", service)
+
+	var imageTag string
+	require.NoError(t, json.Unmarshal(payload["image_tag"], &imageTag))
+	assert.Equal(t, "tag-a", imageTag)
+
+	var bucket string
+	require.NoError(t, json.Unmarshal(payload["bucket"], &bucket))
+	assert.Equal(t, "my-bucket", bucket)
+
+	_, hasManifestKeys := payload["manifest_keys"]
+	assert.False(t, hasManifestKeys, "manifest_keys must not appear in compile.requested payload")
 	_, hasManifestsURI := payload["manifests_uri"]
 	assert.False(t, hasManifestsURI, "manifests_uri must not appear in the payload")
-
-	var keys []struct {
-		Service string `json:"service"`
-		S3URI   string `json:"s3_uri"`
-	}
-	require.NoError(t, json.Unmarshal(payload["manifest_keys"], &keys))
-	require.Len(t, keys, 1, "only the changed service is present when no other services have service_prod pointers")
-	assert.Equal(t, "svc-a", keys[0].Service)
-	assert.Equal(t, "s3://my-bucket/svc-a/rA/manifest.json", keys[0].S3URI)
 }
 
-func TestAdvanceQueue_OtherServicesIncludedInManifestKeys(t *testing.T) {
+func TestAdvanceQueue_OtherServicesIncluded_ImageTagsAssembledOnRelease(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
 
@@ -64,27 +69,23 @@ func TestAdvanceQueue_OtherServicesIncludedInManifestKeys(t *testing.T) {
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
+	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
 
 	var payload map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
 
-	var keys []struct {
-		Service string `json:"service"`
-		S3URI   string `json:"s3_uri"`
-	}
-	require.NoError(t, json.Unmarshal(payload["manifest_keys"], &keys))
-	assert.Len(t, keys, 3, "changed service + two other services")
+	// compile.requested carries the changed service + its image_tag.
+	var service string
+	require.NoError(t, json.Unmarshal(payload["service"], &service))
+	assert.Equal(t, "svc-a", service)
 
-	byService := map[string]string{}
-	for _, k := range keys {
-		byService[k.Service] = k.S3URI
-	}
-	assert.Equal(t, "s3://bucket/svc-a/rNEW/manifest.json", byService["svc-a"], "changed service gets new canonical key")
-	assert.Equal(t, "s3://bucket/svc-b/rOLD1/manifest.json", byService["svc-b"], "other service keeps its stored key")
-	assert.Equal(t, "s3://bucket/svc-c/rOLD2/manifest.json", byService["svc-c"], "other service keeps its stored key")
+	var imageTag string
+	require.NoError(t, json.Unmarshal(payload["image_tag"], &imageTag))
+	assert.Equal(t, "tag-a-new", imageTag)
 
-	// Assembled image tags must be persisted on the release.
+	// Assembled image tags must already be persisted on the release (SetAssembledImageTags).
 	r, _ := store.GetRelease("rNEW")
+	assert.Equal(t, release.StatusCompiling, r.Status())
 	assert.Equal(t, map[string]string{
 		"svc-a": "tag-a-new",
 		"svc-b": "tag-b-old",
@@ -142,11 +143,11 @@ func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, release.StatusParsing, r.Status())
+	assert.Equal(t, release.StatusCompiling, r.Status())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
-	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName)
+	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
 }
 
 func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
@@ -184,6 +185,6 @@ func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rOLD, _ := store.GetRelease("rOLD")
 	rNEW, _ := store.GetRelease("rNEW")
-	assert.Equal(t, release.StatusParsing, rOLD.Status())
+	assert.Equal(t, release.StatusCompiling, rOLD.Status())
 	assert.Equal(t, release.StatusReceived, rNEW.Status())
 }

@@ -110,6 +110,13 @@ func main() {
 		}
 	}()
 
+	compileConsumer := redisadapter.NewCompileCompletedConsumer(rc, deps, logger)
+	go func() {
+		if err := compileConsumer.Start(ctx); err != nil && ctx.Err() == nil {
+			logger.Error("compile.completed consumer stopped", "error", err)
+		}
+	}()
+
 	// Retention loop: prune terminal releases older than the retention window on
 	// the janitor interval. current_prod is never pruned.
 	retentionDays, err := strconv.Atoi(cfg.RetentionDays)

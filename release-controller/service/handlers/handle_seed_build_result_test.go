@@ -54,10 +54,10 @@ func topoSeedOnly() release.Topology {
 }
 
 // putSeedBuildingRelease advances a release through ReceiveCandidate →
-// AdvanceQueue → HandleParsedManifest (which must emit seed.build.requested,
-// transitioning the release to SeedBuilding) and stores it in the fakeStore.
-// The topology must contain at least one dbt-seed (new, no prod snapshot) so
-// HandleParsedManifest routes to the seed-build leg.
+// AdvanceQueue → HandleCompileResult(ok) → HandleParsedManifest (which must
+// emit seed.build.requested, transitioning the release to SeedBuilding) and
+// stores it in the fakeStore. The topology must contain at least one dbt-seed
+// (new, no prod snapshot) so HandleParsedManifest routes to the seed-build leg.
 func putSeedBuildingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps, releaseID string, topo release.Topology) {
 	t.Helper()
 
@@ -69,6 +69,12 @@ func putSeedBuildingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps,
 		CommitSHA: "cafebabe",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx(t), deps))
+
+	// Simulate the compile leg completing successfully (Compiling → Parsing).
+	require.NoError(t, handlers.HandleCompileResult(ctx(t), deps, handlers.HandleCompileResultInput{
+		ReleaseID: releaseID,
+		Status:    "ok",
+	}))
 
 	require.NoError(t, handlers.HandleParsedManifest(ctx(t), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: releaseID,

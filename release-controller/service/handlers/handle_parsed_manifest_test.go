@@ -14,9 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// seedToParsing advances a release from Received to Parsing via ReceiveCandidate + AdvanceQueue.
-// Returns the deps and fakeStore for further assertions or handler calls.
-// seedToParsing advances a release from Received to Parsing via ReceiveCandidate + AdvanceQueue.
+// seedToParsing advances a release from Received to Parsing via
+// ReceiveCandidate → AdvanceQueue → HandleCompileResult(ok).
 // imageTags must have exactly one entry: {changedService: imageTag}. Returns the deps and fakeStore.
 func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
@@ -37,6 +36,11 @@ func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) 
 		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	// Simulate the compile leg completing (Compiling → Parsing).
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: releaseID,
+		Status:    "ok",
+	}))
 	return deps, store
 }
 
@@ -72,6 +76,11 @@ func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string
 		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	// Simulate the compile leg completing (Compiling → Parsing).
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: releaseID,
+		Status:    "ok",
+	}))
 	return deps, store
 }
 
@@ -100,13 +109,13 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 	assert.Contains(t, validIDs, "b")
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 2) // ReleaseRequested + ValidationRequested
+	require.Len(t, entries, 3) // CompileRequested + ReleaseRequested + ValidationRequested
 
-	second := entries[1]
-	assert.Equal(t, streams.ValidationRequestedV1, second.StreamName)
+	last := entries[2]
+	assert.Equal(t, streams.ValidationRequestedV1, last.StreamName)
 
 	var payload map[string]any
-	require.NoError(t, json.Unmarshal(second.Payload, &payload))
+	require.NoError(t, json.Unmarshal(last.Payload, &payload))
 	assert.Equal(t, "rA", payload["release_id"])
 	assert.Equal(t, "validation", payload["mode"])
 }
@@ -128,10 +137,10 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 	assert.Equal(t, "parse_failed", r.RejectReason())
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 2) // ReleaseRequested + ReleaseRejected
+	require.Len(t, entries, 3) // CompileRequested + ReleaseRequested + ReleaseRejected
 
-	second := entries[1]
-	assert.Equal(t, streams.ReleaseRejectedV1, second.StreamName)
+	last := entries[2]
+	assert.Equal(t, streams.ReleaseRejectedV1, last.StreamName)
 }
 
 // TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields asserts
@@ -167,8 +176,8 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 
 	// seed.build.requested:v1 must be emitted; validation.requested must not.
 	entries := outboxEntries(store)
-	require.Len(t, entries, 2) // ReleaseRequested + SeedBuildRequested
-	require.Equal(t, streams.SeedBuildRequestedV1, entries[1].StreamName)
+	require.Len(t, entries, 3) // CompileRequested + ReleaseRequested + SeedBuildRequested
+	require.Equal(t, streams.SeedBuildRequestedV1, entries[2].StreamName)
 
 	var payload struct {
 		ReleaseID string `json:"release_id"`
@@ -182,7 +191,7 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 			ImageTag    string `json:"image_tag"`
 		} `json:"seeds"`
 	}
-	require.NoError(t, json.Unmarshal(entries[1].Payload, &payload))
+	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
 
 	assert.Equal(t, "rA", payload.ReleaseID)
 	assert.Equal(t, "seed_build", payload.Mode)
@@ -433,6 +442,10 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	// Simulate the compile leg completing (Compiling → Parsing).
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
 
 	// a2 (svc-a) is new and depends on b_up (svc-b). b_up is present in the
 	// candidate topology — it is buildable and must not cause a rejection.
@@ -603,6 +616,10 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-alpha", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	// Simulate the compile leg completing (Compiling → Parsing).
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
 
 	// Seed prod with "a" (unchanged hash) so "a" is not in the changed set; "b"
 	// is the only changed node and its upstream "a" is present in the candidate
@@ -660,10 +677,10 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	// current_prod seeded to this release.
 	assert.Equal(t, "rBoot", store.GetCurrentProd().ReleaseID())
 
-	// Exactly ReleaseRequested + ReleasePromoted; NO validation_requested, NO rejection.
+	// Exactly CompileRequested + ReleaseRequested + ReleasePromoted; NO validation_requested, NO rejection.
 	entries := outboxEntries(store)
-	require.Len(t, entries, 2)
-	assert.Equal(t, streams.ReleasePromotedV1, entries[1].StreamName)
+	require.Len(t, entries, 3)
+	assert.Equal(t, streams.ReleasePromotedV1, entries[2].StreamName)
 
 	// Assert the changed service's service_prod row carries the correct values.
 	// Changed service is the lexically-first service ("svc-a", tag "sha-a").
