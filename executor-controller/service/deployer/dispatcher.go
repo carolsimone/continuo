@@ -375,8 +375,8 @@ func (d *Dispatcher) settleFailedSeedBuild(ctx context.Context, repo repository.
 // terminal failure it fails the row and settles the per-release compile
 // aggregate via SettleCompileNodeTerminal. Compile is a single root node (no
 // in-leg upstreams) so the gating propagation in SettleCompileNodeTerminal is a
-// no-op — but the aggregate gate fires to emit compile.completed:v1 (wired in
-// Task A7; currently a stub that runs the gate machinery with no stream emit).
+// no-op — but the aggregate gate fires and emits compile.completed:v1 via
+// compileEmit (wired in A6/A7).
 func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
 	now := d.now()
 
@@ -428,8 +428,8 @@ func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.Deploy
 // settleFailedCompile settles a compile node that failed AT dispatch: it runs
 // the per-release aggregate-emit gate under the per-release advisory lock so the
 // aggregate can fire. Compile is a single root node so propagateGating is a
-// no-op, but the aggregate gate still runs (stream emit is wired in Task A7 via
-// SettleCompileNodeTerminal's TODO). The failed node's own outcome is already
+// no-op, but the aggregate gate runs and emits compile.completed:v1 via
+// SettleCompileNodeTerminal. The failed node's own outcome is already
 // persisted before this call.
 func (d *Dispatcher) settleFailedCompile(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
 	return validation.SettleCompileNodeTerminal(

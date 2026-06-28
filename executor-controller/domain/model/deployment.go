@@ -324,13 +324,14 @@ func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason strin
 }
 
 // RecordOutcome attaches the terminal outcome to a previously dispatched
-// (status=deployed) validation OR seed-build deployment — both legs report a
-// per-node terminal status the same way (validation.node.completed:v1 /
-// seed.build.node.completed:v1). Production deployments announce their result
-// through a different path and are rejected. Only "ok" and "failed" are accepted.
+// (status=deployed) validation, seed-build, OR compile deployment — all three
+// legs report a per-node terminal status the same way (validation.node.completed:v1 /
+// seed.build.node.completed:v1 / compile.node.completed:v1). Production
+// deployments announce their result through a different path and are rejected.
+// Only "ok" and "failed" are accepted.
 func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI string, now time.Time) error {
-	if d.mode != ModeValidation && d.mode != ModeSeedBuild {
-		return fmt.Errorf("RecordOutcome called on non-validation/seed-build deployment %s", d.id)
+	if d.mode != ModeValidation && d.mode != ModeSeedBuild && d.mode != ModeCompile {
+		return fmt.Errorf("RecordOutcome called on non-validation/seed-build/compile deployment %s", d.id)
 	}
 	if d.outcomeAt != nil {
 		return fmt.Errorf("outcome already recorded for deployment %s", d.id)

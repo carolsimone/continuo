@@ -222,8 +222,13 @@ func emitAggregateIfComplete(
 // aggregate_status, candidate_schema}); the seed-build leg uses release-
 // controller's HandleSeedBuildResult contract ({release_id, status, per_node,
 // candidate_schema} — it reads only release_id + status, the rest is symmetry).
+// The compile leg shares the seed-build shape: release-controller's
+// HandleCompileResultInput reads release_id + status under the "status" key, so
+// compile MUST emit "status" (not "aggregate_status") — otherwise the consumer
+// decodes Status as "" and treats every compile (even a successful one) as a
+// failure, rejecting the release.
 func aggregatePayload(mode model.Mode, releaseID string, perNode []map[string]any, aggregate, candidateSchema string) map[string]any {
-	if mode == model.ModeSeedBuild {
+	if mode == model.ModeSeedBuild || mode == model.ModeCompile {
 		return map[string]any{
 			"release_id":       releaseID,
 			"status":           aggregate,

@@ -147,6 +147,8 @@ func main() {
 	validationNodeHandler := handlers.NewValidationNodeCompletedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
 	seedBuildNodeHandler := handlers.NewSeedBuildNodeCompletedHandler(logger)
+	compileReqHandler := handlers.NewCompileRequestedHandler(logger)
+	compileNodeHandler := handlers.NewCompileNodeCompletedHandler(logger)
 
 	queryBinding := redis.NewQueryModelBinding(uowFactory, queryHandler, logger)
 	retryBinding := redis.NewRetryTaskBinding(uowFactory, retryHandler, logger)
@@ -160,6 +162,10 @@ func main() {
 		uowFactory, seedBuildReqHandler, candidateSchemaCreator, logger)
 	seedBuildNodeBinding := redis.NewSeedBuildNodeCompletedBinding(
 		uowFactory, seedBuildNodeHandler, logger)
+	compileReqBinding := redis.NewCompileRequestedBinding(
+		uowFactory, compileReqHandler, logger)
+	compileNodeBinding := redis.NewCompileNodeCompletedBinding(
+		uowFactory, compileNodeHandler, logger)
 	validationCompletedTeardownBinding := redis.NewValidationCompletedTeardownBinding(
 		candidateSchemaCleaner, logger)
 
@@ -208,6 +214,18 @@ func main() {
 		seedBuildNodeBinding, logger)
 	logger.Info("seed.build.node.completed consumer initialized",
 		"stream", streams.SeedBuildNodeCompletedV1, "group", streams.ExecutorSeedBuildNodeCompleted)
+
+	compileReqConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.CompileRequestedV1, streams.ExecutorCompileRequested,
+		compileReqBinding, logger)
+	logger.Info("compile.requested consumer initialized",
+		"stream", streams.CompileRequestedV1, "group", streams.ExecutorCompileRequested)
+
+	compileNodeConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.CompileNodeCompletedV1, streams.ExecutorCompileNodeCompleted,
+		compileNodeBinding, logger)
+	logger.Info("compile.node.completed consumer initialized",
+		"stream", streams.CompileNodeCompletedV1, "group", streams.ExecutorCompileNodeCompleted)
 
 	validationCompletedTeardownConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.ValidationCompletedV1, streams.ExecutorValidationCompleted,
@@ -336,6 +354,16 @@ func main() {
 	go func() {
 		if err := seedBuildNodeConsumer.Start(ctx); err != nil {
 			logger.Error("seed.build.node.completed consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := compileReqConsumer.Start(ctx); err != nil {
+			logger.Error("compile.requested consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := compileNodeConsumer.Start(ctx); err != nil {
+			logger.Error("compile.node.completed consumer error", "error", err)
 		}
 	}()
 	go func() {
