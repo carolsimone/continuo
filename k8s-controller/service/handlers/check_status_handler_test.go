@@ -1361,6 +1361,168 @@ func TestHandle_SeedBuildModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
 	}
 }
 
+// TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly verifies
+// that a terminal Job carrying mode=compile emits exactly one
+// compile_node_completed row (stream=compile.node.completed:v1, outcome=ok on
+// Succeeded / outcome=failed on Failed, release_id/node_id from annotations)
+// and none of the three production task-status rows.
+func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		status          model.JobStatus
+		expectedOutcome string
+	}{
+		{"succeeded", model.JobStatusSucceeded, "ok"},
+		{"failed", model.JobStatusFailed, "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outbox := &fakeOutboxRepo{}
+			handler := newHandler(
+				&fakeK8sClient{
+					status: &model.K8sPodResult{Status: tc.status},
+					labels: map[string]string{"mode": "compile"},
+					annotations: map[string]string{
+						pkgmodel.AnnotationReleaseID: "rel-compile-1",
+						pkgmodel.AnnotationNodeID:    "compile-node-abc",
+					},
+				},
+				noopCancelledRepo(), 3,
+			)
+
+			cmd := command.CheckJobStatus{
+				TaskID:     uuid.New(),
+				ScheduleID: uuid.New(),
+				JobName:    "compile-node-abc",
+				MaxRetries: 3,
+			}
+
+			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+
+			entries := outbox.entries
+			if len(entries) != 1 {
+				t.Fatalf("expected exactly 1 outbox entry (compile_node_completed), got %d: %v", len(entries), eventTypesOf(entries))
+			}
+			entry := entries[0]
+			if entry.EventType != "compile_node_completed" {
+				t.Errorf("expected event_type=compile_node_completed, got %q", entry.EventType)
+			}
+			if entry.StreamName != streams.CompileNodeCompletedV1 {
+				t.Errorf("expected stream=%s, got %q", streams.CompileNodeCompletedV1, entry.StreamName)
+			}
+			if entry.AggregateType != "release" {
+				t.Errorf("expected aggregate_type=release, got %q", entry.AggregateType)
+			}
+
+			// Ensure no production rows leaked in.
+			for _, e := range entries {
+				switch e.EventType {
+				case "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+					t.Errorf("unexpected production outbox row %q for compile Job", e.EventType)
+				}
+			}
+
+			var payload map[string]any
+			if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal compile_node_completed: %v", err)
+			}
+			if payload["release_id"] != "rel-compile-1" {
+				t.Errorf("expected release_id=rel-compile-1, got %v", payload["release_id"])
+			}
+			if payload["node_id"] != "compile-node-abc" {
+				t.Errorf("expected node_id=compile-node-abc, got %v", payload["node_id"])
+			}
+			if payload["outcome"] != tc.expectedOutcome {
+				t.Errorf("expected outcome=%s, got %v", tc.expectedOutcome, payload["outcome"])
+			}
+		})
+	}
+}
+
+// TestHandle_CompileModeLabel_SuppressesRunningAnnouncement verifies a
+// mode=compile Job observed running for the first time writes only the
+// check_delayed re-poll and never a task_status_updated row (compile Jobs
+// use synthetic task IDs and carry no real task status, same as validation/seed_build).
+func TestHandle_CompileModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusRunning},
+			labels: map[string]string{"mode": "compile"},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		JobName:          "compile-node-1",
+		MaxRetries:       3,
+		RunningAnnounced: false,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	if len(entries) != 1 || entries[0].EventType != "check_delayed" {
+		t.Fatalf("expected 1 check_delayed entry, got %v", eventTypesOf(entries))
+	}
+	if findEntryByEventType(entries, "task_status_updated") != nil {
+		t.Error("compile Job must not emit task_status_updated RUNNING")
+	}
+}
+
+// TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll verifies a
+// still-running (or briefly Unknown) compile Job is re-polled: the handler
+// writes exactly one check.k8s:v1 re-poll ticket and no compile_node_completed
+// or production rows.
+func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T) {
+	for _, status := range []model.JobStatus{model.JobStatusRunning, model.JobStatusUnknown} {
+		outbox := &fakeOutboxRepo{}
+		handler := newHandler(
+			&fakeK8sClient{
+				status: &model.K8sPodResult{Status: status},
+				labels: map[string]string{"mode": "compile"},
+				annotations: map[string]string{
+					pkgmodel.AnnotationReleaseID: "rel-c-1",
+					pkgmodel.AnnotationNodeID:    "compile-1",
+				},
+			},
+			noopCancelledRepo(), 3,
+		)
+
+		cmd := command.CheckJobStatus{
+			TaskID:     uuid.New(),
+			ScheduleID: uuid.New(),
+			JobName:    "compile-node-1",
+			MaxRetries: 3,
+		}
+
+		if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			t.Fatalf("Handle (%s): %v", status, err)
+		}
+		entries := outbox.entries
+		if len(entries) != 1 {
+			t.Fatalf("status %s: expected exactly 1 check.k8s:v1 re-poll row, got %d", status, len(entries))
+		}
+		if entries[0].EventType != "check_delayed" {
+			t.Errorf("status %s: expected event_type=check_delayed, got %q", status, entries[0].EventType)
+		}
+		if entries[0].StreamName != streams.CheckK8sV1 {
+			t.Errorf("status %s: expected stream=%s, got %q", status, streams.CheckK8sV1, entries[0].StreamName)
+		}
+		for _, e := range entries {
+			switch e.EventType {
+			case "compile_node_completed", "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+				t.Errorf("status %s: unexpected non-repoll row %q for running compile Job", status, e.EventType)
+			}
+		}
+	}
+}
+
 // Compile-time interface checks.
 var _ ports.LogUploader = (*fakeLogUploader)(nil)
 var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)

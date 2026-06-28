@@ -33,6 +33,13 @@ var validationLabelNamespace = uuid.MustParse("a4f1c2e6-8b3d-4f7a-9c1e-2d6b5a0f3
 // Must never change — same dedup guarantee as validationLabelNamespace.
 var seedBuildLabelNamespace = uuid.MustParse("c7a3e1d9-5f2b-4e6c-8d0a-1b4f7c2e9a3b")
 
+// compileLabelNamespace is the immutable UUIDv5 namespace used to derive the
+// compile_node_completed outbox row's AggregateID from the release-id annotation.
+// Must never change — same dedup guarantee as validationLabelNamespace and
+// seedBuildLabelNamespace. Distinct from both to avoid aggregate-ID collisions
+// between compile, seed-build, and validation events for the same release.
+var compileLabelNamespace = uuid.MustParse("e2b8d4f6-1a3c-5e7f-9b0d-2c4e6a8f0b2d")
+
 // SplitValidationResult removes the structured-result sentinel block from a
 // validation pod log and returns the cleaned log plus the inner single-line
 // JSON. The sentinel markers are the shared cross-language contract in
@@ -150,6 +157,10 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 
 	if labels["mode"] == "seed_build" {
 		return h.handleSeedBuildTerminal(ctx, u, cmd, result, annotations)
+	}
+
+	if labels["mode"] == "compile" {
+		return h.handleCompileTerminal(ctx, u, cmd, result, annotations)
 	}
 
 	// Empty metadata means the Job is gone (deleted/TTL-reaped): GetJobMeta maps
@@ -329,6 +340,70 @@ func (h *CheckStatusHandler) handleSeedBuildTerminal(
 	}
 
 	h.logger.Info("Seed-build Job terminal — seed_build_node_completed outbox entry created",
+		"job_name", cmd.JobName,
+		"release_id", releaseID,
+		"node_id", nodeID,
+		"outcome", outcome,
+	)
+	return nil
+}
+
+// handleCompileTerminal emits the per-compile result for a Job carrying the
+// mode=compile label. It writes a single compile_node_completed outbox row
+// (→ compile.node.completed:v1) instead of the three production task-status rows.
+// release_id and node_id are read from the Job annotations (raw, unsanitized) so
+// they match the executor's executor_deployments key; outcome is derived from the
+// terminal status. Unknown status is not terminal — re-poll via the shared
+// check.k8s:v1 ticket. Running is handled before this function is reached.
+// Unlike validation, no stdout result block is parsed — the manifest went to S3
+// via the compile Job's upload container, so outcome is purely the Job's success/failure.
+// dbt_log_uri and run_results_uri may be empty.
+func (h *CheckStatusHandler) handleCompileTerminal(
+	ctx context.Context,
+	u uow.UnitOfWork,
+	cmd command.CheckJobStatus,
+	result *model.K8sPodResult,
+	annotations map[string]string,
+) error {
+	if result.Status == model.JobStatusUnknown {
+		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
+	}
+
+	_, logS3Key, runResultsS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
+
+	outcome := "failed"
+	if result.Status == model.JobStatusSucceeded {
+		outcome = "ok"
+	}
+
+	releaseID := annotations[pkgmodel.AnnotationReleaseID]
+	nodeID := annotations[pkgmodel.AnnotationNodeID]
+	payloadMap := map[string]any{
+		"release_id":  releaseID,
+		"node_id":     nodeID,
+		"outcome":     outcome,
+		"dbt_log_uri": logS3Key,
+	}
+	if runResultsS3Key != "" {
+		payloadMap["run_results_uri"] = runResultsS3Key
+	}
+	payload, err := json.Marshal(payloadMap)
+	if err != nil {
+		return fmt.Errorf("marshal compile_node_completed payload: %w", err)
+	}
+
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		AggregateType: "release",
+		AggregateID:   uuid.NewSHA1(compileLabelNamespace, []byte("release:"+releaseID)),
+		EventType:     "compile_node_completed",
+		Payload:       payload,
+		StreamName:    streams.CompileNodeCompletedV1,
+		MaxRetries:    3,
+	}); err != nil {
+		return fmt.Errorf("create compile_node_completed row: %w", err)
+	}
+
+	h.logger.Info("Compile Job terminal — compile_node_completed outbox entry created",
 		"job_name", cmd.JobName,
 		"release_id", releaseID,
 		"node_id", nodeID,
@@ -538,7 +613,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 		if err != nil {
 			return fmt.Errorf("fetch job meta for running announcement: %w", err)
 		}
-		if labels["mode"] != "validation" && labels["mode"] != "seed_build" {
+		if labels["mode"] != "validation" && labels["mode"] != "seed_build" && labels["mode"] != "compile" {
 			if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "RUNNING", cmd.RetryCount); err != nil {
 				return fmt.Errorf("task_status_updated RUNNING: %w", err)
 			}
