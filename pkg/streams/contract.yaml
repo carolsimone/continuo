@@ -253,6 +253,33 @@ streams:
         group: release-controller-seed-build-completed
         const: ReleaseControllerSeedBuildCompleted
 
+  - name: compile.requested:v1
+    const: CompileRequestedV1
+    description: release-controller requests the changed service's dbt compile; executor dispatches the compile Job.
+    producers: [release-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-compile-requested
+        const: ExecutorCompileRequested
+
+  - name: compile.node.completed:v1
+    const: CompileNodeCompletedV1
+    description: compile Job terminal status from k8s-controller back to executor-controller.
+    producers: [k8s-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-compile-node-completed
+        const: ExecutorCompileNodeCompleted
+
+  - name: compile.completed:v1
+    const: CompileCompletedV1
+    description: aggregated compile result from executor-controller back to release-controller.
+    producers: [executor-controller]
+    consumers:
+      - service: release-controller
+        group: release-controller-compile-completed
+        const: ReleaseControllerCompileCompleted
+
   - name: release.promoted:v1
     const: ReleasePromotedV1
     description: Release promoted to production; orchestrator atomically replaces its Neo4j topology.

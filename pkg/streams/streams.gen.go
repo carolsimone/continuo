@@ -54,6 +54,12 @@ const (
 	SeedBuildNodeCompletedV1 = "seed.build.node.completed:v1"
 	// SeedBuildCompletedV1 — aggregated candidate seed-build result from executor-controller back to release-controller.
 	SeedBuildCompletedV1 = "seed.build.completed:v1"
+	// CompileRequestedV1 — release-controller requests the changed service's dbt compile; executor dispatches the compile Job.
+	CompileRequestedV1 = "compile.requested:v1"
+	// CompileNodeCompletedV1 — compile Job terminal status from k8s-controller back to executor-controller.
+	CompileNodeCompletedV1 = "compile.node.completed:v1"
+	// CompileCompletedV1 — aggregated compile result from executor-controller back to release-controller.
+	CompileCompletedV1 = "compile.completed:v1"
 	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
 	ReleasePromotedV1 = "release.promoted:v1"
 	// ReleaseRejectedV1 — Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
@@ -122,6 +128,12 @@ const (
 	ExecutorSeedBuildNodeCompleted = "executor-seed-build-node-completed"
 	// ReleaseControllerSeedBuildCompleted — release-controller consumer group on seed.build.completed:v1.
 	ReleaseControllerSeedBuildCompleted = "release-controller-seed-build-completed"
+	// ExecutorCompileRequested — executor-controller consumer group on compile.requested:v1.
+	ExecutorCompileRequested = "executor-compile-requested"
+	// ExecutorCompileNodeCompleted — executor-controller consumer group on compile.node.completed:v1.
+	ExecutorCompileNodeCompleted = "executor-compile-node-completed"
+	// ReleaseControllerCompileCompleted — release-controller consumer group on compile.completed:v1.
+	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// OrchestratorReleasePromotedSeedBuild — orchestrator consumer group on release.promoted:v1.
