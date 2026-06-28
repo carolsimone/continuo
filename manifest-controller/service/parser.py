@@ -104,6 +104,9 @@ def parse_manifest(manifest_path: str, manifest_version: str, image_tag: str = "
             continue
 
         tags = node.get("tags", [])
+        if "local_stub" in tags:
+            logger.info("Skipping local_stub node", extra={"node_id": node_id})
+            continue
         default_schedule = _RESOURCE_TYPE_DEFAULT_SCHEDULE.get(resource_type)
         if not tags and default_schedule is None:
             logger.warning("Skipping node missing required tags (schedule)",
