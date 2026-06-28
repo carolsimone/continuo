@@ -51,6 +51,7 @@ type ValidationDeployTask struct {
 	ValidationOp     string   `json:"validation_op"`
 	ProdSchema       string   `json:"prod_schema"`
 	UpstreamNodeIDs  []string `json:"upstream_node_ids"`
+	ManifestS3URI    string   `json:"manifest_s3_uri"`
 }
 
 func (ValidationDeployTask) isCommand() {}

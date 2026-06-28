@@ -62,7 +62,7 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 		releaseID, nodeID  *string
 		err                error
 	)
-	if d.Mode() == model.ModeValidation || d.Mode() == model.ModeSeedBuild {
+	if d.Mode() == model.ModeValidation || d.Mode() == model.ModeSeedBuild || d.Mode() == model.ModeCompile {
 		vcmd := d.ValidationCommand()
 		if jobParams, err = json.Marshal(vcmd); err != nil {
 			return fmt.Errorf("marshal validation deploy command: %w", err)
@@ -250,6 +250,24 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 			}
 		}
 		return model.ReconstituteSeedBuild(
+			row.ID, row.MessageProcessingID, vcmd, model.Status(row.Status),
+			row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
+			row.DeployedAt, row.ErrorMessage,
+			derefStr(row.Outcome), derefStr(row.DBTLogURI), derefStr(row.RunResultsURI), row.OutcomeAt,
+		)
+	}
+
+	if row.Mode == string(model.ModeCompile) {
+		var vcmd command.ValidationDeployTask
+		if err := json.Unmarshal(row.JobParams, &vcmd); err != nil {
+			r.logger.Error("compile deployment job_params unparseable — recovering identity from columns",
+				"deployment_id", row.ID, "error", err)
+			vcmd = command.ValidationDeployTask{
+				ReleaseID: derefStr(row.ReleaseID),
+				NodeID:    derefStr(row.NodeID),
+			}
+		}
+		return model.ReconstituteCompile(
 			row.ID, row.MessageProcessingID, vcmd, model.Status(row.Status),
 			row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 			row.DeployedAt, row.ErrorMessage,

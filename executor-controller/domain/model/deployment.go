@@ -32,6 +32,7 @@ const (
 	ModeProduction Mode = "production"
 	ModeValidation Mode = "validation"
 	ModeSeedBuild  Mode = "seed_build"
+	ModeCompile    Mode = "compile"
 )
 
 // BackoffPolicy computes the delay before the next deploy attempt:
@@ -117,6 +118,23 @@ func NewSeedBuildDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UU
 		id:                  uuid.New(),
 		messageProcessingID: msgProcID,
 		mode:                ModeSeedBuild,
+		validationCmd:       cmd,
+		status:              StatusPending,
+		maxRetries:          defaultMaxRetries,
+		nextAttemptAt:       now,
+		createdAt:           now,
+	}
+}
+
+// NewCompileDeployment creates a compile deployment: the changed service's dbt
+// manifest is compiled into S3 before validation runs. Compile is a single root
+// node (no intra-service upstreams), so the deployment always starts pending.
+// It reuses the ValidationDeployTask command shape and the outcome columns.
+func NewCompileDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
+	return &Deployment{
+		id:                  uuid.New(),
+		messageProcessingID: msgProcID,
+		mode:                ModeCompile,
 		validationCmd:       cmd,
 		status:              StatusPending,
 		maxRetries:          defaultMaxRetries,
@@ -219,6 +237,39 @@ func ReconstituteSeedBuild(
 	}
 }
 
+// ReconstituteCompile rebuilds a compile-mode Deployment from persisted state.
+// It mirrors ReconstituteSeedBuild but sets mode: ModeCompile.
+func ReconstituteCompile(
+	id uuid.UUID,
+	msgProcID *uuid.UUID,
+	cmd command.ValidationDeployTask,
+	status Status,
+	retryCount, maxRetries int,
+	nextAttemptAt, createdAt time.Time,
+	deployedAt *time.Time,
+	errorMessage *string,
+	outcome, dbtLogURI, runResultsURI string,
+	outcomeAt *time.Time,
+) *Deployment {
+	return &Deployment{
+		id:                  id,
+		messageProcessingID: msgProcID,
+		mode:                ModeCompile,
+		validationCmd:       cmd,
+		status:              status,
+		retryCount:          retryCount,
+		maxRetries:          maxRetries,
+		nextAttemptAt:       nextAttemptAt,
+		createdAt:           createdAt,
+		deployedAt:          deployedAt,
+		errorMessage:        errorMessage,
+		outcome:             outcome,
+		dbtLogURI:           dbtLogURI,
+		dbtRunResultsURI:    runResultsURI,
+		outcomeAt:           outcomeAt,
+	}
+}
+
 // IsDeployable reports whether the command carries the identity and target a
 // deploy needs. A row whose job_params could not be deserialized recovers only
 // its task/schedule identity, so this returns false and the dispatcher fails it
@@ -229,6 +280,14 @@ func (d *Deployment) IsDeployable() bool {
 			d.validationCmd.NodeID != "" &&
 			d.validationCmd.ReleaseID != "" &&
 			d.validationCmd.NodeType != "" &&
+			d.validationCmd.ImageTag != ""
+	}
+	if d.mode == ModeCompile {
+		// Compile jobs have no NodeType — they compile the full manifest for a
+		// service, not a single dbt node. Only identity + image are required.
+		return d.validationCmd.JobName != "" &&
+			d.validationCmd.NodeID != "" &&
+			d.validationCmd.ReleaseID != "" &&
 			d.validationCmd.ImageTag != ""
 	}
 	return d.command.JobName != "" &&
