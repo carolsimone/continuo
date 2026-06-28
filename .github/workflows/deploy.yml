@@ -153,7 +153,12 @@ jobs:
   build-publish:
     if: needs.detect-changes.outputs.release == 'true'
     needs: detect-changes
-    runs-on: ubuntu-latest
+    # Image builds run on the self-hosted runner for its warm Docker layer cache.
+    # detect-changes (path detection) and deploy (SSH helm to prod) stay on
+    # GitHub-hosted: they gain nothing from the cache, and keeping the lightweight
+    # jobs off the box avoids needlessly coupling them to its availability. Only
+    # triggered by push/tags/dispatch (trusted), so no fork exposure.
+    runs-on: self-hosted
     permissions:
       contents: read
     strategy:

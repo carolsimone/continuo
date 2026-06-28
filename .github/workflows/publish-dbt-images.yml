@@ -10,7 +10,9 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    # Self-hosted for the warm Docker layer cache (builds + pushes the dbt service
+    # images). Manual ad-hoc workflow_dispatch only (trusted), so no fork exposure.
+    runs-on: self-hosted
 
     permissions:
       contents: read
