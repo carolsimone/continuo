@@ -153,12 +153,13 @@ jobs:
   build-publish:
     if: needs.detect-changes.outputs.release == 'true'
     needs: detect-changes
-    # Image builds run on the self-hosted runner for its warm Docker layer cache.
-    # detect-changes (path detection) and deploy (SSH helm to prod) stay on
-    # GitHub-hosted: they gain nothing from the cache, and keeping the lightweight
-    # jobs off the box avoids needlessly coupling them to its availability. Only
-    # triggered by push/tags/dispatch (trusted), so no fork exposure.
-    runs-on: self-hosted
+    # GitHub-hosted on purpose: this is a matrix (one job per service) that runs
+    # in parallel here for free. On the single self-hosted runner the jobs
+    # serialize (one agent = one job at a time) and queue behind PR CI — measured
+    # ~6x slower for a release — so the warm-cache gain doesn't pay off. ci.yml and
+    # the single-job publish workflows stay self-hosted; only this parallel matrix
+    # belongs on hosted.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     strategy:
