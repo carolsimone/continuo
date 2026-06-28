@@ -40,3 +40,13 @@ def test_missing_env_exits_nonzero(monkeypatch):
     with pytest.raises(SystemExit) as e:
         compile_uploader.main()
     assert e.value.code != 0
+
+
+def test_malformed_manifest_s3_uri_exits_nonzero(tmp_path, monkeypatch):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"nodes":{}}')
+    monkeypatch.setenv("COMPILE_MANIFEST_PATH", str(manifest))
+    monkeypatch.setenv("MANIFEST_S3_URI", "not-an-s3-uri")
+    with pytest.raises(SystemExit) as e:
+        compile_uploader.main()
+    assert e.value.code != 0

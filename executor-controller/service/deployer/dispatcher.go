@@ -455,19 +455,21 @@ func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo 
 }
 
 // writeValidationDeployedTrigger emits the node.deployed:v1 trigger after a
-// validation Job is created. k8s-controller is event-driven and never polls, so
-// without this row the validation Job would never be status-checked and the
-// release would hang in "validating". This is NOT the production success path:
-// it writes only the node_deployed check trigger and skips the production-only
-// task_status_updated / RUNNING announcement (validation rows have no real
-// task/schedule, so there is no UI task status to advance). The per-node
-// terminal outcome still arrives later via validation.node.completed:v1.
+// validation, seed-build, or compile Job is created. k8s-controller is
+// event-driven and never polls, so without this row the Job would never be
+// status-checked and the release would hang. This is NOT the production success
+// path: it writes only the node_deployed check trigger and skips the
+// production-only task_status_updated / RUNNING announcement (these rows have
+// no real task/schedule, so there is no UI task status to advance). The
+// per-node terminal outcome still arrives later via the mode-specific
+// node.completed:v1 event.
 //
 // The trigger carries the deterministic synthetic task/schedule UUIDs derived
-// from (release_id, node_id). They are inert carriers for validation: the
-// k8s-controller routes the resulting check by the Job's mode=validation label,
-// not by these IDs — they only need to be valid UUIDs so ParseNodeDeployed
-// accepts the message, and to satisfy the outbox AggregateID.
+// from (release_id, node_id). They are inert carriers: k8s-controller routes
+// the resulting check by the Job's own mode label (mode=validation,
+// mode=seed_build, or mode=compile), not by these IDs — they only need to be
+// valid UUIDs so ParseNodeDeployed accepts the message, and to satisfy the
+// outbox AggregateID.
 func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	vc := dep.ValidationCommand()
 	taskID, scheduleID := model.ValidationSyntheticIDs(dep.ReleaseID(), dep.NodeID())

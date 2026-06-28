@@ -33,7 +33,11 @@ def _require(name: str) -> str:
 
 def main() -> None:
     path = _require("COMPILE_MANIFEST_PATH")
-    bucket, key = _parse_s3_uri(_require("MANIFEST_S3_URI"))
+    try:
+        bucket, key = _parse_s3_uri(_require("MANIFEST_S3_URI"))
+    except ValueError as exc:
+        print(f"compile_uploader: invalid MANIFEST_S3_URI: {exc}", file=sys.stderr)
+        sys.exit(2)
     try:
         with open(path, "rb") as f:
             body = f.read()

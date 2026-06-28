@@ -458,18 +458,18 @@ func (d *Deployment) MessageProcessingID() *uuid.UUID { return d.messageProcessi
 func (d *Deployment) Mode() Mode                      { return d.mode }
 func (d *Deployment) Command() command.DeployTask     { return d.command }
 
-// ValidationCommand is meaningful only when Mode() == ModeValidation or
-// ModeSeedBuild; for production deployments it returns the zero ValidationDeployTask.
+// ValidationCommand is meaningful only when Mode() == ModeValidation,
+// ModeSeedBuild, or ModeCompile; for production deployments it returns the zero ValidationDeployTask.
 func (d *Deployment) ValidationCommand() command.ValidationDeployTask {
 	return d.validationCmd
 }
 
-// ReleaseID is meaningful only when Mode() == ModeValidation; for production
-// deployments it returns "".
+// ReleaseID is meaningful only when Mode() == ModeValidation, ModeSeedBuild,
+// or ModeCompile; for production deployments it returns "".
 func (d *Deployment) ReleaseID() string { return d.validationCmd.ReleaseID }
 
-// NodeID is meaningful only when Mode() == ModeValidation; for production
-// deployments it returns "".
+// NodeID is meaningful only when Mode() == ModeValidation, ModeSeedBuild,
+// or ModeCompile; for production deployments it returns "".
 func (d *Deployment) NodeID() string           { return d.validationCmd.NodeID }
 func (d *Deployment) Status() Status           { return d.status }
 func (d *Deployment) RetryCount() int          { return d.retryCount }
