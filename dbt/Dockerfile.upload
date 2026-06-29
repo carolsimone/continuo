@@ -14,5 +14,6 @@ COPY dbt_upload/ ./dbt_upload/
 COPY targets.yaml .
 # Kept so integration tests can be run via: docker exec dbt-compile-and-load uv run --with pytest pytest tests/
 COPY tests/ ./tests/
+COPY manifest-uploader/compile_uploader.py /compile_uploader.py
 
 CMD ["tail", "-f", "/dev/null"]

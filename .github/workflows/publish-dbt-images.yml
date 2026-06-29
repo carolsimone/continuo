@@ -40,6 +40,15 @@ jobs:
           cache-from: type=gha,scope=dbt-base
           cache-to: type=gha,mode=max,scope=dbt-base
 
+      - name: Build and push manifest-uploader
+        uses: docker/build-push-action@v6
+        with:
+          context: dbt/manifest-uploader
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/manifest-uploader:latest
+          cache-from: type=gha,scope=manifest-uploader
+          cache-to: type=gha,mode=max,scope=manifest-uploader
+
       # One step per service. Image name = DOCKERHUB_USERNAME/service-N:latest,
       # matching the dbt project name and params.ServiceName in executor-controller.
       - name: Build and push service-1

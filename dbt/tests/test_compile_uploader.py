@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from base import compile_uploader  # pythonpath="." in tests (pyproject)
+import compile_uploader  # pythonpath="manifest-uploader" in pyproject
 
 
 def test_uploads_file_to_parsed_key(tmp_path, monkeypatch):
