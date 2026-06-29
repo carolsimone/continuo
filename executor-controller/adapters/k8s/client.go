@@ -552,10 +552,10 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //   - an initContainer "compile" using the team image (ImageTag must be
 //     non-empty) that runs `dbt compile --profiles-dir /project` and copies
 //     the resulting manifest.json into /shared/manifest.json;
-//   - a main container "upload" using the validation image (VALIDATION_IMAGE
-//     env, else <DOCKERHUB_USERNAME>/dbt-base:latest) that runs
-//     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH, MANIFEST_S3_URI,
-//     and the S3 credential envs forwarded from the executor-controller env.
+//   - a main container "upload" using a minimal python+boto3 image (no dbt;
+//     COMPILE_UPLOAD_IMAGE env, else <DOCKERHUB_USERNAME>/manifest-uploader:latest)
+//     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
+//     MANIFEST_S3_URI, and the S3 credential envs forwarded from the executor-controller env.
 func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from compile job params for service %s",

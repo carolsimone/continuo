@@ -492,13 +492,6 @@ type serviceInfo struct {
 	nodes    []manifestNode
 }
 
-// baselineManifestKey returns the S3 object key for a service's baseline manifest:
-//
-//	<service>/e2e-baseline/manifest.json
-func baselineManifestKey(service string) string {
-	return fmt.Sprintf("%s/%s/manifest.json", service, e2eBaselineReleaseID)
-}
-
 // canonicalManifestS3URI returns the full s3:// URI for a per-release manifest,
 // mirroring the CanonicalManifestKey convention in release-controller.
 func canonicalManifestS3URI(service, releaseID string) string {

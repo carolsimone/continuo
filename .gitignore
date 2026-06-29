@@ -75,3 +75,13 @@ deploy/infra/values.secret.yaml
 
 # e2e per-service image tags (written by setup.sh / provision-k8s-test-env.sh)
 tests/e2e/.image-tags
+
+# Python bytecode / test cache (never commit)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Local agent/tooling artifacts (never commit)
+.enola/
+.claire/
