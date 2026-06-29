@@ -12,19 +12,21 @@ import (
 	"github.com/google/uuid"
 )
 
-// AdvanceQueue promotes the oldest Received release to Compiling and emits
-// compile.requested:v1 into the outbox — but only if no release is already
-// active (Compiling, Parsing, SeedBuilding, or Validating). Safe to call
-// repeatedly; it is a no-op when the queue is empty or when a release is
+// AdvanceQueue promotes the oldest Received release — but only if no release is
+// already active (Compiling, Parsing, SeedBuilding, or Validating). Safe to
+// call repeatedly; it is a no-op when the queue is empty or when a release is
 // already in flight.
 //
-// The assembled image-tag set (for all services) is computed here so that
-// SetAssembledImageTags can record the full multi-service map on the release.
-// The other services' service_prod pointers can change as earlier-queued
-// releases are promoted, so we must read them at activation time to guarantee
-// we see the live state. The manifest-key set is assembled again in
-// HandleCompileResult (ok path), reading live service_prod a second time when
-// the release advances to Parsing.
+// The assembled image-tag set (for all services) is computed here for both
+// branches so that SetAssembledImageTags records the full multi-service map on
+// the release at activation time.
+//
+// Branch on compile_in_continuo:
+//   - flag true  → Received→Compiling + compile.requested:v1 (continuo runs
+//     the dbt-compile leg; HandleCompileResult advances to Parsing).
+//   - flag false (default) → Received→Parsing + release.requested:v1 with
+//     manifest_keys (the producer's uploaded manifest is used directly,
+//     pre-compile-leg behaviour that unblocks e2e stacks without a compile Job).
 func AdvanceQueue(ctx context.Context, d *Deps) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -92,45 +94,78 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	}
 
 	now := d.Clock.Now()
-	if err := next.TransitionToCompiling(now); err != nil {
-		return fmt.Errorf("transition to compiling: %w", err)
-	}
-
 	imageTag := next.ImageTags()[next.ChangedService()]
 	set := AssembleManifestSet(pointers, d.Bucket, next.ChangedService(), next.ID(), imageTag)
 	next.SetAssembledImageTags(set.ImageTags)
 
-	if err := u.ReleaseRepo().Save(ctx, next); err != nil {
-		return fmt.Errorf("save release: %w", err)
-	}
-
-	type compileRequestedPayload struct {
-		ReleaseID string `json:"release_id"`
-		Service   string `json:"service"`
-		ImageTag  string `json:"image_tag"`
-		Bucket    string `json:"bucket"`
-	}
-	payload, err := json.Marshal(compileRequestedPayload{
-		ReleaseID: next.ID(),
-		Service:   next.ChangedService(),
-		ImageTag:  imageTag,
-		Bucket:    d.Bucket,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(next.ID()),
-		EventType:     "compile_requested",
-		Payload:       payload,
-		StreamName:    streams.CompileRequestedV1,
-		Status:        "pending",
-		MaxRetries:    3,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if next.CompileInContinuo() {
+		// Part A compile leg: Received → Compiling, emit compile.requested.
+		if err := next.TransitionToCompiling(now); err != nil {
+			return fmt.Errorf("transition to compiling: %w", err)
+		}
+		if err := u.ReleaseRepo().Save(ctx, next); err != nil {
+			return fmt.Errorf("save release: %w", err)
+		}
+		type compileRequestedPayload struct {
+			ReleaseID string `json:"release_id"`
+			Service   string `json:"service"`
+			ImageTag  string `json:"image_tag"`
+			Bucket    string `json:"bucket"`
+		}
+		payload, err := json.Marshal(compileRequestedPayload{
+			ReleaseID: next.ID(),
+			Service:   next.ChangedService(),
+			ImageTag:  imageTag,
+			Bucket:    d.Bucket,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+			ID:            uuid.New(),
+			AggregateType: "release-controller",
+			AggregateID:   AggregateIDForRelease(next.ID()),
+			EventType:     "compile_requested",
+			Payload:       payload,
+			StreamName:    streams.CompileRequestedV1,
+			Status:        "pending",
+			MaxRetries:    3,
+			CreatedAt:     now,
+		}); err != nil {
+			return fmt.Errorf("outbox insert: %w", err)
+		}
+	} else {
+		// Default (flag off): Received → Parsing, emit release.requested with manifest_keys.
+		if err := next.TransitionToParsing(now); err != nil {
+			return fmt.Errorf("transition to parsing: %w", err)
+		}
+		if err := u.ReleaseRepo().Save(ctx, next); err != nil {
+			return fmt.Errorf("save release: %w", err)
+		}
+		keys := make([]manifestKeyDTO, len(set.ManifestKeys))
+		for i, k := range set.ManifestKeys {
+			keys[i] = manifestKeyDTO{Service: k.Service, S3URI: k.S3URI}
+		}
+		releasePayload, err := json.Marshal(releaseRequestedPayload{
+			ReleaseID:    next.ID(),
+			ManifestKeys: keys,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+			ID:            uuid.New(),
+			AggregateType: "release-controller",
+			AggregateID:   AggregateIDForRelease(next.ID()),
+			EventType:     "release_requested",
+			Payload:       releasePayload,
+			StreamName:    streams.ReleaseRequestedV1,
+			Status:        "pending",
+			MaxRetries:    3,
+			CreatedAt:     now,
+		}); err != nil {
+			return fmt.Errorf("outbox insert: %w", err)
+		}
 	}
 
 	if err := u.Commit(); err != nil {

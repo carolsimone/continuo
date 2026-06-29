@@ -13,11 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *testing.T) {
+func TestAdvanceQueue_FlagTrue_ActivatesToCompilingAndEmitsCompileRequested(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "my-bucket"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -54,6 +55,53 @@ func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *t
 	assert.False(t, hasManifestsURI, "manifests_uri must not appear in the payload")
 }
 
+func TestAdvanceQueue_FlagFalse_ActivatesToParsingAndEmitsReleaseRequested(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "my-bucket"
+
+	store.SeedServiceProd(release.NewServiceProd("svc-a", "rOLD0", "s3://my-bucket/svc-a/rOLD0/manifest.json", "tag-a-old", time.Unix(0, 0)))
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+		// CompileInContinuo defaults to false
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	r, _ := store.GetRelease("rA")
+	assert.Equal(t, release.StatusParsing, r.Status())
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 1)
+	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName)
+
+	var payload map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
+
+	var releaseID string
+	require.NoError(t, json.Unmarshal(payload["release_id"], &releaseID))
+	assert.Equal(t, "rA", releaseID)
+
+	// manifest_keys must be present and contain at least the changed service's key.
+	var keys []struct {
+		Service string `json:"service"`
+		S3URI   string `json:"s3_uri"`
+	}
+	require.NoError(t, json.Unmarshal(payload["manifest_keys"], &keys))
+	require.NotEmpty(t, keys)
+	found := false
+	for _, k := range keys {
+		if k.Service == "svc-a" {
+			found = true
+			// Canonical S3 URI: s3://<bucket>/<service>/<releaseID>/manifest.json
+			assert.Equal(t, "s3://my-bucket/svc-a/rA/manifest.json", k.S3URI)
+		}
+	}
+	assert.True(t, found, "changed service svc-a must appear in manifest_keys")
+
+	_, hasCompileFields := payload["service"]
+	assert.False(t, hasCompileFields, "service field must not appear in release.requested payload")
+}
+
 func TestAdvanceQueue_OtherServicesIncluded_ImageTagsAssembledOnRelease(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
@@ -64,6 +112,7 @@ func TestAdvanceQueue_OtherServicesIncluded_ImageTagsAssembledOnRelease(t *testi
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rNEW", ImageTag: "tag-a-new", Repo: "acme/demo", CommitSHA: "deadbeef",
+		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -110,6 +159,7 @@ func TestAdvanceQueue_ProdSeeded_UncoveredService_BlocksActivation(t *testing.T)
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -139,6 +189,7 @@ func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -155,10 +206,12 @@ func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
 	deps.Bucket = "b"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc", ReleaseID: "rB", ImageTag: "t2", Repo: "acme/demo", CommitSHA: "deadbeef",
+		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rB, _ := store.GetRelease("rB")
@@ -178,9 +231,11 @@ func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 	deps.Bucket = "b"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc", ReleaseID: "rOLD", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc", ReleaseID: "rNEW", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rOLD, _ := store.GetRelease("rOLD")

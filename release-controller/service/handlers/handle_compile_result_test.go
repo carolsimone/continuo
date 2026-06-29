@@ -27,11 +27,12 @@ func decodeJSON(t *testing.T, data []byte) map[string]any {
 func putCompilingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps, releaseID string) {
 	t.Helper()
 	require.NoError(t, handlers.ReceiveCandidate(ctx(t), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc-a",
-		ReleaseID: releaseID,
-		ImageTag:  "sha-compile",
-		Repo:      "acme/demo",
-		CommitSHA: "cafebabe",
+		Service:           "svc-a",
+		ReleaseID:         releaseID,
+		ImageTag:          "sha-compile",
+		Repo:              "acme/demo",
+		CommitSHA:         "cafebabe",
+		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx(t), deps))
 
