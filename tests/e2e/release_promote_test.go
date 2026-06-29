@@ -60,7 +60,9 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	// additive polls: assertValidationRequestedNodes(8m) + waitForReleasePromoted(10m)
+	// + waitForTopologySwap(2m) = 20m; bumped from 15m to match Gated tests.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)

@@ -29,6 +29,8 @@ describe('releasePillClass', () => {
     expect(releasePillClass('rejected')).toBe('pill--failed');
     expect(releasePillClass('validating')).toBe('pill--running');
     expect(releasePillClass('parsing')).toBe('pill--running');
+    expect(releasePillClass('compiling')).toBe('pill--running');
+    expect(releasePillClass('seed_building')).toBe('pill--running');
     expect(releasePillClass('received')).toBe('pill--pending');
     expect(releasePillClass('superseded')).toBe('pill--cancelled');
   });

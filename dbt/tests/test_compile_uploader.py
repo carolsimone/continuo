@@ -50,3 +50,17 @@ def test_malformed_manifest_s3_uri_exits_nonzero(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         compile_uploader.main()
     assert e.value.code != 0
+
+
+def test_put_object_failure_exits_nonzero(tmp_path, monkeypatch):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"nodes":{}}')
+    monkeypatch.setenv("COMPILE_MANIFEST_PATH", str(manifest))
+    monkeypatch.setenv("MANIFEST_S3_URI", "s3://continuo/svc/rel-1/manifest.json")
+    fake = mock.MagicMock()
+    fake.put_object.side_effect = RuntimeError("connection refused")
+    monkeypatch.setattr(compile_uploader.boto3, "client", lambda *a, **k: fake)
+
+    with pytest.raises(SystemExit) as e:
+        compile_uploader.main()
+    assert e.value.code != 0

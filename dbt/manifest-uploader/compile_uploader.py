@@ -51,7 +51,11 @@ def main() -> None:
         aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
         region_name=os.environ.get("AWS_DEFAULT_REGION"),
     )
-    s3.put_object(Bucket=bucket, Key=key, Body=body)
+    try:
+        s3.put_object(Bucket=bucket, Key=key, Body=body)
+    except Exception as exc:
+        print(f"compile_uploader: S3 upload to s3://{bucket}/{key} failed: {exc}", file=sys.stderr)
+        sys.exit(4)
     print(f"compile_uploader: uploaded {path} -> s3://{bucket}/{key}")
 
 

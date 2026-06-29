@@ -194,21 +194,27 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	}
 
 	now := d.now()
+	isPromoteSeed := dep.Command().ToJobSpec().Mode == pkgevents.ModePromoteSeed
 
 	// A row whose job_params could not be deserialized is unrunnable; fail it
 	// permanently with a routable announcement built from its recovered identity.
+	// promote_seed is fire-and-forget: no state run to load, so skip announcements.
 	if !dep.IsDeployable() {
 		dep.RegisterFailure(now, true, "deployment job_params not deployable", d.backoff)
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
-			return err
+		if !isPromoteSeed {
+			if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+				return err
+			}
 		}
 		return repo.Save(ctx, dep)
 	}
 
 	deployErr := d.deployer.Deploy(ctx, dep.Command().ToJobSpec())
 	if deployErr == nil {
-		if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
-			return err
+		if !isPromoteSeed {
+			if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
+				return err
+			}
 		}
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
@@ -219,8 +225,10 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
 	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) {
 		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "cause", deployErr)
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
-			return err
+		if !isPromoteSeed {
+			if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+				return err
+			}
 		}
 	} else {
 		d.logger.Warn("Deploy transient failure — rescheduling",

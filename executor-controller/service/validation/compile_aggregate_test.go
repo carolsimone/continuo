@@ -16,13 +16,15 @@ import (
 // compileDep builds a terminal compile deployment with the given outcome.
 func compileDep(t *testing.T, releaseID, nodeID, outcome string) *model.Deployment {
 	t.Helper()
+	// Production compile tasks have no candidate schema (compile_requested_handler.go:
+	// "Compile tasks have no candidate schema"). CandidateSchema must be empty here
+	// to match production reality.
 	cmd := command.ValidationDeployTask{
-		ReleaseID:       releaseID,
-		NodeID:          nodeID,
-		CandidateSchema: "_candidate_" + releaseID,
-		JobName:         "compile-" + nodeID,
-		NodeType:        "dbt-model",
-		ImageTag:        "t",
+		ReleaseID: releaseID,
+		NodeID:    nodeID,
+		JobName:   "compile-" + nodeID,
+		NodeType:  "dbt-model",
+		ImageTag:  "t",
 	}
 	dep := model.NewCompileDeployment(cmd, nil, time.Now())
 	require.NoError(t, dep.MarkDeployed(time.Now()))
@@ -54,6 +56,9 @@ func TestSettleCompileNode_AllOk_EmitsStatusOk(t *testing.T) {
 	assert.NotContains(t, string(outboxRepo.last.Payload), `"aggregate_status"`,
 		"compile payload MUST NOT use \"aggregate_status\" (release-controller can't read it)")
 	assert.Contains(t, string(outboxRepo.last.Payload), `"release_id":"rel"`)
+	// Compile tasks have no candidate schema — the emitted payload must reflect that.
+	assert.NotContains(t, string(outboxRepo.last.Payload), `"candidate_schema":"_candidate_`,
+		"compile payload must not carry a candidate schema (compile has no candidate schema)")
 }
 
 // TestSettleCompileNode_Failed_EmitsStatusFailed verifies a failed compile node

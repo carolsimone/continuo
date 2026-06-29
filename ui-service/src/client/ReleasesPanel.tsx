@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ReleaseListItem, ReleasesListResponse, CurrentProd } from './types';
 import { firstInFlight, releasePillClass } from './release-helpers';
 
-const STATUS_FILTERS = ['', 'promoted', 'rejected', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
+const STATUS_FILTERS = ['', 'promoted', 'rejected', 'superseded', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
 
 export default function ReleasesPanel() {
   const navigate = useNavigate();

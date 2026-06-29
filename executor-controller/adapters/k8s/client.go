@@ -496,9 +496,10 @@ func buildSeedBuildPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 //   - initContainer "compile": team image runs `dbt compile --profiles-dir
 //     /project && cp .../manifest.json /shared/manifest.json` with the
 //     standard DBT_POSTGRES_* warehouse envs.
-//   - main container "upload": validation image (VALIDATION_IMAGE or
-//     <DOCKERHUB_USERNAME>/dbt-base:latest) runs `python /compile_uploader.py`
-//     with COMPILE_MANIFEST_PATH + MANIFEST_S3_URI + the S3 credential envs.
+//   - main container "upload": minimal python+boto3 image (COMPILE_UPLOAD_IMAGE
+//     env, else <DOCKERHUB_USERNAME>/manifest-uploader:latest) runs
+//     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH +
+//     MANIFEST_S3_URI + the S3 credential envs.
 //
 // The mode=compile label lets k8s-controller route its terminal status to
 // compile.node.completed:v1. release-id/node-id annotations carry the
@@ -599,8 +600,9 @@ func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "COMPILE_MANIFEST_PATH", Value: "/shared/manifest.json"},
 		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
 		// S3 credentials — forwarded from executor-controller environment.
+		// Note: S3_BUCKET is intentionally omitted — compile_uploader.py parses
+		// the bucket from MANIFEST_S3_URI and never reads S3_BUCKET.
 		{Name: "S3_ENDPOINT_URL", Value: os.Getenv("S3_ENDPOINT_URL")},
-		{Name: "S3_BUCKET", Value: os.Getenv("S3_BUCKET")},
 		{Name: "AWS_ACCESS_KEY_ID", Value: os.Getenv("AWS_ACCESS_KEY_ID")},
 		{Name: "AWS_SECRET_ACCESS_KEY", Value: os.Getenv("AWS_SECRET_ACCESS_KEY")},
 		{Name: "AWS_DEFAULT_REGION", Value: os.Getenv("AWS_DEFAULT_REGION")},

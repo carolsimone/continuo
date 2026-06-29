@@ -743,3 +743,85 @@ func TestDispatcher_DispatchOne_CompileMode_NotDeployable_SavesFailedBeforeGate(
 	require.Len(t, outboxRepo.created, 1, "aggregate compile.completed:v1 emitted for the last (failed) node")
 	assert.Equal(t, streams.CompileCompletedV1, outboxRepo.created[0].StreamName)
 }
+
+// --- promote_seed announcement suppression ------------------------------------
+
+// promoteSeedDep builds a production deployment with Mode=ModePromoteSeed. It
+// mirrors how the real handler populates the DeployTask.
+func promoteSeedDep() *model.Deployment {
+	cmd := command.DeployTask{
+		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		ScheduleName: "promote-seed", ServiceName: "dbt",
+		SchemaName: "public", TableName: "seeds", JobName: "promote-seed-public-seeds",
+		NodeType: "dbt-seed", ImageTag: "sha-abc", Mode: pkgevents.ModePromoteSeed,
+	}
+	return model.NewDeployment(cmd, nil, time.Now())
+}
+
+// TestDispatcher_PromoteSeed_NonDeployable_EmitsZeroOutboxRows asserts that a
+// promote_seed deployment that cannot be deployed (non-deployable or permanent
+// error) writes NO outbox rows — it is fire-and-forget with no state run to load.
+func TestDispatcher_PromoteSeed_NonDeployable_EmitsZeroOutboxRows(t *testing.T) {
+	d := silentDispatcher(&fakeValidationDeployer{})
+	repo := &fakeDeploymentRepo{}
+	outboxRepo := &fakeOutboxRepo{}
+	dep := promoteSeedDep()
+
+	// Make it non-deployable by zeroing the JobName so IsDeployable() == false.
+	cmd := command.DeployTask{
+		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		Mode: pkgevents.ModePromoteSeed,
+		// intentionally leave JobName empty → IsDeployable() false
+	}
+	nonDeployable := model.NewDeployment(cmd, nil, time.Now())
+	_ = dep // suppress unused-var warning
+
+	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, nonDeployable))
+
+	assert.Empty(t, outboxRepo.created, "promote_seed must emit ZERO outbox rows when non-deployable")
+	require.Len(t, repo.saved, 1)
+	assert.Equal(t, model.StatusFailed, repo.saved[0].Status(), "row still marked failed")
+}
+
+// TestDispatcher_PromoteSeed_PermanentDeployFailure_EmitsZeroOutboxRows asserts
+// that a promote_seed deployment that hits a permanent deploy error also emits
+// no outbox rows.
+func TestDispatcher_PromoteSeed_PermanentDeployFailure_EmitsZeroOutboxRows(t *testing.T) {
+	fk := &fakeValidationDeployer{deployErr: errors.Join(errors.New("bad image"), pkgevents.ErrPermanent)}
+	d := silentDispatcher(fk)
+	repo := &fakeDeploymentRepo{}
+	outboxRepo := &fakeOutboxRepo{}
+	dep := promoteSeedDep()
+
+	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
+
+	assert.Empty(t, outboxRepo.created, "promote_seed must emit ZERO outbox rows on permanent deploy failure")
+	require.Len(t, repo.saved, 1)
+	assert.Equal(t, model.StatusFailed, repo.saved[0].Status(), "row still marked failed")
+}
+
+// TestDispatcher_NormalProduction_NonDeployable_EmitsFailedAnnouncements
+// protects the production path: a normal (non-promote_seed) non-deployable row
+// must still emit its failure announcements.
+func TestDispatcher_NormalProduction_NonDeployable_EmitsFailedAnnouncements(t *testing.T) {
+	d := silentDispatcher(&fakeValidationDeployer{})
+	repo := &fakeDeploymentRepo{}
+	outboxRepo := &fakeOutboxRepo{}
+
+	// Non-deployable: empty JobName, no Mode set (normal production).
+	cmd := command.DeployTask{
+		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+	}
+	dep := model.NewDeployment(cmd, nil, time.Now())
+	require.False(t, dep.IsDeployable())
+
+	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
+
+	assert.NotEmpty(t, outboxRepo.created, "normal production must emit failure announcements")
+	eventTypes := make([]string, 0, len(outboxRepo.created))
+	for _, e := range outboxRepo.created {
+		eventTypes = append(eventTypes, e.EventType)
+	}
+	assert.Contains(t, eventTypes, "task_status_updated", "production failure must emit task_status_updated")
+	assert.Contains(t, eventTypes, "node_updated", "production failure must emit node_updated")
+}
