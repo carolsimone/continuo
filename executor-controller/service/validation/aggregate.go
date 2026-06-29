@@ -21,6 +21,20 @@ import (
 	"github.com/google/uuid"
 )
 
+// EventTypeValidationCompleted is the canonical outbox event_type string for
+// the validation.completed:v1 aggregate event. Defined here (service layer) so
+// both the emit site (aggregate.go) and the publisher adapter (adapters/publisher)
+// share one source of truth without requiring the service to import an adapter.
+const EventTypeValidationCompleted = "validation_completed"
+
+// EventTypeSeedBuildCompleted is the canonical outbox event_type string for
+// the seed.build.completed:v1 aggregate event.
+const EventTypeSeedBuildCompleted = "seed_build_completed"
+
+// EventTypeCompileCompleted is the canonical outbox event_type string for
+// the compile.completed:v1 aggregate event.
+const EventTypeCompileCompleted = "compile_completed"
+
 // DedupNamespace seeds the deterministic aggregate_id for a release's
 // validation.completed:v1 outbox row so a re-emission (e.g. a retried batch that
 // re-wins the sentinel after a crash between INSERT and commit) deduplicates to
@@ -57,14 +71,14 @@ type emitConfig struct {
 
 var validationEmit = emitConfig{
 	streamName: streams.ValidationCompletedV1,
-	eventType:  "validation_completed",
+	eventType:  EventTypeValidationCompleted,
 	namespace:  DedupNamespace,
 	mode:       model.ModeValidation,
 }
 
 var seedBuildEmit = emitConfig{
 	streamName: streams.SeedBuildCompletedV1,
-	eventType:  "seed_build_completed",
+	eventType:  EventTypeSeedBuildCompleted,
 	namespace:  SeedBuildDedupNamespace,
 	mode:       model.ModeSeedBuild,
 }
@@ -74,7 +88,7 @@ var seedBuildEmit = emitConfig{
 // interferes with the co-existing validation/seed-build legs of the same release.
 var compileEmit = emitConfig{
 	streamName: streams.CompileCompletedV1,
-	eventType:  "compile_completed",
+	eventType:  EventTypeCompileCompleted,
 	namespace:  CompileDedupNamespace,
 	mode:       model.ModeCompile,
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/publisher"
+	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -101,6 +102,98 @@ func TestPublisher_UnknownEventTypeReturnsError(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown event_type")
+}
+
+// TestPublisher_ContractAllHandledEventTypes is a regression guard that asserts
+// every event_type the k8s publisher is expected to handle does NOT return
+// "unknown event_type". This prevents a recurrence of the class of bug where an
+// emit site uses a string that has no matching case in the publisher switch
+// (e.g. compile_node_completed was emitted but unmapped → events never published).
+// The event_type constants are the single source of truth shared by both sites.
+func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
+	// Minimal valid payloads for each event_type — just enough for the publisher's
+	// json.Unmarshal to succeed. Verbatim-passthrough cases use any valid JSON object.
+	cases := []struct {
+		eventType  string
+		streamName string
+		payload    []byte
+	}{
+		{
+			eventType:  "task_status_updated",
+			streamName: streams.TaskStatusUpdatedV1,
+			payload:    mustMarshalK8s(t, pkgevents.TaskStatusUpdated{TaskID: "t1", ScheduleID: "s1", Status: "SUCCEEDED", RetryCount: 0}),
+		},
+		{
+			eventType:  "task_execution_recorded",
+			streamName: streams.TaskExecutionRecordedV1,
+			payload:    mustMarshalK8s(t, pkgevents.TaskExecutionRecorded{ExecutionID: "e1", TaskID: "t1", JobName: "j1", ExecutionSeconds: 1.0}),
+		},
+		{
+			eventType:  "task_retry",
+			streamName: streams.RetryTaskV1,
+			payload:    mustMarshalK8s(t, event.TaskRetry{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", ImageTag: "sha", RetryCount: 1, MaxRetries: 3, NodeType: "dbt-model"}),
+		},
+		{
+			eventType:  "task_failed",
+			streamName: streams.TaskFailedV1,
+			payload:    mustMarshalK8s(t, event.TaskFailed{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", ErrorMessage: "err", RetryCount: 0}),
+		},
+		{
+			eventType:  "check_delayed",
+			streamName: streams.CheckK8sV1,
+			payload:    mustMarshalK8s(t, event.JobCheckRequest{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", CheckAfter: 1700000000, NodeType: "dbt-model", ImageTag: "sha", RetryCount: 0, MaxRetries: 3}),
+		},
+		{
+			eventType:  "node_status_updated",
+			streamName: streams.NodeUpdatedV1,
+			payload:    mustMarshalK8s(t, event.NodeStatusUpdated{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", Status: "SUCCEEDED"}),
+		},
+		{
+			// Uses the shared constant — the single source of truth for this wire string.
+			eventType:  event.EventTypeValidationNodeCompleted,
+			streamName: streams.ValidationNodeCompletedV1,
+			payload:    []byte(`{"release_id":"rel1","node_id":"public.orders","outcome":"ok"}`),
+		},
+		{
+			eventType:  event.EventTypeSeedBuildNodeCompleted,
+			streamName: streams.SeedBuildNodeCompletedV1,
+			payload:    []byte(`{"release_id":"rel1","node_id":"public.seed_x","outcome":"ok"}`),
+		},
+		{
+			eventType:  event.EventTypeCompileNodeCompleted,
+			streamName: streams.CompileNodeCompletedV1,
+			payload:    []byte(`{"release_id":"rel1","node_id":"service-1","outcome":"ok"}`),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.eventType, func(t *testing.T) {
+			mr, err := miniredis.Run()
+			require.NoError(t, err)
+			t.Cleanup(mr.Close)
+			r := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+			pub := publisher.NewOutboxPublisher(r, newTestLogger())
+
+			publishErr := pub.Publish(context.Background(), &outbox.Entry{
+				ID:         uuid.New(),
+				EventType:  tc.eventType,
+				StreamName: tc.streamName,
+				Payload:    tc.payload,
+			})
+			// The only acceptable error here is an infrastructure error; "unknown event_type" is never acceptable.
+			if publishErr != nil {
+				assert.NotContains(t, publishErr.Error(), "unknown event_type",
+					"event_type %q must be handled by the publisher switch", tc.eventType)
+			}
+		})
+	}
+}
+
+func mustMarshalK8s(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return b
 }
 
 func TestPublisher_BadPayloadReturnsError(t *testing.T) {

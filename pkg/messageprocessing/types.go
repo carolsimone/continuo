@@ -10,8 +10,13 @@ import (
 // Each service owns its own physical message_processing table in its own database;
 // this struct is the shared Go contract.
 type MessageProcessing struct {
-	ID         uuid.UUID
-	MessageID  string
+	ID        uuid.UUID
+	MessageID string
+	// StreamName is the consumer's DEDUP SCOPE. Normally it holds the Redis stream
+	// name. Exception: when multiple consumer groups read the SAME stream, each
+	// group stores its consumer-group name here instead, so that their dedup rows
+	// (and the V12 (outbox_entry_id, stream_name) unique index entries) remain
+	// distinct and do not collide across groups.
 	StreamName string
 	State      string // "processing", "completed", "acked"
 	Payload    []byte

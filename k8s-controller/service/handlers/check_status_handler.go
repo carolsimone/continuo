@@ -270,7 +270,7 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "release",
 		AggregateID:   uuid.NewSHA1(validationLabelNamespace, []byte("release:"+releaseID)),
-		EventType:     "validation_node_completed",
+		EventType:     event.EventTypeValidationNodeCompleted,
 		Payload:       payload,
 		StreamName:    streams.ValidationNodeCompletedV1,
 		MaxRetries:    3,
@@ -331,7 +331,7 @@ func (h *CheckStatusHandler) handleSeedBuildTerminal(
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "release",
 		AggregateID:   uuid.NewSHA1(seedBuildLabelNamespace, []byte("release:"+releaseID)),
-		EventType:     "seed_build_node_completed",
+		EventType:     event.EventTypeSeedBuildNodeCompleted,
 		Payload:       payload,
 		StreamName:    streams.SeedBuildNodeCompletedV1,
 		MaxRetries:    3,
@@ -395,7 +395,7 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "release",
 		AggregateID:   uuid.NewSHA1(compileLabelNamespace, []byte("release:"+releaseID)),
-		EventType:     "compile_node_completed",
+		EventType:     event.EventTypeCompileNodeCompleted,
 		Payload:       payload,
 		StreamName:    streams.CompileNodeCompletedV1,
 		MaxRetries:    3,

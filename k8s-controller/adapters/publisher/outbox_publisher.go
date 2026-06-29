@@ -118,7 +118,7 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return e.ToMap(), nil
 
-	case "validation_node_completed", "seed_build_node_completed", "compile_node_completed":
+	case event.EventTypeValidationNodeCompleted, event.EventTypeSeedBuildNodeCompleted, event.EventTypeCompileNodeCompleted:
 		// The three candidate-leg node-completed events
 		// (validation.node.completed:v1 / seed.build.node.completed:v1 /
 		// compile.node.completed:v1) each carry the per-node result as a single

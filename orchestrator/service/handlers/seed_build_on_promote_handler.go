@@ -73,9 +73,18 @@ func (h *SeedBuildOnPromoteHandler) Handle(
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	// Dedup keyed on the seed-build consumer's own stream constant so that
-	// this consumer's dedup rows are scoped independently from the topology-swap
-	// consumer's rows on the same release.promoted:v1 stream.
+	// Dedup scope rule (shared): when MULTIPLE consumer groups read the SAME
+	// stream, each group scopes its dedup by its CONSUMER-GROUP name so their
+	// message_processing rows remain distinct. Single-consumer streams use the
+	// stream name directly.
+	//
+	// release.promoted:v1 has two orchestrator consumer groups:
+	//   - ReleasePromotedHandler (topology-swap): group streams.OrchestratorReleasePromoted
+	//   - this handler (seed-build):              group streams.OrchestratorReleasePromotedSeedBuild
+	// Both groups scope by their group name. The V12 unique index
+	// (outbox_entry_id, stream_name) relies on the two values differing to keep
+	// each group's dedup rows independent — they are distinct:
+	// "orchestrator-release-promoted" vs "orchestrator-release-promoted-seed-build".
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
 		messageID, streams.OrchestratorReleasePromotedSeedBuild, payload, outboxEntryID,

@@ -1,5 +1,20 @@
 package event
 
+// EventTypeValidationNodeCompleted is the canonical outbox event_type string for
+// the validation.node.completed:v1 per-node event. Defined in the domain package
+// so both the emit site (service/handlers) and the publisher adapter
+// (adapters/publisher) share one source of truth. The adapter imports inward
+// (adapter→domain), which is the allowed direction.
+const EventTypeValidationNodeCompleted = "validation_node_completed"
+
+// EventTypeSeedBuildNodeCompleted is the canonical outbox event_type string for
+// the seed.build.node.completed:v1 per-node event.
+const EventTypeSeedBuildNodeCompleted = "seed_build_node_completed"
+
+// EventTypeCompileNodeCompleted is the canonical outbox event_type string for
+// the compile.node.completed:v1 per-node event.
+const EventTypeCompileNodeCompleted = "compile_node_completed"
+
 // Event is a marker interface for all events
 type Event interface {
 	isEvent()
