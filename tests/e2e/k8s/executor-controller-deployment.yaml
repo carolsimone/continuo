@@ -79,6 +79,8 @@ spec:
             # with ErrImagePull here; production omits this and defaults to Always.
             - name: VALIDATION_IMAGE_PULL_POLICY
               value: "IfNotPresent"
+            - name: COMPILE_UPLOAD_IMAGE
+              value: "manifest-uploader:latest"
             - name: MAX_CONCURRENT_JOBS
               value: "50"
             - name: HTTP_PORT

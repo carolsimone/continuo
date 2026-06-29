@@ -568,10 +568,11 @@ func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		teamImage = user + "/" + teamImage
 	}
 
-	// Validation image for the main (upload) container — mirrors buildValidationPodSpec.
-	uploadImage := os.Getenv("VALIDATION_IMAGE")
+	// Upload container image: a minimal python+boto3 image (NO dbt). The compile leg keeps S3
+	// access out of any dbt image. Defaults to manifest-uploader:latest (DOCKERHUB_USERNAME-prefixed).
+	uploadImage := os.Getenv("COMPILE_UPLOAD_IMAGE")
 	if uploadImage == "" {
-		uploadImage = "dbt-base:latest"
+		uploadImage = "manifest-uploader:latest"
 		if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
 			uploadImage = user + "/" + uploadImage
 		}
