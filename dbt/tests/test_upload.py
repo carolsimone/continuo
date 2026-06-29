@@ -14,6 +14,7 @@ and skipped by default. Run them inside the dbt-compile-and-load container:
 import json
 import os
 import subprocess
+import sys
 
 import boto3
 import pytest
@@ -28,13 +29,20 @@ S3_ENV = os.getenv("S3_ENV", "local")
 
 @pytest.fixture
 def s3():
-    return boto3.client(
+    client = boto3.client(
         "s3",
         endpoint_url=S3_ENDPOINT,
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "test"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
         region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
     )
+    try:
+        client.create_bucket(Bucket=S3_BUCKET)
+    except client.exceptions.BucketAlreadyOwnedByYou:
+        pass
+    except Exception:
+        pass  # already exists / created by infra setup
+    return client
 
 
 # ---------------------------------------------------------------------------
@@ -238,3 +246,42 @@ def test_all_valid_services_upload_canonical(s3):
         response = s3.get_object(Bucket=S3_BUCKET, Key=key)
         content = json.loads(response["Body"].read())
         assert "nodes" in content, f"manifest missing nodes for {name}"
+
+
+@pytest.mark.integration
+def test_compile_uploader_lands_manifest_at_canonical_key(s3):
+    """The DEPLOYED uploader: real `dbt compile` + /compile_uploader.py -> manifest at the
+    canonical S3 key, readable and parseable. Proves the actual adapter-sidecar main container."""
+    service_dir = os.path.join(SERVICES_DIR, "service-1")
+    # 1) real dbt compile (init-container step)
+    compiled = subprocess.run(
+        ["dbt", "compile", "--profiles-dir", "."],
+        cwd=service_dir, capture_output=True, text=True,
+    )
+    assert compiled.returncode == 0, f"dbt compile failed:\n{compiled.stderr}"
+    manifest_path = os.path.join(service_dir, "target", "manifest.json")
+    assert os.path.exists(manifest_path)
+
+    # 2) run the DEPLOYED uploader exactly as the pod's main container does
+    release_id = "test-rel-compile-uploader"
+    key = f"service-1/{release_id}/manifest.json"
+    env = {
+        **os.environ,
+        "COMPILE_MANIFEST_PATH": manifest_path,
+        "MANIFEST_S3_URI": f"s3://{S3_BUCKET}/{key}",
+        "S3_ENDPOINT_URL": S3_ENDPOINT,
+        "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", "test"),
+        "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
+        "AWS_DEFAULT_REGION": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+    }
+    uploaded = subprocess.run(
+        [sys.executable, "/compile_uploader.py"], capture_output=True, text=True, env=env,
+    )
+    assert uploaded.returncode == 0, f"compile_uploader failed:\n{uploaded.stderr}"
+
+    # 3) the object exists at the canonical key and is a parseable manifest
+    response = s3.get_object(Bucket=S3_BUCKET, Key=key)
+    content = json.loads(response["Body"].read())
+    assert "nodes" in content
+    node_names = [n["name"] for n in content["nodes"].values()]
+    assert "table_a" in node_names
