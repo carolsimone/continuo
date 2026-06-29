@@ -57,7 +57,6 @@ type releaseRow struct {
 	CreatedAt         sql.NullTime   `db:"created_at"`
 	TransitionsJSON   []byte         `db:"transitions"`
 	Bootstrap         bool           `db:"bootstrap"`
-	CompileInContinuo bool           `db:"compile_in_continuo"`
 	Repo              string         `db:"repo"`
 	CommitSHA         string         `db:"commit_sha"`
 }
@@ -68,7 +67,7 @@ func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Releas
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, compile_in_continuo, repo, commit_sha
+		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha
 		 FROM releases WHERE release_id = $1`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -86,7 +85,7 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, compile_in_continuo, repo, commit_sha
+		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha
 		 FROM releases WHERE status = 'received'
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -105,7 +104,7 @@ func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, compile_in_continuo, repo, commit_sha
+		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha
 		 FROM releases WHERE status IN ('compiling','parsing','seed_building','validating')
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -144,8 +143,8 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		`INSERT INTO releases (
 		   release_id, status, image_tags, changed_service,
 		   candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		   per_node_results, created_at, transitions, bootstrap, compile_in_continuo, repo, commit_sha
-		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		   per_node_results, created_at, transitions, bootstrap, repo, commit_sha
+		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		 ON CONFLICT (release_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
@@ -158,7 +157,7 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		rel.ID(), string(rel.Status()),
 		imageTagsJSON, rel.ChangedService(), topoJSON, pq.StringArray(rel.ValidationNodeIDs()),
 		rejectReason, pq.StringArray(rel.FailingNodes()), perNodeJSON,
-		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap(), rel.CompileInContinuo(), rel.Repo(), rel.CommitSHA())
+		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap(), rel.Repo(), rel.CommitSHA())
 	if err != nil {
 		return fmt.Errorf("upsert release: %w", err)
 	}
@@ -204,7 +203,6 @@ func rowToRelease(row releaseRow) (*release.Release, error) {
 		CreatedAt:         row.CreatedAt.Time,
 		Transitions:       transitions,
 		Bootstrap:         row.Bootstrap,
-		CompileInContinuo: row.CompileInContinuo,
 		Repo:              row.Repo,
 		CommitSHA:         row.CommitSHA,
 	}), nil
@@ -237,7 +235,7 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 	args = append(args, limit+1)
 	query := fmt.Sprintf(`SELECT release_id, status, image_tags, changed_service,
 	        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-	        per_node_results, created_at, transitions, bootstrap, compile_in_continuo, repo, commit_sha
+	        per_node_results, created_at, transitions, bootstrap, repo, commit_sha
 	 FROM releases %s
 	 ORDER BY created_at DESC, release_id DESC
 	 LIMIT $%d`, where, len(args))

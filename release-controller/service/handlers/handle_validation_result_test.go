@@ -35,12 +35,11 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 	deps.Bucket = "continuo"
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:           "svc-a",
-		ReleaseID:         releaseID,
-		ImageTag:          "sha-a",
-		Repo:              "acme/demo",
-		CommitSHA:         "deadbeef",
-		CompileInContinuo: true,
+		Service:   "svc-a",
+		ReleaseID: releaseID,
+		ImageTag:  "sha-a",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	// Simulate the compile leg completing (Compiling → Parsing).
@@ -203,12 +202,11 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 	deps.Bucket = "continuo"
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:           "svc-a",
-		ReleaseID:         releaseID,
-		ImageTag:          "sha-a",
-		Repo:              "acme/demo",
-		CommitSHA:         "deadbeef",
-		CompileInContinuo: true,
+		Service:   "svc-a",
+		ReleaseID: releaseID,
+		ImageTag:  "sha-a",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	// Simulate the compile leg completing (Compiling → Parsing).
@@ -375,12 +373,11 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 	}, time.Unix(50, 0).UTC()))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:           "svc-a",
-		ReleaseID:         "rA",
-		ImageTag:          "sha-a",
-		Repo:              "acme/demo",
-		CommitSHA:         "deadbeef",
-		CompileInContinuo: true,
+		Service:   "svc-a",
+		ReleaseID: "rA",
+		ImageTag:  "sha-a",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
@@ -438,7 +435,6 @@ func TestHandleValidationResult_Promote_EmitsOriginalFilePath(t *testing.T) {
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
-		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{

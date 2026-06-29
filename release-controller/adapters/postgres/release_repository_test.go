@@ -60,7 +60,7 @@ func openTestDB(t *testing.T) *sqlx.DB {
 func TestReleaseRepository_SaveAndGet(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db, nil)
-	r := release.New("rA", "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	r := release.New("rA", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(context.Background(), r))
 
 	got, err := repo.Get(context.Background(), "rA")
@@ -76,9 +76,9 @@ func TestReleaseRepository_BootstrapRoundTrips(t *testing.T) {
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
-	boot := release.New("r-boot", "svc-a", "sha-a", true, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	boot := release.New("r-boot", "svc-a", "sha-a", true, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, boot))
-	plain := release.New("r-plain", "svc-a", "sha-a", false, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	plain := release.New("r-plain", "svc-a", "sha-a", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, plain))
 
 	gotBoot, err := repo.Get(ctx, "r-boot")
@@ -95,8 +95,8 @@ func TestReleaseRepository_BootstrapRoundTrips(t *testing.T) {
 func TestReleaseRepository_NextQueuedAndActive(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db, nil)
-	older := release.New("rOLD", "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
-	newer := release.New("rNEW", "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(200, 0).UTC())
+	older := release.New("rOLD", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	newer := release.New("rNEW", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(200, 0).UTC())
 	require.NoError(t, repo.Save(context.Background(), older))
 	require.NoError(t, repo.Save(context.Background(), newer))
 
@@ -119,7 +119,7 @@ func TestReleaseRepository_ChangedServiceRoundTrips(t *testing.T) {
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
-	r := release.New("rCS", "service-x", "img-1", false, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	r := release.New("rCS", "service-x", "img-1", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	got, err := repo.Get(ctx, "rCS")
@@ -134,7 +134,7 @@ func TestReleaseRepository_SetAssembledImageTagsRoundTrips(t *testing.T) {
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
-	r := release.New("rIT", "svc-a", "tag-a", false, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	r := release.New("rIT", "svc-a", "tag-a", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	// Simulate AdvanceQueue overwriting image_tags with the assembled set.
@@ -151,7 +151,7 @@ func TestReleaseRepository_ListPaginatesNewestFirst(t *testing.T) {
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 	for i, id := range []string{"r1", "r2", "r3"} {
-		r := release.New(id, "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(int64(100+i), 0).UTC())
+		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", time.Unix(int64(100+i), 0).UTC())
 		require.NoError(t, repo.Save(ctx, r))
 	}
 	page1, next, err := repo.List(ctx, repository.ListFilter{Limit: 2})
@@ -173,8 +173,8 @@ func TestReleaseRepository_ListTiebreaksByReleaseIDOnEqualTimestamp(t *testing.T
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 	ts := time.Unix(200, 0).UTC()
-	ra := release.New("ra", "svc", "t", false, false, "acme/demo", "deadbeef", ts)
-	rb := release.New("rb", "svc", "t", false, false, "acme/demo", "deadbeef", ts)
+	ra := release.New("ra", "svc", "t", false, "acme/demo", "deadbeef", ts)
+	rb := release.New("rb", "svc", "t", false, "acme/demo", "deadbeef", ts)
 	require.NoError(t, repo.Save(ctx, ra))
 	require.NoError(t, repo.Save(ctx, rb))
 
@@ -195,9 +195,9 @@ func TestReleaseRepository_ListFiltersByStatus(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
-	a := release.New("ra", "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	a := release.New("ra", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, a))
-	b := release.New("rb", "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(101, 0).UTC())
+	b := release.New("rb", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(101, 0).UTC())
 	require.NoError(t, b.TransitionToParsing(time.Unix(102, 0).UTC()))
 	require.NoError(t, b.TransitionToValidating(nil, nil, time.Unix(103, 0).UTC()))
 	require.NoError(t, b.TransitionToRejected("validation_failed", []string{"x"}, time.Unix(104, 0).UTC()))
@@ -214,7 +214,7 @@ func TestReleaseRepository_PerNodeResultsRoundTrip(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
-	r := release.New("rp", "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	r := release.New("rp", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(102, 0).UTC()))
 	r.RecordValidationResults([]release.NodeValidationResult{{NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 9}})
@@ -232,14 +232,14 @@ func TestReleaseRepository_DeleteResolvedBeforeKeepsCurrentProd(t *testing.T) {
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 	mkRejected := func(id string, ts int64) {
-		r := release.New(id, "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
+		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.TransitionToRejected("validation_failed", nil, time.Unix(ts+3, 0).UTC()))
 		require.NoError(t, repo.Save(ctx, r))
 	}
 	mkPromoted := func(id string, ts int64) {
-		r := release.New(id, "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
+		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.TransitionToPromoted(time.Unix(ts+3, 0).UTC()))
@@ -248,7 +248,7 @@ func TestReleaseRepository_DeleteResolvedBeforeKeepsCurrentProd(t *testing.T) {
 	mkRejected("old-rejected", 100)
 	mkPromoted("old-promoted", 100)
 	mkRejected("old-keep", 100)
-	r := release.New("received-young", "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	r := release.New("received-young", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	cutoff := time.Unix(1000, 0).UTC()
@@ -273,7 +273,7 @@ func TestReleaseRepository_DeleteResolvedBeforeKeepsServiceProdRefs(t *testing.T
 	ctx := context.Background()
 
 	mkPromoted := func(id string, ts int64) {
-		r := release.New(id, "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
+		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.TransitionToPromoted(time.Unix(ts+3, 0).UTC()))
@@ -313,7 +313,7 @@ func TestReleaseRepository_DeleteResolvedBeforeEmptyKeepSlice(t *testing.T) {
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
-	r := release.New("old-prom", "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	r := release.New("old-prom", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(102, 0).UTC()))
 	require.NoError(t, r.TransitionToPromoted(time.Unix(103, 0).UTC()))
@@ -333,7 +333,7 @@ func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
-	r := release.New("rPROV", "svc-a", "img-1", false, false, "acme/demo", "deadbeefcafe1234", time.Unix(100, 0).UTC())
+	r := release.New("rPROV", "svc-a", "img-1", false, "acme/demo", "deadbeefcafe1234", time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	got, err := repo.Get(ctx, "rPROV")
@@ -385,7 +385,7 @@ func TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes(t *t
 	ctx := context.Background()
 
 	mkTerminal := func(id string, ts int64) {
-		r := release.New(id, "svc", "t", false, false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
+		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.TransitionToRejected("validation_failed", nil, time.Unix(ts+3, 0).UTC()))

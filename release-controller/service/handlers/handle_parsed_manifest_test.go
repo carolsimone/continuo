@@ -29,12 +29,11 @@ func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) 
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:           svc,
-		ReleaseID:         releaseID,
-		ImageTag:          tag,
-		Repo:              "acme/demo",
-		CommitSHA:         "deadbeef",
-		CompileInContinuo: true,
+		Service:   svc,
+		ReleaseID: releaseID,
+		ImageTag:  tag,
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	// Simulate the compile leg completing (Compiling → Parsing).
@@ -69,13 +68,12 @@ func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string
 	}
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:           changedSvc,
-		ReleaseID:         releaseID,
-		ImageTag:          changedTag,
-		Bootstrap:         true,
-		CompileInContinuo: true,
-		Repo:              "acme/demo",
-		CommitSHA:         "deadbeef",
+		Service:   changedSvc,
+		ReleaseID: releaseID,
+		ImageTag:  changedTag,
+		Bootstrap: true,
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	// Simulate the compile leg completing (Compiling → Parsing).
@@ -442,7 +440,6 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "sha-b", time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
-		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	// Simulate the compile leg completing (Compiling → Parsing).
@@ -617,7 +614,6 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-alpha", Repo: "acme/demo", CommitSHA: "deadbeef",
-		CompileInContinuo: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	// Simulate the compile leg completing (Compiling → Parsing).

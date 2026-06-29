@@ -62,12 +62,11 @@ func putSeedBuildingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps,
 	t.Helper()
 
 	require.NoError(t, handlers.ReceiveCandidate(ctx(t), deps, handlers.ReceiveCandidateInput{
-		Service:           "svc-fin",
-		ReleaseID:         releaseID,
-		ImageTag:          "sha-fin",
-		Repo:              "acme/demo",
-		CommitSHA:         "cafebabe",
-		CompileInContinuo: true,
+		Service:   "svc-fin",
+		ReleaseID: releaseID,
+		ImageTag:  "sha-fin",
+		Repo:      "acme/demo",
+		CommitSHA: "cafebabe",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx(t), deps))
 

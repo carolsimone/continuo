@@ -84,7 +84,6 @@ type Release struct {
 	resolvedAt          *time.Time
 	transitions         []Transition
 	bootstrap           bool
-	compileInContinuo   bool
 	repo                string
 	commitSHA           string
 }
@@ -94,18 +93,17 @@ type Release struct {
 // map in AdvanceQueue when the release transitions to Parsing (see
 // SetAssembledImageTags for the rationale). repo (GitHub owner/name) and
 // commitSHA (full SHA) record the source change and are immutable after creation.
-func New(id, changedService, imageTag string, bootstrap, compileInContinuo bool, repo, commitSHA string, now time.Time) *Release {
+func New(id, changedService, imageTag string, bootstrap bool, repo, commitSHA string, now time.Time) *Release {
 	return &Release{
-		id:                id,
-		status:            StatusReceived,
-		imageTags:         map[string]string{changedService: imageTag},
-		changedService:    changedService,
-		bootstrap:         bootstrap,
-		compileInContinuo: compileInContinuo,
-		repo:              repo,
-		commitSHA:         commitSHA,
-		createdAt:         now,
-		transitions:       []Transition{{To: StatusReceived, At: now}},
+		id:             id,
+		status:         StatusReceived,
+		imageTags:      map[string]string{changedService: imageTag},
+		changedService: changedService,
+		bootstrap:      bootstrap,
+		repo:           repo,
+		commitSHA:      commitSHA,
+		createdAt:      now,
+		transitions:    []Transition{{To: StatusReceived, At: now}},
 	}
 }
 
@@ -114,7 +112,6 @@ func (r *Release) Status() Status                         { return r.status }
 func (r *Release) ImageTags() map[string]string           { return r.imageTags }
 func (r *Release) ChangedService() string                 { return r.changedService }
 func (r *Release) IsBootstrap() bool                      { return r.bootstrap }
-func (r *Release) CompileInContinuo() bool                { return r.compileInContinuo }
 func (r *Release) Repo() string                           { return r.repo }
 func (r *Release) CommitSHA() string                      { return r.commitSHA }
 func (r *Release) CandidateTopology() Topology            { return r.candidateTopology }
@@ -255,7 +252,6 @@ type RehydrateInput struct {
 	CreatedAt         time.Time
 	Transitions       []Transition
 	Bootstrap         bool
-	CompileInContinuo bool
 	Repo              string
 	CommitSHA         string
 }
@@ -276,7 +272,6 @@ func Rehydrate(in RehydrateInput) *Release {
 		createdAt:         in.CreatedAt,
 		transitions:       in.Transitions,
 		bootstrap:         in.Bootstrap,
-		compileInContinuo: in.CompileInContinuo,
 		repo:              in.Repo,
 		commitSHA:         in.CommitSHA,
 	}

@@ -17,13 +17,12 @@ import (
 // other services happen later in AdvanceQueue, not here, so that we always read
 // the live service_prod pointers at the moment this release becomes active.
 type ReceiveCandidateInput struct {
-	Service           string `json:"service"`
-	ReleaseID         string `json:"release_id"`
-	ImageTag          string `json:"image_tag"`
-	Bootstrap         bool   `json:"bootstrap"`
-	CompileInContinuo bool   `json:"compile_in_continuo"`
-	Repo              string `json:"repo"`
-	CommitSHA         string `json:"commit_sha"`
+	Service   string `json:"service"`
+	ReleaseID string `json:"release_id"`
+	ImageTag  string `json:"image_tag"`
+	Bootstrap bool   `json:"bootstrap"`
+	Repo      string `json:"repo"`
+	CommitSHA string `json:"commit_sha"`
 }
 
 func (i ReceiveCandidateInput) validate() error {
@@ -63,7 +62,7 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return u.Commit()
 	}
 
-	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.CompileInContinuo, in.Repo, in.CommitSHA, d.Clock.Now())
+	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, d.Clock.Now())
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
