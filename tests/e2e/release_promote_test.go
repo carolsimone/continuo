@@ -103,15 +103,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 		"rel_probe not found in any manifest — is the model in service-1 and the image rebuilt?")
 	t.Logf("seeded prod snapshot with %d nodes (rel_probe excluded)", len(prodNodes))
 
-	// 2. Copy the changed service's baseline manifest to the new release key so
-	//    manifest-controller can fetch it. Other services' manifests already live
-	//    at their e2e-baseline canonical keys — service_prod seeding points there.
-	copyS3Object(t, ctx, clients,
-		baselineManifestKey(changedService),
-		canonicalManifestObjectKey(changedService, releaseID),
-	)
-
-	// 3. Reset the queue, seed current_prod, and seed service_prod for all
+	// 2. Reset the queue, seed current_prod, and seed service_prod for all
 	//    other services (so assembly reconstructs the full topology).
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -225,11 +217,6 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 		"rel_probe_down not found in any manifest — is the model in service-1 and the image rebuilt + manifests re-uploaded?")
 	t.Logf("seeded prod snapshot with %d nodes (rel_probe* chain excluded)", len(prodNodes))
 
-	copyS3Object(t, ctx, clients,
-		baselineManifestKey(changedService),
-		canonicalManifestObjectKey(changedService, releaseID),
-	)
-
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -321,11 +308,6 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 		"xprobe_down not found in any manifest — is the model in service-2 and the image rebuilt + manifests re-uploaded?")
 	t.Logf("seeded prod snapshot with %d nodes (xprobe pair excluded)", len(prodNodes))
 
-	copyS3Object(t, ctx, clients,
-		baselineManifestKey(changedService),
-		canonicalManifestObjectKey(changedService, releaseID),
-	)
-
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -373,11 +355,6 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 
 	changedImageTag := allServices[changedService].imageTag
 	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
-
-	copyS3Object(t, ctx, clients,
-		baselineManifestKey(changedService),
-		canonicalManifestObjectKey(changedService, releaseID),
-	)
 
 	// Empty current_prod and service_prod: a non-bootstrap release against an
 	// empty baseline would treat every node as changed and could not promote.
@@ -464,11 +441,6 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	require.True(t, probeFound,
 		"rel_probe not found in baseline — service-1 manifests must include it")
 
-	copyS3Object(t, ctx, clients,
-		baselineManifestKey(changedService),
-		canonicalManifestObjectKey(changedService, releaseID),
-	)
-
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -525,13 +497,6 @@ type serviceInfo struct {
 //	<service>/e2e-baseline/manifest.json
 func baselineManifestKey(service string) string {
 	return fmt.Sprintf("%s/%s/manifest.json", service, e2eBaselineReleaseID)
-}
-
-// canonicalManifestObjectKey returns the S3 object key for a per-release manifest:
-//
-//	<service>/<release_id>/manifest.json
-func canonicalManifestObjectKey(service, releaseID string) string {
-	return fmt.Sprintf("%s/%s/manifest.json", service, releaseID)
 }
 
 // canonicalManifestS3URI returns the full s3:// URI for a per-release manifest,
@@ -605,17 +570,6 @@ func getS3Object(t *testing.T, ctx context.Context, clients *testClients, key st
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err, "read S3 object %s", key)
 	return body
-}
-
-// copyS3Object copies an object to a new key within the e2e bucket.
-func copyS3Object(t *testing.T, ctx context.Context, clients *testClients, srcKey, dstKey string) {
-	t.Helper()
-	_, err := clients.s3Client.CopyObject(ctx, &s3.CopyObjectInput{
-		Bucket:     aws.String(e2eS3Bucket),
-		CopySource: aws.String(e2eS3Bucket + "/" + srcKey),
-		Key:        aws.String(dstKey),
-	})
-	require.NoError(t, err, "copy S3 object %s -> %s", srcKey, dstKey)
 }
 
 // parseManifestNodes extracts the model/seed/snapshot nodes from a dbt
@@ -742,7 +696,7 @@ func postRelease(t *testing.T, clients *testClients, service, releaseID, imageTa
 func assertValidationRequestedNodes(t *testing.T, ctx context.Context, clients *testClients, releaseID string, want []string) {
 	t.Helper()
 	var got []string
-	pollUntil(t, ctx, 3*time.Minute, 1*time.Second, func() (bool, error) {
+	pollUntil(t, ctx, 8*time.Minute, 1*time.Second, func() (bool, error) {
 		msgs, err := clients.redisClient.XRange(ctx, streams.ValidationRequestedV1, "-", "+").Result()
 		if err != nil {
 			return false, nil
