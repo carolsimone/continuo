@@ -57,10 +57,11 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		return fmt.Errorf("save release: %w", err)
 	}
 	payload, err := json.Marshal(map[string]string{
-		"release_id":   in.ReleaseID,
-		"reason":       "seed_build_failed",
-		"error_class":  in.ErrorClass,
-		"error_detail": in.ErrorDetail,
+		"release_id":       in.ReleaseID,
+		"reason":           "seed_build_failed",
+		"error_class":      in.ErrorClass,
+		"error_detail":     in.ErrorDetail,
+		"candidate_schema": "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

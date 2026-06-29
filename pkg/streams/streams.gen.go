@@ -138,8 +138,12 @@ const (
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// OrchestratorReleasePromotedSeedBuild — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromotedSeedBuild = "orchestrator-release-promoted-seed-build"
+	// ExecutorReleasePromoted — executor-controller consumer group on release.promoted:v1.
+	ExecutorReleasePromoted = "executor-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
+	// ExecutorReleaseRejected — executor-controller consumer group on release.rejected:v1.
+	ExecutorReleaseRejected = "executor-release-rejected"
 	// RemediationAgentRemediationRequested — remediation-agent consumer group on remediation.requested:v1.
 	RemediationAgentRemediationRequested = "remediation-agent-remediation-requested"
 )

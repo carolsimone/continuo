@@ -45,6 +45,7 @@ func (d *Deployer) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 		Namespace:    d.namespace,
 		NodeType:     nodeType,
 		ImageTag:     spec.ImageTag,
+		Mode:         spec.Mode,
 	})
 }
 

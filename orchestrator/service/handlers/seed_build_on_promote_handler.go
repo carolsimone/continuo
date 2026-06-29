@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -126,6 +127,7 @@ func (h *SeedBuildOnPromoteHandler) Handle(
 			JobName:      jobName,
 			NodeType:     node.NodeType,
 			ImageTag:     node.ImageTag,
+			Mode:         pkgevents.ModePromoteSeed,
 		}
 
 		evtPayload, err := json.Marshal(nodeEvt)

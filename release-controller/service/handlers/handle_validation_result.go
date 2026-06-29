@@ -183,12 +183,13 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		}
 	}
 	payload, err := json.Marshal(map[string]any{
-		"release_id":  releaseID,
-		"topology":    wireTopo,
-		"image_tags":  r.ImageTags(),
-		"repo":        r.Repo(),
-		"commit_sha":  r.CommitSHA(),
-		"promoted_at": now.UTC(),
+		"release_id":       releaseID,
+		"topology":         wireTopo,
+		"image_tags":       r.ImageTags(),
+		"repo":             r.Repo(),
+		"commit_sha":       r.CommitSHA(),
+		"promoted_at":      now.UTC(),
+		"candidate_schema": "_candidate_" + sanitizeSchemaSuffix(releaseID),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

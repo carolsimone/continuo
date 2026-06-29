@@ -24,6 +24,11 @@ type DeployTask struct {
 	ImageTag       string `json:"image_tag"`
 	TaskRetryCount int    `json:"task_retry_count"`
 	TaskMaxRetries int    `json:"task_max_retries"`
+	// Mode is the optional dispatch mode (omitempty on the query.model wire).
+	// Empty for normal production jobs; events.ModePromoteSeed for promote-seed
+	// jobs. Persisted in job_params and forwarded to the k8s JobSpec so the
+	// k8s adapter can stamp the mode label on the Job.
+	Mode string `json:"mode,omitempty"`
 }
 
 func (DeployTask) isCommand() {}
@@ -69,6 +74,7 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		TableName:    c.TableName,
 		NodeType:     c.NodeType,
 		ImageTag:     c.ImageTag,
+		Mode:         c.Mode,
 	}
 }
 

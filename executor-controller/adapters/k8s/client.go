@@ -31,6 +31,13 @@ type JobParams struct {
 	Namespace    string
 	NodeType     pkg_model.NodeType
 	ImageTag     string
+	// Mode is the optional dispatch mode. Empty for normal production jobs;
+	// set to events.ModePromoteSeed for promote-seed jobs. When non-empty the
+	// value is stamped as a "mode" label on the Job and its pod template so
+	// k8s-controller can suppress the production lifecycle events for jobs
+	// that have no real state run. Normal production jobs (empty Mode) get no
+	// mode label — the wire format is unchanged.
+	Mode string
 }
 
 // K8sClient provides methods to interact with Kubernetes
@@ -133,33 +140,32 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	}
 
 	backoffLimit := int32(0)
+	jobLabels := map[string]string{
+		"app":          "dbt-job",
+		"task-id":      params.TaskID,
+		"schedule-id":  params.ScheduleID,
+		"schedule":     params.ScheduleName,
+		"table_name":   params.TableName,
+		"schema_name":  params.SchemaName,
+		"service_name": params.ServiceName,
+	}
+	// Stamp the mode label only when the caller provides one. Normal production
+	// jobs (empty Mode) get NO mode label — their wire format is unchanged and
+	// k8s-controller continues to route them through the production lifecycle.
+	if params.Mode != "" {
+		jobLabels["mode"] = params.Mode
+	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      params.JobName,
 			Namespace: params.Namespace,
-			Labels: map[string]string{
-				"app":          "dbt-job",
-				"task-id":      params.TaskID,
-				"schedule-id":  params.ScheduleID,
-				"schedule":     params.ScheduleName,
-				"table_name":   params.TableName,
-				"schema_name":  params.SchemaName,
-				"service_name": params.ServiceName,
-			},
+			Labels:    jobLabels,
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app":          "dbt-job",
-						"task-id":      params.TaskID,
-						"schedule-id":  params.ScheduleID,
-						"schedule":     params.ScheduleName,
-						"table_name":   params.TableName,
-						"schema_name":  params.SchemaName,
-						"service_name": params.ServiceName,
-					},
+					Labels: jobLabels,
 				},
 				Spec: podSpec,
 			},

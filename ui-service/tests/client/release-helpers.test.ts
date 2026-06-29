@@ -14,8 +14,12 @@ describe('firstInFlight', () => {
   it('returns null when all terminal', () => {
     expect(firstInFlight([mk('a', 'promoted'), mk('b', 'rejected')])).toBeNull();
   });
-  it('IN_FLIGHT_STATUSES covers the three active states', () => {
-    expect(IN_FLIGHT_STATUSES).toEqual(['received', 'parsing', 'validating']);
+  it('IN_FLIGHT_STATUSES covers every active pipeline state in lifecycle order', () => {
+    expect(IN_FLIGHT_STATUSES).toEqual(['received', 'compiling', 'parsing', 'seed_building', 'validating']);
+  });
+  it('treats compiling and seed_building as in flight', () => {
+    expect(firstInFlight([mk('a', 'promoted'), mk('b', 'compiling')])?.release_id).toBe('b');
+    expect(firstInFlight([mk('a', 'promoted'), mk('b', 'seed_building')])?.release_id).toBe('b');
   });
 });
 

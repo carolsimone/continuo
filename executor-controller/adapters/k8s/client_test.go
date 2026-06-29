@@ -1,13 +1,18 @@
 package k8s
 
 import (
+	"context"
 	"errors"
+	"log/slog"
+	"os"
 	"testing"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
@@ -112,4 +117,82 @@ func TestBuildPodSpec_NoCandidateSchemaEnv(t *testing.T) {
 	require.Len(t, spec.Containers, 1)
 	assert.Empty(t, envByName(spec, "DBT_TARGET_SCHEMA"),
 		"prod query job must not set the candidate output schema")
+}
+
+// newQueryTestClient creates a K8sClient backed by a fake clientset for unit tests.
+func newQueryTestClient() *K8sClient {
+	cs := fake.NewSimpleClientset()
+	c := &K8sClient{logger: slog.New(slog.NewTextHandler(os.Stderr, nil))}
+	c.setClientsetForTest(cs)
+	return c
+}
+
+// TestCreateQueryJob_PromoteSeedMode_StampsModeLabel verifies that CreateQueryJob
+// stamps a "mode" label on both the Job and its pod template when params.Mode is
+// non-empty (e.g. events.ModePromoteSeed). This lets k8s-controller route the
+// terminal status away from the production lifecycle.
+func TestCreateQueryJob_PromoteSeedMode_StampsModeLabel(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	c := newQueryTestClient()
+	ctx := context.Background()
+
+	params := JobParams{
+		JobName:      "promote-seed-svc-analytics-fx-abc123",
+		TaskID:       "task-1",
+		ScheduleID:   "sched-1",
+		ScheduleName: "promote-seed",
+		ServiceName:  "svc",
+		SchemaName:   "analytics",
+		TableName:    "fx",
+		Namespace:    "default",
+		NodeType:     pkg_model.NodeTypeDbtSeed,
+		ImageTag:     "v1",
+		Mode:         events.ModePromoteSeed,
+	}
+
+	require.NoError(t, c.CreateQueryJob(ctx, params))
+
+	job, err := c.clientset.BatchV1().Jobs("default").Get(ctx, params.JobName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	assert.Equal(t, events.ModePromoteSeed, job.Labels["mode"],
+		"Job must carry mode label for promote_seed jobs")
+	assert.Equal(t, events.ModePromoteSeed, job.Spec.Template.Labels["mode"],
+		"Pod template must also carry the mode label")
+}
+
+// TestCreateQueryJob_NormalProduction_HasNoModeLabel verifies that a normal
+// production job (empty Mode) gets NO "mode" label. This protects the production
+// path: the wire format must be unchanged and k8s-controller must not accidentally
+// suppress the production lifecycle for normal jobs.
+func TestCreateQueryJob_NormalProduction_HasNoModeLabel(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	c := newQueryTestClient()
+	ctx := context.Background()
+
+	params := JobParams{
+		JobName:      "prod-svc-analytics-orders-abc456",
+		TaskID:       "task-2",
+		ScheduleID:   "sched-2",
+		ScheduleName: "daily",
+		ServiceName:  "svc",
+		SchemaName:   "analytics",
+		TableName:    "orders",
+		Namespace:    "default",
+		NodeType:     pkg_model.NodeTypeDbtModel,
+		ImageTag:     "v1",
+		Mode:         "", // normal production job — no mode
+	}
+
+	require.NoError(t, c.CreateQueryJob(ctx, params))
+
+	job, err := c.clientset.BatchV1().Jobs("default").Get(ctx, params.JobName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	_, hasModeLabel := job.Labels["mode"]
+	assert.False(t, hasModeLabel,
+		"normal production job must have no mode label — production lifecycle must run unchanged")
+	_, hasPodModeLabel := job.Spec.Template.Labels["mode"]
+	assert.False(t, hasPodModeLabel,
+		"pod template of normal production job must also have no mode label")
 }

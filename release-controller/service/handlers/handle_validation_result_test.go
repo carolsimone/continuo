@@ -426,6 +426,36 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 	assert.Equal(t, "h", contentHashByID["a"], "a's content_hash must match candidate")
 }
 
+// TestHandleValidationResult_Promote_CarriesCandidateSchema verifies that the
+// release.promoted:v1 payload includes candidate_schema so the executor-controller's
+// release.promoted teardown consumer can drop the schema when present (idempotent
+// no-op if validation.completed already cleaned it up).
+func TestHandleValidationResult_Promote_CarriesCandidateSchema(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA",
+		PerNodeResults: []handlers.NodeResult{
+			{NodeID: "a", Status: "ok"},
+			{NodeID: "b", Status: "ok"},
+		},
+		AggregateStatus: "ok",
+	})
+	require.NoError(t, err)
+
+	entries := outboxEntries(store)
+	promotedEntry := entries[len(entries)-1]
+	require.Equal(t, streams.ReleasePromotedV1, promotedEntry.StreamName)
+
+	var payload map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(promotedEntry.Payload, &payload))
+
+	var candidateSchema string
+	require.NoError(t, json.Unmarshal(payload["candidate_schema"], &candidateSchema))
+	assert.Equal(t, "_candidate_rA", candidateSchema,
+		"release.promoted:v1 must carry candidate_schema for executor teardown")
+}
+
 // TestHandleValidationResult_Promote_EmitsOriginalFilePath verifies that promotion
 // carries the original_file_path field from the candidate topology through to the
 // release.promoted:v1 event, allowing the orchestrator to persist ancestry metadata.

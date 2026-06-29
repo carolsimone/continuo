@@ -200,6 +200,24 @@ func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	assert.Equal(t, streams.ReleaseRejectedV1, lastOutbox(t, store).StreamName)
 }
 
+func TestHandleSeedBuildResult_FailedPayloadCarriesCandidateSchema(t *testing.T) {
+	deps, store := newTestDeps(t)
+	releaseID := "rel-seed-fail-schema"
+	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedPlusModel())
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: releaseID, Status: "failed", ErrorClass: "seed_error", ErrorDetail: "csv parse",
+	}))
+
+	entry := lastOutbox(t, store)
+	assert.Equal(t, streams.ReleaseRejectedV1, entry.StreamName)
+
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	assert.Equal(t, "_candidate_rel_seed_fail_schema", payload["candidate_schema"],
+		"release.rejected:v1 must carry candidate_schema so executor can tear down the schema")
+}
+
 func TestHandleSeedBuildResult_UnknownReleaseDropped(t *testing.T) {
 	deps, store := newTestDeps(t)
 	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
@@ -233,4 +251,22 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotesDirect(t *testing.T) {
 	// Verify current_prod was updated
 	cp := store.GetCurrentProd()
 	assert.Equal(t, releaseID, cp.ReleaseID())
+}
+
+func TestHandleSeedBuildResult_EmptyAfterExclusionPromotePayloadCarriesCandidateSchema(t *testing.T) {
+	deps, store := newTestDeps(t)
+	releaseID := "rel-seed-only-schema"
+	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedOnly())
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: releaseID, Status: "ok",
+	}))
+
+	entry := lastOutbox(t, store)
+	assert.Equal(t, streams.ReleasePromotedV1, entry.StreamName)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	assert.Equal(t, "_candidate_rel_seed_only_schema", payload["candidate_schema"],
+		"release.promoted:v1 on seed-only path must carry candidate_schema so executor can tear down the schema")
 }

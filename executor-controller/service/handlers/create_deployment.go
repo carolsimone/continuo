@@ -46,6 +46,7 @@ func createDeployment(
 		ImageTag:       base.ImageTag,
 		TaskRetryCount: taskRetryCount,
 		TaskMaxRetries: taskMaxRetries,
+		Mode:           base.Mode,
 	}
 
 	var procID *uuid.UUID

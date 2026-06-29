@@ -168,6 +168,10 @@ func main() {
 		uowFactory, compileNodeHandler, logger)
 	validationCompletedTeardownBinding := redis.NewValidationCompletedTeardownBinding(
 		candidateSchemaCleaner, logger)
+	releaseRejectedTeardownBinding := redis.NewReleaseRejectedTeardownBinding(
+		candidateSchemaCleaner, logger)
+	releasePromotedTeardownBinding := redis.NewReleasePromotedTeardownBinding(
+		candidateSchemaCleaner, logger)
 
 	// ========================================================================
 	// INITIALIZE REDIS PRODUCERS + CONSUMERS
@@ -232,6 +236,18 @@ func main() {
 		validationCompletedTeardownBinding, logger)
 	logger.Info("validation.completed teardown consumer initialized",
 		"stream", streams.ValidationCompletedV1, "group", streams.ExecutorValidationCompleted)
+
+	releaseRejectedTeardownConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
+		releaseRejectedTeardownBinding, logger)
+	logger.Info("release.rejected teardown consumer initialized",
+		"stream", streams.ReleaseRejectedV1, "group", streams.ExecutorReleaseRejected)
+
+	releasePromotedTeardownConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ReleasePromotedV1, streams.ExecutorReleasePromoted,
+		releasePromotedTeardownBinding, logger)
+	logger.Info("release.promoted teardown consumer initialized",
+		"stream", streams.ReleasePromotedV1, "group", streams.ExecutorReleasePromoted)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -369,6 +385,16 @@ func main() {
 	go func() {
 		if err := validationCompletedTeardownConsumer.Start(ctx); err != nil {
 			logger.Error("validation.completed teardown consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := releaseRejectedTeardownConsumer.Start(ctx); err != nil {
+			logger.Error("release.rejected teardown consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := releasePromotedTeardownConsumer.Start(ctx); err != nil {
+			logger.Error("release.promoted teardown consumer error", "error", err)
 		}
 	}()
 
