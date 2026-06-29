@@ -129,6 +129,44 @@ func TestPublisher_ValidationCompleted(t *testing.T) {
 	assert.JSONEq(t, string(body), payloadStr, "stored aggregate payload re-emitted verbatim")
 }
 
+func TestPublisher_SeedBuildCompleted(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	r := newRedis(t)
+	pub := publisher.NewOutboxPublisher(r, logger)
+
+	body := []byte(`{"release_id":"rel_1","per_node_results":[{"node_id":"public.seed_x","status":"ok"}],"aggregate_status":"ok"}`)
+	id := uuid.New()
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: id, EventType: "seed_build_completed", StreamName: streams.SeedBuildCompletedV1, Payload: body,
+	}))
+
+	v := lastEntryFields(t, r, streams.SeedBuildCompletedV1)
+	assert.Equal(t, id.String(), v["outbox_entry_id"])
+	payloadStr, ok := v["payload"].(string)
+	require.True(t, ok, "expected a string payload field")
+	assert.JSONEq(t, string(body), payloadStr, "stored aggregate payload re-emitted verbatim")
+}
+
+func TestPublisher_CompileCompleted(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	r := newRedis(t)
+	pub := publisher.NewOutboxPublisher(r, logger)
+
+	// Regression: the compile leg's aggregate event must be publishable — a
+	// missing switch case stranded releases in `compiling` (no compile.completed:v1).
+	body := []byte(`{"release_id":"rel_1","status":"ok"}`)
+	id := uuid.New()
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: id, EventType: "compile_completed", StreamName: streams.CompileCompletedV1, Payload: body,
+	}))
+
+	v := lastEntryFields(t, r, streams.CompileCompletedV1)
+	assert.Equal(t, id.String(), v["outbox_entry_id"])
+	payloadStr, ok := v["payload"].(string)
+	require.True(t, ok, "expected a string payload field")
+	assert.JSONEq(t, string(body), payloadStr, "stored aggregate payload re-emitted verbatim")
+}
+
 func TestPublisher_UnknownEventType(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	r := newRedis(t)

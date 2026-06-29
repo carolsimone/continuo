@@ -118,11 +118,13 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return e.ToMap(), nil
 
-	case "validation_node_completed":
-		// validation.node.completed:v1 carries the per-node result as a single
-		// JSON "payload" field (release_id, node_id, outcome, dbt_log_uri) — the
-		// shape executor-controller's ParseValidationNodeCompleted decodes. The
-		// stored payload is already that body; re-emit it verbatim.
+	case "validation_node_completed", "seed_build_node_completed", "compile_node_completed":
+		// The three candidate-leg node-completed events
+		// (validation.node.completed:v1 / seed.build.node.completed:v1 /
+		// compile.node.completed:v1) each carry the per-node result as a single
+		// JSON "payload" field (release_id, node_id, outcome, ...) — the shape
+		// executor-controller's Parse*NodeCompleted decoders expect. The stored
+		// payload is already that body; re-emit it verbatim.
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:

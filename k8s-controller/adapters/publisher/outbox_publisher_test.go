@@ -48,6 +48,52 @@ func TestPublisher_ValidationNodeCompleted(t *testing.T) {
 	assert.JSONEq(t, string(body), payloadStr, "stored per-node result re-emitted verbatim")
 }
 
+func TestPublisher_SeedBuildNodeCompleted(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	r := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	pub := publisher.NewOutboxPublisher(r, newTestLogger())
+
+	body := []byte(`{"release_id":"rel_1","node_id":"public.seed_x","outcome":"ok"}`)
+	id := uuid.New()
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: id, EventType: "seed_build_node_completed", StreamName: streams.SeedBuildNodeCompletedV1, Payload: body,
+	}))
+
+	res, err := r.XRange(context.Background(), streams.SeedBuildNodeCompletedV1, "-", "+").Result()
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	assert.Equal(t, id.String(), res[0].Values["outbox_entry_id"])
+	payloadStr, ok := res[0].Values["payload"].(string)
+	require.True(t, ok, "expected a string payload field")
+	assert.JSONEq(t, string(body), payloadStr, "stored per-node result re-emitted verbatim")
+}
+
+func TestPublisher_CompileNodeCompleted(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	r := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	pub := publisher.NewOutboxPublisher(r, newTestLogger())
+
+	// Regression: the compile leg's terminal-status event must be publishable —
+	// a missing switch case stranded releases in `compiling` (no compile.node.completed:v1).
+	body := []byte(`{"release_id":"rel_1","node_id":"service-1","outcome":"ok"}`)
+	id := uuid.New()
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: id, EventType: "compile_node_completed", StreamName: streams.CompileNodeCompletedV1, Payload: body,
+	}))
+
+	res, err := r.XRange(context.Background(), streams.CompileNodeCompletedV1, "-", "+").Result()
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	assert.Equal(t, id.String(), res[0].Values["outbox_entry_id"])
+	payloadStr, ok := res[0].Values["payload"].(string)
+	require.True(t, ok, "expected a string payload field")
+	assert.JSONEq(t, string(body), payloadStr, "stored per-node result re-emitted verbatim")
+}
+
 func TestPublisher_UnknownEventTypeReturnsError(t *testing.T) {
 	pub := publisher.NewOutboxPublisher(nil, newTestLogger())
 	err := pub.Publish(context.Background(), &outbox.Entry{
