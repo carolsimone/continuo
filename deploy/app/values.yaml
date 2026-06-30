@@ -160,9 +160,10 @@ services:
         secretKey: POSTGRES_PASSWORD
       - name: REDIS_PASSWORD
         secretKey: REDIS_PASSWORD
-      # Forwarded into each validation Job so the s3-sidecar can fetch the
-      # candidate SQL from S3 (CANDIDATE_SQL_URI). Endpoint/bucket/region come
-      # from the shared configMap; the access keys come from the secret.
+      # Forwarded into each validation Job's main container, which fetches its
+      # candidate SQL from CANDIDATE_SQL_URI directly (boto3), and into the
+      # compile Job's s3-sidecar. Endpoint/bucket/region come from the shared
+      # configMap; the access keys come from the secret.
       - name: AWS_ACCESS_KEY_ID
         secretKey: AWS_ACCESS_KEY_ID
       - name: AWS_SECRET_ACCESS_KEY

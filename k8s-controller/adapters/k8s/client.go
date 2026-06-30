@@ -219,9 +219,10 @@ func (c *K8sClient) GetJobMeta(ctx context.Context, namespace, jobName string) (
 // Returns empty strings if no pod is found or no logs are available.
 //
 // When the main container produced no output because a preceding init container
-// failed (e.g. the s3-sidecar fetch container could not download candidate SQL),
-// the function falls back to reading the failed init container's logs so the
-// error message reaches the classifier instead of being silently swallowed.
+// failed (e.g. the compile Job's `compile` init container), the function falls
+// back to reading the first failed init container's logs so the error message
+// reaches the classifier instead of being silently swallowed. Validation Jobs
+// have no init container; this fallback applies only to the compile leg.
 func (c *K8sClient) GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (fullLog, tail string, err error) {
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
@@ -334,8 +335,8 @@ func (c *K8sClient) hasFailedCondition(job *batchv1.Job) bool {
 // checkImagePullError inspects pod container statuses for image pull failure reasons.
 // The k8s Job controller never marks Status.Failed for stuck image pulls, so we detect
 // them directly from pod state. Both main containers and init containers are checked —
-// a broken init-container image (e.g. the s3-sidecar fetch container) otherwise hangs
-// a release in "validating" forever because Job.Status.Failed stays zero.
+// a broken init-container image (e.g. the compile Job's `compile` init container) would
+// otherwise hang a release in "validating" forever because Job.Status.Failed stays zero.
 // Returns reason+message if found, empty strings otherwise.
 func (c *K8sClient) checkImagePullError(ctx context.Context, namespace, jobName string) (reason, message string) {
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{

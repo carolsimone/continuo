@@ -181,8 +181,8 @@ func TestGetJobStatus_DbtSuccess_ReturnsJobStatusSucceeded(t *testing.T) {
 }
 
 // TestGetJobStatus_InitContainerImagePullBackOff_ReturnsJobStatusFailed verifies that
-// an ImagePullBackOff on an init container (e.g. the s3-sidecar fetch container used
-// in validation Jobs) is correctly surfaced as a failure. The k8s Job controller never
+// an ImagePullBackOff on an init container (e.g. the compile Job's `compile` init
+// container) is correctly surfaced as a failure. The k8s Job controller never
 // increments Status.Failed for image pull loops regardless of whether the image pull
 // failure is on a main container or an init container.
 func TestGetJobStatus_InitContainerImagePullBackOff_ReturnsJobStatusFailed(t *testing.T) {

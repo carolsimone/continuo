@@ -121,6 +121,7 @@ def test_main_build_from_sql_calls_adapter_and_emits_success(monkeypatch, capsys
     out = capsys.readouterr().out
     assert validation_result.SENTINEL_BEGIN in out
     assert '"status":"success"' in out
+    assert out.strip().endswith(validation_result.SENTINEL_END)
 
 
 def test_main_build_from_sql_empty_candidate_sql_errors(monkeypatch, capsys):
@@ -148,7 +149,10 @@ def test_main_build_from_sql_s3_error_emits_error_block(monkeypatch, capsys):
         main()
 
     assert exc.value.code == 1
-    assert '"status":"error"' in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert validation_result.SENTINEL_BEGIN in out
+    assert '"status":"error"' in out
+    assert out.strip().endswith(validation_result.SENTINEL_END)
 
 
 # ---------------------------------------------------------------------------
@@ -180,3 +184,22 @@ def test_main_clone_from_prod_missing_prod_schema_exits(monkeypatch):
         main()
 
     assert exc.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# main — unknown VALIDATION_OP
+# ---------------------------------------------------------------------------
+
+def test_main_unknown_validation_op_exits_2(monkeypatch, capsys):
+    """The else branch in main() must emit a structured error block and exit 2."""
+    _set_pg_env(monkeypatch)
+    monkeypatch.setenv("VALIDATION_OP", "bogus")
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 2
+    out = capsys.readouterr().out
+    assert validation_result.SENTINEL_BEGIN in out
+    assert '"status":"error"' in out
+    assert out.strip().endswith(validation_result.SENTINEL_END)

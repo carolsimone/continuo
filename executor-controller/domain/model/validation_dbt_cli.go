@@ -15,9 +15,9 @@ import (
 // build_from_sql fetches the node's compiled SQL from S3 (CANDIDATE_SQL_URI)
 // and runs CREATE TABLE <candidate>.<table> AS (<sql>) WITH NO DATA;
 // clone_from_prod
-// clones an existing prod table's shape empty. Seeds are no longer validated with
-// `dbt seed --empty`; they are pre-built / cloned (see release-controller), so they
-// need no distinct command here.
+// clones an existing prod table's shape empty. Seeds need no distinct command
+// here: they are pre-built (new/changed) or cloned from prod (unchanged) by the
+// release-controller, never validated via dbt.
 func ValidationCommand(nt pkg_model.NodeType, tableName string) []string {
 	return []string{"python", "/validation_runner.py"}
 }
