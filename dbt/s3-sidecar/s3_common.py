@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Shared S3 helpers for the compile and validation sidecars.
+"""Shared S3 helpers for the compile sidecar (compile_uploader.py).
 
-Both compile_uploader.py and candidate_fetcher.py need identical URI parsing,
-env-var validation, and S3 client construction. Centralising them here prevents
-the two scripts from drifting apart.
+Provides URI parsing, env-var validation, and S3 client construction used by
+compile_uploader.py.
 """
 import os
 import sys
