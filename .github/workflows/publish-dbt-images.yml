@@ -49,15 +49,6 @@ jobs:
           cache-from: type=gha,scope=s3-sidecar
           cache-to: type=gha,mode=max,scope=s3-sidecar
 
-      - name: Build and push validation-runner
-        uses: docker/build-push-action@v6
-        with:
-          context: validation-runner
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/validation-runner:latest
-          cache-from: type=gha,scope=validation-runner
-          cache-to: type=gha,mode=max,scope=validation-runner
-
       # One step per service. Image name = DOCKERHUB_USERNAME/service-N:latest,
       # matching the dbt project name and params.ServiceName in executor-controller.
       - name: Build and push service-1

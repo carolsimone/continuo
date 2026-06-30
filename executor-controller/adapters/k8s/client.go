@@ -277,6 +277,10 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // have no candidate SQL and never touch S3, so they remain single-container with no
 // emptyDir and no S3 credentials.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
+	// VALIDATION_IMAGE pins the validator image. In production the Helm chart sets
+	// it to the SHA-tagged continuo-validation-runner:<imageTag>; when unset (local
+	// docker-compose, kind e2e) it falls back to the locally-built validation-runner:latest,
+	// DOCKERHUB_USERNAME-prefixed when set.
 	image := os.Getenv("VALIDATION_IMAGE")
 	if image == "" {
 		image = "validation-runner:latest"

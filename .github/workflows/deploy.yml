@@ -101,8 +101,11 @@ jobs:
               - 'pkg/**'
               - 'orchestrator/**'
               - 'remediation-agent/**'
+              - 'validation-runner/**'
             migrations:
               - 'db/**'
+            validation_runner:
+              - 'validation-runner/**'
 
       - name: Build publish matrix
         id: matrix
@@ -118,6 +121,7 @@ jobs:
           REMEDIATION_CHANGED: ${{ steps.filter.outputs.remediation }}
           REMEDIATION_AGENT_CHANGED: ${{ steps.filter.outputs.remediation_agent }}
           MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations }}
+          VALIDATION_RUNNER_CHANGED: ${{ steps.filter.outputs.validation_runner }}
         run: |
           matrix="$(
             jq -cn \
@@ -132,6 +136,7 @@ jobs:
               --arg remediation "$REMEDIATION_CHANGED" \
               --arg remediation_agent "$REMEDIATION_AGENT_CHANGED" \
               --arg migrations "$MIGRATIONS_CHANGED" \
+              --arg validation_runner "$VALIDATION_RUNNER_CHANGED" \
               '{
                 include: [
                   {service: "state", changed: $state, dockerfile: "state/Dockerfile.prod", context: "."},
@@ -144,7 +149,8 @@ jobs:
                   {service: "agent-runner", changed: $agent_runner, dockerfile: "agent-runner/Dockerfile.prod", context: "."},
                   {service: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
                   {service: "remediation-agent", changed: $remediation_agent, dockerfile: "remediation-agent/Dockerfile.prod", context: "."},
-                  {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"}
+                  {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
+                  {service: "validation-runner", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile", context: "validation-runner"}
                 ]
               }'
           )"

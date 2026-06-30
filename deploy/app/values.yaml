@@ -180,10 +180,11 @@ services:
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       MAX_CONCURRENT_JOBS: "50"
-      # Re-pull validation images every run: the continuo-owned validation-runner
-      # image is re-pushed under its mutable :latest tag whenever the validator
-      # changes, and the registry holds the fresh image.
-      VALIDATION_IMAGE_PULL_POLICY: Always
+      # Validation Jobs pull the SHA-pinned continuo-validation-runner:<imageTag>
+      # image (set via VALIDATION_IMAGE below). The tag is immutable per deploy, so
+      # IfNotPresent caches it by digest instead of re-pulling every run.
+      VALIDATION_IMAGE_PULL_POLICY: IfNotPresent
+      VALIDATION_IMAGE: __VALIDATION_IMAGE__
       DBT_POSTGRES_DB: continuo_dbt
       HTTP_PORT: "8084"
       DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__
