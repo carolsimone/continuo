@@ -95,7 +95,7 @@ func main() {
 		Evidence:         store,
 		Ancestry:         ancestryClient,
 		Source:           ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, http.DefaultClient),
-		Sanitizer:        sanitizer.Passthrough{},
+		Sanitizer:        sanitizer.NewRedactor(sanitizer.ParseLevel(cfg.LogSanitizerLevel)),
 		Artifacts:        store,
 		Clock:            ports.SystemClock{},
 		Logger:           logger,

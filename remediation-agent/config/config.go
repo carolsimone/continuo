@@ -27,6 +27,11 @@ type Config struct {
 	MaxAttempts      int
 	OrchestratorAddr string
 
+	// LogSanitizerLevel selects how aggressively the dbt log is scrubbed before
+	// it reaches the LLM prompt: `redacted` (strict default), `summary`, or
+	// `raw`. Unrecognised values fall back to `redacted`.
+	LogSanitizerLevel string
+
 	// ServiceRepoMapPath is the path to the service→repo YAML file. When empty
 	// or missing, ServiceRepoPaths is an empty map and Step-2 source resolution
 	// degrades gracefully for all services.
@@ -65,6 +70,7 @@ func Load(v *pkgconfig.Validator) Config {
 		GRPCPort:           pkgconfig.EnvOrDefault("REMEDIATION_AGENT_GRPC_PORT", "50054"),
 		MaxAttempts:        pkgconfig.EnvIntOrDefault("REMEDIATION_AGENT_MAX_ATTEMPTS", 3),
 		OrchestratorAddr:   pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
+		LogSanitizerLevel:  pkgconfig.EnvOrDefault("REMEDIATION_AGENT_LOG_SANITIZER_LEVEL", "redacted"),
 		ServiceRepoMapPath: pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
 	}
 	switch cfg.LLMProvider {

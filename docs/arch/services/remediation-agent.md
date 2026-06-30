@@ -86,7 +86,8 @@ The `{path}` is formed by joining the service's `repo_path` from `service_repos.
 5. Fetch dbt log from S3 at dbt_log_uri.
    - If not found: rawLog = "" (log unavailable path).
    - If transient S3 error: return error (message stays in PEL, retried).
-6. Pass rawLog through LogSanitizer → dbtLog.
+6. Pass rawLog through LogSanitizer → dbtLog (data values redacted, error
+   structure preserved; see LogSanitizer Seam).
 7. Call orchestrator GetNodeAncestry(node_id) → ranked upstream ancestors
    (best-effort; degrades to empty list on error).
 
@@ -181,7 +182,35 @@ If the Step-1 response contains no tool call (or no choices), the adapter return
 
 ## LogSanitizer Seam
 
-The `LogSanitizer` port sits between the raw S3 log fetch and the prompt assembly step. The deployed implementation is currently pass-through: it returns the dbt log string unchanged. The seam exists so a redacting implementation can be dropped in without touching the handler or prompt-assembly logic.
+The `LogSanitizer` port sits between the raw S3 log fetch and the prompt assembly step. The deployed implementation is a redactor that scrubs likely warehouse-data values from the dbt log before it reaches the LLM, while preserving the error structure the LLM needs to diagnose the failure. The same redactor is applied to the real model source on the Step-2 path.
+
+### Redaction policy
+
+Data values that may carry warehouse content are replaced with stable, self-describing placeholders so the LLM still sees the shape of each value without seeing the value itself:
+
+| Pattern | Replacement | Notes |
+|---|---|---|
+| Email address | `<email>` | Applied everywhere, including inside tuple bodies. |
+| Canonical 8-4-4-4-12 UUID | `<uuid>` | |
+| Single-quoted SQL string literal `'…'` | `'<str>'` | Single quotes always delimit string values in SQL. |
+| Double-quoted value in `invalid input syntax … : "value"` | `"<str>"` | Only this form treats double quotes as data. |
+| Standalone run of 6+ digits | `<num>` | Ids, account numbers, epoch values. |
+| Constraint DETAIL value side `Key (cols)=(value)` | `Key (cols)=(…)` scrubbed | The column list before `=` is kept; the parenthesised value is scrubbed field-by-field. |
+| Failing-row tuple `… contains (…)` | tuple body scrubbed | Each comma-separated field is scrubbed; bare tokens and free text collapse to `<str>`; Postgres `NULL` is preserved. |
+
+Structural tokens that the LLM relies on are preserved verbatim: error classes (`duplicate key value violates unique constraint`, `invalid input syntax …`), relation/table/column identifiers (double-quoted Postgres identifiers), constraint names, `LINE n:` markers and the `^` position caret, dbt node ids (`service_1.dim_customers`), schema-qualified relation references, short numbers, and the 5-character `SQLSTATE` code.
+
+### Levels
+
+The redaction level is selected at boot via `REMEDIATION_AGENT_LOG_SANITIZER_LEVEL` and defaults to the strict `redacted`:
+
+| Level | Behaviour |
+|---|---|
+| `redacted` (default) | Scrub data values across the whole log; preserve structure. |
+| `summary` | Apply the same redaction, then keep only diagnostic-bearing lines (error/detail/hint/constraint/SQLSTATE/position markers), dropping run-progress noise. |
+| `raw` | Forward the log unchanged. For local debugging against a trusted, self-hosted LLM only; never use with an external LLM provider. |
+
+In production the LLM provider is Anthropic (external HTTPS egress), so the strict `redacted` default keeps warehouse data values out of the prompt sent to the external API.
 
 ## Payload Shape (`remediation.proposed:v1`)
 
@@ -256,6 +285,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `REMEDIATION_AGENT_HTTP_PORT` | no | `8092` | `/healthz` port |
 | `REMEDIATION_AGENT_GRPC_PORT` | no | `50054` | `RemediationProposals` gRPC server port |
 | `REMEDIATION_AGENT_MAX_ATTEMPTS` | no | `3` | Per-`(source, node_id, error_signature)` attempt cap |
+| `REMEDIATION_AGENT_LOG_SANITIZER_LEVEL` | no | `redacted` | dbt-log redaction level: `redacted` (strict default), `summary`, or `raw`. Unrecognised values fall back to `redacted`. |
 
 ## Key Code Paths
 
@@ -277,6 +307,6 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Service→repo map file (Helm chart) | `deploy/app/files/service_repos.yaml` (rendered into `continuo-app-service-repos` ConfigMap, mounted at `/etc/continuo`) |
 | Anthropic LLM adapter | `remediation-agent/adapters/llm/anthropic.go` |
 | OpenAI-compatible LLM adapter | `remediation-agent/adapters/llm/openai.go` |
-| Pass-through log sanitizer | `remediation-agent/adapters/sanitizer/passthrough.go` |
+| Log sanitizer (redactor) | `remediation-agent/adapters/sanitizer/redactor.go` |
 | Redis consumer + outbox publisher | `remediation-agent/adapters/redis/` |
 | DB migrations | `db/migration/remediation_agent/V1__init_remediation_agent.sql`, `V2__source_fix.sql` |

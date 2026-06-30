@@ -1,8 +1,10 @@
 package ports
 
-// LogSanitizer redacts a dbt log before it reaches the LLM. A pass-through
-// implementation is wired at start-up; the seam allows real PII/token redaction
-// to be dropped in without touching the handler.
+// LogSanitizer scrubs likely warehouse-data values from a dbt log before it
+// reaches the LLM, while preserving the error structure (error classes,
+// relation/column identifiers, LINE markers, node ids, SQLSTATE codes) the LLM
+// needs to diagnose the failure. The seam keeps redaction policy out of the
+// handler.
 type LogSanitizer interface {
 	Sanitize(log string) string
 }
