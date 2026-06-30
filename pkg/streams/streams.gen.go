@@ -48,6 +48,18 @@ const (
 	ValidationNodeCompletedV1 = "validation.node.completed:v1"
 	// ValidationCompletedV1 — Per-node validation results from executor-controller back to release-controller.
 	ValidationCompletedV1 = "validation.completed:v1"
+	// SeedBuildRequestedV1 — release-controller requests candidate seed builds; executor dispatches per-seed team-image jobs.
+	SeedBuildRequestedV1 = "seed.build.requested:v1"
+	// SeedBuildNodeCompletedV1 — per-seed build terminal status from k8s-controller back to executor-controller.
+	SeedBuildNodeCompletedV1 = "seed.build.node.completed:v1"
+	// SeedBuildCompletedV1 — aggregated candidate seed-build result from executor-controller back to release-controller.
+	SeedBuildCompletedV1 = "seed.build.completed:v1"
+	// CompileRequestedV1 — release-controller requests the changed service's dbt compile; executor dispatches the compile Job.
+	CompileRequestedV1 = "compile.requested:v1"
+	// CompileNodeCompletedV1 — compile Job terminal status from k8s-controller back to executor-controller.
+	CompileNodeCompletedV1 = "compile.node.completed:v1"
+	// CompileCompletedV1 — aggregated compile result from executor-controller back to release-controller.
+	CompileCompletedV1 = "compile.completed:v1"
 	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
 	ReleasePromotedV1 = "release.promoted:v1"
 	// ReleaseRejectedV1 — Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
@@ -110,10 +122,28 @@ const (
 	ReleaseControllerValidationCompleted = "release-controller-validation-completed"
 	// ExecutorValidationCompleted — executor-controller consumer group on validation.completed:v1.
 	ExecutorValidationCompleted = "executor-validation-completed"
+	// ExecutorSeedBuildRequested — executor-controller consumer group on seed.build.requested:v1.
+	ExecutorSeedBuildRequested = "executor-seed-build-requested"
+	// ExecutorSeedBuildNodeCompleted — executor-controller consumer group on seed.build.node.completed:v1.
+	ExecutorSeedBuildNodeCompleted = "executor-seed-build-node-completed"
+	// ReleaseControllerSeedBuildCompleted — release-controller consumer group on seed.build.completed:v1.
+	ReleaseControllerSeedBuildCompleted = "release-controller-seed-build-completed"
+	// ExecutorCompileRequested — executor-controller consumer group on compile.requested:v1.
+	ExecutorCompileRequested = "executor-compile-requested"
+	// ExecutorCompileNodeCompleted — executor-controller consumer group on compile.node.completed:v1.
+	ExecutorCompileNodeCompleted = "executor-compile-node-completed"
+	// ReleaseControllerCompileCompleted — release-controller consumer group on compile.completed:v1.
+	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
+	// OrchestratorReleasePromotedSeedBuild — orchestrator consumer group on release.promoted:v1.
+	OrchestratorReleasePromotedSeedBuild = "orchestrator-release-promoted-seed-build"
+	// ExecutorReleasePromoted — executor-controller consumer group on release.promoted:v1.
+	ExecutorReleasePromoted = "executor-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
+	// ExecutorReleaseRejected — executor-controller consumer group on release.rejected:v1.
+	ExecutorReleaseRejected = "executor-release-rejected"
 	// RemediationAgentRemediationRequested — remediation-agent consumer group on remediation.requested:v1.
 	RemediationAgentRemediationRequested = "remediation-agent-remediation-requested"
 )

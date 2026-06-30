@@ -100,13 +100,21 @@ func (h *ReleasePromotedHandler) Handle(
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	// Dedup check keyed on the (message_id, release.promoted:v1) namespace, so
-	// this consumer's dedup state is scoped to its own stream.
+	// Dedup scope rule: when a single consumer group reads a stream, use the
+	// stream name as the dedup scope. When MULTIPLE consumer groups read the
+	// SAME stream, each group must scope its dedup by its CONSUMER-GROUP name
+	// so their message_processing rows remain distinct and the V12 unique index
+	// (outbox_entry_id, stream_name) keeps them independent.
+	//
+	// release.promoted:v1 has two orchestrator consumer groups:
+	//   - this handler (topology-swap): group streams.OrchestratorReleasePromoted
+	//   - SeedBuildOnPromoteHandler:    group streams.OrchestratorReleasePromotedSeedBuild
+	// Both scope by their group name so their dedup rows never collide.
 	// outboxEntryID provides a secondary uniqueness key that catches a re-XADD
 	// of the same upstream outbox row under a fresh Redis message ID.
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, streams.ReleasePromotedV1, payload, outboxEntryID,
+		messageID, streams.OrchestratorReleasePromoted, payload, outboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("message deduplication failed: %w", err)

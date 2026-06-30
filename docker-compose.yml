@@ -202,6 +202,7 @@ services:
       # the cached image. PullAlways would fail with ErrImagePull locally;
       # production omits this and defaults to Always.
       - VALIDATION_IMAGE_PULL_POLICY=IfNotPresent
+      - COMPILE_UPLOAD_IMAGE=manifest-uploader:latest
       # dbt PostgreSQL target (forwarded to K8s job pods)
       - DBT_POSTGRES_DB=continuo_dbt
       # S3 config so validation_runner.py can fetch the candidate SQL from

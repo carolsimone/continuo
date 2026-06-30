@@ -60,6 +60,8 @@ fi
 # depends on it and is now in the default (non-profiled) service set.
 echo "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
+echo "Building manifest-uploader image..."
+DOCKER_BUILDKIT=1 docker build -t manifest-uploader:latest dbt/manifest-uploader/
 echo "Building service images (batched)..."
 # Build in small batches instead of all ~13 services at once. On a 2-CPU/7.75GB
 # CI runner, building everything in parallel thrashes memory and disk I/O so badly
@@ -128,6 +130,8 @@ for svc in "${DBT_SERVICES[@]}"; do
 done
 kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME}
 kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME}
+kind load docker-image dbt-base:latest --name ${CLUSTER_NAME}
+kind load docker-image manifest-uploader:latest --name ${CLUSTER_NAME}
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 

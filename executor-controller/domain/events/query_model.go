@@ -24,4 +24,9 @@ type QueryModel struct {
 	JobName       string
 	NodeType      pkg_model.NodeType
 	ImageTag      string
+	// Mode carries the optional dispatch mode from the query.model:v1 payload.
+	// Empty for normal production jobs; events.ModePromoteSeed for promote-seed
+	// jobs. The executor stamps it as a k8s Job label so k8s-controller can
+	// suppress the production lifecycle events for modes that have no real run.
+	Mode string
 }

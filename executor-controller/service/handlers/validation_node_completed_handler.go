@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	"github.com/google/uuid"
@@ -44,7 +45,7 @@ func (h *ValidationNodeCompletedHandler) Handle(
 	evt events.ValidationNodeCompleted,
 	msgProcID uuid.UUID,
 ) error {
-	dep, err := u.DeploymentsRepo().GetByReleaseNode(ctx, evt.ReleaseID, evt.NodeID)
+	dep, err := u.DeploymentsRepo().GetByReleaseNode(ctx, evt.ReleaseID, evt.NodeID, model.ModeValidation)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			h.logger.Warn("validation.node.completed: no matching deployment",

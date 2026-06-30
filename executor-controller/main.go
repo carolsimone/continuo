@@ -145,6 +145,10 @@ func main() {
 	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	validationNodeHandler := handlers.NewValidationNodeCompletedHandler(logger)
+	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
+	seedBuildNodeHandler := handlers.NewSeedBuildNodeCompletedHandler(logger)
+	compileReqHandler := handlers.NewCompileRequestedHandler(logger)
+	compileNodeHandler := handlers.NewCompileNodeCompletedHandler(logger)
 
 	queryBinding := redis.NewQueryModelBinding(uowFactory, queryHandler, logger)
 	retryBinding := redis.NewRetryTaskBinding(uowFactory, retryHandler, logger)
@@ -154,7 +158,19 @@ func main() {
 		uowFactory, validationReqHandler, candidateSchemaCreator, logger)
 	validationNodeBinding := redis.NewValidationNodeCompletedBinding(
 		uowFactory, validationNodeHandler, logger)
+	seedBuildReqBinding := redis.NewSeedBuildRequestedBinding(
+		uowFactory, seedBuildReqHandler, candidateSchemaCreator, logger)
+	seedBuildNodeBinding := redis.NewSeedBuildNodeCompletedBinding(
+		uowFactory, seedBuildNodeHandler, logger)
+	compileReqBinding := redis.NewCompileRequestedBinding(
+		uowFactory, compileReqHandler, logger)
+	compileNodeBinding := redis.NewCompileNodeCompletedBinding(
+		uowFactory, compileNodeHandler, logger)
 	validationCompletedTeardownBinding := redis.NewValidationCompletedTeardownBinding(
+		candidateSchemaCleaner, logger)
+	releaseRejectedTeardownBinding := redis.NewReleaseRejectedTeardownBinding(
+		candidateSchemaCleaner, logger)
+	releasePromotedTeardownBinding := redis.NewReleasePromotedTeardownBinding(
 		candidateSchemaCleaner, logger)
 
 	// ========================================================================
@@ -191,11 +207,47 @@ func main() {
 	logger.Info("validation.node.completed consumer initialized",
 		"stream", streams.ValidationNodeCompletedV1, "group", streams.ExecutorValidationNodeCompleted)
 
+	seedBuildReqConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.SeedBuildRequestedV1, streams.ExecutorSeedBuildRequested,
+		seedBuildReqBinding, logger)
+	logger.Info("seed.build.requested consumer initialized",
+		"stream", streams.SeedBuildRequestedV1, "group", streams.ExecutorSeedBuildRequested)
+
+	seedBuildNodeConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.SeedBuildNodeCompletedV1, streams.ExecutorSeedBuildNodeCompleted,
+		seedBuildNodeBinding, logger)
+	logger.Info("seed.build.node.completed consumer initialized",
+		"stream", streams.SeedBuildNodeCompletedV1, "group", streams.ExecutorSeedBuildNodeCompleted)
+
+	compileReqConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.CompileRequestedV1, streams.ExecutorCompileRequested,
+		compileReqBinding, logger)
+	logger.Info("compile.requested consumer initialized",
+		"stream", streams.CompileRequestedV1, "group", streams.ExecutorCompileRequested)
+
+	compileNodeConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.CompileNodeCompletedV1, streams.ExecutorCompileNodeCompleted,
+		compileNodeBinding, logger)
+	logger.Info("compile.node.completed consumer initialized",
+		"stream", streams.CompileNodeCompletedV1, "group", streams.ExecutorCompileNodeCompleted)
+
 	validationCompletedTeardownConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.ValidationCompletedV1, streams.ExecutorValidationCompleted,
 		validationCompletedTeardownBinding, logger)
 	logger.Info("validation.completed teardown consumer initialized",
 		"stream", streams.ValidationCompletedV1, "group", streams.ExecutorValidationCompleted)
+
+	releaseRejectedTeardownConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
+		releaseRejectedTeardownBinding, logger)
+	logger.Info("release.rejected teardown consumer initialized",
+		"stream", streams.ReleaseRejectedV1, "group", streams.ExecutorReleaseRejected)
+
+	releasePromotedTeardownConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ReleasePromotedV1, streams.ExecutorReleasePromoted,
+		releasePromotedTeardownBinding, logger)
+	logger.Info("release.promoted teardown consumer initialized",
+		"stream", streams.ReleasePromotedV1, "group", streams.ExecutorReleasePromoted)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -311,8 +363,38 @@ func main() {
 		}
 	}()
 	go func() {
+		if err := seedBuildReqConsumer.Start(ctx); err != nil {
+			logger.Error("seed.build.requested consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := seedBuildNodeConsumer.Start(ctx); err != nil {
+			logger.Error("seed.build.node.completed consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := compileReqConsumer.Start(ctx); err != nil {
+			logger.Error("compile.requested consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := compileNodeConsumer.Start(ctx); err != nil {
+			logger.Error("compile.node.completed consumer error", "error", err)
+		}
+	}()
+	go func() {
 		if err := validationCompletedTeardownConsumer.Start(ctx); err != nil {
 			logger.Error("validation.completed teardown consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := releaseRejectedTeardownConsumer.Start(ctx); err != nil {
+			logger.Error("release.rejected teardown consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := releasePromotedTeardownConsumer.Start(ctx); err != nil {
+			logger.Error("release.promoted teardown consumer error", "error", err)
 		}
 	}()
 

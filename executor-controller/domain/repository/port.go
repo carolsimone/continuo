@@ -23,40 +23,52 @@ type DeploymentRepository interface {
 	GetDueBatch(ctx context.Context, limit int) ([]*model.Deployment, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
-	// GetByReleaseNode returns the validation Deployment for (release_id, node_id),
-	// or sql.ErrNoRows when none exists. Used by the validation.node.completed
-	// handler to attach an outcome to the right row.
-	GetByReleaseNode(ctx context.Context, releaseID, nodeID string) (*model.Deployment, error)
-	// PendingValidationCount counts mode='validation' rows for releaseID that
+	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
+	// sql.ErrNoRows when none exists. mode scopes the lookup so the validation
+	// and seed-build legs of one release (which share release_id) never read each
+	// other's rows: the validation.node.completed handler passes ModeValidation,
+	// the seed.build.node.completed handler passes ModeSeedBuild.
+	GetByReleaseNode(ctx context.Context, releaseID, nodeID string, mode model.Mode) (*model.Deployment, error)
+	// PendingValidationCount counts rows of the given mode for releaseID that
 	// are not yet terminal — i.e. status IN ('pending','blocked','deployed') AND
 	// outcome IS NULL. 'blocked' rows are not terminal: they are waiting for
 	// in-set upstreams to complete before they can be dispatched. Including them
 	// prevents the aggregate-emit gate from firing before all nodes have settled.
-	PendingValidationCount(ctx context.Context, releaseID string) (int, error)
-	// ListValidationResults returns all mode='validation' rows for releaseID
-	// whose outcome is non-NULL. The dispatcher uses this to build the per-node
-	// results array on the aggregate validation.completed:v1 emission.
-	ListValidationResults(ctx context.Context, releaseID string) ([]*model.Deployment, error)
-	// ListValidationByRelease returns every mode='validation' row for releaseID
+	// mode scopes the count so a release's validation and seed-build legs are
+	// counted independently.
+	PendingValidationCount(ctx context.Context, releaseID string, mode model.Mode) (int, error)
+	// ListValidationResults returns all rows of the given mode for releaseID
+	// whose outcome is non-NULL. The aggregate gate uses this to build the
+	// per-node results array on the per-leg completion emission.
+	ListValidationResults(ctx context.Context, releaseID string, mode model.Mode) ([]*model.Deployment, error)
+	// ListValidationByRelease returns every row of the given mode for releaseID
 	// as reconstituted aggregates (status, outcome, and UpstreamNodeIDs from
-	// job_params). The validation.node.completed handler uses it to compute
-	// downstream readiness and to skip transitive downstreams on failure.
-	ListValidationByRelease(ctx context.Context, releaseID string) ([]*model.Deployment, error)
+	// job_params). The node.completed handlers use it to compute downstream
+	// readiness and to skip transitive downstreams on failure.
+	ListValidationByRelease(ctx context.Context, releaseID string, mode model.Mode) ([]*model.Deployment, error)
 }
 
-// ValidationAggregateRepository guards single emission of
-// validation.completed:v1 via the validation_aggregates sentinel table.
+// ValidationAggregateRepository guards single emission of a per-release leg
+// completion event (validation.completed:v1 / seed.build.completed:v1) via the
+// validation_aggregates sentinel table. Both legs share one release_id but run
+// sequentially (seed-build BEFORE validation), so the sentinel and the advisory
+// lock are keyed on (release_id, mode): the seed-build claim must NOT block the
+// later validation claim for the same release.
 type ValidationAggregateRepository interface {
-	// LockRelease takes a transaction-scoped advisory lock keyed on releaseID,
-	// serializing the aggregate-emit gate (pending-count -> claim -> emit)
-	// across concurrent transactions for the same release. It auto-releases at
-	// commit/rollback. Without it, two overlapping last-node terminals could
-	// each read the other as still pending under READ COMMITTED and both no-op,
-	// hanging the release with no aggregate ever emitted. Must be called inside
-	// a transaction, before PendingValidationCount.
-	LockRelease(ctx context.Context, releaseID string) error
-	// ClaimEmission inserts a sentinel row for releaseID. Returns (true, nil)
-	// if this caller won the race and should emit validation.completed:v1;
-	// returns (false, nil) on PK conflict (another caller already emitted).
-	ClaimEmission(ctx context.Context, releaseID string, now time.Time) (bool, error)
+	// LockRelease takes a transaction-scoped advisory lock keyed on
+	// (releaseID, mode), serializing one leg's aggregate-emit gate
+	// (pending-count -> claim -> emit) across concurrent transactions. It
+	// auto-releases at commit/rollback. Without it, two overlapping last-node
+	// terminals could each read the other as still pending under READ COMMITTED
+	// and both no-op, hanging the leg with no aggregate ever emitted. Keying on
+	// mode keeps the validation and seed-build legs of one release from
+	// serializing against each other. Must be called inside a transaction,
+	// before PendingValidationCount.
+	LockRelease(ctx context.Context, releaseID string, mode model.Mode) error
+	// ClaimEmission inserts a sentinel row for (releaseID, mode). Returns
+	// (true, nil) if this caller won the race and should emit the leg's
+	// completion event; returns (false, nil) on conflict (another caller already
+	// emitted that leg). Keying on mode lets the same release emit both
+	// seed.build.completed:v1 and validation.completed:v1.
+	ClaimEmission(ctx context.Context, releaseID string, mode model.Mode, now time.Time) (bool, error)
 }

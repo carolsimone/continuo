@@ -31,6 +31,13 @@ type JobParams struct {
 	Namespace    string
 	NodeType     pkg_model.NodeType
 	ImageTag     string
+	// Mode is the optional dispatch mode. Empty for normal production jobs;
+	// set to events.ModePromoteSeed for promote-seed jobs. When non-empty the
+	// value is stamped as a "mode" label on the Job and its pod template so
+	// k8s-controller can suppress the production lifecycle events for jobs
+	// that have no real state run. Normal production jobs (empty Mode) get no
+	// mode label — the wire format is unchanged.
+	Mode string
 }
 
 // K8sClient provides methods to interact with Kubernetes
@@ -133,33 +140,32 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	}
 
 	backoffLimit := int32(0)
+	jobLabels := map[string]string{
+		"app":          "dbt-job",
+		"task-id":      params.TaskID,
+		"schedule-id":  params.ScheduleID,
+		"schedule":     params.ScheduleName,
+		"table_name":   params.TableName,
+		"schema_name":  params.SchemaName,
+		"service_name": params.ServiceName,
+	}
+	// Stamp the mode label only when the caller provides one. Normal production
+	// jobs (empty Mode) get NO mode label — their wire format is unchanged and
+	// k8s-controller continues to route them through the production lifecycle.
+	if params.Mode != "" {
+		jobLabels["mode"] = params.Mode
+	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      params.JobName,
 			Namespace: params.Namespace,
-			Labels: map[string]string{
-				"app":          "dbt-job",
-				"task-id":      params.TaskID,
-				"schedule-id":  params.ScheduleID,
-				"schedule":     params.ScheduleName,
-				"table_name":   params.TableName,
-				"schema_name":  params.SchemaName,
-				"service_name": params.ServiceName,
-			},
+			Labels:    jobLabels,
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app":          "dbt-job",
-						"task-id":      params.TaskID,
-						"schedule-id":  params.ScheduleID,
-						"schedule":     params.ScheduleName,
-						"table_name":   params.TableName,
-						"schema_name":  params.SchemaName,
-						"service_name": params.ServiceName,
-					},
+					Labels: jobLabels,
 				},
 				Spec: podSpec,
 			},
@@ -184,8 +190,19 @@ type ValidationJobParams struct {
 	NodeType    pkg_model.NodeType
 	ImageTag    string
 
+	// ValidationOp selects the runner operation: "build_from_sql" (default) or
+	// "clone_from_prod". ProdSchema is the source schema for clone_from_prod.
+	// Both are set per node by release-controller (Plan 3); empty here defaults
+	// VALIDATION_OP to build_from_sql.
+	ValidationOp string
+	ProdSchema   string
+
 	CandidateSchema string
 	CandidateSQLURI string
+
+	// ManifestS3URI is the S3 destination where the compile Job uploads the
+	// compiled manifest.json. Populated only for mode=compile Jobs.
+	ManifestS3URI string
 
 	Namespace string
 }
@@ -248,21 +265,26 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 }
 
 // buildValidationPodSpec constructs the PodSpec for a validation node job.
-// Image construction and the dbt-profile env conventions mirror the production
-// buildPodSpec; the container command comes from model.ValidationCommand, the
-// single source of truth for the validation CLI. Model/snapshot nodes run
-// validation_runner.py (fetching SQL from S3 via CANDIDATE_SQL_URI); seed nodes
-// use `dbt seed --select <table> --empty`. An empty ImageTag is a permanent
-// error — content-addressed tags must be explicit.
+// Validation runs the continuo-owned validation image (which carries
+// validation_runner.py + the warehouse adapter), NOT the per-service team
+// image — so the per-service ImageTag is unused here and an empty tag is no
+// longer an error. VALIDATION_IMAGE overrides verbatim; otherwise default to
+// dbt-base:latest, prefixed with DOCKERHUB_USERNAME when set.
+// The container command comes from model.ValidationCommand, the single source
+// of truth for the validation CLI. VALIDATION_OP selects the runner operation
+// (default "build_from_sql"); PROD_SCHEMA is the clone source for Plan 3.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
-	if p.ImageTag == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing for service %s",
-			events.ErrPermanent, p.ServiceName)
+	image := os.Getenv("VALIDATION_IMAGE")
+	if image == "" {
+		image = "dbt-base:latest"
+		if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+			image = user + "/" + image
+		}
 	}
 
-	image := p.ServiceName + ":" + p.ImageTag
-	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
-		image = user + "/" + image
+	op := p.ValidationOp
+	if op == "" {
+		op = "build_from_sql"
 	}
 
 	envVars := []corev1.EnvVar{
@@ -276,7 +298,6 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		// CANDIDATE_SQL_URI is an S3 URI pointing to the node's compiled SQL with
 		// schema refs already rewritten to the candidate schema. validation_runner.py
 		// fetches this object from S3 and builds the node as an empty CTAS table.
-		// Empty for seeds (they use `dbt seed --empty` instead).
 		{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI},
 		// S3 credentials — forwarded from executor-controller environment so the
 		// validation runner can boto3-GET the candidate SQL object.
@@ -291,6 +312,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
 		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
 		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+		// Selects the runner operation; PROD_SCHEMA is the clone source (Plan 3).
+		{Name: "VALIDATION_OP", Value: op},
+		{Name: "PROD_SCHEMA", Value: p.ProdSchema},
 	}
 
 	return corev1.PodSpec{
@@ -309,10 +333,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 
 // validationImagePullPolicy resolves the pull policy for validation Job pods.
 //
-// In production a service image is re-baked FROM dbt-base whenever
-// validation_runner.py changes and is re-pushed under the same mutable service
-// tag, so a node must re-pull or it would validate the candidate with a stale
-// cached runner. The default is therefore PullAlways.
+// Validation runs a continuo-owned image pinned to a mutable tag (dbt-base:latest
+// by default), which is re-pushed when the validator changes. PullAlways ensures
+// the node fetches the freshly pushed image rather than a stale cached layer.
 //
 // Environments that side-load images directly into the node's image cache and
 // have no registry to pull from (the kind-based e2e suite, local clusters) set
@@ -362,6 +385,263 @@ func (c *K8sClient) CountActiveJobs(ctx context.Context, namespace, labelSelecto
 		}
 	}
 	return active, nil
+}
+
+// CreateSeedBuildJob builds and creates a mode=seed_build K8s Job (idempotent
+// by job name). The Job uses the team image (same as production) and runs
+// `dbt seed --select <TableName>`, materializing into the candidate schema via
+// DBT_TARGET_SCHEMA so the generate_schema_name macro routes the output there.
+// The mode=seed_build label lets k8s-controller route its terminal status to
+// seed.build.node.completed:v1.
+func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJobParams) error {
+	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		c.logger.Info("Seed-build K8s job already exists, skipping creation",
+			"namespace", params.Namespace,
+			"job_name", params.JobName,
+		)
+		return nil
+	}
+
+	podSpec, err := buildSeedBuildPodSpec(params)
+	if err != nil {
+		return fmt.Errorf("failed to build seed-build pod spec: %w", err)
+	}
+
+	backoffLimit := int32(0)
+	labels := map[string]string{
+		"app":          "dbt-job",
+		"mode":         "seed_build",
+		"release-id":   sanitizeK8sLabel(params.ReleaseID),
+		"node-id":      sanitizeK8sLabel(params.NodeID),
+		"service_name": params.ServiceName,
+		"schema_name":  params.SchemaName,
+		"table_name":   params.TableName,
+	}
+	annotations := map[string]string{
+		pkg_model.AnnotationReleaseID: params.ReleaseID,
+		pkg_model.AnnotationNodeID:    params.NodeID,
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        params.JobName,
+			Namespace:   params.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+				Spec:       podSpec,
+			},
+		},
+	}
+
+	return c.CreateJob(ctx, job)
+}
+
+// buildSeedBuildPodSpec constructs the PodSpec for a seed-build Job.
+// It mirrors buildPodSpec (production team image + standard DBT_POSTGRES_* +
+// SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
+// generate_schema_name macro materializes the seed into the candidate schema.
+// ImageTag must be non-empty — the team image must be explicitly versioned.
+func buildSeedBuildPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
+	if p.ImageTag == "" {
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from seed-build job params for service %s",
+			events.ErrPermanent, p.ServiceName)
+	}
+
+	image := p.ServiceName + ":" + p.ImageTag
+	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+		image = user + "/" + image
+	}
+
+	envVars := []corev1.EnvVar{
+		{Name: "RELEASE_ID", Value: p.ReleaseID},
+		{Name: "NODE_ID", Value: p.NodeID},
+		{Name: "SERVICE_NAME", Value: p.ServiceName},
+		{Name: "SCHEMA", Value: p.SchemaName},
+		{Name: "TABLE_NAME", Value: p.TableName},
+		{Name: "JOB_NAME", Value: p.JobName},
+		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
+		// dbt profile connection — forwarded from executor-controller environment
+		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
+		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
+		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
+		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
+		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+	}
+
+	return corev1.PodSpec{
+		RestartPolicy: corev1.RestartPolicyNever,
+		Containers: []corev1.Container{
+			{
+				Name:            "dbt-job",
+				Image:           image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Command:         p.NodeType.Command(p.TableName),
+				Env:             envVars,
+			},
+		},
+	}, nil
+}
+
+// CreateCompileJob builds and creates a mode=compile K8s Job (idempotent by
+// job name). The Job pod has a shared emptyDir volume "shared" mounted at
+// /shared in both containers:
+//   - initContainer "compile": team image runs `dbt compile --profiles-dir
+//     /project && cp .../manifest.json /shared/manifest.json` with the
+//     standard DBT_POSTGRES_* warehouse envs.
+//   - main container "upload": minimal python+boto3 image (COMPILE_UPLOAD_IMAGE
+//     env, else <DOCKERHUB_USERNAME>/manifest-uploader:latest) runs
+//     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH +
+//     MANIFEST_S3_URI + the S3 credential envs.
+//
+// The mode=compile label lets k8s-controller route its terminal status to
+// compile.node.completed:v1. release-id/node-id annotations carry the
+// authoritative identity. ImageTag must be non-empty — the team image must be
+// explicitly versioned.
+func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobParams) error {
+	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		c.logger.Info("Compile K8s job already exists, skipping creation",
+			"namespace", params.Namespace,
+			"job_name", params.JobName,
+		)
+		return nil
+	}
+
+	podSpec, err := buildCompilePodSpec(params)
+	if err != nil {
+		return fmt.Errorf("failed to build compile pod spec: %w", err)
+	}
+
+	backoffLimit := int32(0)
+	labels := map[string]string{
+		"app":          "dbt-job",
+		"mode":         "compile",
+		"release-id":   sanitizeK8sLabel(params.ReleaseID),
+		"node-id":      sanitizeK8sLabel(params.NodeID),
+		"service_name": params.ServiceName,
+	}
+	annotations := map[string]string{
+		pkg_model.AnnotationReleaseID: params.ReleaseID,
+		pkg_model.AnnotationNodeID:    params.NodeID,
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        params.JobName,
+			Namespace:   params.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+				Spec:       podSpec,
+			},
+		},
+	}
+
+	return c.CreateJob(ctx, job)
+}
+
+// buildCompilePodSpec constructs the PodSpec for a compile Job. The pod has:
+//   - a shared emptyDir volume "shared" mounted at /shared in both containers;
+//   - an initContainer "compile" using the team image (ImageTag must be
+//     non-empty) that runs `dbt compile --profiles-dir /project` and copies
+//     the resulting manifest.json into /shared/manifest.json;
+//   - a main container "upload" using a minimal python+boto3 image (no dbt;
+//     COMPILE_UPLOAD_IMAGE env, else <DOCKERHUB_USERNAME>/manifest-uploader:latest)
+//     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
+//     MANIFEST_S3_URI, and the S3 credential envs forwarded from the executor-controller env.
+func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
+	if p.ImageTag == "" {
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from compile job params for service %s",
+			events.ErrPermanent, p.ServiceName)
+	}
+
+	// Team image for the init (compile) container.
+	teamImage := p.ServiceName + ":" + p.ImageTag
+	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+		teamImage = user + "/" + teamImage
+	}
+
+	// Upload container image: a minimal python+boto3 image (NO dbt). The compile leg keeps S3
+	// access out of any dbt image. Defaults to manifest-uploader:latest (DOCKERHUB_USERNAME-prefixed).
+	uploadImage := os.Getenv("COMPILE_UPLOAD_IMAGE")
+	if uploadImage == "" {
+		uploadImage = "manifest-uploader:latest"
+		if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+			uploadImage = user + "/" + uploadImage
+		}
+	}
+
+	sharedMount := corev1.VolumeMount{Name: "shared", MountPath: "/shared"}
+
+	initEnvVars := []corev1.EnvVar{
+		// dbt profile connection — forwarded from executor-controller environment
+		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
+		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
+		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
+		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
+		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+	}
+
+	uploadEnvVars := []corev1.EnvVar{
+		{Name: "COMPILE_MANIFEST_PATH", Value: "/shared/manifest.json"},
+		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
+		// S3 credentials — forwarded from executor-controller environment.
+		// Note: S3_BUCKET is intentionally omitted — compile_uploader.py parses
+		// the bucket from MANIFEST_S3_URI and never reads S3_BUCKET.
+		{Name: "S3_ENDPOINT_URL", Value: os.Getenv("S3_ENDPOINT_URL")},
+		{Name: "AWS_ACCESS_KEY_ID", Value: os.Getenv("AWS_ACCESS_KEY_ID")},
+		{Name: "AWS_SECRET_ACCESS_KEY", Value: os.Getenv("AWS_SECRET_ACCESS_KEY")},
+		{Name: "AWS_DEFAULT_REGION", Value: os.Getenv("AWS_DEFAULT_REGION")},
+	}
+
+	return corev1.PodSpec{
+		RestartPolicy: corev1.RestartPolicyNever,
+		Volumes: []corev1.Volume{
+			{
+				Name: "shared",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+		},
+		InitContainers: []corev1.Container{
+			{
+				Name:            "compile",
+				Image:           teamImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{
+					"sh", "-c",
+					"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json",
+				},
+				Env:          initEnvVars,
+				VolumeMounts: []corev1.VolumeMount{sharedMount},
+			},
+		},
+		Containers: []corev1.Container{
+			{
+				Name:            "upload",
+				Image:           uploadImage,
+				ImagePullPolicy: validationImagePullPolicy(),
+				Command:         []string{"python", "/compile_uploader.py"},
+				Env:             uploadEnvVars,
+				VolumeMounts:    []corev1.VolumeMount{sharedMount},
+			},
+		},
+	}, nil
 }
 
 // setClientsetForTest swaps the clientset for a fake in unit tests.

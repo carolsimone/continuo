@@ -18,6 +18,11 @@ type JobSpec struct {
 	TableName    string
 	NodeType     string
 	ImageTag     string
+	// Mode is the optional dispatch mode. Empty for normal production jobs;
+	// set to events.ModePromoteSeed for promote-seed jobs. The k8s adapter
+	// stamps this as a Job label so k8s-controller can suppress the production
+	// lifecycle events for modes that carry no real state run.
+	Mode string
 }
 
 // ValidationJobSpec is the domain description of a single validation deploy.
@@ -37,6 +42,12 @@ type ValidationJobSpec struct {
 	ImageTag        string
 	CandidateSchema string
 	CandidateSQLURI string
+	ValidationOp    string
+	ProdSchema      string
+	// ManifestS3URI is the S3 destination where the compile Job uploads the
+	// compiled manifest.json. Populated only for mode=compile dispatches; empty
+	// for validation and seed-build dispatches.
+	ManifestS3URI string
 }
 
 // Deployer is the driven port the dispatcher uses to deploy work and observe
@@ -49,6 +60,16 @@ type Deployer interface {
 	// Implementations must be idempotent by job name so a redelivery is a
 	// no-op.
 	DeployValidation(ctx context.Context, spec ValidationJobSpec) error
+	// DeploySeedBuild executes the mode=seed_build job described by spec.
+	// The job uses the team image and runs `dbt seed --select <TableName>`,
+	// materializing into the candidate schema. Implementations must be
+	// idempotent by job name so a redelivery is a no-op.
+	DeploySeedBuild(ctx context.Context, spec ValidationJobSpec) error
+	// DeployCompile executes the mode=compile job described by spec. The job
+	// runs `dbt compile` in the team image (init container) and uploads the
+	// resulting manifest.json to S3 (main container). Implementations must be
+	// idempotent by job name so a redelivery is a no-op.
+	DeployCompile(ctx context.Context, spec ValidationJobSpec) error
 	// CountActive returns the number of deploys currently running.
 	CountActive(ctx context.Context) (int, error)
 }

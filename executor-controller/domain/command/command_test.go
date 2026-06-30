@@ -81,3 +81,15 @@ func TestValidationDeployTask_ToValidationJobSpec(t *testing.T) {
 	assert.Equal(t, c.CandidateSchema, spec.CandidateSchema)
 	assert.Equal(t, c.CandidateSQLURI, spec.CandidateSQLURI)
 }
+
+func TestValidationDeployTask_ToValidationJobSpec_CarriesOp(t *testing.T) {
+	cmd := command.ValidationDeployTask{
+		ReleaseID: "r", NodeID: "model.a", ServiceName: "s", SchemaName: "sc",
+		TableName: "a", NodeType: "dbt-model", ImageTag: "t", JobName: "j",
+		CandidateSchema: "_candidate_r", CandidateSQLURI: "s3://b/a.sql",
+		ValidationOp: "clone_from_prod", ProdSchema: "analytics",
+	}
+	spec := cmd.ToValidationJobSpec()
+	assert.Equal(t, "clone_from_prod", spec.ValidationOp)
+	assert.Equal(t, "analytics", spec.ProdSchema)
+}

@@ -121,7 +121,7 @@ export interface TopologyListResponse {
 
 export interface ReleaseListItem {
   release_id: string;
-  status: string; // received|parsing|validating|promoted|rejected|superseded
+  status: string; // received|compiling|parsing|seed_building|validating|promoted|rejected|superseded
   created_at: string;
   resolved_at: string | null;
   node_count: number;

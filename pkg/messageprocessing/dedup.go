@@ -41,6 +41,13 @@ func ExtractOutboxEntryID(fields map[string]interface{}) *uuid.UUID {
 //     by another instance"). Distinguishing the two helps operators spot
 //     concurrent-consumer races vs. legitimate replays.
 //
+// streamName is the consumer's DEDUP SCOPE and is stored in
+// message_processing.stream_name. Normally this is the Redis stream name.
+// Exception: when multiple consumer groups read the SAME stream, each group
+// must pass its CONSUMER-GROUP name instead of the shared stream name, so
+// that their dedup rows (and the V12 (outbox_entry_id, stream_name) index
+// entries) remain distinct and do not collide across groups.
+//
 // Use DedupWithOutboxEntryID instead when the inbound message originated from
 // pkg/outbox — it adds a second uniqueness key that catches Processor-crash
 // redeliveries (same outbox row republished with a fresh Redis message_id).
@@ -61,6 +68,11 @@ func Dedup(
 // XADD and MarkProcessed causes the same outbox row to be republished with a
 // fresh Redis message_id. The primary (message_id, stream_name) dedup would
 // miss that redelivery; the outbox_entry_id key catches it.
+//
+// streamName is the consumer's DEDUP SCOPE (see Dedup for the full rule).
+// Normally it is the Redis stream name. When multiple consumer groups read
+// the same stream, each group passes its consumer-group name here so their
+// dedup rows remain distinct.
 //
 // outboxEntryID may be nil for messages with no upstream outbox row (HTTP
 // triggers, scheduler ticks, etc.), in which case the behavior is identical

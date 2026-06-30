@@ -106,7 +106,7 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
 			return nil, fmt.Errorf("unmarshal node_ready_for_execution: %w", err)
 		}
-		return map[string]interface{}{
+		values := map[string]interface{}{
 			"outbox_entry_id":  entry.ID.String(),
 			"schedule_id":      evt.ScheduleID,
 			"schedule_name":    evt.ScheduleName,
@@ -118,7 +118,15 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 			"node_type":        evt.NodeType,
 			"image_tag":        evt.ImageTag,
 			"manifest_version": evt.ManifestVersion,
-		}, nil
+		}
+		// Mode is carried only for non-production dispatches (promote_seed): the
+		// executor stamps it as a Job label so k8s-controller suppresses the
+		// production task lifecycle. Omitted for normal production jobs so their
+		// wire shape is unchanged.
+		if evt.Mode != "" {
+			values["mode"] = evt.Mode
+		}
+		return values, nil
 
 	case "cascade_task_skipped":
 		var evt domain.CascadeTaskSkipped

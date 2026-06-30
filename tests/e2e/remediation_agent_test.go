@@ -83,13 +83,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 		"ftable_e not found in any manifest — is the model in service-2 and the image rebuilt?")
 	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
 
-	// 2. Copy the changed service's baseline manifest to the new release key.
-	copyS3Object(t, ctx, clients,
-		baselineManifestKey(changedService),
-		canonicalManifestObjectKey(changedService, releaseID),
-	)
-
-	// 3. Reset the queue, seed current_prod (all nodes except ftable_e), and seed
+	// 2. Reset the queue, seed current_prod (all nodes except ftable_e), and seed
 	//    service_prod for all services except service-2.
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)

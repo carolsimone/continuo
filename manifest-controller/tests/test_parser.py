@@ -276,3 +276,35 @@ def test_parse_manifest_captures_original_file_path(tmp_path):
 
     assert len(nodes) == 1
     assert nodes[0].original_file_path == "models/staging/stg_orders.sql"
+
+
+def _node(name: str, schema: str, fqn: list, owner: str, tags: list) -> dict:
+    return {
+        "resource_type": "model",
+        "name": name,
+        "schema": schema,
+        "fqn": fqn,
+        "config": {"meta": {"owner": owner}},
+        "tags": tags,
+    }
+
+
+def _write(tmp_path, manifest: dict) -> str:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    return str(path)
+
+
+def test_parse_manifest_drops_local_stub_nodes(tmp_path):
+    manifest = {
+        "macros": {},
+        "nodes": {
+            "model.svc.keep": _node(name="keep", schema="analytics", fqn=["svc", "keep"], owner="o", tags=["daily"]),
+            "model.svc.stub": _node(name="stub", schema="analytics", fqn=["svc", "stub"], owner="o", tags=["daily", "local_stub"]),
+        },
+    }
+    path = _write(tmp_path, manifest)
+    nodes = parse_manifest(path, "v1")
+    names = {n.table_name for n in nodes}
+    assert "keep" in names
+    assert "stub" not in names

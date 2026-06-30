@@ -8,12 +8,14 @@ import (
 type Status string
 
 const (
-	StatusReceived   Status = "received"
-	StatusParsing    Status = "parsing"
-	StatusValidating Status = "validating"
-	StatusPromoted   Status = "promoted"
-	StatusRejected   Status = "rejected"
-	StatusSuperseded Status = "superseded"
+	StatusReceived     Status = "received"
+	StatusCompiling    Status = "compiling"
+	StatusParsing      Status = "parsing"
+	StatusSeedBuilding Status = "seed_building"
+	StatusValidating   Status = "validating"
+	StatusPromoted     Status = "promoted"
+	StatusRejected     Status = "rejected"
+	StatusSuperseded   Status = "superseded"
 )
 
 type Transition struct {
@@ -147,6 +149,30 @@ func (r *Release) TransitionToParsing(now time.Time) error {
 	return nil
 }
 
+// TransitionToCompiling moves a Received release into Compiling — the leg where
+// continuo runs the changed service's dbt compile to produce its manifest before
+// parsing. Replaces the direct Received->Parsing step at activation.
+func (r *Release) TransitionToCompiling(now time.Time) error {
+	if r.status != StatusReceived {
+		return fmt.Errorf("cannot transition to compiling from %s", r.status)
+	}
+	r.status = StatusCompiling
+	r.transitions = append(r.transitions, Transition{To: StatusCompiling, At: now})
+	return nil
+}
+
+// TransitionFromCompiling advances a Compiling release to Parsing once the
+// manifest has been compiled + uploaded.
+func (r *Release) TransitionFromCompiling(now time.Time) error {
+	if r.status != StatusCompiling {
+		return fmt.Errorf("cannot transition to parsing from %s", r.status)
+	}
+	r.status = StatusParsing
+	r.parsingStartedAt = &now
+	r.transitions = append(r.transitions, Transition{To: StatusParsing, At: now})
+	return nil
+}
+
 func (r *Release) TransitionToValidating(topology Topology, validationNodeIDs []string, now time.Time) error {
 	if r.status != StatusParsing {
 		return fmt.Errorf("cannot transition to validating from %s", r.status)
@@ -154,6 +180,35 @@ func (r *Release) TransitionToValidating(topology Topology, validationNodeIDs []
 	r.status = StatusValidating
 	r.candidateTopology = topology
 	r.validationNodeIDs = validationNodeIDs
+	r.validatingStartedAt = &now
+	r.transitions = append(r.transitions, Transition{To: StatusValidating, At: now})
+	return nil
+}
+
+// TransitionToSeedBuilding moves a Parsing release into SeedBuilding and records
+// the candidate topology + validation node IDs (the same data Validating needs),
+// so the later seed.build.completed handler can emit validation.requested without
+// re-deriving them. Emitted when the changed-closure contains new/changed seeds
+// that must be built into the candidate schema before validation.
+func (r *Release) TransitionToSeedBuilding(topology Topology, validationNodeIDs []string, now time.Time) error {
+	if r.status != StatusParsing {
+		return fmt.Errorf("cannot transition to seed_building from %s", r.status)
+	}
+	r.status = StatusSeedBuilding
+	r.candidateTopology = topology
+	r.validationNodeIDs = validationNodeIDs
+	r.transitions = append(r.transitions, Transition{To: StatusSeedBuilding, At: now})
+	return nil
+}
+
+// TransitionFromSeedBuilding advances a SeedBuilding release to Validating once
+// candidate seeds are built. It stamps validatingStartedAt; the candidate
+// topology + validation IDs are already set by TransitionToSeedBuilding.
+func (r *Release) TransitionFromSeedBuilding(now time.Time) error {
+	if r.status != StatusSeedBuilding {
+		return fmt.Errorf("cannot transition to validating from %s", r.status)
+	}
+	r.status = StatusValidating
 	r.validatingStartedAt = &now
 	r.transitions = append(r.transitions, Transition{To: StatusValidating, At: now})
 	return nil
@@ -170,7 +225,8 @@ func (r *Release) TransitionToPromoted(now time.Time) error {
 }
 
 func (r *Release) TransitionToRejected(reason string, failingNodes []string, now time.Time) error {
-	if r.status != StatusReceived && r.status != StatusParsing && r.status != StatusValidating {
+	if r.status != StatusReceived && r.status != StatusCompiling &&
+		r.status != StatusParsing && r.status != StatusSeedBuilding && r.status != StatusValidating {
 		return fmt.Errorf("cannot transition to rejected from %s", r.status)
 	}
 	r.status = StatusRejected

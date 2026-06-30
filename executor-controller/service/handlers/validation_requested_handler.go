@@ -56,6 +56,8 @@ func (h *ValidationRequestedHandler) Handle(
 			CandidateSchema: evt.CandidateSchema,
 			UpstreamNodeIDs: n.UpstreamNodeIDs,
 			CandidateSQLURI: n.CandidateSQLURI,
+			ValidationOp:    n.ValidationOp,
+			ProdSchema:      n.ProdSchema,
 		}
 		if err := createValidationDeployment(ctx, u, cmd, msgProcID, now, len(n.UpstreamNodeIDs) > 0); err != nil {
 			return fmt.Errorf("enqueue validation node %s: %w", n.NodeID, err)

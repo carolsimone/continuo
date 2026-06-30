@@ -2,13 +2,11 @@ package k8s
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"testing"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
-	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
@@ -49,6 +47,7 @@ func validationParams() ValidationJobParams {
 		CandidateSchema: "_candidate_rel_123",
 		CandidateSQLURI: "s3://continuo-artifacts/candidate-sql/rel123/svc.orders.sql",
 		Namespace:       "default",
+		// ValidationOp/ProdSchema intentionally empty here -> defaults exercised.
 	}
 }
 
@@ -68,7 +67,7 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtModel(t *testing.T) {
 	assert.Equal(t,
 		[]string{"python", "/validation_runner.py"},
 		job.Spec.Template.Spec.Containers[0].Command)
-	assert.Equal(t, "service-1:abc-1714300000", job.Spec.Template.Spec.Containers[0].Image)
+	assert.Equal(t, "dbt-base:latest", job.Spec.Template.Spec.Containers[0].Image)
 
 	// CANDIDATE_SQL_URI must be wired through so validation_runner.py can fetch
 	// the SQL from S3 and build the empty CTAS table.
@@ -87,7 +86,7 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t,
-		[]string{"python", "/seed_validation_runner.py", "--select", "country_codes"},
+		[]string{"python", "/validation_runner.py"},
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
@@ -273,14 +272,51 @@ func TestCreateValidationJob_PullPolicyOverride(t *testing.T) {
 	}
 }
 
-func TestCreateValidationJob_FailsPermanentOnEmptyImageTag(t *testing.T) {
+// Validation runs the continuo-owned validation image, not the per-service
+// image; with DOCKERHUB_USERNAME set it is prefixed, matching the prod idiom.
+func TestCreateValidationJob_UsesContinuoValidationImage(t *testing.T) {
+	t.Setenv("VALIDATION_IMAGE", "")
+	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	c := newValidationTestClient()
 	p := validationParams()
-	p.ImageTag = ""
 
-	err := c.CreateValidationJob(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "image_tag missing")
-	assert.True(t, errors.Is(err, events.ErrPermanent),
-		"empty image_tag must wrap events.ErrPermanent so outbox processor classifies non-retryable")
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+	assert.Equal(t, "carolsimone/dbt-base:latest", job.Spec.Template.Spec.Containers[0].Image)
+}
+
+// An explicit VALIDATION_IMAGE override is used verbatim (no prefixing).
+func TestCreateValidationJob_VALIDATION_IMAGE_OverrideUsedVerbatim(t *testing.T) {
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/acme/continuo-validator:v3")
+	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	c := newValidationTestClient()
+	p := validationParams()
+
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+	assert.Equal(t, "ghcr.io/acme/continuo-validator:v3", job.Spec.Template.Spec.Containers[0].Image)
+}
+
+// VALIDATION_OP defaults to build_from_sql when unset; PROD_SCHEMA is forwarded
+// from params. Plan 3 will set these per node.
+func TestCreateValidationJob_SetsValidationOpAndProdSchema(t *testing.T) {
+	c := newValidationTestClient()
+
+	// default op when params leave it empty
+	p := validationParams()
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+	assert.Equal(t, "build_from_sql", envByName(job.Spec.Template.Spec, "VALIDATION_OP"))
+
+	// explicit clone op + prod schema forwarded
+	p2 := validationParams()
+	p2.JobName = "validate-orders-rel123-clone"
+	p2.ValidationOp = "clone_from_prod"
+	p2.ProdSchema = "analytics"
+	require.NoError(t, c.CreateValidationJob(context.Background(), p2))
+	job2 := fetchJob(t, c, p2.Namespace, p2.JobName)
+	assert.Equal(t, "clone_from_prod", envByName(job2.Spec.Template.Spec, "VALIDATION_OP"))
+	assert.Equal(t, "analytics", envByName(job2.Spec.Template.Spec, "PROD_SCHEMA"))
 }

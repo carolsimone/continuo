@@ -226,6 +226,60 @@ streams:
         group: executor-validation-completed
         const: ExecutorValidationCompleted
 
+  - name: seed.build.requested:v1
+    const: SeedBuildRequestedV1
+    description: release-controller requests candidate seed builds; executor dispatches per-seed team-image jobs.
+    producers: [release-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-seed-build-requested
+        const: ExecutorSeedBuildRequested
+
+  - name: seed.build.node.completed:v1
+    const: SeedBuildNodeCompletedV1
+    description: per-seed build terminal status from k8s-controller back to executor-controller.
+    producers: [k8s-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-seed-build-node-completed
+        const: ExecutorSeedBuildNodeCompleted
+
+  - name: seed.build.completed:v1
+    const: SeedBuildCompletedV1
+    description: aggregated candidate seed-build result from executor-controller back to release-controller.
+    producers: [executor-controller]
+    consumers:
+      - service: release-controller
+        group: release-controller-seed-build-completed
+        const: ReleaseControllerSeedBuildCompleted
+
+  - name: compile.requested:v1
+    const: CompileRequestedV1
+    description: release-controller requests the changed service's dbt compile; executor dispatches the compile Job.
+    producers: [release-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-compile-requested
+        const: ExecutorCompileRequested
+
+  - name: compile.node.completed:v1
+    const: CompileNodeCompletedV1
+    description: compile Job terminal status from k8s-controller back to executor-controller.
+    producers: [k8s-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-compile-node-completed
+        const: ExecutorCompileNodeCompleted
+
+  - name: compile.completed:v1
+    const: CompileCompletedV1
+    description: aggregated compile result from executor-controller back to release-controller.
+    producers: [executor-controller]
+    consumers:
+      - service: release-controller
+        group: release-controller-compile-completed
+        const: ReleaseControllerCompileCompleted
+
   - name: release.promoted:v1
     const: ReleasePromotedV1
     description: Release promoted to production; orchestrator atomically replaces its Neo4j topology.
@@ -234,6 +288,12 @@ streams:
       - service: orchestrator
         group: orchestrator-release-promoted
         const: OrchestratorReleasePromoted
+      - service: orchestrator
+        group: orchestrator-release-promoted-seed-build
+        const: OrchestratorReleasePromotedSeedBuild
+      - service: executor-controller
+        group: executor-release-promoted
+        const: ExecutorReleasePromoted
 
   - name: release.rejected:v1
     const: ReleaseRejectedV1
@@ -243,6 +303,9 @@ streams:
       - service: remediation
         group: remediation-release-rejected
         const: RemediationReleaseRejected
+      - service: executor-controller
+        group: executor-release-rejected
+        const: ExecutorReleaseRejected
 
   # ---------------- remediation-classifier streams ----------------
 

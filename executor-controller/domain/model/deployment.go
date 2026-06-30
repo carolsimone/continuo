@@ -31,6 +31,8 @@ type Mode string
 const (
 	ModeProduction Mode = "production"
 	ModeValidation Mode = "validation"
+	ModeSeedBuild  Mode = "seed_build"
+	ModeCompile    Mode = "compile"
 )
 
 // BackoffPolicy computes the delay before the next deploy attempt:
@@ -107,6 +109,40 @@ func NewValidationDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.U
 	}
 }
 
+// NewSeedBuildDeployment creates a seed-build deployment: a candidate seed built
+// with the team image (dbt seed) into the candidate schema. Seeds are dbt roots
+// (no in-leg upstreams), so the deployment always starts pending. It reuses the
+// ValidationDeployTask command shape and the outcome columns.
+func NewSeedBuildDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
+	return &Deployment{
+		id:                  uuid.New(),
+		messageProcessingID: msgProcID,
+		mode:                ModeSeedBuild,
+		validationCmd:       cmd,
+		status:              StatusPending,
+		maxRetries:          defaultMaxRetries,
+		nextAttemptAt:       now,
+		createdAt:           now,
+	}
+}
+
+// NewCompileDeployment creates a compile deployment: the changed service's dbt
+// manifest is compiled into S3 before validation runs. Compile is a single root
+// node (no intra-service upstreams), so the deployment always starts pending.
+// It reuses the ValidationDeployTask command shape and the outcome columns.
+func NewCompileDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
+	return &Deployment{
+		id:                  uuid.New(),
+		messageProcessingID: msgProcID,
+		mode:                ModeCompile,
+		validationCmd:       cmd,
+		status:              StatusPending,
+		maxRetries:          defaultMaxRetries,
+		nextAttemptAt:       now,
+		createdAt:           now,
+	}
+}
+
 // Reconstitute rebuilds a Deployment from persisted state. Adapters use this to
 // turn a stored row back into an aggregate.
 func Reconstitute(
@@ -168,16 +204,90 @@ func ReconstituteValidation(
 	}
 }
 
+// ReconstituteSeedBuild rebuilds a seed-build-mode Deployment from persisted
+// state. It mirrors ReconstituteValidation but sets mode: ModeSeedBuild.
+func ReconstituteSeedBuild(
+	id uuid.UUID,
+	msgProcID *uuid.UUID,
+	cmd command.ValidationDeployTask,
+	status Status,
+	retryCount, maxRetries int,
+	nextAttemptAt, createdAt time.Time,
+	deployedAt *time.Time,
+	errorMessage *string,
+	outcome, dbtLogURI, runResultsURI string,
+	outcomeAt *time.Time,
+) *Deployment {
+	return &Deployment{
+		id:                  id,
+		messageProcessingID: msgProcID,
+		mode:                ModeSeedBuild,
+		validationCmd:       cmd,
+		status:              status,
+		retryCount:          retryCount,
+		maxRetries:          maxRetries,
+		nextAttemptAt:       nextAttemptAt,
+		createdAt:           createdAt,
+		deployedAt:          deployedAt,
+		errorMessage:        errorMessage,
+		outcome:             outcome,
+		dbtLogURI:           dbtLogURI,
+		dbtRunResultsURI:    runResultsURI,
+		outcomeAt:           outcomeAt,
+	}
+}
+
+// ReconstituteCompile rebuilds a compile-mode Deployment from persisted state.
+// It mirrors ReconstituteSeedBuild but sets mode: ModeCompile.
+func ReconstituteCompile(
+	id uuid.UUID,
+	msgProcID *uuid.UUID,
+	cmd command.ValidationDeployTask,
+	status Status,
+	retryCount, maxRetries int,
+	nextAttemptAt, createdAt time.Time,
+	deployedAt *time.Time,
+	errorMessage *string,
+	outcome, dbtLogURI, runResultsURI string,
+	outcomeAt *time.Time,
+) *Deployment {
+	return &Deployment{
+		id:                  id,
+		messageProcessingID: msgProcID,
+		mode:                ModeCompile,
+		validationCmd:       cmd,
+		status:              status,
+		retryCount:          retryCount,
+		maxRetries:          maxRetries,
+		nextAttemptAt:       nextAttemptAt,
+		createdAt:           createdAt,
+		deployedAt:          deployedAt,
+		errorMessage:        errorMessage,
+		outcome:             outcome,
+		dbtLogURI:           dbtLogURI,
+		dbtRunResultsURI:    runResultsURI,
+		outcomeAt:           outcomeAt,
+	}
+}
+
 // IsDeployable reports whether the command carries the identity and target a
 // deploy needs. A row whose job_params could not be deserialized recovers only
 // its task/schedule identity, so this returns false and the dispatcher fails it
 // permanently rather than attempting a meaningless deploy.
 func (d *Deployment) IsDeployable() bool {
-	if d.mode == ModeValidation {
+	if d.mode == ModeValidation || d.mode == ModeSeedBuild {
 		return d.validationCmd.JobName != "" &&
 			d.validationCmd.NodeID != "" &&
 			d.validationCmd.ReleaseID != "" &&
 			d.validationCmd.NodeType != "" &&
+			d.validationCmd.ImageTag != ""
+	}
+	if d.mode == ModeCompile {
+		// Compile jobs have no NodeType — they compile the full manifest for a
+		// service, not a single dbt node. Only identity + image are required.
+		return d.validationCmd.JobName != "" &&
+			d.validationCmd.NodeID != "" &&
+			d.validationCmd.ReleaseID != "" &&
 			d.validationCmd.ImageTag != ""
 	}
 	return d.command.JobName != "" &&
@@ -213,13 +323,15 @@ func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason strin
 	return true
 }
 
-// RecordOutcome attaches the terminal validation outcome to a previously
-// dispatched (status=deployed) validation deployment. It is validation-only:
-// production deployments announce their result through a different path. Only
-// "ok" and "failed" are accepted outcomes.
+// RecordOutcome attaches the terminal outcome to a previously dispatched
+// (status=deployed) validation, seed-build, OR compile deployment — all three
+// legs report a per-node terminal status the same way (validation.node.completed:v1 /
+// seed.build.node.completed:v1 / compile.node.completed:v1). Production
+// deployments announce their result through a different path and are rejected.
+// Only "ok" and "failed" are accepted.
 func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI string, now time.Time) error {
-	if d.mode != ModeValidation {
-		return fmt.Errorf("RecordOutcome called on non-validation deployment %s", d.id)
+	if d.mode != ModeValidation && d.mode != ModeSeedBuild && d.mode != ModeCompile {
+		return fmt.Errorf("RecordOutcome called on non-validation/seed-build/compile deployment %s", d.id)
 	}
 	if d.outcomeAt != nil {
 		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
@@ -248,6 +360,50 @@ func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI string, now ti
 func (d *Deployment) FailValidation(reason string, now time.Time) error {
 	if d.mode != ModeValidation {
 		return fmt.Errorf("FailValidation called on non-validation deployment %s", d.id)
+	}
+	if d.outcomeAt != nil {
+		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
+	}
+	msg := reason
+	d.errorMessage = &msg
+	d.status = StatusFailed
+	d.outcome = "failed"
+	ts := now
+	d.outcomeAt = &ts
+	return nil
+}
+
+// FailSeedBuild drives a seed-build deployment to a terminal failed state and
+// records outcome="failed" in one step. It is the seed-build equivalent of
+// FailValidation: a seed-build row that fails BEFORE it is dispatched (not
+// deployable, or a permanent pre-deploy deployer error) is still pending yet
+// must reach a terminal "failed" outcome so the per-release seed-build
+// aggregate can be emitted.
+func (d *Deployment) FailSeedBuild(reason string, now time.Time) error {
+	if d.mode != ModeSeedBuild {
+		return fmt.Errorf("FailSeedBuild called on non-seed-build deployment %s", d.id)
+	}
+	if d.outcomeAt != nil {
+		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
+	}
+	msg := reason
+	d.errorMessage = &msg
+	d.status = StatusFailed
+	d.outcome = "failed"
+	ts := now
+	d.outcomeAt = &ts
+	return nil
+}
+
+// FailCompile drives a compile deployment to a terminal failed state and
+// records outcome="failed" in one step. It is the compile equivalent of
+// FailSeedBuild: a compile row that fails BEFORE it is dispatched (not
+// deployable, or a permanent pre-deploy deployer error) is still pending yet
+// must reach a terminal "failed" outcome so the per-release compile aggregate
+// can be emitted.
+func (d *Deployment) FailCompile(reason string, now time.Time) error {
+	if d.mode != ModeCompile {
+		return fmt.Errorf("FailCompile called on non-compile deployment %s", d.id)
 	}
 	if d.outcomeAt != nil {
 		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
@@ -302,18 +458,18 @@ func (d *Deployment) MessageProcessingID() *uuid.UUID { return d.messageProcessi
 func (d *Deployment) Mode() Mode                      { return d.mode }
 func (d *Deployment) Command() command.DeployTask     { return d.command }
 
-// ValidationCommand is meaningful only when Mode() == ModeValidation; for
-// production deployments it returns the zero ValidationDeployTask.
+// ValidationCommand is meaningful only when Mode() == ModeValidation,
+// ModeSeedBuild, or ModeCompile; for production deployments it returns the zero ValidationDeployTask.
 func (d *Deployment) ValidationCommand() command.ValidationDeployTask {
 	return d.validationCmd
 }
 
-// ReleaseID is meaningful only when Mode() == ModeValidation; for production
-// deployments it returns "".
+// ReleaseID is meaningful only when Mode() == ModeValidation, ModeSeedBuild,
+// or ModeCompile; for production deployments it returns "".
 func (d *Deployment) ReleaseID() string { return d.validationCmd.ReleaseID }
 
-// NodeID is meaningful only when Mode() == ModeValidation; for production
-// deployments it returns "".
+// NodeID is meaningful only when Mode() == ModeValidation, ModeSeedBuild,
+// or ModeCompile; for production deployments it returns "".
 func (d *Deployment) NodeID() string           { return d.validationCmd.NodeID }
 func (d *Deployment) Status() Status           { return d.status }
 func (d *Deployment) RetryCount() int          { return d.retryCount }
@@ -322,7 +478,7 @@ func (d *Deployment) NextAttemptAt() time.Time { return d.nextAttemptAt }
 func (d *Deployment) CreatedAt() time.Time     { return d.createdAt }
 func (d *Deployment) DeployedAt() *time.Time   { return d.deployedAt }
 func (d *Deployment) ErrorMessage() *string    { return d.errorMessage }
-func (d *Deployment) Outcome() string           { return d.outcome }
-func (d *Deployment) DBTLogURI() string         { return d.dbtLogURI }
-func (d *Deployment) DBTRunResultsURI() string  { return d.dbtRunResultsURI }
-func (d *Deployment) OutcomeAt() *time.Time     { return d.outcomeAt }
+func (d *Deployment) Outcome() string          { return d.outcome }
+func (d *Deployment) DBTLogURI() string        { return d.dbtLogURI }
+func (d *Deployment) DBTRunResultsURI() string { return d.dbtRunResultsURI }
+func (d *Deployment) OutcomeAt() *time.Time    { return d.outcomeAt }

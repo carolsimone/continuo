@@ -45,6 +45,7 @@ func (d *Deployer) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 		Namespace:    d.namespace,
 		NodeType:     nodeType,
 		ImageTag:     spec.ImageTag,
+		Mode:         spec.Mode,
 	})
 }
 
@@ -67,7 +68,59 @@ func (d *Deployer) DeployValidation(ctx context.Context, spec deploy.ValidationJ
 		ImageTag:        spec.ImageTag,
 		CandidateSchema: spec.CandidateSchema,
 		CandidateSQLURI: spec.CandidateSQLURI,
+		ValidationOp:    spec.ValidationOp,
+		ProdSchema:      spec.ProdSchema,
 		Namespace:       d.namespace,
+	})
+}
+
+// DeploySeedBuild maps the domain ValidationJobSpec to K8s seed-build job
+// params and creates the Job (idempotent by job name). The job uses the team
+// image and runs `dbt seed --select <TableName>` into the candidate schema.
+// An unparseable node type can never succeed, so it is reported as a permanent error.
+func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJobSpec) error {
+	nodeType, err := pkg_model.ParseNodeType(spec.NodeType)
+	if err != nil {
+		return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
+	}
+	return d.client.CreateSeedBuildJob(ctx, ValidationJobParams{
+		JobName:         spec.JobName,
+		ReleaseID:       spec.ReleaseID,
+		NodeID:          spec.NodeID,
+		ServiceName:     spec.ServiceName,
+		SchemaName:      spec.SchemaName,
+		TableName:       spec.TableName,
+		NodeType:        nodeType,
+		ImageTag:        spec.ImageTag,
+		CandidateSchema: spec.CandidateSchema,
+		Namespace:       d.namespace,
+	})
+}
+
+// DeployCompile maps the domain ValidationJobSpec to K8s compile job params
+// and creates the Job (idempotent by job name). The compile Job runs `dbt
+// compile` in the team image (init container) and uploads the resulting
+// manifest.json to S3 (main container). An unparseable node type is NOT an
+// error here — compile Jobs do not use NodeType (they compile the full service
+// manifest, not a single dbt node). We still forward the field for symmetry.
+func (d *Deployer) DeployCompile(ctx context.Context, spec deploy.ValidationJobSpec) error {
+	var nodeType pkg_model.NodeType
+	if spec.NodeType != "" {
+		var err error
+		nodeType, err = pkg_model.ParseNodeType(spec.NodeType)
+		if err != nil {
+			return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
+		}
+	}
+	return d.client.CreateCompileJob(ctx, ValidationJobParams{
+		JobName:       spec.JobName,
+		ReleaseID:     spec.ReleaseID,
+		NodeID:        spec.NodeID,
+		ServiceName:   spec.ServiceName,
+		NodeType:      nodeType,
+		ImageTag:      spec.ImageTag,
+		ManifestS3URI: spec.ManifestS3URI,
+		Namespace:     d.namespace,
 	})
 }
 

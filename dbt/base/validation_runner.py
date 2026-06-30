@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """Build a single node as an empty table in the candidate schema (blue/green validation).
 
-The executor passes ``CANDIDATE_SQL_URI`` — an ``s3://bucket/key`` reference to the
-node's compiled SQL with every schema-qualified reference already rewritten to the
-candidate schema. We fetch the SQL at runtime, then materialize it ``WITH NO DATA``
-so the SQL is validated against the (empty) upstream tables built earlier in
-dependency order, without touching production. stdout is captured as the per-node
-validation log; a non-zero exit marks the node failed.
+Dispatches on ``VALIDATION_OP`` env var (default ``build_from_sql``):
+- ``build_from_sql``: fetch node's compiled SQL from S3 via ``CANDIDATE_SQL_URI``,
+  then materialize it ``WITH NO DATA`` (models/snapshots).
+- ``clone_from_prod``: clone an existing prod table's shape empty from ``PROD_SCHEMA``
+  (unchanged upstreams, including seeds).
 
-Seeds run ``dbt seed --empty`` via a separate code path and never invoke this
-runner (the executor only uses it as the model/snapshot validation command). A
-missing or empty ``CANDIDATE_SQL_URI`` therefore means the producer never uploaded
-this node's compiled SQL — that is a validation error, not a no-op: the node fails
-rather than being silently reported as validated.
+The DDL itself lives behind the warehouse adapter (``base.warehouse``). stdout is the
+per-node validation log; the runner prints exactly one structured ``result_block`` as
+its last line. A non-zero exit marks the node failed.
 """
 import os
 import sys
 
 import boto3
-import psycopg2
-from psycopg2 import sql as pg_sql
 
 try:
     from base import validation_result  # repo/test context (pythonpath=".")
 except ModuleNotFoundError:  # pragma: no cover - flat layout inside the image
     import validation_result
+
+try:
+    from base.warehouse import adapter_from_env
+except ModuleNotFoundError:  # pragma: no cover - flat layout inside the image
+    from warehouse import adapter_from_env
 
 
 def _require(name: str) -> str:
@@ -74,131 +74,56 @@ def load_candidate_sql() -> str:
     return body.decode("utf-8")
 
 
-def _ensure_schema(cur, schema: str) -> None:
-    """Create the candidate schema race-safely.
-
-    ``CREATE SCHEMA IF NOT EXISTS`` is not atomic under concurrency: root
-    validation nodes have no gating upstreams and dispatch in parallel, so
-    several pods can race this statement and raise DuplicateSchema /
-    UniqueViolation on pg_namespace.  A session-level advisory lock keyed on the
-    schema name serializes concurrent creators on the same database, so only one
-    issues the CREATE; the lock is released before returning.  A
-    DuplicateSchema / UniqueViolation is still tolerated (the schema now exists,
-    which is the desired outcome) as a second line of defense against any
-    creator that does not hold the lock.
-    (autocommit is on, so a failed statement leaves no aborted transaction.)
-    """
-    from psycopg2 import errors as pg_errors
-    from psycopg2 import sql as pg_sql
-
-    # hashtext maps the schema name to the int4 key pg_advisory_lock needs.
-    # Holders of the same key block until the lock is released, so only one
-    # session at a time runs the CREATE for a given candidate schema.
-    cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (schema,))
-    try:
-        stmt = pg_sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(pg_sql.Identifier(schema))
-        print(f"-- ensuring candidate schema {schema} exists", flush=True)
-        try:
-            cur.execute(stmt)
-        except (pg_errors.DuplicateSchema, pg_errors.UniqueViolation):
-            print(f"-- schema {schema} already exists (concurrent create); continuing", flush=True)
-    finally:
-        cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (schema,))
-
-
 def main() -> None:
     schema = _require("DBT_TARGET_SCHEMA")
     table = _require("TABLE_NAME")
-    # Best-effort node identity for the structured block; the runner knows only the
-    # table name (not the service or true node type). The validation event already
-    # carries the authoritative node_id, so this is supplementary.
+    op = os.environ.get("VALIDATION_OP", "build_from_sql")
     unique_id = f"model.{table}"
 
-    try:
-        raw_sql = load_candidate_sql()
-    except Exception as exc:
-        uri = os.environ.get("CANDIDATE_SQL_URI", "")
-        print(
-            f"validation_runner: ERROR fetching candidate SQL from {uri!r}: {exc}",
-            file=sys.stderr,
-        )
-        print(validation_result.result_block("error", str(exc), unique_id=unique_id), flush=True)
-        sys.exit(1)
-    if not raw_sql:
-        # This runner is only ever the model/snapshot validation command; seeds use
-        # `dbt seed --empty` and never reach here. A missing/empty CANDIDATE_SQL_URI
-        # means this node's compiled SQL was never produced — fail the node rather
-        # than silently report it validated.
-        print(
-            "validation_runner: CANDIDATE_SQL_URI is missing or empty for a "
-            "model/snapshot node; cannot validate",
-            file=sys.stderr,
-        )
-        print(
-            validation_result.result_block(
-                "error", "CANDIDATE_SQL_URI is missing or empty", unique_id=unique_id
-            ),
-            flush=True,
-        )
+    # Gather op-specific inputs BEFORE connecting, surfacing input errors as a
+    # structured block (preserves the prior contract + exit codes).
+    candidate_sql = None
+    prod_schema = None
+    if op == "build_from_sql":
+        try:
+            raw_sql = load_candidate_sql()
+        except Exception as exc:
+            uri = os.environ.get("CANDIDATE_SQL_URI", "")
+            print(f"validation_runner: ERROR fetching candidate SQL from {uri!r}: {exc}", file=sys.stderr)
+            print(validation_result.result_block("error", str(exc), unique_id=unique_id), flush=True)
+            sys.exit(1)
+        if not raw_sql:
+            print("validation_runner: CANDIDATE_SQL_URI is missing or empty for a "
+                  "build_from_sql node; cannot validate", file=sys.stderr)
+            print(validation_result.result_block("error", "CANDIDATE_SQL_URI is missing or empty",
+                                                 unique_id=unique_id), flush=True)
+            sys.exit(2)
+        candidate_sql = raw_sql
+    elif op == "clone_from_prod":
+        prod_schema = _require("PROD_SCHEMA")
+    else:
+        print(f"validation_runner: unknown VALIDATION_OP {op!r}", file=sys.stderr)
+        print(validation_result.result_block("error", f"unknown VALIDATION_OP {op!r}",
+                                             unique_id=unique_id), flush=True)
         sys.exit(2)
 
-    # Strip any trailing terminator so it embeds cleanly inside CREATE TABLE AS (...).
-    candidate_sql = raw_sql.strip().rstrip(";").strip()
-
-    # Connection setup lives inside the try so a missing DBT_POSTGRES_* env var or a
-    # warehouse connection failure — both common validation failure modes — surface
-    # as a structured error block rather than a bare exit. Without this, the pod
-    # would exit with no sentinel block and k8s-controller could not upload
-    # run_results_uri, bypassing the structured-first remediation path.
-    conn = None
+    adapter = None
     try:
-        missing = [
-            name
-            for name in ("DBT_POSTGRES_HOST", "DBT_POSTGRES_DB", "DBT_POSTGRES_USER")
-            if not os.environ.get(name)
-        ]
-        if missing:
-            raise RuntimeError(f"missing required env var(s): {', '.join(missing)}")
-
-        conn = psycopg2.connect(
-            host=os.environ["DBT_POSTGRES_HOST"],
-            port=os.environ.get("DBT_POSTGRES_PORT", "5432"),
-            dbname=os.environ["DBT_POSTGRES_DB"],
-            user=os.environ["DBT_POSTGRES_USER"],
-            password=os.environ.get("DBT_POSTGRES_PASSWORD", ""),
-        )
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            _ensure_schema(cur, schema)
-            # The candidate SQL is the compiled model SELECT fetched from S3, with
-            # all schema-qualified references already rewritten to the candidate
-            # schema. WITH NO DATA validates the SELECT against the empty upstream
-            # tables built earlier in dependency order, without loading any rows.
-            # Every node is materialized as a table here regardless of its real
-            # materialization type (view, incremental, etc.) — validation checks
-            # the SELECT, not the final materialization behaviour.
-            statements = (
-                pg_sql.SQL("DROP TABLE IF EXISTS {}.{}").format(
-                    pg_sql.Identifier(schema), pg_sql.Identifier(table)
-                ),
-                pg_sql.SQL("CREATE TABLE {}.{} AS ({}) WITH NO DATA").format(
-                    pg_sql.Identifier(schema),
-                    pg_sql.Identifier(table),
-                    pg_sql.SQL(candidate_sql),
-                ),
-            )
-            for stmt in statements:
-                print(f"-- executing:\n{stmt.as_string(conn)}", flush=True)
-                cur.execute(stmt)
-        print(f"validation_runner: built {schema}.{table} (empty)", flush=True)
+        adapter = adapter_from_env()
+        adapter.ensure_schema(schema)
+        if op == "build_from_sql":
+            adapter.build_empty_from_sql(schema, table, candidate_sql)
+        else:
+            adapter.clone_empty_from_prod(schema, prod_schema, table)
+        print(f"validation_runner: built {schema}.{table} (empty, op={op})", flush=True)
         print(validation_result.result_block("success", unique_id=unique_id), flush=True)
-    except Exception as exc:  # surface any DB/exec error as the per-node validation log
+    except Exception as exc:
         print(f"validation_runner: ERROR building {schema}.{table}: {exc}", file=sys.stderr)
         print(validation_result.result_block("error", str(exc), unique_id=unique_id), flush=True)
         sys.exit(1)
     finally:
-        if conn is not None:
-            conn.close()
+        if adapter is not None:
+            adapter.close()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
+	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	goredis "github.com/redis/go-redis/v9"
@@ -90,11 +91,13 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return e.ToMap(), nil
 
-	case "validation_completed":
-		// validation.completed:v1 carries the aggregate as a single JSON
-		// "payload" field (release_id, per_node_results, aggregate_status) — the
-		// shape release-controller's HandleValidationResult decodes. The stored
-		// payload is already that body; re-emit it verbatim.
+	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted:
+		// The three candidate-leg aggregate-completion events
+		// (validation.completed:v1 / seed.build.completed:v1 / compile.completed:v1)
+		// each carry the aggregate as a single JSON "payload" field that
+		// release-controller's HandleValidationResult / HandleSeedBuildResult /
+		// HandleCompileResult decodes. The stored payload is already that body;
+		// re-emit it verbatim.
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:

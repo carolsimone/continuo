@@ -157,6 +157,17 @@ jobs:
       - name: Test manifest-controller
         run: docker exec manifest-controller uv run pytest -v
 
+      - name: Test dbt compile + S3 upload (integration)
+        run: |
+          docker exec \
+            -e AWS_ACCESS_KEY_ID=test \
+            -e AWS_SECRET_ACCESS_KEY=test \
+            -e AWS_DEFAULT_REGION=us-east-1 \
+            -e S3_ENDPOINT_URL=http://localstack:4566 \
+            -e S3_BUCKET=continuo \
+            dbt-compile-and-load \
+            uv run --with pytest pytest tests/test_upload.py -v -m integration
+
       - name: Verify ui-service proto is in sync with canonical
         # Drift in ui-service/proto/state.proto silently drops fields on the
         # wire — @grpc/proto-loader reads this copy at boot, so any divergence

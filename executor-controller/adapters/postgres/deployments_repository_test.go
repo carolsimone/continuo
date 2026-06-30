@@ -338,7 +338,7 @@ func TestAdd_ValidationRow_RoundTrip(t *testing.T) {
 	assert.Equal(t, schedule, schedule2, "synthetic schedule_id deterministic for same (release,node)")
 
 	// Reconstitution via GetByReleaseNode rebuilds the validation aggregate.
-	got, err := repo.GetByReleaseNode(context.Background(), "rel-1", "node-A")
+	got, err := repo.GetByReleaseNode(context.Background(), "rel-1", "node-A", model.ModeValidation)
 	require.NoError(t, err)
 	assert.Equal(t, model.ModeValidation, got.Mode())
 	assert.Equal(t, cmd, got.ValidationCommand())
@@ -354,11 +354,11 @@ func TestGetByReleaseNode_HitAndMiss(t *testing.T) {
 	dep := model.NewValidationDeployment(validValidationCmd("rel-2", "node-X"), nil, time.Now(), false)
 	require.NoError(t, repo.Add(context.Background(), dep))
 
-	got, err := repo.GetByReleaseNode(context.Background(), "rel-2", "node-X")
+	got, err := repo.GetByReleaseNode(context.Background(), "rel-2", "node-X", model.ModeValidation)
 	require.NoError(t, err)
 	assert.Equal(t, dep.ID(), got.ID())
 
-	_, err = repo.GetByReleaseNode(context.Background(), "rel-2", "node-MISSING")
+	_, err = repo.GetByReleaseNode(context.Background(), "rel-2", "node-MISSING", model.ModeValidation)
 	assert.ErrorIs(t, err, sql.ErrNoRows, "miss signals sql.ErrNoRows")
 }
 
@@ -390,7 +390,7 @@ func TestPendingValidationCount_PendingDeployedDoneMix(t *testing.T) {
 	other := model.NewValidationDeployment(validValidationCmd("rel-OTHER", "n1"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, other))
 
-	count, err := repo.PendingValidationCount(ctx, "rel-3")
+	count, err := repo.PendingValidationCount(ctx, "rel-3", model.ModeValidation)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count, "pending + deployed-without-outcome count; outcomed row excluded")
 }
@@ -420,7 +420,7 @@ func TestListValidationResults_OnlyOutcomedRows(t *testing.T) {
 	pending := model.NewValidationDeployment(validValidationCmd("rel-4", "n3"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, pending))
 
-	results, err := repo.ListValidationResults(ctx, "rel-4")
+	results, err := repo.ListValidationResults(ctx, "rel-4", model.ModeValidation)
 	require.NoError(t, err)
 	require.Len(t, results, 2, "only outcomed rows returned")
 	assert.Equal(t, "ok", results[0].Outcome(), "ordered by outcome_at ASC")
@@ -439,16 +439,16 @@ func TestClaimEmission_FirstCallerWins_SecondReturnsFalse(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	won, err := repo.ClaimEmission(ctx, "rel-5", now)
+	won, err := repo.ClaimEmission(ctx, "rel-5", model.ModeValidation, now)
 	require.NoError(t, err)
 	assert.True(t, won, "first caller claims emission")
 
-	won2, err := repo.ClaimEmission(ctx, "rel-5", now.Add(time.Second))
+	won2, err := repo.ClaimEmission(ctx, "rel-5", model.ModeValidation, now.Add(time.Second))
 	require.NoError(t, err)
 	assert.False(t, won2, "second caller loses on PK conflict")
 
 	// a distinct release is independent
-	wonOther, err := repo.ClaimEmission(ctx, "rel-6", now)
+	wonOther, err := repo.ClaimEmission(ctx, "rel-6", model.ModeValidation, now)
 	require.NoError(t, err)
 	assert.True(t, wonOther)
 }
@@ -473,7 +473,7 @@ func runGateInTx(t *testing.T, tx *sqlx.Tx, releaseID, nodeID string, now time.T
 	t.Helper()
 	logger := testLogger()
 	depRepo := postgres.NewDeploymentsRepository(tx, logger)
-	dep, err := depRepo.GetByReleaseNode(context.Background(), releaseID, nodeID)
+	dep, err := depRepo.GetByReleaseNode(context.Background(), releaseID, nodeID, model.ModeValidation)
 	require.NoError(t, err)
 	require.NoError(t, dep.RecordOutcome("ok", "", "", now))
 	require.NoError(t, depRepo.Save(context.Background(), dep))
@@ -535,11 +535,11 @@ func TestDeploymentsRepository_ListValidationByRelease_And_BlockedPending(t *tes
 	require.NoError(t, repo.Add(ctx, model.NewValidationDeployment(child, nil, now, true)))
 
 	// Blocked child counts toward "pending" so the aggregate gate does not fire early.
-	n, err := repo.PendingValidationCount(ctx, releaseID)
+	n, err := repo.PendingValidationCount(ctx, releaseID, model.ModeValidation)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 
-	rows, err := repo.ListValidationByRelease(ctx, releaseID)
+	rows, err := repo.ListValidationByRelease(ctx, releaseID, model.ModeValidation)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	byNode := map[string]*model.Deployment{}
@@ -549,6 +549,159 @@ func TestDeploymentsRepository_ListValidationByRelease_And_BlockedPending(t *tes
 	require.Equal(t, model.StatusPending, byNode["a1"].Status())
 	require.Equal(t, model.StatusBlocked, byNode["a2"].Status())
 	require.Equal(t, []string{"a1"}, byNode["a2"].ValidationCommand().UpstreamNodeIDs)
+}
+
+func validSeedBuildCmd(releaseID, nodeID string) command.ValidationDeployTask {
+	return command.ValidationDeployTask{
+		ReleaseID: releaseID, NodeID: nodeID,
+		ServiceName: "dbt", SchemaName: "public", TableName: nodeID,
+		NodeType: "dbt-seed", ImageTag: "sha-seed",
+		JobName: "dbt-seed-" + nodeID, CandidateSchema: "_candidate_" + releaseID,
+	}
+}
+
+func TestAdd_SeedBuildRow_RoundTrip(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	now := time.Now()
+	cmd := validSeedBuildCmd("rel-seed-1", "seed.orders")
+	dep := model.NewSeedBuildDeployment(cmd, nil, now)
+	require.NoError(t, repo.Add(context.Background(), dep))
+
+	// Verify the raw row persisted with mode=seed_build and job_params contain the command.
+	var (
+		mode      string
+		releaseID string
+		nodeID    string
+		jobParams []byte
+	)
+	require.NoError(t, db.QueryRow(
+		`SELECT mode, release_id, node_id, job_params FROM executor_deployments WHERE id=$1`, dep.ID(),
+	).Scan(&mode, &releaseID, &nodeID, &jobParams))
+	assert.Equal(t, "seed_build", mode)
+	assert.Equal(t, "rel-seed-1", releaseID)
+	assert.Equal(t, "seed.orders", nodeID)
+	assert.Contains(t, string(jobParams), "dbt-seed-seed.orders", "seed command serialized into job_params")
+
+	// Rehydrate via GetByReleaseNode scoped to ModeSeedBuild.
+	got, err := repo.GetByReleaseNode(context.Background(), "rel-seed-1", "seed.orders", model.ModeSeedBuild)
+	require.NoError(t, err)
+	assert.Equal(t, model.ModeSeedBuild, got.Mode())
+	assert.Equal(t, cmd, got.ValidationCommand(), "command round-trips intact")
+	assert.Equal(t, "rel-seed-1", got.ReleaseID())
+	assert.Equal(t, "seed.orders", got.NodeID())
+	assert.Equal(t, model.StatusPending, got.Status())
+
+	// A ModeValidation lookup for the same (release, node) must miss — the legs
+	// share release_id but GetByReleaseNode is mode-scoped.
+	_, err = repo.GetByReleaseNode(context.Background(), "rel-seed-1", "seed.orders", model.ModeValidation)
+	assert.ErrorIs(t, err, sql.ErrNoRows, "mode scoping isolates the seed-build row from a validation lookup")
+}
+
+// TestCrossModeIsolation_SameReleaseID is the B12 mode-scoping regression guard:
+// a single release_id carries both a seed-build leg and a validation leg
+// (sequential phases). The per-mode pending-count, results, and aggregate-emit
+// sentinel must treat the two legs independently — a seed-build claim must not
+// block the later validation claim, and neither leg's rows must leak into the
+// other's count/results.
+func TestCrossModeIsolation_SameReleaseID(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	aggRepo := postgres.NewValidationAggregateRepository(db)
+	ctx := context.Background()
+	now := time.Now()
+	const releaseID = "rel-both"
+
+	// One terminal-ok seed-build row.
+	seed := model.NewSeedBuildDeployment(validSeedBuildCmd(releaseID, "seed.fx"), nil, now)
+	require.NoError(t, repo.Add(ctx, seed))
+	require.NoError(t, seed.MarkDeployed(now))
+	require.NoError(t, seed.RecordOutcome("ok", "", "", now))
+	require.NoError(t, repo.Save(ctx, seed))
+
+	// One still-pending validation row for the SAME release.
+	val := model.NewValidationDeployment(validValidationCmd(releaseID, "model.x"), nil, now, false)
+	require.NoError(t, repo.Add(ctx, val))
+
+	// Per-mode pending counts: seed-build has 0 (its row is terminal), validation has 1.
+	seedPending, err := repo.PendingValidationCount(ctx, releaseID, model.ModeSeedBuild)
+	require.NoError(t, err)
+	assert.Equal(t, 0, seedPending, "seed-build leg fully settled")
+	valPending, err := repo.PendingValidationCount(ctx, releaseID, model.ModeValidation)
+	require.NoError(t, err)
+	assert.Equal(t, 1, valPending, "validation leg still pending, unaffected by seed-build settle")
+
+	// Per-mode results lists do not cross-contaminate.
+	seedResults, err := repo.ListValidationResults(ctx, releaseID, model.ModeSeedBuild)
+	require.NoError(t, err)
+	require.Len(t, seedResults, 1)
+	assert.Equal(t, "seed.fx", seedResults[0].NodeID())
+	valResults, err := repo.ListValidationResults(ctx, releaseID, model.ModeValidation)
+	require.NoError(t, err)
+	assert.Empty(t, valResults, "validation row has no outcome yet")
+
+	// The aggregate-emit sentinel is keyed on (release, mode): the seed-build
+	// claim must NOT block the later validation claim for the same release.
+	wonSeed, err := aggRepo.ClaimEmission(ctx, releaseID, model.ModeSeedBuild, now)
+	require.NoError(t, err)
+	assert.True(t, wonSeed, "seed-build leg claims its emission")
+	wonVal, err := aggRepo.ClaimEmission(ctx, releaseID, model.ModeValidation, now)
+	require.NoError(t, err)
+	assert.True(t, wonVal, "validation leg claims independently despite same release_id")
+
+	// Re-claiming the same (release, mode) loses, as before.
+	wonSeed2, err := aggRepo.ClaimEmission(ctx, releaseID, model.ModeSeedBuild, now)
+	require.NoError(t, err)
+	assert.False(t, wonSeed2, "second seed-build claim loses on (release, mode) conflict")
+}
+
+func countSeedBuildCompletedOutbox(t *testing.T, db *sqlx.DB, releaseID string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow(
+		`SELECT count(*) FROM executor_outbox WHERE stream_name = $1 AND payload::jsonb->>'release_id' = $2`,
+		streams.SeedBuildCompletedV1, releaseID,
+	).Scan(&n))
+	return n
+}
+
+// TestSeedBuildAggregateGate_EmitsCompletion drives the seed-build settle path
+// end-to-end against Postgres: a single terminal seed row -> the gate emits
+// exactly one seed.build.completed:v1 row with status=ok.
+func TestSeedBuildAggregateGate_EmitsCompletion(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	const releaseID = "rel-seedgate"
+	logger := testLogger()
+
+	repo := postgres.NewDeploymentsRepository(db, logger)
+	seed := model.NewSeedBuildDeployment(validSeedBuildCmd(releaseID, "seed.fx"), nil, now)
+	require.NoError(t, repo.Add(ctx, seed))
+	require.NoError(t, seed.MarkDeployed(now))
+	require.NoError(t, repo.Save(ctx, seed))
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	txRepo := postgres.NewDeploymentsRepository(tx, logger)
+	dep, err := txRepo.GetByReleaseNode(ctx, releaseID, "seed.fx", model.ModeSeedBuild)
+	require.NoError(t, err)
+	require.NoError(t, dep.RecordOutcome("ok", "", "", now))
+	require.NoError(t, txRepo.Save(ctx, dep))
+	require.NoError(t, validation.SettleSeedBuildNodeTerminal(
+		ctx, txRepo,
+		outbox.NewPostgresRepository(tx, "executor_outbox", logger),
+		postgres.NewValidationAggregateRepository(tx),
+		releaseID, "seed.fx", "ok", now,
+	))
+	require.NoError(t, tx.Commit())
+
+	assert.Equal(t, 1, countSeedBuildCompletedOutbox(t, db, releaseID),
+		"exactly one seed.build.completed:v1 row")
 }
 
 func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {

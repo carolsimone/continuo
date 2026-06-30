@@ -144,13 +144,16 @@ func (f *fakeReleaseRepo) NextQueuedRelease(_ context.Context) (*release.Release
 	return nil, nil
 }
 
-// ActiveRelease returns the single release in StatusParsing or StatusValidating, or nil.
+// ActiveRelease returns the single release in StatusCompiling, StatusParsing,
+// StatusSeedBuilding, or StatusValidating, or nil. Mirrors the Postgres query
+// that guards AdvanceQueue from launching a second concurrent release.
 func (f *fakeReleaseRepo) ActiveRelease(_ context.Context) (*release.Release, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	for _, id := range f.store.order {
 		s := f.store.releases[id].Status()
-		if s == release.StatusParsing || s == release.StatusValidating {
+		if s == release.StatusCompiling || s == release.StatusParsing ||
+			s == release.StatusSeedBuilding || s == release.StatusValidating {
 			return f.store.releases[id], nil
 		}
 	}

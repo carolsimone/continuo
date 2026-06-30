@@ -12,7 +12,7 @@ Postgres (its own database). Tables:
 
 | Table | Purpose |
 |---|---|
-| `releases` | One row per candidate release: status, the `changed_service` this delta belongs to, the per-service image tags assembled at activation, candidate topology, validation node ids, per-node results, transition history, and the immutable provenance columns `repo` (GitHub owner/name) and `commit_sha` (full SHA) captured at receipt. |
+| `releases` | One row per candidate release: status (`received`, `compiling`, `parsing`, `seed_building`, `validating`, `promoted`, `rejected`, `superseded`), the `changed_service` this delta belongs to, the per-service image tags assembled at activation, candidate topology, validation node ids, per-node results, transition history, and the immutable provenance columns `repo` (GitHub owner/name) and `commit_sha` (full SHA) captured at receipt. |
 | `current_prod` | Singleton row: the promoted `release_id` and its `topology_snapshot` (the live topology). |
 | `service_prod` | One row per dbt service — the live per-service production pointer: `{service_name, release_id, manifest_s3_key, image_tag, updated_at}`. Records which manifest key and image tag are currently live for each service; the full production manifest set is reconstructed by collecting every service's pointer at activation time. |
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
@@ -38,7 +38,9 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 
 | Stream | Group | Description |
 |---|---|---|
+| `compile.completed:v1` | `release-controller-compile-completed` | Compile job result from executor-controller. |
 | `manifest.loaded.candidate:v1` | `release-controller-manifest-loaded-candidate` | Resolved candidate topology (or a parse failure) from manifest-controller. |
+| `seed.build.completed:v1` | `release-controller-seed-build-completed` | Aggregate seed-build results from executor-controller. |
 | `validation.completed:v1` | `release-controller-validation-completed` | Aggregate per-node validation results from executor-controller. |
 
 ## Outbound Interfaces
@@ -47,10 +49,12 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 
 | Stream | Consumed by | Emitted when |
 |---|---|---|
-| `release.requested:v1` | manifest-controller | A release becomes active; carries the assembled `manifest_keys` set (the changed service plus every other service's current prod manifest) to parse. |
+| `compile.requested:v1` | executor-controller | A new release activates; the changed service's dbt compile is needed to produce a fresh manifest. |
+| `release.requested:v1` | manifest-controller | A release transitions from Compiling to Parsing; carries the re-assembled `manifest_keys` set (the changed service plus every other service's current prod manifest) to parse. |
+| `seed.build.requested:v1` | executor-controller | A parsed release has new/changed dbt-seed nodes that need building into the candidate schema before validation. |
 | `validation.requested:v1` | executor-controller | A candidate has changed nodes to validate. |
 | `release.promoted:v1` | orchestrator | A release is promoted to production. Payload: `{release_id, topology, image_tags, repo, commit_sha, promoted_at}`. Each entry in `topology` carries the standard node fields plus a `changed` boolean that is `true` when the node's `content_hash` differs from the prior `current_prod` (or when `current_prod` was empty). The top-level `repo`, `commit_sha`, and `promoted_at` are the source-change provenance for this release; orchestrator stamps them onto each changed `:Table` node. |
-| `release.rejected:v1` | `remediation` (group `remediation-release-rejected`) | A release fails parsing or validation; each failing node's per-node entry carries `dbt_log_uri` and the optional structured `run_results_uri`, and the remediation classifier prefers the structured result (falling back to the dbt log) and emits a `remediation.requested:v1` trigger for healable failures. |
+| `release.rejected:v1` | `remediation` (group `remediation-release-rejected`) | A release fails compilation, parsing, seed-building, or validation; each failing node's per-node entry carries `dbt_log_uri` and the optional structured `run_results_uri`, and the remediation classifier prefers the structured result (falling back to the dbt log) and emits a `remediation.requested:v1` trigger for healable failures. |
 
 All events are written to the outbox inside the same transaction as the state change and published with an injected `outbox_entry_id` for consumer-side dedup.
 
@@ -58,16 +62,26 @@ Calls no gRPC services.
 
 ## Processing Logic
 
-Releases run a FIFO queue: one release is active (parsing or validating) at a time; on each terminal outcome the queue advances the next queued release.
+Releases run a FIFO queue: one release is active (`compiling`, `parsing`, `seed_building`, or `validating`) at a time; on each terminal outcome the queue advances the next queued release. The full state machine is: `received` → `compiling` → `parsing` → `seed_building` → `validating` → (`promoted` | `rejected` | `superseded`).
 
 ### On `POST /releases`
-Create a `Received` release for the single submitted service (idempotent: an existing `release_id` is a no-op). The release records its `changed_service`, that service's `image_tag`, and the immutable provenance (`repo`, `commit_sha`) supplied by the caller. The queue advance promotes the next `Received` release to `Parsing`, assembles its full manifest set, and emits `release.requested:v1`.
+Create a `Received` release for the single submitted service (idempotent: an existing `release_id` is a no-op). The release records its `changed_service`, that service's `image_tag`, and the immutable provenance (`repo`, `commit_sha`) supplied by the caller. The queue advance promotes the next `Received` release to `Compiling` and emits `compile.requested:v1`.
 
 ### Manifest-set assembly (at activation, not receipt)
-Assembly happens when a release transitions to `Parsing`, not when it is received. Under the FIFO queue an earlier release may promote and change another service's pointer before this one activates, so the set must be read from live state at the moment of activation. The queue advance reads every other service's `service_prod` row and combines them with the changed service's new canonical key (`s3://<bucket>/<changed_service>/<release_id>/manifest.json`) and its submitted image tag. The changed service's prior pointer, if any, is replaced rather than duplicated. The assembled per-service image tags are persisted on the release; the resulting `manifest_keys` list — one `{service, s3_uri}` entry per service — is emitted in the `release.requested:v1` payload `{release_id, manifest_keys}`.
+Assembly happens when a release transitions from `Compiling` to `Parsing`, not when it is received. Under the FIFO queue an earlier release may promote and change another service's pointer before this one activates, so the set must be read from live state at the moment of activation. The queue advance reads every other service's `service_prod` row and combines them with the changed service's new canonical key (`s3://<bucket>/<changed_service>/<release_id>/manifest.json`) and its submitted image tag. The changed service's prior pointer, if any, is replaced rather than duplicated. The assembled per-service image tags are persisted on the release; the resulting `manifest_keys` list — one `{service, s3_uri}` entry per service — is emitted in the `release.requested:v1` payload `{release_id, manifest_keys}`.
 
 ### Activation guard
 Before a release activates, the queue advance verifies that every service live in the `current_prod` topology snapshot is covered by a `service_prod` pointer (or is this release's changed service). If a live service has no pointer, the release stays `Received`, nothing is emitted, and a warning naming the uncovered services is logged; a later queue advance retries automatically. This protects the transition from a fully-populated `current_prod` with an empty `service_prod` table: without coverage, assembly would omit the unpointered services and promotion would retire them. `service_prod` is populated from the existing `current_prod` snapshot by the `seed-service-prod` command (shipped in the service image), which records each service's existing manifest key verbatim and is idempotent.
+
+### On `compile.completed:v1`
+```
+status=failed → Reject(reason=compile_failed), emit release.rejected:v1, advance queue
+status=ok:
+  TransitionFromCompiling (Compiling → Parsing)
+  re-assemble manifest set from live service_prod (same logic as activation)
+  emit release.requested:v1 {release_id, manifest_keys}
+  advance queue
+```
 
 ### On `manifest.loaded.candidate:v1`
 ```
@@ -88,6 +102,8 @@ status=ok:
   if inSet is empty:
       promote directly (nothing to validate trivially passes the gate):
         update current_prod, transition to Promoted, emit release.promoted:v1
+  else if inSet has changed seeds:
+      emit seed.build.requested:v1, transition to SeedBuilding
   else:
       transition to Validating, emit validation.requested:v1
         (mode=validation, candidate_schema=_candidate_<release_id>,
@@ -96,6 +112,15 @@ status=ok:
   advance queue
 ```
 A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.
+
+### On `seed.build.completed:v1`
+```
+status=failed → Reject(reason=seed_build_failed), emit release.rejected:v1, advance queue
+status=ok:
+  TransitionFromSeedBuilding (SeedBuilding → Validating)
+  emit validation.requested:v1
+  advance queue
+```
 
 ### On `validation.completed:v1`
 ```
@@ -115,10 +140,10 @@ Before updating `current_prod`, `promoteToProduction` computes the set of change
 
 ## Consumer Reliability
 
-- Two consumer groups (`manifest.loaded.candidate:v1`, `validation.completed:v1`) run in the same process; each maintains its own offset.
+- Four consumer groups (`compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.completed:v1`) run in the same process; each maintains its own offset.
 - Inbound messages are deduped via `message_processing` (idempotent on the upstream `outbox_entry_id`), so a redelivery is absorbed.
 - A permanent parse-decode failure is ACKed (logged, not retried); transient errors are not ACKed and replay.
-- A `manifest.loaded.candidate:v1` or `validation.completed:v1` message whose `release_id` no longer has a `releases` row (pruned, or reclaimed from a previous consumer for a deleted release) is logged and dropped rather than processed. The repository's `Get` returns no row as `(nil, nil)`, so both handlers nil-check the aggregate before use; without that guard a reclaimed message for a missing release would crash the consumer on startup.
+- A message on any of the four inbound streams whose `release_id` no longer has a `releases` row (pruned, or reclaimed from a previous consumer for a deleted release) is logged and dropped rather than processed. The repository's `Get` returns no row as `(nil, nil)`, so all handlers nil-check the aggregate before use; without that guard a reclaimed message for a missing release would crash the consumer on startup.
 - State changes and the outbox row are written in one transaction; the outbox publisher drains rows and XADDs them, injecting `outbox_entry_id` for downstream dedup.
 
 ## Background Loops
@@ -126,7 +151,9 @@ Before updating `current_prod`, `promoteToProduction` computes the set of change
 | Loop | Description |
 |---|---|
 | Outbox publisher | Drains `release_controller_outbox` and XADDs each row to its stream. |
+| `compile.completed:v1` consumer | Dispatches to the compile-result handler. |
 | `manifest.loaded.candidate:v1` consumer | Dispatches to the parsed-manifest handler. |
+| `seed.build.completed:v1` consumer | Dispatches to the seed-build-result handler. |
 | `validation.completed:v1` consumer | Dispatches to the validation-result handler. |
 | Retention | Runs on the janitor interval (`RELEASE_JANITOR_INTERVAL`, default 24h). Deletes terminal releases (promoted, rejected, superseded) whose creation timestamp is older than `RELEASE_RETENTION_DAYS` (default 90 days). Never deletes the release referenced by `current_prod` or by any `service_prod` pointer. For each pruned release, also deletes the `candidate-sql/<release_id>/` S3 prefix (soft-fail — a delete error does not abort the prune; the S3 lifecycle expiry rule is the backstop). |
 

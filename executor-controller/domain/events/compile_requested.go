@@ -1,0 +1,19 @@
+// executor-controller/domain/events/compile_requested.go
+package events
+
+import "github.com/google/uuid"
+
+// CompileRequested is the parsed compile.requested:v1 stream payload — a typed,
+// in-process representation of the compile request emitted by release-controller.
+// The executor enqueues exactly one compile Deployment for the named service.
+//
+// OutboxEntryID is the release-controller outbox row ID, carried through as
+// provenance. Zero value (uuid.Nil) means the inbound message did not carry
+// the field.
+type CompileRequested struct {
+	OutboxEntryID uuid.UUID
+	ReleaseID     string
+	Service       string
+	ImageTag      string
+	Bucket        string
+}

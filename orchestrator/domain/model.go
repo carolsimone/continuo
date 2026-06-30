@@ -81,4 +81,8 @@ type NodeReadyForExecution struct {
 	NodeType        string `json:"node_type"`
 	ManifestVersion string `json:"manifest_version"`
 	ImageTag        string `json:"image_tag"`
+	// Mode is omitempty so normal production messages are wire-identical (empty
+	// string is not serialised). Set to events.ModePromoteSeed for promote-seed
+	// jobs so k8s-controller can suppress the production lifecycle for them.
+	Mode string `json:"mode,omitempty"`
 }

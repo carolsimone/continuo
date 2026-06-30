@@ -97,15 +97,15 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 	return rowToRelease(row)
 }
 
-// ActiveRelease returns the single Release that is currently parsing or
-// validating, or nil if there is none.
+// ActiveRelease returns the single Release that is currently compiling,
+// parsing, seed_building, or validating, or nil if there is none.
 func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release, error) {
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha
-		 FROM releases WHERE status IN ('parsing','validating')
+		 FROM releases WHERE status IN ('compiling','parsing','seed_building','validating')
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

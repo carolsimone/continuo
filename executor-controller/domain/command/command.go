@@ -24,6 +24,11 @@ type DeployTask struct {
 	ImageTag       string `json:"image_tag"`
 	TaskRetryCount int    `json:"task_retry_count"`
 	TaskMaxRetries int    `json:"task_max_retries"`
+	// Mode is the optional dispatch mode (omitempty on the query.model wire).
+	// Empty for normal production jobs; events.ModePromoteSeed for promote-seed
+	// jobs. Persisted in job_params and forwarded to the k8s JobSpec so the
+	// k8s adapter can stamp the mode label on the Job.
+	Mode string `json:"mode,omitempty"`
 }
 
 func (DeployTask) isCommand() {}
@@ -48,7 +53,10 @@ type ValidationDeployTask struct {
 	JobName          string   `json:"job_name"`
 	CandidateSchema  string   `json:"candidate_schema"`
 	CandidateSQLURI  string   `json:"candidate_sql_uri"`
+	ValidationOp     string   `json:"validation_op"`
+	ProdSchema       string   `json:"prod_schema"`
 	UpstreamNodeIDs  []string `json:"upstream_node_ids"`
+	ManifestS3URI    string   `json:"manifest_s3_uri"`
 }
 
 func (ValidationDeployTask) isCommand() {}
@@ -66,6 +74,7 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		TableName:    c.TableName,
 		NodeType:     c.NodeType,
 		ImageTag:     c.ImageTag,
+		Mode:         c.Mode,
 	}
 }
 
@@ -86,5 +95,8 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		ImageTag:        c.ImageTag,
 		CandidateSchema: c.CandidateSchema,
 		CandidateSQLURI: c.CandidateSQLURI,
+		ValidationOp:    c.ValidationOp,
+		ProdSchema:      c.ProdSchema,
+		ManifestS3URI:   c.ManifestS3URI,
 	}
 }

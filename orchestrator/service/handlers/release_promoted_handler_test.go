@@ -175,8 +175,10 @@ func TestReleasePromoted_HappyPath_PromotesAndEmitsSchedulesLoaded(t *testing.T)
 	}, payload.ServiceMetadata)
 	assert.Equal(t, int64(5), payload.TopologyGeneration)
 
-	// Dedup row written for the inbound message.
-	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.ReleasePromotedV1)
+	// Dedup row written for the inbound message. The swap consumer scopes its
+	// dedup by its group name (OrchestratorReleasePromoted), not the stream
+	// name, because two groups share the release.promoted:v1 stream.
+	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.OrchestratorReleasePromoted)
 	require.NoError(t, err)
 	require.NotNil(t, mp, "dedup row should be written")
 	assert.Equal(t, "completed", mp.State)
@@ -237,8 +239,9 @@ func TestReleasePromoted_IdempotentRedelivery_ReemitsOutboxWithSameEventID(t *te
 	assert.Equal(t, int64(7), topoRepo.setServiceMetadataCalls[0].TopologyGeneration,
 		"SetServiceMetadata must be called with the current generation, not an incremented one")
 
-	// Dedup row still written so the message is not replayed again.
-	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-idem", streams.ReleasePromotedV1)
+	// Dedup row still written so the message is not replayed again. Scoped by
+	// group name (OrchestratorReleasePromoted) per the shared-stream rule.
+	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-idem", streams.OrchestratorReleasePromoted)
 	require.NoError(t, err)
 	require.NotNil(t, mp, "dedup row should be written even on no-op")
 	assert.Equal(t, "completed", mp.State)

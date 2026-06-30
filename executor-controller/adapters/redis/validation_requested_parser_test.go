@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/carolsimone/continuo/executor-controller/domain/events"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -190,4 +191,41 @@ func TestParseValidationRequested_NodesMismatchOrderList(t *testing.T) {
 	p["node_ids_in_order"] = []string{"model.shop.orders", "model.shop.missing"}
 	_, err := ParseValidationRequested(validationMsg(t, p, ""))
 	require.Error(t, err)
+}
+
+func TestParseValidationRequested_CarriesValidationOpAndProdSchema(t *testing.T) {
+	payload := `{
+	  "release_id":"rel-1","mode":"validation",
+	  "node_ids_in_order":["model.core.dim","model.shop.orders"],
+	  "nodes":[
+	    {"unique_id":"model.core.dim","service_name":"core","node_type":"dbt-model",
+	     "schema_name":"analytics","table_name":"dim","image_tag":"t1",
+	     "validation_op":"clone_from_prod","prod_schema":"analytics"},
+	    {"unique_id":"model.shop.orders","service_name":"shop","node_type":"dbt-model",
+	     "schema_name":"shop","table_name":"orders","image_tag":"t2",
+	     "candidate_sql_uri":"s3://b/o.sql","validation_op":"build_from_sql","prod_schema":""}
+	  ]}`
+	msg := goredis.XMessage{Values: map[string]any{"payload": payload}}
+
+	evt, err := ParseValidationRequested(msg)
+	require.NoError(t, err)
+	byID := map[string]events.ValidationNode{}
+	for _, n := range evt.Nodes {
+		byID[n.NodeID] = n
+	}
+	assert.Equal(t, "clone_from_prod", byID["model.core.dim"].ValidationOp)
+	assert.Equal(t, "analytics", byID["model.core.dim"].ProdSchema)
+	assert.Equal(t, "build_from_sql", byID["model.shop.orders"].ValidationOp)
+	assert.Equal(t, "", byID["model.shop.orders"].ProdSchema)
+}
+
+// Missing op/prod_schema keys must parse cleanly (back-compat / default path).
+func TestParseValidationRequested_AbsentOpDefaultsEmpty(t *testing.T) {
+	payload := `{"release_id":"r","mode":"validation","node_ids_in_order":["model.a"],
+	  "nodes":[{"unique_id":"model.a","service_name":"s","node_type":"dbt-model",
+	  "schema_name":"sc","table_name":"a","image_tag":"t"}]}`
+	evt, err := ParseValidationRequested(goredis.XMessage{Values: map[string]any{"payload": payload}})
+	require.NoError(t, err)
+	assert.Equal(t, "", evt.Nodes[0].ValidationOp)
+	assert.Equal(t, "", evt.Nodes[0].ProdSchema)
 }

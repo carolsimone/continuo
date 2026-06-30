@@ -27,16 +27,16 @@ func (r *fakeDepRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, er
 	return nil, nil
 }
 func (r *fakeDepRepo) Save(context.Context, *model.Deployment) error { return nil }
-func (r *fakeDepRepo) GetByReleaseNode(context.Context, string, string) (*model.Deployment, error) {
+func (r *fakeDepRepo) GetByReleaseNode(context.Context, string, string, model.Mode) (*model.Deployment, error) {
 	return nil, nil
 }
-func (r *fakeDepRepo) PendingValidationCount(_ context.Context, _ string) (int, error) {
+func (r *fakeDepRepo) PendingValidationCount(_ context.Context, _ string, _ model.Mode) (int, error) {
 	return r.pending, nil
 }
-func (r *fakeDepRepo) ListValidationResults(_ context.Context, _ string) ([]*model.Deployment, error) {
+func (r *fakeDepRepo) ListValidationResults(_ context.Context, _ string, _ model.Mode) ([]*model.Deployment, error) {
 	return r.results, nil
 }
-func (r *fakeDepRepo) ListValidationByRelease(context.Context, string) ([]*model.Deployment, error) {
+func (r *fakeDepRepo) ListValidationByRelease(context.Context, string, model.Mode) ([]*model.Deployment, error) {
 	return nil, nil
 }
 
@@ -47,8 +47,8 @@ type fakeAggRepo struct {
 	won bool
 }
 
-func (r *fakeAggRepo) LockRelease(context.Context, string) error { return nil }
-func (r *fakeAggRepo) ClaimEmission(context.Context, string, time.Time) (bool, error) {
+func (r *fakeAggRepo) LockRelease(context.Context, string, model.Mode) error { return nil }
+func (r *fakeAggRepo) ClaimEmission(context.Context, string, model.Mode, time.Time) (bool, error) {
 	return r.won, nil
 }
 
@@ -69,7 +69,7 @@ func (c *captureOutbox) GetPendingBatch(context.Context, int) ([]*outbox.Entry, 
 func (c *captureOutbox) MarkProcessed(context.Context, uuid.UUID) error        { return nil }
 func (c *captureOutbox) MarkProcessedBatch(context.Context, []uuid.UUID) error { return nil }
 func (c *captureOutbox) MarkFailed(context.Context, uuid.UUID, string) error   { return nil }
-func (c *captureOutbox) IncrementRetry(context.Context, uuid.UUID) error     { return nil }
+func (c *captureOutbox) IncrementRetry(context.Context, uuid.UUID) error       { return nil }
 
 var _ outbox.Repository = (*captureOutbox)(nil)
 

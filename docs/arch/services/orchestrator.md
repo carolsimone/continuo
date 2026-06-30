@@ -196,6 +196,7 @@ Goroutines started in `main.go` run for the process lifetime:
 | `trigger.rerun:v1` | `orchestrator_rerun` | `DerivedRunHandler` (rerun config) — runs `Snapshot(SourcePinnedDAG{})` against the **new** `:Run` minted by state's `TriggerRerun`, projecting the source's pinned DAG with non-SUCCEEDED tasks + their descendants as rebased PENDING and the rest as inherited at source's stored status; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only |
 | `trigger.rebase:v1` | `orchestrator-rebase` | `DerivedRunHandler` (rebase config) — runs `Snapshot(RebasePartition)` against the new `:Run`; projects rebase_set ∪ inherit_set against the latest topology; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only. Shares one handler implementation with the rerun trigger, differing only in selector/kind/stream |
 | `trigger.single_node_run:v1` | `orchestrator_single_node_run` | `HandleSingleNodeRunHandler` — runs `Snapshot(SingleNode)` and dispatches the one task; see details below |
+| `release.promoted:v1` | `orchestrator-release-promoted-seed-build` | `SeedBuildOnPromoteHandler` — for each node with `Changed == true` and `NodeType == "dbt-seed"`, emits one `query.model:v1` outbox row so the executor builds the prod seed; no Neo4j interaction |
 
 Each consumer is wired as a `parser → handler` binding under `adapters/redis/`: the parser extracts and validates the message's scalar fields defensively and returns an `events.ErrPermanent`-wrapped error on any malformed field (missing/non-string value, bad UUID, or cross-field rule violation), which the stream consumer ACKs and drops so a single poison message cannot crash-loop the process.
 
@@ -271,6 +272,8 @@ Receives the full promoted topology for a release (each node carries its `image_
 2. `ReleasePromotionRepository.PromoteRelease` performs the atomic Neo4j topology swap in a single Neo4j transaction (retire-then-orphan-cleanup; see "Topology swap pattern" below). During the upsert, nodes with `changed=true` have `last_commit_sha`, `last_repo`, `last_changed_at`, and `last_release_id` stamped from the release's provenance; unchanged nodes retain their prior values. It short-circuits (`changed=false`) when the `:Meta {key:'current_release'}` singleton already records this `release_id`.
 3. If `changed=true`, increment `topology_state.topology_generation`; otherwise read the current value. Either way, write the per-service `service_metadata` and the generation onto `:TopologyRoot` (idempotent MERGE).
 4. Always write a `schedules.loaded:v1` outbox entry with the schedule names, `service_metadata`, and `topology_generation`. The `event_id` is a deterministic UUID v5 of `(namespace, release_id)`, so re-emissions from idempotent redeliveries are deduplicated by state's `ScheduleCatalogHandler`.
+
+`release.promoted:v1` has two orchestrator consumer groups. `ReleasePromotedHandler` (group `orchestrator-release-promoted`) performs the topology swap and emits `schedules.loaded:v1`. `SeedBuildOnPromoteHandler` (group `orchestrator-release-promoted-seed-build`) independently emits one `query.model:v1` per changed dbt-seed node so the executor builds the seed into the production schema. The two handlers are decoupled — a failure in the seed-build path does not block the topology swap.
 
 Schedule graph reads and new run snapshots only consider `active=true` `Table` nodes, while historical `Run` graphs remain intact through their `EXECUTES` edges.
 
@@ -361,6 +364,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 | Redis consumer (`trigger.rerun:v1`) | Reads and dispatches to HandleRerun handler |
 | Redis consumer (`trigger.rebase:v1`) | Reads and dispatches to HandleRebase handler |
 | Redis consumer (`trigger.single_node_run:v1`) | Reads and dispatches to HandleSingleNodeRunHandler |
+| Redis consumer (`release.promoted:v1` seed-build) | Reads `release.promoted:v1` on consumer group `orchestrator-release-promoted-seed-build`; dispatches to `SeedBuildOnPromoteHandler` |
 | Redis consumer (`run.finalized:v1`) | Projects state's terminal outcome (succeeded, failed, or cancelled) onto Neo4j `:Run.completed_at` / `terminal_status`. Covers runs that produce no `node.updated:v1` traffic (full-inherited rebases, cancelled runs). |
 | Outbox processor (`pkg/outbox.Processor`) | Polls `orchestrator_outbox` for pending entries; publishes each row to its `stream_name` via `orchestrator/adapters/publisher.OutboxPublisher` |
 | RunSweeper | Periodically deletes expired `Run` nodes (and their `EXECUTES` edges) older than `retention_days` |
@@ -452,7 +456,7 @@ When the Neo4j Go driver binds `time.Time` parameters into Cypher, it uses `Loca
 
 ## Reliability Patterns
 
-- **Inbound dedup**: `message_processing` keyed by `(message_id, stream_name)`; INSERT IF NOT EXISTS prevents double-processing. The composite key is required because Redis Streams assign IDs per-stream, so a single publisher can emit two messages to two streams in the same millisecond and produce identical message IDs that must not collide.
+- **Inbound dedup**: `message_processing` keyed by `(message_id, stream_name)`; INSERT IF NOT EXISTS prevents double-processing. The composite key is required because Redis Streams assign IDs per-stream, so a single publisher can emit two messages to two streams in the same millisecond and produce identical message IDs that must not collide. When multiple consumer groups read the same stream, each group scopes its dedup row by its consumer-group name rather than the stream name, so the two groups' rows remain distinct. Single-consumer streams continue to use the stream name. (`streams.OrchestratorReleasePromotedSeedBuild` is the `stream_name` key used for the seed-build group's dedup rows.)
 - **Neo4j updates are outside the Postgres tx**: topology and status writes are idempotent; if the tx fails the message will be redelivered
 - **Snapshot reconciliation**: the promoted topology on `release.promoted:v1` is treated as authoritative; nodes missing from it are retired from the current topology automatically (and deleted once no `:Run` references them)
 - **Pre-assigned task UUIDs**: task IDs are committed to Neo4j EXECUTES edges before `run.entries.dispatched:v1` is produced; the outbox processor reads them at publish time, ensuring consistent IDs across retries

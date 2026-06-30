@@ -27,13 +27,63 @@ func SettleNodeTerminal(
 	releaseID, completedNodeID, outcome string,
 	now time.Time,
 ) error {
-	if err := aggRepo.LockRelease(ctx, releaseID); err != nil {
+	cfg := validationEmit
+	cfg.namespace = namespace
+	if err := aggRepo.LockRelease(ctx, releaseID, cfg.mode); err != nil {
 		return fmt.Errorf("lock release for settle: %w", err)
 	}
-	if err := propagateGating(ctx, depRepo, releaseID, completedNodeID, outcome, now); err != nil {
+	if err := propagateGating(ctx, depRepo, cfg.mode, releaseID, completedNodeID, outcome, now); err != nil {
 		return fmt.Errorf("propagate gating: %w", err)
 	}
-	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, namespace, releaseID, now)
+	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, cfg, releaseID, now)
+}
+
+// SettleSeedBuildNodeTerminal settles a seed-build node after it reaches a
+// terminal outcome. Seeds are flat roots with no in-leg upstreams, so there is
+// no gating to propagate (propagateGating over the mode=seed_build rows finds no
+// blocked rows and no upstream edges — it is a no-op); the settle is just the
+// aggregate-emit gate under the per-(release, seed-build) advisory lock. It emits
+// seed.build.completed:v1 once every mode=seed_build row for the release settles.
+func SettleSeedBuildNodeTerminal(
+	ctx context.Context,
+	depRepo repository.DeploymentRepository,
+	outboxRepo outbox.Repository,
+	aggRepo repository.ValidationAggregateRepository,
+	releaseID, completedNodeID, outcome string,
+	now time.Time,
+) error {
+	if err := aggRepo.LockRelease(ctx, releaseID, seedBuildEmit.mode); err != nil {
+		return fmt.Errorf("lock release for seed-build settle: %w", err)
+	}
+	// No-op over flat seed roots, but kept for symmetry and to defend against a
+	// future seed dependency edge: it only ever transitions blocked rows.
+	if err := propagateGating(ctx, depRepo, seedBuildEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
+		return fmt.Errorf("propagate seed-build gating: %w", err)
+	}
+	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, seedBuildEmit, releaseID, now)
+}
+
+// SettleCompileNodeTerminal settles a compile node after it reaches a terminal
+// outcome. Compile is a single root node (no in-leg upstreams) so there is no
+// gating to propagate; the settle is just the aggregate-emit gate under the
+// per-(release, compile) advisory lock. It emits compile.completed:v1 once the
+// mode=compile row for the release settles.
+func SettleCompileNodeTerminal(
+	ctx context.Context,
+	depRepo repository.DeploymentRepository,
+	outboxRepo outbox.Repository,
+	aggRepo repository.ValidationAggregateRepository,
+	releaseID, completedNodeID, outcome string,
+	now time.Time,
+) error {
+	if err := aggRepo.LockRelease(ctx, releaseID, compileEmit.mode); err != nil {
+		return fmt.Errorf("lock release for compile settle: %w", err)
+	}
+	// Compile is a single root — no gating to propagate, but kept for symmetry.
+	if err := propagateGating(ctx, depRepo, compileEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
+		return fmt.Errorf("propagate compile gating: %w", err)
+	}
+	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, compileEmit, releaseID, now)
 }
 
 // propagateGating advances the gated downstream rows after one node terminates.
@@ -42,8 +92,8 @@ func SettleNodeTerminal(
 // transitively downstream of the failed node is Skipped — it can never be
 // validated. Readiness/reachability is computed in Go over the release's rows;
 // transitions go through the guarded aggregate methods, one Save per change.
-func propagateGating(ctx context.Context, repo repository.DeploymentRepository, releaseID, completedNode, outcome string, now time.Time) error {
-	rows, err := repo.ListValidationByRelease(ctx, releaseID)
+func propagateGating(ctx context.Context, repo repository.DeploymentRepository, mode model.Mode, releaseID, completedNode, outcome string, now time.Time) error {
+	rows, err := repo.ListValidationByRelease(ctx, releaseID, mode)
 	if err != nil {
 		return fmt.Errorf("list validation by release: %w", err)
 	}

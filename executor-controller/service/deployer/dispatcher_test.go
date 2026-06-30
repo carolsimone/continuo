@@ -39,6 +39,14 @@ func (f *fakeDeployer) DeployValidation(_ context.Context, _ deploy.ValidationJo
 	f.validationDeployCalls++
 	return f.deployErr
 }
+func (f *fakeDeployer) DeploySeedBuild(_ context.Context, _ deploy.ValidationJobSpec) error {
+	f.validationDeployCalls++
+	return f.deployErr
+}
+func (f *fakeDeployer) DeployCompile(_ context.Context, _ deploy.ValidationJobSpec) error {
+	f.validationDeployCalls++
+	return f.deployErr
+}
 func (f *fakeDeployer) CountActive(_ context.Context) (int, error) { return f.active, nil }
 
 // newTestDispatcher builds a Dispatcher whose repo factory is the real Postgres

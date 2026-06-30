@@ -345,6 +345,13 @@ func main() {
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
 	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, topologyRepo, topologyStateRepo, logger)
 
+	// release.promoted:v1 (seed-build) — independent consumer group that, for
+	// each promoted node with Changed == true && NodeType == "dbt-seed", emits a
+	// query.model:v1 outbox row so the executor builds the seed into the prod
+	// schema. Isolated from the topology-swap consumer so failures here do not
+	// block the promote path.
+	seedBuildOnPromoteHandler := handlers.NewSeedBuildOnPromoteHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), logger)
+
 	// Every orchestrator consumer is the same shape: a domain handler wrapped
 	// by a redis binding, driven by a StreamConsumer on its (stream, group).
 	// They are declared in one table and started uniformly via runConsumer;
@@ -362,6 +369,7 @@ func main() {
 		{"single_node_run", streams.TriggerSingleNodeRunV1, streams.OrchestratorSingleNodeRun, redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger)},
 		{"run_finalized", streams.RunFinalizedV1, streams.OrchestratorRunFinalized, redis.NewRunFinalizedBinding(runFinalizedHandler, logger)},
 		{"release_promoted", streams.ReleasePromotedV1, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger)},
+		{"release_promoted_seed_build", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedSeedBuild, redis.NewSeedBuildOnPromoteBinding(seedBuildOnPromoteHandler, logger)},
 	}
 	for _, c := range consumers {
 		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))

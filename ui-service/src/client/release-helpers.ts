@@ -1,6 +1,8 @@
 import { ReleaseListItem } from './types';
 
-export const IN_FLIGHT_STATUSES = ['received', 'parsing', 'validating'];
+// In-flight = a release actively moving through the pipeline, in lifecycle order:
+// received -> compiling -> parsing -> seed_building -> validating.
+export const IN_FLIGHT_STATUSES = ['received', 'compiling', 'parsing', 'seed_building', 'validating'];
 
 // firstInFlight returns the newest non-terminal release (the candidate currently
 // moving through the pipeline), or null if every listed release is terminal.
@@ -18,6 +20,8 @@ export function releasePillClass(status: string): string {
     case 'ok':         return 'pill--succeeded';
     case 'rejected':   return 'pill--failed';
     case 'validating':
+    case 'seed_building':
+    case 'compiling':
     case 'parsing':    return 'pill--running';
     case 'received':   return 'pill--pending';
     case 'superseded': return 'pill--cancelled';

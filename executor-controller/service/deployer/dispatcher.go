@@ -186,23 +186,35 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	if dep.Mode() == model.ModeValidation {
 		return d.dispatchValidation(ctx, repo, outboxRepo, aggRepo, dep)
 	}
+	if dep.Mode() == model.ModeSeedBuild {
+		return d.dispatchSeedBuild(ctx, repo, outboxRepo, aggRepo, dep)
+	}
+	if dep.Mode() == model.ModeCompile {
+		return d.dispatchCompile(ctx, repo, outboxRepo, aggRepo, dep)
+	}
 
 	now := d.now()
+	isPromoteSeed := dep.Command().ToJobSpec().Mode == pkgevents.ModePromoteSeed
 
 	// A row whose job_params could not be deserialized is unrunnable; fail it
 	// permanently with a routable announcement built from its recovered identity.
+	// promote_seed is fire-and-forget: no state run to load, so skip announcements.
 	if !dep.IsDeployable() {
 		dep.RegisterFailure(now, true, "deployment job_params not deployable", d.backoff)
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
-			return err
+		if !isPromoteSeed {
+			if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+				return err
+			}
 		}
 		return repo.Save(ctx, dep)
 	}
 
 	deployErr := d.deployer.Deploy(ctx, dep.Command().ToJobSpec())
 	if deployErr == nil {
-		if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
-			return err
+		if !isPromoteSeed {
+			if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
+				return err
+			}
 		}
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
@@ -213,8 +225,10 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
 	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) {
 		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "cause", deployErr)
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
-			return err
+		if !isPromoteSeed {
+			if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+				return err
+			}
 		}
 	} else {
 		d.logger.Warn("Deploy transient failure — rescheduling",
@@ -296,6 +310,141 @@ func (d *Dispatcher) settleFailedValidation(ctx context.Context, repo repository
 		dep.ReleaseID(), dep.NodeID(), "failed", now)
 }
 
+// dispatchSeedBuild handles a mode=seed_build row. It is structurally identical
+// to dispatchValidation: on success it marks the row deployed and emits a
+// node.deployed:v1 trigger so k8s-controller status-checks the seed-build Job;
+// on terminal failure it fails the row and settles the per-release seed-build
+// aggregate. Seeds are flat roots with no blocked downstreams so
+// SettleSeedBuildNodeTerminal's propagateGating call is a no-op — but the
+// aggregate gate still fires to emit seed.build.completed:v1.
+func (d *Dispatcher) dispatchSeedBuild(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
+	now := d.now()
+
+	if !dep.IsDeployable() {
+		if err := dep.FailSeedBuild("seed-build deployment not deployable", now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate. The gate reads
+		// PendingValidationCount and must see this node as terminal (its own
+		// uncommitted write is visible within this transaction); otherwise it
+		// counts the row as still pending, skips the emission, and no later
+		// seed.build.node.completed event will re-run the gate for this release.
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.settleFailedSeedBuild(ctx, repo, outboxRepo, aggRepo, dep, now)
+	}
+
+	deployErr := d.deployer.DeploySeedBuild(ctx, dep.ValidationCommand().ToValidationJobSpec())
+	if deployErr == nil {
+		if err := dep.MarkDeployed(now); err != nil {
+			return err
+		}
+		if err := d.writeValidationDeployedTrigger(ctx, outboxRepo, dep); err != nil {
+			return err
+		}
+		return repo.Save(ctx, dep)
+	}
+
+	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
+	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) { // terminal
+		d.logger.Error("Seed-build deploy terminal failure",
+			"deployment_id", dep.ID(), "release_id", dep.ReleaseID(), "node_id", dep.NodeID(), "cause", deployErr)
+		if err := dep.FailSeedBuild(deployErr.Error(), now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate so PendingValidationCount
+		// sees this node as terminal (see the not-deployable branch above).
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.settleFailedSeedBuild(ctx, repo, outboxRepo, aggRepo, dep, now)
+	}
+	d.logger.Warn("Seed-build deploy transient failure — rescheduling",
+		"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
+	return repo.Save(ctx, dep)
+}
+
+// settleFailedSeedBuild settles a seed-build node that failed AT dispatch: it
+// runs the per-release aggregate-emit gate under the per-release advisory lock
+// so the aggregate can fire. Seeds are flat roots so propagateGating is a no-op,
+// but the aggregate gate still emits seed.build.completed:v1 once all rows
+// for the release are terminal. The failed node's own outcome is already
+// persisted before this call.
+func (d *Dispatcher) settleFailedSeedBuild(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
+	return validation.SettleSeedBuildNodeTerminal(
+		ctx, repo, outboxRepo, aggRepo,
+		dep.ReleaseID(), dep.NodeID(), "failed", now)
+}
+
+// dispatchCompile handles a mode=compile row. It is structurally identical to
+// dispatchSeedBuild: on success it marks the row deployed and emits a
+// node.deployed:v1 trigger so k8s-controller status-checks the compile Job; on
+// terminal failure it fails the row and settles the per-release compile
+// aggregate via SettleCompileNodeTerminal. Compile is a single root node (no
+// in-leg upstreams) so the gating propagation in SettleCompileNodeTerminal is a
+// no-op — but the aggregate gate fires and emits compile.completed:v1 via
+// compileEmit (wired in A6/A7).
+func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
+	now := d.now()
+
+	if !dep.IsDeployable() {
+		if err := dep.FailCompile("compile deployment not deployable", now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate. The gate reads
+		// PendingValidationCount and must see this node as terminal (its own
+		// uncommitted write is visible within this transaction); otherwise it
+		// counts the row as still pending, skips the emission, and no later
+		// compile.node.completed event will re-run the gate for this release.
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.settleFailedCompile(ctx, repo, outboxRepo, aggRepo, dep, now)
+	}
+
+	deployErr := d.deployer.DeployCompile(ctx, dep.ValidationCommand().ToValidationJobSpec())
+	if deployErr == nil {
+		if err := dep.MarkDeployed(now); err != nil {
+			return err
+		}
+		if err := d.writeValidationDeployedTrigger(ctx, outboxRepo, dep); err != nil {
+			return err
+		}
+		return repo.Save(ctx, dep)
+	}
+
+	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
+	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) { // terminal
+		d.logger.Error("Compile deploy terminal failure",
+			"deployment_id", dep.ID(), "release_id", dep.ReleaseID(), "node_id", dep.NodeID(), "cause", deployErr)
+		if err := dep.FailCompile(deployErr.Error(), now); err != nil {
+			return err
+		}
+		// Persist outcome='failed' BEFORE the aggregate gate so PendingValidationCount
+		// sees this node as terminal (see the not-deployable branch above).
+		if err := repo.Save(ctx, dep); err != nil {
+			return err
+		}
+		return d.settleFailedCompile(ctx, repo, outboxRepo, aggRepo, dep, now)
+	}
+	d.logger.Warn("Compile deploy transient failure — rescheduling",
+		"deployment_id", dep.ID(), "retry_count", dep.RetryCount(), "next_attempt_at", dep.NextAttemptAt(), "error", deployErr)
+	return repo.Save(ctx, dep)
+}
+
+// settleFailedCompile settles a compile node that failed AT dispatch: it runs
+// the per-release aggregate-emit gate under the per-release advisory lock so the
+// aggregate can fire. Compile is a single root node so propagateGating is a
+// no-op, but the aggregate gate runs and emits compile.completed:v1 via
+// SettleCompileNodeTerminal. The failed node's own outcome is already
+// persisted before this call.
+func (d *Dispatcher) settleFailedCompile(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
+	return validation.SettleCompileNodeTerminal(
+		ctx, repo, outboxRepo, aggRepo,
+		dep.ReleaseID(), dep.NodeID(), "failed", now)
+}
+
 func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	cmd := dep.Command()
 	// The deploy path emits only the node_deployed trigger that starts k8s polling.
@@ -314,19 +463,21 @@ func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo 
 }
 
 // writeValidationDeployedTrigger emits the node.deployed:v1 trigger after a
-// validation Job is created. k8s-controller is event-driven and never polls, so
-// without this row the validation Job would never be status-checked and the
-// release would hang in "validating". This is NOT the production success path:
-// it writes only the node_deployed check trigger and skips the production-only
-// task_status_updated / RUNNING announcement (validation rows have no real
-// task/schedule, so there is no UI task status to advance). The per-node
-// terminal outcome still arrives later via validation.node.completed:v1.
+// validation, seed-build, or compile Job is created. k8s-controller is
+// event-driven and never polls, so without this row the Job would never be
+// status-checked and the release would hang. This is NOT the production success
+// path: it writes only the node_deployed check trigger and skips the
+// production-only task_status_updated / RUNNING announcement (these rows have
+// no real task/schedule, so there is no UI task status to advance). The
+// per-node terminal outcome still arrives later via the mode-specific
+// node.completed:v1 event.
 //
 // The trigger carries the deterministic synthetic task/schedule UUIDs derived
-// from (release_id, node_id). They are inert carriers for validation: the
-// k8s-controller routes the resulting check by the Job's mode=validation label,
-// not by these IDs — they only need to be valid UUIDs so ParseNodeDeployed
-// accepts the message, and to satisfy the outbox AggregateID.
+// from (release_id, node_id). They are inert carriers: k8s-controller routes
+// the resulting check by the Job's own mode label (mode=validation,
+// mode=seed_build, or mode=compile), not by these IDs — they only need to be
+// valid UUIDs so ParseNodeDeployed accepts the message, and to satisfy the
+// outbox AggregateID.
 func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	vc := dep.ValidationCommand()
 	taskID, scheduleID := model.ValidationSyntheticIDs(dep.ReleaseID(), dep.NodeID())
