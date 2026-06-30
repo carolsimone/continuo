@@ -12,7 +12,7 @@ Postgres database `continuo_remediation`. Tables:
 
 | Table | Purpose |
 |---|---|
-| `classification_decision` | One row per classified node. Records `source`, `release_id`, `node_id`, `category`, `error_signature`, `decision` (`emit` or `drop`), `reason` (matched rule, e.g. `infra:connection_refused`), `dbt_log_uri`, and `created_at`. Natural key `(source, release_id, node_id)` gives idempotency: a redelivered rejection neither re-records nor re-emits. |
+| `classification_decision` | One row per classified node per stage. Records `source` (`validation`, `compile`, or `seed_build`), `release_id`, `node_id`, `category`, `error_signature`, `decision` (`emit` or `drop`), `reason` (matched rule, e.g. `infra:connection_refused`), `dbt_log_uri`, and `created_at`. Natural key `(source, release_id, node_id)` gives idempotency: a redelivered rejection neither re-records nor re-emits. |
 | `remediation_outbox` | Transactional outbox; one row per `remediation.requested:v1` trigger, drained by the outbox publisher. |
 | `message_processing` | FK target of `remediation_outbox.message_processing_id` (canonical outbox table shape). Not used for inbound consumer dedup; inbound idempotency is enforced by the `classification_decision` natural key `(source, release_id, node_id)`. |
 
@@ -24,7 +24,7 @@ The `classification_decision` table is append-only and auditable: it contains ev
 
 | Stream | Group | Description |
 |---|---|---|
-| `release.rejected:v1` | `remediation-release-rejected` | Emitted by release-controller when a release fails parsing or validation. Each message carries one or more failing nodes; the handler processes each node independently. |
+| `release.rejected:v1` | `remediation-release-rejected` | Emitted by release-controller when a release fails at any pipeline stage (compile, seed_build, or validation). The `stage` field in the payload determines how each failing node is classified. Each message carries one or more failing nodes (one for compile, one per seed for seed_build, one per model for validation); the handler processes each node independently. |
 
 ## Outbound Interfaces
 
@@ -71,14 +71,23 @@ After stripping, it folds the category with the normalized error text and return
 ### On `release.rejected:v1` — per failing node
 
 ```
-1. Parse the event; extract FailureEvidence (release_id, node_id, dbt_log_uri,
-   run_results_uri, candidate_sql_uri, repo, commit_sha).
+1. Parse the event; extract stage ("compile" | "seed_build" | "validation") and,
+   for each entry in per_node where status="failed":
+   build FailureEvidence {source (derived from stage), release_id, node_id,
+   dbt_log_uri, run_results_uri, candidate_sql_uri, repo, commit_sha}.
+   When stage is absent (legacy payloads), the reason field is used as a fallback.
 2. Fetch dbt log text from S3 at dbt_log_uri.
    - If not found: logText = "" (→ unknown:log_unavailable).
    - If transient S3 error: return error (message stays in PEL, retried).
 2b. If run_results_uri is set: fetch + parse the structured validation result
     (status/message/failures/unique_id). A transient S3 error returns (retried);
     a parse failure logs and leaves structured=nil (text-log fallback).
+2c. For compile and seed_build sources: call ExtractDbtFilePath(logText) to derive
+    the offending project-relative source file path from the dbt error output (the
+    log names the file as "models/…​.sql" or similar). The result is threaded into
+    FailureEvidence.FilePath and later into the remediation.requested:v1 trigger
+    so the agent can read the real source file directly. Validation evidence never
+    has FilePath set at this layer (the agent derives it from orchestrator ancestry).
 3. ClassifyWithStructured(ev, structured, logText) → Category, Signature, Decision,
    Reason (pure, deterministic). Prefers the structured record: status=fail → test;
    status=error → message through the infra/logic rules. Falls back to the text-log
@@ -104,13 +113,14 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 | Field | Description |
 |---|---|
 | `event_id` | Deterministic SHA1 UUID keyed on `release_id\|node_id`. Stable on redelivery. |
-| `source` | Origin pipeline. Currently always `validation`. |
+| `source` | Origin pipeline. One of `validation`, `compile`, or `seed_build`. |
 | `release_id` | The rejected release identifier. |
 | `node_id` | The unique_id of the failing dbt node. |
 | `category` | `logic`, `test`, or `unknown`. |
 | `error_signature` | Release-stable normalized dedup key (SHA-256 hex). |
 | `dbt_log_uri` | S3 URI of the full dbt execution log. |
-| `candidate_sql_uri` | S3 URI of the candidate SQL file (candidate-schema form; omitted for seeds). |
+| `candidate_sql_uri` | S3 URI of the candidate SQL file (candidate-schema form; omitted for seeds and compile failures). |
+| `file_path` | Project-relative source file path; non-empty for compile and seed_build failures where the log names the offending file (e.g. `models/order_items.sql`). Empty for validation failures — the agent derives the path from orchestrator ancestry. |
 | `repo` | GitHub owner/name from the originating release. |
 | `commit_sha` | Full commit SHA from the originating release. |
 | `classified_at` | RFC 3339 timestamp of classification. |
@@ -144,11 +154,12 @@ All solution state — proposals, what-worked history, agent conversations — b
 
 | Concern | Path |
 |---|---|
-| Domain model (evidence, categories, decisions) | `remediation/domain/failure/evidence.go` |
-| Deterministic classifier | `remediation/domain/failure/classify.go` |
+| Domain model (evidence, categories, decisions, source constants) | `remediation/domain/failure/evidence.go` |
+| Deterministic classifier (incl. stage dispatch + ExtractDbtFilePath) | `remediation/domain/failure/classify.go` |
 | Signature normalization | `remediation/domain/failure/signature.go` |
-| Trigger payload | `remediation/domain/event/remediation_requested.go` |
-| Application handler | `remediation/service/handlers/classify_failure.go` |
+| Trigger payload (incl. FilePath field) | `remediation/domain/event/remediation_requested.go` |
+| Application handler (stage discrimination, FilePath derivation) | `remediation/service/handlers/classify_failure.go` |
+| Inbound adapter (stage→source mapping, legacy reason fallback) | `remediation/adapters/redis/release_rejected_binding.go` |
 | Decision repository port | `remediation/domain/repository/decision_repository.go` |
 | Postgres adapter | `remediation/adapters/postgres/decision_repository.go` |
 | S3 log reader | `remediation/adapters/s3/log_reader.go` |
