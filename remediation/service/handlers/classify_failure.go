@@ -65,9 +65,8 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 	// the log text so the remediation agent can read the file directly. Compile
 	// failures have a synthetic service-name NodeID (not a real dbt node), so
 	// the log is the only source of the file path.
-	// Seed_build and validation failures have a real dbt node unique_id; the
-	// agent resolves the source file via the ancestry node lookup (NodeContext)
-	// and does not need FilePath populated here.
+	// Seed_build failures carry FilePath and Service from the candidate topology
+	// via the rejection payload, so no extraction is needed here.
 	if ev.Source == failure.SourceCompile && ev.FilePath == "" {
 		ev.FilePath = failure.ExtractDbtFilePath(logText)
 	}
@@ -122,6 +121,7 @@ func enqueueTrigger(ctx context.Context, u uow.UnitOfWork, deps Deps, ev failure
 		DBTLogURI:       ev.DBTLogURI,
 		CandidateSQLURI: ev.CandidateSQLURI,
 		FilePath:        ev.FilePath,
+		Service:         ev.Service,
 		Repo:            ev.Repo,
 		CommitSHA:       ev.CommitSHA,
 		ClassifiedAt:    deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),

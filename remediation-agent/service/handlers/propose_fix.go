@@ -34,11 +34,17 @@ type Trigger struct {
 	Category        string
 	DBTLogURI       string
 	CandidateSQLURI string
-	// FilePath is the offending dbt-project-relative source path carried by
-	// compile failures (e.g. "models/daily_transactions.sql"). Empty for
-	// validation and seed_build, whose source path is resolved via Ancestry.
-	FilePath  string
-	Repo      string
+	// FilePath is the offending dbt-project-relative source path. For compile
+	// failures it is extracted from the dbt log. For seed_build failures it is
+	// threaded from the candidate topology (OriginalFilePath on release.Node).
+	// Empty means fall back to Ancestry.
+	FilePath string
+	// Service is the owning dbt service name for the failing node. Set for
+	// seed_build failures from the candidate topology so source resolution does
+	// not depend on Ancestry (which only holds promoted topology). Empty for
+	// compile failures where NodeID acts as the service discriminator.
+	Service  string
+	Repo     string
 	CommitSHA string
 	// MessageID is the Redis Stream message ID of the inbound
 	// remediation.requested:v1 message. It is the primary dedup key.
@@ -231,10 +237,24 @@ func proposeFromSource(ctx context.Context, deps Deps, t Trigger, attempt int) e
 	}
 	dbtLog := deps.Sanitizer.Sanitize(rawLog)
 
-	// Resolve the project-relative source path and owning service. Compile
-	// failures carry the offending path directly and use the service name as the
-	// node id; seed failures resolve a real dbt node via Ancestry.
-	filePath, serviceName := t.FilePath, t.NodeID
+	// Resolve the project-relative source path and owning service.
+	//
+	// Priority 1: threaded values from the candidate topology (FilePath and
+	// Service set on the trigger). This is the primary path for seed_build
+	// failures, including newly-added seeds that do not yet appear in the
+	// promoted topology that Ancestry serves.
+	//
+	// Priority 2: for compile failures, NodeID IS the service (synthetic id);
+	// FilePath is always set by the classifier for compile.
+	//
+	// Priority 3: Ancestry fallback — used when FilePath is absent (e.g. an
+	// older rejection payload that predates candidate-topology threading).
+	filePath := t.FilePath
+	serviceName := t.Service
+	if serviceName == "" {
+		// compile: the node id is the service discriminator, not a real dbt node
+		serviceName = t.NodeID
+	}
 	if filePath == "" {
 		var aerr error
 		filePath, serviceName, _, aerr = deps.Ancestry.NodeContext(ctx, t.NodeID)

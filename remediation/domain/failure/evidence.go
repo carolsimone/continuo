@@ -51,5 +51,6 @@ type FailureEvidence struct {
 	CandidateSQLURI string
 	Repo            string
 	CommitSHA       string
-	FilePath        string // optional; offending source path for compile (empty → resolve via Ancestry(NodeID))
+	FilePath string // optional; offending source path for compile (from dbt log) or seed_build (from candidate topology); empty → resolve via Ancestry(NodeID)
+	Service  string // optional; owning dbt service for source resolution; set for seed_build failures; empty for compile (NodeID is the service)
 }

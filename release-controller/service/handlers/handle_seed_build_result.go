@@ -75,14 +75,27 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 	}
 
 	// perNodeEntry is the outbox wire shape for a single seed-build-leg result.
-	// Intentionally omits duration_ms (irrelevant for seeds) and file_path
-	// (populated by the remediation service when it reads S3 logs).
+	// FilePath and Service carry the source location from the candidate topology
+	// so the remediation agent can locate the seed source file without querying
+	// Ancestry, which only holds promoted topology and cannot find newly-added seeds.
 	type perNodeEntry struct {
 		NodeID        string `json:"node_id"`
 		Status        string `json:"status"`
 		DBTLogURI     string `json:"dbt_log_uri,omitempty"`
 		RunResultsURI string `json:"run_results_uri,omitempty"`
+		FilePath      string `json:"file_path,omitempty"`
+		Service       string `json:"service,omitempty"`
 	}
+
+	// Build lookup maps from the candidate topology so per-node rejection entries
+	// carry the source location needed by the remediation agent.
+	filePathByNodeID := make(map[string]string, len(r.CandidateTopology()))
+	serviceByNodeID := make(map[string]string, len(r.CandidateTopology()))
+	for _, n := range r.CandidateTopology() {
+		filePathByNodeID[n.UniqueID] = n.OriginalFilePath
+		serviceByNodeID[n.UniqueID] = n.ServiceName
+	}
+
 	perNode := make([]perNodeEntry, len(in.PerNode))
 	for i, n := range in.PerNode {
 		perNode[i] = perNodeEntry{
@@ -90,6 +103,8 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 			Status:        n.Status,
 			DBTLogURI:     n.DBTLogURI,
 			RunResultsURI: n.RunResultsURI,
+			FilePath:      filePathByNodeID[n.NodeID],
+			Service:       serviceByNodeID[n.NodeID],
 		}
 	}
 

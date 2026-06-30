@@ -112,3 +112,36 @@ func TestEvidenceFromRejected_Compile(t *testing.T) {
 		}
 	})
 }
+
+// TestEvidenceFromRejected_SeedFilePathAndService verifies that when the
+// release.rejected:v1 payload carries file_path and service on a seed_build
+// per-node entry, evidenceFromRejected threads them into FailureEvidence so
+// the classifier can forward them to the remediation trigger — allowing the
+// agent to locate the source file without querying Ancestry.
+func TestEvidenceFromRejected_SeedFilePathAndService(t *testing.T) {
+	raw := []byte(`{
+		"release_id":"rel-seed","stage":"seed_build","reason":"seed_build_failed",
+		"repo":"o/r","commit_sha":"sha1",
+		"per_node":[
+			{"node_id":"seed.svc.customers","status":"failed","dbt_log_uri":"s3://b/c.log",
+			 "file_path":"seeds/customers.csv","service":"svc-data"},
+			{"node_id":"seed.svc.products","status":"ok","dbt_log_uri":"s3://b/p.log"}
+		]}`)
+	got, err := evidenceFromRejected(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 failed evidence, got %d", len(got))
+	}
+	e := got[0]
+	if e.Source != failure.SourceSeed {
+		t.Errorf("Source = %q, want %q", e.Source, failure.SourceSeed)
+	}
+	if e.FilePath != "seeds/customers.csv" {
+		t.Errorf("FilePath = %q, want seeds/customers.csv", e.FilePath)
+	}
+	if e.Service != "svc-data" {
+		t.Errorf("Service = %q, want svc-data", e.Service)
+	}
+}

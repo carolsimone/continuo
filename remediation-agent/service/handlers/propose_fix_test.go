@@ -390,10 +390,12 @@ func TestProposeFix_CompileSource(t *testing.T) {
 	}
 }
 
-// TestProposeFix_SeedSourceViaAncestry verifies the seed_build branch: no
-// candidate SQL and no FilePath on the trigger, so the source path is resolved
-// via Ancestry from the real dbt node id, then the source is fixed directly.
-func TestProposeFix_SeedSourceViaAncestry(t *testing.T) {
+// TestProposeFix_SeedSourceViaThreadedPayload verifies the primary seed_build
+// path: when FilePath and Service are carried on the trigger (threaded from the
+// candidate topology), the handler must NOT call Ancestry and must produce a
+// source-resolved proposal. This is the common case for newly-added seeds that
+// do not yet exist in the promoted topology that Ancestry serves.
+func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
 		"s3://b/log": "Database Error in seed customers: extra column",
@@ -408,10 +410,12 @@ func TestProposeFix_SeedSourceViaAncestry(t *testing.T) {
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
 
 	d := Deps{
-		NewUoW:           func() uow.UnitOfWork { return u },
-		LLM:              &llm,
-		Evidence:         ev,
-		Ancestry:         fakeAncestry{fp: "seeds/customers.csv", svc: "svc"},
+		NewUoW:  func() uow.UnitOfWork { return u },
+		LLM:     &llm,
+		Evidence: ev,
+		// Ancestry must NOT be called: it only has promoted topology, which does
+		// not include newly-added seeds. An error here proves we skip it.
+		Ancestry:         fakeAncestry{err: fmt.Errorf("ancestry must not be called for new seeds")},
 		Source:           src,
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -426,7 +430,10 @@ func TestProposeFix_SeedSourceViaAncestry(t *testing.T) {
 		ReleaseID:       "r1",
 		NodeID:          "svc.customers",
 		ErrorSignature:  "seed-err",
-		FilePath:        "",
+		// FilePath and Service are threaded from the candidate topology by
+		// release-controller, bypassing the need for an Ancestry call.
+		FilePath:        "seeds/customers.csv",
+		Service:         "svc",
 		CandidateSQLURI: "",
 		DBTLogURI:       "s3://b/log",
 		Repo:            "o/r",
@@ -459,6 +466,72 @@ func TestProposeFix_SeedSourceViaAncestry(t *testing.T) {
 	}
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("expected 1 outbox entry, got %d", len(u.ob.entries))
+	}
+}
+
+// TestProposeFix_SeedSourceFallsBackToAncestry verifies the Ancestry fallback
+// path for seed_build: when FilePath is absent on the trigger (e.g. an older
+// rejection payload that predates the candidate-topology threading), the handler
+// falls back to Ancestry to resolve the source location.
+func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/log": "Database Error in seed customers: extra column",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "id,name\n1,alice",
+		Rationale:   "removed extra column",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	src := &fakeSource{content: "id,name\n1,alice,extra"}
+
+	d := Deps{
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Ancestry:         fakeAncestry{fp: "seeds/customers.csv", svc: "svc"},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		Bucket:           "bucket",
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+	}
+	// No FilePath or Service on the trigger: must fall back to Ancestry.
+	tr := Trigger{
+		Source:          "seed_build",
+		ReleaseID:       "r1",
+		NodeID:          "svc.customers",
+		ErrorSignature:  "seed-err",
+		FilePath:        "",
+		Service:         "",
+		CandidateSQLURI: "",
+		DBTLogURI:       "s3://b/log",
+		Repo:            "o/r",
+		CommitSHA:       "sha",
+		MessageID:       "8-1",
+	}
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status on ancestry fallback, got %s", p.Status)
+	}
+	if !p.SourceResolved {
+		t.Fatal("expected SourceResolved=true on ancestry fallback")
+	}
+	if p.FilePath != "services/svc/seeds/customers.csv" {
+		t.Fatalf("FilePath = %q, want services/svc/seeds/customers.csv", p.FilePath)
 	}
 }
 

@@ -362,3 +362,56 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotePayloadCarriesCandidate
 	assert.Equal(t, "_candidate_rel_seed_only_schema", payload["candidate_schema"],
 		"release.promoted:v1 on seed-only path must carry candidate_schema so executor can tear down the schema")
 }
+
+// topoSeedsWithFilePath returns a topology with two dbt-seeds that each carry
+// an OriginalFilePath and ServiceName, so the rejection payload can include
+// the source location for the remediation agent.
+func topoSeedsWithFilePath() release.Topology {
+	return release.Topology{
+		{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "svc-fin", NodeType: "dbt-seed",
+			SchemaName: "schema_fin", TableName: "seed_fx_rates_eur",
+			OriginalFilePath: "seeds/seed_fx_rates_eur.csv"},
+		{UniqueID: "analytics.seed_equities", ServiceName: "svc-fin", NodeType: "dbt-seed",
+			SchemaName: "schema_fin", TableName: "seed_equities",
+			OriginalFilePath: "seeds/seed_equities.csv"},
+	}
+}
+
+// TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndService verifies
+// that when the candidate topology carries OriginalFilePath and ServiceName for
+// a seed node, the release.rejected:v1 per_node entry includes those values so
+// the remediation agent can locate the source file without querying Ancestry
+// (which only has promoted topology and cannot find newly-added seeds).
+func TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndService(t *testing.T) {
+	deps, store := newTestDeps(t)
+	releaseID := "rel-seed-fp"
+	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedsWithFilePath())
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: releaseID,
+		Status:    "failed",
+		PerNode: []handlers.NodeResult{
+			{NodeID: "analytics.seed_fx_rates_eur", Status: "failed", DBTLogURI: "s3://logs/seed_eur.log"},
+		},
+		ErrorClass:  "seed_error",
+		ErrorDetail: "csv parse failure",
+	}))
+
+	entry := lastOutbox(t, store)
+	assert.Equal(t, streams.ReleaseRejectedV1, entry.StreamName)
+
+	var topLevel map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entry.Payload, &topLevel))
+
+	var perNode []struct {
+		NodeID   string `json:"node_id"`
+		FilePath string `json:"file_path"`
+		Service  string `json:"service"`
+	}
+	require.NoError(t, json.Unmarshal(topLevel["per_node"], &perNode))
+	require.Len(t, perNode, 1)
+	assert.Equal(t, "seeds/seed_fx_rates_eur.csv", perNode[0].FilePath,
+		"file_path must be taken from the candidate topology's OriginalFilePath")
+	assert.Equal(t, "svc-fin", perNode[0].Service,
+		"service must be taken from the candidate topology's ServiceName")
+}
