@@ -37,32 +37,32 @@ type rejectedPayload struct {
 	} `json:"per_node"`
 }
 
-// stageToSource maps the pipeline stage string from the payload to the
-// domain Source constant. Unknown values default to SourceValidation so that
-// the classifier degrades gracefully rather than dropping a failure.
-func stageToSource(stage string) failure.Source {
+// sourceFromPayload resolves the remediation Source from a release.rejected
+// payload. It prefers the explicit stage field and falls back to the reason
+// field for older payloads that carry no stage. The bool is false when the
+// rejection is not one of the three remediable pipeline legs — e.g. a
+// parse-phase rejection (parse_failed, unbuildable_cross_service_upstream) or
+// an unknown future stage; the caller then produces no evidence rather than
+// misrouting it onto a leg's classification path.
+func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 	switch stage {
 	case "compile":
-		return failure.SourceCompile
+		return failure.SourceCompile, true
 	case "seed_build":
-		return failure.SourceSeed
-	default:
-		return failure.SourceValidation
+		return failure.SourceSeed, true
+	case "validation":
+		return failure.SourceValidation, true
+	case "":
+		switch reason {
+		case "compile_failed":
+			return failure.SourceCompile, true
+		case "seed_build_failed":
+			return failure.SourceSeed, true
+		case "validation_failed":
+			return failure.SourceValidation, true
+		}
 	}
-}
-
-// reasonToStage maps a legacy reason field to the equivalent stage string so
-// that older payloads without an explicit stage field are handled identically
-// to newer ones.
-func reasonToStage(reason string) string {
-	switch reason {
-	case "compile_failed":
-		return "compile"
-	case "seed_build_failed":
-		return "seed_build"
-	default:
-		return "validation"
-	}
+	return "", false
 }
 
 // evidenceFromRejected translates a release.rejected:v1 payload into one
@@ -77,11 +77,12 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 		return nil, fmt.Errorf("unmarshal release.rejected payload: %w", err)
 	}
 
-	stage := p.Stage
-	if stage == "" {
-		stage = reasonToStage(p.Reason)
+	src, ok := sourceFromPayload(p.Stage, p.Reason)
+	if !ok {
+		// Not a remediable pipeline-leg rejection (e.g. a parse-phase failure):
+		// produce no evidence rather than misrouting it onto a leg's path.
+		return nil, nil
 	}
-	src := stageToSource(stage)
 
 	out := make([]failure.FailureEvidence, 0, len(p.PerNode))
 	for _, n := range p.PerNode {

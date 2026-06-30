@@ -52,18 +52,13 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 
 func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleSeedBuildResultInput, now time.Time) error {
 	// Build per-node results and derive the failing set.
-	results := make([]release.NodeValidationResult, len(in.PerNode))
-	var failing []string
-	for i, n := range in.PerNode {
-		results[i] = release.NodeValidationResult{
-			NodeID:        n.NodeID,
-			Status:        n.Status,
-			DBTLogURI:     n.DBTLogURI,
-			RunResultsURI: n.RunResultsURI,
-		}
-		if n.Status != "ok" {
-			failing = append(failing, n.NodeID)
-		}
+	results, failing := stageResults(in.PerNode)
+
+	if len(in.PerNode) == 0 {
+		// A failed seed build with no per-node detail still rejects the release,
+		// but carries nothing for the remediation classifier to act on.
+		d.Logger.Warn("seed build failed with no per-node results; release rejected without a remediation trigger",
+			"release_id", in.ReleaseID)
 	}
 
 	r.RecordStageResults("seed_build", results)
@@ -87,24 +82,24 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		Service       string `json:"service,omitempty"`
 	}
 
-	// Build lookup maps from the candidate topology so per-node rejection entries
-	// carry the source location needed by the remediation agent.
-	filePathByNodeID := make(map[string]string, len(r.CandidateTopology()))
-	serviceByNodeID := make(map[string]string, len(r.CandidateTopology()))
+	// Build a single lookup from the candidate topology so per-node rejection
+	// entries carry the source location needed by the remediation agent.
+	type sourceLoc struct{ filePath, service string }
+	locByNodeID := make(map[string]sourceLoc, len(r.CandidateTopology()))
 	for _, n := range r.CandidateTopology() {
-		filePathByNodeID[n.UniqueID] = n.OriginalFilePath
-		serviceByNodeID[n.UniqueID] = n.ServiceName
+		locByNodeID[n.UniqueID] = sourceLoc{filePath: n.OriginalFilePath, service: n.ServiceName}
 	}
 
 	perNode := make([]perNodeEntry, len(in.PerNode))
 	for i, n := range in.PerNode {
+		loc := locByNodeID[n.NodeID]
 		perNode[i] = perNodeEntry{
 			NodeID:        n.NodeID,
 			Status:        n.Status,
 			DBTLogURI:     n.DBTLogURI,
 			RunResultsURI: n.RunResultsURI,
-			FilePath:      filePathByNodeID[n.NodeID],
-			Service:       serviceByNodeID[n.NodeID],
+			FilePath:      loc.filePath,
+			Service:       loc.service,
 		}
 	}
 
@@ -147,15 +142,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleSeedBuildResultInput, now time.Time) error {
 	// Record per-node seed-build results on the ok path so the UI can surface
 	// per-seed build status even when the overall build succeeds.
-	results := make([]release.NodeValidationResult, len(in.PerNode))
-	for i, n := range in.PerNode {
-		results[i] = release.NodeValidationResult{
-			NodeID:        n.NodeID,
-			Status:        n.Status,
-			DBTLogURI:     n.DBTLogURI,
-			RunResultsURI: n.RunResultsURI,
-		}
-	}
+	results, _ := stageResults(in.PerNode)
 	r.RecordStageResults("seed_build", results)
 
 	if err := r.TransitionFromSeedBuilding(now); err != nil {

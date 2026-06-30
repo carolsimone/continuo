@@ -7,7 +7,6 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/google/uuid"
 )
 
@@ -66,21 +65,16 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	now := d.Clock.Now()
 
 	// Build per-node results and derive the failing set for both branches.
-	results := make([]release.NodeValidationResult, len(in.PerNode))
-	var failing []string
-	for i, n := range in.PerNode {
-		results[i] = release.NodeValidationResult{
-			NodeID:        n.NodeID,
-			Status:        n.Status,
-			DBTLogURI:     n.DBTLogURI,
-			RunResultsURI: n.RunResultsURI,
-		}
-		if n.Status != "ok" {
-			failing = append(failing, n.NodeID)
-		}
-	}
+	results, failing := stageResults(in.PerNode)
 
 	if in.Status != "ok" {
+		if len(in.PerNode) == 0 {
+			// A failed compile with no per-node detail (e.g. a producer that
+			// predates per-node compile results) still rejects the release, but
+			// carries nothing for the remediation classifier to act on.
+			d.Logger.Warn("compile failed with no per-node results; release rejected without a remediation trigger",
+				"release_id", in.ReleaseID)
+		}
 		r.RecordStageResults("compile", results)
 		if err := r.TransitionToRejected("compile_failed", failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)

@@ -111,6 +111,22 @@ func TestEvidenceFromRejected_Compile(t *testing.T) {
 			t.Errorf("Source = %q, want %q", evs[0].Source, failure.SourceCompile)
 		}
 	})
+
+	t.Run("parse-phase rejection yields no evidence (not misrouted to validation)", func(t *testing.T) {
+		// A parse_failed rejection is not a remediable pipeline leg. Even when it
+		// carries per_node entries, it must NOT be classified as a validation
+		// source-fix — evidenceFromRejected produces nothing.
+		raw := []byte(`{"release_id":"rel-9","reason":"parse_failed",
+		  "repo":"o/r","commit_sha":"sha","failing_nodes":["x"],
+		  "per_node":[{"node_id":"x","status":"failed","dbt_log_uri":"s3://x.log"}]}`)
+		evs, err := evidenceFromRejected(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 0 {
+			t.Fatalf("want 0 evidence for parse-phase rejection, got %d", len(evs))
+		}
+	})
 }
 
 // TestEvidenceFromRejected_SeedFilePathAndService verifies that when the
