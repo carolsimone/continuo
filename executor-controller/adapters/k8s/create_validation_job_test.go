@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
@@ -343,4 +344,31 @@ func TestCreateValidationJob_SetsValidationOpAndProdSchema(t *testing.T) {
 	job2 := fetchJob(t, c, p2.Namespace, p2.JobName)
 	assert.Equal(t, "clone_from_prod", envByName(job2.Spec.Template.Spec, "VALIDATION_OP"))
 	assert.Equal(t, "analytics", envByName(job2.Spec.Template.Spec, "PROD_SCHEMA"))
+}
+
+// TestCreateValidationJob_BuildFromSql_EmptyCandidateURIErrors verifies that a
+// build_from_sql validation job with no CandidateSQLURI fails with a permanent
+// error at job-build time rather than producing a pod that fails at runtime.
+func TestCreateValidationJob_BuildFromSql_EmptyCandidateURIErrors(t *testing.T) {
+	c := newValidationTestClient()
+	p := validationParams()
+	p.CandidateSQLURI = "" // omit the required URI
+
+	err := c.CreateValidationJob(context.Background(), p)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
+}
+
+// TestCreateValidationJob_UnknownOpErrors verifies that an unrecognised
+// ValidationOp returns a permanent error rather than silently falling through
+// to a default pod shape. A future op must be explicitly named; unknown ops are
+// treated as permanent failures so the release is not silently misvalidated.
+func TestCreateValidationJob_UnknownOpErrors(t *testing.T) {
+	c := newValidationTestClient()
+	p := validationParams()
+	p.ValidationOp = "bogus_op"
+
+	err := c.CreateValidationJob(context.Background(), p)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
 }
