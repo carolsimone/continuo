@@ -1,10 +1,10 @@
-"""Unit tests for base.warehouse — mocked cursor, no live database."""
+"""Unit tests for warehouse — mocked cursor, no live database."""
 import pytest
 from psycopg2 import errors as pg_errors
 from psycopg2 import sql as pg_sql
 from unittest.mock import MagicMock, patch
 
-from base.warehouse import PostgresAdapter, adapter_from_env, WarehouseAdapter
+from warehouse import PostgresAdapter, adapter_from_env, WarehouseAdapter
 
 
 class _FakeCursor:
@@ -124,7 +124,7 @@ def test_adapter_from_env_builds_postgres(monkeypatch):
     }.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("WAREHOUSE_ENGINE", raising=False)
-    with patch("base.warehouse.psycopg2.connect", return_value=MagicMock()) as conn:
+    with patch("warehouse.psycopg2.connect", return_value=MagicMock()) as conn:
         adapter = adapter_from_env()
     assert isinstance(adapter, WarehouseAdapter)
     conn.assert_called_once()

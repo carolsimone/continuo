@@ -2,28 +2,22 @@
 """Build a single node as an empty table in the candidate schema (blue/green validation).
 
 Dispatches on ``VALIDATION_OP`` env var (default ``build_from_sql``):
-- ``build_from_sql``: read the node's compiled SQL from the local file at
-  ``CANDIDATE_SQL_PATH`` (placed there by the validation Job's fetch init container),
-  then materialize it ``WITH NO DATA`` (models/snapshots).
+- ``build_from_sql``: fetch the node's compiled SQL from S3 (``CANDIDATE_SQL_URI``) and
+  materialize it ``WITH NO DATA`` (models/snapshots).
 - ``clone_from_prod``: clone an existing prod table's shape empty from ``PROD_SCHEMA``
   (unchanged upstreams, including seeds).
 
-The DDL itself lives behind the warehouse adapter (``base.warehouse``). stdout is the
-per-node validation log; the runner prints exactly one structured ``result_block`` as
-its last line. A non-zero exit marks the node failed.
+This is a continuo-owned, dbt-free image: it fetches its own input (boto3) and runs
+the DDL behind the warehouse adapter (psycopg2). stdout is the per-node validation log;
+the runner prints exactly one structured ``result_block`` as its last line. A non-zero
+exit marks the node failed.
 """
 import os
 import sys
 
-try:
-    from base import validation_result  # repo/test context (pythonpath=".")
-except ModuleNotFoundError:  # pragma: no cover - flat layout inside the image
-    import validation_result
-
-try:
-    from base.warehouse import adapter_from_env
-except ModuleNotFoundError:  # pragma: no cover - flat layout inside the image
-    from warehouse import adapter_from_env
+import s3_common
+import validation_result
+from warehouse import adapter_from_env
 
 
 def _require(name: str) -> str:
@@ -35,18 +29,20 @@ def _require(name: str) -> str:
 
 
 def load_candidate_sql() -> str:
-    """Read the candidate SQL for this node from the local file at ``CANDIDATE_SQL_PATH``.
+    """Fetch this node's candidate SQL from S3 at ``CANDIDATE_SQL_URI``.
 
-    The validation Job's fetch init container downloads ``CANDIDATE_SQL_URI`` from S3 into
-    this shared-emptyDir path; this container has no S3 access. Returns the raw UTF-8 body
-    without stripping — the caller normalizes. Returns ``""`` when the path env is
-    unset/empty or the file is missing/empty (seed/empty node — nothing to validate).
+    The validation container fetches its own input directly — no sidecar. Returns the
+    raw UTF-8 body (no stripping; the caller normalizes). Returns ``""`` when
+    ``CANDIDATE_SQL_URI`` is unset/empty (nothing to validate). Raises on invalid-URI
+    or S3-download errors so ``main`` maps them to a structured error block.
     """
-    path = os.environ.get("CANDIDATE_SQL_PATH", "")
-    if not path or not os.path.isfile(path):
+    uri = os.environ.get("CANDIDATE_SQL_URI", "")
+    if not uri:
         return ""
-    with open(path, encoding="utf-8") as f:
-        return f.read()
+    bucket, key = s3_common.parse_s3_uri(uri)
+    s3 = s3_common.make_s3_client()
+    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+    return body.decode("utf-8")
 
 
 def main() -> None:
@@ -63,14 +59,14 @@ def main() -> None:
         try:
             raw_sql = load_candidate_sql()
         except Exception as exc:
-            path = os.environ.get("CANDIDATE_SQL_PATH", "")
-            print(f"validation_runner: ERROR reading candidate SQL from {path!r}: {exc}", file=sys.stderr)
+            uri = os.environ.get("CANDIDATE_SQL_URI", "")
+            print(f"validation_runner: ERROR fetching candidate SQL from {uri!r}: {exc}", file=sys.stderr)
             print(validation_result.result_block("error", str(exc), unique_id=unique_id), flush=True)
             sys.exit(1)
         if not raw_sql:
-            print("validation_runner: CANDIDATE_SQL_PATH file is missing or empty for a "
+            print("validation_runner: CANDIDATE_SQL_URI is unset or the object is empty for a "
                   "build_from_sql node; cannot validate", file=sys.stderr)
-            print(validation_result.result_block("error", "CANDIDATE_SQL_PATH is missing or empty",
+            print(validation_result.result_block("error", "CANDIDATE_SQL_URI is unset or empty",
                                                  unique_id=unique_id), flush=True)
             sys.exit(2)
         candidate_sql = raw_sql

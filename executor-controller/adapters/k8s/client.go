@@ -266,22 +266,24 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 
 // buildValidationPodSpec constructs the PodSpec for a validation node job.
 //
-// Validation runs the continuo-owned validation image (dbt-base, which carries
-// validation_runner.py + the warehouse adapter) — never the per-service team
-// image. VALIDATION_IMAGE overrides verbatim; else dbt-base:latest,
+// Validation runs the continuo-owned validation-runner image, which carries
+// validation_runner.py, the warehouse adapter, and boto3 — never the per-service
+// team image. VALIDATION_IMAGE overrides verbatim; else validation-runner:latest,
 // DOCKERHUB_USERNAME-prefixed.
 //
-// build_from_sql nodes need their compiled candidate SQL, which lives in S3.
-// dbt-base carries no S3 client, so the pod uses the adapter-sidecar pattern: an
-// init "fetch" container (the shared s3-sidecar image) downloads CANDIDATE_SQL_URI
-// into /shared/candidate.sql on a shared emptyDir, and the main "dbt-job"
-// container reads that local file (CANDIDATE_SQL_PATH). clone_from_prod nodes have
-// no candidate SQL and never touch S3, so they stay single-container with no
+// build_from_sql nodes receive CANDIDATE_SQL_URI + S3 credentials directly on the
+// single main container; the runner fetches the compiled SQL from S3 itself. There
+// is no init container and no shared emptyDir for this path. clone_from_prod nodes
+// have no candidate SQL and never touch S3, so they remain single-container with no
 // emptyDir and no S3 credentials.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
+	// VALIDATION_IMAGE pins the validator image. In production the Helm chart sets
+	// it to the SHA-tagged continuo-validation-runner:<imageTag>; when unset (local
+	// docker-compose, kind e2e) it falls back to the locally-built validation-runner:latest,
+	// DOCKERHUB_USERNAME-prefixed when set.
 	image := os.Getenv("VALIDATION_IMAGE")
 	if image == "" {
-		image = "dbt-base:latest"
+		image = "validation-runner:latest"
 		if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
 			image = user + "/" + image
 		}
@@ -292,11 +294,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		op = "build_from_sql"
 	}
 
-	const candidateSQLPath = "/shared/candidate.sql"
-
-	// Env common to both validation ops. CANDIDATE_SQL_PATH is added only on the
-	// build_from_sql branch (where the fetch sidecar populates that file);
-	// clone_from_prod has no shared emptyDir and never reads it.
+	// Env common to both validation ops.
 	mainEnv := []corev1.EnvVar{
 		{Name: "RELEASE_ID", Value: p.ReleaseID},
 		{Name: "NODE_ID", Value: p.NodeID},
@@ -332,41 +330,19 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		}, nil
 
 	case "build_from_sql":
-		// Adapter-sidecar pattern: init "fetch" downloads the candidate SQL from S3
-		// into a shared emptyDir; the main "dbt-job" container reads it from there.
-		// CandidateSQLURI must be set — changed models/snapshots always carry one;
-		// nodes without candidate SQL (unchanged upstreams, seeds) use clone_from_prod.
+		// The validation container fetches its own compiled SQL from S3 (boto3) and
+		// builds it WITH NO DATA — no sidecar, no shared emptyDir. CandidateSQLURI must
+		// be set: changed models/snapshots always carry one; nodes without candidate SQL
+		// (unchanged upstreams, seeds) use clone_from_prod.
 		if p.CandidateSQLURI == "" {
 			return corev1.PodSpec{}, fmt.Errorf("%w: candidate_sql_uri missing from build_from_sql validation job params for node %s",
 				events.ErrPermanent, p.NodeID)
 		}
-		mount := sharedVolumeMount()
-		mainContainer.VolumeMounts = []corev1.VolumeMount{mount}
-		// The main container reads the SQL the fetch sidecar wrote to this path.
-		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_PATH", Value: candidateSQLPath})
-
-		// CANDIDATE_SQL_URI is the S3 address of the node's compiled SQL (schema refs
-		// already rewritten to the candidate schema). The fetch sidecar downloads it
-		// into CANDIDATE_SQL_PATH on the shared emptyDir.
-		fetchEnv := append([]corev1.EnvVar{
-			{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI},
-			{Name: "CANDIDATE_SQL_PATH", Value: candidateSQLPath},
-		}, s3CredEnvVars()...)
-
+		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI})
+		mainContainer.Env = append(mainContainer.Env, s3CredEnvVars()...)
 		return corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
-			Volumes:       []corev1.Volume{sharedEmptyDirVolume()},
-			InitContainers: []corev1.Container{
-				{
-					Name:            "fetch",
-					Image:           s3SidecarImage(),
-					ImagePullPolicy: validationImagePullPolicy(),
-					Command:         []string{"python", "/candidate_fetcher.py"},
-					Env:             fetchEnv,
-					VolumeMounts:    []corev1.VolumeMount{mount},
-				},
-			},
-			Containers: []corev1.Container{mainContainer},
+			Containers:    []corev1.Container{mainContainer},
 		}, nil
 
 	default:
@@ -375,8 +351,8 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	}
 }
 
-// s3SidecarImage resolves the shared non-dbt S3 I/O sidecar image used by both the
-// compile leg (manifest upload) and the validation leg (candidate-SQL fetch). The
+// s3SidecarImage resolves the non-dbt S3 I/O sidecar image used by the
+// compile leg (manifest upload). The
 // S3_SIDECAR_IMAGE env overrides verbatim; otherwise default to s3-sidecar:latest,
 // DOCKERHUB_USERNAME-prefixed when set.
 func s3SidecarImage() string {
@@ -392,7 +368,7 @@ func s3SidecarImage() string {
 
 // s3CredEnvVars returns the four S3 credential environment variables forwarded
 // from the executor-controller environment. S3_BUCKET is intentionally omitted —
-// both the compile uploader and the candidate fetcher parse the bucket from their
+// both the compile uploader and the validation runner parse the bucket from their
 // respective URI parameters and never read S3_BUCKET.
 func s3CredEnvVars() []corev1.EnvVar {
 	return []corev1.EnvVar{
@@ -404,8 +380,7 @@ func s3CredEnvVars() []corev1.EnvVar {
 }
 
 // sharedEmptyDirVolume returns the "shared" emptyDir volume used as the hand-off
-// point between the init container and the main container in compile and
-// build_from_sql validation pods.
+// point between the init container and the main container in compile pods.
 func sharedEmptyDirVolume() corev1.Volume {
 	return corev1.Volume{
 		Name:         "shared",
@@ -419,17 +394,18 @@ func sharedVolumeMount() corev1.VolumeMount {
 	return corev1.VolumeMount{Name: "shared", MountPath: "/shared"}
 }
 
-// validationImagePullPolicy resolves the pull policy for validation Job pods.
+// validationImagePullPolicy resolves the pull policy applied to both the
+// validation main container and the compile leg's s3-sidecar upload container.
 //
-// Validation runs a continuo-owned image pinned to a mutable tag (dbt-base:latest
-// by default), which is re-pushed when the validator changes. PullAlways ensures
-// the node fetches the freshly pushed image rather than a stale cached layer.
+// The default is PullAlways so the s3-sidecar (:latest, mutable tag) is
+// re-pulled when it is re-pushed to the registry. The SHA-pinned validation
+// image just receives a cheap digest check under PullAlways rather than a full
+// layer download.
 //
-// Environments that side-load images directly into the node's image cache and
-// have no registry to pull from (the kind-based e2e suite, local clusters) set
-// VALIDATION_IMAGE_PULL_POLICY=IfNotPresent (or Never) so the locally-loaded
-// image is used; PullAlways there would fail with ErrImagePull because the
-// mutable tag exists only in the node cache, not in any registry.
+// e2e and local clusters side-load images directly into the node's image cache
+// and have no registry to pull from, so they set VALIDATION_IMAGE_PULL_POLICY
+// to IfNotPresent or Never; PullAlways would fail with ErrImagePull there
+// because neither image exists in any accessible registry.
 func validationImagePullPolicy() corev1.PullPolicy {
 	switch os.Getenv("VALIDATION_IMAGE_PULL_POLICY") {
 	case string(corev1.PullIfNotPresent):

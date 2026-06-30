@@ -160,9 +160,10 @@ services:
         secretKey: POSTGRES_PASSWORD
       - name: REDIS_PASSWORD
         secretKey: REDIS_PASSWORD
-      # Forwarded into each validation Job so the s3-sidecar can fetch the
-      # candidate SQL from S3 (CANDIDATE_SQL_URI). Endpoint/bucket/region come
-      # from the shared configMap; the access keys come from the secret.
+      # Forwarded into each validation Job's main container, which fetches its
+      # candidate SQL from CANDIDATE_SQL_URI directly (boto3), and into the
+      # compile Job's s3-sidecar. Endpoint/bucket/region come from the shared
+      # configMap; the access keys come from the secret.
       - name: AWS_ACCESS_KEY_ID
         secretKey: AWS_ACCESS_KEY_ID
       - name: AWS_SECRET_ACCESS_KEY
@@ -180,10 +181,12 @@ services:
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       MAX_CONCURRENT_JOBS: "50"
-      # Re-pull validation images every run: a service image is re-baked FROM
-      # dbt-base and re-pushed under the same mutable service tag whenever the
-      # validation runner changes, and the registry holds the fresh image.
+      # Pull policy for validation Jobs AND the compile leg's s3-sidecar upload
+      # container (both use validationImagePullPolicy). The s3-sidecar runs a mutable
+      # :latest tag that must be re-pulled when re-pushed; the validation image is
+      # SHA-pinned, so Always is just a cheap digest check there.
       VALIDATION_IMAGE_PULL_POLICY: Always
+      VALIDATION_IMAGE: __VALIDATION_IMAGE__
       DBT_POSTGRES_DB: continuo_dbt
       HTTP_PORT: "8084"
       DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__

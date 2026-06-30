@@ -158,12 +158,12 @@ jobs:
         run: docker exec manifest-controller uv run pytest -v
 
       - name: Test validation-runner
-        # Pure-python unit tests (psycopg2/boto3/DB all mocked). Run inside a throwaway
-        # python container so the step needs only Docker — no uv/python on the runner.
-        # pytest reads pythonpath="." from validation-runner/pyproject.toml.
+        # Run the validation-runner unit tests against the committed lockfile so CI
+        # matches the image's pinned deps. Uses the uv image so the step needs only Docker.
         run: |
-          docker run --rm -v "$PWD/validation-runner:/app" -w /app python:3.12-slim \
-            sh -c "pip install -q pytest psycopg2-binary boto3 && pytest -v"
+          docker run --rm -v "$PWD/validation-runner:/app" -w /app \
+            ghcr.io/astral-sh/uv:python3.12-bookworm-slim \
+            sh -c "uv sync --frozen --extra dev && uv run pytest -v"
 
       - name: Test dbt compile + S3 upload (integration)
         run: |

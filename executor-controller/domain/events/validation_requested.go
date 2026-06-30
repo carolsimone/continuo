@@ -23,10 +23,10 @@ import (
 // CandidateSQLURI is an S3 URI (s3://bucket/key) pointing to the node's
 // compiled SQL with every schema-qualified reference already rewritten to the
 // candidate schema. For model/snapshot nodes it is passed as the
-// CANDIDATE_SQL_URI env var on the validation Job's fetch init container, which
-// downloads the object into the shared file the runner reads (CANDIDATE_SQL_PATH)
-// and builds an empty CTAS table without a dbt recompile. Empty for seed nodes
-// (unchanged seeds are cloned from prod; new/changed seeds are pre-built).
+// CANDIDATE_SQL_URI env var on the validation Job's main container, which
+// fetches the object directly from S3 and builds an empty CTAS table without a
+// dbt recompile. Empty for seed nodes (unchanged seeds are cloned from prod;
+// new/changed seeds are pre-built).
 type ValidationNode struct {
 	NodeID          string // dbt unique_id
 	ServiceName     string

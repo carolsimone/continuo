@@ -181,8 +181,8 @@ func TestGetJobStatus_DbtSuccess_ReturnsJobStatusSucceeded(t *testing.T) {
 }
 
 // TestGetJobStatus_InitContainerImagePullBackOff_ReturnsJobStatusFailed verifies that
-// an ImagePullBackOff on an init container (e.g. the s3-sidecar fetch container used
-// in validation Jobs) is correctly surfaced as a failure. The k8s Job controller never
+// an ImagePullBackOff on an init container (e.g. the compile Job's `compile` init
+// container) is correctly surfaced as a failure. The k8s Job controller never
 // increments Status.Failed for image pull loops regardless of whether the image pull
 // failure is on a main container or an init container.
 func TestGetJobStatus_InitContainerImagePullBackOff_ReturnsJobStatusFailed(t *testing.T) {
@@ -265,8 +265,8 @@ func TestPickInitContainerLog_ReturnsEmptyWhenNoneFailed(t *testing.T) {
 // TestGetPodLogs_FallsBackToInitContainerWhenMainLogEmpty verifies that when the main
 // dbt-job container never started (because a preceding init container failed), GetPodLogs
 // falls back to reading the failed init container's log instead of returning empty. This
-// surfaces error messages such as "candidate_fetcher: S3 download ... failed" to the
-// classifier rather than silently swallowing them.
+// surfaces error messages such as "compile: S3 upload ... failed" to the classifier
+// rather than silently swallowing them.
 func TestGetPodLogs_FallsBackToInitContainerWhenMainLogEmpty(t *testing.T) {
 	job := &batchv1.Job{
 		TypeMeta:   metav1.TypeMeta{Kind: "Job", APIVersion: "batch/v1"},
@@ -296,7 +296,7 @@ func TestGetPodLogs_FallsBackToInitContainerWhenMainLogEmpty(t *testing.T) {
 		},
 	}
 
-	initLog := "candidate_fetcher: S3 download s3://bucket/candidate.sql failed: NoSuchKey"
+	initLog := "compile: S3 upload s3://bucket/manifest.json failed: NoSuchBucket"
 	logsByContainer := map[string]string{
 		"":      "", // main container: empty (never started)
 		"fetch": initLog,
@@ -306,7 +306,7 @@ func TestGetPodLogs_FallsBackToInitContainerWhenMainLogEmpty(t *testing.T) {
 
 	fullLog, _, err := client.GetPodLogs(context.Background(), "default", "test-job", 10)
 	require.NoError(t, err)
-	assert.Contains(t, fullLog, "S3 download")
+	assert.Contains(t, fullLog, "S3 upload")
 }
 
 // newClientServingLogs creates a K8sClient backed by an httptest.Server that serves
