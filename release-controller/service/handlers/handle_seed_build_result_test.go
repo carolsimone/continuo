@@ -212,10 +212,102 @@ func TestHandleSeedBuildResult_FailedPayloadCarriesCandidateSchema(t *testing.T)
 	entry := lastOutbox(t, store)
 	assert.Equal(t, streams.ReleaseRejectedV1, entry.StreamName)
 
-	var payload map[string]string
+	// Use map[string]any so the uniform payload (which includes array fields
+	// like per_node and failing_nodes) unmarshals without error.
+	var payload map[string]any
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, "_candidate_rel_seed_fail_schema", payload["candidate_schema"],
 		"release.rejected:v1 must carry candidate_schema so executor can tear down the schema")
+}
+
+// topoTwoSeeds returns a topology with two dbt-seeds so we can test the
+// per_node seed-build failure path with multiple entries.
+func topoTwoSeeds() release.Topology {
+	return release.Topology{
+		{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "svc-fin", NodeType: "dbt-seed",
+			SchemaName: "schema_fin", TableName: "seed_fx_rates_eur"},
+		{UniqueID: "analytics.seed_equities", ServiceName: "svc-fin", NodeType: "dbt-seed",
+			SchemaName: "schema_fin", TableName: "seed_equities"},
+	}
+}
+
+// TestHandleSeedBuildResult_Failed_EmitsUniformRejected verifies that a
+// seed-build failure emits a release.rejected:v1 outbox payload with the
+// canonical uniform shape: stage="seed_build", reason="seed_build_failed",
+// repo, commit_sha, failing_nodes, per_node with dbt_log_uri per entry, and
+// candidate_schema. It also verifies that the release aggregate records a
+// seed_build-stage PerNodeResult with Stage=="seed_build".
+func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
+	deps, store := newTestDeps(t)
+	releaseID := "rel-seed-uniform"
+	putSeedBuildingRelease(t, store, deps, releaseID, topoTwoSeeds())
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: releaseID,
+		Status:    "failed",
+		PerNode: []handlers.NodeResult{
+			{NodeID: "analytics.seed_fx_rates_eur", Status: "failed", DBTLogURI: "s3://logs/seed_eur.log"},
+			{NodeID: "analytics.seed_equities", Status: "ok", DBTLogURI: "s3://logs/seed_eq.log"},
+		},
+		ErrorClass:  "seed_error",
+		ErrorDetail: "csv parse failure",
+	}))
+
+	r := mustGetRelease(t, store, releaseID)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "seed_build_failed", r.RejectReason())
+
+	// The aggregate must record per-node seed-build stage results.
+	require.NotEmpty(t, r.PerNodeResults())
+	assert.Equal(t, "seed_build", r.PerNodeResults()[0].Stage)
+
+	// The outbox payload must match the canonical uniform rejected shape.
+	e := lastOutbox(t, store)
+	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+
+	var topLevel map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(e.Payload, &topLevel))
+
+	var stage string
+	require.NoError(t, json.Unmarshal(topLevel["stage"], &stage))
+	assert.Equal(t, "seed_build", stage)
+
+	var reason string
+	require.NoError(t, json.Unmarshal(topLevel["reason"], &reason))
+	assert.Equal(t, "seed_build_failed", reason)
+
+	var repo string
+	require.NoError(t, json.Unmarshal(topLevel["repo"], &repo))
+	assert.Equal(t, "acme/demo", repo)
+
+	var commitSHA string
+	require.NoError(t, json.Unmarshal(topLevel["commit_sha"], &commitSHA))
+	assert.Equal(t, "cafebabe", commitSHA)
+
+	var failingNodes []string
+	require.NoError(t, json.Unmarshal(topLevel["failing_nodes"], &failingNodes))
+	assert.Equal(t, []string{"analytics.seed_fx_rates_eur"}, failingNodes)
+
+	var perNode []struct {
+		NodeID    string `json:"node_id"`
+		Status    string `json:"status"`
+		DBTLogURI string `json:"dbt_log_uri"`
+	}
+	require.NoError(t, json.Unmarshal(topLevel["per_node"], &perNode))
+	require.Len(t, perNode, 2)
+	// Collect statuses from all per_node entries to verify both are present.
+	statuses := make([]string, 0, len(perNode))
+	for _, n := range perNode {
+		statuses = append(statuses, n.Status)
+		assert.NotEmpty(t, n.DBTLogURI, "each per_node entry must carry its dbt_log_uri")
+	}
+	assert.Contains(t, statuses, "failed")
+	assert.Contains(t, statuses, "ok")
+
+	// candidate_schema must be preserved alongside the new uniform fields.
+	var candidateSchema string
+	require.NoError(t, json.Unmarshal(topLevel["candidate_schema"], &candidateSchema))
+	assert.Equal(t, "_candidate_rel_seed_uniform", candidateSchema)
 }
 
 func TestHandleSeedBuildResult_UnknownReleaseDropped(t *testing.T) {

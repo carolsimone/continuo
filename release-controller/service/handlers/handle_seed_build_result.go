@@ -16,10 +16,11 @@ import (
 // HandleSeedBuildResultInput carries the aggregated candidate seed-build outcome
 // from executor-controller (seed.build.completed:v1).
 type HandleSeedBuildResultInput struct {
-	ReleaseID   string `json:"release_id"`
-	Status      string `json:"status"` // "ok" | "failed"
-	ErrorClass  string `json:"error_class,omitempty"`
-	ErrorDetail string `json:"error_detail,omitempty"`
+	ReleaseID   string       `json:"release_id"`
+	Status      string       `json:"status"` // "ok" | "failed"
+	PerNode     []NodeResult `json:"per_node"`
+	ErrorClass  string       `json:"error_class,omitempty"`
+	ErrorDetail string       `json:"error_detail,omitempty"`
 }
 
 // HandleSeedBuildResult advances a SeedBuilding release. On success it emits
@@ -50,17 +51,58 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 }
 
 func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleSeedBuildResultInput, now time.Time) error {
-	if err := r.TransitionToRejected("seed_build_failed", nil, now); err != nil {
+	// Build per-node results and derive the failing set.
+	results := make([]release.NodeValidationResult, len(in.PerNode))
+	var failing []string
+	for i, n := range in.PerNode {
+		results[i] = release.NodeValidationResult{
+			NodeID:        n.NodeID,
+			Status:        n.Status,
+			DBTLogURI:     n.DBTLogURI,
+			RunResultsURI: n.RunResultsURI,
+		}
+		if n.Status != "ok" {
+			failing = append(failing, n.NodeID)
+		}
+	}
+
+	r.RecordStageResults("seed_build", results)
+	if err := r.TransitionToRejected("seed_build_failed", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-	payload, err := json.Marshal(map[string]string{
+
+	// perNodeEntry is the outbox wire shape for a single seed-build-leg result.
+	// Intentionally omits duration_ms (irrelevant for seeds) and file_path
+	// (populated by the remediation service when it reads S3 logs).
+	type perNodeEntry struct {
+		NodeID        string `json:"node_id"`
+		Status        string `json:"status"`
+		DBTLogURI     string `json:"dbt_log_uri,omitempty"`
+		RunResultsURI string `json:"run_results_uri,omitempty"`
+	}
+	perNode := make([]perNodeEntry, len(in.PerNode))
+	for i, n := range in.PerNode {
+		perNode[i] = perNodeEntry{
+			NodeID:        n.NodeID,
+			Status:        n.Status,
+			DBTLogURI:     n.DBTLogURI,
+			RunResultsURI: n.RunResultsURI,
+		}
+	}
+
+	payload, err := json.Marshal(map[string]any{
 		"release_id":       in.ReleaseID,
+		"stage":            "seed_build",
 		"reason":           "seed_build_failed",
 		"error_class":      in.ErrorClass,
 		"error_detail":     in.ErrorDetail,
+		"failing_nodes":    failing,
+		"per_node":         perNode,
+		"repo":             r.Repo(),
+		"commit_sha":       r.CommitSHA(),
 		"candidate_schema": "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID),
 	})
 	if err != nil {
@@ -83,11 +125,24 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, false, 0)
-	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "seed_build_failed", nil)
+	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "seed_build_failed", failing)
 	return nil
 }
 
 func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleSeedBuildResultInput, now time.Time) error {
+	// Record per-node seed-build results on the ok path so the UI can surface
+	// per-seed build status even when the overall build succeeds.
+	results := make([]release.NodeValidationResult, len(in.PerNode))
+	for i, n := range in.PerNode {
+		results[i] = release.NodeValidationResult{
+			NodeID:        n.NodeID,
+			Status:        n.Status,
+			DBTLogURI:     n.DBTLogURI,
+			RunResultsURI: n.RunResultsURI,
+		}
+	}
+	r.RecordStageResults("seed_build", results)
+
 	if err := r.TransitionFromSeedBuilding(now); err != nil {
 		return fmt.Errorf("transition from seed building: %w", err)
 	}
