@@ -535,6 +535,70 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 	}
 }
 
+// TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry covers the
+// partial-threading case: a topology node carries a file_path but no service.
+// The handler must fall back to Ancestry for the SERVICE (not treat NodeID as
+// the service) while keeping the threaded file_path — otherwise the proposal is
+// wrongly skipped.
+func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/log": "Database Error in seed customers: extra column",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "id,name\n1,alice",
+		Rationale:   "removed extra column",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	src := &fakeSource{content: "id,name\n1,alice,extra"}
+
+	d := Deps{
+		NewUoW:    func() uow.UnitOfWork { return u },
+		LLM:       &llm,
+		Evidence:  ev,
+		// Ancestry supplies the missing service; its fp is deliberately wrong to
+		// prove the threaded file_path is preserved, not overwritten.
+		Ancestry:         fakeAncestry{fp: "seeds/WRONG.csv", svc: "svc"},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		Bucket:           "bucket",
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+	}
+	tr := Trigger{
+		Source:         "seed_build",
+		ReleaseID:      "r1",
+		NodeID:         "svc.customers", // a dbt node id, NOT a service
+		ErrorSignature: "seed-err",
+		FilePath:       "seeds/customers.csv", // threaded; service missing
+		Service:        "",
+		DBTLogURI:      "s3://b/log",
+		Repo:           "o/r",
+		CommitSHA:      "sha",
+		MessageID:      "9-0",
+	}
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row (not skipped), got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status, got %s", p.Status)
+	}
+	// Threaded file_path preserved + service resolved from Ancestry → svc.
+	if src.readPath != "services/svc/seeds/customers.csv" {
+		t.Fatalf("ReadFile path = %q, want services/svc/seeds/customers.csv", src.readPath)
+	}
+}
+
 func TestProposeFix_HappyPath(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{

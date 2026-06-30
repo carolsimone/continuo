@@ -251,17 +251,30 @@ func proposeFromSource(ctx context.Context, deps Deps, t Trigger, attempt int) e
 	// older rejection payload that predates candidate-topology threading).
 	filePath := t.FilePath
 	serviceName := t.Service
-	if serviceName == "" {
-		// compile: the node id is the service discriminator, not a real dbt node
+	if t.Source == sourceCompile && serviceName == "" {
+		// compile: the node id IS the service discriminator (a synthetic id,
+		// not a real dbt node), and the classifier always supplies file_path
+		// from the log. This shortcut is compile-only — for seed/validation the
+		// node id is a real dbt node, so an empty service must resolve below.
 		serviceName = t.NodeID
 	}
-	if filePath == "" {
-		var aerr error
-		filePath, serviceName, _, aerr = deps.Ancestry.NodeContext(ctx, t.NodeID)
+	// Ancestry fallback when the path or owning service is still unknown: an
+	// older rejection payload that predates candidate-topology threading, or a
+	// topology node that carries a file_path but no service. NodeContext only
+	// resolves nodes already in the promoted graph, so it is best-effort and
+	// fills in only the missing field(s) rather than overwriting threaded ones.
+	if filePath == "" || serviceName == "" {
+		fp, svc, _, aerr := deps.Ancestry.NodeContext(ctx, t.NodeID)
 		if aerr != nil {
 			deps.Logger.Warn("source fix: ancestry unavailable; skipping",
 				"node", t.NodeID, "error", aerr)
 			return record(ctx, deps, t, attempt, proposal.Proposal{Status: proposal.StatusSkipped}, false, false)
+		}
+		if filePath == "" {
+			filePath = fp
+		}
+		if serviceName == "" {
+			serviceName = svc
 		}
 	}
 	if filePath == "" || serviceName == "" {
@@ -283,12 +296,17 @@ func proposeFromSource(ctx context.Context, deps Deps, t Trigger, attempt int) e
 		return record(ctx, deps, t, attempt, proposal.Proposal{Status: proposal.StatusSkipped}, false, false)
 	}
 
-	res, err := deps.LLM.Propose(ctx, prompt.AssembleSourceFromError(deps.Sanitizer.Sanitize(original), dbtLog, t.NodeID))
+	sanitizedSource := deps.Sanitizer.Sanitize(original)
+	res, err := deps.LLM.Propose(ctx, prompt.AssembleSourceFromError(sanitizedSource, dbtLog, t.NodeID))
 	if err != nil {
 		// Transient LLM error: return so the message is redelivered.
 		return fmt.Errorf("llm propose (source): %w", err)
 	}
-	if res.ProposedSQL == "" || res.ProposedSQL == original {
+	// No-op guard against what the LLM actually saw: it was shown the sanitized
+	// source, so a verbatim echo is a no-op even when sanitization changed bytes
+	// the raw file still carries. The diff below is still computed against the
+	// raw original — that is what a fix would be applied to.
+	if res.ProposedSQL == "" || res.ProposedSQL == sanitizedSource {
 		return record(ctx, deps, t, attempt, proposal.Proposal{Status: proposal.StatusFailed}, false, false)
 	}
 
