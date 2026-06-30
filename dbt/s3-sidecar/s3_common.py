@@ -28,8 +28,7 @@ def require_env(name: str, *, caller: str) -> str:
     """Return the value of env var *name*, or print an error and exit with code 2.
 
     *caller* is prepended to the error message so the originating script is
-    identifiable in pod logs (e.g. ``"candidate_fetcher"`` or
-    ``"compile_uploader"``).
+    identifiable in pod logs (e.g. ``"compile_uploader"``).
     """
     value = os.environ.get(name)
     if not value:
