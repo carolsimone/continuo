@@ -13,10 +13,11 @@ import (
 // HandleCompileResultInput carries the aggregated compile outcome from
 // executor-controller (compile.completed:v1).
 type HandleCompileResultInput struct {
-	ReleaseID   string `json:"release_id"`
-	Status      string `json:"status"` // "ok" | "failed"
-	ErrorClass  string `json:"error_class,omitempty"`
-	ErrorDetail string `json:"error_detail,omitempty"`
+	ReleaseID   string       `json:"release_id"`
+	Status      string       `json:"status"` // "ok" | "failed"
+	PerNode     []NodeResult `json:"per_node"`
+	ErrorClass  string       `json:"error_class,omitempty"`
+	ErrorDetail string       `json:"error_detail,omitempty"`
 }
 
 // manifestKeyDTO is the wire shape for one service's manifest entry in the
