@@ -217,6 +217,11 @@ func (c *K8sClient) GetJobMeta(ctx context.Context, namespace, jobName string) (
 // GetPodLogs fetches logs for the first pod of a completed job.
 // Returns both the full log and the last tailLines lines.
 // Returns empty strings if no pod is found or no logs are available.
+//
+// When the main container produced no output because a preceding init container
+// failed (e.g. the s3-sidecar fetch container could not download candidate SQL),
+// the function falls back to reading the failed init container's logs so the
+// error message reaches the classifier instead of being silently swallowed.
 func (c *K8sClient) GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (fullLog, tail string, err error) {
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
@@ -229,29 +234,63 @@ func (c *K8sClient) GetPodLogs(ctx context.Context, namespace, jobName string, t
 		return "", "", nil
 	}
 
-	podName := pods.Items[0].Name
+	pod := pods.Items[0]
+	podName := pod.Name
 
-	// Fetch full log
-	fullLog, err = c.streamPodLogs(ctx, namespace, podName, nil)
+	// Fetch full log from the main (default) container.
+	fullLog, err = c.streamPodLogs(ctx, namespace, podName, nil, "")
 	if err != nil {
 		c.logger.Warn("Failed to stream full pod log", "pod", podName, "error", err)
 		fullLog = ""
 	}
 
-	// Fetch tail
-	tail, err = c.streamPodLogs(ctx, namespace, podName, &tailLines)
+	// Fetch tail from the main container.
+	tail, err = c.streamPodLogs(ctx, namespace, podName, &tailLines, "")
 	if err != nil {
 		c.logger.Warn("Failed to stream pod log tail", "pod", podName, "error", err)
 		tail = ""
 	}
 
+	// When the main container produced no output (it never started because an init
+	// container failed), fall back to that init container's logs. This surfaces error
+	// messages such as "candidate_fetcher: S3 download ... failed" to the classifier.
+	// Normal runs and compile jobs are unaffected because fullLog is non-empty for them.
+	if fullLog == "" {
+		if initName := pickInitContainerLog(pod); initName != "" {
+			if initFull, ferr := c.streamPodLogs(ctx, namespace, podName, nil, initName); ferr == nil && initFull != "" {
+				fullLog = initFull
+				if initTail, terr := c.streamPodLogs(ctx, namespace, podName, &tailLines, initName); terr == nil {
+					tail = initTail
+				}
+			}
+		}
+	}
+
 	return fullLog, tail, nil
 }
 
-func (c *K8sClient) streamPodLogs(ctx context.Context, namespace, podName string, tailLines *int64) (string, error) {
+// pickInitContainerLog returns the name of the first init container that terminated
+// with a non-zero exit code, or empty string if none failed. Used by GetPodLogs to
+// select the fallback log source when the main container never ran.
+func pickInitContainerLog(pod corev1.Pod) string {
+	for _, ics := range pod.Status.InitContainerStatuses {
+		if ics.State.Terminated != nil && ics.State.Terminated.ExitCode != 0 {
+			return ics.Name
+		}
+	}
+	return ""
+}
+
+// streamPodLogs reads logs for a single container in a pod. When containerName is
+// empty, Kubernetes returns the default (first) container's logs. Pass a non-empty
+// containerName to read a specific init or sidecar container.
+func (c *K8sClient) streamPodLogs(ctx context.Context, namespace, podName string, tailLines *int64, containerName string) (string, error) {
 	opts := &corev1.PodLogOptions{}
 	if tailLines != nil {
 		opts.TailLines = tailLines
+	}
+	if containerName != "" {
+		opts.Container = containerName
 	}
 	req := c.clientset.CoreV1().Pods(namespace).GetLogs(podName, opts)
 	stream, err := req.Stream(ctx)
@@ -292,9 +331,12 @@ func (c *K8sClient) hasFailedCondition(job *batchv1.Job) bool {
 	return false
 }
 
-// checkImagePullError inspects pod ContainerStatus.Waiting for image pull failure reasons.
+// checkImagePullError inspects pod container statuses for image pull failure reasons.
 // The k8s Job controller never marks Status.Failed for stuck image pulls, so we detect
-// them directly from pod state. Returns reason+message if found, empty strings otherwise.
+// them directly from pod state. Both main containers and init containers are checked —
+// a broken init-container image (e.g. the s3-sidecar fetch container) otherwise hangs
+// a release in "validating" forever because Job.Status.Failed stays zero.
+// Returns reason+message if found, empty strings otherwise.
 func (c *K8sClient) checkImagePullError(ctx context.Context, namespace, jobName string) (reason, message string) {
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
@@ -303,7 +345,10 @@ func (c *K8sClient) checkImagePullError(ctx context.Context, namespace, jobName 
 		return "", ""
 	}
 	for _, pod := range pods.Items {
-		for _, cs := range pod.Status.ContainerStatuses {
+		// Check both regular containers and init containers: an unpullable image on
+		// either kind keeps Job.Status.Failed at zero while the pod loops indefinitely.
+		allStatuses := append(pod.Status.ContainerStatuses, pod.Status.InitContainerStatuses...) //nolint:gocritic
+		for _, cs := range allStatuses {
 			if cs.State.Waiting != nil {
 				switch cs.State.Waiting.Reason {
 				case "ImagePullBackOff", "ErrImagePull", "InvalidImageName":
