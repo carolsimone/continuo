@@ -250,11 +250,11 @@ type fakeUoW struct {
 	committed bool
 }
 
-func (u *fakeUoW) Begin(context.Context) error                       { return nil }
-func (u *fakeUoW) Commit() error                                     { u.committed = true; return nil }
-func (u *fakeUoW) Rollback() error                                   { return nil }
-func (u *fakeUoW) ProposalRepo() repository.ProposalRepository       { return u.pr }
-func (u *fakeUoW) OutboxRepo() outbox.Repository                     { return u.ob }
+func (u *fakeUoW) Begin(context.Context) error                         { return nil }
+func (u *fakeUoW) Commit() error                                       { u.committed = true; return nil }
+func (u *fakeUoW) Rollback() error                                     { return nil }
+func (u *fakeUoW) ProposalRepo() repository.ProposalRepository         { return u.pr }
+func (u *fakeUoW) OutboxRepo() outbox.Repository                       { return u.ob }
 func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return u.mp }
 
 func newFakeUoW() *fakeUoW {
@@ -294,6 +294,171 @@ func baseTrigger() Trigger {
 		Repo:            "o/r",
 		CommitSHA:       "abc",
 		MessageID:       "1-0",
+	}
+}
+
+// TestProposeFix_CompileSource verifies the compile branch: a compile trigger
+// carries no candidate SQL but a FilePath. The handler must bypass Ancestry,
+// read the offending source from version control, prompt the LLM with the dbt
+// error + raw source, and persist a non-skipped, source-resolved proposal whose
+// FilePath and Source are preserved. A non-empty proposed-fix artifact is written.
+func TestProposeFix_CompileSource(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://c.log": "Compilation Error in model daily_transactions (models/daily_transactions.sql)\n  unexpected '}' in config block",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "{{ config(materialized='table', tags=['daily']) }}\nselect * from analytics.raw_transactions",
+		Rationale:   "fixed malformed config block",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	// The broken source has a malformed config()/tags expression.
+	src := &fakeSource{content: "{{ config(materialized='table'), tags=['daily'])}}\nselect * from analytics.raw_transactions"}
+
+	d := Deps{
+		NewUoW:      func() uow.UnitOfWork { return u },
+		LLM:         &llm,
+		Evidence:    ev,
+		Ancestry:    fakeAncestry{err: fmt.Errorf("ancestry must not be called for compile")},
+		Source:      src,
+		Sanitizer:   fakeSanitizer{},
+		Artifacts:   art,
+		Clock:       fakeClock{},
+		Logger:      slog.Default(),
+		MaxAttempts: 3,
+		Bucket:      "bucket",
+		// Service "core" maps to the repo root, so the full path equals FilePath.
+		ServiceRepoPaths: map[string]string{"core": ""},
+	}
+	tr := Trigger{
+		Source:          "compile",
+		ReleaseID:       "r1",
+		NodeID:          "core",
+		ErrorSignature:  "compile-err",
+		FilePath:        "models/daily_transactions.sql",
+		CandidateSQLURI: "",
+		DBTLogURI:       "s3://c.log",
+		Repo:            "o/r",
+		CommitSHA:       "sha",
+		MessageID:       "7-0",
+	}
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+	if p.Status == proposal.StatusSkipped {
+		t.Fatalf("compile proposal must not be skipped, got %+v", p)
+	}
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status, got %s", p.Status)
+	}
+	if p.Source != "compile" {
+		t.Fatalf("Source = %q, want compile", p.Source)
+	}
+	if p.FilePath != "models/daily_transactions.sql" {
+		t.Fatalf("FilePath = %q, want models/daily_transactions.sql", p.FilePath)
+	}
+	if !p.SourceResolved {
+		t.Fatal("expected SourceResolved=true")
+	}
+	// Source must be read at join(prefix, FilePath); prefix is empty here.
+	if src.readPath != "models/daily_transactions.sql" {
+		t.Fatalf("ReadFile path = %q, want models/daily_transactions.sql", src.readPath)
+	}
+	// At least one non-empty proposed-fix artifact must be written.
+	nonEmpty := 0
+	for _, body := range art.written {
+		if body != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty == 0 {
+		t.Fatalf("expected a non-empty proposed-fix artifact, got %v", art.written)
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox entry, got %d", len(u.ob.entries))
+	}
+	if !u.committed {
+		t.Fatal("not committed")
+	}
+}
+
+// TestProposeFix_SeedSourceViaAncestry verifies the seed_build branch: no
+// candidate SQL and no FilePath on the trigger, so the source path is resolved
+// via Ancestry from the real dbt node id, then the source is fixed directly.
+func TestProposeFix_SeedSourceViaAncestry(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/log": "Database Error in seed customers: extra column",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "id,name\n1,alice",
+		Rationale:   "removed extra column",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	src := &fakeSource{content: "id,name\n1,alice,extra"}
+
+	d := Deps{
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Ancestry:         fakeAncestry{fp: "seeds/customers.csv", svc: "svc"},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		Bucket:           "bucket",
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+	}
+	tr := Trigger{
+		Source:          "seed_build",
+		ReleaseID:       "r1",
+		NodeID:          "svc.customers",
+		ErrorSignature:  "seed-err",
+		FilePath:        "",
+		CandidateSQLURI: "",
+		DBTLogURI:       "s3://b/log",
+		Repo:            "o/r",
+		CommitSHA:       "sha",
+		MessageID:       "8-0",
+	}
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status, got %s", p.Status)
+	}
+	if p.Source != "seed_build" {
+		t.Fatalf("Source = %q, want seed_build", p.Source)
+	}
+	if !p.SourceResolved {
+		t.Fatal("expected SourceResolved=true")
+	}
+	if p.FilePath != "services/svc/seeds/customers.csv" {
+		t.Fatalf("FilePath = %q, want services/svc/seeds/customers.csv", p.FilePath)
+	}
+	if src.readPath != "services/svc/seeds/customers.csv" {
+		t.Fatalf("ReadFile path = %q, want services/svc/seeds/customers.csv", src.readPath)
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox entry, got %d", len(u.ob.entries))
 	}
 }
 

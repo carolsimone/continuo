@@ -25,6 +25,7 @@ type requestedPayload struct {
 	ErrorSignature  string `json:"error_signature"`
 	DBTLogURI       string `json:"dbt_log_uri"`
 	CandidateSQLURI string `json:"candidate_sql_uri"`
+	FilePath        string `json:"file_path"`
 	Repo            string `json:"repo"`
 	CommitSHA       string `json:"commit_sha"`
 }
@@ -45,6 +46,7 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 		ErrorSignature:  p.ErrorSignature,
 		DBTLogURI:       p.DBTLogURI,
 		CandidateSQLURI: p.CandidateSQLURI,
+		FilePath:        p.FilePath,
 		Repo:            p.Repo,
 		CommitSHA:       p.CommitSHA,
 		MessageID:       msg.ID,

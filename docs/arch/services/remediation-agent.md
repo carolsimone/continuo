@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`remediation-agent` acts on healable validation failures surfaced by the `remediation` classifier. It consumes `remediation.requested:v1` — one trigger per failing dbt node — and produces a fix proposal using a two-step LLM flow. For each successful proposal it enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
+`remediation-agent` acts on healable failures surfaced by the `remediation` classifier, across all three failure sources: `validation`, `compile`, and `seed_build`. It consumes `remediation.requested:v1` — one trigger per failing dbt node — and produces a fix proposal. Validation failures carry a pre-compiled candidate SQL and use a two-step LLM flow (candidate diagnosis, then real-source fix). Compile and seed_build failures carry no candidate SQL; the agent reads the offending source file directly and fixes it in a single LLM step from the dbt error and the real source. For each successful proposal it enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
 **Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (`GetNodeAncestry`, port 50052), and the GitHub Contents API (read-only).
 
@@ -73,16 +73,41 @@ The `{path}` is formed by joining the service's `repo_path` from `service_repos.
 
 ```
 1. Decode trigger: extract source, release_id, node_id, error_signature,
-   category, dbt_log_uri, candidate_sql_uri, repo, commit_sha.
+   category, dbt_log_uri, candidate_sql_uri, file_path, repo, commit_sha.
 
 2. Count prior attempts for (source, node_id, error_signature).
    - attempts >= MaxAttempts (default 3): insert proposal(status=escalated),
      emit nothing, done.
 
-3. candidate_sql_uri is empty (e.g. seed nodes): insert proposal(status=skipped),
-   emit nothing, done.
+3. source is compile or seed_build: run the source-only branch (below) and done.
+   These sources carry no candidate SQL.
 
-4. Fetch candidate SQL from S3 at candidate_sql_uri (required; error is transient).
+4. source is validation and candidate_sql_uri is empty: insert
+   proposal(status=skipped), emit nothing, done.
+
+── Source-only branch (compile / seed_build) ──────────────────────────────────
+
+S1. Fetch dbt log from S3 at dbt_log_uri (not-found → ""; transient error → retry),
+    sanitize via LogSanitizer.
+S2. Resolve the project-relative source path and owning service:
+    - compile: file_path is on the trigger; service_name = node_id (the synthetic
+      service id). Ancestry is bypassed.
+    - seed_build: file_path empty → resolve via orchestrator GetNodeAncestry(node_id)
+      (node_id is a real dbt node). On ancestry error: proposal(status=skipped), done.
+S3. Look up service_name in the service→repo mapping (SERVICE_REPO_MAP_PATH). Missing
+    file path / service name / mapping: proposal(status=skipped), done.
+S4. Read the real source from GitHub Contents API at <repo_path>/<file_path>. Read
+    error: proposal(status=skipped), done.
+S5. Single forced propose_fix LLM tool call from {sanitized dbt log, real source}
+    (no candidate SQL is fabricated). LLM transient error → retry.
+S6. proposed_sql empty or unchanged from the source: proposal(status=failed), done.
+S7. Write source artifacts attempt-<n>.source.sql / .source.diff; insert
+    proposal(status=proposed, source_resolved=true) with repo/commit_sha/file_path,
+    emit remediation.proposed:v1. Persist as in the shared transaction below.
+
+── Validation two-step ─────────────────────────────────────────────────────────
+
+4v. Fetch candidate SQL from S3 at candidate_sql_uri (required; error is transient).
 5. Fetch dbt log from S3 at dbt_log_uri.
    - If not found: rawLog = "" (log unavailable path).
    - If transient S3 error: return error (message stays in PEL, retried).

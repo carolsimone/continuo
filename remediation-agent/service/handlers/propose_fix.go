@@ -34,8 +34,12 @@ type Trigger struct {
 	Category        string
 	DBTLogURI       string
 	CandidateSQLURI string
-	Repo            string
-	CommitSHA       string
+	// FilePath is the offending dbt-project-relative source path carried by
+	// compile failures (e.g. "models/daily_transactions.sql"). Empty for
+	// validation and seed_build, whose source path is resolved via Ancestry.
+	FilePath  string
+	Repo      string
+	CommitSHA string
 	// MessageID is the Redis Stream message ID of the inbound
 	// remediation.requested:v1 message. It is the primary dedup key.
 	MessageID string
@@ -89,7 +93,14 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		}, false, false)
 	}
 
-	// No candidate SQL (e.g. seed nodes): record skipped, emit nothing.
+	// Compile and seed_build failures carry no candidate SQL. They are fixed by
+	// reading the real model source from version control and applying the dbt
+	// error directly, in a single LLM step.
+	if t.Source == sourceCompile || t.Source == sourceSeed {
+		return proposeFromSource(ctx, deps, t, attempt)
+	}
+
+	// Validation with no candidate SQL: record skipped, emit nothing.
 	if t.CandidateSQLURI == "" {
 		return record(ctx, deps, t, attempt, proposal.Proposal{
 			Status: proposal.StatusSkipped,
@@ -196,6 +207,98 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		p.FilePath = resolvedFilePath
 	}
 	return record(ctx, deps, t, attempt, p, true, sourceResolved, res.SuspectedRootCauseNode)
+}
+
+// Source discriminators carried on remediation.requested:v1. They mirror the
+// wire values produced by the remediation classifier; the agent consumes them
+// as opaque strings (the producer owns the domain enum).
+const (
+	sourceCompile = "compile"
+	sourceSeed    = "seed_build"
+)
+
+// proposeFromSource handles compile and seed_build failures, which carry no
+// candidate SQL. It resolves the offending source file (compile carries the
+// path on the trigger with the service name as node id; seed resolves a real
+// dbt node via Ancestry), reads it from version control, asks the LLM to fix it
+// given the dbt error, and records a source-resolved proposal. When the source
+// cannot be located or read the attempt is recorded as skipped (no emit); an
+// empty or unchanged LLM result is recorded as failed.
+func proposeFromSource(ctx context.Context, deps Deps, t Trigger, attempt int) error {
+	rawLog, err := deps.Evidence.Fetch(ctx, t.DBTLogURI)
+	if err != nil && err != ports.ErrNotFound {
+		return fmt.Errorf("fetch dbt log: %w", err)
+	}
+	dbtLog := deps.Sanitizer.Sanitize(rawLog)
+
+	// Resolve the project-relative source path and owning service. Compile
+	// failures carry the offending path directly and use the service name as the
+	// node id; seed failures resolve a real dbt node via Ancestry.
+	filePath, serviceName := t.FilePath, t.NodeID
+	if filePath == "" {
+		var aerr error
+		filePath, serviceName, _, aerr = deps.Ancestry.NodeContext(ctx, t.NodeID)
+		if aerr != nil {
+			deps.Logger.Warn("source fix: ancestry unavailable; skipping",
+				"node", t.NodeID, "error", aerr)
+			return record(ctx, deps, t, attempt, proposal.Proposal{Status: proposal.StatusSkipped}, false, false)
+		}
+	}
+	if filePath == "" || serviceName == "" {
+		deps.Logger.Warn("source fix: file path or service unavailable; skipping",
+			"node", t.NodeID, "file_path", filePath, "service_name", serviceName)
+		return record(ctx, deps, t, attempt, proposal.Proposal{Status: proposal.StatusSkipped}, false, false)
+	}
+	repoPrefix, ok := deps.ServiceRepoPaths[serviceName]
+	if !ok {
+		deps.Logger.Warn("source fix: no repo path mapping for service; skipping",
+			"node", t.NodeID, "service_name", serviceName)
+		return record(ctx, deps, t, attempt, proposal.Proposal{Status: proposal.StatusSkipped}, false, false)
+	}
+	fullPath := path.Join(repoPrefix, filePath)
+	original, err := deps.Source.ReadFile(ctx, t.Repo, t.CommitSHA, fullPath)
+	if err != nil {
+		deps.Logger.Warn("source fix: github read failed; skipping",
+			"node", t.NodeID, "path", fullPath, "error", err)
+		return record(ctx, deps, t, attempt, proposal.Proposal{Status: proposal.StatusSkipped}, false, false)
+	}
+
+	res, err := deps.LLM.Propose(ctx, prompt.AssembleSourceFromError(deps.Sanitizer.Sanitize(original), dbtLog, t.NodeID))
+	if err != nil {
+		// Transient LLM error: return so the message is redelivered.
+		return fmt.Errorf("llm propose (source): %w", err)
+	}
+	if res.ProposedSQL == "" || res.ProposedSQL == original {
+		return record(ctx, deps, t, attempt, proposal.Proposal{Status: proposal.StatusFailed}, false, false)
+	}
+
+	diff := proposal.ComputeUnifiedDiff(original, res.ProposedSQL, t.NodeID)
+	sqlURI, err := deps.Artifacts.Write(ctx,
+		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", t.ReleaseID, t.NodeID, attempt),
+		res.ProposedSQL, "text/plain")
+	if err != nil {
+		return fmt.Errorf("write source sql: %w", err)
+	}
+	diffURI, err := deps.Artifacts.Write(ctx,
+		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.diff", t.ReleaseID, t.NodeID, attempt),
+		diff, "text/plain")
+	if err != nil {
+		return fmt.Errorf("write source diff: %w", err)
+	}
+
+	p := proposal.Proposal{
+		Status:         proposal.StatusProposed,
+		Confidence:     normalizeConfidence(res.Confidence),
+		Rationale:      res.Rationale,
+		ProposedSQLURI: sqlURI,
+		DiffURI:        diffURI,
+		SourceResolved: true,
+		Model:          res.Model,
+		Repo:           t.Repo,
+		CommitSHA:      t.CommitSHA,
+		FilePath:       fullPath,
+	}
+	return record(ctx, deps, t, attempt, p, true, true, res.SuspectedRootCauseNode)
 }
 
 // resolvedSource holds the original model source and the Step-2 corrected
