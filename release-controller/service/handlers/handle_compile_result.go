@@ -7,6 +7,7 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/google/uuid"
 )
 
@@ -64,18 +65,59 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 
 	now := d.Clock.Now()
 
+	// Build per-node results and derive the failing set for both branches.
+	results := make([]release.NodeValidationResult, len(in.PerNode))
+	var failing []string
+	for i, n := range in.PerNode {
+		results[i] = release.NodeValidationResult{
+			NodeID:        n.NodeID,
+			Status:        n.Status,
+			DBTLogURI:     n.DBTLogURI,
+			RunResultsURI: n.RunResultsURI,
+		}
+		if n.Status != "ok" {
+			failing = append(failing, n.NodeID)
+		}
+	}
+
 	if in.Status != "ok" {
-		if err := r.TransitionToRejected("compile_failed", nil, now); err != nil {
+		r.RecordStageResults("compile", results)
+		if err := r.TransitionToRejected("compile_failed", failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
 		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 			return fmt.Errorf("save release: %w", err)
 		}
-		payload, err := json.Marshal(map[string]string{
+
+		// perNodeEntry is the outbox wire shape for a single compile-leg result.
+		// Intentionally omits duration_ms (irrelevant for compile) and file_path
+		// (populated by the remediation service when it reads S3 logs).
+		type perNodeEntry struct {
+			NodeID        string `json:"node_id"`
+			Status        string `json:"status"`
+			DBTLogURI     string `json:"dbt_log_uri,omitempty"`
+			RunResultsURI string `json:"run_results_uri,omitempty"`
+		}
+		perNode := make([]perNodeEntry, len(in.PerNode))
+		for i, n := range in.PerNode {
+			perNode[i] = perNodeEntry{
+				NodeID:        n.NodeID,
+				Status:        n.Status,
+				DBTLogURI:     n.DBTLogURI,
+				RunResultsURI: n.RunResultsURI,
+			}
+		}
+
+		payload, err := json.Marshal(map[string]any{
 			"release_id":   in.ReleaseID,
+			"stage":        "compile",
 			"reason":       "compile_failed",
 			"error_class":  in.ErrorClass,
 			"error_detail": in.ErrorDetail,
+			"failing_nodes": failing,
+			"per_node":     perNode,
+			"repo":         r.Repo(),
+			"commit_sha":   r.CommitSHA(),
 		})
 		if err != nil {
 			return fmt.Errorf("marshal payload: %w", err)
@@ -96,11 +138,14 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "compile_failed", nil)
+		d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "compile_failed", failing)
 		return nil
 	}
 
 	// ok path: Compiling → Parsing, re-read live service_prod, emit release.requested.
+	// Record compile results on the ok path too so the UI can surface
+	// "Compilation: success" for each service unit.
+	r.RecordStageResults("compile", results)
 	if err := r.TransitionFromCompiling(now); err != nil {
 		return fmt.Errorf("transition from compiling: %w", err)
 	}

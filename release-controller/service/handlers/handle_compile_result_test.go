@@ -97,3 +97,63 @@ func TestHandleCompileResult_UnknownReleaseDropped(t *testing.T) {
 	}))
 	assert.Equal(t, 0, outboxCount(t, fakes))
 }
+
+// TestHandleCompileResult_Failed_EmitsUniformRejected verifies that a compile
+// failure emits a release.rejected:v1 outbox payload with the canonical uniform
+// shape: stage="compile", reason="compile_failed", repo, commit_sha,
+// failing_nodes, and per_node with dbt_log_uri. It also verifies that the
+// release aggregate records a compile-stage PerNodeResult with Stage=="compile".
+func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
+	d, fakes := newTestDeps(t)
+	releaseID := "rel-1"
+	putCompilingRelease(t, fakes, d, releaseID)
+
+	in := handlers.HandleCompileResultInput{
+		ReleaseID:   releaseID,
+		Status:      "failed",
+		PerNode:     []handlers.NodeResult{{NodeID: "core", Status: "failed", DBTLogURI: "s3://c.log"}},
+		ErrorClass:  "compilation_error",
+		ErrorDetail: "Compilation Error in model daily_transactions",
+	}
+	err := handlers.HandleCompileResult(ctx(t), d, in)
+	require.NoError(t, err)
+
+	r := mustGetRelease(t, fakes, releaseID)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "compile_failed", r.RejectReason())
+
+	// The aggregate must record a per-node compile-stage result.
+	require.Len(t, r.PerNodeResults(), 1)
+	assert.Equal(t, "compile", r.PerNodeResults()[0].Stage)
+
+	// The outbox payload must match the canonical uniform rejected shape.
+	e := lastOutbox(t, fakes)
+	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+
+	var topLevel map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(e.Payload, &topLevel))
+
+	var stage string
+	require.NoError(t, json.Unmarshal(topLevel["stage"], &stage))
+	assert.Equal(t, "compile", stage)
+
+	var repo string
+	require.NoError(t, json.Unmarshal(topLevel["repo"], &repo))
+	assert.Equal(t, "acme/demo", repo)
+
+	var commitSHA string
+	require.NoError(t, json.Unmarshal(topLevel["commit_sha"], &commitSHA))
+	assert.Equal(t, "cafebabe", commitSHA)
+
+	var failingNodes []string
+	require.NoError(t, json.Unmarshal(topLevel["failing_nodes"], &failingNodes))
+	assert.Equal(t, []string{"core"}, failingNodes)
+
+	var perNode []struct {
+		NodeID    string `json:"node_id"`
+		DBTLogURI string `json:"dbt_log_uri"`
+	}
+	require.NoError(t, json.Unmarshal(topLevel["per_node"], &perNode))
+	require.Len(t, perNode, 1)
+	assert.Equal(t, "s3://c.log", perNode[0].DBTLogURI)
+}
