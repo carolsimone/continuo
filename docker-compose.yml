@@ -206,12 +206,13 @@ services:
       - S3_SIDECAR_IMAGE=s3-sidecar:latest
       # dbt PostgreSQL target (forwarded to K8s job pods)
       - DBT_POSTGRES_DB=continuo_dbt
-      # S3 config so the s3-sidecar fetch init container can download the candidate
-      # SQL from CANDIDATE_SQL_URI (points at LocalStack). NOTE: like POSTGRES_HOST above,
+      # S3 credentials forwarded into both the validation pod (which fetches
+      # CANDIDATE_SQL_URI itself) and the compile pod's s3-sidecar (manifest upload).
+      # Points at LocalStack on the compose network. NOTE: like POSTGRES_HOST above,
       # this is a compose-network DNS name — it serves this process's own use and
-      # is NOT resolvable from in-kind validation pods. The e2e dispatches via the
-      # kind deployment (tests/e2e/k8s/executor-controller-deployment.yaml), which
-      # supplies the docker-bridge-IP equivalents that in-kind pods can reach.
+      # is NOT resolvable from in-kind pods. The e2e dispatches via the kind deployment
+      # (tests/e2e/k8s/executor-controller-deployment.yaml), which supplies the
+      # docker-bridge-IP equivalents that in-kind pods can reach.
       - S3_ENDPOINT_URL=http://localstack:4566
       - S3_BUCKET=continuo
       - AWS_ACCESS_KEY_ID=test

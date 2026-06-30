@@ -12,9 +12,9 @@ import (
 //
 // Every node type — model, snapshot, and seed — runs validation_runner.py. The
 // runner dispatches on the VALIDATION_OP env var (build_from_sql | clone_from_prod):
-// build_from_sql reads the node's compiled SQL from the local file at
-// CANDIDATE_SQL_PATH (placed there by the fetch init container) and runs
-// CREATE TABLE <candidate>.<table> AS (<sql>) WITH NO DATA; clone_from_prod
+// build_from_sql fetches the node's compiled SQL from S3 (CANDIDATE_SQL_URI)
+// and runs CREATE TABLE <candidate>.<table> AS (<sql>) WITH NO DATA;
+// clone_from_prod
 // clones an existing prod table's shape empty. Seeds are no longer validated with
 // `dbt seed --empty`; they are pre-built / cloned (see release-controller), so they
 // need no distinct command here.

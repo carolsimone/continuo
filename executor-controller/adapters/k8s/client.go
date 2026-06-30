@@ -347,8 +347,8 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	}
 }
 
-// s3SidecarImage resolves the shared non-dbt S3 I/O sidecar image used by both the
-// compile leg (manifest upload) and the validation leg (candidate-SQL fetch). The
+// s3SidecarImage resolves the non-dbt S3 I/O sidecar image used by the
+// compile leg (manifest upload). The
 // S3_SIDECAR_IMAGE env overrides verbatim; otherwise default to s3-sidecar:latest,
 // DOCKERHUB_USERNAME-prefixed when set.
 func s3SidecarImage() string {
@@ -364,7 +364,7 @@ func s3SidecarImage() string {
 
 // s3CredEnvVars returns the four S3 credential environment variables forwarded
 // from the executor-controller environment. S3_BUCKET is intentionally omitted —
-// both the compile uploader and the candidate fetcher parse the bucket from their
+// both the compile uploader and the validation runner parse the bucket from their
 // respective URI parameters and never read S3_BUCKET.
 func s3CredEnvVars() []corev1.EnvVar {
 	return []corev1.EnvVar{
@@ -376,8 +376,7 @@ func s3CredEnvVars() []corev1.EnvVar {
 }
 
 // sharedEmptyDirVolume returns the "shared" emptyDir volume used as the hand-off
-// point between the init container and the main container in compile and
-// build_from_sql validation pods.
+// point between the init container and the main container in compile pods.
 func sharedEmptyDirVolume() corev1.Volume {
 	return corev1.Volume{
 		Name:         "shared",
@@ -393,7 +392,7 @@ func sharedVolumeMount() corev1.VolumeMount {
 
 // validationImagePullPolicy resolves the pull policy for validation Job pods.
 //
-// Validation runs a continuo-owned image pinned to a mutable tag (dbt-base:latest
+// Validation runs a continuo-owned image pinned to a mutable tag (validation-runner:latest
 // by default), which is re-pushed when the validator changes. PullAlways ensures
 // the node fetches the freshly pushed image rather than a stale cached layer.
 //

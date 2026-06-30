@@ -253,8 +253,8 @@ func (c *K8sClient) GetPodLogs(ctx context.Context, namespace, jobName string, t
 
 	// When the main container produced no output (it never started because an init
 	// container failed), fall back to that init container's logs. This surfaces error
-	// messages such as "candidate_fetcher: S3 download ... failed" to the classifier.
-	// Normal runs and compile jobs are unaffected because fullLog is non-empty for them.
+	// messages such as "compile: S3 upload ... failed" to the classifier.
+	// Normal runs are unaffected because fullLog is non-empty for them.
 	if fullLog == "" {
 		if initName := pickInitContainerLog(pod); initName != "" {
 			if initFull, ferr := c.streamPodLogs(ctx, namespace, podName, nil, initName); ferr == nil && initFull != "" {
