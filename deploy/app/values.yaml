@@ -160,7 +160,7 @@ services:
         secretKey: POSTGRES_PASSWORD
       - name: REDIS_PASSWORD
         secretKey: REDIS_PASSWORD
-      # Forwarded into each validation Job so validation_runner.py can fetch the
+      # Forwarded into each validation Job so the s3-sidecar can fetch the
       # candidate SQL from S3 (CANDIDATE_SQL_URI). Endpoint/bucket/region come
       # from the shared configMap; the access keys come from the secret.
       - name: AWS_ACCESS_KEY_ID

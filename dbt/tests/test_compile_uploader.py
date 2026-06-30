@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-import compile_uploader  # pythonpath="manifest-uploader" in pyproject
+import compile_uploader  # pythonpath="s3-sidecar" in pyproject
 
 
 def test_uploads_file_to_parsed_key(tmp_path, monkeypatch):
