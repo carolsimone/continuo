@@ -18,6 +18,8 @@ import (
 // release-controller. Only the fields the classifier needs are decoded.
 type rejectedPayload struct {
 	ReleaseID string `json:"release_id"`
+	Stage     string `json:"stage"`  // "compile" | "seed_build" | "validation"; absent in older payloads
+	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed"
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
 	PerNode   []struct {
@@ -29,20 +31,59 @@ type rejectedPayload struct {
 	} `json:"per_node"`
 }
 
+// stageToSource maps the pipeline stage string from the payload to the
+// domain Source constant. Unknown values default to SourceValidation so that
+// the classifier degrades gracefully rather than dropping a failure.
+func stageToSource(stage string) failure.Source {
+	switch stage {
+	case "compile":
+		return failure.SourceCompile
+	case "seed_build":
+		return failure.SourceSeed
+	default:
+		return failure.SourceValidation
+	}
+}
+
+// reasonToStage maps a legacy reason field to the equivalent stage string so
+// that older payloads without an explicit stage field are handled identically
+// to newer ones.
+func reasonToStage(reason string) string {
+	switch reason {
+	case "compile_failed":
+		return "compile"
+	case "seed_build_failed":
+		return "seed_build"
+	default:
+		return "validation"
+	}
+}
+
 // evidenceFromRejected translates a release.rejected:v1 payload into one
 // FailureEvidence per failed node. Nodes with status != "failed" are skipped.
+// The Source field is derived from the payload's stage field; when stage is
+// absent (older payloads) the reason field is used as a fallback.
+// FilePath is left empty here — it is populated by the ClassifyFailure handler
+// once the dbt log has been fetched (task 5.3).
 func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	var p rejectedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal release.rejected payload: %w", err)
 	}
+
+	stage := p.Stage
+	if stage == "" {
+		stage = reasonToStage(p.Reason)
+	}
+	src := stageToSource(stage)
+
 	out := make([]failure.FailureEvidence, 0, len(p.PerNode))
 	for _, n := range p.PerNode {
 		if n.Status != "failed" {
 			continue
 		}
 		out = append(out, failure.FailureEvidence{
-			Source:          failure.SourceValidation,
+			Source:          src,
 			ReleaseID:       p.ReleaseID,
 			NodeID:          n.NodeID,
 			DBTLogURI:       n.DBTLogURI,
