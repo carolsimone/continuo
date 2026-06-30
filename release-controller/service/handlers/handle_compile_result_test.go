@@ -137,6 +137,10 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 	require.NoError(t, json.Unmarshal(topLevel["stage"], &stage))
 	assert.Equal(t, "compile", stage)
 
+	var reason string
+	require.NoError(t, json.Unmarshal(topLevel["reason"], &reason))
+	assert.Equal(t, "compile_failed", reason)
+
 	var repo string
 	require.NoError(t, json.Unmarshal(topLevel["repo"], &repo))
 	assert.Equal(t, "acme/demo", repo)
@@ -151,9 +155,11 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 
 	var perNode []struct {
 		NodeID    string `json:"node_id"`
+		Status    string `json:"status"`
 		DBTLogURI string `json:"dbt_log_uri"`
 	}
 	require.NoError(t, json.Unmarshal(topLevel["per_node"], &perNode))
 	require.Len(t, perNode, 1)
+	assert.Equal(t, "failed", perNode[0].Status)
 	assert.Equal(t, "s3://c.log", perNode[0].DBTLogURI)
 }
