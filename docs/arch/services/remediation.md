@@ -75,7 +75,7 @@ After stripping, it folds the category with the normalized error text and return
    for each entry in per_node where status="failed":
    build FailureEvidence {source (derived from stage), release_id, node_id,
    dbt_log_uri, run_results_uri, candidate_sql_uri, repo, commit_sha}.
-   When stage is absent (legacy payloads), the reason field is used as a fallback.
+   When `stage` is absent, the `reason` field is used as the source fallback.
 2. Fetch dbt log text from S3 at dbt_log_uri.
    - If not found: logText = "" (→ unknown:log_unavailable).
    - If transient S3 error: return error (message stays in PEL, retried).
@@ -159,7 +159,7 @@ All solution state — proposals, what-worked history, agent conversations — b
 | Signature normalization | `remediation/domain/failure/signature.go` |
 | Trigger payload (incl. FilePath field) | `remediation/domain/event/remediation_requested.go` |
 | Application handler (stage discrimination, FilePath derivation) | `remediation/service/handlers/classify_failure.go` |
-| Inbound adapter (stage→source mapping, legacy reason fallback) | `remediation/adapters/redis/release_rejected_binding.go` |
+| Inbound adapter (stage→source mapping, reason fallback) | `remediation/adapters/redis/release_rejected_binding.go` |
 | Decision repository port | `remediation/domain/repository/decision_repository.go` |
 | Postgres adapter | `remediation/adapters/postgres/decision_repository.go` |
 | S3 log reader | `remediation/adapters/s3/log_reader.go` |

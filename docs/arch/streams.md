@@ -77,7 +77,7 @@ schemas live in the service dossiers.
 
 **`release.rejected:v1`** — emitted by release-controller for every terminal
 rejection regardless of which leg failed. The payload always includes:
-`release_id`, `stage` (`compile` | `seed_build` | `validation`), `reason`,
+`release_id`, `stage` (`compile` | `seed_build` | `validation`; absent for parse-phase rejections), `reason`,
 `repo`, `commit_sha`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
 `status`, `dbt_log_uri`, optional `run_results_uri`). Validation entries
 additionally carry `candidate_sql_uri`; seed_build entries carry
