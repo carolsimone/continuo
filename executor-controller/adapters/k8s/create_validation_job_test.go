@@ -216,6 +216,8 @@ func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {
 	assert.Equal(t, "clone_from_prod", envByName(spec, "VALIDATION_OP"))
 	assert.Equal(t, "analytics", envByName(spec, "PROD_SCHEMA"))
 	assert.Empty(t, envByName(spec, "AWS_SECRET_ACCESS_KEY"), "clone_from_prod must not carry S3 creds")
+	assert.Empty(t, envByName(spec, "CANDIDATE_SQL_PATH"),
+		"clone_from_prod has no fetch sidecar/emptyDir, so it must not carry CANDIDATE_SQL_PATH")
 }
 
 func repeatStr(s string, n int) string {

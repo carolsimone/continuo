@@ -294,8 +294,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 
 	const candidateSQLPath = "/shared/candidate.sql"
 
-	// Env for the validation main container (dbt-base). No S3 — the runner reads
-	// the candidate SQL from the local file the fetch init container produced.
+	// Env common to both validation ops. CANDIDATE_SQL_PATH is added only on the
+	// build_from_sql branch (where the fetch sidecar populates that file);
+	// clone_from_prod has no shared emptyDir and never reads it.
 	mainEnv := []corev1.EnvVar{
 		{Name: "RELEASE_ID", Value: p.ReleaseID},
 		{Name: "NODE_ID", Value: p.NodeID},
@@ -304,7 +305,6 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
-		{Name: "CANDIDATE_SQL_PATH", Value: candidateSQLPath},
 		// dbt profile connection — forwarded from executor-controller environment.
 		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
 		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
@@ -332,8 +332,14 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	}
 
 	// build_from_sql: adapter-sidecar. init fetch -> shared emptyDir -> main reads.
+	// Only changed models/snapshots reach this branch and they always carry a
+	// non-empty CandidateSQLURI: new/changed seeds are built by the seed-build leg
+	// and excluded from the validation set, and unchanged upstreams (including
+	// seeds, which have no candidate SQL) take the clone_from_prod branch above.
 	sharedMount := corev1.VolumeMount{Name: "shared", MountPath: "/shared"}
 	mainContainer.VolumeMounts = []corev1.VolumeMount{sharedMount}
+	// The main container reads the SQL the fetch sidecar wrote to this path.
+	mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_PATH", Value: candidateSQLPath})
 
 	fetchEnv := []corev1.EnvVar{
 		// CANDIDATE_SQL_URI is the S3 address of the node's compiled SQL (schema
