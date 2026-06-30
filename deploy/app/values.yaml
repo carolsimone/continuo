@@ -180,9 +180,9 @@ services:
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       MAX_CONCURRENT_JOBS: "50"
-      # Re-pull validation images every run: a service image is re-baked FROM
-      # dbt-base and re-pushed under the same mutable service tag whenever the
-      # validation runner changes, and the registry holds the fresh image.
+      # Re-pull validation images every run: the continuo-owned validation-runner
+      # image is re-pushed under its mutable :latest tag whenever the validator
+      # changes, and the registry holds the fresh image.
       VALIDATION_IMAGE_PULL_POLICY: Always
       DBT_POSTGRES_DB: continuo_dbt
       HTTP_PORT: "8084"

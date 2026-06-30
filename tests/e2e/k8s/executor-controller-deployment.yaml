@@ -79,6 +79,8 @@ spec:
             # with ErrImagePull here; production omits this and defaults to Always.
             - name: VALIDATION_IMAGE_PULL_POLICY
               value: "IfNotPresent"
+            - name: VALIDATION_IMAGE
+              value: "validation-runner:latest"
             - name: S3_SIDECAR_IMAGE
               value: "s3-sidecar:latest"
             - name: MAX_CONCURRENT_JOBS

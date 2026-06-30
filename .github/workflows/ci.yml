@@ -157,6 +157,11 @@ jobs:
       - name: Test manifest-controller
         run: docker exec manifest-controller uv run pytest -v
 
+      - name: Test validation-runner
+        run: |
+          cd validation-runner
+          uv run --with pytest --with psycopg2-binary --with boto3 pytest -v
+
       - name: Test dbt compile + S3 upload (integration)
         run: |
           docker exec \
