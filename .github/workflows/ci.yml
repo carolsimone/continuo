@@ -158,9 +158,12 @@ jobs:
         run: docker exec manifest-controller uv run pytest -v
 
       - name: Test validation-runner
+        # Pure-python unit tests (psycopg2/boto3/DB all mocked). Run inside a throwaway
+        # python container so the step needs only Docker — no uv/python on the runner.
+        # pytest reads pythonpath="." from validation-runner/pyproject.toml.
         run: |
-          cd validation-runner
-          uv run --with pytest --with psycopg2-binary --with boto3 pytest -v
+          docker run --rm -v "$PWD/validation-runner:/app" -w /app python:3.12-slim \
+            sh -c "pip install -q pytest psycopg2-binary boto3 && pytest -v"
 
       - name: Test dbt compile + S3 upload (integration)
         run: |
