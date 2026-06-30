@@ -1,10 +1,11 @@
 name: Publish dbt service images (manual ad-hoc only)
 
-# Auto-triggering moved into deploy.yml's build-publish-dbt job, which
-# pushes both :${{ github.sha }} AND :latest tags as part of every deploy.
-# This workflow is kept as a manual safety valve for ad-hoc rebuilds
-# (e.g. testing a hotfix branch's dbt changes without doing a full Go
-# rollout) and only produces :latest tags.
+# The continuo-owned s3-sidecar image is published by deploy.yml's build-publish
+# matrix (as continuo-s3-sidecar:<sha> + :latest) on every deploy, so it is NOT
+# built here. This workflow rebuilds only the example/e2e dbt images — dbt-base
+# and the service-N projects — which are not part of continuo's CD. It is a
+# manual safety valve for ad-hoc rebuilds (e.g. testing dbt changes without a
+# full rollout) and only produces :latest tags.
 on:
   workflow_dispatch:
 
@@ -39,15 +40,6 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/dbt-base:latest
           cache-from: type=gha,scope=dbt-base
           cache-to: type=gha,mode=max,scope=dbt-base
-
-      - name: Build and push s3-sidecar
-        uses: docker/build-push-action@v6
-        with:
-          context: dbt/s3-sidecar
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/s3-sidecar:latest
-          cache-from: type=gha,scope=s3-sidecar
-          cache-to: type=gha,mode=max,scope=s3-sidecar
 
       # One step per service. Image name = DOCKERHUB_USERNAME/service-N:latest,
       # matching the dbt project name and params.ServiceName in executor-controller.

@@ -52,6 +52,8 @@ spec:
               value: {{ $.Values.global.dockerHubUser | quote }}
               {{- else if and (eq $key "VALIDATION_IMAGE") (eq $val "__VALIDATION_IMAGE__") }}
               value: {{ printf "%s/continuo-validation-runner:%s" $.Values.global.dockerHubUser $.Values.global.imageTag | quote }}
+              {{- else if and (eq $key "S3_SIDECAR_IMAGE") (eq $val "__S3_SIDECAR_IMAGE__") }}
+              value: {{ printf "%s/continuo-s3-sidecar:%s" $.Values.global.dockerHubUser $.Values.global.imageTag | quote }}
               {{- else if and (eq $key "AUTH_OIDC_ISSUER_URL") (eq $val "__AUTH_ISSUER_URL__") }}
               value: {{ $.Values.global.auth.issuerUrl | quote }}
               {{- else if and (eq $key "AUTH_OIDC_CLIENT_ID") (eq $val "__AUTH_CLIENT_ID__") }}

@@ -48,6 +48,7 @@ jobs:
               - 'remediation/**'
               - 'remediation-agent/**'
               - 'validation-runner/**'
+              - 'dbt/s3-sidecar/**'
             state:
               - 'Dockerfile.base'
               - 'go.work'
@@ -106,6 +107,8 @@ jobs:
               - 'db/**'
             validation_runner:
               - 'validation-runner/**'
+            s3_sidecar:
+              - 'dbt/s3-sidecar/**'
 
       - name: Build publish matrix
         id: matrix
@@ -122,6 +125,7 @@ jobs:
           REMEDIATION_AGENT_CHANGED: ${{ steps.filter.outputs.remediation_agent }}
           MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations }}
           VALIDATION_RUNNER_CHANGED: ${{ steps.filter.outputs.validation_runner }}
+          S3_SIDECAR_CHANGED: ${{ steps.filter.outputs.s3_sidecar }}
         run: |
           matrix="$(
             jq -cn \
@@ -137,6 +141,7 @@ jobs:
               --arg remediation_agent "$REMEDIATION_AGENT_CHANGED" \
               --arg migrations "$MIGRATIONS_CHANGED" \
               --arg validation_runner "$VALIDATION_RUNNER_CHANGED" \
+              --arg s3_sidecar "$S3_SIDECAR_CHANGED" \
               '{
                 include: [
                   {service: "state", changed: $state, dockerfile: "state/Dockerfile.prod", context: "."},
@@ -150,7 +155,8 @@ jobs:
                   {service: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
                   {service: "remediation-agent", changed: $remediation_agent, dockerfile: "remediation-agent/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
-                  {service: "validation-runner", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile", context: "validation-runner"}
+                  {service: "validation-runner", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile", context: "validation-runner"},
+                  {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "dbt/s3-sidecar/Dockerfile", context: "dbt/s3-sidecar"}
                 ]
               }'
           )"
