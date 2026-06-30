@@ -37,6 +37,7 @@ type RemediationRequested struct {
 	ErrorSignature  string `json:"error_signature"`
 	DBTLogURI       string `json:"dbt_log_uri"`
 	CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
+	FilePath        string `json:"file_path,omitempty"`
 	Repo            string `json:"repo"`
 	CommitSHA       string `json:"commit_sha"`
 	ClassifiedAt    string `json:"classified_at"`

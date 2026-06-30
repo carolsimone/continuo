@@ -180,3 +180,39 @@ func TestClassifyFailure_IdempotentSkipsTrigger(t *testing.T) {
 		t.Fatalf("redelivery must not re-emit, got %d", len(u.ob.entries))
 	}
 }
+
+func TestClassifyFailure_CompileSourceThreadsFilePath(t *testing.T) {
+	// A compile-stage failure with a Jinja syntax error must be classified as
+	// logic (healable), emitted, and the file path extracted from the log must
+	// appear in the RemediationRequested trigger payload.
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	logText := "Compilation Error in model daily_transactions (models/daily_transactions.sql)\n  got '='"
+	ev := failure.FailureEvidence{
+		Source:    failure.SourceCompile,
+		ReleaseID: "r2",
+		NodeID:    "svc.daily_transactions",
+		Repo:      "org/repo",
+		CommitSHA: "def456",
+		DBTLogURI: "s3://bucket/compile.log",
+	}
+	err := ClassifyFailure(context.Background(), depsWith(u, logText, nil), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Must be classified as healable logic.
+	if len(u.dec.saved) != 1 || u.dec.saved[0].Category != failure.CategoryLogic {
+		t.Fatalf("compile syntax error must classify as logic: %+v", u.dec.saved)
+	}
+	// Must emit a trigger (healable).
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
+	}
+	var p event.RemediationRequested
+	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	if p.FilePath != "models/daily_transactions.sql" {
+		t.Fatalf("trigger payload file_path = %q, want %q", p.FilePath, "models/daily_transactions.sql")
+	}
+	if p.NodeID != "svc.daily_transactions" {
+		t.Fatalf("trigger payload node_id = %q", p.NodeID)
+	}
+}

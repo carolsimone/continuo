@@ -61,6 +61,14 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 		}
 	}
 
+	// For compile- and seed-stage failures, extract the offending source file
+	// path from the log so the remediation agent can read the file directly.
+	// Only populate when the caller has not already set it (e.g. via evidence
+	// enrichment in the ingress adapter).
+	if (ev.Source == failure.SourceCompile || ev.Source == failure.SourceSeed) && ev.FilePath == "" {
+		ev.FilePath = failure.ExtractDbtFilePath(logText)
+	}
+
 	c := failure.ClassifyWithStructured(ev, structured, logText)
 
 	u := deps.NewUoW()
@@ -110,6 +118,7 @@ func enqueueTrigger(ctx context.Context, u uow.UnitOfWork, deps Deps, ev failure
 		ErrorSignature:  c.Signature,
 		DBTLogURI:       ev.DBTLogURI,
 		CandidateSQLURI: ev.CandidateSQLURI,
+		FilePath:        ev.FilePath,
 		Repo:            ev.Repo,
 		CommitSHA:       ev.CommitSHA,
 		ClassifiedAt:    deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),

@@ -36,9 +36,9 @@ func TestExtractDbtFilePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractDbtFilePath(tc.logText)
+			got := ExtractDbtFilePath(tc.logText)
 			if got != tc.want {
-				t.Errorf("extractDbtFilePath(%q) = %q, want %q", tc.logText, got, tc.want)
+				t.Errorf("ExtractDbtFilePath(%q) = %q, want %q", tc.logText, got, tc.want)
 			}
 		})
 	}
