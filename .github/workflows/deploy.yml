@@ -247,7 +247,14 @@ jobs:
             export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
             cd /root/continuo
-            git pull --ff-only origin main
+            # Force the checkout to exactly match origin/main. A plain
+            # `git pull --ff-only` aborts when an untracked file on the server
+            # collides with a file a new commit adds (e.g. local agent output
+            # left in /root/continuo), wedging every deploy. Fetch + hard reset
+            # + clean make the deploy immune to accumulated untracked cruft.
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
 
             kubectl create namespace continuo --dry-run=client -o yaml | kubectl apply -f -
 
