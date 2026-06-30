@@ -89,13 +89,14 @@ func TestRecordValidationResults_RetainedAcrossReject(t *testing.T) {
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(release.Topology{{UniqueID: "a"}}, []string{"a"}, time.Unix(3, 0).UTC()))
 
-	results := []release.NodeValidationResult{
+	r.RecordValidationResults([]release.NodeValidationResult{
 		{NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 12},
-	}
-	r.RecordValidationResults(results)
+	})
 	require.NoError(t, r.TransitionToRejected("validation_failed", []string{"a"}, time.Unix(4, 0).UTC()))
 
-	assert.Equal(t, results, r.PerNodeResults())
+	assert.Equal(t, []release.NodeValidationResult{
+		{Stage: "validation", NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 12},
+	}, r.PerNodeResults())
 	assert.Equal(t, release.StatusRejected, r.Status())
 }
 
@@ -105,7 +106,7 @@ func TestRecordValidationResults_RetainedAcrossPromote(t *testing.T) {
 	require.NoError(t, r.TransitionToValidating(release.Topology{{UniqueID: "a"}}, []string{"a"}, time.Unix(3, 0).UTC()))
 	r.RecordValidationResults([]release.NodeValidationResult{{NodeID: "a", Status: "ok"}})
 	require.NoError(t, r.TransitionToPromoted(time.Unix(4, 0).UTC()))
-	assert.Equal(t, []release.NodeValidationResult{{NodeID: "a", Status: "ok"}}, r.PerNodeResults())
+	assert.Equal(t, []release.NodeValidationResult{{Stage: "validation", NodeID: "a", Status: "ok"}}, r.PerNodeResults())
 }
 
 func TestRelease_NewCarriesProvenance(t *testing.T) {
@@ -230,4 +231,31 @@ func TestTransitionToRejected_FromCompiling(t *testing.T) {
 	require.NoError(t, r.TransitionToCompiling(t0))
 	require.NoError(t, r.TransitionToRejected("compile_failed", nil, t1))
 	assert.Equal(t, release.StatusRejected, r.Status())
+}
+
+func TestRecordStageResults_ReplacesPerStage(t *testing.T) {
+	r := release.New("rel-1", "core", "tag", false, "o/r", "sha", time.Now())
+	r.RecordStageResults("compile", []release.NodeValidationResult{
+		{Stage: "compile", NodeID: "core", Status: "failed", DBTLogURI: "s3://c.log"},
+	})
+	r.RecordStageResults("validation", []release.NodeValidationResult{
+		{Stage: "validation", NodeID: "analytics.x", Status: "ok"},
+	})
+	// re-deliver compile: must replace, not duplicate
+	r.RecordStageResults("compile", []release.NodeValidationResult{
+		{Stage: "compile", NodeID: "core", Status: "failed", DBTLogURI: "s3://c2.log"},
+	})
+	got := r.PerNodeResults()
+	if len(got) != 2 {
+		t.Fatalf("want 2 results (1 compile + 1 validation), got %d", len(got))
+	}
+	var compile release.NodeValidationResult
+	for _, n := range got {
+		if n.Stage == "compile" {
+			compile = n
+		}
+	}
+	if compile.DBTLogURI != "s3://c2.log" {
+		t.Fatalf("compile result not replaced: %q", compile.DBTLogURI)
+	}
 }
