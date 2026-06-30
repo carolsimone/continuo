@@ -52,36 +52,32 @@ func validationParams() ValidationJobParams {
 	}
 }
 
-func TestCreateValidationJob_BuildFromSql_FetchInitThenValidateMain(t *testing.T) {
+func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
+	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
 	c := newValidationTestClient()
 	p := validationParams() // op defaults to build_from_sql, CandidateSQLURI set
 
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
-	job := fetchJob(t, c, p.Namespace, p.JobName)
-	spec := job.Spec.Template.Spec
+	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
 
-	// init "fetch": s3-sidecar downloads the candidate SQL into the shared emptyDir.
-	require.Len(t, spec.InitContainers, 1)
-	assert.Equal(t, "fetch", spec.InitContainers[0].Name)
-	assert.Equal(t, "s3-sidecar:latest", spec.InitContainers[0].Image)
-	assert.Equal(t, []string{"python", "/candidate_fetcher.py"}, spec.InitContainers[0].Command)
-	assert.Equal(t, p.CandidateSQLURI, initEnvByName(spec, "CANDIDATE_SQL_URI"))
-	assert.Equal(t, "/shared/candidate.sql", initEnvByName(spec, "CANDIDATE_SQL_PATH"))
-
-	// main "dbt-job": dbt-base runs the runner, reads the local file — no S3.
+	// No sidecar: one container, no init container, no shared emptyDir.
+	assert.Empty(t, spec.InitContainers, "validation must carry no fetch sidecar")
+	assert.Empty(t, spec.Volumes, "validation needs no shared emptyDir")
 	require.Len(t, spec.Containers, 1)
-	assert.Equal(t, "dbt-job", spec.Containers[0].Name)
-	assert.Equal(t, "dbt-base:latest", spec.Containers[0].Image)
-	assert.Equal(t, []string{"python", "/validation_runner.py"}, spec.Containers[0].Command)
-	assert.Equal(t, "/shared/candidate.sql", envByName(spec, "CANDIDATE_SQL_PATH"))
-	assert.Empty(t, envByName(spec, "CANDIDATE_SQL_URI"), "main container must not carry the S3 URI")
-	assert.Empty(t, envByName(spec, "AWS_SECRET_ACCESS_KEY"), "main container must not carry S3 creds")
 
-	// shared emptyDir mounted in both containers.
-	require.Len(t, spec.Volumes, 1)
-	assert.Equal(t, "shared", spec.Volumes[0].Name)
-	require.NotNil(t, spec.Volumes[0].EmptyDir)
+	main := spec.Containers[0]
+	assert.Equal(t, "dbt-job", main.Name)
+	assert.Equal(t, "validation-runner:latest", main.Image)
+	assert.Equal(t, []string{"python", "/validation_runner.py"}, main.Command)
+	// The main container fetches its own SQL: it carries the URI + S3 creds.
+	assert.Equal(t, p.CandidateSQLURI, envByName(spec, "CANDIDATE_SQL_URI"))
+	assert.Equal(t, "http://minio:9000", envByName(spec, "S3_ENDPOINT_URL"))
+	assert.Equal(t, "test-secret", envByName(spec, "AWS_SECRET_ACCESS_KEY"))
+	// CANDIDATE_SQL_PATH / the shared-file indirection is gone.
+	assert.Empty(t, envByName(spec, "CANDIDATE_SQL_PATH"), "no shared file: path env must be unset")
 }
 
 func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
@@ -99,7 +95,7 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
-func TestCreateValidationJob_ForwardsS3CredsToFetchInit(t *testing.T) {
+func TestCreateValidationJob_ForwardsS3CredsToMainContainer(t *testing.T) {
 	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
 	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
@@ -111,10 +107,10 @@ func TestCreateValidationJob_ForwardsS3CredsToFetchInit(t *testing.T) {
 	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
 
 	assert.Equal(t, p.CandidateSchema, envByName(spec, "DBT_TARGET_SCHEMA"))
-	assert.Equal(t, "http://minio:9000", initEnvByName(spec, "S3_ENDPOINT_URL"))
-	assert.Equal(t, "test-key-id", initEnvByName(spec, "AWS_ACCESS_KEY_ID"))
-	assert.Equal(t, "test-secret", initEnvByName(spec, "AWS_SECRET_ACCESS_KEY"))
-	assert.Equal(t, "us-east-1", initEnvByName(spec, "AWS_DEFAULT_REGION"))
+	assert.Equal(t, "http://minio:9000", envByName(spec, "S3_ENDPOINT_URL"))
+	assert.Equal(t, "test-key-id", envByName(spec, "AWS_ACCESS_KEY_ID"))
+	assert.Equal(t, "test-secret", envByName(spec, "AWS_SECRET_ACCESS_KEY"))
+	assert.Equal(t, "us-east-1", envByName(spec, "AWS_DEFAULT_REGION"))
 }
 
 func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {
@@ -180,18 +176,6 @@ func TestCreateValidationJob_AnnotationsCarryRawIDsWhenLabelWouldSanitize(t *tes
 
 func envByName(spec corev1.PodSpec, name string) string {
 	for _, e := range spec.Containers[0].Env {
-		if e.Name == name {
-			return e.Value
-		}
-	}
-	return ""
-}
-
-func initEnvByName(spec corev1.PodSpec, name string) string {
-	if len(spec.InitContainers) == 0 {
-		return ""
-	}
-	for _, e := range spec.InitContainers[0].Env {
 		if e.Name == name {
 			return e.Value
 		}
@@ -307,7 +291,7 @@ func TestCreateValidationJob_UsesContinuoValidationImage(t *testing.T) {
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 
 	job := fetchJob(t, c, p.Namespace, p.JobName)
-	assert.Equal(t, "carolsimone/dbt-base:latest", job.Spec.Template.Spec.Containers[0].Image)
+	assert.Equal(t, "carolsimone/validation-runner:latest", job.Spec.Template.Spec.Containers[0].Image)
 }
 
 // An explicit VALIDATION_IMAGE override is used verbatim (no prefixing).
