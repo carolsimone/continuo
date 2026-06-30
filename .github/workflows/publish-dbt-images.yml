@@ -40,14 +40,14 @@ jobs:
           cache-from: type=gha,scope=dbt-base
           cache-to: type=gha,mode=max,scope=dbt-base
 
-      - name: Build and push manifest-uploader
+      - name: Build and push s3-sidecar
         uses: docker/build-push-action@v6
         with:
-          context: dbt/manifest-uploader
+          context: dbt/s3-sidecar
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/manifest-uploader:latest
-          cache-from: type=gha,scope=manifest-uploader
-          cache-to: type=gha,mode=max,scope=manifest-uploader
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/s3-sidecar:latest
+          cache-from: type=gha,scope=s3-sidecar
+          cache-to: type=gha,mode=max,scope=s3-sidecar
 
       # One step per service. Image name = DOCKERHUB_USERNAME/service-N:latest,
       # matching the dbt project name and params.ServiceName in executor-controller.

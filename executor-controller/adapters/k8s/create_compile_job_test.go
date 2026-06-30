@@ -23,7 +23,7 @@ func TestCreateCompileJob_InitCompilesMainUploads(t *testing.T) {
 	assert.Equal(t, "carolsimone/core:abc123", spec.InitContainers[0].Image)          // team image
 	assert.Contains(t, spec.InitContainers[0].Command[2], "dbt compile")
 	assert.Contains(t, spec.InitContainers[0].Command[2], "/shared/manifest.json")
-	assert.Equal(t, "carolsimone/manifest-uploader:latest", spec.Containers[0].Image)   // upload image
+	assert.Equal(t, "carolsimone/s3-sidecar:latest", spec.Containers[0].Image)   // upload image
 	assert.Equal(t, []string{"python", "/compile_uploader.py"}, spec.Containers[0].Command)
 	assert.Equal(t, "/shared/manifest.json", envByName(spec, "COMPILE_MANIFEST_PATH"))
 	assert.Equal(t, "s3://continuo/core/rel-1/manifest.json", envByName(spec, "MANIFEST_S3_URI"))
@@ -33,9 +33,9 @@ func TestCreateCompileJob_InitCompilesMainUploads(t *testing.T) {
 	require.NotNil(t, spec.Volumes[0].EmptyDir)
 }
 
-func TestCreateCompileJob_RespectsCompileUploadImageEnv(t *testing.T) {
+func TestCreateCompileJob_RespectsS3SidecarImageEnv(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
-	t.Setenv("COMPILE_UPLOAD_IMAGE", "ghcr.io/acme/manifest-uploader:v2")
+	t.Setenv("S3_SIDECAR_IMAGE", "ghcr.io/acme/s3-sidecar:v2")
 	c := newValidationTestClient()
 	p := ValidationJobParams{
 		JobName: "compile-svc-rel", ReleaseID: "rel-1", NodeID: "core",
@@ -45,7 +45,7 @@ func TestCreateCompileJob_RespectsCompileUploadImageEnv(t *testing.T) {
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	// env override used verbatim, NOT DOCKERHUB_USERNAME-prefixed
-	assert.Equal(t, "ghcr.io/acme/manifest-uploader:v2", job.Spec.Template.Spec.Containers[0].Image)
+	assert.Equal(t, "ghcr.io/acme/s3-sidecar:v2", job.Spec.Template.Spec.Containers[0].Image)
 }
 
 func TestCreateCompileJob_EmptyImageTagErrors(t *testing.T) {

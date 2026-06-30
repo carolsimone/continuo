@@ -202,11 +202,11 @@ services:
       # the cached image. PullAlways would fail with ErrImagePull locally;
       # production omits this and defaults to Always.
       - VALIDATION_IMAGE_PULL_POLICY=IfNotPresent
-      - COMPILE_UPLOAD_IMAGE=manifest-uploader:latest
+      - S3_SIDECAR_IMAGE=s3-sidecar:latest
       # dbt PostgreSQL target (forwarded to K8s job pods)
       - DBT_POSTGRES_DB=continuo_dbt
-      # S3 config so validation_runner.py can fetch the candidate SQL from
-      # CANDIDATE_SQL_URI (points at LocalStack). NOTE: like POSTGRES_HOST above,
+      # S3 config so the s3-sidecar fetch init container can download the candidate
+      # SQL from CANDIDATE_SQL_URI (points at LocalStack). NOTE: like POSTGRES_HOST above,
       # this is a compose-network DNS name — it serves this process's own use and
       # is NOT resolvable from in-kind validation pods. The e2e dispatches via the
       # kind deployment (tests/e2e/k8s/executor-controller-deployment.yaml), which

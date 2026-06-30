@@ -2,7 +2,8 @@
 """Build a single node as an empty table in the candidate schema (blue/green validation).
 
 Dispatches on ``VALIDATION_OP`` env var (default ``build_from_sql``):
-- ``build_from_sql``: fetch node's compiled SQL from S3 via ``CANDIDATE_SQL_URI``,
+- ``build_from_sql``: read the node's compiled SQL from the local file at
+  ``CANDIDATE_SQL_PATH`` (placed there by the validation Job's fetch init container),
   then materialize it ``WITH NO DATA`` (models/snapshots).
 - ``clone_from_prod``: clone an existing prod table's shape empty from ``PROD_SCHEMA``
   (unchanged upstreams, including seeds).
@@ -13,8 +14,6 @@ its last line. A non-zero exit marks the node failed.
 """
 import os
 import sys
-
-import boto3
 
 try:
     from base import validation_result  # repo/test context (pythonpath=".")
@@ -35,43 +34,19 @@ def _require(name: str) -> str:
     return value
 
 
-def _parse_s3_uri(uri: str) -> tuple[str, str]:
-    """Parse an ``s3://bucket/key`` URI into ``(bucket, key)``.
-
-    >>> _parse_s3_uri("s3://continuo/candidate-sql/rel/node.sql")
-    ('continuo', 'candidate-sql/rel/node.sql')
-    """
-    if not uri.startswith("s3://"):
-        raise ValueError(f"invalid S3 URI (must start with s3://): {uri!r}")
-    without_scheme = uri[len("s3://"):]
-    bucket, _, key = without_scheme.partition("/")
-    if not bucket or not key:
-        raise ValueError(f"invalid S3 URI (missing bucket or key): {uri!r}")
-    return bucket, key
-
-
 def load_candidate_sql() -> str:
-    """Fetch the candidate SQL for this node from S3 via ``CANDIDATE_SQL_URI``.
+    """Read the candidate SQL for this node from the local file at ``CANDIDATE_SQL_PATH``.
 
-    Returns the raw UTF-8 body of the S3 object, without stripping — the caller
-    is responsible for any ``.strip().rstrip(";").strip()`` normalization.
-
-    Returns ``""`` when ``CANDIDATE_SQL_URI`` is absent or empty (seed/empty node
-    — nothing to validate). No S3 connection is made in that case.
+    The validation Job's fetch init container downloads ``CANDIDATE_SQL_URI`` from S3 into
+    this shared-emptyDir path; this container has no S3 access. Returns the raw UTF-8 body
+    without stripping — the caller normalizes. Returns ``""`` when the path env is
+    unset/empty or the file is missing/empty (seed/empty node — nothing to validate).
     """
-    uri = os.environ.get("CANDIDATE_SQL_URI", "")
-    if not uri:
+    path = os.environ.get("CANDIDATE_SQL_PATH", "")
+    if not path or not os.path.isfile(path):
         return ""
-    bucket, key = _parse_s3_uri(uri)
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=os.environ.get("S3_ENDPOINT_URL"),
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-        region_name=os.environ.get("AWS_DEFAULT_REGION"),
-    )
-    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-    return body.decode("utf-8")
+    with open(path, encoding="utf-8") as f:
+        return f.read()
 
 
 def main() -> None:
@@ -88,14 +63,14 @@ def main() -> None:
         try:
             raw_sql = load_candidate_sql()
         except Exception as exc:
-            uri = os.environ.get("CANDIDATE_SQL_URI", "")
-            print(f"validation_runner: ERROR fetching candidate SQL from {uri!r}: {exc}", file=sys.stderr)
+            path = os.environ.get("CANDIDATE_SQL_PATH", "")
+            print(f"validation_runner: ERROR reading candidate SQL from {path!r}: {exc}", file=sys.stderr)
             print(validation_result.result_block("error", str(exc), unique_id=unique_id), flush=True)
             sys.exit(1)
         if not raw_sql:
-            print("validation_runner: CANDIDATE_SQL_URI is missing or empty for a "
+            print("validation_runner: CANDIDATE_SQL_PATH file is missing or empty for a "
                   "build_from_sql node; cannot validate", file=sys.stderr)
-            print(validation_result.result_block("error", "CANDIDATE_SQL_URI is missing or empty",
+            print(validation_result.result_block("error", "CANDIDATE_SQL_PATH is missing or empty",
                                                  unique_id=unique_id), flush=True)
             sys.exit(2)
         candidate_sql = raw_sql

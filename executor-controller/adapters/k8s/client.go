@@ -265,14 +265,19 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 }
 
 // buildValidationPodSpec constructs the PodSpec for a validation node job.
-// Validation runs the continuo-owned validation image (which carries
-// validation_runner.py + the warehouse adapter), NOT the per-service team
-// image — so the per-service ImageTag is unused here and an empty tag is no
-// longer an error. VALIDATION_IMAGE overrides verbatim; otherwise default to
-// dbt-base:latest, prefixed with DOCKERHUB_USERNAME when set.
-// The container command comes from model.ValidationCommand, the single source
-// of truth for the validation CLI. VALIDATION_OP selects the runner operation
-// (default "build_from_sql"); PROD_SCHEMA is the clone source for Plan 3.
+//
+// Validation runs the continuo-owned validation image (dbt-base, which carries
+// validation_runner.py + the warehouse adapter) — never the per-service team
+// image. VALIDATION_IMAGE overrides verbatim; else dbt-base:latest,
+// DOCKERHUB_USERNAME-prefixed.
+//
+// build_from_sql nodes need their compiled candidate SQL, which lives in S3.
+// dbt-base carries no S3 client, so the pod uses the adapter-sidecar pattern: an
+// init "fetch" container (the shared s3-sidecar image) downloads CANDIDATE_SQL_URI
+// into /shared/candidate.sql on a shared emptyDir, and the main "dbt-job"
+// container reads that local file (CANDIDATE_SQL_PATH). clone_from_prod nodes have
+// no candidate SQL and never touch S3, so they stay single-container with no
+// emptyDir and no S3 credentials.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	image := os.Getenv("VALIDATION_IMAGE")
 	if image == "" {
@@ -287,7 +292,12 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		op = "build_from_sql"
 	}
 
-	envVars := []corev1.EnvVar{
+	const candidateSQLPath = "/shared/candidate.sql"
+
+	// Env common to both validation ops. CANDIDATE_SQL_PATH is added only on the
+	// build_from_sql branch (where the fetch sidecar populates that file);
+	// clone_from_prod has no shared emptyDir and never reads it.
+	mainEnv := []corev1.EnvVar{
 		{Name: "RELEASE_ID", Value: p.ReleaseID},
 		{Name: "NODE_ID", Value: p.NodeID},
 		{Name: "SERVICE_NAME", Value: p.ServiceName},
@@ -295,40 +305,118 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
-		// CANDIDATE_SQL_URI is an S3 URI pointing to the node's compiled SQL with
-		// schema refs already rewritten to the candidate schema. validation_runner.py
-		// fetches this object from S3 and builds the node as an empty CTAS table.
-		{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI},
-		// S3 credentials — forwarded from executor-controller environment so the
-		// validation runner can boto3-GET the candidate SQL object.
-		{Name: "S3_ENDPOINT_URL", Value: os.Getenv("S3_ENDPOINT_URL")},
-		{Name: "S3_BUCKET", Value: os.Getenv("S3_BUCKET")},
-		{Name: "AWS_ACCESS_KEY_ID", Value: os.Getenv("AWS_ACCESS_KEY_ID")},
-		{Name: "AWS_SECRET_ACCESS_KEY", Value: os.Getenv("AWS_SECRET_ACCESS_KEY")},
-		{Name: "AWS_DEFAULT_REGION", Value: os.Getenv("AWS_DEFAULT_REGION")},
-		// dbt profile connection — forwarded from executor-controller environment
+		// dbt profile connection — forwarded from executor-controller environment.
 		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
 		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
 		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
 		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
 		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
-		// Selects the runner operation; PROD_SCHEMA is the clone source (Plan 3).
 		{Name: "VALIDATION_OP", Value: op},
 		{Name: "PROD_SCHEMA", Value: p.ProdSchema},
 	}
 
-	return corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
-		Containers: []corev1.Container{
-			{
-				Name:            "dbt-job",
-				Image:           image,
-				ImagePullPolicy: validationImagePullPolicy(),
-				Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
-				Env:             envVars,
+	mainContainer := corev1.Container{
+		Name:            "dbt-job",
+		Image:           image,
+		ImagePullPolicy: validationImagePullPolicy(),
+		Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
+		Env:             mainEnv,
+	}
+
+	switch op {
+	case "clone_from_prod":
+		// No candidate SQL, no S3, single container.
+		return corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers:    []corev1.Container{mainContainer},
+		}, nil
+
+	case "build_from_sql":
+		// Adapter-sidecar pattern: init "fetch" downloads the candidate SQL from S3
+		// into a shared emptyDir; the main "dbt-job" container reads it from there.
+		// CandidateSQLURI must be set — changed models/snapshots always carry one;
+		// nodes without candidate SQL (unchanged upstreams, seeds) use clone_from_prod.
+		if p.CandidateSQLURI == "" {
+			return corev1.PodSpec{}, fmt.Errorf("%w: candidate_sql_uri missing from build_from_sql validation job params for node %s",
+				events.ErrPermanent, p.NodeID)
+		}
+		mount := sharedVolumeMount()
+		mainContainer.VolumeMounts = []corev1.VolumeMount{mount}
+		// The main container reads the SQL the fetch sidecar wrote to this path.
+		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_PATH", Value: candidateSQLPath})
+
+		// CANDIDATE_SQL_URI is the S3 address of the node's compiled SQL (schema refs
+		// already rewritten to the candidate schema). The fetch sidecar downloads it
+		// into CANDIDATE_SQL_PATH on the shared emptyDir.
+		fetchEnv := append([]corev1.EnvVar{
+			{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI},
+			{Name: "CANDIDATE_SQL_PATH", Value: candidateSQLPath},
+		}, s3CredEnvVars()...)
+
+		return corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Volumes:       []corev1.Volume{sharedEmptyDirVolume()},
+			InitContainers: []corev1.Container{
+				{
+					Name:            "fetch",
+					Image:           s3SidecarImage(),
+					ImagePullPolicy: validationImagePullPolicy(),
+					Command:         []string{"python", "/candidate_fetcher.py"},
+					Env:             fetchEnv,
+					VolumeMounts:    []corev1.VolumeMount{mount},
+				},
 			},
-		},
-	}, nil
+			Containers: []corev1.Container{mainContainer},
+		}, nil
+
+	default:
+		return corev1.PodSpec{}, fmt.Errorf("%w: unknown validation_op %q for node %s",
+			events.ErrPermanent, op, p.NodeID)
+	}
+}
+
+// s3SidecarImage resolves the shared non-dbt S3 I/O sidecar image used by both the
+// compile leg (manifest upload) and the validation leg (candidate-SQL fetch). The
+// S3_SIDECAR_IMAGE env overrides verbatim; otherwise default to s3-sidecar:latest,
+// DOCKERHUB_USERNAME-prefixed when set.
+func s3SidecarImage() string {
+	img := os.Getenv("S3_SIDECAR_IMAGE")
+	if img == "" {
+		img = "s3-sidecar:latest"
+		if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
+			img = user + "/" + img
+		}
+	}
+	return img
+}
+
+// s3CredEnvVars returns the four S3 credential environment variables forwarded
+// from the executor-controller environment. S3_BUCKET is intentionally omitted —
+// both the compile uploader and the candidate fetcher parse the bucket from their
+// respective URI parameters and never read S3_BUCKET.
+func s3CredEnvVars() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "S3_ENDPOINT_URL", Value: os.Getenv("S3_ENDPOINT_URL")},
+		{Name: "AWS_ACCESS_KEY_ID", Value: os.Getenv("AWS_ACCESS_KEY_ID")},
+		{Name: "AWS_SECRET_ACCESS_KEY", Value: os.Getenv("AWS_SECRET_ACCESS_KEY")},
+		{Name: "AWS_DEFAULT_REGION", Value: os.Getenv("AWS_DEFAULT_REGION")},
+	}
+}
+
+// sharedEmptyDirVolume returns the "shared" emptyDir volume used as the hand-off
+// point between the init container and the main container in compile and
+// build_from_sql validation pods.
+func sharedEmptyDirVolume() corev1.Volume {
+	return corev1.Volume{
+		Name:         "shared",
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+}
+
+// sharedVolumeMount returns the VolumeMount for the "shared" emptyDir volume,
+// mounting it at /shared in a container.
+func sharedVolumeMount() corev1.VolumeMount {
+	return corev1.VolumeMount{Name: "shared", MountPath: "/shared"}
 }
 
 // validationImagePullPolicy resolves the pull policy for validation Job pods.
@@ -496,8 +584,8 @@ func buildSeedBuildPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 //   - initContainer "compile": team image runs `dbt compile --profiles-dir
 //     /project && cp .../manifest.json /shared/manifest.json` with the
 //     standard DBT_POSTGRES_* warehouse envs.
-//   - main container "upload": minimal python+boto3 image (COMPILE_UPLOAD_IMAGE
-//     env, else <DOCKERHUB_USERNAME>/manifest-uploader:latest) runs
+//   - main container "upload": the shared s3-sidecar image (S3_SIDECAR_IMAGE
+//     env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest) runs
 //     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH +
 //     MANIFEST_S3_URI + the S3 credential envs.
 //
@@ -559,8 +647,8 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //   - an initContainer "compile" using the team image (ImageTag must be
 //     non-empty) that runs `dbt compile --profiles-dir /project` and copies
 //     the resulting manifest.json into /shared/manifest.json;
-//   - a main container "upload" using a minimal python+boto3 image (no dbt;
-//     COMPILE_UPLOAD_IMAGE env, else <DOCKERHUB_USERNAME>/manifest-uploader:latest)
+//   - a main container "upload" using the shared s3-sidecar image (no dbt;
+//     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
 //     MANIFEST_S3_URI, and the S3 credential envs forwarded from the executor-controller env.
 func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
@@ -575,17 +663,10 @@ func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		teamImage = user + "/" + teamImage
 	}
 
-	// Upload container image: a minimal python+boto3 image (NO dbt). The compile leg keeps S3
-	// access out of any dbt image. Defaults to manifest-uploader:latest (DOCKERHUB_USERNAME-prefixed).
-	uploadImage := os.Getenv("COMPILE_UPLOAD_IMAGE")
-	if uploadImage == "" {
-		uploadImage = "manifest-uploader:latest"
-		if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
-			uploadImage = user + "/" + uploadImage
-		}
-	}
+	// Upload container image: the shared minimal python+boto3 sidecar (NO dbt).
+	uploadImage := s3SidecarImage()
 
-	sharedMount := corev1.VolumeMount{Name: "shared", MountPath: "/shared"}
+	mount := sharedVolumeMount()
 
 	initEnvVars := []corev1.EnvVar{
 		// dbt profile connection — forwarded from executor-controller environment
@@ -596,28 +677,16 @@ func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
 	}
 
-	uploadEnvVars := []corev1.EnvVar{
+	// compile_uploader.py parses the bucket from MANIFEST_S3_URI; S3_BUCKET is
+	// intentionally omitted (see s3CredEnvVars).
+	uploadEnvVars := append([]corev1.EnvVar{
 		{Name: "COMPILE_MANIFEST_PATH", Value: "/shared/manifest.json"},
 		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
-		// S3 credentials — forwarded from executor-controller environment.
-		// Note: S3_BUCKET is intentionally omitted — compile_uploader.py parses
-		// the bucket from MANIFEST_S3_URI and never reads S3_BUCKET.
-		{Name: "S3_ENDPOINT_URL", Value: os.Getenv("S3_ENDPOINT_URL")},
-		{Name: "AWS_ACCESS_KEY_ID", Value: os.Getenv("AWS_ACCESS_KEY_ID")},
-		{Name: "AWS_SECRET_ACCESS_KEY", Value: os.Getenv("AWS_SECRET_ACCESS_KEY")},
-		{Name: "AWS_DEFAULT_REGION", Value: os.Getenv("AWS_DEFAULT_REGION")},
-	}
+	}, s3CredEnvVars()...)
 
 	return corev1.PodSpec{
 		RestartPolicy: corev1.RestartPolicyNever,
-		Volumes: []corev1.Volume{
-			{
-				Name: "shared",
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
-				},
-			},
-		},
+		Volumes:       []corev1.Volume{sharedEmptyDirVolume()},
 		InitContainers: []corev1.Container{
 			{
 				Name:            "compile",
@@ -628,7 +697,7 @@ func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 					"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json",
 				},
 				Env:          initEnvVars,
-				VolumeMounts: []corev1.VolumeMount{sharedMount},
+				VolumeMounts: []corev1.VolumeMount{mount},
 			},
 		},
 		Containers: []corev1.Container{
@@ -638,7 +707,7 @@ func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 				ImagePullPolicy: validationImagePullPolicy(),
 				Command:         []string{"python", "/compile_uploader.py"},
 				Env:             uploadEnvVars,
-				VolumeMounts:    []corev1.VolumeMount{sharedMount},
+				VolumeMounts:    []corev1.VolumeMount{mount},
 			},
 		},
 	}, nil

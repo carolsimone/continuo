@@ -8,33 +8,17 @@ continuo's canonical <service>/<release_id>/manifest.json). The team image has n
 S3 access; this continuo-owned container does the upload. A nonzero exit fails
 the compile Job, which release-controller treats as compile_failed.
 """
-import os
 import sys
 
-import boto3
-
-
-def _parse_s3_uri(uri: str) -> tuple[str, str]:
-    if not uri.startswith("s3://"):
-        raise ValueError(f"invalid S3 URI (must start with s3://): {uri!r}")
-    bucket, _, key = uri[len("s3://"):].partition("/")
-    if not bucket or not key:
-        raise ValueError(f"invalid S3 URI (missing bucket or key): {uri!r}")
-    return bucket, key
-
-
-def _require(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        print(f"compile_uploader: missing required env var {name}", file=sys.stderr)
-        sys.exit(2)
-    return value
+import s3_common
 
 
 def main() -> None:
-    path = _require("COMPILE_MANIFEST_PATH")
+    path = s3_common.require_env("COMPILE_MANIFEST_PATH", caller="compile_uploader")
     try:
-        bucket, key = _parse_s3_uri(_require("MANIFEST_S3_URI"))
+        bucket, key = s3_common.parse_s3_uri(
+            s3_common.require_env("MANIFEST_S3_URI", caller="compile_uploader")
+        )
     except ValueError as exc:
         print(f"compile_uploader: invalid MANIFEST_S3_URI: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -44,13 +28,7 @@ def main() -> None:
     except OSError as exc:
         print(f"compile_uploader: cannot read manifest {path}: {exc}", file=sys.stderr)
         sys.exit(3)
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=os.environ.get("S3_ENDPOINT_URL"),
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-        region_name=os.environ.get("AWS_DEFAULT_REGION"),
-    )
+    s3 = s3_common.make_s3_client()
     try:
         s3.put_object(Bucket=bucket, Key=key, Body=body)
     except Exception as exc:
