@@ -7,43 +7,21 @@ emptyDir file instead of calling S3 itself. This init container reads CANDIDATE_
 object body to CANDIDATE_SQL_PATH inside the shared emptyDir. Keeping S3 access here keeps
 boto3 out of every dbt image. A nonzero exit fails the validation Job.
 """
-import os
 import sys
 
-import boto3
-
-
-def _parse_s3_uri(uri: str) -> tuple[str, str]:
-    if not uri.startswith("s3://"):
-        raise ValueError(f"invalid S3 URI (must start with s3://): {uri!r}")
-    bucket, _, key = uri[len("s3://"):].partition("/")
-    if not bucket or not key:
-        raise ValueError(f"invalid S3 URI (missing bucket or key): {uri!r}")
-    return bucket, key
-
-
-def _require(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        print(f"candidate_fetcher: missing required env var {name}", file=sys.stderr)
-        sys.exit(2)
-    return value
+import s3_common
 
 
 def main() -> None:
-    dest = _require("CANDIDATE_SQL_PATH")
+    dest = s3_common.require_env("CANDIDATE_SQL_PATH", caller="candidate_fetcher")
     try:
-        bucket, key = _parse_s3_uri(_require("CANDIDATE_SQL_URI"))
+        bucket, key = s3_common.parse_s3_uri(
+            s3_common.require_env("CANDIDATE_SQL_URI", caller="candidate_fetcher")
+        )
     except ValueError as exc:
         print(f"candidate_fetcher: invalid CANDIDATE_SQL_URI: {exc}", file=sys.stderr)
         sys.exit(2)
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=os.environ.get("S3_ENDPOINT_URL"),
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-        region_name=os.environ.get("AWS_DEFAULT_REGION"),
-    )
+    s3 = s3_common.make_s3_client()
     try:
         body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
     except Exception as exc:

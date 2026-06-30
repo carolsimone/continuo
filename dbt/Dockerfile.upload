@@ -14,11 +14,13 @@ COPY dbt_upload/ ./dbt_upload/
 COPY targets.yaml .
 # Kept so integration tests can be run via: docker exec dbt-compile-and-load uv run --with pytest pytest tests/
 COPY tests/ ./tests/
-# NOTE: compile_uploader.py is copied here for TEST/integration harness use only
-# (run via `docker exec dbt-compile-and-load pytest`). In PRODUCTION the compile
-# Job's upload container is the dedicated s3-sidecar image (python+boto3,
-# no dbt), keeping S3 access entirely out of any dbt image. The dbt+uploader
-# co-residence in this image is test-only and does not violate production isolation.
+# The three s3-sidecar scripts are copied here for TEST/integration harness use only
+# (run via `docker exec dbt-compile-and-load pytest`). In PRODUCTION each script runs
+# in the dedicated s3-sidecar image (python+boto3, no dbt), keeping S3 access entirely
+# out of any dbt image. The dbt+sidecar co-residence in this image is test-only and does
+# not violate production isolation.
+COPY s3-sidecar/s3_common.py /s3_common.py
 COPY s3-sidecar/compile_uploader.py /compile_uploader.py
+COPY s3-sidecar/candidate_fetcher.py /candidate_fetcher.py
 
 CMD ["tail", "-f", "/dev/null"]

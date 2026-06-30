@@ -7,6 +7,7 @@ from unittest import mock
 import pytest
 
 import candidate_fetcher  # pythonpath="s3-sidecar" in pyproject
+import s3_common
 
 
 def test_downloads_object_to_local_path(tmp_path, monkeypatch):
@@ -15,7 +16,7 @@ def test_downloads_object_to_local_path(tmp_path, monkeypatch):
     monkeypatch.setenv("CANDIDATE_SQL_PATH", str(dest))
     fake = mock.MagicMock()
     fake.get_object.return_value = {"Body": mock.MagicMock(read=lambda: b"select 1")}
-    monkeypatch.setattr(candidate_fetcher.boto3, "client", lambda *a, **k: fake)
+    monkeypatch.setattr(s3_common.boto3, "client", lambda *a, **k: fake)
 
     candidate_fetcher.main()
 
@@ -54,7 +55,24 @@ def test_get_object_failure_exits_nonzero(monkeypatch, tmp_path):
     monkeypatch.setenv("CANDIDATE_SQL_PATH", str(tmp_path / "candidate.sql"))
     fake = mock.MagicMock()
     fake.get_object.side_effect = RuntimeError("connection refused")
-    monkeypatch.setattr(candidate_fetcher.boto3, "client", lambda *a, **k: fake)
+    monkeypatch.setattr(s3_common.boto3, "client", lambda *a, **k: fake)
     with pytest.raises(SystemExit) as e:
         candidate_fetcher.main()
     assert e.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# s3_common.parse_s3_uri edge-case coverage
+# ---------------------------------------------------------------------------
+
+
+def test_parse_s3_uri_rejects_bucket_only():
+    """s3://bucket-only has no key separator — must raise ValueError."""
+    with pytest.raises(ValueError, match="missing bucket or key"):
+        s3_common.parse_s3_uri("s3://bucket-only")
+
+
+def test_parse_s3_uri_rejects_empty_key():
+    """s3://bucket/ has a trailing slash but an empty key — must raise ValueError."""
+    with pytest.raises(ValueError, match="missing bucket or key"):
+        s3_common.parse_s3_uri("s3://bucket/")

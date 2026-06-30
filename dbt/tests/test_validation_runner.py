@@ -34,6 +34,22 @@ def test_load_candidate_sql_empty_when_file_missing(tmp_path, monkeypatch):
     assert load_candidate_sql() == ""
 
 
+def test_load_candidate_sql_preserves_whitespace(tmp_path, monkeypatch):
+    """load_candidate_sql returns the raw file body without any stripping."""
+    p = tmp_path / "candidate.sql"
+    p.write_text("  select 2  \n")
+    monkeypatch.setenv("CANDIDATE_SQL_PATH", str(p))
+    assert load_candidate_sql() == "  select 2  \n"
+
+
+def test_load_candidate_sql_empty_file_returns_empty_string(tmp_path, monkeypatch):
+    """An existing but empty file returns '' (empty string, not None)."""
+    p = tmp_path / "candidate.sql"
+    p.write_text("")
+    monkeypatch.setenv("CANDIDATE_SQL_PATH", str(p))
+    assert load_candidate_sql() == ""
+
+
 # ---------------------------------------------------------------------------
 # main: a missing CANDIDATE_SQL_PATH file for a model/snapshot node is a
 # validation error (exit != 0)

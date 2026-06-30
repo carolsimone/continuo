@@ -4,6 +4,7 @@ FROM python:3.12-slim
 # compile_uploader.py uploads the compiled manifest (compile leg); candidate_fetcher.py
 # downloads a node's candidate SQL into the shared emptyDir (validation leg).
 RUN pip install --no-cache-dir "boto3>=1.34.0"
+COPY s3_common.py /s3_common.py
 COPY compile_uploader.py /compile_uploader.py
 COPY candidate_fetcher.py /candidate_fetcher.py
 ENTRYPOINT []

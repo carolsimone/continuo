@@ -8,6 +8,7 @@ from unittest import mock
 import pytest
 
 import compile_uploader  # pythonpath="s3-sidecar" in pyproject
+import s3_common
 
 
 def test_uploads_file_to_parsed_key(tmp_path, monkeypatch):
@@ -16,7 +17,7 @@ def test_uploads_file_to_parsed_key(tmp_path, monkeypatch):
     monkeypatch.setenv("COMPILE_MANIFEST_PATH", str(manifest))
     monkeypatch.setenv("MANIFEST_S3_URI", "s3://continuo/svc/rel-1/manifest.json")
     fake = mock.MagicMock()
-    monkeypatch.setattr(compile_uploader.boto3, "client", lambda *a, **k: fake)
+    monkeypatch.setattr(s3_common.boto3, "client", lambda *a, **k: fake)
 
     compile_uploader.main()
 
@@ -59,7 +60,7 @@ def test_put_object_failure_exits_nonzero(tmp_path, monkeypatch):
     monkeypatch.setenv("MANIFEST_S3_URI", "s3://continuo/svc/rel-1/manifest.json")
     fake = mock.MagicMock()
     fake.put_object.side_effect = RuntimeError("connection refused")
-    monkeypatch.setattr(compile_uploader.boto3, "client", lambda *a, **k: fake)
+    monkeypatch.setattr(s3_common.boto3, "client", lambda *a, **k: fake)
 
     with pytest.raises(SystemExit) as e:
         compile_uploader.main()
