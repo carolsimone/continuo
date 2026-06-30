@@ -82,12 +82,15 @@ After stripping, it folds the category with the normalized error text and return
 2b. If run_results_uri is set: fetch + parse the structured validation result
     (status/message/failures/unique_id). A transient S3 error returns (retried);
     a parse failure logs and leaves structured=nil (text-log fallback).
-2c. For compile and seed_build sources: call ExtractDbtFilePath(logText) to derive
-    the offending project-relative source file path from the dbt error output (the
+2c. For compile sources only: call ExtractDbtFilePath(logText) to derive the
+    offending project-relative source file path from the dbt error output (the
     log names the file as "models/…​.sql" or similar). The result is threaded into
     FailureEvidence.FilePath and later into the remediation.requested:v1 trigger
-    so the agent can read the real source file directly. Validation evidence never
-    has FilePath set at this layer (the agent derives it from orchestrator ancestry).
+    so the agent can read the real source file directly. Compile failures use a
+    synthetic service-name NodeID (not a real dbt node), so the log is the only
+    source of the path. Seed_build and validation failures have a real dbt node
+    unique_id; the agent resolves the source file via the ancestry node lookup
+    (NodeContext) and FilePath is left empty at this stage.
 3. ClassifyWithStructured(ev, structured, logText) → Category, Signature, Decision,
    Reason (pure, deterministic). Prefers the structured record: status=fail → test;
    status=error → message through the infra/logic rules. Falls back to the text-log
@@ -120,7 +123,7 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 | `error_signature` | Release-stable normalized dedup key (SHA-256 hex). |
 | `dbt_log_uri` | S3 URI of the full dbt execution log. |
 | `candidate_sql_uri` | S3 URI of the candidate SQL file (candidate-schema form; omitted for seeds and compile failures). |
-| `file_path` | Project-relative source file path; non-empty for compile and seed_build failures where the log names the offending file (e.g. `models/order_items.sql`). Empty for validation failures — the agent derives the path from orchestrator ancestry. |
+| `file_path` | Project-relative source file path; non-empty for compile failures only (the log names the offending file, e.g. `models/order_items.sql`). Empty for seed_build and validation failures — the agent derives the source file from the orchestrator ancestry node lookup using `node_id`. |
 | `repo` | GitHub owner/name from the originating release. |
 | `commit_sha` | Full commit SHA from the originating release. |
 | `classified_at` | RFC 3339 timestamp of classification. |

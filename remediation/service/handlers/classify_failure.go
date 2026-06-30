@@ -61,11 +61,14 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 		}
 	}
 
-	// For compile- and seed-stage failures, extract the offending source file
-	// path from the log so the remediation agent can read the file directly.
-	// Only populate when the caller has not already set it (e.g. via evidence
-	// enrichment in the ingress adapter).
-	if (ev.Source == failure.SourceCompile || ev.Source == failure.SourceSeed) && ev.FilePath == "" {
+	// For compile-stage failures, extract the offending source file path from
+	// the log text so the remediation agent can read the file directly. Compile
+	// failures have a synthetic service-name NodeID (not a real dbt node), so
+	// the log is the only source of the file path.
+	// Seed_build and validation failures have a real dbt node unique_id; the
+	// agent resolves the source file via the ancestry node lookup (NodeContext)
+	// and does not need FilePath populated here.
+	if ev.Source == failure.SourceCompile && ev.FilePath == "" {
 		ev.FilePath = failure.ExtractDbtFilePath(logText)
 	}
 

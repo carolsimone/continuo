@@ -181,6 +181,41 @@ func TestClassifyFailure_IdempotentSkipsTrigger(t *testing.T) {
 	}
 }
 
+func TestClassifyFailure_SeedSourceFilePathIsEmpty(t *testing.T) {
+	// A seed_build failure whose dbt log names a seeds/...csv path must NOT
+	// have file_path populated in the RemediationRequested trigger. Seed
+	// failures carry a real dbt node unique_id, so the remediation agent
+	// resolves the source file via the ancestry node lookup (NodeContext).
+	// Populating file_path for seeds would send a service-name-like NodeID
+	// as serviceName in the agent, causing a miss on ServiceRepoPaths.
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	logText := `Runtime Error in seed fx_rates_eur (seeds/customers.csv)
+  Could not find file seeds/customers.csv`
+	ev := failure.FailureEvidence{
+		Source:    failure.SourceSeed,
+		ReleaseID: "r3",
+		NodeID:    "analytics.seed_fx_rates_eur",
+		Repo:      "org/repo",
+		CommitSHA: "abc123",
+		DBTLogURI: "s3://bucket/seed.log",
+	}
+	err := ClassifyFailure(context.Background(), depsWith(u, logText, nil), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
+	}
+	var p event.RemediationRequested
+	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	if p.FilePath != "" {
+		t.Fatalf("seed trigger must have empty file_path so agent routes via ancestry; got %q", p.FilePath)
+	}
+	if p.NodeID != "analytics.seed_fx_rates_eur" {
+		t.Fatalf("node_id must be preserved, got %q", p.NodeID)
+	}
+}
+
 func TestClassifyFailure_CompileSourceThreadsFilePath(t *testing.T) {
 	// A compile-stage failure with a Jinja syntax error must be classified as
 	// logic (healable), emitted, and the file path extracted from the log must
