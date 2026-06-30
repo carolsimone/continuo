@@ -394,17 +394,18 @@ func sharedVolumeMount() corev1.VolumeMount {
 	return corev1.VolumeMount{Name: "shared", MountPath: "/shared"}
 }
 
-// validationImagePullPolicy resolves the pull policy for validation Job pods.
+// validationImagePullPolicy resolves the pull policy applied to both the
+// validation main container and the compile leg's s3-sidecar upload container.
 //
-// Validation runs a continuo-owned image pinned to a mutable tag (validation-runner:latest
-// by default), which is re-pushed when the validator changes. PullAlways ensures
-// the node fetches the freshly pushed image rather than a stale cached layer.
+// The default is PullAlways so the s3-sidecar (:latest, mutable tag) is
+// re-pulled when it is re-pushed to the registry. The SHA-pinned validation
+// image just receives a cheap digest check under PullAlways rather than a full
+// layer download.
 //
-// Environments that side-load images directly into the node's image cache and
-// have no registry to pull from (the kind-based e2e suite, local clusters) set
-// VALIDATION_IMAGE_PULL_POLICY=IfNotPresent (or Never) so the locally-loaded
-// image is used; PullAlways there would fail with ErrImagePull because the
-// mutable tag exists only in the node cache, not in any registry.
+// e2e and local clusters side-load images directly into the node's image cache
+// and have no registry to pull from, so they set VALIDATION_IMAGE_PULL_POLICY
+// to IfNotPresent or Never; PullAlways would fail with ErrImagePull there
+// because neither image exists in any accessible registry.
 func validationImagePullPolicy() corev1.PullPolicy {
 	switch os.Getenv("VALIDATION_IMAGE_PULL_POLICY") {
 	case string(corev1.PullIfNotPresent):

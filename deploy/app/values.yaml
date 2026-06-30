@@ -180,10 +180,11 @@ services:
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       MAX_CONCURRENT_JOBS: "50"
-      # Validation Jobs pull the SHA-pinned continuo-validation-runner:<imageTag>
-      # image (set via VALIDATION_IMAGE below). The tag is immutable per deploy, so
-      # IfNotPresent caches it by digest instead of re-pulling every run.
-      VALIDATION_IMAGE_PULL_POLICY: IfNotPresent
+      # Pull policy for validation Jobs AND the compile leg's s3-sidecar upload
+      # container (both use validationImagePullPolicy). The s3-sidecar runs a mutable
+      # :latest tag that must be re-pulled when re-pushed; the validation image is
+      # SHA-pinned, so Always is just a cheap digest check there.
+      VALIDATION_IMAGE_PULL_POLICY: Always
       VALIDATION_IMAGE: __VALIDATION_IMAGE__
       DBT_POSTGRES_DB: continuo_dbt
       HTTP_PORT: "8084"

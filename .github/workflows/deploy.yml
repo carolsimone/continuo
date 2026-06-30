@@ -47,6 +47,7 @@ jobs:
               - 'cli/**'
               - 'remediation/**'
               - 'remediation-agent/**'
+              - 'validation-runner/**'
             state:
               - 'Dockerfile.base'
               - 'go.work'
@@ -101,7 +102,6 @@ jobs:
               - 'pkg/**'
               - 'orchestrator/**'
               - 'remediation-agent/**'
-              - 'validation-runner/**'
             migrations:
               - 'db/**'
             validation_runner:
