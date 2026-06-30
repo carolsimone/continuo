@@ -51,28 +51,36 @@ func validationParams() ValidationJobParams {
 	}
 }
 
-// TestCreateValidationJob_BuildsExpectedCommand_DbtModel verifies that model
-// nodes run validation_runner.py (CTAS path) rather than a dbt command.
-// CANDIDATE_SQL_URI env must be populated from the params so the runner can
-// fetch the SQL from S3 and build the empty table without a dbt recompile.
-func TestCreateValidationJob_BuildsExpectedCommand_DbtModel(t *testing.T) {
+func TestCreateValidationJob_BuildFromSql_FetchInitThenValidateMain(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newValidationTestClient()
-	p := validationParams()
+	p := validationParams() // op defaults to build_from_sql, CandidateSQLURI set
 
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
-
 	job := fetchJob(t, c, p.Namespace, p.JobName)
-	require.Len(t, job.Spec.Template.Spec.Containers, 1)
-	assert.Equal(t,
-		[]string{"python", "/validation_runner.py"},
-		job.Spec.Template.Spec.Containers[0].Command)
-	assert.Equal(t, "dbt-base:latest", job.Spec.Template.Spec.Containers[0].Image)
+	spec := job.Spec.Template.Spec
 
-	// CANDIDATE_SQL_URI must be wired through so validation_runner.py can fetch
-	// the SQL from S3 and build the empty CTAS table.
-	assert.Equal(t, p.CandidateSQLURI, envByName(job.Spec.Template.Spec, "CANDIDATE_SQL_URI"),
-		"model validation job must set CANDIDATE_SQL_URI env")
+	// init "fetch": s3-sidecar downloads the candidate SQL into the shared emptyDir.
+	require.Len(t, spec.InitContainers, 1)
+	assert.Equal(t, "fetch", spec.InitContainers[0].Name)
+	assert.Equal(t, "s3-sidecar:latest", spec.InitContainers[0].Image)
+	assert.Equal(t, []string{"python", "/candidate_fetcher.py"}, spec.InitContainers[0].Command)
+	assert.Equal(t, p.CandidateSQLURI, initEnvByName(spec, "CANDIDATE_SQL_URI"))
+	assert.Equal(t, "/shared/candidate.sql", initEnvByName(spec, "CANDIDATE_SQL_PATH"))
+
+	// main "dbt-job": dbt-base runs the runner, reads the local file — no S3.
+	require.Len(t, spec.Containers, 1)
+	assert.Equal(t, "dbt-job", spec.Containers[0].Name)
+	assert.Equal(t, "dbt-base:latest", spec.Containers[0].Image)
+	assert.Equal(t, []string{"python", "/validation_runner.py"}, spec.Containers[0].Command)
+	assert.Equal(t, "/shared/candidate.sql", envByName(spec, "CANDIDATE_SQL_PATH"))
+	assert.Empty(t, envByName(spec, "CANDIDATE_SQL_URI"), "main container must not carry the S3 URI")
+	assert.Empty(t, envByName(spec, "AWS_SECRET_ACCESS_KEY"), "main container must not carry S3 creds")
+
+	// shared emptyDir mounted in both containers.
+	require.Len(t, spec.Volumes, 1)
+	assert.Equal(t, "shared", spec.Volumes[0].Name)
+	require.NotNil(t, spec.Volumes[0].EmptyDir)
 }
 
 func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
@@ -90,41 +98,22 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
-// TestCreateValidationJob_PassesCandidateEnvsViaEnv verifies that
-// DBT_TARGET_SCHEMA, CANDIDATE_SQL_URI, and the five S3 credential vars are
-// all set on the validation pod.
-// DBT_TARGET_SCHEMA routes the generate_schema_name macro to the candidate
-// schema; CANDIDATE_SQL_URI is the S3 address the runner fetches to build the
-// empty CTAS table; the S3 vars give the runner credentials to perform that
-// fetch. Dropping any of these would silently break the validation run.
-func TestCreateValidationJob_PassesCandidateEnvsViaEnv(t *testing.T) {
+func TestCreateValidationJob_ForwardsS3CredsToFetchInit(t *testing.T) {
 	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
-	t.Setenv("S3_BUCKET", "continuo-artifacts")
 	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-1")
 
 	c := newValidationTestClient()
 	p := validationParams()
-
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
 
-	job := fetchJob(t, c, p.Namespace, p.JobName)
-	require.Len(t, job.Spec.Template.Spec.Containers, 1)
-	spec := job.Spec.Template.Spec
-
-	require.NotEmpty(t, envByName(spec, "DBT_TARGET_SCHEMA"), "validation job must set DBT_TARGET_SCHEMA")
 	assert.Equal(t, p.CandidateSchema, envByName(spec, "DBT_TARGET_SCHEMA"))
-
-	require.NotEmpty(t, envByName(spec, "CANDIDATE_SQL_URI"), "validation job must set CANDIDATE_SQL_URI")
-	assert.Equal(t, p.CandidateSQLURI, envByName(spec, "CANDIDATE_SQL_URI"))
-
-	// S3 credentials — the runner needs these to boto3-GET the candidate SQL.
-	assert.Equal(t, "http://minio:9000", envByName(spec, "S3_ENDPOINT_URL"), "validation job must forward S3_ENDPOINT_URL")
-	assert.Equal(t, "continuo-artifacts", envByName(spec, "S3_BUCKET"), "validation job must forward S3_BUCKET")
-	assert.Equal(t, "test-key-id", envByName(spec, "AWS_ACCESS_KEY_ID"), "validation job must forward AWS_ACCESS_KEY_ID")
-	assert.Equal(t, "test-secret", envByName(spec, "AWS_SECRET_ACCESS_KEY"), "validation job must forward AWS_SECRET_ACCESS_KEY")
-	assert.Equal(t, "us-east-1", envByName(spec, "AWS_DEFAULT_REGION"), "validation job must forward AWS_DEFAULT_REGION")
+	assert.Equal(t, "http://minio:9000", initEnvByName(spec, "S3_ENDPOINT_URL"))
+	assert.Equal(t, "test-key-id", initEnvByName(spec, "AWS_ACCESS_KEY_ID"))
+	assert.Equal(t, "test-secret", initEnvByName(spec, "AWS_SECRET_ACCESS_KEY"))
+	assert.Equal(t, "us-east-1", initEnvByName(spec, "AWS_DEFAULT_REGION"))
 }
 
 func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {
@@ -195,6 +184,38 @@ func envByName(spec corev1.PodSpec, name string) string {
 		}
 	}
 	return ""
+}
+
+func initEnvByName(spec corev1.PodSpec, name string) string {
+	if len(spec.InitContainers) == 0 {
+		return ""
+	}
+	for _, e := range spec.InitContainers[0].Env {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
+}
+
+func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+	c := newValidationTestClient()
+	p := validationParams()
+	p.JobName = "validate-orders-rel123-clone"
+	p.ValidationOp = "clone_from_prod"
+	p.ProdSchema = "analytics"
+	p.CandidateSQLURI = "" // clone nodes have no candidate SQL
+
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
+
+	assert.Empty(t, spec.InitContainers, "clone_from_prod has no fetch init container")
+	assert.Empty(t, spec.Volumes, "clone_from_prod needs no shared emptyDir")
+	require.Len(t, spec.Containers, 1)
+	assert.Equal(t, "clone_from_prod", envByName(spec, "VALIDATION_OP"))
+	assert.Equal(t, "analytics", envByName(spec, "PROD_SCHEMA"))
+	assert.Empty(t, envByName(spec, "AWS_SECRET_ACCESS_KEY"), "clone_from_prod must not carry S3 creds")
 }
 
 func repeatStr(s string, n int) string {
@@ -310,11 +331,12 @@ func TestCreateValidationJob_SetsValidationOpAndProdSchema(t *testing.T) {
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	assert.Equal(t, "build_from_sql", envByName(job.Spec.Template.Spec, "VALIDATION_OP"))
 
-	// explicit clone op + prod schema forwarded
+	// explicit clone op + prod schema forwarded; clone nodes have no candidate SQL.
 	p2 := validationParams()
 	p2.JobName = "validate-orders-rel123-clone"
 	p2.ValidationOp = "clone_from_prod"
 	p2.ProdSchema = "analytics"
+	p2.CandidateSQLURI = ""
 	require.NoError(t, c.CreateValidationJob(context.Background(), p2))
 	job2 := fetchJob(t, c, p2.Namespace, p2.JobName)
 	assert.Equal(t, "clone_from_prod", envByName(job2.Spec.Template.Spec, "VALIDATION_OP"))
