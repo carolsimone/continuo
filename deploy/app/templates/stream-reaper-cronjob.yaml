@@ -1,0 +1,43 @@
+{{- if .Values.streamReaper.enabled }}
+# Periodically trims the continuo event streams by age (XTRIM ... MINID). Only
+# the streams in pkg/streams.All are touched; the ui-service auth session keys
+# (plain strings on the same Redis) are never affected.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "continuo-app.fullname" . }}-stream-reaper
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo-app.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.streamReaper.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            {{- include "continuo-app.labels" . | nindent 12 }}
+            app.kubernetes.io/name: stream-reaper
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: stream-reaper
+              image: {{ printf "%s/continuo-stream-reaper:%s" .Values.global.dockerHubUser .Values.global.imageTag | quote }}
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: REDIS_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "continuo-app.credentialsSecretName" . }}
+                      key: REDIS_PASSWORD
+                - name: REDIS_URL
+                  value: {{ printf "redis://:$(REDIS_PASSWORD)@%s:%v" .Values.global.redis.host .Values.global.redis.port | quote }}
+                - name: STREAM_RETENTION
+                  value: {{ .Values.streamReaper.retention | quote }}
+{{- end }}

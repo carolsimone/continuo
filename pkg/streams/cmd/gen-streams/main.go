@@ -163,6 +163,14 @@ const (
 	{{ .Const }} = "{{ .Group }}"
 {{- end }}
 )
+
+// All is every stream name from contract.yaml, in contract order — for callers
+// that must operate over all streams (e.g. the stream reaper).
+var All = []string{
+{{- range .Streams }}
+	{{ .Const }},
+{{- end }}
+}
 `
 	t, err := template.New("go").Parse(tmpl)
 	if err != nil {
