@@ -8,10 +8,15 @@
 //  1. propose_fix mode: when the request body contains a tool named "propose_fix"
 //     in its tools array, the server returns a NON-STREAMING (stream:false) JSON
 //     response with choices[0].message.tool_calls[0] for propose_fix. This is
-//     what the remediation-agent's openai adapter expects. The response branches
-//     on whether the user message contains "Original model source" (Step-2 marker
-//     from prompt.AssembleSourceFix): if so, the response returns the corrected
-//     real model source (using {{ ref(...) }} macros); otherwise it returns the
+//     what the remediation-agent's openai adapter expects. The remediation-agent
+//     sends three propose_fix variants that share the tool name but differ in
+//     their parameter schema, so the stub routes on the declared parameters:
+//     compile (target_file) → target_file + corrected proposed_content; seed
+//     (proposed_content, no target_file) → corrected CSV proposed_content;
+//     validation (proposed_sql) → the two-step candidate/source SQL fix, which
+//     further branches on whether the user message contains "Original model
+//     source" (Step-2 marker from prompt.AssembleSourceFix): if so it returns the
+//     corrected real model source (using {{ ref(...) }} macros), otherwise the
 //     Step-1 candidate-SQL fix (compiled SQL, no macros).
 //
 //  2. tool-result mode: when the last message role is "tool", respond with a
@@ -62,9 +67,20 @@ type toolDef struct {
 	Function toolFunction `json:"function"`
 }
 
-// toolFunction holds the function name from a tool definition.
+// toolFunction holds the function name and parameter schema from a tool
+// definition. The parameter property names are how the stub tells the three
+// propose_fix variants apart (they all share the tool name propose_fix):
+// compile carries target_file, seed carries proposed_content (no target_file),
+// and validation carries proposed_sql.
 type toolFunction struct {
-	Name string `json:"name"`
+	Name       string     `json:"name"`
+	Parameters toolParams `json:"parameters"`
+}
+
+// toolParams is the subset of the JSON-Schema parameter object the stub needs:
+// the set of property names.
+type toolParams struct {
+	Properties map[string]json.RawMessage `json:"properties"`
 }
 
 func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +102,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// from Step-2 (real source fix via stub-github).
 	if hasTool(req.Tools, "propose_fix") {
 		userContent := lastUserContent(req.Messages)
-		writeProposeFixResponse(w, userContent)
+		writeProposeFixResponse(w, userContent, proposeFixParams(req.Tools))
 		return
 	}
 
@@ -145,6 +161,49 @@ func hasTool(tools []toolDef, name string) bool {
 	return false
 }
 
+// proposeFixParams returns the set of parameter property names declared on the
+// propose_fix tool. The three fix variants share the tool name but differ in
+// their parameters, so this set is how the stub routes: target_file ⇒ compile,
+// proposed_content-without-target_file ⇒ seed, proposed_sql ⇒ validation.
+func proposeFixParams(tools []toolDef) map[string]bool {
+	set := map[string]bool{}
+	for _, t := range tools {
+		if t.Function.Name != "propose_fix" {
+			continue
+		}
+		for name := range t.Function.Parameters.Properties {
+			set[name] = true
+		}
+	}
+	return set
+}
+
+// firstShownFile returns the path of the first "File <path>:" block in a
+// compile-fix prompt. prompt.AssembleCompileFix renders the offending file
+// first, so this is the file the stub targets. Returns "" if none is found, in
+// which case the compile fixer defaults target_file to the offending file.
+func firstShownFile(userContent string) string {
+	const marker = "File "
+	for _, line := range strings.Split(userContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, marker) && strings.HasSuffix(trimmed, ":") {
+			return strings.TrimSuffix(strings.TrimPrefix(trimmed, marker), ":")
+		}
+	}
+	return ""
+}
+
+// compileFixContent is the corrected dbt model the stub returns for a compile
+// fix: the malformed-Jinja fixture (config() closed too early, tags hoisted
+// out) with the config() call closed correctly so dbt can parse it.
+const compileFixContent = `{{ config(materialized='table', tags=['daily']) }}
+select 1 as id
+`
+
+// seedFixContent is the corrected CSV the stub returns for a seed fix: a row
+// whose comma-bearing field is quoted so dbt seed can load it.
+const seedFixContent = "id,name\n1,\"a,b\"\n"
+
 // step2Marker is the string present in the user message when the
 // remediation-agent sends a Step-2 (real-source fix) request. It is produced
 // by prompt.AssembleSourceFix, which prefixes the user body with
@@ -173,27 +232,50 @@ func lastUserContent(messages []message) string {
 
 // writeProposeFixResponse returns a deterministic, non-streaming OpenAI
 // chat-completions response that forces the propose_fix tool call. The
-// remediation-agent openai adapter reads choices[0].message.tool_calls[0].
+// remediation-agent openai adapter reads choices[0].message.tool_calls[0]. The
+// response fields are chosen from the tool's parameter set so each fix variant
+// gets a valid answer:
 //
-// When userContent contains step2Marker (Step-2 real-source request), the
-// proposed_sql is the corrected model source with real {{ ref(...) }} macros.
-// Otherwise (Step-1 candidate request), it returns the compiled SQL fix.
-func writeProposeFixResponse(w http.ResponseWriter, userContent string) {
-	var proposedSQL, rationale string
-	if strings.Contains(userContent, step2Marker) {
-		// Step-2: return the corrected real model source (preserves dbt macros).
-		proposedSQL = step2SourceFix
-		rationale = "removed join to nonexistent relation; preserved {{ ref(...) }} macros"
-	} else {
-		// Step-1: return the candidate SQL fix (compiled SQL, no macros).
-		proposedSQL = "select c.id from e2e_schema.ftable_c c"
-		rationale = "removed reference to nonexistent relation public.wrong_name"
+//   - compile (target_file present): the corrected offending file in
+//     proposed_content, targeting the first file shown in the prompt.
+//   - seed (proposed_content, no target_file): the corrected CSV in
+//     proposed_content.
+//   - validation (proposed_sql): the two-step candidate/source SQL fix, branching
+//     on step2Marker as before.
+func writeProposeFixResponse(w http.ResponseWriter, userContent string, params map[string]bool) {
+	var toolArgs map[string]string
+	switch {
+	case params["target_file"]:
+		// Compile fix: return which shown file to change and its corrected content.
+		toolArgs = map[string]string{
+			"target_file":      firstShownFile(userContent),
+			"proposed_content": compileFixContent,
+			"rationale":        "closed the config() call and moved tags inside it so dbt can parse the model",
+			"confidence":       "high",
+		}
+	case params["proposed_content"]:
+		// Seed fix: return the corrected CSV content.
+		toolArgs = map[string]string{
+			"proposed_content": seedFixContent,
+			"rationale":        "quoted the field containing a comma so the seed row parses",
+			"confidence":       "high",
+		}
+	default:
+		// Validation fix: proposed_sql, branching on the Step-2 marker.
+		proposedSQL := "select c.id from e2e_schema.ftable_c c"
+		rationale := "removed reference to nonexistent relation public.wrong_name"
+		if strings.Contains(userContent, step2Marker) {
+			// Step-2: corrected real model source (preserves dbt macros).
+			proposedSQL = step2SourceFix
+			rationale = "removed join to nonexistent relation; preserved {{ ref(...) }} macros"
+		}
+		toolArgs = map[string]string{
+			"proposed_sql": proposedSQL,
+			"rationale":    rationale,
+			"confidence":   "high",
+		}
 	}
-	args, _ := json.Marshal(map[string]string{
-		"proposed_sql": proposedSQL,
-		"rationale":    rationale,
-		"confidence":   "high",
-	})
+	args, _ := json.Marshal(toolArgs)
 	resp := map[string]any{
 		"choices": []map[string]any{
 			{

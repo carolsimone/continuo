@@ -17,7 +17,10 @@ import (
 )
 
 // Input is the failure evidence a Fixer needs, projected from the inbound
-// remediation.requested trigger. DBTLog is already sanitized by the driver.
+// remediation.requested trigger. DBTLogURI is the raw object-storage URI of the
+// dbt log; each Fixer fetches and sanitizes it (via loadDBTLog) only when its
+// error class actually needs it, so a class that can skip early does not depend
+// on the log being readable.
 type Input struct {
 	Source          string
 	ReleaseID       string
@@ -27,7 +30,7 @@ type Input struct {
 	CommitSHA       string
 	FilePath        string
 	Service         string
-	DBTLog          string
+	DBTLogURI       string
 	CandidateSQLURI string
 	Attempt         int
 }
@@ -99,13 +102,27 @@ const (
 	sourceValidation = "validation"
 )
 
+// loadDBTLog fetches and sanitizes the dbt log a Fixer needs for its prompt. A
+// missing log (ErrNotFound) is not fatal — a fix can still be proposed from the
+// other evidence — so it yields an empty string; any other fetch error is
+// transient and returned so the driver redelivers. Each Fixer calls this only
+// when its error class actually needs the log, keeping the read off the paths
+// (e.g. an empty validation candidate) that skip before proposing anything.
+func loadDBTLog(ctx context.Context, svc Services, uri string) (string, error) {
+	raw, err := svc.Evidence.Fetch(ctx, uri)
+	if err != nil && err != ports.ErrNotFound {
+		return "", fmt.Errorf("fetch dbt log: %w", err)
+	}
+	return svc.Sanitizer.Sanitize(raw), nil
+}
+
 // singleShot builds a Fixer whose flow is: gather source files → build one
 // prompt → one LLM call → interpret → (on a proposed outcome) diff the chosen
 // file against its original content and write the source + diff artifacts.
 // compileFixer and seedFixer embed it.
 type singleShot struct {
 	gather    func(ctx context.Context, svc Services, in Input) (Gathered, bool, error)
-	build     func(g Gathered, in Input) prompt.ProposeRequest
+	build     func(g Gathered, in Input, dbtLog string) prompt.ProposeRequest
 	interpret func(res ports.ProposeResult, g Gathered, in Input) Outcome
 }
 
@@ -117,7 +134,13 @@ func (s singleShot) Propose(ctx context.Context, svc Services, in Input) (Result
 	if skip {
 		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
 	}
-	res, err := svc.LLM.Propose(ctx, s.build(g, in))
+	// The log is fetched only after gather commits to producing a fix, so a
+	// skipped class never depends on the log being readable.
+	dbtLog, err := loadDBTLog(ctx, svc, in.DBTLogURI)
+	if err != nil {
+		return Result{}, err // transient log read error: driver redelivers
+	}
+	res, err := svc.LLM.Propose(ctx, s.build(g, in, dbtLog))
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
 	}

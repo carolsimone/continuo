@@ -101,11 +101,10 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		return err // unknown error class: surfaced loudly, not silently skipped
 	}
 
-	rawLog, err := deps.Evidence.Fetch(ctx, t.DBTLogURI)
-	if err != nil && err != ports.ErrNotFound {
-		return fmt.Errorf("fetch dbt log: %w", err)
-	}
-
+	// The dbt log is not fetched here: each Fixer reads it (via loadDBTLog) only
+	// when its error class needs it, so a class that skips early — e.g. a
+	// validation trigger with no candidate SQL — is not blocked by a transiently
+	// unreadable log.
 	in := fixer.Input{
 		Source:          t.Source,
 		ReleaseID:       t.ReleaseID,
@@ -115,7 +114,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		CommitSHA:       t.CommitSHA,
 		FilePath:        t.FilePath,
 		Service:         t.Service,
-		DBTLog:          deps.Sanitizer.Sanitize(rawLog),
+		DBTLogURI:       t.DBTLogURI,
 		CandidateSQLURI: t.CandidateSQLURI,
 		Attempt:         attempt,
 	}

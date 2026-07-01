@@ -56,8 +56,8 @@ func seedGather(ctx context.Context, svc Services, in Input) (Gathered, bool, er
 	return Gathered{Files: map[string]string{full: content}, Order: []string{full}, Primary: full}, false, nil
 }
 
-func seedBuild(g Gathered, in Input) prompt.ProposeRequest {
-	return prompt.AssembleSeedFix(g.Primary, g.Files[g.Primary], in.DBTLog, in.NodeID)
+func seedBuild(g Gathered, in Input, dbtLog string) prompt.ProposeRequest {
+	return prompt.AssembleSeedFix(g.Primary, g.Files[g.Primary], dbtLog, in.NodeID)
 }
 
 func seedInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {

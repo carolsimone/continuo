@@ -14,11 +14,12 @@ func TestSeed_FixableCSV_Proposes(t *testing.T) {
 	svc := Services{
 		Source:    fs,
 		LLM:       &fakeLLM{queue: []ports.ProposeResult{{ProposedContent: "id,name\n1,\"a,b\"", Confidence: "high", Rationale: "quote the comma"}}},
+		Evidence:  fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "seed_build", NodeID: "analytics.ref", Service: "svc", FilePath: "seeds/ref.csv",
-		Repo: "o/repo", CommitSHA: "sha", DBTLog: "Error loading seed", ReleaseID: "r", Attempt: 1}
+		Repo: "o/repo", CommitSHA: "sha", DBTLogURI: "s3://log", ReleaseID: "r", Attempt: 1}
 	r, err := seedFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)
@@ -34,11 +35,12 @@ func TestSeed_UninferableValue_LowConfidenceUnchanged_Fails(t *testing.T) {
 	svc := Services{
 		Source:    fs,
 		LLM:       &fakeLLM{queue: []ports.ProposeResult{{ProposedContent: original, Confidence: "low", Rationale: "cannot infer amount"}}},
+		Evidence:  fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "seed_build", NodeID: "analytics.ref", Service: "svc", FilePath: "seeds/ref.csv",
-		Repo: "o/repo", CommitSHA: "sha", DBTLog: "type error", ReleaseID: "r", Attempt: 1}
+		Repo: "o/repo", CommitSHA: "sha", DBTLogURI: "s3://log", ReleaseID: "r", Attempt: 1}
 	r, err := seedFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)
@@ -59,11 +61,12 @@ func TestSeed_FallsBackToAncestry_WhenServiceMissing(t *testing.T) {
 		Source:    fs,
 		Ancestry:  fakeAncestry{filePath: "seeds/ref.csv", service: "svc"},
 		LLM:       &fakeLLM{queue: []ports.ProposeResult{{ProposedContent: "id,name\n1,\"a,b\"", Confidence: "high"}}},
+		Evidence:  fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "seed_build", NodeID: "analytics.ref", FilePath: "seeds/ref.csv",
-		Repo: "o/repo", CommitSHA: "sha", DBTLog: "Error loading seed", ReleaseID: "r", Attempt: 1}
+		Repo: "o/repo", CommitSHA: "sha", DBTLogURI: "s3://log", ReleaseID: "r", Attempt: 1}
 	r, err := seedFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)

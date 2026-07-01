@@ -55,11 +55,12 @@ func TestCompile_OffendingSQL_ProposesToSQL(t *testing.T) {
 	svc := Services{
 		Source:    fs,
 		LLM:       &fakeLLM{queue: []ports.ProposeResult{{TargetFile: "services/svc/models/x.sql", ProposedContent: "{{ config(x) }}\nselect 1", Confidence: "high", Rationale: "fix jinja"}}},
+		Evidence:  fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "compile", NodeID: "svc", Repo: "o/repo", CommitSHA: "sha",
-		FilePath: "models/x.sql", DBTLog: "Compilation Error", ReleaseID: "r", Attempt: 1}
+		FilePath: "models/x.sql", DBTLogURI: "s3://log", ReleaseID: "r", Attempt: 1}
 	r, err := compileFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)
@@ -81,11 +82,12 @@ func TestCompile_TargetsCoLocatedYAML(t *testing.T) {
 	svc := Services{
 		Source:    fs,
 		LLM:       &fakeLLM{queue: []ports.ProposeResult{{TargetFile: "services/svc/models/schema.yml", ProposedContent: "version: 2\nmodels: [{name: x}]", Confidence: "high"}}},
+		Evidence:  fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "compile", NodeID: "svc", Repo: "o/repo", CommitSHA: "sha",
-		FilePath: "models/x.sql", DBTLog: "Compilation Error", ReleaseID: "r", Attempt: 1}
+		FilePath: "models/x.sql", DBTLogURI: "s3://log", ReleaseID: "r", Attempt: 1}
 	r, err := compileFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +105,7 @@ func TestCompile_LLMNamesUnshownFile_Skips(t *testing.T) {
 	svc := Services{
 		Source:    fs,
 		LLM:       &fakeLLM{queue: []ports.ProposeResult{{TargetFile: "services/svc/models/evil.sql", ProposedContent: "drop table", Confidence: "high"}}},
+		Evidence:  fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
@@ -148,11 +151,12 @@ func TestCompile_BestEffortReadsFail_StillProposes(t *testing.T) {
 	svc := Services{
 		Source:    fs,
 		LLM:       &fakeLLM{queue: []ports.ProposeResult{{TargetFile: "services/svc/models/x.sql", ProposedContent: "{{ config(x) }}\nselect 1", Confidence: "high", Rationale: "fix jinja"}}},
+		Evidence:  fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "compile", NodeID: "svc", Repo: "o/repo", CommitSHA: "sha",
-		FilePath: "models/x.sql", DBTLog: "Compilation Error", ReleaseID: "r", Attempt: 1}
+		FilePath: "models/x.sql", DBTLogURI: "s3://log", ReleaseID: "r", Attempt: 1}
 	r, err := compileFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)
@@ -173,11 +177,12 @@ func TestCompile_EmptyTargetFile_DefaultsToPrimary(t *testing.T) {
 	svc := Services{
 		Source:    fs,
 		LLM:       &fakeLLM{queue: []ports.ProposeResult{{TargetFile: "", ProposedContent: "{{ config(x) }}\nselect 1", Confidence: "high", Rationale: "fix jinja"}}},
+		Evidence:  fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "compile", NodeID: "svc", Repo: "o/repo", CommitSHA: "sha",
-		FilePath: "models/x.sql", DBTLog: "Compilation Error", ReleaseID: "r", Attempt: 1}
+		FilePath: "models/x.sql", DBTLogURI: "s3://log", ReleaseID: "r", Attempt: 1}
 	r, err := compileFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)

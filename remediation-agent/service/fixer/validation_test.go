@@ -132,7 +132,7 @@ func TestValidation_Step2Success_ResolvesSource(t *testing.T) {
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
-		CandidateSQLURI: "s3://cand", DBTLog: "boom", Attempt: 1}
+		CandidateSQLURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
 	r, err := validationFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +172,7 @@ func TestValidation_Step2Degrade_SourceReadError(t *testing.T) {
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
-		CandidateSQLURI: "s3://cand", DBTLog: "boom", Attempt: 1}
+		CandidateSQLURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
 	r, err := validationFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestValidation_Step1Empty_Fails(t *testing.T) {
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
-		CandidateSQLURI: "s3://cand", DBTLog: "boom", Attempt: 1}
+		CandidateSQLURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
 	r, err := validationFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +237,7 @@ func TestValidation_AncestryError_ProceedsDegraded(t *testing.T) {
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	in := Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
-		CandidateSQLURI: "s3://cand", DBTLog: "boom", Attempt: 1}
+		CandidateSQLURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
 	r, err := validationFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)

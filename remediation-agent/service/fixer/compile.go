@@ -74,12 +74,12 @@ func addFile(ctx context.Context, svc Services, in Input, g *Gathered, p string)
 	g.Order = append(g.Order, p)
 }
 
-func compileBuild(g Gathered, in Input) prompt.ProposeRequest {
+func compileBuild(g Gathered, in Input, dbtLog string) prompt.ProposeRequest {
 	files := make([]prompt.NamedFile, 0, len(g.Order))
 	for _, p := range g.Order {
 		files = append(files, prompt.NamedFile{Path: p, Content: g.Files[p]})
 	}
-	return prompt.AssembleCompileFix(files, in.DBTLog, in.NodeID)
+	return prompt.AssembleCompileFix(files, dbtLog, in.NodeID)
 }
 
 func compileInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {

@@ -25,7 +25,9 @@ import (
 type validationFixer struct{}
 
 func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
-	// Validation with no candidate SQL: nothing to fix.
+	// Validation with no candidate SQL: nothing to fix. This is decided before
+	// any log fetch so a transiently unreadable log cannot turn the intended
+	// skip into a redelivery.
 	if in.CandidateSQLURI == "" {
 		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
 	}
@@ -33,6 +35,11 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	candidateSQL, err := svc.Evidence.Fetch(ctx, in.CandidateSQLURI)
 	if err != nil {
 		return Result{}, fmt.Errorf("fetch candidate sql: %w", err)
+	}
+
+	dbtLog, err := loadDBTLog(ctx, svc, in.DBTLogURI)
+	if err != nil {
+		return Result{}, err // transient log read error: driver redelivers
 	}
 
 	// Ancestry is best-effort: proceed without upstream context on error.
@@ -50,7 +57,7 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 		NodeID:         in.NodeID,
 		ErrorSignature: in.ErrorSignature,
 		CandidateSQL:   candidateSQL,
-		DBTLog:         in.DBTLog,
+		DBTLog:         dbtLog,
 		Repo:           in.Repo,
 		CommitSHA:      in.CommitSHA,
 		Ancestors:      ancestors,

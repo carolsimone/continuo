@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`remediation-agent` acts on healable failures surfaced by the `remediation` classifier, across all three failure sources: `validation`, `compile`, and `seed_build`. It consumes `remediation.requested:v1` — one trigger per failing dbt node — and produces a fix proposal. A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, the dbt-log fetch, persistence, and the outbox emit; it dispatches each trigger to a per-error-class `Fixer` that decides which source files to read, which prompt to send, and how to interpret the model's answer. Validation failures carry a pre-compiled candidate SQL and use a two-step LLM flow (candidate diagnosis, then real-source fix). Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. For each successful proposal the driver enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
+`remediation-agent` acts on healable failures surfaced by the `remediation` classifier, across all three failure sources: `validation`, `compile`, and `seed_build`. It consumes `remediation.requested:v1` — one trigger per failing dbt node — and produces a fix proposal. A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, persistence, and the outbox emit; it dispatches each trigger to a per-error-class `Fixer` that decides which source files to read, whether it needs the dbt log (each class fetches and sanitizes it itself, only when needed), which prompt to send, and how to interpret the model's answer. Validation failures carry a pre-compiled candidate SQL and use a two-step LLM flow (candidate diagnosis, then real-source fix). Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. For each successful proposal the driver enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
 **Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (`GetNodeAncestry`, port 50052), and the GitHub Contents API (read-only).
 
@@ -89,16 +89,19 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
    the classifier only ever emits the three known values — and is returned loudly,
    not swallowed.
 
-4. Fetch the dbt log from S3 at dbt_log_uri (not-found → "" for a log-unavailable
-   proposal; any other error → return, message stays in the PEL and is retried),
-   then sanitize it once via LogSanitizer. The sanitized log is handed to every
-   Fixer; none of them re-fetch or re-sanitize it.
+4. Call fx.Propose(ctx, services, input) — see the per-class flows below. The
+   trigger's dbt_log_uri is passed through unfetched: each Fixer reads and
+   sanitizes the dbt log itself (via the shared loadDBTLog helper: not-found → ""
+   for a log-unavailable proposal; any other error → return, message stays in the
+   PEL and is retried) only when its error class needs the log, and only after it
+   has decided to produce a fix. This keeps the read off the paths that skip
+   before proposing anything — most importantly a validation trigger with no
+   candidate SQL, which must skip even when its log URI is transiently unreadable.
+   A returned error means a transient failure (LLM error, a non-404 source read,
+   or a non-not-found log read); the driver returns it unchanged so the trigger is
+   redelivered.
 
-5. Call fx.Propose(ctx, services, input) — see the per-class flows below.
-   A returned error means a transient failure (LLM error or a non-404 source
-   read); the driver returns it unchanged so the trigger is redelivered.
-
-6. Persist (shared for every class, one Postgres transaction):
+5. Persist (shared for every class, one Postgres transaction):
    a. Claim the inbound message in message_processing (keyed on the Redis
       message id and the upstream outbox_entry_id); if the claim conflicts the
       trigger was already handled, so roll back and ACK without re-proposing.
@@ -131,10 +134,12 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
    - List the offending file's directory via the GitHub Contents API directory
      listing; read every co-located .yml/.yaml sibling found.
    - Read the service's dbt_project.yml.
-5. Single forced propose_fix LLM tool call showing every gathered file (offending
-   file plus any context files) and the sanitized dbt compile error. The model
-   returns target_file (which shown file to change) and proposed_content (that
-   file's complete corrected content).
+5. Fetch and sanitize the dbt compile error via loadDBTLog (only now, once the
+   gather above has committed to producing a fix; not-found → "", any other error
+   is transient and redelivers), then make a single forced propose_fix LLM tool
+   call showing every gathered file (offending file plus any context files) and
+   that error. The model returns target_file (which shown file to change) and
+   proposed_content (that file's complete corrected content).
    - LLM transient error → retry.
 6. Interpret the result:
    - target_file is empty: default to the offending file.
@@ -165,8 +170,10 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 3. Read the CSV at <repo_path>/<file_path>.
    - 404: proposal(status=skipped), done (definitive; not retried).
    - Any other error: return it (transient; message redelivered).
-4. Single forced propose_fix LLM tool call with the CSV content and the sanitized
-   dbt seed error. The prompt is CSV-specific: it names the three concrete failure
+4. Fetch and sanitize the dbt seed error via loadDBTLog (only now, once the CSV
+   read above has succeeded; not-found → "", any other error is transient and
+   redelivers), then make a single forced propose_fix LLM tool call with the CSV
+   content and that error. The prompt is CSV-specific: it names the three concrete failure
    shapes (a stray comma inside an unquoted text field, a malformed row with the
    wrong column count, a value that does not match its column type) and instructs
    the model to return the CSV unchanged with low confidence when a bad value
@@ -186,9 +193,13 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 `validationFixer` (`service/fixer/validation.go`) is the one class that carries a pre-compiled candidate SQL and still runs two LLM calls: a first diagnosis against that candidate, then a best-effort second pass that applies the diagnosis to the real model source.
 
 ```
-1. Empty candidate_sql_uri on the trigger: proposal(status=skipped), done.
+1. Empty candidate_sql_uri on the trigger: proposal(status=skipped), done. This
+   is decided before any evidence is fetched, so a transiently unreadable dbt log
+   URI cannot turn the intended skip into a redelivery.
 2. Fetch the candidate SQL from S3 at candidate_sql_uri (required; any error is
-   transient and the trigger is redelivered).
+   transient and the trigger is redelivered), then fetch and sanitize the dbt log
+   via loadDBTLog (not-found → ""; any other error is transient and redelivered).
+   Both reads happen only after the empty-candidate skip above.
 3. Call orchestrator GetNodeAncestry(node_id) once. It returns the failing node's
    own file_path, its service_name, and its ranked upstream ancestors together.
    Best-effort: on error, proceed with no ancestors and empty file_path/service_name
@@ -266,7 +277,7 @@ If a response contains no tool call (or no choices), the adapter returns an erro
 
 ## LogSanitizer Seam
 
-The `LogSanitizer` port sits between the raw S3 log fetch and prompt assembly; the driver runs every fetched dbt log through it once. Validation's Step 2 also reuses the same seam to sanitize the real model source before it is sent to the LLM. The deployed implementation is currently pass-through: it returns its input unchanged. The seam exists so a redacting implementation can be dropped in without touching the handler or fixer logic.
+The `LogSanitizer` port sits between the raw S3 log fetch and prompt assembly; each Fixer runs its fetched dbt log through it once (via the shared `loadDBTLog` helper). Validation's Step 2 also reuses the same seam to sanitize the real model source before it is sent to the LLM. The deployed implementation is currently pass-through: it returns its input unchanged. The seam exists so a redacting implementation can be dropped in without touching the handler or fixer logic.
 
 ## Payload Shape (`remediation.proposed:v1`)
 
@@ -349,7 +360,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Proposal entity + unified diff | `remediation-agent/domain/proposal/proposal.go` |
 | Prompt assembly (validation candidate + real-source, compile, seed) | `remediation-agent/domain/prompt/prompt.go` (`Assemble`, `AssembleSourceFix`, `AssembleCompileFix`, `AssembleSeedFix`) |
 | Event payloads + deterministic IDs | `remediation-agent/domain/event/` (proposed + pr_opened) |
-| Shared driver — attempt cap, dedup, log fetch, persistence, outbox emit | `remediation-agent/service/handlers/propose_fix.go` |
+| Shared driver — attempt cap, dedup, persistence, outbox emit (each Fixer fetches its own dbt log) | `remediation-agent/service/handlers/propose_fix.go` |
 | Per-error-class fixers — `Fixer` interface, `For` factory, shared single-shot pipeline | `remediation-agent/service/fixer/fixer.go` |
 | Compile fixer (offending file + co-located YAML/`dbt_project.yml` context, one LLM call) | `remediation-agent/service/fixer/compile.go` |
 | Seed fixer (CSV read, one LLM call) | `remediation-agent/service/fixer/seed.go` |
