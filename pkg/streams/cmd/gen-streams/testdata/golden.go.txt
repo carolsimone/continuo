@@ -13,3 +13,9 @@ const (
 	// OrchestratorNodeUpdated — orchestrator consumer group on node.updated:v1.
 	OrchestratorNodeUpdated = "orchestrator-node-updated"
 )
+
+// All is every stream name from contract.yaml, in contract order — for callers
+// that must operate over all streams (e.g. the stream reaper).
+var All = []string{
+	NodeUpdatedV1,
+}
