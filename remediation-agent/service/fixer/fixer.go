@@ -168,8 +168,3 @@ func normalizeConfidence(c string) proposal.Confidence {
 		return proposal.ConfidenceMedium
 	}
 }
-
-// Temporary stub for the seed_build fixer, not yet implemented.
-type seedFixer struct{}
-
-func (seedFixer) Propose(context.Context, Services, Input) (Result, error) { return Result{}, nil }

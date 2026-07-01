@@ -153,6 +153,35 @@ func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string) ProposeRequest
 	}
 }
 
+const seedFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt seed CSV that failed to load.
+You are given the seed CSV file and the dbt seed error. dbt seed loads a comma-separated file into a table; loads fail on quoting problems (a stray comma inside an unquoted text field), a malformed row (wrong column count), or a value that does not match its column type.
+
+Rules:
+- Return the COMPLETE corrected CSV in proposed_content, changing only what the error requires (fix quoting, repair the malformed row). Preserve every other row and the header exactly.
+- Do NOT invent or guess data values. If the failure is a genuinely wrong or missing data value that cannot be inferred from the file and error alone, return the CSV UNCHANGED with low confidence and explain why in rationale.
+- Always respond by calling the propose_fix tool.`
+
+// AssembleSeedFix builds a CSV-specific seed-fix request.
+func AssembleSeedFix(csvPath, csvContent, dbtLog, nodeID string) ProposeRequest {
+	var u strings.Builder
+	fmt.Fprintf(&u, "Seed: %s (node %s)\n\n", csvPath, nodeID)
+	fmt.Fprintf(&u, "CSV content:\n```\n%s\n```\n\n", csvContent)
+	fmt.Fprintf(&u, "dbt seed error:\n```\n%s\n```\n\n", dbtLog)
+	u.WriteString("Return the complete corrected CSV, or the CSV unchanged with low confidence if the bad value cannot be inferred.")
+
+	return ProposeRequest{
+		System:          seedFixSystemPrompt,
+		User:            u.String(),
+		ToolName:        "propose_fix",
+		ToolDescription: "Return the complete corrected seed CSV.",
+		ToolParams: []ToolParam{
+			{Name: "proposed_content", Type: "string", Description: "The complete corrected CSV content.", Required: true},
+			{Name: "rationale", Type: "string", Description: "A short explanation. No warehouse data values.", Required: true},
+			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high. Use low when the bad value cannot be inferred.", Required: true},
+		},
+	}
+}
+
 const systemPrompt = `You are a data-engineering assistant that proposes a fix for a failed dbt model.
 You are given the failed model's SQL, the dbt error, and metadata about which upstream
 models changed recently. Propose a corrected version of the failed model's SQL that makes
