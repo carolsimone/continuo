@@ -91,17 +91,34 @@ func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, e
 	return "s3://bucket/" + key, nil
 }
 
-// fakeSource returns a fixed file content or an error. readPath records the
-// last path argument passed to ReadFile so tests can assert the full path.
+// fakeSource returns file content or an error. When files is non-nil it acts as
+// a path→content map (misses return ports.ErrSourceNotFound); otherwise it
+// returns the single content for any path. readPath records the last path
+// successfully read so tests can assert the offending file was resolved. ListDir
+// returns ErrSourceNotFound by default so the compile gather reads only the
+// offending file (co-located siblings are best-effort).
 type fakeSource struct {
 	content  string
+	files    map[string]string
 	err      error
 	readPath string
 }
 
 func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, error) {
+	if f.files != nil {
+		c, ok := f.files[path]
+		if !ok {
+			return "", ports.ErrSourceNotFound
+		}
+		f.readPath = path
+		return c, nil
+	}
 	f.readPath = path
 	return f.content, f.err
+}
+
+func (f *fakeSource) ListDir(_ context.Context, _, _, _ string) ([]string, error) {
+	return nil, ports.ErrSourceNotFound
 }
 
 // fakeClock returns a fixed UTC timestamp.
@@ -308,14 +325,18 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		"s3://c.log": "Compilation Error in model daily_transactions (models/daily_transactions.sql)\n  unexpected '}' in config block",
 	}}
 	llm := newFakeLLM(ports.ProposeResult{
-		ProposedSQL: "{{ config(materialized='table', tags=['daily']) }}\nselect * from analytics.raw_transactions",
-		Rationale:   "fixed malformed config block",
-		Confidence:  "high",
-		Model:       "m",
+		ProposedContent: "{{ config(materialized='table', tags=['daily']) }}\nselect * from analytics.raw_transactions",
+		Rationale:       "fixed malformed config block",
+		Confidence:      "high",
+		Model:           "m",
 	}, nil)
 	art := &fakeArtifacts{}
-	// The broken source has a malformed config()/tags expression.
-	src := &fakeSource{content: "{{ config(materialized='table'), tags=['daily'])}}\nselect * from analytics.raw_transactions"}
+	// The broken source has a malformed config()/tags expression. Keyed by the
+	// full offending path so the co-located dbt_project.yml read returns 404 and
+	// does not overwrite readPath.
+	src := &fakeSource{files: map[string]string{
+		"models/daily_transactions.sql": "{{ config(materialized='table'), tags=['daily'])}}\nselect * from analytics.raw_transactions",
+	}}
 
 	d := Deps{
 		NewUoW:      func() uow.UnitOfWork { return u },
@@ -401,10 +422,10 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		"s3://b/log": "Database Error in seed customers: extra column",
 	}}
 	llm := newFakeLLM(ports.ProposeResult{
-		ProposedSQL: "id,name\n1,alice",
-		Rationale:   "removed extra column",
-		Confidence:  "high",
-		Model:       "m",
+		ProposedContent: "id,name\n1,alice",
+		Rationale:       "removed extra column",
+		Confidence:      "high",
+		Model:           "m",
 	}, nil)
 	art := &fakeArtifacts{}
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
@@ -479,10 +500,10 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 		"s3://b/log": "Database Error in seed customers: extra column",
 	}}
 	llm := newFakeLLM(ports.ProposeResult{
-		ProposedSQL: "id,name\n1,alice",
-		Rationale:   "removed extra column",
-		Confidence:  "high",
-		Model:       "m",
+		ProposedContent: "id,name\n1,alice",
+		Rationale:       "removed extra column",
+		Confidence:      "high",
+		Model:           "m",
 	}, nil)
 	art := &fakeArtifacts{}
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
@@ -546,10 +567,10 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T)
 		"s3://b/log": "Database Error in seed customers: extra column",
 	}}
 	llm := newFakeLLM(ports.ProposeResult{
-		ProposedSQL: "id,name\n1,alice",
-		Rationale:   "removed extra column",
-		Confidence:  "high",
-		Model:       "m",
+		ProposedContent: "id,name\n1,alice",
+		Rationale:       "removed extra column",
+		Confidence:      "high",
+		Model:           "m",
 	}, nil)
 	art := &fakeArtifacts{}
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
