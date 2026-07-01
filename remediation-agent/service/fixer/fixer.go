@@ -169,11 +169,7 @@ func normalizeConfidence(c string) proposal.Confidence {
 	}
 }
 
-// Temporary stubs — replaced in the per-class tasks.
-type compileFixer struct{}
-
-func (compileFixer) Propose(context.Context, Services, Input) (Result, error) { return Result{}, nil }
-
+// Temporary stub — replaced in Task 6.
 type seedFixer struct{}
 
 func (seedFixer) Propose(context.Context, Services, Input) (Result, error) { return Result{}, nil }

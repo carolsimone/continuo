@@ -111,6 +111,48 @@ func AssembleSourceFromError(originalSource, dbtLog, nodeID string) ProposeReque
 	}
 }
 
+// NamedFile is one source file shown to the model in a multi-file prompt.
+type NamedFile struct {
+	Path    string
+	Content string
+}
+
+const compileFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt project that failed to compile.
+You are given every candidate source file (the offending model and its co-located schema.yml and the project's dbt_project.yml) and the dbt compile error. The dbt projects are independent and reference upstream tables by their physical schema-qualified name (e.g. analytics.table_a), NEVER with {{ ref(...) }} / {{ source(...) }}.
+
+Rules:
+- Decide which ONE file must change to make dbt compile succeed, and return its path in target_file. It must be one of the files shown to you.
+- Return the COMPLETE corrected content of that file in proposed_content, preserving formatting and unrelated content.
+- Never introduce {{ ref(...) }} or {{ source(...) }}.
+- If you cannot determine a safe fix, return the offending file unchanged with low confidence and an explanation.
+- Always respond by calling the propose_fix tool.`
+
+// AssembleCompileFix builds a multi-file compile-fix request. The model chooses
+// which shown file to change (target_file) and returns its corrected content.
+func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string) ProposeRequest {
+	var u strings.Builder
+	fmt.Fprintf(&u, "Service: %s\n\n", nodeID)
+	for _, f := range files {
+		fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", f.Path, f.Content)
+	}
+	fmt.Fprintf(&u, "dbt compile error:\n```\n%s\n```\n\n", dbtLog)
+	u.WriteString("Return the complete corrected content of the ONE file that must change.")
+
+	return ProposeRequest{
+		System:          compileFixSystemPrompt,
+		User:            u.String(),
+		ToolName:        "propose_fix",
+		ToolDescription: "Return the corrected content of the one file that fixes dbt compile.",
+		ToolParams: []ToolParam{
+			{Name: "target_file", Type: "string", Description: "The path of the file to change; must be one of the files shown.", Required: true},
+			{Name: "proposed_content", Type: "string", Description: "The complete corrected content of target_file.", Required: true},
+			{Name: "rationale", Type: "string", Description: "A short explanation of the change. No warehouse data values.", Required: true},
+			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
+			{Name: "suspected_root_cause_node", Type: "string", Description: "Optional: the upstream node id you believe caused the failure, or empty.", Required: false},
+		},
+	}
+}
+
 const systemPrompt = `You are a data-engineering assistant that proposes a fix for a failed dbt model.
 You are given the failed model's SQL, the dbt error, and metadata about which upstream
 models changed recently. Propose a corrected version of the failed model's SQL that makes
