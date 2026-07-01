@@ -177,9 +177,3 @@ func (compileFixer) Propose(context.Context, Services, Input) (Result, error) { 
 type seedFixer struct{}
 
 func (seedFixer) Propose(context.Context, Services, Input) (Result, error) { return Result{}, nil }
-
-type validationFixer struct{}
-
-func (validationFixer) Propose(context.Context, Services, Input) (Result, error) {
-	return Result{}, nil
-}

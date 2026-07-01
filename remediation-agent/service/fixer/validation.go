@@ -1,0 +1,176 @@
+package fixer
+
+import (
+	"context"
+	"fmt"
+	"path"
+	"strings"
+
+	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
+	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
+	"github.com/carolsimone/continuo/remediation-agent/service/ports"
+)
+
+// validationFixer handles validation-rejection failures, which carry a
+// candidate SQL (the pre-compiled SQL extracted from object storage at the
+// point of failure). It runs a two-step flow:
+//
+//  1. Ask the LLM to fix the candidate SQL given the dbt error. The result is
+//     written as candidate artifacts unconditionally, for audit — it is the
+//     LLM's fix applied to the pre-compiled SQL, not the real model source.
+//  2. Best-effort: resolve the real model source from version control via
+//     Ancestry + the service-to-repo-path mapping, and ask the LLM to apply the
+//     Step-1 diagnosis to it. On success the final proposal points to the
+//     source artifacts; on any degraded path it falls back to the candidate.
+type validationFixer struct{}
+
+func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
+	// Validation with no candidate SQL: nothing to fix.
+	if in.CandidateSQLURI == "" {
+		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
+	}
+
+	candidateSQL, err := svc.Evidence.Fetch(ctx, in.CandidateSQLURI)
+	if err != nil {
+		return Result{}, fmt.Errorf("fetch candidate sql: %w", err)
+	}
+
+	// Ancestry is best-effort: proceed without upstream context on error.
+	// filePath and serviceName are forwarded to resolveSource so it does not
+	// need a second NodeContext call.
+	filePath, serviceName, ancestors, err := svc.Ancestry.NodeContext(ctx, in.NodeID)
+	if err != nil {
+		svc.Logger.Warn("ancestry unavailable; proceeding without upstream context",
+			"node", in.NodeID, "error", err)
+		ancestors = nil
+		filePath, serviceName = "", ""
+	}
+
+	res, err := svc.LLM.Propose(ctx, prompt.Assemble(prompt.Evidence{
+		NodeID:         in.NodeID,
+		ErrorSignature: in.ErrorSignature,
+		CandidateSQL:   candidateSQL,
+		DBTLog:         in.DBTLog,
+		Repo:           in.Repo,
+		CommitSHA:      in.CommitSHA,
+		Ancestors:      ancestors,
+	}))
+	if err != nil {
+		// Transient LLM error: return so the driver redelivers.
+		return Result{}, fmt.Errorf("llm propose: %w", err)
+	}
+	if res.ProposedSQL == "" {
+		return Result{Proposal: proposal.Proposal{Status: proposal.StatusFailed}}, nil
+	}
+
+	// Step 1 — candidate artifacts. Written unconditionally for audit: the
+	// candidate is the LLM's fix applied to the pre-compiled SQL extracted from
+	// object storage (not the real model source).
+	candSQLKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.sql", in.ReleaseID, in.NodeID, in.Attempt)
+	candDiffKey := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.diff", in.ReleaseID, in.NodeID, in.Attempt)
+
+	candSQLURI, err := svc.Artifacts.Write(ctx, candSQLKey, res.ProposedSQL, "text/plain")
+	if err != nil {
+		return Result{}, fmt.Errorf("write candidate sql: %w", err)
+	}
+	candDiffURI, err := svc.Artifacts.Write(ctx, candDiffKey, proposal.ComputeUnifiedDiff(candidateSQL, res.ProposedSQL, in.NodeID), "text/plain")
+	if err != nil {
+		return Result{}, fmt.Errorf("write candidate diff: %w", err)
+	}
+
+	// Defaults: final URIs fall back to the candidate unless Step 2 succeeds.
+	finalSQLURI, finalDiffURI := candSQLURI, candDiffURI
+	sourceResolved := false
+	var resolvedFilePath string
+
+	// Step 2 — real-source fix. Fetches the model source from version control
+	// and asks the LLM to apply the Step-1 diagnosis to it. Degrades silently
+	// when the file path, service mapping, source read, or LLM result is
+	// unavailable, or when the LLM did not improve the source.
+	if src, fullPath, ok := resolveValidationSource(ctx, svc, in, filePath, serviceName, res); ok {
+		srcDiff := proposal.ComputeUnifiedDiff(src.original, src.corrected, in.NodeID)
+		srcSQLURI, err := svc.Artifacts.Write(ctx,
+			fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", in.ReleaseID, in.NodeID, in.Attempt),
+			src.corrected, "text/plain")
+		if err != nil {
+			return Result{}, fmt.Errorf("write source sql: %w", err)
+		}
+		srcDiffURI, err := svc.Artifacts.Write(ctx,
+			fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.diff", in.ReleaseID, in.NodeID, in.Attempt),
+			srcDiff, "text/plain")
+		if err != nil {
+			return Result{}, fmt.Errorf("write source diff: %w", err)
+		}
+		finalSQLURI, finalDiffURI, sourceResolved = srcSQLURI, srcDiffURI, true
+		resolvedFilePath = fullPath
+	}
+
+	p := proposal.Proposal{
+		Status:              proposal.StatusProposed,
+		Confidence:          normalizeConfidence(res.Confidence),
+		Rationale:           res.Rationale,
+		ProposedSQLURI:      finalSQLURI,
+		DiffURI:             finalDiffURI,
+		CandidateFixSQLURI:  candSQLURI,
+		CandidateFixDiffURI: candDiffURI,
+		SourceResolved:      sourceResolved,
+		Model:               res.Model,
+	}
+	// Populate source-location fields only when the real-source step succeeded.
+	if sourceResolved {
+		p.Repo = in.Repo
+		p.CommitSHA = in.CommitSHA
+		p.FilePath = resolvedFilePath
+	}
+	return Result{Proposal: p, SuspectedRoot: res.SuspectedRootCauseNode}, nil
+}
+
+// resolvedValidationSource holds the original model source and the Step-2
+// corrected version produced by the LLM.
+type resolvedValidationSource struct{ original, corrected string }
+
+// resolveValidationSource performs Step 2: fetch the real model source from
+// version control and ask the LLM to apply the Step-1 diagnosis to it.
+// filePath and serviceName come from the single NodeContext call already made
+// by the caller. Returns the resolved source, the full repository-relative
+// file path used for the read, and ok=true on success. Returns ok=false on any
+// degraded path (missing file path or service name, no repo mapping, source
+// read error, empty/unchanged LLM result, or low-confidence LLM result); the
+// caller then keeps the candidate proposal. fullPath is empty when ok=false.
+func resolveValidationSource(ctx context.Context, svc Services, in Input, filePath, serviceName string, step1 ports.ProposeResult) (resolvedValidationSource, string, bool) {
+	if filePath == "" || serviceName == "" {
+		svc.Logger.Warn("source fix: file path or service name unavailable; using candidate proposal",
+			"node", in.NodeID, "file_path", filePath, "service_name", serviceName)
+		return resolvedValidationSource{}, "", false
+	}
+	repoPrefix, ok := svc.ServiceRepoPaths[serviceName]
+	if !ok {
+		svc.Logger.Warn("source fix: no repo path mapping for service; using candidate proposal",
+			"node", in.NodeID, "service_name", serviceName)
+		return resolvedValidationSource{}, "", false
+	}
+	fullPath := path.Join(repoPrefix, filePath)
+	original, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, fullPath)
+	if err != nil {
+		svc.Logger.Warn("source fix: github read failed; using candidate proposal",
+			"node", in.NodeID, "path", fullPath, "error", err)
+		return resolvedValidationSource{}, "", false
+	}
+	out, err := svc.LLM.Propose(ctx, prompt.AssembleSourceFix(svc.Sanitizer.Sanitize(original), in.NodeID, step1.Rationale))
+	if err != nil {
+		svc.Logger.Warn("source fix: llm step 2 failed; using candidate proposal",
+			"node", in.NodeID, "error", err)
+		return resolvedValidationSource{}, "", false
+	}
+	if out.ProposedSQL == "" || out.ProposedSQL == original {
+		svc.Logger.Warn("source fix: llm step 2 produced no improvement; using candidate proposal",
+			"node", in.NodeID)
+		return resolvedValidationSource{}, "", false
+	}
+	if strings.EqualFold(out.Confidence, "low") {
+		svc.Logger.Warn("source fix: llm step 2 low confidence; using candidate proposal",
+			"node", in.NodeID)
+		return resolvedValidationSource{}, "", false
+	}
+	return resolvedValidationSource{original: original, corrected: out.ProposedSQL}, fullPath, true
+}
