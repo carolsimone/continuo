@@ -52,10 +52,14 @@ redis:
   master:
     resources:
       requests:
-        memory: 384Mi
+        memory: 512Mi
         cpu: 100m
       limits:
-        memory: 576Mi
+        # Redis holds both the event streams and the ui-service OIDC sessions.
+        # At 576Mi it was OOMKilled while loading its persisted dataset once the
+        # streams grew, crashlooping and taking auth + the event pipeline down.
+        # Headroom here; stream growth is bounded separately by retention trimming.
+        memory: 2Gi
         cpu: 150m
     persistence:
       storageClass: hcloud-volumes
