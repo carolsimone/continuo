@@ -114,7 +114,7 @@ type openaiResponseFunction struct {
 	Arguments string `json:"arguments"`
 }
 
-// openaiToolArgs holds the four fields returned by the propose_fix function.
+// openaiToolArgs holds the fields parsed from the propose_fix tool call.
 type openaiToolArgs struct {
 	ProposedSQL            string `json:"proposed_sql"`
 	ProposedContent        string `json:"proposed_content"`

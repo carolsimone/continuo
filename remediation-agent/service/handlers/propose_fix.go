@@ -71,10 +71,9 @@ type Deps struct {
 	Clock       ports.Clock
 	Logger      *slog.Logger
 	MaxAttempts int
-	Bucket      string
 	// ServiceRepoPaths maps a dbt service_name to its project root within the
-	// source repo, e.g. "service-1" → "services/service-1". Used to construct
-	// the full GitHub file path for Step-2 source resolution.
+	// source repo, e.g. "service-1" → "services/service-1". Used by the fixers
+	// to build the full GitHub file path for the offending source file.
 	ServiceRepoPaths map[string]string
 }
 
@@ -151,9 +150,10 @@ func countAttempts(ctx context.Context, deps Deps, t Trigger) (int, error) {
 
 // record inserts the proposal row and, when emit is true, enqueues the
 // remediation.proposed:v1 outbox trigger — all in a single transaction.
-// sourceResolved indicates whether the real-source Step-2 fix succeeded; it is
-// threaded into the outbox event. The variadic suspectedRoot lets successful
-// proposals forward the optional LLM field without a separate struct.
+// sourceResolved indicates whether the fixer resolved and rewrote the real
+// source file; it is threaded into the outbox event. The variadic
+// suspectedRoot lets successful proposals forward the optional LLM field
+// without a separate struct.
 //
 // Inbound dedup is performed atomically inside the transaction: the
 // message_processing claim, the proposal insert, and the optional outbox enqueue

@@ -77,40 +77,6 @@ func AssembleSourceFix(originalSource, nodeID, diagnosis string) ProposeRequest 
 	}
 }
 
-const sourceErrorSystemPrompt = `You are a data-engineering assistant that fixes a dbt model that failed to compile or build.
-You are given the model's ACTUAL source file and the dbt error it produced. The dbt projects in this system are independent and unaware of each other, so models reference upstream tables by their physical schema-qualified name (e.g. analytics.table_a), NOT with dbt {{ ref(...) }} / {{ source(...) }}.
-
-Rules:
-- Fix the model so it compiles and builds, preserving its formatting style, its {{ config(...) }} block, and any other macros that are not table references.
-- Reference every upstream table by its physical schema.table name, in the same style the existing model already uses. NEVER introduce {{ ref(...) }} or {{ source(...) }}: these do not resolve across the independent dbt projects and would break the model.
-- Return the complete corrected source for the model, not a diff and not a fragment.
-- If you cannot determine a safe fix, return the original source unchanged with low confidence and an explanation.
-- Always respond by calling the propose_fix tool.`
-
-// AssembleSourceFromError builds a single-step request for compile and
-// seed_build failures, which produce no candidate SQL. It gives the LLM the real
-// model source and the dbt error and asks for the complete corrected source.
-func AssembleSourceFromError(originalSource, dbtLog, nodeID string) ProposeRequest {
-	var u strings.Builder
-	fmt.Fprintf(&u, "Model: %s\n\n", nodeID)
-	fmt.Fprintf(&u, "Model source:\n```sql\n%s\n```\n\n", originalSource)
-	fmt.Fprintf(&u, "dbt error:\n```\n%s\n```\n\n", dbtLog)
-	u.WriteString("Return the complete corrected source for this model.")
-
-	return ProposeRequest{
-		System:          sourceErrorSystemPrompt,
-		User:            u.String(),
-		ToolName:        "propose_fix",
-		ToolDescription: "Return the complete corrected source for the dbt model.",
-		ToolParams: []ToolParam{
-			{Name: "proposed_sql", Type: "string", Description: "The complete corrected model source.", Required: true},
-			{Name: "rationale", Type: "string", Description: "A short explanation of the change. No warehouse data values.", Required: true},
-			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
-			{Name: "suspected_root_cause_node", Type: "string", Description: "Optional: the upstream node id you believe caused the failure, or empty.", Required: false},
-		},
-	}
-}
-
 // NamedFile is one source file shown to the model in a multi-file prompt.
 type NamedFile struct {
 	Path    string

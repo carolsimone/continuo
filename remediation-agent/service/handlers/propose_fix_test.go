@@ -294,7 +294,6 @@ func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 }
@@ -349,7 +348,6 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		Clock:       fakeClock{},
 		Logger:      slog.Default(),
 		MaxAttempts: 3,
-		Bucket:      "bucket",
 		// Service "core" maps to the repo root, so the full path equals FilePath.
 		ServiceRepoPaths: map[string]string{"core": ""},
 	}
@@ -443,7 +441,6 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	tr := Trigger{
@@ -519,7 +516,6 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	// No FilePath or Service on the trigger: must fall back to Ancestry.
@@ -588,7 +584,6 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T)
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	tr := Trigger{
@@ -801,7 +796,6 @@ func TestProposeFix_Step2_SourceResolved(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 
@@ -896,7 +890,6 @@ func TestProposeFix_Step2_FallbackOnSourceError(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 
@@ -959,7 +952,6 @@ func TestProposeFix_Step2_FallbackOnEmptyFilePath(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 
@@ -1012,7 +1004,6 @@ func TestProposeFix_Step2_FallbackOnUnmappedService(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"}, // "unknown-service" not present
 	}
 
@@ -1068,7 +1059,6 @@ func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
 			Clock:            fakeClock{},
 			Logger:           slog.Default(),
 			MaxAttempts:      3,
-			Bucket:           "bucket",
 			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
 		}
 		tr := baseTrigger()
@@ -1123,7 +1113,6 @@ func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
 			Clock:            fakeClock{},
 			Logger:           slog.Default(),
 			MaxAttempts:      3,
-			Bucket:           "bucket",
 			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
 		}
 		tr := baseTrigger()
@@ -1187,7 +1176,6 @@ func TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence(t *testing.T) {
 			Clock:            fakeClock{},
 			Logger:           slog.Default(),
 			MaxAttempts:      3,
-			Bucket:           "bucket",
 			ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 		}
 		if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
@@ -1228,7 +1216,6 @@ func TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence(t *testing.T) {
 			Clock:            fakeClock{},
 			Logger:           slog.Default(),
 			MaxAttempts:      3,
-			Bucket:           "bucket",
 			ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 		}
 		if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
