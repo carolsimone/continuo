@@ -153,6 +153,51 @@ func TestAnthropic_ParseResponse(t *testing.T) {
 	assert.Equal(t, "claude-3-5-sonnet-20241022", result.Model)
 }
 
+// anthropicRecordedResponseWithTargetFile is a recorded /v1/messages response whose
+// tool_use input additionally carries target_file and proposed_content, as produced
+// by the compile/seed error-class fixers.
+const anthropicRecordedResponseWithTargetFile = `{
+  "id": "msg_01def",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_02",
+      "name": "propose_fix",
+      "input": {
+        "target_file": "models/x.yml",
+        "proposed_content": "version: 2\n",
+        "rationale": "r",
+        "confidence": "high"
+      }
+    }
+  ],
+  "model": "claude-3-5-sonnet-20241022",
+  "stop_reason": "tool_use",
+  "usage": {"input_tokens": 100, "output_tokens": 50}
+}`
+
+// TestAnthropic_ParsesTargetFileAndContent verifies that the Anthropic adapter parses
+// the target_file and proposed_content tool-call arguments into ProposeResult.
+func TestAnthropic_ParsesTargetFileAndContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(anthropicRecordedResponseWithTargetFile))
+	}))
+	defer srv.Close()
+
+	provider, err := llm.NewProvider("anthropic", "test-key", "claude-3-5-sonnet-20241022", srv.URL, srv.Client())
+	require.NoError(t, err)
+
+	result, err := provider.Propose(context.Background(), buildTestProposeRequest())
+	require.NoError(t, err)
+
+	assert.Equal(t, "models/x.yml", result.TargetFile)
+	assert.Equal(t, "version: 2\n", result.ProposedContent)
+}
+
 // TestAnthropic_NonOKStatus verifies that a non-2xx response returns an error
 // containing the status code and truncated body.
 func TestAnthropic_NonOKStatus(t *testing.T) {

@@ -117,6 +117,8 @@ type openaiResponseFunction struct {
 // openaiToolArgs holds the four fields returned by the propose_fix function.
 type openaiToolArgs struct {
 	ProposedSQL            string `json:"proposed_sql"`
+	ProposedContent        string `json:"proposed_content"`
+	TargetFile             string `json:"target_file"`
 	Rationale              string `json:"rationale"`
 	Confidence             string `json:"confidence"`
 	SuspectedRootCauseNode string `json:"suspected_root_cause_node"`
@@ -222,6 +224,8 @@ func (p *openaiProvider) parseResponse(r io.Reader) (ports.ProposeResult, error)
 
 	return ports.ProposeResult{
 		ProposedSQL:            args.ProposedSQL,
+		ProposedContent:        args.ProposedContent,
+		TargetFile:             args.TargetFile,
 		Rationale:              args.Rationale,
 		Confidence:             args.Confidence,
 		SuspectedRootCauseNode: args.SuspectedRootCauseNode,

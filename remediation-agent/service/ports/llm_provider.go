@@ -12,6 +12,8 @@ type ProposeRequest = prompt.ProposeRequest
 // ProposeResult is the structured propose_fix tool call result.
 type ProposeResult struct {
 	ProposedSQL            string
+	ProposedContent        string // corrected content for the chosen TargetFile (compile/seed)
+	TargetFile             string // repo-relative path the fix targets (compile/seed)
 	Rationale              string
 	Confidence             string
 	SuspectedRootCauseNode string
