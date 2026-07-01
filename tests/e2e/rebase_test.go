@@ -322,42 +322,6 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	t.Log("Rebase run finalized end-to-end: state + orchestrator agree")
 }
 
-// TestRebaseFromCancelledRun is intentionally skipped.
-//
-// Cancel-mid-flight timing is unreliable in e2e: by the time we observe a
-// task running and issue CancelSchedule, the schedule may have already
-// progressed past the cancellable window, leading to flaky test runs.
-//
-// Eligibility for CANCELLED source runs is covered deterministically by
-// TestRebaseHandler_HappyPath_CancelledSource in the orchestrator unit
-// tests, which exercises the same eligibility branch under controlled
-// conditions.
-func TestRebaseFromCancelledRun(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping E2E test in short mode")
-	}
-	t.Skip("TODO: requires reliable cancel-mid-flight timing; eligibility for CANCELLED source is covered by RebaseHandler unit tests (TestRebaseHandler_HappyPath_CancelledSource)")
-}
-
-// TestRebaseOfRebase is intentionally skipped.
-//
-// The test would need to wait for two chained terminal states (R1 FAILED,
-// then R2 FAILED) before triggering R3 — but the rebase of R1 re-executes
-// the same dbt fixture that fails ftable_e, so R2's failure path takes the
-// full retry-exhaustion budget twice in sequence. That timing is too long
-// and too noisy for a deterministic e2e signal.
-//
-// Root-forwarding semantics (R3.inherited_from_task_id points to R1's
-// task_id, not R2's intermediate one) are covered by
-// TestRebasePartition_RebaseOfRebase_RootForwarding in the snapshot
-// selector unit tests.
-func TestRebaseOfRebase(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping E2E test in short mode")
-	}
-	t.Skip("TODO: requires waiting for chained terminal states; root-forwarding semantics covered by TestRebasePartition_RebaseOfRebase_RootForwarding unit test")
-}
-
 // dumpRebaseRowsForDebug logs every task_tracker row attached to a rebase
 // run so an unexpected row count on CI surfaces the offending row's identity
 // (table_name + service + schema + image_tag + manifest_version). Called only

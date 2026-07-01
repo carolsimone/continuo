@@ -192,7 +192,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | `system_test.go` | `TestE2E_HappyPath_FullDAGExecution` — 6-node `ftable_*` DAG through every service |
 | `trigger_test.go` | `TestTriggerSchedule_SeedRunAndRerun` — trigger seed schedule via TriggerSchedule RPC, wait for completion, re-trigger |
 | `failure_test.go` | `TestE2E_FailurePath_RerunRebasesBothFailureSubtrees` — two parallel failing subtrees, then a rerun rebases both |
-| `rebase_test.go` | `TestRebaseFromFailedRun`, `TestRebaseAllInheritedFinalizes`, `TestRebaseFromCancelledRun`, `TestRebaseOfRebase` |
+| `rebase_test.go` | `TestRebaseFromFailedRun`, `TestRebaseAllInheritedFinalizes` |
 | `single_node_run_test.go` | `TestSingleNodeRunLatest`, `TestSingleNodeRunStale`, `TestSingleNodeRunTargetNotFound` |
 | `cancel_test.go` | `TestCancelMidwayAndRetrigger` — cancel an in-flight schedule, then re-trigger |
 | `empty_dag_test.go` | `TestEmptyCronDAG_FinalisesAsFailed` — empty projection fails the run fast |
