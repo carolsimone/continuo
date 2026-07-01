@@ -13,10 +13,11 @@ import (
 // HandleCompileResultInput carries the aggregated compile outcome from
 // executor-controller (compile.completed:v1).
 type HandleCompileResultInput struct {
-	ReleaseID   string `json:"release_id"`
-	Status      string `json:"status"` // "ok" | "failed"
-	ErrorClass  string `json:"error_class,omitempty"`
-	ErrorDetail string `json:"error_detail,omitempty"`
+	ReleaseID   string       `json:"release_id"`
+	Status      string       `json:"status"` // "ok" | "failed"
+	PerNode     []NodeResult `json:"per_node"`
+	ErrorClass  string       `json:"error_class,omitempty"`
+	ErrorDetail string       `json:"error_detail,omitempty"`
 }
 
 // manifestKeyDTO is the wire shape for one service's manifest entry in the
@@ -63,18 +64,54 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 
 	now := d.Clock.Now()
 
+	// Build per-node results and derive the failing set for both branches.
+	results, failing := stageResults(in.PerNode)
+
 	if in.Status != "ok" {
-		if err := r.TransitionToRejected("compile_failed", nil, now); err != nil {
+		if len(in.PerNode) == 0 {
+			// A failed compile with no per-node detail (e.g. a producer that
+			// predates per-node compile results) still rejects the release, but
+			// carries nothing for the remediation classifier to act on.
+			d.Logger.Warn("compile failed with no per-node results; release rejected without a remediation trigger",
+				"release_id", in.ReleaseID)
+		}
+		r.RecordStageResults("compile", results)
+		if err := r.TransitionToRejected("compile_failed", failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
 		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 			return fmt.Errorf("save release: %w", err)
 		}
-		payload, err := json.Marshal(map[string]string{
+
+		// perNodeEntry is the outbox wire shape for a single compile-leg result.
+		// Intentionally omits duration_ms (irrelevant for compile) and file_path
+		// (populated by the remediation service when it reads S3 logs).
+		type perNodeEntry struct {
+			NodeID        string `json:"node_id"`
+			Status        string `json:"status"`
+			DBTLogURI     string `json:"dbt_log_uri,omitempty"`
+			RunResultsURI string `json:"run_results_uri,omitempty"`
+		}
+		perNode := make([]perNodeEntry, len(in.PerNode))
+		for i, n := range in.PerNode {
+			perNode[i] = perNodeEntry{
+				NodeID:        n.NodeID,
+				Status:        n.Status,
+				DBTLogURI:     n.DBTLogURI,
+				RunResultsURI: n.RunResultsURI,
+			}
+		}
+
+		payload, err := json.Marshal(map[string]any{
 			"release_id":   in.ReleaseID,
+			"stage":        "compile",
 			"reason":       "compile_failed",
 			"error_class":  in.ErrorClass,
 			"error_detail": in.ErrorDetail,
+			"failing_nodes": failing,
+			"per_node":     perNode,
+			"repo":         r.Repo(),
+			"commit_sha":   r.CommitSHA(),
 		})
 		if err != nil {
 			return fmt.Errorf("marshal payload: %w", err)
@@ -95,11 +132,14 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "compile_failed", nil)
+		d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "compile_failed", failing)
 		return nil
 	}
 
 	// ok path: Compiling → Parsing, re-read live service_prod, emit release.requested.
+	// Record compile results on the ok path too so the UI can surface
+	// "Compilation: success" for each service unit.
+	r.RecordStageResults("compile", results)
 	if err := r.TransitionFromCompiling(now); err != nil {
 		return fmt.Errorf("transition from compiling: %w", err)
 	}

@@ -16,10 +16,11 @@ import (
 // HandleSeedBuildResultInput carries the aggregated candidate seed-build outcome
 // from executor-controller (seed.build.completed:v1).
 type HandleSeedBuildResultInput struct {
-	ReleaseID   string `json:"release_id"`
-	Status      string `json:"status"` // "ok" | "failed"
-	ErrorClass  string `json:"error_class,omitempty"`
-	ErrorDetail string `json:"error_detail,omitempty"`
+	ReleaseID   string       `json:"release_id"`
+	Status      string       `json:"status"` // "ok" | "failed"
+	PerNode     []NodeResult `json:"per_node"`
+	ErrorClass  string       `json:"error_class,omitempty"`
+	ErrorDetail string       `json:"error_detail,omitempty"`
 }
 
 // HandleSeedBuildResult advances a SeedBuilding release. On success it emits
@@ -50,17 +51,68 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 }
 
 func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleSeedBuildResultInput, now time.Time) error {
-	if err := r.TransitionToRejected("seed_build_failed", nil, now); err != nil {
+	// Build per-node results and derive the failing set.
+	results, failing := stageResults(in.PerNode)
+
+	if len(in.PerNode) == 0 {
+		// A failed seed build with no per-node detail still rejects the release,
+		// but carries nothing for the remediation classifier to act on.
+		d.Logger.Warn("seed build failed with no per-node results; release rejected without a remediation trigger",
+			"release_id", in.ReleaseID)
+	}
+
+	r.RecordStageResults("seed_build", results)
+	if err := r.TransitionToRejected("seed_build_failed", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-	payload, err := json.Marshal(map[string]string{
+
+	// perNodeEntry is the outbox wire shape for a single seed-build-leg result.
+	// FilePath and Service carry the source location from the candidate topology
+	// so the remediation agent can locate the seed source file without querying
+	// Ancestry, which only holds promoted topology and cannot find newly-added seeds.
+	type perNodeEntry struct {
+		NodeID        string `json:"node_id"`
+		Status        string `json:"status"`
+		DBTLogURI     string `json:"dbt_log_uri,omitempty"`
+		RunResultsURI string `json:"run_results_uri,omitempty"`
+		FilePath      string `json:"file_path,omitempty"`
+		Service       string `json:"service,omitempty"`
+	}
+
+	// Build a single lookup from the candidate topology so per-node rejection
+	// entries carry the source location needed by the remediation agent.
+	type sourceLoc struct{ filePath, service string }
+	locByNodeID := make(map[string]sourceLoc, len(r.CandidateTopology()))
+	for _, n := range r.CandidateTopology() {
+		locByNodeID[n.UniqueID] = sourceLoc{filePath: n.OriginalFilePath, service: n.ServiceName}
+	}
+
+	perNode := make([]perNodeEntry, len(in.PerNode))
+	for i, n := range in.PerNode {
+		loc := locByNodeID[n.NodeID]
+		perNode[i] = perNodeEntry{
+			NodeID:        n.NodeID,
+			Status:        n.Status,
+			DBTLogURI:     n.DBTLogURI,
+			RunResultsURI: n.RunResultsURI,
+			FilePath:      loc.filePath,
+			Service:       loc.service,
+		}
+	}
+
+	payload, err := json.Marshal(map[string]any{
 		"release_id":       in.ReleaseID,
+		"stage":            "seed_build",
 		"reason":           "seed_build_failed",
 		"error_class":      in.ErrorClass,
 		"error_detail":     in.ErrorDetail,
+		"failing_nodes":    failing,
+		"per_node":         perNode,
+		"repo":             r.Repo(),
+		"commit_sha":       r.CommitSHA(),
 		"candidate_schema": "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID),
 	})
 	if err != nil {
@@ -83,11 +135,16 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, false, 0)
-	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "seed_build_failed", nil)
+	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "seed_build_failed", failing)
 	return nil
 }
 
 func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleSeedBuildResultInput, now time.Time) error {
+	// Record per-node seed-build results on the ok path so the UI can surface
+	// per-seed build status even when the overall build succeeds.
+	results, _ := stageResults(in.PerNode)
+	r.RecordStageResults("seed_build", results)
+
 	if err := r.TransitionFromSeedBuilding(now); err != nil {
 		return fmt.Errorf("transition from seed building: %w", err)
 	}

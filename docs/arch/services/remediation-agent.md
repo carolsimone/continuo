@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`remediation-agent` acts on healable validation failures surfaced by the `remediation` classifier. It consumes `remediation.requested:v1` — one trigger per failing dbt node — and produces a fix proposal using a two-step LLM flow. For each successful proposal it enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
+`remediation-agent` acts on healable failures surfaced by the `remediation` classifier, across all three failure sources: `validation`, `compile`, and `seed_build`. It consumes `remediation.requested:v1` — one trigger per failing dbt node — and produces a fix proposal. Validation failures carry a pre-compiled candidate SQL and use a two-step LLM flow (candidate diagnosis, then real-source fix). Compile and seed_build failures carry no candidate SQL; the agent reads the offending source file directly and fixes it in a single LLM step from the dbt error and the real source. For each successful proposal it enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
 **Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (`GetNodeAncestry`, port 50052), and the GitHub Contents API (read-only).
 
@@ -53,7 +53,7 @@ All events are written to `remediation_agent_outbox` inside the same transaction
 
 | Method | Purpose |
 |---|---|
-| `OrchestratorQuery.GetNodeAncestry` | Called twice per successful proposal. First call (depth > 0): fetch ranked upstream ancestors for the prompt; best-effort, degrades to empty list on failure. Second call (depth 0, self-node): extract `file_path` for the failing node so Step 2 can locate the real model source; also best-effort. |
+| `OrchestratorQuery.GetNodeAncestry` | For validation proposals: called twice. First call (depth > 0): fetch ranked upstream ancestors for the prompt; best-effort, degrades to empty list on failure. Second call (depth 0, self-node): extract `file_path` for Step 2 source fix; also best-effort. For seed_build: called only when file_path is absent on the trigger (Ancestry fallback for legacy payloads). For compile: not called. |
 
 Its own inbound gRPC surface (`RemediationProposals`) is described in the inbound interfaces section above.
 
@@ -63,7 +63,7 @@ Its own inbound gRPC surface (`RemediationProposals`) is described in the inboun
 |---|---|
 | `GET /repos/{repo}/contents/{path}?ref={commit_sha}` | Read-only fetch of the real dbt model source file at the release commit. `Accept: application/vnd.github.raw+json`. Authenticated with `Authorization: Bearer <GITHUB_TOKEN>` when the token is set; unauthenticated otherwise. 404 → `ErrSourceNotFound` (degrades to candidate proposal). Any non-2xx or network error also degrades gracefully. |
 
-The `{path}` is formed by joining the service's `repo_path` from `service_repos.yaml` with the dbt node's `original_file_path` from the orchestrator topology. The `{repo}` comes from the `remediation.requested:v1` trigger payload. No write requests are issued. The agent holds no GitHub write permissions.
+The `{path}` is formed by joining the service's `repo_path` from `service_repos.yaml` with the dbt node's source file path. For seed_build and compile, this path comes directly from the `remediation.requested:v1` trigger payload (threaded from the candidate topology). For validation, it is resolved via orchestrator `GetNodeAncestry`. The `{repo}` comes from the trigger payload. No write requests are issued. The agent holds no GitHub write permissions.
 
 `GITHUB_TOKEN` is injected at deploy time from the chart-managed secret `continuo-app-credentials` (key `GITHUB_TOKEN`, sourced from `global.github.token` in Helm values). No out-of-band secret mechanism is used.
 
@@ -73,16 +73,47 @@ The `{path}` is formed by joining the service's `repo_path` from `service_repos.
 
 ```
 1. Decode trigger: extract source, release_id, node_id, error_signature,
-   category, dbt_log_uri, candidate_sql_uri, repo, commit_sha.
+   category, dbt_log_uri, candidate_sql_uri, file_path, service, repo, commit_sha.
 
 2. Count prior attempts for (source, node_id, error_signature).
    - attempts >= MaxAttempts (default 3): insert proposal(status=escalated),
      emit nothing, done.
 
-3. candidate_sql_uri is empty (e.g. seed nodes): insert proposal(status=skipped),
-   emit nothing, done.
+3. source is compile or seed_build: run the source-only branch (below) and done.
+   These sources carry no candidate SQL.
 
-4. Fetch candidate SQL from S3 at candidate_sql_uri (required; error is transient).
+4. source is validation and candidate_sql_uri is empty: insert
+   proposal(status=skipped), emit nothing, done.
+
+── Source-only branch (compile / seed_build) ──────────────────────────────────
+
+S1. Fetch dbt log from S3 at dbt_log_uri (not-found → ""; transient error → retry),
+    sanitize via LogSanitizer.
+S2. Resolve the project-relative source path and owning service:
+    - compile: file_path is on the trigger; service_name = node_id (the synthetic
+      service id). Ancestry is bypassed.
+    - seed_build (primary path): file_path and service are threaded from the
+      candidate topology on the trigger. Both must be non-empty to proceed;
+      this path handles newly-added seeds that do not yet appear in the
+      promoted topology Ancestry serves.
+    - seed_build (Ancestry fallback): file_path absent on the trigger (legacy
+      payloads). Call orchestrator GetNodeAncestry(node_id) to resolve
+      file_path and service_name. On ancestry error or empty result:
+      proposal(status=skipped), done.
+S3. Look up service_name in the service→repo mapping (SERVICE_REPO_MAP_PATH). Missing
+    file path / service name / mapping: proposal(status=skipped), done.
+S4. Read the real source from GitHub Contents API at <repo_path>/<file_path>. Read
+    error: proposal(status=skipped), done.
+S5. Single forced propose_fix LLM tool call from {sanitized dbt log, real source}
+    (no candidate SQL is fabricated). LLM transient error → retry.
+S6. proposed_sql empty or unchanged from the source: proposal(status=failed), done.
+S7. Write source artifacts attempt-<n>.source.sql / .source.diff; insert
+    proposal(status=proposed, source_resolved=true) with repo/commit_sha/file_path,
+    emit remediation.proposed:v1. Persist as in the shared transaction below.
+
+── Validation two-step ─────────────────────────────────────────────────────────
+
+4v. Fetch candidate SQL from S3 at candidate_sql_uri (required; error is transient).
 5. Fetch dbt log from S3 at dbt_log_uri.
    - If not found: rawLog = "" (log unavailable path).
    - If transient S3 error: return error (message stays in PEL, retried).

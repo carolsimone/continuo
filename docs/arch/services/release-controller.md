@@ -12,7 +12,7 @@ Postgres (its own database). Tables:
 
 | Table | Purpose |
 |---|---|
-| `releases` | One row per candidate release: status (`received`, `compiling`, `parsing`, `seed_building`, `validating`, `promoted`, `rejected`, `superseded`), the `changed_service` this delta belongs to, the per-service image tags assembled at activation, candidate topology, validation node ids, per-node results, transition history, and the immutable provenance columns `repo` (GitHub owner/name) and `commit_sha` (full SHA) captured at receipt. |
+| `releases` | One row per candidate release: status (`received`, `compiling`, `parsing`, `seed_building`, `validating`, `promoted`, `rejected`, `superseded`), the `changed_service` this delta belongs to, the per-service image tags assembled at activation, candidate topology, validation node ids, per-node results (tagged by `stage` — `compile`, `seed_build`, or `validation` — so results from all three legs are accumulated and independently addressable on a single release), transition history, and the immutable provenance columns `repo` (GitHub owner/name) and `commit_sha` (full SHA) captured at receipt. |
 | `current_prod` | Singleton row: the promoted `release_id` and its `topology_snapshot` (the live topology). |
 | `service_prod` | One row per dbt service — the live per-service production pointer: `{service_name, release_id, manifest_s3_key, image_tag, updated_at}`. Records which manifest key and image tag are currently live for each service; the full production manifest set is reconstructed by collecting every service's pointer at activation time. |
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
@@ -27,7 +27,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | Route | Purpose |
 |---|---|
 | `POST /releases` | Accept a candidate release for a single dbt service. Body: `{service, release_id, image_tag, repo, commit_sha, bootstrap?}`. `repo` (GitHub owner/name) and `commit_sha` (full SHA) are required; missing either returns 400. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
-| `GET /releases/{id}` | Full release detail: `{release_id, status, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap, repo, commit_sha}`. `per_node_results` is an array of `{node_id, status, dbt_log_uri, run_results_uri, duration_ms}`. |
+| `GET /releases/{id}` | Full release detail: `{release_id, status, changed_service, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap, repo, commit_sha}`. `per_node_results` is an array of `{stage, node_id, status, dbt_log_uri, run_results_uri, duration_ms, file_path?}` accumulated across all pipeline legs; the `stage` field (`compile`, `seed_build`, or `validation`) identifies which leg produced each entry. For the compile leg the single entry's `node_id` is the service name; `file_path` is non-empty when the failure maps to a specific source file. |
 | `GET /releases` | Paginated release history, newest-first. Query params: `status` (optional exact-match filter), `limit` (default 20; values that are unparseable, non-positive, or exceed 100 fall back to the default of 20), `cursor` (opaque keyset cursor). Response: `{"releases":[{release_id, status, created_at, resolved_at, node_count, bootstrap, reject_reason}], "next_cursor":"<opaque or empty>"}`. |
 | `GET /current-prod` | The current promoted release + topology snapshot. |
 | `GET /healthz` | Liveness. |
@@ -54,7 +54,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | `seed.build.requested:v1` | executor-controller | A parsed release has new/changed dbt-seed nodes that need building into the candidate schema before validation. |
 | `validation.requested:v1` | executor-controller | A candidate has changed nodes to validate. |
 | `release.promoted:v1` | orchestrator | A release is promoted to production. Payload: `{release_id, topology, image_tags, repo, commit_sha, promoted_at}`. Each entry in `topology` carries the standard node fields plus a `changed` boolean that is `true` when the node's `content_hash` differs from the prior `current_prod` (or when `current_prod` was empty). The top-level `repo`, `commit_sha`, and `promoted_at` are the source-change provenance for this release; orchestrator stamps them onto each changed `:Table` node. |
-| `release.rejected:v1` | `remediation` (group `remediation-release-rejected`) | A release fails compilation, parsing, seed-building, or validation; each failing node's per-node entry carries `dbt_log_uri` and the optional structured `run_results_uri`, and the remediation classifier prefers the structured result (falling back to the dbt log) and emits a `remediation.requested:v1` trigger for healable failures. |
+| `release.rejected:v1` | `remediation` (group `remediation-release-rejected`) | A release fails at any pipeline stage. The payload is uniform across all three legs: `{release_id, stage, reason, repo, commit_sha, failing_nodes, per_node[{node_id, status, dbt_log_uri, run_results_uri}]}`. `stage` is `compile`, `seed_build`, or `validation`; `reason` is `compile_failed`, `seed_build_failed`, or `validation_failed`. For the compile leg, the single `per_node` entry's `node_id` is the service name (a synthetic compile unit, not a dbt node); for validation, entries additionally carry `candidate_sql_uri`. The remediation classifier discriminates by `stage`, fetches the dbt log from S3 for each failing entry, and emits a `remediation.requested:v1` trigger for each healable failure. |
 
 All events are written to the outbox inside the same transaction as the state change and published with an injected `outbox_entry_id` for consumer-side dedup.
 
@@ -75,8 +75,15 @@ Before a release activates, the queue advance verifies that every service live i
 
 ### On `compile.completed:v1`
 ```
-status=failed → Reject(reason=compile_failed), emit release.rejected:v1, advance queue
+status=failed:
+  decode per_node (one entry per compile unit; node_id = service name)
+  RecordStageResults("compile", per_node results)
+  Reject(reason=compile_failed, failing_nodes=[node_id of failed entries])
+  emit release.rejected:v1 {release_id, stage="compile", reason, failing_nodes,
+       per_node[{node_id, status, dbt_log_uri, run_results_uri}], repo, commit_sha}
+  advance queue
 status=ok:
+  RecordStageResults("compile", per_node results)
   TransitionFromCompiling (Compiling → Parsing)
   re-assemble manifest set from live service_prod (same logic as activation)
   emit release.requested:v1 {release_id, manifest_keys}
@@ -115,22 +122,31 @@ A `bootstrap:true` release skips validation entirely: it records the candidate t
 
 ### On `seed.build.completed:v1`
 ```
-status=failed → Reject(reason=seed_build_failed), emit release.rejected:v1, advance queue
-status=ok:
-  TransitionFromSeedBuilding (SeedBuilding → Validating)
-  emit validation.requested:v1
+status=failed:
+  decode per_node (one entry per failed seed node)
+  RecordStageResults("seed_build", per_node results)
+  Reject(reason=seed_build_failed, failing_nodes=[node_id of failed entries])
+  emit release.rejected:v1 {release_id, stage="seed_build", reason, failing_nodes,
+       per_node[{node_id, status, dbt_log_uri, run_results_uri}], repo, commit_sha, candidate_schema}
   advance queue
+status=ok:
+  RecordStageResults("seed_build", per_node results)
+  TransitionFromSeedBuilding (SeedBuilding → Validating)
+  emit validation.requested:v1  (excluding the just-built seeds from the validation set)
+  advance queue
+  edge case: if excluding the built seeds leaves an empty validation set, promote directly
 ```
 
 ### On `validation.completed:v1`
 ```
+RecordStageResults("validation", per_node_results) — persists per-node outcomes for all nodes
 all nodes ok and none missing → handleValidationOK:
    update current_prod to this release's candidate topology,
    upsert the changed service's service_prod pointer (canonical key + image tag + release id),
    transition to Promoted, emit release.promoted:v1
 any node failed / missing / aggregate not ok → Reject(reason=validation_failed),
-   emit release.rejected:v1
-   (carries top-level repo + commit_sha for provenance, and per failing node: node_id, candidate_sql_uri)
+   emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,
+        per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_sql_uri}], repo, commit_sha}
 advance queue
 ```
 

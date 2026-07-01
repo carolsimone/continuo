@@ -19,6 +19,7 @@ var requestedPayloadFixture = map[string]any{
 	"error_signature":   "column \"foo\" does not exist",
 	"dbt_log_uri":       "s3://bucket/logs/orders_daily.log",
 	"candidate_sql_uri": "s3://bucket/sql/orders_daily.sql",
+	"file_path":         "models/orders_daily.sql",
 	"repo":              "acme/dbt-project",
 	"commit_sha":        "deadbeef1234",
 }
@@ -42,6 +43,7 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 	require.Equal(t, "column \"foo\" does not exist", trigger.ErrorSignature)
 	require.Equal(t, "s3://bucket/logs/orders_daily.log", trigger.DBTLogURI)
 	require.Equal(t, "s3://bucket/sql/orders_daily.sql", trigger.CandidateSQLURI)
+	require.Equal(t, "models/orders_daily.sql", trigger.FilePath)
 	require.Equal(t, "acme/dbt-project", trigger.Repo)
 	require.Equal(t, "deadbeef1234", trigger.CommitSHA)
 	require.Equal(t, "1-0", trigger.MessageID)
@@ -52,4 +54,35 @@ func TestTriggerFromRequested_InvalidJSON(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{}}
 	_, err := triggerFromRequested(msg, []byte("not-json"))
 	require.Error(t, err)
+}
+
+// TestTriggerFromRequested_SeedServiceField verifies that when a
+// remediation.requested:v1 payload carries the service field (set for
+// seed_build failures from the candidate topology), it is decoded into
+// trigger.Service so proposeFromSource can skip the Ancestry lookup.
+func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
+	payload := map[string]any{
+		"event_id":        "evt-seed-1",
+		"source":          "seed_build",
+		"release_id":      "rel-seed-1",
+		"node_id":         "seed.svc.customers",
+		"category":        "logic",
+		"error_signature": "extra column",
+		"dbt_log_uri":     "s3://b/seed.log",
+		"file_path":       "seeds/customers.csv",
+		"service":         "svc-data",
+		"repo":            "o/r",
+		"commit_sha":      "sha1",
+	}
+	raw, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	msg := goredis.XMessage{ID: "2-0", Values: map[string]interface{}{}}
+	trigger, err := triggerFromRequested(msg, raw)
+	require.NoError(t, err)
+
+	require.Equal(t, "seed_build", trigger.Source)
+	require.Equal(t, "seeds/customers.csv", trigger.FilePath)
+	require.Equal(t, "svc-data", trigger.Service,
+		"service field must be decoded so proposeFromSource can skip Ancestry")
 }

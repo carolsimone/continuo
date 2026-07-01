@@ -267,6 +267,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 
 	payload, err := json.Marshal(map[string]any{
 		"release_id":       in.ReleaseID,
+		"stage":            "validation",
 		"reason":           "validation_failed",
 		"failing_nodes":    failing,
 		"missing_nodes":    missing,

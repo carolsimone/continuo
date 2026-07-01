@@ -144,6 +144,14 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 
 	third := entries[3]
 	assert.Equal(t, streams.ReleaseRejectedV1, third.StreamName)
+
+	// The outbox payload must carry stage="validation" so consumers can distinguish
+	// compile-leg rejections from validation-leg rejections.
+	var topLevel map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(third.Payload, &topLevel))
+	var stage string
+	require.NoError(t, json.Unmarshal(topLevel["stage"], &stage))
+	assert.Equal(t, "validation", stage)
 }
 
 // TestHandleValidationResult_EmptyResults_Rejects ensures that a result with no

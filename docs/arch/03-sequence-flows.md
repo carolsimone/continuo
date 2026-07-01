@@ -387,7 +387,7 @@ sequenceDiagram
 
 ## 11. dbt Blue/Green Release (Validate-Then-Promote)
 
-A candidate dbt release targets a single dbt service: that team's CI uploads only its own compiled manifest to the canonical S3 key `s3://<bucket>/<service>/<release_id>/manifest.json` and posts a one-service candidate. When the release becomes active, `release-controller` assembles the full manifest set by combining the changed service's new key with every other service's live `service_prod` pointer, parses the whole set, validates every changed node self-contained in an isolated schema, and swaps production (Neo4j topology, image tags, schedule catalog) only if validation passes. `release-controller` owns the lifecycle, holds `current_prod` (the live topology snapshot) and the `service_prod` pointer table (one row per service: its live manifest key + image tag + release id). Releases run a FIFO queue: one release parses/validates at a time, each terminal outcome advances the next, and each promotion refreshes the changed service's `service_prod` pointer.
+A candidate dbt release targets a single dbt service: that team's CI posts a one-service candidate. `release-controller` runs the release through three legs in order — **compile** (dbt compile to produce the changed service's manifest), **seed_build** (build any new/changed dbt seeds into the candidate schema), and **validation** (self-contained empty-build of every changed model and its full transitive closure) — and swaps production only if all three pass. A failure on any leg emits a uniform `release.rejected:v1` event with a `stage` field and a `per_node` array; `remediation` consumes every rejection and builds a `FailureEvidence` appropriate to the stage. `release-controller` owns the lifecycle, holds `current_prod` (the live topology snapshot) and the `service_prod` pointer table (one row per service: its live manifest key + image tag + release id). Releases run a FIFO queue: one release is active at a time, each terminal outcome advances the next, and each promotion refreshes the changed service's `service_prod` pointer.
 
 ```mermaid
 sequenceDiagram
@@ -400,12 +400,28 @@ sequenceDiagram
   participant KC as k8s-controller
   participant OR as orchestrator
   participant ST as state
+  participant RM as remediation
 
   Note over CI,RC: Phase 1 — submit (one service per release)
   CI->>S3: upload {service}/{release_id}/manifest.json (canonical key)
-  CI->>RC: POST /releases {service, release_id, image_tag, bootstrap?}
-  Note over RC: create Received release for this service (idempotent on release_id)<br/>FIFO queue advance → Parsing<br/>assemble manifest_keys from service_prod (changed service + every other<br/>service's live pointer); persist assembled image tags<br/>release_controller_outbox INSERT for release.requested:v1
-  RC->>R: publish release.requested:v1 {release_id, manifest_keys:[{service, s3_uri}]}
+  CI->>RC: POST /releases {service, release_id, image_tag, bootstrap?, repo, commit_sha}
+  Note over RC: create Received release for this service (idempotent on release_id)<br/>FIFO queue advance → Compiling<br/>record changed_service, image_tag, repo, commit_sha<br/>release_controller_outbox INSERT for compile.requested:v1
+  RC->>R: publish compile.requested:v1 {release_id, service, image_tag}
+
+  Note over EC,RC: Phase 1b — compile (changed service's manifest is compiled first)
+  R->>EC: consume compile.requested:v1
+  Note over EC: CreateCompileJob (two-container: initContainer dbt compile + s3-sidecar upload)<br/>emits compile.node.completed:v1 via k8s-controller → aggregate compile.completed:v1
+  EC->>R: publish compile.completed:v1 {release_id, status, per_node[{node_id, status, dbt_log_uri}]}
+  R->>RC: consume compile.completed:v1
+  alt compile failed
+    Note over RC: RecordStageResults("compile") + Reject(compile_failed)<br/>emit release.rejected:v1 {release_id, stage="compile", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri}], repo, commit_sha}
+    RC->>R: publish release.rejected:v1
+    R->>RM: consume release.rejected:v1
+    Note over RM: stage="compile" → SourceCompile; ExtractDbtFilePath(log) → file_path<br/>classify + emit remediation.requested:v1 with file_path (no candidate SQL)
+  else compile ok
+    Note over RC: TransitionFromCompiling → Parsing, re-assemble manifest set
+    RC->>R: publish release.requested:v1 {release_id, manifest_keys}
+  end
 
   Note over MC,RC: Phase 2 — candidate parse
   R->>MC: consume release.requested:v1
@@ -414,7 +430,7 @@ sequenceDiagram
   alt manifest malformed / unqualified table ref / S3 upload failure
     MC->>R: publish manifest.loaded.candidate:v1 {status=failed, error_class}
     R->>RC: consume manifest.loaded.candidate:v1 (failed)
-    Note over RC: Reject(parse_failed) → release.rejected:v1, advance queue
+    Note over RC: Reject(parse_failed) → release.rejected:v1 {stage not present for parse failures}, advance queue
   else parsed and uploaded ok
     MC->>R: publish manifest.loaded.candidate:v1 {status=ok, topology[] (per node: candidate_sql_uri)}
     R->>RC: consume manifest.loaded.candidate:v1 (ok)
@@ -430,7 +446,23 @@ sequenceDiagram
     alt an in-set node has a direct upstream absent from the candidate topology
       Note over RC: Reject(unbuildable_cross_service_upstream)
       RC->>R: publish release.rejected:v1
-    else buildable
+    else inSet has new/changed seeds
+      Note over RC: transition SeedBuilding
+      RC->>R: publish seed.build.requested:v1 {release_id, per changed-seed node}
+      R->>EC: consume seed.build.requested:v1
+      Note over EC: CreateSeedBuildJob per changed seed (dbt seed --select, DBT_TARGET_SCHEMA=candidate)<br/>aggregate → seed.build.completed:v1
+      EC->>R: publish seed.build.completed:v1 {release_id, status, per_node[{node_id,status,dbt_log_uri}]}
+      R->>RC: consume seed.build.completed:v1
+      alt seed_build failed
+        Note over RC: RecordStageResults("seed_build") + Reject(seed_build_failed)<br/>emit release.rejected:v1 {release_id, stage="seed_build", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri}], repo, commit_sha, candidate_schema}
+        RC->>R: publish release.rejected:v1
+        R->>RM: consume release.rejected:v1
+        Note over RM: stage="seed_build" → SourceSeed; ExtractDbtFilePath(log) → file_path<br/>classify + emit remediation.requested:v1 with file_path (no candidate SQL)
+      else seed_build ok
+        Note over RC: TransitionFromSeedBuilding → Validating
+        RC->>R: publish validation.requested:v1<br/>{candidate_schema=_candidate_{id}, per node:<br/>node_type, image_tag, candidate_sql_uri, upstream_node_ids}
+      end
+    else buildable, no changed seeds
       Note over RC: transition Validating
       RC->>R: publish validation.requested:v1<br/>{candidate_schema=_candidate_{id}, per node:<br/>node_type, image_tag, candidate_sql_uri, upstream_node_ids}
     end
@@ -455,10 +487,13 @@ sequenceDiagram
   Note over RC: Phase 5 — promote or reject
   R->>RC: consume validation.completed:v1
   alt aggregate_status=ok
-    Note over RC: current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted
+    Note over RC: RecordStageResults("validation", per_node_results)<br/>current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted
     RC->>R: publish release.promoted:v1
   else any node failed / missing
-    Note over RC: Reject(validation_failed) → release.rejected:v1
+    Note over RC: RecordStageResults("validation", per_node_results)<br/>Reject(validation_failed)<br/>emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri,candidate_sql_uri}], repo, commit_sha}
+    RC->>R: publish release.rejected:v1
+    R->>RM: consume release.rejected:v1
+    Note over RM: stage="validation" → SourceValidation; no file_path at this layer<br/>classify + emit remediation.requested:v1 (agent resolves file_path via ancestry)
   end
   Note over RC: advance FIFO queue
 
@@ -477,7 +512,7 @@ sequenceDiagram
 
 **Gating and exactly-once aggregation.** Each node's `executor_deployments` row starts `blocked` if it has in-set upstreams; a node is dispatched only once all its upstreams have settled `ok` (their empty tables now exist). A non-`ok` terminal skips all reachable downstream nodes. When no node remains non-terminal, a per-release advisory lock plus an insert-once emission sentinel guarantee a single `validation.completed:v1` is produced even under redelivery or crash-retry. `aggregate_status` is `ok` iff every per-node status is `ok`.
 
-**Reject reasons.** A release ends in `Rejected` for one of three reasons, each also emitted as `release.rejected:v1` for observers: `parse_failed` (manifest malformed, an unqualified table reference, or candidate SQL S3 upload failure), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology — i.e. not in the release at all), or `validation_failed` (one or more validation Jobs failed). For `validation_failed`, the `release.rejected:v1` event includes top-level `repo` and `commit_sha` (provenance) plus, per failing node, `candidate_sql_uri` — allowing a downstream remediation agent to fetch the SQL for each failed node without re-parsing the manifest.
+**Reject reasons.** A release ends in `Rejected` for one of five reasons, each emitted as `release.rejected:v1`. The event is uniform across all legs: it always carries `release_id`, `stage`, `reason`, `repo`, `commit_sha`, `failing_nodes`, and `per_node[]` (each entry: `node_id`, `status`, `dbt_log_uri`, optional `run_results_uri`). The five reasons are: `compile_failed` (dbt compile job failed; `stage="compile"`), `parse_failed` (manifest malformed, an unqualified table reference, or candidate SQL S3 upload failure; no explicit stage), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology; no explicit stage), `seed_build_failed` (a candidate seed-build job failed; `stage="seed_build"`), and `validation_failed` (one or more validation jobs failed; `stage="validation"`). For `validation_failed`, per-node entries additionally carry `candidate_sql_uri`. Remediation consumes every leg's rejection and discriminates by `stage` to build `FailureEvidence` with the appropriate source (`SourceCompile`, `SourceSeed`, or `SourceValidation`); for compile and seed_build it extracts `file_path` from the dbt log so the agent can read the real source file directly.
 
 **Bootstrap and empty-diff short-circuits.** A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes — the initial cutover (or a trusted re-baseline) against an empty or mismatched snapshot. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology. A release whose diff is empty (e.g. an image-tag-only bump) trivially passes the gate and promotes directly. All three promotion paths point `current_prod` at the candidate topology and upsert the changed service's `service_prod` pointer, so the next release's change-detection diff is correct and any other service's next release assembles against the refreshed pointer.
 

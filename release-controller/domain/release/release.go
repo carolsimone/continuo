@@ -23,14 +23,25 @@ type Transition struct {
 	At time.Time `json:"at"`
 }
 
-// NodeValidationResult is the persisted per-node outcome of a candidate's dbt
-// validation run. It is recorded for both the promote and reject paths.
+// NodeValidationResult is the persisted per-node outcome of a pipeline stage.
+// Stage identifies which leg produced this result: "compile", "seed_build", or
+// "validation". A single release accumulates results across all legs so that
+// failure diagnostics are always available regardless of which stage rejected it.
 type NodeValidationResult struct {
+	// Stage identifies the pipeline leg that produced this result: "compile" |
+	// "seed_build" | "validation". The failed unit generalises across legs — it
+	// is a dbt node for validation/seed_build, or a service compile unit for the
+	// compile leg.
+	Stage         string `json:"stage,omitempty"`
 	NodeID        string `json:"node_id"`
 	Status        string `json:"status"` // "ok" | "failed"
 	DBTLogURI     string `json:"dbt_log_uri,omitempty"`
 	RunResultsURI string `json:"run_results_uri,omitempty"`
 	DurationMS    int64  `json:"duration_ms,omitempty"`
+	// FilePath is the optional offending source file path; populated for
+	// non-node legs (e.g. compile) where the failure maps to a file rather than
+	// a dbt node ID.
+	FilePath string `json:"file_path,omitempty"`
 }
 
 type Topology []Node
@@ -133,10 +144,29 @@ func (r *Release) SetAssembledImageTags(tags map[string]string) {
 	r.imageTags = tags
 }
 
+// RecordStageResults replaces all per-node results for the given stage with
+// the supplied slice, leaving results from other stages intact. Calling it
+// twice for the same stage is idempotent across re-delivery of a single leg's
+// aggregate event (second call replaces, not appends).
+func (r *Release) RecordStageResults(stage string, results []NodeValidationResult) {
+	kept := r.perNodeResults[:0:0]
+	for _, n := range r.perNodeResults {
+		if n.Stage != stage {
+			kept = append(kept, n)
+		}
+	}
+	for _, n := range results {
+		n.Stage = stage
+		kept = append(kept, n)
+	}
+	r.perNodeResults = kept
+}
+
 // RecordValidationResults stores the per-node validation outcomes on the
-// aggregate. Called before the promote/reject branch so both paths persist them.
+// aggregate. Thin wrapper around RecordStageResults("validation", results).
+// Called before the promote/reject branch so both paths persist them.
 func (r *Release) RecordValidationResults(results []NodeValidationResult) {
-	r.perNodeResults = results
+	r.RecordStageResults("validation", results)
 }
 
 func (r *Release) TransitionToParsing(now time.Time) error {

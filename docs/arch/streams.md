@@ -69,9 +69,32 @@ aggregateKeyField)`:
   store means `n > 1` only adds throughput across aggregates, so size `n`
   against concurrently-active aggregates rather than raw message rate.
 
+## Notable stream payload conventions
+
+A few streams carry a `stage` discriminator that changes how consumers process
+the message. These are documented here as cross-cutting facts; full payload
+schemas live in the service dossiers.
+
+**`release.rejected:v1`** — emitted by release-controller for every terminal
+rejection regardless of which leg failed. The payload always includes:
+`release_id`, `stage` (`compile` | `seed_build` | `validation`; absent for parse-phase rejections), `reason`,
+`repo`, `commit_sha`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
+`status`, `dbt_log_uri`, optional `run_results_uri`). Validation entries
+additionally carry `candidate_sql_uri`; seed_build entries carry
+`candidate_schema`. Consumers must not assume `stage` is always `validation`
+— all three legs reuse this single stream. See `docs/arch/services/release-controller.md`
+for the full per-leg payload shape.
+
+**`remediation.requested:v1`** — emitted by remediation for each healable
+failing node. The payload includes a `file_path` field (project-relative source
+file, e.g. `models/order_items.sql`) that is non-empty for `compile` and
+`seed_build` sources; it is derived from the dbt log. For `validation` sources
+it is empty — the downstream agent resolves the path via orchestrator ancestry.
+See `docs/arch/services/remediation.md` for the full payload shape.
+
 ## Out of scope
 
-- Stream payload schemas — protobuf owns these.
+- Stream payload schemas — service dossiers document them; see `docs/arch/services/`.
 - Per-environment overrides for stream or group names — names are code-level
   identifiers, not deployment-tunable.
 
