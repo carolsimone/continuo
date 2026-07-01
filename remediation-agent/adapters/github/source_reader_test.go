@@ -2,8 +2,11 @@ package github
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
@@ -89,5 +92,43 @@ func TestReadFile_SmallBodySucceeds(t *testing.T) {
 	}
 	if body != "select 42" {
 		t.Fatalf("body = %q, want %q", body, "select 42")
+	}
+}
+
+func TestListDir_ReturnsFilePaths(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/contents/services/svc/models") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"path":"services/svc/models/a.sql","type":"file"},
+			{"path":"services/svc/models/schema.yml","type":"file"},
+			{"path":"services/svc/models/nested","type":"dir"}
+		]`))
+	}))
+	defer srv.Close()
+
+	g := NewSourceReader(srv.URL, "", srv.Client())
+	got, err := g.ListDir(context.Background(), "owner/repo", "abc", "services/svc/models")
+	if err != nil {
+		t.Fatalf("ListDir: %v", err)
+	}
+	want := []string{"services/svc/models/a.sql", "services/svc/models/schema.yml"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestListDir_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	g := NewSourceReader(srv.URL, "", srv.Client())
+	_, err := g.ListDir(context.Background(), "owner/repo", "abc", "services/svc/models")
+	if !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("want ErrSourceNotFound, got %v", err)
 	}
 }
