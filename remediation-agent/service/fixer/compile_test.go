@@ -136,3 +136,53 @@ func TestCompile_OffendingRead404_Skips(t *testing.T) {
 		t.Fatalf("status = %v want skipped", r.Proposal.Status)
 	}
 }
+
+// TestCompile_BestEffortReadsFail_StillProposes proves that a failed co-located
+// context read (ListDir 404, missing schema.yml/dbt_project.yml) is swallowed:
+// the gather still succeeds using the offending file alone.
+func TestCompile_BestEffortReadsFail_StillProposes(t *testing.T) {
+	fs := &fakeSourceMap{
+		files: map[string]string{"services/svc/models/x.sql": "{{ config(x), y) }}\nselect 1"},
+		dir:   map[string][]string{}, // "services/svc/models" absent -> ListDir returns ErrSourceNotFound
+	}
+	svc := Services{
+		Source:    fs,
+		LLM:       &fakeLLM{queue: []ports.ProposeResult{{TargetFile: "services/svc/models/x.sql", ProposedContent: "{{ config(x) }}\nselect 1", Confidence: "high", Rationale: "fix jinja"}}},
+		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+	}
+	in := Input{Source: "compile", NodeID: "svc", Repo: "o/repo", CommitSHA: "sha",
+		FilePath: "models/x.sql", DBTLog: "Compilation Error", ReleaseID: "r", Attempt: 1}
+	r, err := compileFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || r.Proposal.FilePath != "services/svc/models/x.sql" {
+		t.Fatalf("got status=%v file=%q, want proposed on the offending file despite failed context reads", r.Proposal.Status, r.Proposal.FilePath)
+	}
+}
+
+// TestCompile_EmptyTargetFile_DefaultsToPrimary proves that when the model
+// returns an empty target_file, compileInterpret defaults it to the offending
+// (Primary) file rather than skipping.
+func TestCompile_EmptyTargetFile_DefaultsToPrimary(t *testing.T) {
+	fs := &fakeSourceMap{
+		files: map[string]string{"services/svc/models/x.sql": "{{ config(x), y) }}\nselect 1"},
+		dir:   map[string][]string{"services/svc/models": {"services/svc/models/x.sql"}},
+	}
+	svc := Services{
+		Source:    fs,
+		LLM:       &fakeLLM{queue: []ports.ProposeResult{{TargetFile: "", ProposedContent: "{{ config(x) }}\nselect 1", Confidence: "high", Rationale: "fix jinja"}}},
+		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+	}
+	in := Input{Source: "compile", NodeID: "svc", Repo: "o/repo", CommitSHA: "sha",
+		FilePath: "models/x.sql", DBTLog: "Compilation Error", ReleaseID: "r", Attempt: 1}
+	r, err := compileFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || r.Proposal.FilePath != "services/svc/models/x.sql" {
+		t.Fatalf("got status=%v file=%q, want proposed defaulting to the offending file", r.Proposal.Status, r.Proposal.FilePath)
+	}
+}

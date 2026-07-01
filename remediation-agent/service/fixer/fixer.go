@@ -169,7 +169,7 @@ func normalizeConfidence(c string) proposal.Confidence {
 	}
 }
 
-// Temporary stub — replaced in Task 6.
+// Temporary stub for the seed_build fixer, not yet implemented.
 type seedFixer struct{}
 
 func (seedFixer) Propose(context.Context, Services, Input) (Result, error) { return Result{}, nil }
