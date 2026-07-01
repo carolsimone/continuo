@@ -61,11 +61,14 @@ func (r *postgresRepository) InsertIfNotExists(
 ) (uuid.UUID, bool, error) {
 	// Two unique constraints can fire here:
 	//   1. UNIQUE (message_id, stream_name) — primary inbound dedup key.
-	//   2. UNIQUE (outbox_entry_id) WHERE outbox_entry_id IS NOT NULL —
+	//   2. UNIQUE (outbox_entry_id, stream_name) WHERE outbox_entry_id IS NOT NULL —
 	//      catches the rare case where a producer's outbox Processor crashed
 	//      between XADD and MarkProcessed and republished the same outbox
 	//      row, producing a fresh Redis message_id but the same upstream
-	//      outbox_entry_id.
+	//      outbox_entry_id. Scoping by stream_name (the consuming group) mirrors
+	//      the primary key, so when two consumer groups read the same source
+	//      message each still processes it exactly once instead of one group
+	//      silently claiming the shared outbox_entry_id.
 	// ON CONFLICT DO NOTHING (no target) handles either violation. When the
 	// insert is suppressed, we look up the existing row by whichever key
 	// matched.
