@@ -143,6 +143,8 @@ export interface CurrentProd {
 export interface NodeValidationResult {
   node_id: string;
   status: string;
+  stage: string;          // "compile" | "seed_build" | "validation"
+  file_path?: string;     // offending source path; present for compile/seed
   dbt_log_uri?: string;
   duration_ms?: number;
 }
