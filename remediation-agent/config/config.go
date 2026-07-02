@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"os"
+	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"gopkg.in/yaml.v3"
@@ -18,6 +19,12 @@ type Config struct {
 	LLMAPIKey   string
 	LLMModel    string
 	LLMBaseURL  string // required for openai-compatible
+
+	// LLMCacheTTL is how long a cached LLM propose result stays valid. It backs
+	// the best-effort idempotency cache that lets a redelivered
+	// remediation.requested message reuse a prior completion instead of
+	// re-paying the LLM call. Defaults to 24h; optional, so no new required env.
+	LLMCacheTTL time.Duration
 
 	GitHubToken   string // personal access token for GitHub API calls; empty = unauthenticated
 	GitHubBaseURL string // GitHub REST API base URL; defaults to the public API
@@ -59,6 +66,7 @@ func Load(v *pkgconfig.Validator) Config {
 		LLMAPIKey:          pkgconfig.EnvOrDefault("LLM_API_KEY", ""),
 		LLMModel:           v.Require("LLM_MODEL"),
 		LLMBaseURL:         pkgconfig.EnvOrDefault("LLM_BASE_URL", ""),
+		LLMCacheTTL:        pkgconfig.EnvDurationOrDefault("LLM_CACHE_TTL", 24*time.Hour),
 		GitHubToken:        pkgconfig.EnvOrDefault("GITHUB_TOKEN", ""),
 		GitHubBaseURL:      pkgconfig.EnvOrDefault("GITHUB_BASE_URL", "https://api.github.com"),
 		HTTPPort:           pkgconfig.EnvOrDefault("REMEDIATION_AGENT_HTTP_PORT", "8092"),

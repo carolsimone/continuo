@@ -210,6 +210,17 @@ Each successful proposal triggers two non-streaming LLM calls through the same a
 
 If the Step-1 response contains no tool call (or no choices), the adapter returns an error; the handler propagates it so the Redis message is redelivered and retried. If the tool call is present but `proposed_sql` is empty, the adapter returns a zero-value `ProposeResult` without error; the handler detects the empty field and records the attempt as `failed` with no outbox emission.
 
+### Best-effort LLM response cache
+
+Every `LLMProvider.Propose` call passes through a caching decorator (`service/llmcache.CachingLLMProvider`) that composes the real provider with an `LLMResponseCache` port. Because `remediation.requested:v1` is processed at-least-once, a failed terminal DB commit redelivers the message and re-runs the whole handler; the cache lets an identical request reuse the prior completion instead of re-paying the LLM call.
+
+- **Key**: `llmcache:` + SHA-256 of the model id and the canonical JSON encoding of the `ProposeRequest` (system/user prompt, tool name and schema). Folding in the model id keeps different models from colliding; the prompt itself is never stored, only its hash.
+- **Value**: the JSON-serialized `ProposeResult` (proposed SQL, rationale, confidence, suspected-root-cause node, model) — no prompt, no warehouse data.
+- **Backend**: the Redis adapter `adapters/redis.LLMResponseCache` writes each entry with a TTL (`LLM_CACHE_TTL`, default 24h) and relies on Redis `allkeys-lru` eviction; it never scans keys.
+- **Best-effort**: a cache miss or any Get/Put error is logged and treated as a miss/no-op — it never surfaces to the handler. Only the wrapped provider's own error propagates, so the cache can never break the happy path.
+
+The decorator is application-level port composition (it imports only `service/ports`), so it lives under `service/` and the handler stays unchanged — it still calls `deps.LLM.Propose`.
+
 ## LogSanitizer Seam
 
 The `LogSanitizer` port sits between the raw S3 log fetch and the prompt assembly step. The deployed implementation is currently pass-through: it returns the dbt log string unchanged. The seam exists so a redacting implementation can be dropped in without touching the handler or prompt-assembly logic.
@@ -280,6 +291,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `LLM_MODEL` | yes | — | Model identifier (e.g. `claude-haiku-4-5`) |
 | `LLM_API_KEY` | no | `""` | API key for `anthropic`/`openai` providers |
 | `LLM_BASE_URL` | conditional | `""` | Base URL; required when `LLM_PROVIDER=openai-compatible` |
+| `LLM_CACHE_TTL` | no | `24h` | Time-to-live for entries in the best-effort Redis LLM response cache (Go duration string). |
 | `GITHUB_TOKEN` | no | `""` | Read-only fine-grained PAT with `Contents: Read` on the dbt repo. In Helm, sourced from `global.github.token` in the chart-managed secret `continuo-app-credentials`. Empty disables Step-2 source fetch; the agent degrades to the candidate proposal. |
 | `SERVICE_REPO_MAP_PATH` | no | `""` | Path to `service_repos.yaml`, which maps each dbt service name to its project root within the source repo. In Helm, set to `/etc/continuo/service_repos.yaml` and backed by the `continuo-app-service-repos` ConfigMap (built from `deploy/app/files/service_repos.yaml`). In docker-compose (dev/e2e), bind-mounted from `remediation-agent/config/service_repos.yaml`. Empty disables the lookup and causes Step 2 to degrade to the candidate proposal. |
 | `GITHUB_BASE_URL` | no | `https://api.github.com` | GitHub REST API root; override for e2e stub (`stub-github`) |
@@ -298,6 +310,8 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Application handler (two-step flow) | `remediation-agent/service/handlers/propose_fix.go` |
 | PR lifecycle application service (claim/record/fail + outbox) | `remediation-agent/service/` |
 | Port interfaces | `remediation-agent/service/ports/` |
+| Best-effort LLM response cache decorator | `remediation-agent/service/llmcache/caching_provider.go` |
+| Redis LLM response cache adapter | `remediation-agent/adapters/redis/llm_response_cache.go` |
 | Postgres UoW + proposal repo (incl. CAS for BeginPR) | `remediation-agent/adapters/postgres/` |
 | S3 evidence reader + artifact writer | `remediation-agent/adapters/s3/` |
 | gRPC ancestry client | `remediation-agent/adapters/grpc/ancestry_client.go` |
