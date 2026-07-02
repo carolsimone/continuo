@@ -21,7 +21,7 @@ function mockFetch(releases: ReleaseListItem[]) {
   }) as unknown as typeof fetch;
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); });
 
 describe('ReleasesPanel — reject_reason', () => {
   it('shows the reject reason on a rejected row', async () => {
@@ -34,6 +34,13 @@ describe('ReleasesPanel — reject_reason', () => {
     mockFetch([item({ release_id: 'rel-2', status: 'promoted', node_count: 5 })]);
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText('rel-2')).toBeInTheDocument());
+    expect(screen.queryByText('compile_failed')).toBeNull();
+  });
+
+  it('does not render a reason chip for a rejected row with an empty reject_reason', async () => {
+    mockFetch([item({ release_id: 'rel-3', status: 'rejected', reject_reason: '' })]);
+    render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
+    expect(await screen.findByText('rel-3')).toBeInTheDocument();
     expect(screen.queryByText('compile_failed')).toBeNull();
   });
 });
