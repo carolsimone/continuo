@@ -71,7 +71,10 @@ func (f *fakeRepo) AlreadyProcessed(_ context.Context, messageID, streamName str
 		return true, nil
 	}
 	if outboxEntryID != nil {
-		if _, ok := f.byOutboxEntry[*outboxEntryID]; ok {
+		// Scope the outbox axis by stream_name, matching the table's
+		// (outbox_entry_id, stream_name) dedup identity: a match on another
+		// stream must not report this stream's message as processed.
+		if existing, ok := f.byOutboxEntry[*outboxEntryID]; ok && existing.StreamName == streamName {
 			return true, nil
 		}
 	}

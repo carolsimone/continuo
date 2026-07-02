@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testmigrations"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
@@ -141,7 +142,7 @@ func TestProposalRepositorySourceFixFields(t *testing.T) {
 		Model:               "claude-3-5-sonnet",
 		CreatedAt:           now,
 	}
-	require.NoError(t, repo.Insert(ctx, p), "insert proposal with source-fix fields")
+	require.NoError(t, repo.Upsert(ctx, p), "insert proposal with source-fix fields")
 
 	// Read back and verify round-trip.
 	type row struct {
@@ -178,7 +179,7 @@ func TestProposalRepositorySourceFixFields(t *testing.T) {
 		Model:               "claude-3-5-sonnet",
 		CreatedAt:           now,
 	}
-	require.NoError(t, repo.Insert(ctx, p2), "insert second proposal with SourceResolved=true")
+	require.NoError(t, repo.Upsert(ctx, p2), "insert second proposal with SourceResolved=true")
 
 	var got2 row
 	require.NoError(t, tx.GetContext(ctx, &got2,
@@ -267,7 +268,7 @@ func TestProposalRepositoryInsertFinalizesGenerating(t *testing.T) {
 		Model:          "m",
 		CreatedAt:      now,
 	}
-	require.NoError(t, repo.Insert(ctx, final), "Insert must finalize the generating row")
+	require.NoError(t, repo.Upsert(ctx, final), "Upsert must finalize the generating row")
 
 	var count int
 	require.NoError(t, tx.GetContext(ctx, &count,
@@ -310,7 +311,7 @@ func TestProposalRepositoryCountAttemptsExcludesGenerating(t *testing.T) {
 	const source, nodeID, sig = "validation", "schema.model_g", "gen-count-sig"
 
 	for i := 1; i <= 2; i++ {
-		require.NoError(t, repo.Insert(ctx, proposal.Proposal{
+		require.NoError(t, repo.Upsert(ctx, proposal.Proposal{
 			Source: source, ReleaseID: "release-g", NodeID: nodeID, ErrorSignature: sig,
 			Attempt: i, Status: proposal.StatusProposed, CreatedAt: now,
 		}), "insert terminal attempt %d", i)
@@ -341,7 +342,7 @@ func TestMessageProcessingAlreadyProcessed(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 
 	repo := messageprocessing.NewPostgresRepository(tx, slog.Default())
-	const stream = "remediation.requested:v1"
+	const stream = streams.RemediationRequestedV1
 
 	// Axis 1: (message_id, stream_name).
 	_, inserted, err := repo.InsertIfNotExists(ctx, &messageprocessing.MessageProcessing{
@@ -374,6 +375,50 @@ func TestMessageProcessingAlreadyProcessed(t *testing.T) {
 	got, err = repo.AlreadyProcessed(ctx, "m-different", stream, &otherOE)
 	require.NoError(t, err)
 	require.False(t, got, "unknown outbox_entry_id must report not-processed")
+
+	require.NoError(t, tx.Commit())
+}
+
+// TestMessageProcessingAlreadyProcessedScopedByStream is the regression guard for
+// the cross-stream dedup collision: AlreadyProcessed must match the table's scoped
+// (outbox_entry_id, stream_name) identity, so one consumer group having processed
+// an upstream outbox entry on its stream must not suppress a DIFFERENT group's
+// message that carries the same outbox_entry_id on another stream.
+func TestMessageProcessingAlreadyProcessedScopedByStream(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	repo := messageprocessing.NewPostgresRepository(tx, slog.Default())
+	const streamA = streams.RemediationRequestedV1
+	const streamB = streams.RemediationProposedV1
+
+	// Group A processed outbox entry `oe` on streamA (message m-A).
+	oe := uuid.New()
+	_, inserted, err := repo.InsertIfNotExists(ctx, &messageprocessing.MessageProcessing{
+		MessageID: "m-A", StreamName: streamA, State: "processing", Payload: []byte(`{}`), OutboxEntryID: &oe,
+	})
+	require.NoError(t, err)
+	require.True(t, inserted)
+
+	// Different stream, same outbox entry → must NOT be suppressed.
+	got, err := repo.AlreadyProcessed(ctx, "m-B", streamB, &oe)
+	require.NoError(t, err)
+	require.False(t, got, "same outbox_entry_id on a different stream must NOT report processed")
+
+	// Same stream, same outbox entry (fresh message id) → the outbox redelivery
+	// axis still catches it.
+	got, err = repo.AlreadyProcessed(ctx, "m-B", streamA, &oe)
+	require.NoError(t, err)
+	require.True(t, got, "same outbox_entry_id on the same stream must report processed")
+
+	// Primary (message_id, stream_name) axis still works with a nil outbox entry.
+	got, err = repo.AlreadyProcessed(ctx, "m-A", streamA, nil)
+	require.NoError(t, err)
+	require.True(t, got, "known (message_id, stream) must report processed")
 
 	require.NoError(t, tx.Commit())
 }
@@ -412,7 +457,7 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 			Model:          "claude-3-5-sonnet",
 			CreatedAt:      now,
 		}
-		require.NoError(t, repo.Insert(ctx, p), "insert attempt %d", i)
+		require.NoError(t, repo.Upsert(ctx, p), "insert attempt %d", i)
 	}
 
 	count, err := repo.CountAttempts(ctx, source, nodeID, sig)
@@ -434,7 +479,7 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 		Model:          "claude-3-5-sonnet",
 		CreatedAt:      now,
 	}
-	require.NoError(t, repo.Insert(ctx, other), "insert other node attempt")
+	require.NoError(t, repo.Upsert(ctx, other), "insert other node attempt")
 
 	count, err = repo.CountAttempts(ctx, source, nodeID, sig)
 	require.NoError(t, err)
@@ -464,7 +509,7 @@ func TestInsert_PersistsSourceLocation(t *testing.T) {
 		FilePath:       "services/service-3/models/orders_d.sql",
 		CreatedAt:      time.Now(),
 	}
-	require.NoError(t, repo.Insert(ctx, p))
+	require.NoError(t, repo.Upsert(ctx, p))
 
 	var got struct {
 		Repo      string `db:"repo"`
@@ -484,7 +529,7 @@ func TestInsert_PersistsSourceLocation(t *testing.T) {
 func seedProposal(t *testing.T, repo *ProposalRepository, db *sqlx.DB, p proposal.Proposal) string {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, repo.Insert(ctx, p))
+	require.NoError(t, repo.Upsert(ctx, p))
 	var id string
 	require.NoError(t, db.GetContext(ctx, &id,
 		`SELECT id FROM proposal WHERE release_id=$1 AND node_id=$2 AND attempt=$3`,

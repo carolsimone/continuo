@@ -46,11 +46,12 @@ type ProposalRepository interface {
 	// no-op, so at most one generating row exists per attempt.
 	InsertGenerating(ctx context.Context, p proposal.Proposal) error
 
-	// Insert records the terminal outcome of an attempt. It upserts on
+	// Upsert records the terminal outcome of an attempt on the natural key
 	// (release_id, source, node_id, attempt): it finalizes the in-flight
-	// generating row when one exists, or plain-inserts for instant paths that
-	// never marked generating (e.g. the attempt-cap escalation).
-	Insert(ctx context.Context, p proposal.Proposal) error
+	// generating row when one exists (ON CONFLICT … DO UPDATE), or plain-inserts
+	// for instant paths that never marked generating (e.g. the attempt-cap
+	// escalation).
+	Upsert(ctx context.Context, p proposal.Proposal) error
 
 	// Get returns the full View for the given proposal id.
 	// Returns ErrNotFound if no row exists for the id.

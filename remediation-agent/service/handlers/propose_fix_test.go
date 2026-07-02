@@ -133,7 +133,7 @@ type fakeClock struct{}
 func (fakeClock) Now() time.Time { return time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC) }
 
 // fakeProposalRepo satisfies repository.ProposalRepository in memory. inserted
-// collects only TERMINAL Insert (upsert) calls; generating collects the in-flight
+// collects only TERMINAL Upsert calls; generating collects the in-flight
 // InsertGenerating calls. genKeys models the ON CONFLICT DO NOTHING natural key
 // so a redelivery of an in-flight attempt does not create a second generating row.
 type fakeProposalRepo struct {
@@ -165,7 +165,7 @@ func (r *fakeProposalRepo) InsertGenerating(_ context.Context, p proposal.Propos
 	return nil
 }
 
-func (r *fakeProposalRepo) Insert(_ context.Context, p proposal.Proposal) error {
+func (r *fakeProposalRepo) Upsert(_ context.Context, p proposal.Proposal) error {
 	r.inserted = append(r.inserted, p)
 	return nil
 }

@@ -81,9 +81,10 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
    category, dbt_log_uri, candidate_sql_uri, file_path, service, repo, commit_sha.
 
 1a. Read-only dedup pre-check (no write): before any row is written, check
-    whether this trigger was already handled, on either dedup axis — a
-    message_processing row matching (message_id, stream_name) OR the upstream
-    outbox_entry_id. If found, ACK and return without writing anything. This
+    whether this trigger was already handled, on either dedup axis scoped to the
+    consuming stream — a message_processing row matching (message_id, stream_name)
+    OR (outbox_entry_id, stream_name). If found, ACK and return without writing
+    anything. This
     keeps a re-emitted completed trigger (fresh Redis message id, same
     outbox_entry_id) from minting a phantom in-flight 'generating' row for a
     fresh attempt number that the terminal claim would then abandon.

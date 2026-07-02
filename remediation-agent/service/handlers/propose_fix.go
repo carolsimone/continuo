@@ -286,8 +286,8 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 		return nil
 	}
 
-	if err := u.ProposalRepo().Insert(ctx, p); err != nil {
-		return fmt.Errorf("insert proposal: %w", err)
+	if err := u.ProposalRepo().Upsert(ctx, p); err != nil {
+		return fmt.Errorf("upsert proposal: %w", err)
 	}
 	if emit {
 		root := ""

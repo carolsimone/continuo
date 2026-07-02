@@ -66,12 +66,12 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 	return nil
 }
 
-// Insert records the terminal outcome of a proposal attempt. It upserts on the
-// natural key (release_id, source, node_id, attempt): when an in-flight
-// generating row exists (the common healable path) it is finalized in place;
-// otherwise the row is plain-inserted (instant paths — e.g. attempt-cap
-// escalation — that never marked generating).
-func (r *ProposalRepository) Insert(ctx context.Context, p proposal.Proposal) error {
+// Upsert records the terminal outcome of a proposal attempt on the natural key
+// (release_id, source, node_id, attempt): when an in-flight generating row
+// exists (the common healable path) it is finalized in place via
+// ON CONFLICT … DO UPDATE; otherwise the row is plain-inserted (instant paths —
+// e.g. attempt-cap escalation — that never marked generating).
+func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) error {
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, node_id, error_signature, attempt,
