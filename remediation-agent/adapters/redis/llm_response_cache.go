@@ -14,8 +14,10 @@ import (
 
 // LLMResponseCache is a Redis-backed store of LLM propose results, keyed by the
 // caller's content-addressed idempotency key. It stores only the small
-// ProposeResult (never the prompt) as JSON with a TTL, and relies on Redis
-// eviction (allkeys-lru); it never scans keys.
+// ProposeResult (never the prompt) as JSON, and each entry carries a TTL so it
+// expires on its own; it never scans keys. The shared Redis runs noeviction (it
+// co-hosts the event streams and OIDC sessions, which must not be evicted), so
+// the TTL is the cache's only memory bound — it is kept short deliberately.
 type LLMResponseCache struct {
 	client *goredis.Client
 	ttl    time.Duration

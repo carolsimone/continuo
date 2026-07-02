@@ -50,10 +50,11 @@ func ContextWithIdempotencyKey(ctx context.Context, key string) context.Context 
 }
 
 // idempotencyKeyFromContext returns the inbound trigger's idempotency key and
-// whether one was present.
+// whether one was present. ContextWithIdempotencyKey never stores an empty
+// string, so a present value is always non-empty.
 func idempotencyKeyFromContext(ctx context.Context) (string, bool) {
 	v, ok := ctx.Value(idempotencyKeyCtx{}).(string)
-	return v, ok && v != ""
+	return v, ok
 }
 
 // CachingLLMProvider decorates an LLMProvider with a best-effort response cache

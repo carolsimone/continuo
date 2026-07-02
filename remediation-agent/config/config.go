@@ -20,10 +20,13 @@ type Config struct {
 	LLMModel    string
 	LLMBaseURL  string // required for openai-compatible
 
-	// LLMCacheTTL is how long a cached LLM propose result stays valid. It must
-	// comfortably exceed the worst-case redelivery latency of the
-	// remediation.requested stream so a redelivered trigger reuses the prior
-	// completion instead of re-paying the LLM call. Defaults to 24h.
+	// LLMCacheTTL is how long a cached LLM propose result stays valid. The cache
+	// only needs to survive the same-trigger redelivery window (a Redis PEL sweep
+	// or outbox re-emit, seconds to minutes), so a short TTL both covers that and
+	// bounds memory: the shared Redis runs noeviction and co-hosts the event
+	// streams and OIDC sessions, so the cache must self-bound via its TTL rather
+	// than rely on eviction. Defaults to 1h; a non-positive value falls back to
+	// that default so a misconfigured TTL can never disable expiry.
 	LLMCacheTTL time.Duration
 
 	GitHubToken   string // personal access token for GitHub API calls; empty = unauthenticated
@@ -48,6 +51,11 @@ type serviceReposFile struct {
 	Services map[string]string `yaml:"services"`
 }
 
+// defaultLLMCacheTTL bounds how long a cached LLM propose result lives. It only
+// needs to cover the same-trigger redelivery window, and it also caps the memory
+// the cache adds to the shared, noeviction Redis instance.
+const defaultLLMCacheTTL = time.Hour
+
 // Load reads configuration from env vars, recording missing/invalid required
 // values on v so main can fail fast with a complete list.
 func Load(v *pkgconfig.Validator) Config {
@@ -66,7 +74,7 @@ func Load(v *pkgconfig.Validator) Config {
 		LLMAPIKey:          pkgconfig.EnvOrDefault("LLM_API_KEY", ""),
 		LLMModel:           v.Require("LLM_MODEL"),
 		LLMBaseURL:         pkgconfig.EnvOrDefault("LLM_BASE_URL", ""),
-		LLMCacheTTL:        pkgconfig.EnvDurationOrDefault("LLM_CACHE_TTL", 24*time.Hour),
+		LLMCacheTTL:        pkgconfig.EnvDurationOrDefault("LLM_CACHE_TTL", defaultLLMCacheTTL),
 		GitHubToken:        pkgconfig.EnvOrDefault("GITHUB_TOKEN", ""),
 		GitHubBaseURL:      pkgconfig.EnvOrDefault("GITHUB_BASE_URL", "https://api.github.com"),
 		HTTPPort:           pkgconfig.EnvOrDefault("REMEDIATION_AGENT_HTTP_PORT", "8092"),
@@ -86,6 +94,12 @@ func Load(v *pkgconfig.Validator) Config {
 		if cfg.LLMProvider != "" {
 			v.Add("LLM_PROVIDER (must be anthropic|openai|openai-compatible)")
 		}
+	}
+	// A non-positive TTL would either disable expiry (Redis treats a zero SET
+	// expiration as "never expire") or make every write error; either defeats the
+	// cache's memory self-bounding, so clamp it back to the default.
+	if cfg.LLMCacheTTL <= 0 {
+		cfg.LLMCacheTTL = defaultLLMCacheTTL
 	}
 	cfg.ServiceRepoPaths = loadServiceRepos(cfg.ServiceRepoMapPath)
 	return cfg
