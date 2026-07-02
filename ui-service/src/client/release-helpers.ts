@@ -1,4 +1,4 @@
-import { ReleaseListItem } from './types';
+import { NodeValidationResult, ReleaseListItem } from './types';
 
 // In-flight = a release actively moving through the pipeline, in lifecycle order:
 // received -> compiling -> parsing -> seed_building -> validating.
@@ -31,4 +31,52 @@ export function releasePillClass(status: string): string {
   if (status.includes('cancel'))  return 'pill--cancelled';
   if (status.includes('run'))     return 'pill--running';
   return 'pill--pending';
+}
+
+// Fixed display order of release failure stages. Matches the pipeline order the
+// release-controller runs them in (compile → seed_build → validation).
+export const STAGE_ORDER = ['compile', 'seed_build', 'validation'] as const;
+
+const STAGE_LABELS: Record<string, string> = {
+  compile: 'Compilation',
+  seed_build: 'Seed',
+  validation: 'Validation',
+};
+
+// stageLabel maps a raw stage literal to its section display label, falling back
+// to the raw value for an unrecognized stage.
+export function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage] ?? stage;
+}
+
+// groupByStage buckets per-node results by stage and returns the buckets in
+// STAGE_ORDER, omitting any stage with no results. Node order within a stage is
+// preserved. Unknown stages follow the known ones in first-seen order.
+export function groupByStage(
+  perNode: NodeValidationResult[],
+): { stage: string; nodes: NodeValidationResult[] }[] {
+  const byStage = new Map<string, NodeValidationResult[]>();
+  for (const node of perNode) {
+    const list = byStage.get(node.stage);
+    if (list) list.push(node);
+    else byStage.set(node.stage, [node]);
+  }
+  const ordered: { stage: string; nodes: NodeValidationResult[] }[] = [];
+  for (const stage of STAGE_ORDER) {
+    const nodes = byStage.get(stage);
+    if (nodes) {
+      ordered.push({ stage, nodes });
+      byStage.delete(stage);
+    }
+  }
+  for (const [stage, nodes] of byStage) ordered.push({ stage, nodes });
+  return ordered;
+}
+
+// proposalKey is the join key between a per-node result and a remediation
+// proposal. A node_id alone is ambiguous across stages (a compile node_id is a
+// service name that can collide with a validation node_id), so the key is
+// (stage, node_id); stage and proposal.source share the same literals.
+export function proposalKey(stage: string, nodeId: string): string {
+  return `${stage}|${nodeId}`;
 }

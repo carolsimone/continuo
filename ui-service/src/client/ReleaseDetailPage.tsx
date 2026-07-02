@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ReleaseDetail, NodeValidationResult } from './types';
-import { releasePillClass } from './release-helpers';
+import { releasePillClass, groupByStage, stageLabel, proposalKey } from './release-helpers';
 import { fetchProposals } from './remediation-api';
 
 // Cadence for re-checking whether a remediation proposal has been persisted for a
@@ -59,10 +59,12 @@ export default function ReleaseDetailPage() {
 
   // Failed nodes are the only ones eligible for a remediation proposal. A stable
   // string key lets the polling effect re-subscribe only when that set changes.
-  const failedNodeIds = (rel?.per_node_results ?? [])
+  // Keyed on (stage, node_id) since a node_id alone is ambiguous across stages;
+  // the keys themselves contain '|', so joining/splitting uses '\n'.
+  const failedKeys = (rel?.per_node_results ?? [])
     .filter(n => n.status === 'failed')
-    .map(n => n.node_id);
-  const failedKey = failedNodeIds.slice().sort().join('|');
+    .map(n => proposalKey(n.stage, n.node_id));
+  const failedKey = failedKeys.slice().sort().join('\n');
 
   // Poll for remediation proposals so the "Proposed fix available →" link surfaces
   // without a manual refresh. Polling runs only while a failed node still lacks a
@@ -71,7 +73,7 @@ export default function ReleaseDetailPage() {
   // a transient failure never breaks the page; the next tick retries.
   useEffect(() => {
     if (!id) return;
-    const failed = failedKey ? failedKey.split('|') : [];
+    const failed = failedKey ? failedKey.split('\n') : [];
 
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -97,10 +99,10 @@ export default function ReleaseDetailPage() {
           if (cancelled || seq <= applied) return;
           applied = seq;
           const ids = new Set(
-            proposals.filter(p => p.release_id === id).map(p => p.node_id),
+            proposals.filter(p => p.release_id === id).map(p => proposalKey(p.source, p.node_id)),
           );
           setProposedNodeIds(ids);
-          if (failed.every(nid => ids.has(nid))) stop();
+          if (failed.every(k => ids.has(k))) stop();
         })
         .catch(() => {});
     };
@@ -161,39 +163,55 @@ export default function ReleaseDetailPage() {
           ))}
         </ul>
 
-        <div className="section-header">
-          <div className="section-header__main">
-            <span className="section-header__title">Per-node validation</span>
-            <span className="section-header__count">{perNode.length}</span>
-          </div>
-        </div>
-        {perNode.length === 0 ? <p className="empty">No per-node results.</p> : (
-          <table className="nodes-table">
-            <thead>
-              <tr><th>Node</th><th>Status</th><th>Duration</th><th>Log</th><th>Fix</th></tr>
-            </thead>
-            <tbody>
-              {perNode.map(n => (
-                <tr key={n.node_id}>
-                  <td><div className="nodes-node-name">{n.node_id}</div></td>
-                  <td>
-                    <span className={`pill-sm ${releasePillClass(n.status).replace('pill--', 'pill-sm--')}`}>
-                      {n.status}
-                    </span>
-                  </td>
-                  <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
-                  <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
-                  <td>
-                    {proposedNodeIds.has(n.node_id) && (
-                      <Link to="/?tab=remediation" className="btn btn--secondary">
-                        Proposed fix available →
-                      </Link>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {perNode.length === 0 ? (
+          <>
+            <div className="section-header">
+              <div className="section-header__main">
+                <span className="section-header__title">Per-node results</span>
+              </div>
+            </div>
+            <p className="empty">No per-node results.</p>
+          </>
+        ) : (
+          groupByStage(perNode).map(({ stage, nodes }) => (
+            <div key={stage}>
+              <div className="section-header">
+                <div className="section-header__main">
+                  <span className="section-header__title">{stageLabel(stage)}</span>
+                  <span className="section-header__count">{nodes.length}</span>
+                </div>
+              </div>
+              <table className="nodes-table">
+                <thead>
+                  <tr><th>Node</th><th>Status</th><th>Duration</th><th>Log</th><th>Fix</th></tr>
+                </thead>
+                <tbody>
+                  {nodes.map(n => (
+                    <tr key={proposalKey(stage, n.node_id)}>
+                      <td>
+                        <div className="nodes-node-name">{n.node_id}</div>
+                        {n.file_path && <div className="nodes-node-subpath">{n.file_path}</div>}
+                      </td>
+                      <td>
+                        <span className={`pill-sm ${releasePillClass(n.status).replace('pill--', 'pill-sm--')}`}>
+                          {n.status}
+                        </span>
+                      </td>
+                      <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
+                      <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
+                      <td>
+                        {proposedNodeIds.has(proposalKey(stage, n.node_id)) && (
+                          <Link to="/?tab=remediation" className="btn btn--secondary">
+                            Proposed fix available →
+                          </Link>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))
         )}
       </main>
     </div>
