@@ -27,18 +27,18 @@ const keyPrefix = "llmcache:"
 // CachingLLMProvider decorates an LLMProvider with a best-effort response cache
 // keyed by the content-addressed request (model id ‖ canonical request JSON).
 type CachingLLMProvider struct {
-	inner   ports.LLMProvider
-	cache   ports.LLMResponseCache
-	modelID string
-	logger  *slog.Logger
+	provider ports.LLMProvider
+	cache    ports.LLMResponseCache
+	modelID  string
+	logger   *slog.Logger
 }
 
 var _ ports.LLMProvider = (*CachingLLMProvider)(nil)
 
-// New wraps inner with a cache. modelID is folded into the cache key so results
-// from different models never collide.
-func New(inner ports.LLMProvider, cache ports.LLMResponseCache, modelID string, logger *slog.Logger) *CachingLLMProvider {
-	return &CachingLLMProvider{inner: inner, cache: cache, modelID: modelID, logger: logger}
+// New wraps the provider with a cache. modelID is folded into the cache key so
+// results from different models never collide.
+func New(provider ports.LLMProvider, cache ports.LLMResponseCache, modelID string, logger *slog.Logger) *CachingLLMProvider {
+	return &CachingLLMProvider{provider: provider, cache: cache, modelID: modelID, logger: logger}
 }
 
 // Propose returns a cached completion for an identical prior request, otherwise
@@ -49,7 +49,7 @@ func (p *CachingLLMProvider) Propose(ctx context.Context, req ports.ProposeReque
 	if err != nil {
 		// A request that cannot be canonicalised simply is not cached.
 		p.logger.Warn("llm cache: key derivation failed; bypassing cache", "error", err)
-		return p.inner.Propose(ctx, req)
+		return p.provider.Propose(ctx, req)
 	}
 
 	if res, ok, err := p.cache.Get(ctx, key); err != nil {
@@ -58,7 +58,7 @@ func (p *CachingLLMProvider) Propose(ctx context.Context, req ports.ProposeReque
 		return res, nil
 	}
 
-	res, err := p.inner.Propose(ctx, req)
+	res, err := p.provider.Propose(ctx, req)
 	if err != nil {
 		return ports.ProposeResult{}, err
 	}
