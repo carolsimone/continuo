@@ -18,6 +18,13 @@ import (
 // streams in the same millisecond and produce identical message IDs.
 type Repository interface {
 	InsertIfNotExists(ctx context.Context, msgProc *MessageProcessing) (uuid.UUID, bool, error)
+	// AlreadyProcessed reports whether a row already exists for this inbound
+	// message, mirroring InsertIfNotExists's dedup identity: a match on
+	// (message_id, stream_name) OR, when outboxEntryID is non-nil, on
+	// outbox_entry_id. It is a read-only pre-check that lets a consumer bail out
+	// before doing any write when a trigger has already been handled — without
+	// claiming a fresh row as InsertIfNotExists would.
+	AlreadyProcessed(ctx context.Context, messageID, streamName string, outboxEntryID *uuid.UUID) (bool, error)
 	GetByMessageIDAndStream(ctx context.Context, messageID, streamName string) (*MessageProcessing, error)
 	// GetByID fetches a row by its primary key. Dedup uses this to look up the
 	// existing row after a conflict on either of the unique constraints

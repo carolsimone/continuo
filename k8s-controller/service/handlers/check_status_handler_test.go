@@ -148,6 +148,10 @@ func (r *fakeMessageProcessingRepo) InsertIfNotExists(_ context.Context, msgProc
 	return id, true, nil // newly inserted
 }
 
+func (r *fakeMessageProcessingRepo) AlreadyProcessed(_ context.Context, _, _ string, _ *uuid.UUID) (bool, error) {
+	return false, nil
+}
+
 func (r *fakeMessageProcessingRepo) GetByMessageIDAndStream(_ context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
 	key := messageID + "\x00" + streamName
 	if id, exists := r.seen[key]; exists {

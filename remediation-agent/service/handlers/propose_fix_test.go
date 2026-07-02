@@ -54,11 +54,14 @@ func (fakeSanitizer) Sanitize(s string) string { return s }
 
 // fakeLLM returns results from a queue (one per Propose call, in order).
 // When the queue is exhausted, the last entry is repeated. A single-entry queue
-// reproduces the original single-result behaviour.
+// reproduces the original single-result behaviour. probe, when set, runs on each
+// Propose call, letting a test observe repository state at the moment the model
+// is invoked (e.g. that the in-flight generating row was already committed).
 type fakeLLM struct {
 	queue []ports.ProposeResult
 	errs  []error
 	calls int
+	probe func()
 }
 
 func newFakeLLM(res ports.ProposeResult, err error) fakeLLM {
@@ -66,6 +69,9 @@ func newFakeLLM(res ports.ProposeResult, err error) fakeLLM {
 }
 
 func (f *fakeLLM) Propose(_ context.Context, _ ports.ProposeRequest) (ports.ProposeResult, error) {
+	if f.probe != nil {
+		f.probe()
+	}
 	i := f.calls
 	if i >= len(f.queue) {
 		i = len(f.queue) - 1
@@ -126,17 +132,40 @@ type fakeClock struct{}
 
 func (fakeClock) Now() time.Time { return time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC) }
 
-// fakeProposalRepo satisfies repository.ProposalRepository in memory.
+// fakeProposalRepo satisfies repository.ProposalRepository in memory. inserted
+// collects only TERMINAL Upsert calls; generating collects the in-flight
+// InsertGenerating calls. genKeys models the ON CONFLICT DO NOTHING natural key
+// so a redelivery of an in-flight attempt does not create a second generating row.
 type fakeProposalRepo struct {
-	count    int
-	inserted []proposal.Proposal
+	count      int
+	inserted   []proposal.Proposal
+	generating []proposal.Proposal
+	genKeys    map[string]bool
 }
 
 func (r *fakeProposalRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error) {
 	return r.count, nil
 }
 
-func (r *fakeProposalRepo) Insert(_ context.Context, p proposal.Proposal) error {
+func natKey(p proposal.Proposal) string {
+	return fmt.Sprintf("%s|%s|%s|%d", p.ReleaseID, p.Source, p.NodeID, p.Attempt)
+}
+
+func (r *fakeProposalRepo) InsertGenerating(_ context.Context, p proposal.Proposal) error {
+	if r.genKeys == nil {
+		r.genKeys = map[string]bool{}
+	}
+	k := natKey(p)
+	if r.genKeys[k] {
+		return nil // ON CONFLICT DO NOTHING: attempt already in flight.
+	}
+	r.genKeys[k] = true
+	p.Status = proposal.StatusGenerating
+	r.generating = append(r.generating, p)
+	return nil
+}
+
+func (r *fakeProposalRepo) Upsert(_ context.Context, p proposal.Proposal) error {
 	r.inserted = append(r.inserted, p)
 	return nil
 }
@@ -226,6 +255,24 @@ func (r *fakeMsgProcRepo) InsertIfNotExists(
 	stored.ID = id
 	r.rows[id] = &stored
 	return id, true, nil
+}
+
+// AlreadyProcessed mirrors the two dedup axes InsertIfNotExists keys on: a row
+// inserted with an outbox_entry_id is found by that id, otherwise by the
+// (message_id, stream_name) pair. dedupKey stores exactly one of these axes per
+// row, matching the production insert lookup.
+func (r *fakeMsgProcRepo) AlreadyProcessed(
+	_ context.Context, messageID, streamName string, outboxEntryID *uuid.UUID,
+) (bool, error) {
+	if outboxEntryID != nil {
+		if _, ok := r.seen["oe:"+outboxEntryID.String()]; ok {
+			return true, nil
+		}
+	}
+	if _, ok := r.seen["mid:"+messageID+":"+streamName]; ok {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (r *fakeMsgProcRepo) GetByMessageIDAndStream(
@@ -784,6 +831,141 @@ func TestProposeFix_DuplicateTriggerIsDeduped(t *testing.T) {
 	}
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("after dup: expected still 1 outbox entry, got %d", len(u.ob.entries))
+	}
+}
+
+// TestProposeFix_MarksGeneratingBeforeLLM verifies the in-flight indicator
+// contract: an in-flight 'generating' row is committed BEFORE the model is
+// called, and is finalized to the terminal 'proposed' row afterwards. The probe
+// runs inside the LLM call and asserts the generating row already exists at that
+// moment.
+func TestProposeFix_MarksGeneratingBeforeLLM(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t", Rationale: "typo", Confidence: "high", Model: "m",
+	}, nil)
+
+	var genAtLLMCall int
+	llm.probe = func() { genAtLLMCall = len(u.pr.generating) }
+
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+
+	if genAtLLMCall != 1 {
+		t.Fatalf("expected 1 generating row committed before the LLM call, got %d", genAtLLMCall)
+	}
+	if len(u.pr.generating) != 1 || u.pr.generating[0].Status != proposal.StatusGenerating {
+		t.Fatalf("expected one generating row, got %+v", u.pr.generating)
+	}
+	if u.pr.generating[0].Attempt != 1 {
+		t.Fatalf("generating row must be attempt 1, got %d", u.pr.generating[0].Attempt)
+	}
+	// The terminal write finalizes the same attempt to proposed.
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusProposed {
+		t.Fatalf("expected one proposed terminal row, got %+v", u.pr.inserted)
+	}
+	if u.pr.inserted[0].Attempt != 1 {
+		t.Fatalf("terminal row must finalize attempt 1, got %d", u.pr.inserted[0].Attempt)
+	}
+}
+
+// TestProposeFix_AlreadyProcessedPreCheckNoPhantom proves the read-only dedup
+// pre-check prevents a phantom generating row. A completed trigger is re-emitted
+// with a fresh Redis message id but the same upstream outbox_entry_id; the second
+// invocation must ACK (return nil) before writing anything — no extra generating
+// row, no extra terminal row, and no second model call.
+func TestProposeFix_AlreadyProcessedPreCheckNoPhantom(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t", Rationale: "typo", Confidence: "high", Model: "m",
+	}, nil)
+	d := deps(u, ev, &llm, &fakeArtifacts{})
+
+	oeID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+	tr := baseTrigger()
+	tr.MessageID = "100-0"
+	tr.OutboxEntryID = &oeID
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatalf("first delivery: %v", err)
+	}
+	if len(u.pr.generating) != 1 || len(u.pr.inserted) != 1 {
+		t.Fatalf("first delivery: want 1 generating + 1 terminal, got %d/%d", len(u.pr.generating), len(u.pr.inserted))
+	}
+	if llm.calls != 1 {
+		t.Fatalf("first delivery: want 1 LLM call, got %d", llm.calls)
+	}
+
+	// Re-emission: fresh message id, same outbox_entry_id.
+	tr.MessageID = "200-0"
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatalf("re-emitted delivery must return nil, got: %v", err)
+	}
+	if len(u.pr.generating) != 1 {
+		t.Fatalf("re-emission must not add a phantom generating row, got %d", len(u.pr.generating))
+	}
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("re-emission must not add a terminal row, got %d", len(u.pr.inserted))
+	}
+	if llm.calls != 1 {
+		t.Fatalf("re-emission must not call the model again, got %d calls", llm.calls)
+	}
+}
+
+// TestProposeFix_EscalateWritesNoGenerating verifies the attempt-cap path never
+// shows the "Generating fix…" chip: it escalates before markGenerating, so no
+// generating row is written and the model is never called.
+func TestProposeFix_EscalateWritesNoGenerating(t *testing.T) {
+	u := newFakeUoW()
+	u.pr.count = 3
+	ev := fakeEvidence{vals: map[string]string{"s3://b/sql": "x", "s3://b/log": "y"}}
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.pr.generating) != 0 {
+		t.Fatalf("escalated (unhealable) attempt must not write a generating row, got %d", len(u.pr.generating))
+	}
+	if llm.calls != 0 {
+		t.Fatalf("escalated attempt must not call the model, got %d calls", llm.calls)
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusEscalated {
+		t.Fatalf("expected one escalated terminal row, got %+v", u.pr.inserted)
+	}
+}
+
+// TestProposeFix_InternalSkipFinalizesGenerating documents the accepted
+// generating→blank flicker: a Fixer that skips internally (here, a validation
+// trigger with no candidate SQL) still marks the attempt generating in the
+// driver, then finalizes it to skipped. Exactly one generating row and one
+// skipped terminal row result — no outbox emit.
+func TestProposeFix_InternalSkipFinalizesGenerating(t *testing.T) {
+	u := newFakeUoW()
+	tr := baseTrigger()
+	tr.CandidateSQLURI = ""
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+
+	if err := ProposeFix(context.Background(), deps(u, fakeEvidence{}, &llm, &fakeArtifacts{}), tr); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.pr.generating) != 1 {
+		t.Fatalf("expected one generating row before the internal skip, got %d", len(u.pr.generating))
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusSkipped {
+		t.Fatalf("expected one skipped terminal row, got %+v", u.pr.inserted)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatal("skip must not emit an outbox entry")
 	}
 }
 

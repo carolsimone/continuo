@@ -69,6 +69,10 @@ func (f *fakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context,
 	return msgProc.ID, true, nil
 }
 
+func (f *fakeMessageProcessingRepository) AlreadyProcessed(_ context.Context, _, _ string, _ *uuid.UUID) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeMessageProcessingRepository) GetByMessageIDAndStream(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
 	msg, ok := f.messages[fakeMsgProcKey(messageID, streamName)]
 	if !ok {

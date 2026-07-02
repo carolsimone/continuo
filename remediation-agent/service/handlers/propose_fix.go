@@ -97,6 +97,22 @@ type Deps struct {
 // records the proposal row and (on a proposed outcome) enqueues a
 // remediation.proposed:v1 outbox trigger.
 func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
+	// Read-only dedup pre-check before any write. A redelivery of a trigger that
+	// was already handled (including one re-emitted with a fresh Redis message id
+	// but the same upstream outbox_entry_id) is ACKed here without touching the
+	// database. This is what keeps a completed trigger from minting a phantom
+	// in-flight 'generating' row for a fresh attempt number that record()'s dedup
+	// claim would then abandon.
+	done, err := alreadyProcessed(ctx, deps, t)
+	if err != nil {
+		return err
+	}
+	if done {
+		deps.Logger.Info("remediation.requested trigger already processed — skipping",
+			"message_id", t.MessageID, "node", t.NodeID, "release", t.ReleaseID)
+		return nil
+	}
+
 	attempts, err := countAttempts(ctx, deps, t)
 	if err != nil {
 		return err
@@ -138,6 +154,16 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		Logger: deps.Logger, ServiceRepoPaths: deps.ServiceRepoPaths,
 	}
 
+	// Mark this attempt in-flight in its own committed transaction, right before
+	// the model is called, so the release UI can show a "Generating fix…"
+	// indicator for the healable node while the fix is produced. It runs after the
+	// attempt-cap guard so an escalated (unhealable) node never shows the chip. A
+	// Fixer that internally skips finalizes the row to a terminal state; a brief
+	// generating→blank flicker for that case is acceptable.
+	if err := markGenerating(ctx, deps, t, attempt); err != nil {
+		return err
+	}
+
 	// Scope any LLM response caching to this specific inbound trigger. A
 	// redelivery of the same trigger reuses the cached completion; a new trigger
 	// (e.g. a later attempt for the same failure) misses and calls the model
@@ -152,8 +178,28 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	return record(ctx, deps, t, attempt, r.Proposal, emit, r.Proposal.SourceResolved, r.SuspectedRoot)
 }
 
-// countAttempts opens a read-only transaction to count prior proposals for
-// this (source, node, error_signature) triple.
+// alreadyProcessed opens a read-only transaction and reports whether this
+// inbound trigger was already handled, on either dedup axis (message id/stream
+// or upstream outbox_entry_id). It performs no write, so re-emitted completed
+// triggers are ACKed without claiming a fresh message_processing row.
+func alreadyProcessed(ctx context.Context, deps Deps, t Trigger) (bool, error) {
+	u := deps.NewUoW()
+	if err := u.Begin(ctx); err != nil {
+		return false, fmt.Errorf("begin (dedup pre-check): %w", err)
+	}
+	defer func() { _ = u.Rollback() }()
+	done, err := u.MessageProcessingRepo().AlreadyProcessed(
+		ctx, t.MessageID, streams.RemediationRequestedV1, t.OutboxEntryID)
+	if err != nil {
+		return false, fmt.Errorf("dedup pre-check: %w", err)
+	}
+	return done, nil
+}
+
+// countAttempts opens a read-only transaction to count prior TERMINAL proposals
+// for this (source, node, error_signature) triple. In-flight generating rows are
+// excluded by the repository so the in-progress attempt keeps a stable attempt
+// number across a redelivery.
 func countAttempts(ctx context.Context, deps Deps, t Trigger) (int, error) {
 	u := deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -165,6 +211,35 @@ func countAttempts(ctx context.Context, deps Deps, t Trigger) (int, error) {
 		return 0, fmt.Errorf("count attempts: %w", err)
 	}
 	return n, nil
+}
+
+// markGenerating writes an in-flight 'generating' proposal row for the attempt
+// in its own committed transaction, just before the model is called. The insert
+// is idempotent (ON CONFLICT DO NOTHING on the attempt's natural key), so a
+// redelivery of an in-flight attempt re-uses the existing row rather than
+// creating a second one.
+func markGenerating(ctx context.Context, deps Deps, t Trigger, attempt int) error {
+	u := deps.NewUoW()
+	if err := u.Begin(ctx); err != nil {
+		return fmt.Errorf("begin (mark generating): %w", err)
+	}
+	defer func() { _ = u.Rollback() }()
+	p := proposal.Proposal{
+		Source:         t.Source,
+		ReleaseID:      t.ReleaseID,
+		NodeID:         t.NodeID,
+		ErrorSignature: t.ErrorSignature,
+		Attempt:        attempt,
+		Status:         proposal.StatusGenerating,
+		CreatedAt:      deps.Clock.Now(),
+	}
+	if err := u.ProposalRepo().InsertGenerating(ctx, p); err != nil {
+		return fmt.Errorf("mark generating: %w", err)
+	}
+	if err := u.Commit(); err != nil {
+		return fmt.Errorf("commit (mark generating): %w", err)
+	}
+	return nil
 }
 
 // record inserts the proposal row and, when emit is true, enqueues the
@@ -211,8 +286,8 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 		return nil
 	}
 
-	if err := u.ProposalRepo().Insert(ctx, p); err != nil {
-		return fmt.Errorf("insert proposal: %w", err)
+	if err := u.ProposalRepo().Upsert(ctx, p); err != nil {
+		return fmt.Errorf("upsert proposal: %w", err)
 	}
 	if emit {
 		root := ""

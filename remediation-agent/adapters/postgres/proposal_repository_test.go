@@ -5,15 +5,19 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testmigrations"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
@@ -138,7 +142,7 @@ func TestProposalRepositorySourceFixFields(t *testing.T) {
 		Model:               "claude-3-5-sonnet",
 		CreatedAt:           now,
 	}
-	require.NoError(t, repo.Insert(ctx, p), "insert proposal with source-fix fields")
+	require.NoError(t, repo.Upsert(ctx, p), "insert proposal with source-fix fields")
 
 	// Read back and verify round-trip.
 	type row struct {
@@ -175,7 +179,7 @@ func TestProposalRepositorySourceFixFields(t *testing.T) {
 		Model:               "claude-3-5-sonnet",
 		CreatedAt:           now,
 	}
-	require.NoError(t, repo.Insert(ctx, p2), "insert second proposal with SourceResolved=true")
+	require.NoError(t, repo.Upsert(ctx, p2), "insert second proposal with SourceResolved=true")
 
 	var got2 row
 	require.NoError(t, tx.GetContext(ctx, &got2,
@@ -185,6 +189,236 @@ func TestProposalRepositorySourceFixFields(t *testing.T) {
 	), "read back second source-fix row")
 	require.Equal(t, "s3://bucket/candidate/sql/sf2", got2.CandidateFixSQLURI, "candidate_fix_sql_uri second row")
 	require.True(t, got2.SourceResolved, "source_resolved must be true on second row")
+
+	require.NoError(t, tx.Commit())
+}
+
+// TestProposalRepositoryInsertGeneratingIdempotent verifies that InsertGenerating
+// writes a single in-flight 'generating' row and that a second call for the same
+// (release_id, source, node_id, attempt) is a no-op (ON CONFLICT DO NOTHING),
+// modelling a redelivery of an in-flight attempt.
+func TestProposalRepositoryInsertGeneratingIdempotent(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	repo := NewProposalRepository(tx)
+	p := proposal.Proposal{
+		Source:         "compile",
+		ReleaseID:      "release-gen-1",
+		NodeID:         "service-1",
+		ErrorSignature: "gen-sig",
+		Attempt:        1,
+		Status:         proposal.StatusGenerating,
+		CreatedAt:      time.Now().UTC(),
+	}
+	require.NoError(t, repo.InsertGenerating(ctx, p), "first InsertGenerating")
+	require.NoError(t, repo.InsertGenerating(ctx, p), "second InsertGenerating must be a no-op")
+
+	var count int
+	require.NoError(t, tx.GetContext(ctx, &count,
+		`SELECT count(*) FROM proposal WHERE release_id=$1 AND source=$2 AND node_id=$3 AND attempt=$4`,
+		p.ReleaseID, p.Source, p.NodeID, p.Attempt))
+	require.Equal(t, 1, count, "exactly one generating row must exist after two InsertGenerating calls")
+
+	var status string
+	require.NoError(t, tx.GetContext(ctx, &status,
+		`SELECT status FROM proposal WHERE release_id=$1 AND source=$2 AND node_id=$3 AND attempt=$4`,
+		p.ReleaseID, p.Source, p.NodeID, p.Attempt))
+	require.Equal(t, string(proposal.StatusGenerating), status)
+
+	require.NoError(t, tx.Commit())
+}
+
+// TestProposalRepositoryInsertFinalizesGenerating verifies that Insert upserts a
+// prior 'generating' row in place: after finalization exactly one row exists for
+// the attempt, its status is terminal, and the terminal payload columns are set.
+func TestProposalRepositoryInsertFinalizesGenerating(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	repo := NewProposalRepository(tx)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	gen := proposal.Proposal{
+		Source: "compile", ReleaseID: "release-fin-1", NodeID: "service-1",
+		ErrorSignature: "fin-sig", Attempt: 1, Status: proposal.StatusGenerating, CreatedAt: now,
+	}
+	require.NoError(t, repo.InsertGenerating(ctx, gen))
+
+	final := proposal.Proposal{
+		Source: "compile", ReleaseID: "release-fin-1", NodeID: "service-1",
+		ErrorSignature: "fin-sig", Attempt: 1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "fixed config block",
+		ProposedSQLURI: "s3://bucket/sql/fin1",
+		DiffURI:        "s3://bucket/diff/fin1",
+		SourceResolved: true,
+		Repo:           "owner/repo",
+		CommitSHA:      "deadbeef",
+		FilePath:       "models/x.sql",
+		Model:          "m",
+		CreatedAt:      now,
+	}
+	require.NoError(t, repo.Upsert(ctx, final), "Upsert must finalize the generating row")
+
+	var count int
+	require.NoError(t, tx.GetContext(ctx, &count,
+		`SELECT count(*) FROM proposal WHERE release_id=$1 AND source=$2 AND node_id=$3 AND attempt=$4`,
+		final.ReleaseID, final.Source, final.NodeID, final.Attempt))
+	require.Equal(t, 1, count, "finalize must not create a second row")
+
+	type row struct {
+		Status         string `db:"status"`
+		ProposedSQLURI string `db:"proposed_sql_uri"`
+		SourceResolved bool   `db:"source_resolved"`
+		FilePath       string `db:"file_path"`
+	}
+	var got row
+	require.NoError(t, tx.GetContext(ctx, &got,
+		`SELECT status, proposed_sql_uri, source_resolved, file_path
+		 FROM proposal WHERE release_id=$1 AND source=$2 AND node_id=$3 AND attempt=$4`,
+		final.ReleaseID, final.Source, final.NodeID, final.Attempt))
+	require.Equal(t, string(proposal.StatusProposed), got.Status)
+	require.Equal(t, "s3://bucket/sql/fin1", got.ProposedSQLURI)
+	require.True(t, got.SourceResolved)
+	require.Equal(t, "models/x.sql", got.FilePath)
+
+	require.NoError(t, tx.Commit())
+}
+
+// TestProposalRepositoryCountAttemptsExcludesGenerating verifies that an in-flight
+// 'generating' row is not counted toward the attempt cap: two terminal rows plus
+// one generating row for the same triplet count as two attempts.
+func TestProposalRepositoryCountAttemptsExcludesGenerating(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	repo := NewProposalRepository(tx)
+	now := time.Now().UTC()
+	const source, nodeID, sig = "validation", "schema.model_g", "gen-count-sig"
+
+	for i := 1; i <= 2; i++ {
+		require.NoError(t, repo.Upsert(ctx, proposal.Proposal{
+			Source: source, ReleaseID: "release-g", NodeID: nodeID, ErrorSignature: sig,
+			Attempt: i, Status: proposal.StatusProposed, CreatedAt: now,
+		}), "insert terminal attempt %d", i)
+	}
+	// A third, in-flight attempt marked generating.
+	require.NoError(t, repo.InsertGenerating(ctx, proposal.Proposal{
+		Source: source, ReleaseID: "release-g", NodeID: nodeID, ErrorSignature: sig,
+		Attempt: 3, Status: proposal.StatusGenerating, CreatedAt: now,
+	}))
+
+	n, err := repo.CountAttempts(ctx, source, nodeID, sig)
+	require.NoError(t, err)
+	require.Equal(t, 2, n, "generating row must be excluded from the attempt count")
+
+	require.NoError(t, tx.Commit())
+}
+
+// TestMessageProcessingAlreadyProcessed verifies the read-only dedup pre-check on
+// both axes: a row inserted on (message_id, stream_name) is found by that pair,
+// and a row inserted with an outbox_entry_id is found by that id even under a
+// different message id. Unknown identities return false.
+func TestMessageProcessingAlreadyProcessed(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	repo := messageprocessing.NewPostgresRepository(tx, slog.Default())
+	const stream = streams.RemediationRequestedV1
+
+	// Axis 1: (message_id, stream_name).
+	_, inserted, err := repo.InsertIfNotExists(ctx, &messageprocessing.MessageProcessing{
+		MessageID: "m-1", StreamName: stream, State: "processing", Payload: []byte(`{}`),
+	})
+	require.NoError(t, err)
+	require.True(t, inserted)
+
+	got, err := repo.AlreadyProcessed(ctx, "m-1", stream, nil)
+	require.NoError(t, err)
+	require.True(t, got, "known (message_id, stream) must report processed")
+
+	got, err = repo.AlreadyProcessed(ctx, "m-unknown", stream, nil)
+	require.NoError(t, err)
+	require.False(t, got, "unknown message must report not-processed")
+
+	// Axis 2: outbox_entry_id, caught even with a fresh message_id.
+	oe := uuid.New()
+	_, inserted, err = repo.InsertIfNotExists(ctx, &messageprocessing.MessageProcessing{
+		MessageID: "m-2", StreamName: stream, State: "processing", Payload: []byte(`{}`), OutboxEntryID: &oe,
+	})
+	require.NoError(t, err)
+	require.True(t, inserted)
+
+	got, err = repo.AlreadyProcessed(ctx, "m-different", stream, &oe)
+	require.NoError(t, err)
+	require.True(t, got, "same outbox_entry_id under a fresh message id must report processed")
+
+	otherOE := uuid.New()
+	got, err = repo.AlreadyProcessed(ctx, "m-different", stream, &otherOE)
+	require.NoError(t, err)
+	require.False(t, got, "unknown outbox_entry_id must report not-processed")
+
+	require.NoError(t, tx.Commit())
+}
+
+// TestMessageProcessingAlreadyProcessedScopedByStream is the regression guard for
+// the cross-stream dedup collision: AlreadyProcessed must match the table's scoped
+// (outbox_entry_id, stream_name) identity, so one consumer group having processed
+// an upstream outbox entry on its stream must not suppress a DIFFERENT group's
+// message that carries the same outbox_entry_id on another stream.
+func TestMessageProcessingAlreadyProcessedScopedByStream(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	repo := messageprocessing.NewPostgresRepository(tx, slog.Default())
+	const streamA = streams.RemediationRequestedV1
+	const streamB = streams.RemediationProposedV1
+
+	// Group A processed outbox entry `oe` on streamA (message m-A).
+	oe := uuid.New()
+	_, inserted, err := repo.InsertIfNotExists(ctx, &messageprocessing.MessageProcessing{
+		MessageID: "m-A", StreamName: streamA, State: "processing", Payload: []byte(`{}`), OutboxEntryID: &oe,
+	})
+	require.NoError(t, err)
+	require.True(t, inserted)
+
+	// Different stream, same outbox entry → must NOT be suppressed.
+	got, err := repo.AlreadyProcessed(ctx, "m-B", streamB, &oe)
+	require.NoError(t, err)
+	require.False(t, got, "same outbox_entry_id on a different stream must NOT report processed")
+
+	// Same stream, same outbox entry (fresh message id) → the outbox redelivery
+	// axis still catches it.
+	got, err = repo.AlreadyProcessed(ctx, "m-B", streamA, &oe)
+	require.NoError(t, err)
+	require.True(t, got, "same outbox_entry_id on the same stream must report processed")
+
+	// Primary (message_id, stream_name) axis still works with a nil outbox entry.
+	got, err = repo.AlreadyProcessed(ctx, "m-A", streamA, nil)
+	require.NoError(t, err)
+	require.True(t, got, "known (message_id, stream) must report processed")
 
 	require.NoError(t, tx.Commit())
 }
@@ -223,7 +457,7 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 			Model:          "claude-3-5-sonnet",
 			CreatedAt:      now,
 		}
-		require.NoError(t, repo.Insert(ctx, p), "insert attempt %d", i)
+		require.NoError(t, repo.Upsert(ctx, p), "insert attempt %d", i)
 	}
 
 	count, err := repo.CountAttempts(ctx, source, nodeID, sig)
@@ -245,7 +479,7 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 		Model:          "claude-3-5-sonnet",
 		CreatedAt:      now,
 	}
-	require.NoError(t, repo.Insert(ctx, other), "insert other node attempt")
+	require.NoError(t, repo.Upsert(ctx, other), "insert other node attempt")
 
 	count, err = repo.CountAttempts(ctx, source, nodeID, sig)
 	require.NoError(t, err)
@@ -275,7 +509,7 @@ func TestInsert_PersistsSourceLocation(t *testing.T) {
 		FilePath:       "services/service-3/models/orders_d.sql",
 		CreatedAt:      time.Now(),
 	}
-	require.NoError(t, repo.Insert(ctx, p))
+	require.NoError(t, repo.Upsert(ctx, p))
 
 	var got struct {
 		Repo      string `db:"repo"`
@@ -295,7 +529,7 @@ func TestInsert_PersistsSourceLocation(t *testing.T) {
 func seedProposal(t *testing.T, repo *ProposalRepository, db *sqlx.DB, p proposal.Proposal) string {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, repo.Insert(ctx, p))
+	require.NoError(t, repo.Upsert(ctx, p))
 	var id string
 	require.NoError(t, db.GetContext(ctx, &id,
 		`SELECT id FROM proposal WHERE release_id=$1 AND node_id=$2 AND attempt=$3`,

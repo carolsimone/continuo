@@ -12,11 +12,11 @@ Postgres database `continuo_remediation_agent`. Tables:
 
 | Table | Purpose |
 |---|---|
-| `proposal` | One row per attempt. Records `source` (`validation`, `compile`, or `seed_build`), `release_id`, `node_id`, `error_signature`, `attempt`, `status` (`proposed`, `skipped`, `failed`, `escalated`), `confidence`, `rationale`, `proposed_sql_uri`, `diff_uri`, `source_resolved`, `model`, `created_at`, and source-location columns (`repo`, `commit_sha`, `file_path` — populated when `source_resolved=true`). `candidate_fix_sql_uri`/`candidate_fix_diff_uri` are populated only for `validation` proposals (the Step-1 fix applied to the pre-compiled candidate SQL); always empty for `compile`/`seed_build`, which have no candidate SQL. PR-tracking columns: `pr_url`, `pr_number`, `pr_state` (lifecycle: `'' → opening → open` or `failed`), `pr_opened_at`, `pr_opened_by`. Unique on `(release_id, node_id, attempt)`. A secondary index on `(source, node_id, error_signature)` supports the attempt-count lookup. |
+| `proposal` | One row per attempt. Records `source` (`validation`, `compile`, or `seed_build`), `release_id`, `node_id`, `error_signature`, `attempt`, `status`, `confidence`, `rationale`, `proposed_sql_uri`, `diff_uri`, `source_resolved`, `model`, `created_at`, and source-location columns (`repo`, `commit_sha`, `file_path` — populated when `source_resolved=true`). `status` lifecycle: a row is written `generating` (in flight, just before the model is called) and then finalized to one terminal state — `proposed`, `skipped`, `failed`, or `escalated`. `candidate_fix_sql_uri`/`candidate_fix_diff_uri` are populated only for `validation` proposals (the Step-1 fix applied to the pre-compiled candidate SQL); always empty for `compile`/`seed_build`, which have no candidate SQL. PR-tracking columns: `pr_url`, `pr_number`, `pr_state` (lifecycle: `'' → opening → open` or `failed`), `pr_opened_at`, `pr_opened_by`. Unique on `(release_id, source, node_id, attempt)`; the terminal write upserts on this key so it finalizes the in-flight generating row. A secondary index on `(source, node_id, error_signature)` supports the attempt-count lookup, which counts terminal rows only (`status <> 'generating'`). |
 | `remediation_agent_outbox` | Transactional outbox; one row per `remediation.proposed:v1` trigger, drained by the outbox publisher. Status: `pending`, `processed`, `failed`. |
 | `message_processing` | Shared shape consumed by `pkg/messageprocessing`; FK target of `remediation_agent_outbox.message_processing_id`. |
 
-The `proposal` table is append-only: all outcomes, including escalations, skips, and LLM failures, are recorded so the full attempt history is queryable.
+The `proposal` table records one row per attempt: it is written `generating` when the model call begins and finalized in place to a terminal outcome. All terminal outcomes — proposed, escalations, skips, and LLM failures — are recorded so the full attempt history is queryable.
 
 ## Inbound Interfaces
 
@@ -80,14 +80,34 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 1. Decode trigger: extract source, release_id, node_id, error_signature,
    category, dbt_log_uri, candidate_sql_uri, file_path, service, repo, commit_sha.
 
-2. Count prior attempts for (source, node_id, error_signature).
+1a. Read-only dedup pre-check (no write): before any row is written, check
+    whether this trigger was already handled, on either dedup axis scoped to the
+    consuming stream — a message_processing row matching (message_id, stream_name)
+    OR (outbox_entry_id, stream_name). If found, ACK and return without writing
+    anything. This
+    keeps a re-emitted completed trigger (fresh Redis message id, same
+    outbox_entry_id) from minting a phantom in-flight 'generating' row for a
+    fresh attempt number that the terminal claim would then abandon.
+
+2. Count prior TERMINAL attempts for (source, node_id, error_signature). In-flight
+   'generating' rows are excluded, so the in-progress attempt neither inflates the
+   cap nor shifts the attempt number across a redelivery.
    - attempts >= MaxAttempts (default 3): insert proposal(status=escalated),
-     emit nothing, done.
+     emit nothing, done. (This path is before markGenerating, so an unhealable
+     escalated node never shows the "Generating fix…" indicator.)
 
 3. Resolve the Fixer for the trigger's source via fixer.For(source): compileFixer,
    seedFixer, or validationFixer. An unrecognized source is a programming error —
    the classifier only ever emits the three known values — and is returned loudly,
    not swallowed.
+
+3a. markGenerating(attempt): in its own committed transaction, insert an in-flight
+    proposal(status=generating) row for this attempt (idempotent — ON CONFLICT on
+    (release_id, source, node_id, attempt) DO NOTHING, so a redelivery of an
+    in-flight attempt re-uses the row). This is the explicit "fix in flight" signal
+    the release UI reads to show a disabled "Generating fix…" chip while the model
+    runs. A Fixer that then skips internally finalizes the row to a terminal state
+    (a brief generating→blank flicker for that case is accepted).
 
 4. Call fx.Propose(ctx, services, input) — see the per-class flows below. The
    trigger's dbt_log_uri is passed through unfetched: each Fixer reads and
@@ -101,15 +121,16 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
    or a non-not-found log read); the driver returns it unchanged so the trigger is
    redelivered.
 
-5. Persist (shared for every class, one Postgres transaction):
+5. Persist the terminal outcome (shared for every class, one Postgres transaction):
    a. Claim the inbound message in message_processing (keyed on the Redis
       message id and the upstream outbox_entry_id); if the claim conflicts the
       trigger was already handled, so roll back and ACK without re-proposing.
-   b. Insert the proposal row returned by the Fixer (status, confidence,
-      rationale, proposed_sql_uri, diff_uri, source_resolved, model, and —
-      for validation only — candidate_fix_sql_uri/candidate_fix_diff_uri).
-      repo/commit_sha/file_path are populated only when the Fixer reports
-      source_resolved=true.
+   b. Upsert the proposal row returned by the Fixer on (release_id, source,
+      node_id, attempt): this finalizes the in-flight 'generating' row from
+      step 3a in place (status, confidence, rationale, proposed_sql_uri, diff_uri,
+      source_resolved, model, and — for validation only —
+      candidate_fix_sql_uri/candidate_fix_diff_uri). repo/commit_sha/file_path are
+      populated only when the Fixer reports source_resolved=true.
    c. When the Fixer's outcome is status=proposed, enqueue a
       remediation_agent_outbox row (stream=remediation.proposed:v1,
       message_processing_id = the claim row, event_id = deterministic SHA1

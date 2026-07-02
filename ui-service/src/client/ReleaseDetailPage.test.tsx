@@ -72,3 +72,52 @@ describe('ReleaseDetailPage — stage sections', () => {
     expect(screen.queryByText('Seed')).toBeNull();
   });
 });
+
+describe('ReleaseDetailPage — FIX cell is status-aware', () => {
+  it('shows a disabled "Generating fix…" chip while a proposal is in flight', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc', status: 'generating' })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
+    await screen.findByText('Compilation');
+    const chip = await screen.findByText(/Generating fix/);
+    expect(chip).toHaveAttribute('aria-disabled', 'true');
+    // Not a link: the in-flight chip must not be actionable.
+    expect(screen.queryByText(/Proposed fix available/)).toBeNull();
+  });
+
+  it('shows the "Proposed fix available →" link once the proposal is proposed', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc', status: 'proposed' })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
+    await screen.findByText('Compilation');
+    await waitFor(() => expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument());
+    expect(screen.queryByText(/Generating fix/)).toBeNull();
+  });
+
+  it('prefers the proposed link over a generating chip when both exist for a node', async () => {
+    mockFetchProposals.mockResolvedValue([
+      proposal({ source: 'compile', node_id: 'svc', attempt: 1, status: 'generating' }),
+      proposal({ source: 'compile', node_id: 'svc', attempt: 2, status: 'proposed' }),
+    ]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
+    await screen.findByText('Compilation');
+    await waitFor(() => expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument());
+    expect(screen.queryByText(/Generating fix/)).toBeNull();
+  });
+
+  it('renders nothing in the FIX cell for a skipped proposal', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc', status: 'skipped' })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
+    await screen.findByText('Compilation');
+    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    expect(screen.queryByText(/Proposed fix available/)).toBeNull();
+    expect(screen.queryByText(/Generating fix/)).toBeNull();
+  });
+
+  it('renders nothing in the FIX cell when no proposal exists', async () => {
+    mockFetchProposals.mockResolvedValue([]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
+    await screen.findByText('Compilation');
+    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    expect(screen.queryByText(/Proposed fix available/)).toBeNull();
+    expect(screen.queryByText(/Generating fix/)).toBeNull();
+  });
+});

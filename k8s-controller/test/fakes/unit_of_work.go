@@ -155,6 +155,10 @@ func (f *FakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context,
 	return id, true, nil // newly inserted
 }
 
+func (f *FakeMessageProcessingRepository) AlreadyProcessed(_ context.Context, _, _ string, _ *uuid.UUID) (bool, error) {
+	return false, nil
+}
+
 func (f *FakeMessageProcessingRepository) GetByMessageIDAndStream(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
 	if f.GetByMessageIDAndStreamFunc != nil {
 		return f.GetByMessageIDAndStreamFunc(ctx, messageID, streamName)

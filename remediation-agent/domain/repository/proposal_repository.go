@@ -34,8 +34,24 @@ type ProposalFilter struct {
 // query. The repository is bound to its transaction at construction by the
 // UnitOfWork, so methods take only ctx + domain types.
 type ProposalRepository interface {
+	// CountAttempts returns the number of TERMINAL proposal attempts recorded for
+	// the (source, nodeID, errorSignature) triplet. In-flight 'generating' rows
+	// are excluded so the in-progress attempt neither inflates the attempt cap nor
+	// double-counts on a redelivery.
 	CountAttempts(ctx context.Context, source, nodeID, errorSignature string) (int, error)
-	Insert(ctx context.Context, p proposal.Proposal) error
+
+	// InsertGenerating persists an in-flight 'generating' row for the attempt just
+	// before the model is called. It is idempotent: a redelivery that re-runs the
+	// same attempt collides on (release_id, source, node_id, attempt) and is a
+	// no-op, so at most one generating row exists per attempt.
+	InsertGenerating(ctx context.Context, p proposal.Proposal) error
+
+	// Upsert records the terminal outcome of an attempt on the natural key
+	// (release_id, source, node_id, attempt): it finalizes the in-flight
+	// generating row when one exists (ON CONFLICT … DO UPDATE), or plain-inserts
+	// for instant paths that never marked generating (e.g. the attempt-cap
+	// escalation).
+	Upsert(ctx context.Context, p proposal.Proposal) error
 
 	// Get returns the full View for the given proposal id.
 	// Returns ErrNotFound if no row exists for the id.

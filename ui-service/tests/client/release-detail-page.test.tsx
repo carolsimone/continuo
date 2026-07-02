@@ -43,7 +43,9 @@ const DETAIL_OK = {
   ],
 };
 
-const PROPOSAL_G = { release_id: 'rel_abc', node_id: 'analytics.table_g' };
+// A ready proposal for the failed node: the FIX cell is status-aware, so only a
+// 'proposed' row surfaces the "Proposed fix available →" link.
+const PROPOSAL_G = { release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'proposed' };
 
 function renderDetail() {
   return render(

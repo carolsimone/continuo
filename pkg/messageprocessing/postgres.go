@@ -103,6 +103,30 @@ func (r *postgresRepository) InsertIfNotExists(
 	return id, true, nil
 }
 
+func (r *postgresRepository) AlreadyProcessed(
+	ctx context.Context, messageID, streamName string, outboxEntryID *uuid.UUID,
+) (bool, error) {
+	// Matches the table's scoped dedup identity so the read-only pre-check sees a
+	// row on either dedup axis WITHIN this consumer group: the primary
+	// (message_id, stream_name) key or the secondary (outbox_entry_id,
+	// stream_name) key (guarded so a nil outboxEntryID never matches an unrelated
+	// NULL row). Both branches are scoped by stream_name so that a different
+	// consumer group having already processed the same upstream outbox entry on
+	// another stream does not falsely report this group's message as processed.
+	var exists bool
+	err := r.exec.GetContext(ctx, &exists, `
+		SELECT EXISTS (
+			SELECT 1 FROM message_processing
+			WHERE (message_id = $1 AND stream_name = $2)
+			   OR (outbox_entry_id IS NOT NULL AND outbox_entry_id = $3 AND stream_name = $2)
+		)
+	`, messageID, streamName, outboxEntryID)
+	if err != nil {
+		return false, fmt.Errorf("check message already processed: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *postgresRepository) GetByMessageIDAndStream(
 	ctx context.Context, messageID, streamName string,
 ) (*MessageProcessing, error) {

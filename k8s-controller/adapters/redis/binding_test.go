@@ -52,6 +52,9 @@ type alwaysDupMPRepo struct{}
 func (alwaysDupMPRepo) InsertIfNotExists(context.Context, *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
 	return uuid.New(), false, nil // not inserted → duplicate
 }
+func (alwaysDupMPRepo) AlreadyProcessed(context.Context, string, string, *uuid.UUID) (bool, error) {
+	return true, nil // always a duplicate
+}
 func (alwaysDupMPRepo) GetByMessageIDAndStream(context.Context, string, string) (*messageprocessing.MessageProcessing, error) {
 	return &messageprocessing.MessageProcessing{State: "completed"}, nil
 }
