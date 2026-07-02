@@ -121,6 +121,11 @@ export default function ReleasesPanel() {
                     <span className={`pill-sm ${releasePillClass(r.status).replace('pill--', 'pill-sm--')}`}>
                       {r.status}
                     </span>
+                    {r.status === 'rejected' && r.reject_reason && (
+                      <span className="info-strip info-strip--error info-strip--inline" style={{ marginLeft: 8 }}>
+                        {r.reject_reason}
+                      </span>
+                    )}
                   </td>
                   <td className="nodes-ts">{(r.resolved_at || r.created_at || '').slice(0, 19).replace('T', ' ')}</td>
                   <td>{r.node_count}</td>
