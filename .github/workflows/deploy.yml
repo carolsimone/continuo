@@ -276,6 +276,8 @@ jobs:
             helm dependency build deploy/infra
 
             helm upgrade --install continuo-infra deploy/infra \
+              -f deploy/infra/values.yaml \
+              -f /root/continuo-values.secret.yaml \
               -n continuo \
               --wait \
               --timeout 10m
