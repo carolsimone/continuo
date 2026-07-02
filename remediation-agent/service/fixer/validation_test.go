@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
@@ -51,12 +52,14 @@ func (fakeSanitizer) Sanitize(s string) string { return s }
 // fakeLLM returns results from a queue (one per Propose call, in order). When
 // the queue is exhausted, the last entry is repeated.
 type fakeLLM struct {
-	queue []ports.ProposeResult
-	errs  []error
-	calls int
+	queue    []ports.ProposeResult
+	errs     []error
+	calls    int
+	requests []ports.ProposeRequest // records each request in call order
 }
 
-func (f *fakeLLM) Propose(_ context.Context, _ ports.ProposeRequest) (ports.ProposeResult, error) {
+func (f *fakeLLM) Propose(_ context.Context, req ports.ProposeRequest) (ports.ProposeResult, error) {
+	f.requests = append(f.requests, req)
 	i := f.calls
 	if i >= len(f.queue) {
 		i = len(f.queue) - 1
@@ -67,6 +70,14 @@ func (f *fakeLLM) Propose(_ context.Context, _ ports.ProposeRequest) (ports.Prop
 	}
 	f.calls++
 	return f.queue[i], e
+}
+
+// redactingSanitizer replaces a fixed secret with a marker so tests can prove a
+// Fixer routed source content through the LogSanitizer seam before the LLM call.
+type redactingSanitizer struct{ secret, marker string }
+
+func (s redactingSanitizer) Sanitize(in string) string {
+	return strings.ReplaceAll(in, s.secret, s.marker)
 }
 
 // fakeArtifacts records writes in memory and returns deterministic URIs.

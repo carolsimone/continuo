@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"strings"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
@@ -95,18 +94,9 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	// when the file path, service mapping, source read, or LLM result is
 	// unavailable, or when the LLM did not improve the source.
 	if src, fullPath, ok := resolveValidationSource(ctx, svc, in, filePath, serviceName, res); ok {
-		srcDiff := proposal.ComputeUnifiedDiff(src.original, src.corrected, in.NodeID)
-		srcSQLURI, err := svc.Artifacts.Write(ctx,
-			fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", in.ReleaseID, in.NodeID, in.Attempt),
-			src.corrected, "text/plain")
+		srcSQLURI, srcDiffURI, err := writeSourceArtifacts(ctx, svc, in, src.original, src.corrected)
 		if err != nil {
-			return Result{}, fmt.Errorf("write source sql: %w", err)
-		}
-		srcDiffURI, err := svc.Artifacts.Write(ctx,
-			fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.diff", in.ReleaseID, in.NodeID, in.Attempt),
-			srcDiff, "text/plain")
-		if err != nil {
-			return Result{}, fmt.Errorf("write source diff: %w", err)
+			return Result{}, err
 		}
 		finalSQLURI, finalDiffURI, sourceResolved = srcSQLURI, srcDiffURI, true
 		resolvedFilePath = fullPath
@@ -174,7 +164,7 @@ func resolveValidationSource(ctx context.Context, svc Services, in Input, filePa
 			"node", in.NodeID)
 		return resolvedValidationSource{}, "", false
 	}
-	if strings.EqualFold(out.Confidence, "low") {
+	if isLowConfidence(out.Confidence) {
 		svc.Logger.Warn("source fix: llm step 2 low confidence; using candidate proposal",
 			"node", in.NodeID)
 		return resolvedValidationSource{}, "", false

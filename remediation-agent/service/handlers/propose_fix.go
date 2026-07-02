@@ -41,8 +41,8 @@ type Trigger struct {
 	// seed_build failures from the candidate topology so source resolution does
 	// not depend on Ancestry (which only holds promoted topology). Empty for
 	// compile failures where NodeID acts as the service discriminator.
-	Service  string
-	Repo     string
+	Service   string
+	Repo      string
 	CommitSHA string
 	// MessageID is the Redis Stream message ID of the inbound
 	// remediation.requested:v1 message. It is the primary dedup key.

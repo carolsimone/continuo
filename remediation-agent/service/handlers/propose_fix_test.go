@@ -429,8 +429,8 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
 
 	d := Deps{
-		NewUoW:  func() uow.UnitOfWork { return u },
-		LLM:     &llm,
+		NewUoW:   func() uow.UnitOfWork { return u },
+		LLM:      &llm,
 		Evidence: ev,
 		// Ancestry must NOT be called: it only has promoted topology, which does
 		// not include newly-added seeds. An error here proves we skip it.
@@ -444,10 +444,10 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	tr := Trigger{
-		Source:          "seed_build",
-		ReleaseID:       "r1",
-		NodeID:          "svc.customers",
-		ErrorSignature:  "seed-err",
+		Source:         "seed_build",
+		ReleaseID:      "r1",
+		NodeID:         "svc.customers",
+		ErrorSignature: "seed-err",
 		// FilePath and Service are threaded from the candidate topology by
 		// release-controller, bypassing the need for an Ancestry call.
 		FilePath:        "seeds/customers.csv",
@@ -572,9 +572,9 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T)
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
 
 	d := Deps{
-		NewUoW:    func() uow.UnitOfWork { return u },
-		LLM:       &llm,
-		Evidence:  ev,
+		NewUoW:   func() uow.UnitOfWork { return u },
+		LLM:      &llm,
+		Evidence: ev,
 		// Ancestry supplies the missing service; its fp is deliberately wrong to
 		// prove the threaded file_path is preserved, not overwritten.
 		Ancestry:         fakeAncestry{fp: "seeds/WRONG.csv", svc: "svc"},

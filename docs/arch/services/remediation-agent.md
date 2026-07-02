@@ -137,15 +137,24 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 5. Fetch and sanitize the dbt compile error via loadDBTLog (only now, once the
    gather above has committed to producing a fix; not-found → "", any other error
    is transient and redelivers), then make a single forced propose_fix LLM tool
-   call showing every gathered file (offending file plus any context files) and
-   that error. The model returns target_file (which shown file to change) and
-   proposed_content (that file's complete corrected content).
+   call showing every gathered file — each run through the LogSanitizer first, so
+   raw source never leaves for the LLM — and that error. The model returns
+   target_file (which shown file to change) and proposed_content (that file's
+   complete corrected content).
    - LLM transient error → retry.
 6. Interpret the result:
-   - target_file is empty: default to the offending file.
-   - target_file is not one of the files shown to the model: proposal(status=skipped)
-     — never open a PR against a path the agent never read.
-   - proposed_content is empty or identical to target_file's original content:
+   - Resolve target_file to exactly one shown file. An exact path match wins; a
+     differently-rooted spelling (e.g. the model returns models/x.sql for a file
+     shown as services/svc/models/x.sql) is accepted only when it is an
+     unambiguous path-suffix match of a single shown file; an empty target_file
+     resolves to the offending file only when it is the sole file shown.
+   - No shown file resolves (unknown path, ambiguous suffix, or empty target with
+     several files shown): proposal(status=skipped) — never open a PR against a
+     path the agent never read, and never guess which of several files the fix
+     was meant for.
+   - proposed_content is empty or identical to the resolved file's original
+     content: proposal(status=failed).
+   - confidence is low (the model's signal it could not determine a safe fix):
      proposal(status=failed).
    - Otherwise: proposed outcome.
 7. On a proposed outcome, diff the corrected content against target_file's
@@ -173,15 +182,18 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 4. Fetch and sanitize the dbt seed error via loadDBTLog (only now, once the CSV
    read above has succeeded; not-found → "", any other error is transient and
    redelivers), then make a single forced propose_fix LLM tool call with the CSV
-   content and that error. The prompt is CSV-specific: it names the three concrete failure
+   content — run through the LogSanitizer first, so raw seed rows never leave for
+   the LLM — and that error. The prompt is CSV-specific: it names the three concrete failure
    shapes (a stray comma inside an unquoted text field, a malformed row with the
    wrong column count, a value that does not match its column type) and instructs
    the model to return the CSV unchanged with low confidence when a bad value
    cannot be inferred from the file and error alone.
    - LLM transient error → retry.
-5. Interpret the result: proposed_content empty or identical to the original CSV
-   → proposal(status=failed) — an honest "can't infer the value" answer produces
-   no proposal, not a false-positive fix. Otherwise: proposed outcome.
+5. Interpret the result: proposed_content empty or identical to the original CSV,
+   or returned with low confidence → proposal(status=failed) — an honest "can't
+   infer the value" answer (whether it echoes the CSV or guesses a value it flags
+   low-confidence) produces no proposal, not a false-positive fix. Otherwise:
+   proposed outcome.
 6. On a proposed outcome, diff and write proposed-fix/<release_id>/<node_id>/attempt-<n>.source.sql
    and .source.diff (same key shape as compile, even though the content is CSV).
    Insert proposal(status=proposed, source_resolved=true, file_path=<the CSV path>),
@@ -277,7 +289,7 @@ If a response contains no tool call (or no choices), the adapter returns an erro
 
 ## LogSanitizer Seam
 
-The `LogSanitizer` port sits between the raw S3 log fetch and prompt assembly; each Fixer runs its fetched dbt log through it once (via the shared `loadDBTLog` helper). Validation's Step 2 also reuses the same seam to sanitize the real model source before it is sent to the LLM. The deployed implementation is currently pass-through: it returns its input unchanged. The seam exists so a redacting implementation can be dropped in without touching the handler or fixer logic.
+The `LogSanitizer` port sits between the raw S3/GitHub reads and prompt assembly. Every Fixer runs its fetched dbt log through it once (via the shared `loadDBTLog` helper), and every source string sent to the LLM passes through it too: the compile fixer sanitizes each shown file, the seed fixer sanitizes the CSV, and validation's Step 2 sanitizes the real model source. The diff and no-op check always run against the raw content, since the fix is applied to the real file. The deployed implementation is currently pass-through: it returns its input unchanged. The seam exists so a redacting implementation can be dropped in without touching the handler or fixer logic.
 
 ## Payload Shape (`remediation.proposed:v1`)
 

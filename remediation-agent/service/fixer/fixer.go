@@ -8,8 +8,10 @@ package fixer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
@@ -110,10 +112,38 @@ const (
 // (e.g. an empty validation candidate) that skip before proposing anything.
 func loadDBTLog(ctx context.Context, svc Services, uri string) (string, error) {
 	raw, err := svc.Evidence.Fetch(ctx, uri)
-	if err != nil && err != ports.ErrNotFound {
+	if err != nil && !errors.Is(err, ports.ErrNotFound) {
 		return "", fmt.Errorf("fetch dbt log: %w", err)
 	}
 	return svc.Sanitizer.Sanitize(raw), nil
+}
+
+// isLowConfidence reports whether the model's free-form confidence is "low"
+// (case-insensitive). A low-confidence answer is the model's signal that it
+// could not determine a safe fix, so a Fixer must not turn it into a proposal.
+func isLowConfidence(c string) bool {
+	return strings.EqualFold(strings.TrimSpace(c), "low")
+}
+
+// writeSourceArtifacts writes the corrected source and its unified diff (against
+// the original) as the attempt's source artifacts and returns their URIs. Both
+// singleShot (compile/seed) and the validation fixer's real-source step use it,
+// so the artifact key layout and content type live in one place.
+func writeSourceArtifacts(ctx context.Context, svc Services, in Input, original, corrected string) (sqlURI, diffURI string, err error) {
+	diff := proposal.ComputeUnifiedDiff(original, corrected, in.NodeID)
+	sqlURI, err = svc.Artifacts.Write(ctx,
+		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", in.ReleaseID, in.NodeID, in.Attempt),
+		corrected, "text/plain")
+	if err != nil {
+		return "", "", fmt.Errorf("write source sql: %w", err)
+	}
+	diffURI, err = svc.Artifacts.Write(ctx,
+		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.diff", in.ReleaseID, in.NodeID, in.Attempt),
+		diff, "text/plain")
+	if err != nil {
+		return "", "", fmt.Errorf("write source diff: %w", err)
+	}
+	return sqlURI, diffURI, nil
 }
 
 // singleShot builds a Fixer whose flow is: gather source files → build one
@@ -122,7 +152,7 @@ func loadDBTLog(ctx context.Context, svc Services, uri string) (string, error) {
 // compileFixer and seedFixer embed it.
 type singleShot struct {
 	gather    func(ctx context.Context, svc Services, in Input) (Gathered, bool, error)
-	build     func(g Gathered, in Input, dbtLog string) prompt.ProposeRequest
+	build     func(svc Services, g Gathered, in Input, dbtLog string) prompt.ProposeRequest
 	interpret func(res ports.ProposeResult, g Gathered, in Input) Outcome
 }
 
@@ -140,7 +170,7 @@ func (s singleShot) Propose(ctx context.Context, svc Services, in Input) (Result
 	if err != nil {
 		return Result{}, err // transient log read error: driver redelivers
 	}
-	res, err := svc.LLM.Propose(ctx, s.build(g, in, dbtLog))
+	res, err := svc.LLM.Propose(ctx, s.build(svc, g, in, dbtLog))
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
 	}
@@ -148,19 +178,12 @@ func (s singleShot) Propose(ctx context.Context, svc Services, in Input) (Result
 	if out.Status != proposal.StatusProposed {
 		return Result{Proposal: proposal.Proposal{Status: out.Status}}, nil
 	}
+	// Diff and artifacts are computed against the raw original (g.Files), not the
+	// sanitized copy sent to the LLM, because the fix is applied to the real file.
 	original := g.Files[out.TargetFile]
-	diff := proposal.ComputeUnifiedDiff(original, out.CorrectedContent, in.NodeID)
-	sqlURI, err := svc.Artifacts.Write(ctx,
-		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", in.ReleaseID, in.NodeID, in.Attempt),
-		out.CorrectedContent, "text/plain")
+	sqlURI, diffURI, err := writeSourceArtifacts(ctx, svc, in, original, out.CorrectedContent)
 	if err != nil {
-		return Result{}, fmt.Errorf("write source sql: %w", err)
-	}
-	diffURI, err := svc.Artifacts.Write(ctx,
-		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.diff", in.ReleaseID, in.NodeID, in.Attempt),
-		diff, "text/plain")
-	if err != nil {
-		return Result{}, fmt.Errorf("write source diff: %w", err)
+		return Result{}, err
 	}
 	return Result{
 		Proposal: proposal.Proposal{

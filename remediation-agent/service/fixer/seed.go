@@ -56,13 +56,19 @@ func seedGather(ctx context.Context, svc Services, in Input) (Gathered, bool, er
 	return Gathered{Files: map[string]string{full: content}, Order: []string{full}, Primary: full}, false, nil
 }
 
-func seedBuild(g Gathered, in Input, dbtLog string) prompt.ProposeRequest {
-	return prompt.AssembleSeedFix(g.Primary, g.Files[g.Primary], dbtLog, in.NodeID)
+func seedBuild(svc Services, g Gathered, in Input, dbtLog string) prompt.ProposeRequest {
+	// Sanitize the CSV before it leaves for the external LLM; the raw content is
+	// kept in g.Files for the diff and no-op check.
+	return prompt.AssembleSeedFix(g.Primary, svc.Sanitizer.Sanitize(g.Files[g.Primary]), dbtLog, in.NodeID)
 }
 
 func seedInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {
 	if res.ProposedContent == "" || res.ProposedContent == g.Files[g.Primary] {
 		return Outcome{Status: proposal.StatusFailed} // unchanged / no-op → not a fix
+	}
+	if isLowConfidence(res.Confidence) {
+		// The model could not infer the bad value; do not propose a guessed CSV.
+		return Outcome{Status: proposal.StatusFailed}
 	}
 	return Outcome{
 		Status:           proposal.StatusProposed,

@@ -74,24 +74,26 @@ func addFile(ctx context.Context, svc Services, in Input, g *Gathered, p string)
 	g.Order = append(g.Order, p)
 }
 
-func compileBuild(g Gathered, in Input, dbtLog string) prompt.ProposeRequest {
+func compileBuild(svc Services, g Gathered, in Input, dbtLog string) prompt.ProposeRequest {
 	files := make([]prompt.NamedFile, 0, len(g.Order))
 	for _, p := range g.Order {
-		files = append(files, prompt.NamedFile{Path: p, Content: g.Files[p]})
+		// Sanitize each shown file before it leaves for the external LLM; the raw
+		// content is kept in g.Files for the diff and no-op check.
+		files = append(files, prompt.NamedFile{Path: p, Content: svc.Sanitizer.Sanitize(g.Files[p])})
 	}
 	return prompt.AssembleCompileFix(files, dbtLog, in.NodeID)
 }
 
 func compileInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {
-	target := res.TargetFile
-	if target == "" {
-		target = g.Primary // default to the offending file
-	}
-	if _, ok := g.Files[target]; !ok {
-		return Outcome{Status: proposal.StatusSkipped} // model named a file we never showed
+	target, ok := resolveTarget(res.TargetFile, g)
+	if !ok {
+		return Outcome{Status: proposal.StatusSkipped} // no shown file to safely apply the fix to
 	}
 	if res.ProposedContent == "" || res.ProposedContent == g.Files[target] {
 		return Outcome{Status: proposal.StatusFailed} // no-op
+	}
+	if isLowConfidence(res.Confidence) {
+		return Outcome{Status: proposal.StatusFailed} // model could not determine a safe fix
 	}
 	return Outcome{
 		Status:           proposal.StatusProposed,
@@ -102,4 +104,37 @@ func compileInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {
 		Model:            res.Model,
 		SuspectedRoot:    res.SuspectedRootCauseNode,
 	}
+}
+
+// resolveTarget maps the model's target_file to exactly one of the files that
+// were shown to it, returning ok=false when no safe choice exists. It never
+// invents a target the model was not shown (guarding against a PR overwriting an
+// arbitrary path), but it tolerates a differently-rooted spelling — the model
+// may echo "models/x.sql" for a file shown as "services/svc/models/x.sql" — by
+// accepting a path-suffix match when it is unambiguous:
+//   - empty target: the offending file, but only when it is the sole shown file
+//     (otherwise the intended file is ambiguous → skip);
+//   - exact key match: that file;
+//   - exactly one shown file ending in "/"+target: that file;
+//   - anything else (unknown path, or ambiguous suffix): skip.
+func resolveTarget(target string, g Gathered) (string, bool) {
+	if target == "" {
+		if len(g.Order) == 1 {
+			return g.Primary, true
+		}
+		return "", false
+	}
+	if _, ok := g.Files[target]; ok {
+		return target, true
+	}
+	var matches []string
+	for _, p := range g.Order {
+		if strings.HasSuffix(p, "/"+target) {
+			matches = append(matches, p)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], true
+	}
+	return "", false
 }
