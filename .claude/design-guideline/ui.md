@@ -306,6 +306,9 @@ Rules:
   ~280px). Provide a `more` toggle that expands inline via
   `.nodes-error-full--visible`. Always also link out to the full log
   source.
+- A cell may carry a secondary metadata line under its primary value with
+  `.nodes-node-subpath` (11.5px gray monospace) — e.g. the offending source
+  `file_path` under a compile/seed node id. One line only; never actions.
 
 ### Load more
 
