@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,17 @@ func TestLoad_DefaultsAndRequired(t *testing.T) {
 	assert.Equal(t, "8092", cfg.HTTPPort)
 	assert.Equal(t, 3, cfg.MaxAttempts)
 	assert.Equal(t, "orchestrator:50052", cfg.OrchestratorAddr)
+	assert.Equal(t, 24*time.Hour, cfg.LLMCacheTTL, "LLM_CACHE_TTL must default to 24h so no new required env var is introduced")
+}
+
+// TestLoad_LLMCacheTTLOverride verifies LLM_CACHE_TTL overrides the default.
+func TestLoad_LLMCacheTTLOverride(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("LLM_CACHE_TTL", "1h30m")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, 90*time.Minute, cfg.LLMCacheTTL)
 }
 
 // TestLoad_GitHubDefaults verifies that when neither GITHUB_TOKEN nor

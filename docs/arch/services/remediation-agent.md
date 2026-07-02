@@ -287,6 +287,12 @@ The `ProposeResult` struct carries all four possible fields (`proposed_sql`, `pr
 
 If a response contains no tool call (or no choices), the adapter returns an error; the caller propagates it so the Redis message is redelivered and retried. If the tool call is present but the class-relevant content field (`proposed_sql` for validation, `proposed_content` for compile/seed) is empty or unchanged from the original, the fixer records the attempt as `failed` with no outbox emission (for validation Step 1 this also aborts the proposal entirely; for validation Step 2, compile, and seed this is a normal empty/unchanged outcome as described above).
 
+### Idempotency-keyed response cache
+
+The concrete `LLMProvider` is wrapped at boot by a best-effort caching decorator (`service/llmcache.CachingLLMProvider`) before it enters the fixers. `remediation.requested:v1` is consumed at least once; if the terminal write transaction fails after the LLM call, the trigger is redelivered and the whole handler re-runs, which would re-pay the expensive completion. The decorator makes the external LLM call effectively-once: it keys each request on `sha256(LLM_MODEL ‖ canonical-JSON(ProposeRequest))` (hex, prefixed `llmcache:`), returns a cached `ProposeResult` on a hit, and on a miss calls the wrapped provider and caches the result. The model id is folded into the key so results from different models never collide.
+
+The cache is strictly best-effort and can never break the happy path: a `Get` error is treated as a miss and a `Put` error is swallowed — both are logged, neither is surfaced. Only the wrapped provider's own error propagates. The store is the `LLMResponseCache` port (`service/ports`), implemented by a Redis adapter (`adapters/redis`) over the service's existing Redis client. It stores only the small `ProposeResult` as JSON (never the prompt) under a TTL (`LLM_CACHE_TTL`, default 24h — no scanning, relying on Redis `allkeys-lru` eviction). Because the cache key is content-addressed, a redelivery's byte-identical request collides with the original and reuses its completion; a pathologically delayed redelivery past the TTL misses and re-calls, which is acceptable.
+
 ## LogSanitizer Seam
 
 The `LogSanitizer` port sits between the raw S3/GitHub reads and prompt assembly. Every Fixer runs its fetched dbt log through it once (via the shared `loadDBTLog` helper), and every source string sent to the LLM passes through it too: the compile fixer sanitizes each shown file, the seed fixer sanitizes the CSV, and validation's Step 2 sanitizes the real model source. The diff and no-op check always run against the raw content, since the fix is applied to the real file. The deployed implementation is currently pass-through: it returns its input unchanged. The seam exists so a redacting implementation can be dropped in without touching the handler or fixer logic.
@@ -320,6 +326,7 @@ For each `(source, node_id, error_signature)` triple the service enforces a cap 
 
 - **Inbound idempotency**: the write transaction first claims the inbound message in `message_processing`, keyed on both the Redis message id and the upstream `outbox_entry_id`. The first key catches a Redis replay (a message redelivered after the work committed but before the ACK); the second catches an outbox republish (the classifier re-emitting the same row with a fresh Redis message id). On either conflict the transaction rolls back and the message is ACKed, so a redelivered trigger produces no second `proposal` row and no second `remediation.proposed` emit. A transient error before commit rolls the claim back with the rest of the work, so the message stays in the PEL for a clean retry. Permanent decode failures (malformed payload) are ACKed by returning nil (not retried).
 - **Transactional consistency**: the `message_processing` claim, the `proposal` row insert, and the `remediation_agent_outbox` enqueue are performed in one transaction. The LLM call and S3 writes happen before the transaction opens, so no transaction is held across the external call. A crash between the proposal insert and the outbox enqueue cannot occur — both commit together or not at all.
+- **Effectively-once LLM call**: because the whole handler re-runs on a redelivery (the LLM call precedes the write transaction), the external completion is protected by the best-effort idempotency-keyed response cache described under LLM Integration. A byte-identical redelivered request hits the cache and skips the provider, so a failed terminal commit does not re-pay the expensive call.
 - **Outbox dedup**: the `remediation.proposed:v1` entry carries a deterministic `event_id` (SHA1 UUID on `release_id|node_id|attempt`) so a redelivered downstream consumer can detect and suppress duplicates.
 
 ## Non-Responsibilities
@@ -357,6 +364,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `LLM_MODEL` | yes | — | Model identifier (e.g. `claude-haiku-4-5`) |
 | `LLM_API_KEY` | no | `""` | API key for `anthropic`/`openai` providers |
 | `LLM_BASE_URL` | conditional | `""` | Base URL; required when `LLM_PROVIDER=openai-compatible` |
+| `LLM_CACHE_TTL` | no | `24h` | TTL for cached LLM propose results (Go duration). Must exceed worst-case `remediation.requested` redelivery latency so a redelivered trigger reuses the prior completion. |
 | `GITHUB_TOKEN` | no | `""` | Read-only fine-grained PAT with `Contents: Read` on the dbt repo. In Helm, sourced from `global.github.token` in the chart-managed secret `continuo-app-credentials`. When empty, requests to the Contents API are sent unauthenticated (subject to GitHub's lower unauthenticated rate limit) rather than failing outright. |
 | `SERVICE_REPO_MAP_PATH` | no | `""` | Path to `service_repos.yaml`, which maps each dbt service name to its project root within the source repo. In Helm, set to `/etc/continuo/service_repos.yaml` and backed by the `continuo-app-service-repos` ConfigMap (built from `deploy/app/files/service_repos.yaml`). In docker-compose (dev/e2e), bind-mounted from `remediation-agent/config/service_repos.yaml`. Empty (or a service name absent from the map) means every fixer's source read has no repo path to resolve: compile and seed proposals are skipped, and validation's Step 2 degrades to the Step-1 candidate proposal. |
 | `GITHUB_BASE_URL` | no | `https://api.github.com` | GitHub REST API root; override for e2e stub (`stub-github`) |
@@ -389,6 +397,8 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Service→repo map file (Helm chart) | `deploy/app/files/service_repos.yaml` (rendered into `continuo-app-service-repos` ConfigMap, mounted at `/etc/continuo`) |
 | Anthropic LLM adapter | `remediation-agent/adapters/llm/anthropic.go` |
 | OpenAI-compatible LLM adapter | `remediation-agent/adapters/llm/openai.go` |
+| Best-effort LLM response caching decorator | `remediation-agent/service/llmcache/caching_provider.go` |
+| Redis LLM response cache adapter | `remediation-agent/adapters/redis/llm_response_cache.go` |
 | Pass-through log sanitizer | `remediation-agent/adapters/sanitizer/passthrough.go` |
 | Redis consumer + outbox publisher | `remediation-agent/adapters/redis/` |
 | DB migrations | `db/migration/remediation_agent/V1__init_remediation_agent.sql`, `V2__source_fix.sql` |
