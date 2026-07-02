@@ -5,6 +5,7 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,6 +74,48 @@ func (g *GitHub) ReadFile(ctx context.Context, repo, ref, path string) (string, 
 		return "", fmt.Errorf("github get %s@%s: source file exceeds %d bytes", path, ref, maxSourceBytes)
 	}
 	return string(body), nil
+}
+
+// ListDir returns the repo-relative paths of the files directly under dir at
+// ref, using the GitHub Contents API directory listing. Sub-directories are
+// omitted. A 404 (directory absent) → ErrSourceNotFound.
+func (g *GitHub) ListDir(ctx context.Context, repo, ref, dir string) ([]string, error) {
+	u := fmt.Sprintf("%s/repos/%s/contents/%s?ref=%s", g.baseURL, repo, dir, url.QueryEscape(ref))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build github request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if g.token != "" {
+		req.Header.Set("Authorization", "Bearer "+g.token)
+	}
+	resp, err := g.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("github list %s@%s: %w", dir, ref, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ports.ErrSourceNotFound
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("github list %s@%s: status %d: %s", dir, ref, resp.StatusCode, truncate(errBody, 512))
+	}
+	var entries []struct {
+		Path string `json:"path"`
+		Type string `json:"type"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSourceBytes+1)).Decode(&entries); err != nil {
+		return nil, fmt.Errorf("github list %s@%s: decode: %w", dir, ref, err)
+	}
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.Type == "file" {
+			paths = append(paths, e.Path)
+		}
+	}
+	return paths, nil
 }
 
 func truncate(b []byte, n int) string {

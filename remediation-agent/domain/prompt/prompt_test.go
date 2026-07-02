@@ -63,6 +63,41 @@ func TestAssemble_IncludesEvidenceAndForcesTool(t *testing.T) {
 	}
 }
 
+func TestAssembleCompileFix_ToolSchemaAndFiles(t *testing.T) {
+	req := AssembleCompileFix([]NamedFile{
+		{Path: "models/x.sql", Content: "select 1"},
+		{Path: "models/schema.yml", Content: "version: 2"},
+	}, "Compilation Error ...", "svc")
+	names := map[string]bool{}
+	for _, p := range req.ToolParams {
+		names[p.Name] = true
+	}
+	for _, want := range []string{"target_file", "proposed_content", "rationale", "confidence"} {
+		if !names[want] {
+			t.Fatalf("missing tool param %q", want)
+		}
+	}
+	if !strings.Contains(req.User, "models/schema.yml") || !strings.Contains(req.User, "models/x.sql") {
+		t.Fatal("both gathered files must appear in the prompt")
+	}
+}
+
+func TestAssembleSeedFix_CSVVocabularyAndSchema(t *testing.T) {
+	req := AssembleSeedFix("seeds/ref.csv", "id,name\n1,\"a,b\"", "Error loading seed", "svc")
+	names := map[string]bool{}
+	for _, p := range req.ToolParams {
+		names[p.Name] = true
+	}
+	for _, want := range []string{"proposed_content", "confidence", "rationale"} {
+		if !names[want] {
+			t.Fatalf("missing tool param %q", want)
+		}
+	}
+	if !strings.Contains(strings.ToLower(req.System), "csv") {
+		t.Fatal("seed prompt must use CSV vocabulary, not SQL")
+	}
+}
+
 // TestPrompts_ForbidJinjaRefs locks in the cross-project rule: the independent
 // dbt projects cannot resolve {{ ref(...) }} / {{ source(...) }} across each
 // other, so both prompts must require physical schema.table references and

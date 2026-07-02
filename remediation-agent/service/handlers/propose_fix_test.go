@@ -91,17 +91,34 @@ func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, e
 	return "s3://bucket/" + key, nil
 }
 
-// fakeSource returns a fixed file content or an error. readPath records the
-// last path argument passed to ReadFile so tests can assert the full path.
+// fakeSource returns file content or an error. When files is non-nil it acts as
+// a path→content map (misses return ports.ErrSourceNotFound); otherwise it
+// returns the single content for any path. readPath records the last path
+// successfully read so tests can assert the offending file was resolved. ListDir
+// returns ErrSourceNotFound by default so the compile gather reads only the
+// offending file (co-located siblings are best-effort).
 type fakeSource struct {
 	content  string
+	files    map[string]string
 	err      error
 	readPath string
 }
 
 func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, error) {
+	if f.files != nil {
+		c, ok := f.files[path]
+		if !ok {
+			return "", ports.ErrSourceNotFound
+		}
+		f.readPath = path
+		return c, nil
+	}
 	f.readPath = path
 	return f.content, f.err
+}
+
+func (f *fakeSource) ListDir(_ context.Context, _, _, _ string) ([]string, error) {
+	return nil, ports.ErrSourceNotFound
 }
 
 // fakeClock returns a fixed UTC timestamp.
@@ -277,7 +294,6 @@ func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 }
@@ -308,14 +324,18 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		"s3://c.log": "Compilation Error in model daily_transactions (models/daily_transactions.sql)\n  unexpected '}' in config block",
 	}}
 	llm := newFakeLLM(ports.ProposeResult{
-		ProposedSQL: "{{ config(materialized='table', tags=['daily']) }}\nselect * from analytics.raw_transactions",
-		Rationale:   "fixed malformed config block",
-		Confidence:  "high",
-		Model:       "m",
+		ProposedContent: "{{ config(materialized='table', tags=['daily']) }}\nselect * from analytics.raw_transactions",
+		Rationale:       "fixed malformed config block",
+		Confidence:      "high",
+		Model:           "m",
 	}, nil)
 	art := &fakeArtifacts{}
-	// The broken source has a malformed config()/tags expression.
-	src := &fakeSource{content: "{{ config(materialized='table'), tags=['daily'])}}\nselect * from analytics.raw_transactions"}
+	// The broken source has a malformed config()/tags expression. Keyed by the
+	// full offending path so the co-located dbt_project.yml read returns 404 and
+	// does not overwrite readPath.
+	src := &fakeSource{files: map[string]string{
+		"models/daily_transactions.sql": "{{ config(materialized='table'), tags=['daily'])}}\nselect * from analytics.raw_transactions",
+	}}
 
 	d := Deps{
 		NewUoW:      func() uow.UnitOfWork { return u },
@@ -328,7 +348,6 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		Clock:       fakeClock{},
 		Logger:      slog.Default(),
 		MaxAttempts: 3,
-		Bucket:      "bucket",
 		// Service "core" maps to the repo root, so the full path equals FilePath.
 		ServiceRepoPaths: map[string]string{"core": ""},
 	}
@@ -401,17 +420,17 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		"s3://b/log": "Database Error in seed customers: extra column",
 	}}
 	llm := newFakeLLM(ports.ProposeResult{
-		ProposedSQL: "id,name\n1,alice",
-		Rationale:   "removed extra column",
-		Confidence:  "high",
-		Model:       "m",
+		ProposedContent: "id,name\n1,alice",
+		Rationale:       "removed extra column",
+		Confidence:      "high",
+		Model:           "m",
 	}, nil)
 	art := &fakeArtifacts{}
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
 
 	d := Deps{
-		NewUoW:  func() uow.UnitOfWork { return u },
-		LLM:     &llm,
+		NewUoW:   func() uow.UnitOfWork { return u },
+		LLM:      &llm,
 		Evidence: ev,
 		// Ancestry must NOT be called: it only has promoted topology, which does
 		// not include newly-added seeds. An error here proves we skip it.
@@ -422,14 +441,13 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	tr := Trigger{
-		Source:          "seed_build",
-		ReleaseID:       "r1",
-		NodeID:          "svc.customers",
-		ErrorSignature:  "seed-err",
+		Source:         "seed_build",
+		ReleaseID:      "r1",
+		NodeID:         "svc.customers",
+		ErrorSignature: "seed-err",
 		// FilePath and Service are threaded from the candidate topology by
 		// release-controller, bypassing the need for an Ancestry call.
 		FilePath:        "seeds/customers.csv",
@@ -479,10 +497,10 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 		"s3://b/log": "Database Error in seed customers: extra column",
 	}}
 	llm := newFakeLLM(ports.ProposeResult{
-		ProposedSQL: "id,name\n1,alice",
-		Rationale:   "removed extra column",
-		Confidence:  "high",
-		Model:       "m",
+		ProposedContent: "id,name\n1,alice",
+		Rationale:       "removed extra column",
+		Confidence:      "high",
+		Model:           "m",
 	}, nil)
 	art := &fakeArtifacts{}
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
@@ -498,7 +516,6 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	// No FilePath or Service on the trigger: must fall back to Ancestry.
@@ -546,18 +563,18 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T)
 		"s3://b/log": "Database Error in seed customers: extra column",
 	}}
 	llm := newFakeLLM(ports.ProposeResult{
-		ProposedSQL: "id,name\n1,alice",
-		Rationale:   "removed extra column",
-		Confidence:  "high",
-		Model:       "m",
+		ProposedContent: "id,name\n1,alice",
+		Rationale:       "removed extra column",
+		Confidence:      "high",
+		Model:           "m",
 	}, nil)
 	art := &fakeArtifacts{}
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
 
 	d := Deps{
-		NewUoW:    func() uow.UnitOfWork { return u },
-		LLM:       &llm,
-		Evidence:  ev,
+		NewUoW:   func() uow.UnitOfWork { return u },
+		LLM:      &llm,
+		Evidence: ev,
 		// Ancestry supplies the missing service; its fp is deliberately wrong to
 		// prove the threaded file_path is preserved, not overwritten.
 		Ancestry:         fakeAncestry{fp: "seeds/WRONG.csv", svc: "svc"},
@@ -567,7 +584,6 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T)
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 	tr := Trigger{
@@ -681,6 +697,29 @@ func TestProposeFix_EmptyCandidateSQLSkips(t *testing.T) {
 	}
 }
 
+// TestProposeFix_EmptyCandidateSQLSkipsDespiteLogError proves the empty-candidate
+// validation skip is decided before any dbt-log read: even when the evidence
+// store returns a transient error for every fetch (an unreadable or
+// misconfigured log URI), the trigger is still recorded skipped and ACKed rather
+// than erroring and being redelivered.
+func TestProposeFix_EmptyCandidateSQLSkipsDespiteLogError(t *testing.T) {
+	u := newFakeUoW()
+	tr := baseTrigger()
+	tr.CandidateSQLURI = ""
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+	ev := fakeEvidence{err: fmt.Errorf("s3 503: log temporarily unreadable")}
+
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), tr); err != nil {
+		t.Fatalf("empty-candidate skip must not surface a log-read error: %v", err)
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusSkipped {
+		t.Fatalf("expected skipped row, got %+v", u.pr.inserted)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatal("skip must not emit an outbox entry")
+	}
+}
+
 func TestProposeFix_LLMEmptyFails(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{"s3://b/sql": "x", "s3://b/log": "y"}}
@@ -780,7 +819,6 @@ func TestProposeFix_Step2_SourceResolved(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 
@@ -875,7 +913,6 @@ func TestProposeFix_Step2_FallbackOnSourceError(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 
@@ -938,7 +975,6 @@ func TestProposeFix_Step2_FallbackOnEmptyFilePath(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
 
@@ -991,7 +1027,6 @@ func TestProposeFix_Step2_FallbackOnUnmappedService(t *testing.T) {
 		Clock:            fakeClock{},
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
-		Bucket:           "bucket",
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"}, // "unknown-service" not present
 	}
 
@@ -1047,7 +1082,6 @@ func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
 			Clock:            fakeClock{},
 			Logger:           slog.Default(),
 			MaxAttempts:      3,
-			Bucket:           "bucket",
 			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
 		}
 		tr := baseTrigger()
@@ -1102,7 +1136,6 @@ func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
 			Clock:            fakeClock{},
 			Logger:           slog.Default(),
 			MaxAttempts:      3,
-			Bucket:           "bucket",
 			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
 		}
 		tr := baseTrigger()
@@ -1166,7 +1199,6 @@ func TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence(t *testing.T) {
 			Clock:            fakeClock{},
 			Logger:           slog.Default(),
 			MaxAttempts:      3,
-			Bucket:           "bucket",
 			ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 		}
 		if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
@@ -1207,7 +1239,6 @@ func TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence(t *testing.T) {
 			Clock:            fakeClock{},
 			Logger:           slog.Default(),
 			MaxAttempts:      3,
-			Bucket:           "bucket",
 			ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 		}
 		if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {

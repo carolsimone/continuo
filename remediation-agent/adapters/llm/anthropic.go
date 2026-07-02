@@ -100,6 +100,8 @@ type anthropicContentBlock struct {
 // anthropicToolInput holds the structured fields returned by the propose_fix tool.
 type anthropicToolInput struct {
 	ProposedSQL            string `json:"proposed_sql"`
+	ProposedContent        string `json:"proposed_content"`
+	TargetFile             string `json:"target_file"`
 	Rationale              string `json:"rationale"`
 	Confidence             string `json:"confidence"`
 	SuspectedRootCauseNode string `json:"suspected_root_cause_node"`
@@ -187,6 +189,8 @@ func (p *anthropicProvider) parseResponse(r io.Reader) (ports.ProposeResult, err
 		if block.Type == "tool_use" && block.Name == "propose_fix" {
 			return ports.ProposeResult{
 				ProposedSQL:            block.Input.ProposedSQL,
+				ProposedContent:        block.Input.ProposedContent,
+				TargetFile:             block.Input.TargetFile,
 				Rationale:              block.Input.Rationale,
 				Confidence:             block.Input.Confidence,
 				SuspectedRootCauseNode: block.Input.SuspectedRootCauseNode,

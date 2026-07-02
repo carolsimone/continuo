@@ -100,7 +100,6 @@ func main() {
 		Clock:            ports.SystemClock{},
 		Logger:           logger,
 		MaxAttempts:      cfg.MaxAttempts,
-		Bucket:           cfg.S3.Bucket,
 		ServiceRepoPaths: cfg.ServiceRepoPaths,
 	}
 

@@ -77,36 +77,73 @@ func AssembleSourceFix(originalSource, nodeID, diagnosis string) ProposeRequest 
 	}
 }
 
-const sourceErrorSystemPrompt = `You are a data-engineering assistant that fixes a dbt model that failed to compile or build.
-You are given the model's ACTUAL source file and the dbt error it produced. The dbt projects in this system are independent and unaware of each other, so models reference upstream tables by their physical schema-qualified name (e.g. analytics.table_a), NOT with dbt {{ ref(...) }} / {{ source(...) }}.
+// NamedFile is one source file shown to the model in a multi-file prompt.
+type NamedFile struct {
+	Path    string
+	Content string
+}
+
+const compileFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt project that failed to compile.
+You are given every candidate source file (the offending model and its co-located schema.yml and the project's dbt_project.yml) and the dbt compile error. The dbt projects are independent and reference upstream tables by their physical schema-qualified name (e.g. analytics.table_a), NEVER with {{ ref(...) }} / {{ source(...) }}.
 
 Rules:
-- Fix the model so it compiles and builds, preserving its formatting style, its {{ config(...) }} block, and any other macros that are not table references.
-- Reference every upstream table by its physical schema.table name, in the same style the existing model already uses. NEVER introduce {{ ref(...) }} or {{ source(...) }}: these do not resolve across the independent dbt projects and would break the model.
-- Return the complete corrected source for the model, not a diff and not a fragment.
-- If you cannot determine a safe fix, return the original source unchanged with low confidence and an explanation.
+- Decide which ONE file must change to make dbt compile succeed, and return its path in target_file. It must be one of the files shown to you.
+- Return the COMPLETE corrected content of that file in proposed_content, preserving formatting and unrelated content.
+- Never introduce {{ ref(...) }} or {{ source(...) }}.
+- If you cannot determine a safe fix, return the offending file unchanged with low confidence and an explanation.
 - Always respond by calling the propose_fix tool.`
 
-// AssembleSourceFromError builds a single-step request for compile and
-// seed_build failures, which produce no candidate SQL. It gives the LLM the real
-// model source and the dbt error and asks for the complete corrected source.
-func AssembleSourceFromError(originalSource, dbtLog, nodeID string) ProposeRequest {
+// AssembleCompileFix builds a multi-file compile-fix request. The model chooses
+// which shown file to change (target_file) and returns its corrected content.
+func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string) ProposeRequest {
 	var u strings.Builder
-	fmt.Fprintf(&u, "Model: %s\n\n", nodeID)
-	fmt.Fprintf(&u, "Model source:\n```sql\n%s\n```\n\n", originalSource)
-	fmt.Fprintf(&u, "dbt error:\n```\n%s\n```\n\n", dbtLog)
-	u.WriteString("Return the complete corrected source for this model.")
+	fmt.Fprintf(&u, "Service: %s\n\n", nodeID)
+	for _, f := range files {
+		fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", f.Path, f.Content)
+	}
+	fmt.Fprintf(&u, "dbt compile error:\n```\n%s\n```\n\n", dbtLog)
+	u.WriteString("Return the complete corrected content of the ONE file that must change.")
 
 	return ProposeRequest{
-		System:          sourceErrorSystemPrompt,
+		System:          compileFixSystemPrompt,
 		User:            u.String(),
 		ToolName:        "propose_fix",
-		ToolDescription: "Return the complete corrected source for the dbt model.",
+		ToolDescription: "Return the corrected content of the one file that fixes dbt compile.",
 		ToolParams: []ToolParam{
-			{Name: "proposed_sql", Type: "string", Description: "The complete corrected model source.", Required: true},
+			{Name: "target_file", Type: "string", Description: "The path of the file to change; must be one of the files shown.", Required: true},
+			{Name: "proposed_content", Type: "string", Description: "The complete corrected content of target_file.", Required: true},
 			{Name: "rationale", Type: "string", Description: "A short explanation of the change. No warehouse data values.", Required: true},
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 			{Name: "suspected_root_cause_node", Type: "string", Description: "Optional: the upstream node id you believe caused the failure, or empty.", Required: false},
+		},
+	}
+}
+
+const seedFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt seed CSV that failed to load.
+You are given the seed CSV file and the dbt seed error. dbt seed loads a comma-separated file into a table; loads fail on quoting problems (a stray comma inside an unquoted text field), a malformed row (wrong column count), or a value that does not match its column type.
+
+Rules:
+- Return the COMPLETE corrected CSV in proposed_content, changing only what the error requires (fix quoting, repair the malformed row). Preserve every other row and the header exactly.
+- Do NOT invent or guess data values. If the failure is a genuinely wrong or missing data value that cannot be inferred from the file and error alone, return the CSV UNCHANGED with low confidence and explain why in rationale.
+- Always respond by calling the propose_fix tool.`
+
+// AssembleSeedFix builds a CSV-specific seed-fix request.
+func AssembleSeedFix(csvPath, csvContent, dbtLog, nodeID string) ProposeRequest {
+	var u strings.Builder
+	fmt.Fprintf(&u, "Seed: %s (node %s)\n\n", csvPath, nodeID)
+	fmt.Fprintf(&u, "CSV content:\n```\n%s\n```\n\n", csvContent)
+	fmt.Fprintf(&u, "dbt seed error:\n```\n%s\n```\n\n", dbtLog)
+	u.WriteString("Return the complete corrected CSV, or the CSV unchanged with low confidence if the bad value cannot be inferred.")
+
+	return ProposeRequest{
+		System:          seedFixSystemPrompt,
+		User:            u.String(),
+		ToolName:        "propose_fix",
+		ToolDescription: "Return the complete corrected seed CSV.",
+		ToolParams: []ToolParam{
+			{Name: "proposed_content", Type: "string", Description: "The complete corrected CSV content.", Required: true},
+			{Name: "rationale", Type: "string", Description: "A short explanation. No warehouse data values.", Required: true},
+			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high. Use low when the bad value cannot be inferred.", Required: true},
 		},
 	}
 }
