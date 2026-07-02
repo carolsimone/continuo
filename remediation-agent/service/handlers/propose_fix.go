@@ -18,6 +18,7 @@ import (
 	"github.com/carolsimone/continuo/remediation-agent/domain/event"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/service/fixer"
+	"github.com/carolsimone/continuo/remediation-agent/service/llmcache"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 	"github.com/carolsimone/continuo/remediation-agent/service/uow"
 )
@@ -56,6 +57,19 @@ type Trigger struct {
 	// RawPayload is the raw bytes of the message payload, stored in the
 	// message_processing row for audit/replay purposes.
 	RawPayload []byte
+}
+
+// idempotencyKey identifies this inbound trigger for LLM response caching. It
+// mirrors the message-processing dedup identity: the upstream OutboxEntryID when
+// present (stable across a Redis republish of the same logical trigger with a
+// fresh message id), otherwise the Redis MessageID. Two distinct triggers — for
+// example successive remediation attempts for the same failure — never share a
+// key, so the cache dedupes redeliveries without suppressing legitimate retries.
+func (t Trigger) idempotencyKey() string {
+	if t.OutboxEntryID != nil {
+		return "outbox:" + t.OutboxEntryID.String()
+	}
+	return "msg:" + t.MessageID
 }
 
 // Deps holds every collaborator ProposeFix needs, all behind ports so the
@@ -124,7 +138,13 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		Logger: deps.Logger, ServiceRepoPaths: deps.ServiceRepoPaths,
 	}
 
-	r, err := fx.Propose(ctx, svc, in)
+	// Scope any LLM response caching to this specific inbound trigger. A
+	// redelivery of the same trigger reuses the cached completion; a new trigger
+	// (e.g. a later attempt for the same failure) misses and calls the model
+	// again. The caching decorator reads this key off the context.
+	llmCtx := llmcache.ContextWithIdempotencyKey(ctx, t.idempotencyKey())
+
+	r, err := fx.Propose(llmCtx, svc, in)
 	if err != nil {
 		return err // transient (LLM / non-404 read): message is redelivered
 	}

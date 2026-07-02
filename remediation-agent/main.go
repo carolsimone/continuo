@@ -25,6 +25,7 @@ import (
 	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
 	"github.com/carolsimone/continuo/remediation-agent/config"
 	"github.com/carolsimone/continuo/remediation-agent/service/handlers"
+	"github.com/carolsimone/continuo/remediation-agent/service/llmcache"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 	"github.com/carolsimone/continuo/remediation-agent/service/proposals"
 	"github.com/carolsimone/continuo/remediation-agent/service/uow"
@@ -89,9 +90,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Wrap the provider in a best-effort, idempotency-keyed Redis cache so a
+	// redelivered remediation.requested trigger reuses the prior completion
+	// instead of re-paying the LLM call. A cache miss or error falls through to
+	// the real provider, so the cache can never break the happy path.
+	cachedLLM := llmcache.New(
+		llmProvider,
+		rredis.NewLLMResponseCache(rc, cfg.LLMCacheTTL),
+		cfg.LLMModel,
+		logger,
+	)
+
 	deps := handlers.Deps{
 		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
-		LLM:              llmProvider,
+		LLM:              cachedLLM,
 		Evidence:         store,
 		Ancestry:         ancestryClient,
 		Source:           ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, http.DefaultClient),
