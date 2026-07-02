@@ -103,6 +103,27 @@ func (r *postgresRepository) InsertIfNotExists(
 	return id, true, nil
 }
 
+func (r *postgresRepository) AlreadyProcessed(
+	ctx context.Context, messageID, streamName string, outboxEntryID *uuid.UUID,
+) (bool, error) {
+	// Mirrors the InsertIfNotExists conflict-lookup WHERE clause so the read-only
+	// pre-check sees a row on either dedup axis: the primary (message_id,
+	// stream_name) key or the secondary outbox_entry_id key (guarded so a nil
+	// outboxEntryID never matches an unrelated NULL row).
+	var exists bool
+	err := r.exec.GetContext(ctx, &exists, `
+		SELECT EXISTS (
+			SELECT 1 FROM message_processing
+			WHERE (message_id = $1 AND stream_name = $2)
+			   OR (outbox_entry_id IS NOT NULL AND outbox_entry_id = $3)
+		)
+	`, messageID, streamName, outboxEntryID)
+	if err != nil {
+		return false, fmt.Errorf("check message already processed: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *postgresRepository) GetByMessageIDAndStream(
 	ctx context.Context, messageID, streamName string,
 ) (*MessageProcessing, error) {

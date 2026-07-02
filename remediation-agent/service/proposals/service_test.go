@@ -44,7 +44,8 @@ type fakeRepo struct {
 }
 
 func (r *fakeRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error) { return 0, nil }
-func (r *fakeRepo) Insert(_ context.Context, _ proposal.Proposal) error          { return nil }
+func (r *fakeRepo) InsertGenerating(_ context.Context, _ proposal.Proposal) error { return nil }
+func (r *fakeRepo) Insert(_ context.Context, _ proposal.Proposal) error { return nil }
 func (r *fakeRepo) Get(_ context.Context, _ string) (proposal.View, error) {
 	return r.view, nil
 }

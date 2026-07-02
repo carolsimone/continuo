@@ -691,6 +691,22 @@ body {
   font-family: inherit;
 }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Non-interactive chip used for in-flight states (e.g. "Generating fix…") on a
+   non-button element, mirroring the disabled-button look. */
+.btn.is-disabled { opacity: 0.55; cursor: default; pointer-events: none; }
+.btn.is-disabled[aria-busy='true']::before {
+  content: '';
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-right: 0.45em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: btn-spin 0.7s linear infinite;
+}
+@keyframes btn-spin { to { transform: rotate(360deg); } }
 
 .btn--secondary { border-color: #d1d5db; color: #374151; background: #fff; }
 .btn--secondary:hover:not(:disabled) { background: #f3f4f6; border-color: #9ca3af; }

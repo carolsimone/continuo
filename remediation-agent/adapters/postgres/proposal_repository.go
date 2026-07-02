@@ -30,10 +30,13 @@ func NewProposalRepository(q Queryer) *ProposalRepository {
 	return &ProposalRepository{q: q}
 }
 
-// CountAttempts returns the number of proposal attempts recorded for the
-// given (source, nodeID, errorSignature) triplet.
+// CountAttempts returns the number of TERMINAL proposal attempts recorded for
+// the given (source, nodeID, errorSignature) triplet. In-flight 'generating'
+// rows are excluded so the in-progress attempt does not inflate the attempt cap
+// or shift the attempt number on a redelivery.
 func (r *ProposalRepository) CountAttempts(ctx context.Context, source, nodeID, errorSignature string) (int, error) {
-	const query = `SELECT count(*) FROM proposal WHERE source=$1 AND node_id=$2 AND error_signature=$3`
+	const query = `SELECT count(*) FROM proposal
+		WHERE source=$1 AND node_id=$2 AND error_signature=$3 AND status <> 'generating'`
 	var count int
 	if err := r.q.GetContext(ctx, &count, query, source, nodeID, errorSignature); err != nil {
 		return 0, fmt.Errorf("count proposal attempts: %w", err)
@@ -41,9 +44,33 @@ func (r *ProposalRepository) CountAttempts(ctx context.Context, source, nodeID, 
 	return count, nil
 }
 
-// Insert persists a new proposal attempt row. The proposal's (release_id,
-// node_id, attempt) triplet is unique; a duplicate attempt number returns an
-// error so the caller's UnitOfWork can roll back and the trigger redelivers.
+// InsertGenerating persists an in-flight 'generating' row for the attempt right
+// before the model is called. It is idempotent: ON CONFLICT on the natural key
+// (release_id, source, node_id, attempt) DO NOTHING, so a redelivery that
+// re-runs the same attempt leaves the single generating row untouched. Only the
+// identity + status columns are written; the remaining columns take their
+// defaults and are populated when Insert finalizes the row.
+func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Proposal) error {
+	const stmt = `
+		INSERT INTO proposal
+			(source, release_id, node_id, error_signature, attempt, status, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT (release_id, source, node_id, attempt) DO NOTHING`
+	_, err := r.q.ExecContext(ctx, stmt,
+		p.Source, p.ReleaseID, p.NodeID, p.ErrorSignature, p.Attempt,
+		proposal.StatusGenerating, p.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("insert generating proposal: %w", err)
+	}
+	return nil
+}
+
+// Insert records the terminal outcome of a proposal attempt. It upserts on the
+// natural key (release_id, source, node_id, attempt): when an in-flight
+// generating row exists (the common healable path) it is finalized in place;
+// otherwise the row is plain-inserted (instant paths — e.g. attempt-cap
+// escalation — that never marked generating).
 func (r *ProposalRepository) Insert(ctx context.Context, p proposal.Proposal) error {
 	const stmt = `
 		INSERT INTO proposal
@@ -52,7 +79,21 @@ func (r *ProposalRepository) Insert(ctx context.Context, p proposal.Proposal) er
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
 			 repo, commit_sha, file_path)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+		ON CONFLICT (release_id, source, node_id, attempt) DO UPDATE SET
+			status                 = EXCLUDED.status,
+			confidence             = EXCLUDED.confidence,
+			rationale              = EXCLUDED.rationale,
+			proposed_sql_uri       = EXCLUDED.proposed_sql_uri,
+			diff_uri               = EXCLUDED.diff_uri,
+			candidate_fix_sql_uri  = EXCLUDED.candidate_fix_sql_uri,
+			candidate_fix_diff_uri = EXCLUDED.candidate_fix_diff_uri,
+			source_resolved        = EXCLUDED.source_resolved,
+			model                  = EXCLUDED.model,
+			created_at             = EXCLUDED.created_at,
+			repo                   = EXCLUDED.repo,
+			commit_sha             = EXCLUDED.commit_sha,
+			file_path              = EXCLUDED.file_path`
 	_, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, p.NodeID, p.ErrorSignature, p.Attempt,
 		p.Status, p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,

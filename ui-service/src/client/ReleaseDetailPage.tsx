@@ -47,8 +47,11 @@ export default function ReleaseDetailPage() {
   const navigate = useNavigate();
   const [rel, setRel] = useState<ReleaseDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // node_ids that have at least one remediation proposal for this release
-  const [proposedNodeIds, setProposedNodeIds] = useState<Set<string>>(new Set());
+  // Per (stage, node_id) FIX-cell state, bucketed from the node's remediation
+  // proposals: 'proposed' when a fix is ready to review, 'generating' while a fix
+  // is still in flight. Nodes with only terminal-but-blank outcomes
+  // (skipped/failed/escalated) or none carry no entry and render nothing.
+  const [fixState, setFixState] = useState<Map<string, 'proposed' | 'generating'>>(new Map());
 
   useEffect(() => {
     fetch(`/api/releases/${id}`)
@@ -66,11 +69,12 @@ export default function ReleaseDetailPage() {
     .map(n => proposalKey(n.stage, n.node_id));
   const failedKey = failedKeys.slice().sort().join('\n');
 
-  // Poll for remediation proposals so the "Proposed fix available →" link surfaces
-  // without a manual refresh. Polling runs only while a failed node still lacks a
-  // proposal, stops once all are present, and is capped so unhealable failures
-  // (which never produce a proposal) do not poll forever. Errors are swallowed so
-  // a transient failure never breaks the page; the next tick retries.
+  // Poll for remediation proposals so the FIX cell surfaces the "Generating fix…"
+  // chip and then the "Proposed fix available →" link without a manual refresh.
+  // Polling runs only while a failed node has not yet reached a ready proposal,
+  // stops once every failed node has one, and is capped so unhealable failures
+  // (which never produce a ready proposal) do not poll forever. Errors are
+  // swallowed so a transient failure never breaks the page; the next tick retries.
   useEffect(() => {
     if (!id) return;
     const failed = failedKey ? failedKey.split('\n') : [];
@@ -98,11 +102,20 @@ export default function ReleaseDetailPage() {
         .then(proposals => {
           if (cancelled || seq <= applied) return;
           applied = seq;
-          const ids = new Set(
-            proposals.filter(p => p.release_id === id).map(p => proposalKey(p.source, p.node_id)),
-          );
-          setProposedNodeIds(ids);
-          if (failed.every(k => ids.has(k))) stop();
+          // Bucket each failed node by its proposals. A ready 'proposed' fix
+          // dominates an in-flight 'generating' one (a later attempt can supersede
+          // an earlier in-flight row); terminal-but-blank statuses
+          // (skipped/failed/escalated) leave the node without an entry.
+          const byKey = new Map<string, 'proposed' | 'generating'>();
+          for (const p of proposals.filter(p => p.release_id === id)) {
+            const k = proposalKey(p.source, p.node_id);
+            if (p.status === 'proposed') byKey.set(k, 'proposed');
+            else if (p.status === 'generating' && byKey.get(k) !== 'proposed') byKey.set(k, 'generating');
+          }
+          setFixState(byKey);
+          // Stop only when every failed node has a ready fix; keep polling through
+          // the generating→proposed swap and until the cap for unhealable nodes.
+          if (failed.every(k => byKey.get(k) === 'proposed')) stop();
         })
         .catch(() => {});
     };
@@ -200,11 +213,19 @@ export default function ReleaseDetailPage() {
                       <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
                       <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
                       <td>
-                        {proposedNodeIds.has(proposalKey(stage, n.node_id)) && (
+                        {fixState.get(proposalKey(stage, n.node_id)) === 'proposed' ? (
                           <Link to="/?tab=remediation" className="btn btn--secondary">
                             Proposed fix available →
                           </Link>
-                        )}
+                        ) : fixState.get(proposalKey(stage, n.node_id)) === 'generating' ? (
+                          <span
+                            className="btn btn--secondary is-disabled"
+                            aria-disabled="true"
+                            aria-busy="true"
+                          >
+                            Generating fix…
+                          </span>
+                        ) : null}
                       </td>
                     </tr>
                   ))}

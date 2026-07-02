@@ -272,6 +272,10 @@ func (fakeMessageProcessing) InsertIfNotExists(_ context.Context, _ *messageproc
 	return uuid.New(), true, nil
 }
 
+func (fakeMessageProcessing) AlreadyProcessed(_ context.Context, _, _ string, _ *uuid.UUID) (bool, error) {
+	return false, nil
+}
+
 func (fakeMessageProcessing) GetByMessageIDAndStream(_ context.Context, _, _ string) (*messageprocessing.MessageProcessing, error) {
 	return nil, nil
 }

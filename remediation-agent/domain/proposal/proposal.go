@@ -9,10 +9,14 @@ import "time"
 type Status string
 
 const (
-	StatusProposed  Status = "proposed"
-	StatusSkipped   Status = "skipped"
-	StatusFailed    Status = "failed"
-	StatusEscalated Status = "escalated"
+	// StatusGenerating is the in-flight state: the agent has committed to calling
+	// the model for a healable failure but the attempt has not yet resolved. It is
+	// finalized to one of the terminal states below once the outcome is known.
+	StatusGenerating Status = "generating"
+	StatusProposed   Status = "proposed"
+	StatusSkipped    Status = "skipped"
+	StatusFailed     Status = "failed"
+	StatusEscalated  Status = "escalated"
 )
 
 // Confidence is the model's self-reported confidence in the proposed fix.

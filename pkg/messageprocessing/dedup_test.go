@@ -63,6 +63,21 @@ func (f *fakeRepo) InsertIfNotExists(_ context.Context, m *mp.MessageProcessing)
 	return id, true, nil
 }
 
+func (f *fakeRepo) AlreadyProcessed(_ context.Context, messageID, streamName string, outboxEntryID *uuid.UUID) (bool, error) {
+	if f.getErr != nil {
+		return false, f.getErr
+	}
+	if _, ok := f.byKey[fakeKey(messageID, streamName)]; ok {
+		return true, nil
+	}
+	if outboxEntryID != nil {
+		if _, ok := f.byOutboxEntry[*outboxEntryID]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (f *fakeRepo) GetByMessageIDAndStream(_ context.Context, messageID, streamName string) (*mp.MessageProcessing, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
