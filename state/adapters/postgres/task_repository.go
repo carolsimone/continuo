@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -197,7 +198,7 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to prepare count query: %w", err)
 	}
-	defer countStmt.Close()
+	defer func() { _ = countStmt.Close() }()
 
 	if err := countStmt.GetContext(ctx, &total, args); err != nil {
 		return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
@@ -221,7 +222,7 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to prepare query: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	var tasks []*TaskTracker
 	if err := stmt.SelectContext(ctx, &tasks, args); err != nil {
@@ -283,7 +284,22 @@ func (r *taskTrackerRepository) SetStatusAndAttemptTx(ctx context.Context, tx *s
 	if err != nil {
 		return 0, err
 	}
-	return int32(n), nil
+	return int64ToInt32(n), nil
+}
+
+// int64ToInt32 bounds-checks a RowsAffected count before narrowing it to the
+// int32 the aggregate expects. A single UPDATE keyed by task_id affects at
+// most one row in practice, but this clamps defensively instead of trusting
+// that invariant silently.
+func int64ToInt32(n int64) int32 {
+	switch {
+	case n > math.MaxInt32:
+		return math.MaxInt32
+	case n < math.MinInt32:
+		return math.MinInt32
+	default:
+		return int32(n)
+	}
 }
 
 // LoadStatusAndAttemptTx returns the current status and retry_count of the

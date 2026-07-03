@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/carolsimone/continuo/pkg/liveness"
@@ -24,7 +25,9 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 		Service: "state",
 	}
 
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("HealthHandler: failed to encode response", "error", err)
+	}
 }
 
 // ReadinessResponse represents the readiness check response.
@@ -44,7 +47,9 @@ func NewReadinessHandler(registry *liveness.Registry) http.HandlerFunc {
 		failures := registry.Check(r.Context())
 		if len(failures) == 0 {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(ReadinessResponse{Status: "ready", Service: "state"})
+			if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "ready", Service: "state"}); err != nil {
+				slog.Error("ReadinessHandler: failed to encode response", "error", err)
+			}
 			return
 		}
 		names := make([]string, 0, len(failures))
@@ -52,6 +57,8 @@ func NewReadinessHandler(registry *liveness.Registry) http.HandlerFunc {
 			names = append(names, f.Name)
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(ReadinessResponse{Status: "not_ready", Service: "state", Unhealthy: names})
+		if err := json.NewEncoder(w).Encode(ReadinessResponse{Status: "not_ready", Service: "state", Unhealthy: names}); err != nil {
+			slog.Error("ReadinessHandler: failed to encode response", "error", err)
+		}
 	}
 }

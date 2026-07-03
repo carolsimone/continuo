@@ -169,7 +169,7 @@ func TestComputeJobName(t *testing.T) {
 
 				// Check only contains allowed characters
 				for _, ch := range result {
-					if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-') {
+					if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '-' {
 						t.Errorf("result %q contains invalid character: %c", result, ch)
 					}
 				}

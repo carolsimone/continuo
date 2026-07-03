@@ -160,7 +160,7 @@ func (r *scheduleCatalogRepository) ListAll(ctx context.Context) ([]ScheduleCata
 	if err != nil {
 		return nil, fmt.Errorf("list all schedule_catalog rows: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanScheduleCatalogRows(rows)
 }
 
@@ -174,7 +174,7 @@ func (r *scheduleCatalogRepository) ListAllForUpdateTx(ctx context.Context, tx *
 	if err != nil {
 		return nil, fmt.Errorf("list all schedule_catalog rows for update: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanScheduleCatalogRows(rows)
 }
 

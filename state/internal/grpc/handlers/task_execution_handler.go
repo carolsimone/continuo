@@ -68,7 +68,7 @@ func (h *TaskExecutionHandler) ListTaskExecutions(ctx context.Context, req *stat
 
 	return &statev1.ListTaskExecutionsResponse{
 		TaskExecutions: protoExecs,
-		TotalCount:     int32(total),
+		TotalCount:     toInt32(total),
 	}, nil
 }
 

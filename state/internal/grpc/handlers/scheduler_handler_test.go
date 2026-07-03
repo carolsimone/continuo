@@ -861,53 +861,6 @@ func TestCancelSchedule_OutboxError(t *testing.T) {
 	assert.Equal(t, codes.Internal, st.Code())
 }
 
-// ---- fakeSchedulerRepo for non-cancel tests ----
-
-type fakeSchedulerRepo struct {
-	tracker *postgres.SchedulerTracker
-}
-
-func (f *fakeSchedulerRepo) Create(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
-func (f *fakeSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
-	return f.tracker, nil
-}
-func (f *fakeSchedulerRepo) GetActiveScheduler(_ context.Context, _ string) (*postgres.SchedulerTracker, error) {
-	return nil, nil
-}
-func (f *fakeSchedulerRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
-	return false, nil
-}
-func (f *fakeSchedulerRepo) GetLastRunPerSchedule(_ context.Context) (map[string]postgres.LastRunData, error) {
-	return map[string]postgres.LastRunData{}, nil
-}
-func (f *fakeSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (f *fakeSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
-	return nil
-}
-func (f *fakeSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
-	return nil
-}
-func (f *fakeSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
-	return nil
-}
-func (f *fakeSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (f *fakeSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
-	return f.tracker, nil
-}
-func (f *fakeSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (f *fakeSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ postgres.RunRowUpdate) error {
-	return nil
-}
-func (f *fakeSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string, _ time.Time) error {
-	return nil
-}
-
 // ---- GetSchedulerInitStatus tests ----
 
 func TestGetSchedulerInitStatus_ReturnsStatus(t *testing.T) {

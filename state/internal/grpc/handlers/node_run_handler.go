@@ -54,7 +54,7 @@ func (h *NodeRunHandler) ListNodeRuns(
 			TerminalStatus:  string(r.TerminalStatus),
 			TaskId:          r.TaskID.String(),
 			TaskStatus:      string(r.TaskStatus),
-			RetryCount:      int32(r.RetryCount),
+			RetryCount:      toInt32(r.RetryCount),
 			ImageTag:        r.ImageTag,
 			ManifestVersion: r.ManifestVersion,
 			CreatedAt:       r.CreatedAt.UTC().Format(time.RFC3339),
@@ -97,16 +97,16 @@ func (h *NodeRunHandler) ListNodes(
 			ServiceName:    r.ServiceName,
 			SchemaName:     r.SchemaName,
 			TableName:      r.TableName,
-			RunCount:       int32(r.RunCount),
-			SuccessRatePct: int32(r.SuccessRatePct),
-			AvgDurationSec: int32(r.AvgDurationSec),
-			P95DurationSec: int32(r.P95DurationSec),
-			FlakyRatePct:   int32(r.FlakyRatePct),
+			RunCount:       toInt32(r.RunCount),
+			SuccessRatePct: toInt32(r.SuccessRatePct),
+			AvgDurationSec: toInt32(r.AvgDurationSec),
+			P95DurationSec: toInt32(r.P95DurationSec),
+			FlakyRatePct:   toInt32(r.FlakyRatePct),
 			LastStatus:     r.LastStatus,
 			LastRunAt:      r.LastRunAt.UTC().Format(time.RFC3339),
 		})
 	}
-	return &statev1.ListNodesResponse{Nodes: out, TotalCount: int32(total)}, nil
+	return &statev1.ListNodesResponse{Nodes: out, TotalCount: toInt32(total)}, nil
 }
 
 // ListNodeNames returns distinct node table names for the search autocomplete.

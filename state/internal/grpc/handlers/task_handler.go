@@ -135,7 +135,7 @@ func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksReque
 
 	return &statev1.ListTasksResponse{
 		Tasks:      protoTasks,
-		TotalCount: int32(total),
+		TotalCount: toInt32(total),
 	}, nil
 }
 
@@ -194,8 +194,8 @@ func domainToProtoTask(t *postgres.TaskTracker) *statev1.Task {
 		TableName:   t.TableName,
 		JobName:     t.JobName,
 		Status:      domainToProtoTaskStatus(t.Status),
-		RetryCount:  int32(t.RetryCount),
-		MaxRetries:  int32(t.MaxRetries),
+		RetryCount:  toInt32(t.RetryCount),
+		MaxRetries:  toInt32(t.MaxRetries),
 	}
 
 	if t.CancelledAt != nil {
