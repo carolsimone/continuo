@@ -7,3 +7,4 @@ cli
 release-controller
 executor-controller
 agent-runner
+remediation-agent
