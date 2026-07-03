@@ -53,7 +53,15 @@ fi
 rc=0
 for m in ${targets}; do
   echo "==> linting ${m}"
-  ( cd "${m}" && golangci-lint run ./... ) || rc=1
+  if [ "${m}" = "./cli" ]; then
+    # cli is nested under the repo root's go.work but is deliberately not a
+    # member (see CLAUDE.md). Go's workspace auto-detection would otherwise
+    # walk up and pick up the root go.work anyway, so force it off and let
+    # cli's own self-contained go.mod resolve instead.
+    ( cd "${m}" && GOWORK=off golangci-lint run ./... ) || rc=1
+  else
+    ( cd "${m}" && golangci-lint run ./... ) || rc=1
+  fi
 done
 
 exit "${rc}"
