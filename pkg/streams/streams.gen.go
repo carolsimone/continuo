@@ -70,6 +70,8 @@ const (
 	RemediationProposedV1 = "remediation.proposed:v1"
 	// RemediationPrOpenedV1 — Audit event emitted when an operator opens a GitHub PR from a fix proposal; pointer-only, no consumer in this slice.
 	RemediationPrOpenedV1 = "remediation.pr_opened:v1"
+	// RemediationPrClosedV1 — Audit event emitted when a remediation PR reaches a terminal outcome on GitHub (merged, or closed without merge); pointer-only, no consumer in this slice.
+	RemediationPrClosedV1 = "remediation.pr_closed:v1"
 )
 
 // Consumer groups.
@@ -184,4 +186,5 @@ var All = []string{
 	RemediationRequestedV1,
 	RemediationProposedV1,
 	RemediationPrOpenedV1,
+	RemediationPrClosedV1,
 }
