@@ -63,6 +63,13 @@ jobs:
         working-directory: pkg
         run: go test ./...
 
+      - name: Lint Go services
+        # Static analysis (golangci-lint v2) over the modules enrolled in
+        # scripts/lint-ci-modules.txt. Runs early and needs no docker/kind/e2e
+        # infra, so it fails fast before the slow setup. All install/run logic
+        # lives in scripts/lint-go.sh to keep CI and local dev on one primitive.
+        run: bash scripts/lint-go.sh --ci
+
       - name: Run guards
         # Fail fast if ci.yml contains inline build/run/wait logic that should
         # live in shared scripts. Keeps CI and local dev on the same primitives.
