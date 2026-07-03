@@ -25,7 +25,7 @@ func NewSnapshotTxRunner(client Neo4jClient) *SnapshotTxRunner {
 // it commits.
 func (s *SnapshotTxRunner) Run(ctx context.Context, fn func(snapshot.TopologyReader, snapshot.SnapshotWriter) error) error {
 	session := s.Client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		r := newTopologyReader(tx)
 		w := newSnapshotWriter(tx)

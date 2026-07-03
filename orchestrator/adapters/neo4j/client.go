@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/config"
 )
 
 type Neo4jClient interface {
@@ -24,10 +25,10 @@ func NewNeo4jClient(uri, user, password string, logger *slog.Logger) (Neo4jClien
 	driver, err := neo4j.NewDriverWithContext(
 		uri,
 		neo4j.BasicAuth(user, password, ""),
-		func(config *neo4j.Config) {
-			config.MaxConnectionPoolSize = 50
-			config.ConnectionAcquisitionTimeout = 60 * time.Second
-			config.MaxConnectionLifetime = 1 * time.Hour
+		func(cfg *config.Config) {
+			cfg.MaxConnectionPoolSize = 50
+			cfg.ConnectionAcquisitionTimeout = 60 * time.Second
+			cfg.MaxConnectionLifetime = 1 * time.Hour
 		},
 	)
 	if err != nil {

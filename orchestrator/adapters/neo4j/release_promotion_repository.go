@@ -58,7 +58,7 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 	}
 
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	tx, err := session.BeginTransaction(ctx)
 	if err != nil {

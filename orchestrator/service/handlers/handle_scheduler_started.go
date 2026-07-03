@@ -275,7 +275,7 @@ func (h *HandleSchedulerStartedHandler) buildRunEntriesDispatchedPayload(
 		ScheduleID:     evt.ScheduleID.String(),
 		ScheduleName:   evt.ScheduleName,
 		AllTasks:       allTasks,
-		TotalTaskCount: int32(len(allTasks)),
+		TotalTaskCount: toInt32(len(allTasks)),
 	}
 
 	return json.Marshal(dispatched)

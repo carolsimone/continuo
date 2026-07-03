@@ -76,7 +76,7 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 		ScheduleID:     d.RunID,
 		ScheduleName:   d.ScheduleName,
 		AllTasks:       allTasks,
-		TotalTaskCount: int32(len(allTasks)),
+		TotalTaskCount: toInt32(len(allTasks)),
 	}
 	dispatchedPayload, err := json.Marshal(dispatchedEvt)
 	if err != nil {

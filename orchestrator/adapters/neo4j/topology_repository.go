@@ -30,7 +30,7 @@ func (r *TopologyRepository) SetServiceMetadata(
 	topologyGeneration int64,
 ) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	payload, err := json.Marshal(serviceMetadata)
 	if err != nil {
