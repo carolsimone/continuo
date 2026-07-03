@@ -12,3 +12,4 @@ k8s-controller
 pkg
 orchestrator
 tests/e2e
+state
