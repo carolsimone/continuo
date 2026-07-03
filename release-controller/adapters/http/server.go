@@ -39,7 +39,7 @@ func (s *Server) Routes() http.Handler {
 // cancelled, at which point it performs a graceful 5-second shutdown.
 func (s *Server) Start(ctx context.Context) error {
 	s.srv = &http.Server{Addr: ":" + s.port, Handler: s.Routes(), ReadHeaderTimeout: 5 * time.Second}
-	go func() {
+	go func() { //nolint:gosec // G118: ctx is already Done() by the time we get here, so it cannot supply a working deadline for Shutdown; a fresh context.Background() is required, not a request-scoped one
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

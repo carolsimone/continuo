@@ -53,7 +53,7 @@ func main() {
 		logger.Error("postgres connect", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	rc, err := redisadapter.NewClient(ctx, redisadapter.Config{
 		Host:     cfg.Redis.Host,
@@ -64,7 +64,7 @@ func main() {
 		logger.Error("redis connect", "error", err)
 		os.Exit(1)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	// S3 client for pruning candidate-SQL objects when releases are deleted.
 	s3Client := s3adapter.NewS3Client(
