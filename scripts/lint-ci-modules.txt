@@ -3,3 +3,4 @@
 # findings during the golangci-lint burn-down. Lines starting with # and blank lines
 # are ignored. When empty, `scripts/lint-go.sh --ci` lints nothing and exits 0.
 remediation
+cli
