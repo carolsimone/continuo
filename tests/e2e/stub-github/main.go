@@ -28,13 +28,24 @@
 //
 //	GET  /repos/{owner}/{repo}/pulls
 //	    Returns an empty list (no existing PRs).
+//
+//	GET  /repos/{owner}/{repo}/pulls/{n}
+//	    Returns the current PR state (404 when never opened).
+//
+//	PUT  /repos/{owner}/{repo}/pulls/{n}/merge
+//	    Marks PR as merged and closed. Returns 200 with merged confirmation.
+//
+//	PATCH /repos/{owner}/{repo}/pulls/{n}
+//	    With body {"state":"closed"} marks PR as closed without merge. Returns 200 with PR JSON.
 package main
 
 import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 // ftableESource is the canned dbt model source for ftable_e as it exists in
@@ -55,6 +66,28 @@ const (
 	stubBranch    = "stub"
 	stubPRNumber  = 1
 )
+
+// stubClosedAt is the fixed terminal timestamp reported for closed stub PRs.
+const stubClosedAt = "2026-01-01T00:00:00Z"
+
+// prStates tracks each opened stub PR's lifecycle so the reconciler read path
+// observes merges/closes performed by tests.
+var (
+	prMu     sync.Mutex
+	prStates = map[int]*stubPRState{}
+)
+
+type stubPRState struct {
+	Closed bool
+	Merged bool
+}
+
+// resetPRs clears all PR state (test helper).
+func resetPRs() {
+	prMu.Lock()
+	defer prMu.Unlock()
+	prStates = map[int]*stubPRState{}
+}
 
 func main() {
 	http.HandleFunc("/app/", handleApp)
@@ -195,18 +228,28 @@ func handleContents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handlePulls responds to GET and POST /repos/{owner}/{repo}/pulls.
+// handlePulls routes /repos/{o}/{r}/pulls[...]:
 //
-// GET returns an empty list (no existing PRs). POST opens a stub PR and
-// returns 201 with a deterministic number and html_url.
+//	GET  pulls            -> empty list (no existing PRs for branch lookups)
+//	POST pulls            -> open stub PR #1 (registers lifecycle state)
+//	GET  pulls/{n}        -> current PR state (404 when never opened)
+//	PUT  pulls/{n}/merge  -> mark merged
+//	PATCH pulls/{n}       -> {"state":"closed"} marks closed without merge
 func handlePulls(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
+	// Isolate the segment after ".../pulls".
+	_, after, _ := strings.Cut(r.URL.Path, "/pulls")
+	after = strings.TrimPrefix(after, "/")
+
+	switch {
+	case after == "" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("[]"))
 
-	case http.MethodPost:
+	case after == "" && r.Method == http.MethodPost:
+		prMu.Lock()
+		prStates[stubPRNumber] = &stubPRState{}
+		prMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -215,7 +258,94 @@ func handlePulls(w http.ResponseWriter, r *http.Request) {
 			"state":    "open",
 		})
 
+	case strings.HasSuffix(after, "/merge") && r.Method == http.MethodPut:
+		n, err := strconv.Atoi(strings.TrimSuffix(after, "/merge"))
+		if err != nil {
+			http.Error(w, "bad pull number", http.StatusBadRequest)
+			return
+		}
+		prMu.Lock()
+		st, ok := prStates[n]
+		if ok {
+			st.Closed, st.Merged = true, true
+		}
+		prMu.Unlock()
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"sha": stubCommitSHA, "merged": true,
+		})
+
+	case after != "" && r.Method == http.MethodPatch:
+		n, err := strconv.Atoi(after)
+		if err != nil {
+			http.Error(w, "bad pull number", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			State string `json:"state"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		prMu.Lock()
+		st, ok := prStates[n]
+		if ok && body.State == "closed" {
+			st.Closed = true
+		}
+		prMu.Unlock()
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		writePullJSON(w, n)
+
+	case after != "" && r.Method == http.MethodGet:
+		n, err := strconv.Atoi(after)
+		if err != nil {
+			http.Error(w, "bad pull number", http.StatusBadRequest)
+			return
+		}
+		writePullJSON(w, n)
+
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// writePullJSON renders the current lifecycle state of PR n in the shape the
+// GitHub pulls API returns; unknown n is a 404.
+func writePullJSON(w http.ResponseWriter, n int) {
+	prMu.Lock()
+	st, ok := prStates[n]
+	var snapshot stubPRState
+	if ok {
+		snapshot = *st
+	}
+	prMu.Unlock()
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	state := "open"
+	var mergedAt, closedAt interface{}
+	if snapshot.Closed {
+		state = "closed"
+		closedAt = stubClosedAt
+		if snapshot.Merged {
+			mergedAt = stubClosedAt
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"number":    n,
+		"state":     state,
+		"merged":    snapshot.Merged,
+		"merged_at": mergedAt,
+		"closed_at": closedAt,
+		"html_url":  "http://stub-github/pull/1",
+	})
 }

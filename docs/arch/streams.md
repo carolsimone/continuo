@@ -92,6 +92,17 @@ file, e.g. `models/order_items.sql`) that is non-empty for `compile` and
 it is empty — the downstream agent resolves the path via orchestrator ancestry.
 See `docs/arch/services/remediation.md` for the full payload shape.
 
+**`remediation.pr_closed:v1`** — emitted by remediation-agent when its
+PR-outcome reconciler observes a terminal GitHub pull request state (merged,
+or closed without merge) for a proposal whose `pr_state` is `open`; the CAS
+`open → merged | rejected` and this outbox row commit in the same transaction.
+The payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`,
+`pr_number`, `outcome` (`merged` or `rejected`), `closed_at`. `event_id` is a
+deterministic SHA1 UUID derived from `(release_id, node_id, attempt)`, distinct
+from the `remediation.pr_opened:v1` id derived from the same triple, so the two
+events never collide. No consumer is wired to it. See
+`docs/arch/services/remediation-agent.md` for the full payload shape.
+
 ## Out of scope
 
 - Stream payload schemas — service dossiers document them; see `docs/arch/services/`.

@@ -43,9 +43,13 @@ function sourceLabel(resolved: boolean): string {
   return resolved ? 'yes' : 'no';
 }
 
-function statusLabel(proposal: ProposalDTO): string {
-  if (proposal.pr_state) return `${proposal.status} · ${proposal.pr_state}`;
-  return proposal.status;
+// prStateBadge renders terminal PR outcomes as colored chips; non-terminal
+// pr_state values stay plain text.
+function prStateBadge(prState: string) {
+  if (prState === 'merged' || prState === 'rejected') {
+    return <span className={`pr-chip pr-chip--${prState}`}>{prState}</span>;
+  }
+  return <>{prState}</>;
 }
 
 export default function RemediationPanel() {
@@ -106,7 +110,7 @@ export default function RemediationPanel() {
                   <td>{p.release_id}</td>
                   <td>{p.confidence}</td>
                   <td>{sourceLabel(p.source_resolved)}</td>
-                  <td>{statusLabel(p)}</td>
+                  <td>{p.status}{p.pr_state ? <> · {prStateBadge(p.pr_state)}</> : null}</td>
                 </tr>
               ))}
             </tbody>

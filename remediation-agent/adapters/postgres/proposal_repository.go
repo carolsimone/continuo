@@ -135,6 +135,7 @@ type proposalRow struct {
 	PrState             string     `db:"pr_state"`
 	PrOpenedAt          *time.Time `db:"pr_opened_at"`
 	PrOpenedBy          string     `db:"pr_opened_by"`
+	PrClosedAt          *time.Time `db:"pr_closed_at"`
 }
 
 func (row proposalRow) toView() proposal.View {
@@ -163,6 +164,7 @@ func (row proposalRow) toView() proposal.View {
 		PrState:             row.PrState,
 		PrOpenedAt:          row.PrOpenedAt,
 		PrOpenedBy:          row.PrOpenedBy,
+		PrClosedAt:          row.PrClosedAt,
 	}
 }
 
@@ -170,7 +172,7 @@ const proposalColumns = `id, source, release_id, node_id, error_signature, attem
 		       status, confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, model, created_at,
-		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by`
+		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at`
 
 // claimRow is the persistence DTO for the BeginPR RETURNING projection.
 type claimRow struct {
@@ -311,4 +313,59 @@ func (r *ProposalRepository) FailPR(ctx context.Context, id string) error {
 		return fmt.Errorf("fail pr: %w", err)
 	}
 	return nil
+}
+
+// openPRRow is the persistence DTO for the ListOpenPullRequests projection.
+type openPRRow struct {
+	ID        string `db:"id"`
+	Repo      string `db:"repo"`
+	PRNumber  int    `db:"pr_number"`
+	ReleaseID string `db:"release_id"`
+	NodeID    string `db:"node_id"`
+	Attempt   int    `db:"attempt"`
+}
+
+// ListOpenPullRequests returns proposals with pr_state='open', oldest-opened
+// first, so the reconciler checks the longest-waiting PRs before newer ones.
+func (r *ProposalRepository) ListOpenPullRequests(ctx context.Context, limit int) ([]proposal.OpenPR, error) {
+	q := `SELECT id, repo, pr_number, release_id, node_id, attempt
+	      FROM proposal WHERE pr_state = 'open' ORDER BY pr_opened_at ASC`
+	args := []any{}
+	if limit > 0 {
+		args = append(args, limit)
+		q += " LIMIT $1"
+	}
+	var rows []openPRRow
+	if err := r.q.SelectContext(ctx, &rows, q, args...); err != nil {
+		return nil, fmt.Errorf("list open pull requests: %w", err)
+	}
+	out := make([]proposal.OpenPR, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, proposal.OpenPR{
+			ID:        row.ID,
+			Repo:      row.Repo,
+			PRNumber:  row.PRNumber,
+			ReleaseID: row.ReleaseID,
+			NodeID:    row.NodeID,
+			Attempt:   row.Attempt,
+		})
+	}
+	return out, nil
+}
+
+// RecordPROutcome atomically transitions pr_state 'open' -> outcome. The WHERE
+// pr_state='open' guard makes concurrent or repeated calls single-winner: only
+// the first caller sees rows-affected=1; every later call is a no-op false.
+func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal SET pr_state=$2, pr_closed_at=$3 WHERE id=$1 AND pr_state='open'`,
+		id, string(outcome), closedAt)
+	if err != nil {
+		return false, fmt.Errorf("record pr outcome: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("record pr outcome: rows affected: %w", err)
+	}
+	return n > 0, nil
 }

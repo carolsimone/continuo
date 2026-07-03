@@ -74,4 +74,13 @@ type ProposalRepository interface {
 	// FailPR resets a stuck 'opening' claim back to 'failed' so the action can
 	// be retried. It is a no-op when pr_state is not 'opening'.
 	FailPR(ctx context.Context, id string) error
+
+	// ListOpenPullRequests returns proposals whose PR awaits a terminal outcome
+	// (pr_state='open'), oldest-opened first. limit<=0 means no limit.
+	ListOpenPullRequests(ctx context.Context, limit int) ([]proposal.OpenPR, error)
+
+	// RecordPROutcome atomically transitions pr_state 'open' -> outcome and sets
+	// pr_closed_at. Returns true when the transition fired; false when the row is
+	// no longer in 'open' (already terminal or never opened) — an idempotent no-op.
+	RecordPROutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) (bool, error)
 }

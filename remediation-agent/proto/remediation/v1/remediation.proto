@@ -50,6 +50,9 @@ message Proposal {
   // pr_opened_at is an RFC3339-formatted timestamp string, empty when not yet set.
   string pr_opened_at = 23;
   string pr_opened_by = 24;
+  // pr_closed_at is an RFC3339-formatted timestamp string, empty until the PR
+  // reaches a terminal outcome (pr_state 'merged' or 'rejected').
+  string pr_closed_at = 25;
 }
 
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.

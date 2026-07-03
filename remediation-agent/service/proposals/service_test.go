@@ -41,6 +41,11 @@ type fakeRepo struct {
 		openedBy string
 		openedAt time.Time
 	}
+	// RecordPROutcome capture
+	lastOutcome   proposal.PROutcome
+	lastClosedAt  time.Time
+	outcomeCASHit bool
+	openPRs       []proposal.OpenPR
 }
 
 func (r *fakeRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error) { return 0, nil }
@@ -70,6 +75,14 @@ func (r *fakeRepo) RecordPR(_ context.Context, id, prURL string, prNumber int, o
 	return nil
 }
 func (r *fakeRepo) FailPR(_ context.Context, _ string) error { return nil }
+func (r *fakeRepo) ListOpenPullRequests(_ context.Context, _ int) ([]proposal.OpenPR, error) {
+	return r.openPRs, nil
+}
+func (r *fakeRepo) RecordPROutcome(_ context.Context, _ string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
+	r.lastOutcome = outcome
+	r.lastClosedAt = closedAt
+	return r.outcomeCASHit, nil
+}
 
 // fakeUoW is a unit of work backed by the fakeRepo.
 type fakeUoW struct {
@@ -146,4 +159,40 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	require.NotNil(t, repo.lastOutbox, "expected an outbox entry to be created")
 	require.Equal(t, streams.RemediationPrOpenedV1, repo.lastOutbox.StreamName)
 	require.True(t, repo.committed, "expected the unit of work to be committed")
+}
+
+// TestService_RecordOutcome_EmitsPRClosedAtomically verifies that a fired CAS
+// writes a remediation.pr_closed:v1 outbox entry and commits the unit of work.
+func TestService_RecordOutcome_EmitsPRClosedAtomically(t *testing.T) {
+	repo := &fakeRepo{
+		view: proposal.View{
+			ID: "p1", ReleaseID: "r-1", NodeID: "model.p.orders_d",
+			Attempt: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
+		},
+		outcomeCASHit: true,
+	}
+	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
+
+	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
+	require.NoError(t, svc.RecordOutcome(context.Background(), "p1", proposal.PROutcomeMerged, closedAt))
+
+	require.Equal(t, proposal.PROutcomeMerged, repo.lastOutcome)
+	require.Equal(t, closedAt, repo.lastClosedAt)
+	require.NotNil(t, repo.lastOutbox, "expected a pr_closed outbox entry")
+	require.Equal(t, streams.RemediationPrClosedV1, repo.lastOutbox.StreamName)
+	require.True(t, repo.committed, "expected the unit of work to be committed")
+}
+
+// TestService_RecordOutcome_NoEventWhenAlreadyTerminal verifies a CAS miss
+// (row no longer 'open') produces no outbox entry and no error.
+func TestService_RecordOutcome_NoEventWhenAlreadyTerminal(t *testing.T) {
+	repo := &fakeRepo{
+		view:          proposal.View{ID: "p1", ReleaseID: "r-1", NodeID: "n", Attempt: 1},
+		outcomeCASHit: false,
+	}
+	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
+
+	err := svc.RecordOutcome(context.Background(), "p1", proposal.PROutcomeRejected, time.Now())
+	require.NoError(t, err, "a CAS miss is an idempotent no-op, not an error")
+	require.Nil(t, repo.lastOutbox, "no event may be emitted when the CAS misses")
 }

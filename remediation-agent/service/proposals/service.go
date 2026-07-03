@@ -126,6 +126,72 @@ func (s *Service) Fail(ctx context.Context, id string) error {
 	return s.repo.FailPR(ctx, id)
 }
 
+// RecordOutcome mirrors a terminal PR outcome observed on GitHub onto the
+// proposal inside a single transaction: the pr_state CAS 'open' -> outcome and
+// the remediation.pr_closed:v1 outbox entry commit together. A CAS miss (the
+// row is no longer 'open') is an idempotent no-op: nothing is written and no
+// event is emitted, so repeated observers of the same fact converge safely.
+func (s *Service) RecordOutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) error {
+	v, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get proposal: %w", err)
+	}
+
+	u := s.newUoW()
+	if err := u.Begin(ctx); err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = u.Rollback() }()
+
+	transitioned, err := u.ProposalRepo().RecordPROutcome(ctx, id, outcome, closedAt)
+	if err != nil {
+		return fmt.Errorf("record pr outcome: %w", err)
+	}
+	if !transitioned {
+		return nil
+	}
+
+	if err := s.enqueuePRClosed(ctx, u, v, outcome, closedAt); err != nil {
+		return err
+	}
+
+	if err := u.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// enqueuePRClosed builds the deterministic remediation.pr_closed:v1 outbox
+// entry and creates it on the repository bound to the caller's transaction.
+func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v proposal.View, outcome proposal.PROutcome, closedAt time.Time) error {
+	eventID := event.PRClosedEventID(v.ReleaseID, v.NodeID, v.Attempt)
+	payload := event.PRClosed{
+		ProposalID: v.ID,
+		ReleaseID:  v.ReleaseID,
+		NodeID:     v.NodeID,
+		PrURL:      v.PrURL,
+		PrNumber:   v.PrNumber,
+		Outcome:    string(outcome),
+		ClosedAt:   closedAt.Format(time.RFC3339),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal pr_closed event: %w", err)
+	}
+	entry := &outbox.Entry{
+		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
+		AggregateType: "remediation_agent",
+		AggregateID:   event.AggregateIDForRelease(v.ReleaseID),
+		EventType:     event.PRClosedEventType,
+		Payload:       body,
+		StreamName:    streams.RemediationPrClosedV1,
+		Status:        "pending",
+		MaxRetries:    outbox.DefaultMaxRetries,
+		CreatedAt:     s.clock.Now(),
+	}
+	return u.OutboxRepo().Create(ctx, entry)
+}
+
 // enqueuePROpened builds the deterministic remediation.pr_opened:v1 outbox
 // entry and creates it on the repository bound to the caller's transaction.
 func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v proposal.View, in RecordInput, now time.Time) error {

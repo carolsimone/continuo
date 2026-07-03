@@ -101,12 +101,18 @@ func main() {
 		logger,
 	)
 
+	// One GitHub adapter instance serves both read-only ports: source reads for
+	// the fixers and PR-status reads for the outcome reconciler. A request
+	// deadline keeps a hung GitHub connection from stalling the callers that
+	// share this adapter — source reads and the PR reconciler.
+	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
+
 	deps := handlers.Deps{
 		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
 		LLM:              cachedLLM,
 		Evidence:         store,
 		Ancestry:         ancestryClient,
-		Source:           ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, http.DefaultClient),
+		Source:           gh,
 		Sanitizer:        sanitizer.Passthrough{},
 		Artifacts:        store,
 		Clock:            ports.SystemClock{},
@@ -156,6 +162,18 @@ func main() {
 			logger.Error("grpc server stopped", "error", err)
 		}
 	}()
+
+	// Mirror terminal GitHub PR outcomes (merged / closed-without-merge) onto
+	// proposal rows on a fixed cadence.
+	reconciler := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:   proposalRepo,
+		Checker:  gh,
+		Recorder: proposalSvc,
+		Clock:    ports.SystemClock{},
+		Logger:   logger,
+		Interval: cfg.PRPollInterval,
+	})
+	go reconciler.Run(ctx)
 
 	logger.Info("remediation-agent started", "http_port", cfg.HTTPPort, "grpc_port", cfg.GRPCPort)
 	<-ctx.Done()

@@ -146,6 +146,10 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 	if v.PrOpenedAt != nil {
 		prOpenedAt = v.PrOpenedAt.Format(time.RFC3339)
 	}
+	var prClosedAt string
+	if v.PrClosedAt != nil {
+		prClosedAt = v.PrClosedAt.Format(time.RFC3339)
+	}
 	return &remediationv1.Proposal{
 		Id:                  v.ID,
 		Source:              v.Source,
@@ -171,6 +175,7 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		PrState:             v.PrState,
 		PrOpenedAt:          prOpenedAt,
 		PrOpenedBy:          v.PrOpenedBy,
+		PrClosedAt:          prClosedAt,
 	}
 }
 
