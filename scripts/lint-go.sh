@@ -19,11 +19,6 @@ GOLANGCI_VERSION="v2.12.2"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "error: jq is required (used to read go.work)" >&2
-  exit 1
-fi
-
 gopath_bin="$(go env GOPATH)/bin"
 
 install_golangci() {
@@ -36,8 +31,14 @@ install_golangci() {
     | sh -s -- -b "${gopath_bin}" "${GOLANGCI_VERSION}"
 }
 
-# Authoritative workspace members + cli (outside go.work by design).
+# Authoritative workspace members + cli (outside go.work by design). Only this
+# path needs jq (to read go.work); the --ci path reads a static file, so the CI
+# gate does not depend on jq being installed on the runner.
 modules() {
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "error: jq is required to derive the module list from go.work" >&2
+    exit 1
+  fi
   go work edit -json | jq -r '.Use[].DiskPath'
   echo "./cli"
 }
