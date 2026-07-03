@@ -49,8 +49,11 @@ type Proposal struct {
 	PrNumber  int32  `protobuf:"varint,21,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
 	PrState   string `protobuf:"bytes,22,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
 	// pr_opened_at is an RFC3339-formatted timestamp string, empty when not yet set.
-	PrOpenedAt    string `protobuf:"bytes,23,opt,name=pr_opened_at,json=prOpenedAt,proto3" json:"pr_opened_at,omitempty"`
-	PrOpenedBy    string `protobuf:"bytes,24,opt,name=pr_opened_by,json=prOpenedBy,proto3" json:"pr_opened_by,omitempty"`
+	PrOpenedAt string `protobuf:"bytes,23,opt,name=pr_opened_at,json=prOpenedAt,proto3" json:"pr_opened_at,omitempty"`
+	PrOpenedBy string `protobuf:"bytes,24,opt,name=pr_opened_by,json=prOpenedBy,proto3" json:"pr_opened_by,omitempty"`
+	// pr_closed_at is an RFC3339-formatted timestamp string, empty until the PR
+	// reaches a terminal outcome (pr_state 'merged' or 'rejected').
+	PrClosedAt    string `protobuf:"bytes,25,opt,name=pr_closed_at,json=prClosedAt,proto3" json:"pr_closed_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -249,6 +252,13 @@ func (x *Proposal) GetPrOpenedAt() string {
 func (x *Proposal) GetPrOpenedBy() string {
 	if x != nil {
 		return x.PrOpenedBy
+	}
+	return ""
+}
+
+func (x *Proposal) GetPrClosedAt() string {
+	if x != nil {
+		return x.PrClosedAt
 	}
 	return ""
 }
@@ -779,7 +789,7 @@ var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xf1\x05\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x93\x06\n" +
 	"\bProposal\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
@@ -812,7 +822,9 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\fpr_opened_at\x18\x17 \x01(\tR\n" +
 	"prOpenedAt\x12 \n" +
 	"\fpr_opened_by\x18\x18 \x01(\tR\n" +
-	"prOpenedBy\"_\n" +
+	"prOpenedBy\x12 \n" +
+	"\fpr_closed_at\x18\x19 \x01(\tR\n" +
+	"prClosedAt\"_\n" +
 	"\x14ListProposalsRequest\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x19\n" +
 	"\bpr_state\x18\x02 \x01(\tR\aprState\x12\x14\n" +

@@ -215,4 +215,5 @@ export interface ProposalDTO {
   pr_state: string;
   pr_opened_at: string;
   pr_opened_by: string;
+  pr_closed_at: string;
 }

@@ -24,6 +24,7 @@ const proposal = (o: Partial<ProposalDTO> & { source: string; node_id: string })
   confidence: 'high', rationale: '', proposed_sql_uri: '', diff_uri: '', candidate_fix_sql_uri: '',
   candidate_fix_diff_uri: '', source_resolved: true, repo: '', commit_sha: '', file_path: '',
   model: '', created_at: '', pr_url: '', pr_number: 0, pr_state: '', pr_opened_at: '', pr_opened_by: '',
+  pr_closed_at: '',
   ...o,
 });
 

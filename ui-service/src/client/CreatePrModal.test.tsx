@@ -47,6 +47,7 @@ const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   pr_state: '',
   pr_opened_at: '',
   pr_opened_by: '',
+  pr_closed_at: '',
   ...overrides,
 });
 
