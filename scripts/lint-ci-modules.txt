@@ -6,3 +6,4 @@ remediation
 cli
 release-controller
 executor-controller
+agent-runner
