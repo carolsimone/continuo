@@ -14,3 +14,7 @@ linters:
       - cli/proto          # generated gRPC stubs (state, orchestrator)
       - ".*\\.gen\\.go$"   # e.g. pkg/streams/streams.gen.go
       - ".*\\.pb\\.go$"    # protobuf stubs
+    rules:
+      - path: _test\.go$
+        linters:
+          - errcheck

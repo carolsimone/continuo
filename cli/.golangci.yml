@@ -21,3 +21,7 @@ linters:
     generated: lax
     paths:
       - proto   # generated gRPC stubs, relative to the cli module root
+    rules:
+      - path: _test\.go$
+        linters:
+          - errcheck

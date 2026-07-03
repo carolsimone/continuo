@@ -10,6 +10,7 @@
 # Usage:
 #   scripts/lint-go.sh            # lint every module
 #   scripts/lint-go.sh state      # lint one module
+#   scripts/lint-go.sh --ci       # lint only modules listed in scripts/lint-ci-modules.txt
 set -uo pipefail
 
 # Single source of truth for the pinned version. Bump here only.
@@ -44,7 +45,9 @@ modules() {
 install_golangci
 export PATH="${gopath_bin}:${PATH}"
 
-if [ "$#" -ge 1 ]; then
+if [ "${1:-}" = "--ci" ]; then
+  targets="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' scripts/lint-ci-modules.txt | sed 's#^[[:space:]]*#./#')"
+elif [ "$#" -ge 1 ]; then
   targets="./$1"
 else
   targets="$(modules)"
