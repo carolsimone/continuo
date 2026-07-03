@@ -144,18 +144,20 @@ func connectPostgres(t *testing.T, host, database string) *sqlx.DB {
 	return db
 }
 
-// closeClients closes all client connections
+// closeClients closes all client connections. Best-effort: this runs at test
+// teardown, so a close failure on one connection shouldn't stop the others
+// from being released.
 func (c *testClients) close(ctx context.Context) {
-	c.redisClient.Close()
-	c.neo4jDriver.Close(ctx)
-	c.executorDB.Close()
-	c.orchestratorDB.Close()
-	c.k8sDB.Close()
-	c.stateDB.Close()
-	c.releaseDB.Close()
-	c.dbtDB.Close()
-	c.remediationDB.Close()
-	c.remediationAgentDB.Close()
+	_ = c.redisClient.Close()
+	_ = c.neo4jDriver.Close(ctx)
+	_ = c.executorDB.Close()
+	_ = c.orchestratorDB.Close()
+	_ = c.k8sDB.Close()
+	_ = c.stateDB.Close()
+	_ = c.releaseDB.Close()
+	_ = c.dbtDB.Close()
+	_ = c.remediationDB.Close()
+	_ = c.remediationAgentDB.Close()
 }
 
 // getEnv returns environment variable or default value

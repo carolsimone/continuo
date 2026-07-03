@@ -80,23 +80,6 @@ func verifyJobsCompleted(
 	t.Logf("✅ All %d jobs completed successfully", len(tables))
 }
 
-// verifyJobLogs checks that job logs contain expected parameters
-func verifyJobLogs(
-	t *testing.T,
-	ctx context.Context,
-	clients *testClients,
-	tableName string,
-	scheduleName string,
-) {
-	logs := getK8sJobLogs(ctx, t, tableName)
-
-	assert.Contains(t, logs, fmt.Sprintf("schedule_name=%s", scheduleName))
-	assert.Contains(t, logs, fmt.Sprintf("table_name=%s", tableName))
-	assert.Contains(t, logs, fmt.Sprintf("schema_name=%s", testSchemaName))
-	assert.Contains(t, logs, "job_name=")
-	assert.Contains(t, logs, fmt.Sprintf("service_name=%s", getServiceNameForTable(tableName)))
-}
-
 // verifyDependencyControllerUnlockedNextLevel checks that next level nodes were published
 func verifyDependencyControllerUnlockedNextLevel(
 	t *testing.T,
