@@ -76,7 +76,7 @@ func TestPublish_UsesBatchPublisherWhenAvailable(t *testing.T) {
 	}
 	assert.Equal(t, 1, pub.batchCalls, "exactly one pipelined batch call")
 	assert.Equal(t, 5, pub.batchEntries, "all entries dispatched in one batch")
-	assert.Equal(t, 0, pub.plainPublisher.calls, "per-entry Publish must not be used")
+	assert.Equal(t, 0, pub.calls, "per-entry Publish must not be used")
 }
 
 // TestPublish_FallsBackToPerEntryWhenNoBatchPublisher asserts a Publish-only
@@ -140,5 +140,5 @@ func TestPublish_FallsBackOnMismatchedBatchSlice(t *testing.T) {
 	errs := p.publish(context.Background(), entries)
 
 	require.Len(t, errs, 3, "result length must always match entries")
-	assert.Equal(t, 3, pub.plainPublisher.calls, "fell back to per-entry publish")
+	assert.Equal(t, 3, pub.calls, "fell back to per-entry publish")
 }

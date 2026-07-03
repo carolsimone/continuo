@@ -56,7 +56,11 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("parse REDIS_URL: %w", err)
 	}
 	rdb := goredis.NewClient(opt)
-	defer rdb.Close()
+	defer func() {
+		if closeErr := rdb.Close(); closeErr != nil {
+			logger.Error("close redis client", "error", closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

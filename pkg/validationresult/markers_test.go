@@ -28,7 +28,7 @@ func TestSentinelMarkersMatchPythonContract(t *testing.T) {
 	// <root>/pkg/validationresult/<this> → up two to the repo root.
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 	pyPath := filepath.Join(repoRoot, "dbt", "base", "validation_result.py")
-	src, err := os.ReadFile(pyPath)
+	src, err := os.ReadFile(pyPath) //nolint:gosec // G304: pyPath is built from runtime.Caller(0) plus fixed literal segments, not external input
 	if err != nil {
 		t.Fatalf("read python contract %s: %v", pyPath, err)
 	}
