@@ -102,8 +102,10 @@ func main() {
 	)
 
 	// One GitHub adapter instance serves both read-only ports: source reads for
-	// the fixers and PR-status reads for the outcome reconciler.
-	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, http.DefaultClient)
+	// the fixers and PR-status reads for the outcome reconciler. A request
+	// deadline keeps a hung GitHub connection from stalling the callers that
+	// share this adapter — source reads and the PR reconciler.
+	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
 
 	deps := handlers.Deps{
 		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },

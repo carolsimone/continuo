@@ -363,6 +363,9 @@ func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id string, out
 	if err != nil {
 		return false, fmt.Errorf("record pr outcome: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("record pr outcome: rows affected: %w", err)
+	}
 	return n > 0, nil
 }
