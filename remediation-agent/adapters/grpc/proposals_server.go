@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -137,6 +138,22 @@ func toGRPCError(err error) error {
 	}
 }
 
+// toInt32 bounds-checks a domain int (attempt count or PR number) before
+// narrowing it to the proto wire type. Attempt is bounded by the small
+// configured MaxAttempts; PrNumber is itself sourced from an int32 proto
+// field on ingestion (RecordPullRequest). Neither can realistically overflow,
+// but this clamps defensively instead of trusting that invariant silently.
+func toInt32(n int) int32 {
+	switch {
+	case n > math.MaxInt32:
+		return math.MaxInt32
+	case n < math.MinInt32:
+		return math.MinInt32
+	default:
+		return int32(n)
+	}
+}
+
 // viewToProto converts a domain proposal.View to the proto Proposal message.
 // Timestamps are formatted as RFC3339 strings; a nil PrOpenedAt produces an
 // empty string.
@@ -151,7 +168,7 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		ReleaseId:           v.ReleaseID,
 		NodeId:              v.NodeID,
 		ErrorSignature:      v.ErrorSignature,
-		Attempt:             int32(v.Attempt),
+		Attempt:             toInt32(v.Attempt),
 		Status:              string(v.Status),
 		Confidence:          string(v.Confidence),
 		Rationale:           v.Rationale,
@@ -166,7 +183,7 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		Model:               v.Model,
 		CreatedAt:           v.CreatedAt.Format(time.RFC3339),
 		PrUrl:               v.PrURL,
-		PrNumber:            int32(v.PrNumber),
+		PrNumber:            toInt32(v.PrNumber),
 		PrState:             v.PrState,
 		PrOpenedAt:          prOpenedAt,
 		PrOpenedBy:          v.PrOpenedBy,
@@ -184,7 +201,7 @@ func claimToProto(c proposal.PRClaim) *remediationv1.BeginPullRequestResponse {
 		DiffUri:        c.DiffURI,
 		ReleaseId:      c.ReleaseID,
 		NodeId:         c.NodeID,
-		Attempt:        int32(c.Attempt),
+		Attempt:        toInt32(c.Attempt),
 		Rationale:      c.Rationale,
 		Confidence:     string(c.Confidence),
 		Model:          c.Model,

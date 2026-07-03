@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -113,7 +114,10 @@ func loadServiceRepos(path string) map[string]string {
 		slog.Info("SERVICE_REPO_MAP_PATH not set; service→repo mapping disabled")
 		return map[string]string{}
 	}
-	data, err := os.ReadFile(path)
+	// path is an operator-supplied deploy-time setting (SERVICE_REPO_MAP_PATH env
+	// var), never derived from a request or other runtime input; Clean it before
+	// reading purely to normalize traversal segments defensively.
+	data, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // G304: trusted operator config path, not user input.
 	if err != nil {
 		if os.IsNotExist(err) {
 			slog.Warn("service repo map file not found; service→repo mapping disabled", "path", path)
