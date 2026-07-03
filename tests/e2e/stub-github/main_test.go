@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,5 +105,79 @@ func TestHandleApp_AccessTokens(t *testing.T) {
 	}
 	if !strings.Contains(body, "expires_at") {
 		t.Errorf("expected expires_at in body, got: %q", body)
+	}
+}
+
+// TestPullLifecycle_MergePath drives POST -> GET(open) -> PUT merge -> GET(merged).
+func TestPullLifecycle_MergePath(t *testing.T) {
+	resetPRs()
+	// Open the PR.
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPost, "/repos/o/r/pulls", nil))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("open PR: got %d", rec.Code)
+	}
+	// It reads back open.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls/1", nil))
+	var pr struct {
+		State  string `json:"state"`
+		Merged bool   `json:"merged"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &pr); err != nil {
+		t.Fatal(err)
+	}
+	if pr.State != "open" || pr.Merged {
+		t.Fatalf("want open/unmerged, got %+v", pr)
+	}
+	// Merge it.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPut, "/repos/o/r/pulls/1/merge", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("merge: got %d", rec.Code)
+	}
+	// It reads back merged.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls/1", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &pr); err != nil {
+		t.Fatal(err)
+	}
+	if pr.State != "closed" || !pr.Merged {
+		t.Fatalf("want closed/merged, got %+v", pr)
+	}
+}
+
+// TestPullLifecycle_ClosePath drives POST -> PATCH state=closed -> GET(closed, unmerged).
+func TestPullLifecycle_ClosePath(t *testing.T) {
+	resetPRs()
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPost, "/repos/o/r/pulls", nil))
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPatch, "/repos/o/r/pulls/1",
+		strings.NewReader(`{"state":"closed"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch close: got %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls/1", nil))
+	var pr struct {
+		State  string `json:"state"`
+		Merged bool   `json:"merged"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &pr); err != nil {
+		t.Fatal(err)
+	}
+	if pr.State != "closed" || pr.Merged {
+		t.Fatalf("want closed/unmerged, got %+v", pr)
+	}
+}
+
+// TestGetUnknownPullIs404 verifies an unregistered PR number returns 404.
+func TestGetUnknownPullIs404(t *testing.T) {
+	resetPRs()
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls/99", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", rec.Code)
 	}
 }
