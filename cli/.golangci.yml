@@ -7,6 +7,10 @@ linters:
     - gosec
     - depguard
   settings:
+    gosec:
+      excludes:
+        # G104 (unhandled errors) duplicates errcheck; let errcheck own it.
+        - G104
     depguard:
       rules:
         main:

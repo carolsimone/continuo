@@ -6,6 +6,12 @@ linters:
   enable:
     - bodyclose  # HTTP response bodies must be closed
     - gosec      # security-focused static analysis
+  settings:
+    gosec:
+      excludes:
+        # G104 (unhandled errors) duplicates errcheck, which already owns this
+        # rule and is scoped to skip test files. Let errcheck be the single source.
+        - G104
   exclusions:
     # Skip files carrying the "// Code generated ... DO NOT EDIT." header.
     generated: lax
