@@ -66,6 +66,14 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		// node.deployed:v1 carries a typed JSON payload (pkg/events.NodeDeployed);
 		// outbox_entry_id is added as a flat sibling by Publish for dedup.
+		taskRetryCount, err := event.ToInt32(e.TaskRetryCount, "task_retry_count")
+		if err != nil {
+			return nil, fmt.Errorf("node.deployed payload: %w", err)
+		}
+		maxRetries, err := event.ToInt32(e.MaxRetries, "max_retries")
+		if err != nil {
+			return nil, fmt.Errorf("node.deployed payload: %w", err)
+		}
 		payload, err := json.Marshal(pkgevents.NodeDeployed{
 			TaskID:         e.TaskID,
 			ScheduleID:     e.ScheduleID,
@@ -76,8 +84,8 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 			JobName:        e.JobName,
 			NodeType:       e.NodeType,
 			ImageTag:       e.ImageTag,
-			TaskRetryCount: int32(e.TaskRetryCount),
-			MaxRetries:     int32(e.MaxRetries),
+			TaskRetryCount: taskRetryCount,
+			MaxRetries:     maxRetries,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("marshal node.deployed payload: %w", err)

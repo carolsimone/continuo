@@ -514,8 +514,12 @@ func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxR
 
 func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	cmd := dep.Command()
+	retryCount, err := event.ToInt32(cmd.TaskRetryCount, "task_retry_count")
+	if err != nil {
+		return fmt.Errorf("write FAILED task_status announcement: %w", err)
+	}
 	if err := d.createOutbox(ctx, outboxRepo, dep, "task_status_updated", streams.TaskStatusUpdatedV1,
-		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "FAILED", RetryCount: int32(cmd.TaskRetryCount)}); err != nil {
+		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "FAILED", RetryCount: retryCount}); err != nil {
 		return fmt.Errorf("write FAILED task_status announcement: %w", err)
 	}
 	nodeFailed := event.NodeUpdated{
