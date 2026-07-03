@@ -33,6 +33,11 @@ type Config struct {
 	GitHubToken   string // personal access token for GitHub API calls; empty = unauthenticated
 	GitHubBaseURL string // GitHub REST API base URL; defaults to the public API
 
+	// PRPollInterval is how often the PR-outcome reconciler polls GitHub for
+	// proposals with an open PR. Non-positive values fall back to the default
+	// so a misconfigured interval can never produce a hot loop.
+	PRPollInterval time.Duration
+
 	HTTPPort         string
 	GRPCPort         string
 	MaxAttempts      int
@@ -57,6 +62,10 @@ type serviceReposFile struct {
 // the cache adds to the shared, noeviction Redis instance.
 const defaultLLMCacheTTL = time.Hour
 
+// defaultPRPollInterval paces the PR-outcome reconciler; one minute keeps the
+// proposal table at most one poll behind GitHub without pressuring rate limits.
+const defaultPRPollInterval = time.Minute
+
 // Load reads configuration from env vars, recording missing/invalid required
 // values on v so main can fail fast with a complete list.
 func Load(v *pkgconfig.Validator) Config {
@@ -78,6 +87,7 @@ func Load(v *pkgconfig.Validator) Config {
 		LLMCacheTTL:        pkgconfig.EnvDurationOrDefault("LLM_CACHE_TTL", defaultLLMCacheTTL),
 		GitHubToken:        pkgconfig.EnvOrDefault("GITHUB_TOKEN", ""),
 		GitHubBaseURL:      pkgconfig.EnvOrDefault("GITHUB_BASE_URL", "https://api.github.com"),
+		PRPollInterval:     pkgconfig.EnvDurationOrDefault("REMEDIATION_PR_POLL_INTERVAL", defaultPRPollInterval),
 		HTTPPort:           pkgconfig.EnvOrDefault("REMEDIATION_AGENT_HTTP_PORT", "8092"),
 		GRPCPort:           pkgconfig.EnvOrDefault("REMEDIATION_AGENT_GRPC_PORT", "50054"),
 		MaxAttempts:        pkgconfig.EnvIntOrDefault("REMEDIATION_AGENT_MAX_ATTEMPTS", 3),
@@ -101,6 +111,9 @@ func Load(v *pkgconfig.Validator) Config {
 	// cache's memory self-bounding, so clamp it back to the default.
 	if cfg.LLMCacheTTL <= 0 {
 		cfg.LLMCacheTTL = defaultLLMCacheTTL
+	}
+	if cfg.PRPollInterval <= 0 {
+		cfg.PRPollInterval = defaultPRPollInterval
 	}
 	cfg.ServiceRepoPaths = loadServiceRepos(cfg.ServiceRepoMapPath)
 	return cfg
