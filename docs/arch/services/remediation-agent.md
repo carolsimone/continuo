@@ -12,7 +12,7 @@ Postgres database `continuo_remediation_agent`. Tables:
 
 | Table | Purpose |
 |---|---|
-| `proposal` | One row per attempt. Records `source` (`validation`, `compile`, or `seed_build`), `release_id`, `node_id`, `error_signature`, `attempt`, `status`, `confidence`, `rationale`, `proposed_sql_uri`, `diff_uri`, `source_resolved`, `model`, `created_at`, and source-location columns (`repo`, `commit_sha`, `file_path` — populated when `source_resolved=true`). `status` lifecycle: a row is written `generating` (in flight, just before the model is called) and then finalized to one terminal state — `proposed`, `skipped`, `failed`, or `escalated`. `candidate_fix_sql_uri`/`candidate_fix_diff_uri` are populated only for `validation` proposals (the Step-1 fix applied to the pre-compiled candidate SQL); always empty for `compile`/`seed_build`, which have no candidate SQL. PR-tracking columns: `pr_url`, `pr_number`, `pr_state` (lifecycle: `'' → opening → open` or `failed`), `pr_opened_at`, `pr_opened_by`. Unique on `(release_id, source, node_id, attempt)`; the terminal write upserts on this key so it finalizes the in-flight generating row. A secondary index on `(source, node_id, error_signature)` supports the attempt-count lookup, which counts terminal rows only (`status <> 'generating'`). |
+| `proposal` | One row per attempt. Records `source` (`validation`, `compile`, or `seed_build`), `release_id`, `node_id`, `error_signature`, `attempt`, `status`, `confidence`, `rationale`, `proposed_sql_uri`, `diff_uri`, `source_resolved`, `model`, `created_at`, and source-location columns (`repo`, `commit_sha`, `file_path` — populated when `source_resolved=true`). `status` lifecycle: a row is written `generating` (in flight, just before the model is called) and then finalized to one terminal state — `proposed`, `skipped`, `failed`, or `escalated`. `candidate_fix_sql_uri`/`candidate_fix_diff_uri` are populated only for `validation` proposals (the Step-1 fix applied to the pre-compiled candidate SQL); always empty for `compile`/`seed_build`, which have no candidate SQL. PR-tracking columns: `pr_url`, `pr_number`, `pr_state`, `pr_opened_at`, `pr_opened_by`, `pr_closed_at`. `pr_state` lifecycle: `'' → opening → open → merged | rejected`, with `opening → failed` as a retryable error path; `merged` and `rejected` are terminal. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked — the reconciler only watches `open` rows. Unique on `(release_id, source, node_id, attempt)`; the terminal write upserts on this key so it finalizes the in-flight generating row. A secondary index on `(source, node_id, error_signature)` supports the attempt-count lookup, which counts terminal rows only (`status <> 'generating'`). |
 | `remediation_agent_outbox` | Transactional outbox; one row per `remediation.proposed:v1` trigger, drained by the outbox publisher. Status: `pending`, `processed`, `failed`. |
 | `message_processing` | Shared shape consumed by `pkg/messageprocessing`; FK target of `remediation_agent_outbox.message_processing_id`. |
 
@@ -45,7 +45,8 @@ Exposes proposal data and the PR lifecycle to ui-service. Handlers are thin and 
 | Stream | Consumed by | Emitted when |
 |---|---|---|
 | `remediation.proposed:v1` | (approval surface) | The dispatched `Fixer` produces a `status=proposed` outcome for the node (validation, compile, or seed_build). |
-| `remediation.pr_opened:v1` | (no consumer; audit seam for future close-loop) | `RecordPullRequest` is called; payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `opened_by`, `opened_at`. |
+| `remediation.pr_opened:v1` | (no consumer; audit seam) | `RecordPullRequest` is called; payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `opened_by`, `opened_at`. |
+| `remediation.pr_closed:v1` | (no consumer; audit seam) | The PR-outcome reconciler observes a terminal GitHub PR state and `RecordOutcome` performs the CAS `open → merged | rejected`; payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `outcome` (`merged` or `rejected`), `closed_at` (RFC 3339). `event_id` is a deterministic SHA1 UUID keyed on `release_id|node_id|attempt`, distinct from the `pr_opened` id derived from the same triple. |
 
 All events are written to `remediation_agent_outbox` inside the same transaction as the `proposal` row insert and published with a deterministic `event_id` for consumer-side dedup.
 
@@ -69,6 +70,14 @@ The `{path}` for the offending file is formed by joining the owning service's `r
 `ReadFile` itself always returns the same shape of error (`ErrSourceNotFound` on 404, a wrapped error otherwise); how a caller reacts differs by class. The compile and seed fixers treat their offending-file read as load-bearing: a 404 is a definitive skip, any other error is transient and the trigger is redelivered. The compile fixer's extra context reads (co-located `.yml`/`.yaml` files, `dbt_project.yml`, via `ListDir`) swallow every error, including 404s, since that context is optional. Validation's Step-2 real-source read is best-effort at a higher level: any error there — 404 or otherwise — degrades silently to the Step-1 candidate proposal rather than causing a retry, because Step 1 already produced a usable (if lower-fidelity) result.
 
 `GITHUB_TOKEN` is injected at deploy time from the chart-managed secret `continuo-app-credentials` (key `GITHUB_TOKEN`, sourced from `global.github.token` in Helm values). No out-of-band secret mechanism is used.
+
+### Outbound HTTP — GitHub Pulls API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /repos/{repo}/pulls/{number}` | Read-only fetch of one pull request's current state, used by the PR-outcome reconciler. `Accept: application/vnd.github+json`. Authenticated the same way as the Contents API calls above. Any non-2xx response (including 404) is an error: the caller leaves the proposal untouched and retries on the next reconcile pass. On success, `state="closed"` with `merged=true` maps to outcome `merged`; `state="closed"` with `merged=false` maps to outcome `rejected`; `state="open"` is not yet actionable and the row is left for a later pass. |
+
+This is the only GitHub write-adjacent surface remediation-agent reads from besides source files; the request is still a GET, so GitHub access remains exclusively read-only.
 
 ## Data Flow
 
@@ -359,7 +368,7 @@ For each `(source, node_id, error_signature)` triple the service enforces a cap 
 - Create GitHub pull requests or open code review branches. PR creation is performed by ui-service, which holds the GitHub App write credential.
 - Write to, commit to, or push any git repository. GitHub access is read-only.
 - Auto-apply or merge any proposed SQL change.
-- Track PR state beyond `open` (merged/closed webhook/polling is out of scope for this service).
+- Merge, close, or comment on any pull request; the reconciler only reads PR status via GitHub's Pulls API. It observes GitHub's own merge/close decision, made by human reviewers, and mirrors it onto `pr_state`.
 - Track whether a proposal was accepted or resulted in a passing release.
 
 All code-change decisions — review, approval, and PR creation — are human actions.
@@ -369,7 +378,8 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Loop | Description |
 |---|---|
 | `remediation.requested:v1` consumer | Dispatches each inbound message to the `ProposeFix` handler. |
-| Outbox publisher | Drains `remediation_agent_outbox` and XADDs each pending row to `remediation.proposed:v1` or `remediation.pr_opened:v1` depending on the row's stream field. |
+| Outbox publisher | Drains `remediation_agent_outbox` and XADDs each pending row to `remediation.proposed:v1`, `remediation.pr_opened:v1`, or `remediation.pr_closed:v1` depending on the row's stream field. |
+| PR-outcome reconciler | Ticks every `REMEDIATION_PR_POLL_INTERVAL` (default 60s). Each pass lists up to 50 proposals with `pr_state='open'`, oldest-opened first; for each it calls `GET /repos/{repo}/pulls/{number}` (GitHub Pulls API) and maps a merged PR to `merged` and a closed-unmerged PR to `rejected`. A closed PR calls `Service.RecordOutcome`, which performs the single-winner CAS `pr_state: open → merged|rejected` and enqueues the `remediation.pr_closed:v1` outbox row in one transaction; a CAS miss (the row already left `open`) is a no-op. Per-row errors (a failed GitHub read or a failed `RecordOutcome`) are logged and skipped — one bad row never blocks the rest of the batch — and are retried on the next pass. |
 
 ## Configuration Reference
 
@@ -395,6 +405,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `REMEDIATION_AGENT_HTTP_PORT` | no | `8092` | `/healthz` port |
 | `REMEDIATION_AGENT_GRPC_PORT` | no | `50054` | `RemediationProposals` gRPC server port |
 | `REMEDIATION_AGENT_MAX_ATTEMPTS` | no | `3` | Per-`(source, node_id, error_signature)` attempt cap |
+| `REMEDIATION_PR_POLL_INTERVAL` | no | `1m` | Interval between PR-outcome reconciler passes (Go duration). A non-positive value falls back to the default. |
 
 ## Key Code Paths
 
@@ -402,19 +413,21 @@ All code-change decisions — review, approval, and PR creation — are human ac
 |---|---|
 | Proposal entity + unified diff | `remediation-agent/domain/proposal/proposal.go` |
 | Prompt assembly (validation candidate + real-source, compile, seed) | `remediation-agent/domain/prompt/prompt.go` (`Assemble`, `AssembleSourceFix`, `AssembleCompileFix`, `AssembleSeedFix`) |
-| Event payloads + deterministic IDs | `remediation-agent/domain/event/` (proposed + pr_opened) |
+| Event payloads + deterministic IDs | `remediation-agent/domain/event/` (proposed, pr_opened, pr_closed) |
 | Shared driver — attempt cap, dedup, persistence, outbox emit (each Fixer fetches its own dbt log) | `remediation-agent/service/handlers/propose_fix.go` |
 | Per-error-class fixers — `Fixer` interface, `For` factory, shared single-shot pipeline | `remediation-agent/service/fixer/fixer.go` |
 | Compile fixer (offending file + co-located YAML/`dbt_project.yml` context, one LLM call) | `remediation-agent/service/fixer/compile.go` |
 | Seed fixer (CSV read, one LLM call) | `remediation-agent/service/fixer/seed.go` |
 | Validation fixer (two-step candidate + real-source flow) | `remediation-agent/service/fixer/validation.go` |
-| PR lifecycle application service (claim/record/fail + outbox) | `remediation-agent/service/` |
+| PR lifecycle application service (claim/record/fail/record-outcome + outbox) | `remediation-agent/service/proposals/service.go` |
+| PR-outcome reconciler loop | `remediation-agent/service/proposals/reconciler.go` |
 | Port interfaces | `remediation-agent/service/ports/` |
-| Postgres UoW + proposal repo (incl. CAS for BeginPR) | `remediation-agent/adapters/postgres/` |
+| Postgres UoW + proposal repo (incl. CAS for BeginPR and RecordPROutcome, open-PR listing) | `remediation-agent/adapters/postgres/` |
 | S3 evidence reader + artifact writer | `remediation-agent/adapters/s3/` |
 | gRPC ancestry client | `remediation-agent/adapters/grpc/ancestry_client.go` |
 | gRPC `RemediationProposals` server | `remediation-agent/adapters/grpc/server.go` |
 | GitHub read-only source reader (file read + directory list) | `remediation-agent/adapters/github/source_reader.go` |
+| GitHub read-only PR status reader (Pulls API) | `remediation-agent/adapters/github/pr_status.go` |
 | Service→repo map config loader | `remediation-agent/config.go` (reads `SERVICE_REPO_MAP_PATH`, parses `service_repos.yaml`) |
 | Service→repo map file (dev + e2e) | `remediation-agent/config/service_repos.yaml` |
 | Service→repo map file (Helm chart) | `deploy/app/files/service_repos.yaml` (rendered into `continuo-app-service-repos` ConfigMap, mounted at `/etc/continuo`) |

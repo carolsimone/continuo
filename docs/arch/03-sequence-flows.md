@@ -520,7 +520,7 @@ sequenceDiagram
 
 ## 12. Human-Gated Create PR (Remediation Surface)
 
-An operator reviews a fix proposal in the Remediation tab and clicks **Create PR**. ui-service orchestrates the claim, GitHub PR creation, and result recording; remediation-agent enforces single-winner idempotency.
+An operator reviews a fix proposal in the Remediation tab and clicks **Create PR**. ui-service orchestrates the claim, GitHub PR creation, and result recording; remediation-agent enforces single-winner idempotency. The PR's eventual close is then mirrored back onto the proposal by a background reconciler, independent of ui-service.
 
 ```mermaid
 sequenceDiagram
@@ -568,7 +568,40 @@ sequenceDiagram
   end
 ```
 
-> The deterministic branch name and the GitHub-level "PR already exists for head" guard together make the full flow safe to retry: a double-click or browser reload issues a second `BeginPullRequest`, which — if the first already reached `opening`/`open` — short-circuits with the existing `pr_url` before touching GitHub again. `FailPullRequest` resets `pr_state` to `failed` so a subsequent click by the same or a different operator can retry cleanly. The `remediation.pr_opened:v1` outbox event is an audit seam for future close-loop or notification consumers; none are wired today.
+> The deterministic branch name and the GitHub-level "PR already exists for head" guard together make the full flow safe to retry: a double-click or browser reload issues a second `BeginPullRequest`, which — if the first already reached `opening`/`open` — short-circuits with the existing `pr_url` before touching GitHub again. `FailPullRequest` resets `pr_state` to `failed` so a subsequent click by the same or a different operator can retry cleanly. The `remediation.pr_opened:v1` outbox event is an audit seam; no consumer is wired to it.
+
+### 12a. PR-Outcome Reconciler (Close-Loop Tail)
+
+Independent of the operator-driven flow above, a background loop in remediation-agent polls GitHub for every proposal whose `pr_state='open'` and mirrors the terminal outcome back onto the row.
+
+```mermaid
+sequenceDiagram
+  participant RA as remediation-agent (reconciler)
+  participant GH as GitHub Pulls API
+  participant PG as remediation-agent Postgres
+
+  loop every REMEDIATION_PR_POLL_INTERVAL (default 60s)
+    RA->>PG: ListOpenPullRequests(limit=50) -- pr_state='open', oldest-opened first
+    loop each open-PR row
+      RA->>GH: GET /repos/{repo}/pulls/{number}
+      alt PR still open
+        GH-->>RA: state=open
+        Note over RA: leave row untouched; retried next pass
+      else PR closed
+        GH-->>RA: state=closed, merged=<bool>, closed_at
+        Note over RA: outcome = merged if merged=true else rejected
+        RA->>PG: RecordOutcome(id, outcome, closed_at) -- 1 tx:<br/>CAS pr_state 'open' -> outcome<br/>INSERT remediation_agent_outbox (remediation.pr_closed:v1, pointer-only)
+        alt CAS hit (row was still 'open')
+          Note over PG: pr_state=outcome, pr_closed_at=closed_at; outbox row committed
+        else CAS miss (row already left 'open')
+          Note over PG: no-op -- nothing written, no event emitted
+        end
+      end
+    end
+  end
+```
+
+> Per-row errors — a failed GitHub read or a failed `RecordOutcome` — are logged and skipped so one bad row never blocks the rest of the batch; that row is retried on the next pass. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked: the reconciler only lists `pr_state='open'` rows, so a terminal row is never re-examined. The outbox publisher drains the `remediation.pr_closed:v1` row on its own loop, same as every other outbox entry; there is no consumer for the stream today — it is an audit seam.
 
 ## Why These Diagrams Are Not Enough On Their Own
 
