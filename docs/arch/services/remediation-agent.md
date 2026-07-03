@@ -4,7 +4,7 @@
 
 `remediation-agent` acts on healable failures surfaced by the `remediation` classifier, across all three failure sources: `validation`, `compile`, and `seed_build`. It consumes `remediation.requested:v1` — one trigger per failing dbt node — and produces a fix proposal. A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, persistence, and the outbox emit; it dispatches each trigger to a per-error-class `Fixer` that decides which source files to read, whether it needs the dbt log (each class fetches and sanitizes it itself, only when needed), which prompt to send, and how to interpret the model's answer. Validation failures carry a pre-compiled candidate SQL and use a two-step LLM flow (candidate diagnosis, then real-source fix). Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. For each successful proposal the driver enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
-**Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (`GetNodeAncestry`, port 50052), and the GitHub Contents API (read-only).
+**Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (`GetNodeAncestry`, port 50052), and GitHub, exclusively via read-only GETs against the Contents API (source file/directory reads) and the Pulls API (PR status polling for the reconciler).
 
 ## Owned Storage
 
@@ -13,7 +13,7 @@ Postgres database `continuo_remediation_agent`. Tables:
 | Table | Purpose |
 |---|---|
 | `proposal` | One row per attempt. Records `source` (`validation`, `compile`, or `seed_build`), `release_id`, `node_id`, `error_signature`, `attempt`, `status`, `confidence`, `rationale`, `proposed_sql_uri`, `diff_uri`, `source_resolved`, `model`, `created_at`, and source-location columns (`repo`, `commit_sha`, `file_path` — populated when `source_resolved=true`). `status` lifecycle: a row is written `generating` (in flight, just before the model is called) and then finalized to one terminal state — `proposed`, `skipped`, `failed`, or `escalated`. `candidate_fix_sql_uri`/`candidate_fix_diff_uri` are populated only for `validation` proposals (the Step-1 fix applied to the pre-compiled candidate SQL); always empty for `compile`/`seed_build`, which have no candidate SQL. PR-tracking columns: `pr_url`, `pr_number`, `pr_state`, `pr_opened_at`, `pr_opened_by`, `pr_closed_at`. `pr_state` lifecycle: `'' → opening → open → merged | rejected`, with `opening → failed` as a retryable error path; `merged` and `rejected` are terminal. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked — the reconciler only watches `open` rows. Unique on `(release_id, source, node_id, attempt)`; the terminal write upserts on this key so it finalizes the in-flight generating row. A secondary index on `(source, node_id, error_signature)` supports the attempt-count lookup, which counts terminal rows only (`status <> 'generating'`). |
-| `remediation_agent_outbox` | Transactional outbox; one row per `remediation.proposed:v1` trigger, drained by the outbox publisher. Status: `pending`, `processed`, `failed`. |
+| `remediation_agent_outbox` | Transactional outbox; one row per emitted event (`remediation.proposed:v1`, `remediation.pr_opened:v1`, or `remediation.pr_closed:v1`), drained by the outbox publisher. Status: `pending`, `processed`, `failed`. |
 | `message_processing` | Shared shape consumed by `pkg/messageprocessing`; FK target of `remediation_agent_outbox.message_processing_id`. |
 
 The `proposal` table records one row per attempt: it is written `generating` when the model call begins and finalized in place to a terminal outcome. All terminal outcomes — proposed, escalations, skips, and LLM failures — are recorded so the full attempt history is queryable.
@@ -405,7 +405,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `REMEDIATION_AGENT_HTTP_PORT` | no | `8092` | `/healthz` port |
 | `REMEDIATION_AGENT_GRPC_PORT` | no | `50054` | `RemediationProposals` gRPC server port |
 | `REMEDIATION_AGENT_MAX_ATTEMPTS` | no | `3` | Per-`(source, node_id, error_signature)` attempt cap |
-| `REMEDIATION_PR_POLL_INTERVAL` | no | `1m` | Interval between PR-outcome reconciler passes (Go duration). A non-positive value falls back to the default. |
+| `REMEDIATION_PR_POLL_INTERVAL` | no | `60s` | Interval between PR-outcome reconciler passes (Go duration). A non-positive value falls back to the default. |
 
 ## Key Code Paths
 
@@ -437,4 +437,4 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Redis LLM response cache adapter | `remediation-agent/adapters/redis/llm_response_cache.go` |
 | Pass-through log sanitizer | `remediation-agent/adapters/sanitizer/passthrough.go` |
 | Redis consumer + outbox publisher | `remediation-agent/adapters/redis/` |
-| DB migrations | `db/migration/remediation_agent/V1__init_remediation_agent.sql`, `V2__source_fix.sql` |
+| DB migrations | `db/migration/remediation_agent/` (`V1__init_remediation_agent.sql` through `V7__pr_close_loop.sql`, including `V3__pr_creation.sql` for the PR-tracking columns and `V6__add_generating_proposal_status.sql` for the in-flight `generating` status) |
