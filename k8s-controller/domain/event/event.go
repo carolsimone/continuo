@@ -1,21 +1,5 @@
 package event
 
-import (
-	"fmt"
-	"math"
-)
-
-// ToInt32 converts a domain retry-count int to the int32 used by the
-// pkg/events wire structs. Retry counts are always small (bounded by the
-// configured max-retries budget), but this guards against a corrupt or
-// negative value silently wrapping when it crosses onto the wire.
-func ToInt32(n int, field string) (int32, error) {
-	if n < 0 || n > math.MaxInt32 {
-		return 0, fmt.Errorf("%s value %d overflows int32", field, n)
-	}
-	return int32(n), nil
-}
-
 // EventTypeValidationNodeCompleted is the canonical outbox event_type string for
 // the validation.node.completed:v1 per-node event. Defined in the domain package
 // so both the emit site (service/handlers) and the publisher adapter

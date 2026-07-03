@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"math"
 
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
+	"github.com/carolsimone/continuo/pkg/num"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -104,21 +104,6 @@ func clampOffset(requested int32) int {
 	return int(requested)
 }
 
-// toInt32 bounds-checks a domain int (a Neo4j/Postgres row count or an
-// ancestry-walk depth already capped by maxAncestryDepth) before narrowing it
-// to the proto wire type. None of these can realistically overflow, but this
-// clamps defensively instead of trusting that invariant silently.
-func toInt32(n int) int32 {
-	switch {
-	case n > math.MaxInt32:
-		return math.MaxInt32
-	case n < math.MinInt32:
-		return math.MinInt32
-	default:
-		return int32(n)
-	}
-}
-
 func (h *QueryHandler) ListRuns(ctx context.Context, req *orchestratorv1.ListRunsRequest) (*orchestratorv1.ListRunsResponse, error) {
 	if req.ScheduleName == "" {
 		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
@@ -132,7 +117,7 @@ func (h *QueryHandler) ListRuns(ctx context.Context, req *orchestratorv1.ListRun
 	}
 	resp := &orchestratorv1.ListRunsResponse{
 		Runs:       make([]*orchestratorv1.RunSummary, 0, len(runs)),
-		TotalCount: toInt32(total),
+		TotalCount: num.ClampInt32(total),
 	}
 	for _, r := range runs {
 		resp.Runs = append(resp.Runs, &orchestratorv1.RunSummary{
@@ -205,7 +190,7 @@ func (h *QueryHandler) ListScheduleTopologies(ctx context.Context, _ *orchestrat
 	for _, s := range summaries {
 		item := &orchestratorv1.ScheduleTopologySummary{
 			ScheduleName: s.ScheduleName,
-			NodeCount:    toInt32(s.NodeCount),
+			NodeCount:    num.ClampInt32(s.NodeCount),
 		}
 		if !s.LastUpdatedAt.IsZero() {
 			item.LastUpdatedAt = timestamppb.New(s.LastUpdatedAt)
@@ -250,7 +235,7 @@ func domainToProtoAncestor(a *domain.NodeAncestor) *orchestratorv1.AncestorNode 
 		TableName:     a.TableName,
 		ServiceName:   a.ServiceName,
 		NodeType:      a.NodeType,
-		Depth:         toInt32(a.Depth),
+		Depth:         num.ClampInt32(a.Depth),
 		LastCommitSha: a.LastCommitSHA,
 		LastRepo:      a.LastRepo,
 		LastReleaseId: a.LastReleaseID,

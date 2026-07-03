@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -66,11 +67,11 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		// node.deployed:v1 carries a typed JSON payload (pkg/events.NodeDeployed);
 		// outbox_entry_id is added as a flat sibling by Publish for dedup.
-		taskRetryCount, err := event.ToInt32(e.TaskRetryCount, "task_retry_count")
+		taskRetryCount, err := num.Int32(e.TaskRetryCount, "task_retry_count")
 		if err != nil {
 			return nil, fmt.Errorf("node.deployed payload: %w", err)
 		}
-		maxRetries, err := event.ToInt32(e.MaxRetries, "max_retries")
+		maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
 		if err != nil {
 			return nil, fmt.Errorf("node.deployed payload: %w", err)
 		}

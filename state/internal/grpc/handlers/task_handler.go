@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
@@ -135,7 +136,7 @@ func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksReque
 
 	return &statev1.ListTasksResponse{
 		Tasks:      protoTasks,
-		TotalCount: toInt32(total),
+		TotalCount: num.ClampInt32(total),
 	}, nil
 }
 
@@ -194,8 +195,8 @@ func domainToProtoTask(t *postgres.TaskTracker) *statev1.Task {
 		TableName:   t.TableName,
 		JobName:     t.JobName,
 		Status:      domainToProtoTaskStatus(t.Status),
-		RetryCount:  toInt32(t.RetryCount),
-		MaxRetries:  toInt32(t.MaxRetries),
+		RetryCount:  num.ClampInt32(t.RetryCount),
+		MaxRetries:  num.ClampInt32(t.MaxRetries),
 	}
 
 	if t.CancelledAt != nil {

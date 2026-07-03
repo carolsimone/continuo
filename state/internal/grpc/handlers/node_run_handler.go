@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"google.golang.org/grpc/codes"
@@ -54,7 +55,7 @@ func (h *NodeRunHandler) ListNodeRuns(
 			TerminalStatus:  string(r.TerminalStatus),
 			TaskId:          r.TaskID.String(),
 			TaskStatus:      string(r.TaskStatus),
-			RetryCount:      toInt32(r.RetryCount),
+			RetryCount:      num.ClampInt32(r.RetryCount),
 			ImageTag:        r.ImageTag,
 			ManifestVersion: r.ManifestVersion,
 			CreatedAt:       r.CreatedAt.UTC().Format(time.RFC3339),
@@ -97,16 +98,16 @@ func (h *NodeRunHandler) ListNodes(
 			ServiceName:    r.ServiceName,
 			SchemaName:     r.SchemaName,
 			TableName:      r.TableName,
-			RunCount:       toInt32(r.RunCount),
-			SuccessRatePct: toInt32(r.SuccessRatePct),
-			AvgDurationSec: toInt32(r.AvgDurationSec),
-			P95DurationSec: toInt32(r.P95DurationSec),
-			FlakyRatePct:   toInt32(r.FlakyRatePct),
+			RunCount:       num.ClampInt32(r.RunCount),
+			SuccessRatePct: num.ClampInt32(r.SuccessRatePct),
+			AvgDurationSec: num.ClampInt32(r.AvgDurationSec),
+			P95DurationSec: num.ClampInt32(r.P95DurationSec),
+			FlakyRatePct:   num.ClampInt32(r.FlakyRatePct),
 			LastStatus:     r.LastStatus,
 			LastRunAt:      r.LastRunAt.UTC().Format(time.RFC3339),
 		})
 	}
-	return &statev1.ListNodesResponse{Nodes: out, TotalCount: toInt32(total)}, nil
+	return &statev1.ListNodesResponse{Nodes: out, TotalCount: num.ClampInt32(total)}, nil
 }
 
 // ListNodeNames returns distinct node table names for the search autocomplete.

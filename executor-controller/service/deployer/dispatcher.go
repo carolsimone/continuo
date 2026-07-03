@@ -18,6 +18,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -514,7 +515,7 @@ func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxR
 
 func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	cmd := dep.Command()
-	retryCount, err := event.ToInt32(cmd.TaskRetryCount, "task_retry_count")
+	retryCount, err := num.Int32(cmd.TaskRetryCount, "task_retry_count")
 	if err != nil {
 		return fmt.Errorf("write FAILED task_status announcement: %w", err)
 	}

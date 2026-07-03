@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
-	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -101,7 +101,7 @@ func buildCheckJobStatus(f checkJobFields, defaultMaxRetries int) (command.Check
 
 	maxRetries := f.maxRetries
 	if maxRetries <= 0 {
-		converted, err := event.ToInt32(defaultMaxRetries, "default_max_retries")
+		converted, err := num.Int32(defaultMaxRetries, "default_max_retries")
 		if err != nil {
 			return command.CheckJobStatus{}, err
 		}

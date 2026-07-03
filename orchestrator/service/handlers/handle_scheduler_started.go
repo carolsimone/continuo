@@ -10,6 +10,7 @@ import (
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/num"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 
@@ -275,7 +276,7 @@ func (h *HandleSchedulerStartedHandler) buildRunEntriesDispatchedPayload(
 		ScheduleID:     evt.ScheduleID.String(),
 		ScheduleName:   evt.ScheduleName,
 		AllTasks:       allTasks,
-		TotalTaskCount: toInt32(len(allTasks)),
+		TotalTaskCount: num.ClampInt32(len(allTasks)),
 	}
 
 	return json.Marshal(dispatched)

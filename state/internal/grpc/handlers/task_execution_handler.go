@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
@@ -68,7 +69,7 @@ func (h *TaskExecutionHandler) ListTaskExecutions(ctx context.Context, req *stat
 
 	return &statev1.ListTaskExecutionsResponse{
 		TaskExecutions: protoExecs,
-		TotalCount:     toInt32(total),
+		TotalCount:     num.ClampInt32(total),
 	}, nil
 }
 

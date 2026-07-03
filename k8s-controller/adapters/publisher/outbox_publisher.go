@@ -9,6 +9,7 @@ import (
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -89,11 +90,11 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		// The typed event travels in the JSON payload; check_after stays a flat
 		// field so the binding's delay gate can read it without decoding the
 		// payload, and so re-circulated copies preserve the schedule.
-		retryCount, err := event.ToInt32(e.RetryCount, "retry_count")
+		retryCount, err := num.Int32(e.RetryCount, "retry_count")
 		if err != nil {
 			return nil, fmt.Errorf("check.k8s payload: %w", err)
 		}
-		maxRetries, err := event.ToInt32(e.MaxRetries, "max_retries")
+		maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
 		if err != nil {
 			return nil, fmt.Errorf("check.k8s payload: %w", err)
 		}

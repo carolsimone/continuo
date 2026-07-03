@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"math"
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -284,22 +284,7 @@ func (r *taskTrackerRepository) SetStatusAndAttemptTx(ctx context.Context, tx *s
 	if err != nil {
 		return 0, err
 	}
-	return int64ToInt32(n), nil
-}
-
-// int64ToInt32 bounds-checks a RowsAffected count before narrowing it to the
-// int32 the aggregate expects. A single UPDATE keyed by task_id affects at
-// most one row in practice, but this clamps defensively instead of trusting
-// that invariant silently.
-func int64ToInt32(n int64) int32 {
-	switch {
-	case n > math.MaxInt32:
-		return math.MaxInt32
-	case n < math.MinInt32:
-		return math.MinInt32
-	default:
-		return int32(n)
-	}
+	return num.ClampInt32(n), nil
 }
 
 // LoadStatusAndAttemptTx returns the current status and retry_count of the
