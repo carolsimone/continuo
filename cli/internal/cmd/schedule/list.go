@@ -73,7 +73,7 @@ Errors:
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 
 			resp, err := c.ListAllSchedules(ctx)
 			if err != nil {
