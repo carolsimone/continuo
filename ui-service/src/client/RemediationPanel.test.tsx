@@ -141,4 +141,34 @@ describe('RemediationPanel', () => {
     expect(screen.getByRole('button', { name: /view/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /open full ↗/i })).toBeInTheDocument();
   });
+
+  it('renders a merged chip for a proposal whose PR was merged', async () => {
+    const proposal = makeProposal({
+      pr_state: 'merged',
+      pr_url: 'https://github.com/org/repo/pull/7',
+      pr_number: 7,
+      pr_closed_at: '2026-07-03T10:00:00Z',
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    const chip = await screen.findByText('merged');
+    expect(chip).toHaveClass('pr-chip', 'pr-chip--merged');
+  });
+
+  it('renders a rejected chip for a proposal whose PR was closed without merge', async () => {
+    const proposal = makeProposal({
+      pr_state: 'rejected',
+      pr_url: 'https://github.com/org/repo/pull/7',
+      pr_number: 7,
+      pr_closed_at: '2026-07-03T10:00:00Z',
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    const chip = await screen.findByText('rejected');
+    expect(chip).toHaveClass('pr-chip', 'pr-chip--rejected');
+  });
 });

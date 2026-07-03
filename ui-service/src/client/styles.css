@@ -1041,3 +1041,19 @@ body {
 .detail-card__row {
   margin-bottom: 12px;
 }
+
+.pr-chip {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+.pr-chip--merged {
+  background: #dcfce7;
+  color: #15803d;
+}
+.pr-chip--rejected {
+  background: #fee2e2;
+  color: #dc2626;
+}
