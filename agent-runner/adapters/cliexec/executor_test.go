@@ -31,7 +31,7 @@ for a in "$@"; do
 done
 echo "{\"argv\":\"$*\"}"
 `
-	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755)) //nolint:gosec // G306: must be executable to run as the fake CLI under test.
 	return path
 }
 
@@ -43,7 +43,7 @@ func stderrCLI(t *testing.T) string {
 echo "something went wrong on stderr" >&2
 exit 1
 `
-	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755)) //nolint:gosec // G306: must be executable to run as the fake CLI under test.
 	return path
 }
 

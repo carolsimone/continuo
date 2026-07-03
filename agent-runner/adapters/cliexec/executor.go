@@ -121,7 +121,12 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 
 	cctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, e.cliPath, argv...)
+	// G204: argv is not an arbitrary tainted string. Checks 1-3 above already
+	// enforced that call.Name resolves to a catalogued tool, that call.Args
+	// contains only known/required parameters, and that no value can start
+	// with '-' (so it can never be smuggled in as a flag). e.cliPath is our
+	// own trusted continuo binary, and there is no shell in this call chain.
+	cmd := exec.CommandContext(cctx, e.cliPath, argv...) //nolint:gosec // G204: validated argv, direct execve, no shell.
 	// A nil env intentionally inherits the parent process environment; the
 	// continuo CLI is our own trusted binary and needs PATH plus the
 	// CONTINUO_* address vars that main injects.

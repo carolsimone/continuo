@@ -97,7 +97,7 @@ func (p *Provider) StreamTurn(ctx context.Context, req ports.TurnRequest, onDelt
 	if err != nil {
 		return nil, fmt.Errorf("openai: http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
