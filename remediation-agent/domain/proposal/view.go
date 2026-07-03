@@ -30,6 +30,8 @@ type View struct {
 	PrState    string
 	PrOpenedAt *time.Time
 	PrOpenedBy string
+	// PrClosedAt is when GitHub closed the PR; nil while pr_state is not terminal.
+	PrClosedAt *time.Time
 }
 
 // PRClaim carries the data needed to open a GitHub pull-request for a proposal
@@ -50,4 +52,25 @@ type PRClaim struct {
 	Model          string
 	// Branch is populated by the caller of BeginPR, not from the DB.
 	Branch string
+}
+
+// PROutcome is a terminal pull-request outcome mirrored from GitHub.
+type PROutcome string
+
+const (
+	// PROutcomeMerged marks a PR that GitHub reports closed with merged=true.
+	PROutcomeMerged PROutcome = "merged"
+	// PROutcomeRejected marks a PR closed on GitHub without being merged.
+	PROutcomeRejected PROutcome = "rejected"
+)
+
+// OpenPR identifies a proposal whose opened pull request awaits a terminal
+// outcome; it carries exactly the fields the PR reconciler needs.
+type OpenPR struct {
+	ID        string
+	Repo      string
+	PRNumber  int
+	ReleaseID string
+	NodeID    string
+	Attempt   int
 }

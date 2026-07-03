@@ -41,6 +41,11 @@ type fakeRepo struct {
 		openedBy string
 		openedAt time.Time
 	}
+	// RecordPROutcome capture
+	lastOutcome   proposal.PROutcome
+	lastClosedAt  time.Time
+	outcomeCASHit bool
+	openPRs       []proposal.OpenPR
 }
 
 func (r *fakeRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error) { return 0, nil }
@@ -70,6 +75,14 @@ func (r *fakeRepo) RecordPR(_ context.Context, id, prURL string, prNumber int, o
 	return nil
 }
 func (r *fakeRepo) FailPR(_ context.Context, _ string) error { return nil }
+func (r *fakeRepo) ListOpenPullRequests(_ context.Context, _ int) ([]proposal.OpenPR, error) {
+	return r.openPRs, nil
+}
+func (r *fakeRepo) RecordPROutcome(_ context.Context, _ string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
+	r.lastOutcome = outcome
+	r.lastClosedAt = closedAt
+	return r.outcomeCASHit, nil
+}
 
 // fakeUoW is a unit of work backed by the fakeRepo.
 type fakeUoW struct {

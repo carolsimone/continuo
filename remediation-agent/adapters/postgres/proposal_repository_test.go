@@ -684,3 +684,114 @@ func TestList_FilterAwaitingHuman(t *testing.T) {
 	require.Len(t, views, 1)
 	require.Equal(t, "proposed", string(views[0].Status))
 }
+
+// TestRecordPROutcome_CASAndListOpen drives a proposal through
+// open -> merged and verifies: ListOpenPullRequests only surfaces 'open' rows,
+// the CAS fires exactly once, pr_closed_at is persisted, and rows in
+// non-'open' states are never transitioned.
+func TestRecordPROutcome_CASAndListOpen(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	// Seed one proposal and walk it to pr_state='open'.
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "rel-1",
+		NodeID:         "model.p.orders",
+		ErrorSignature: "sig-1",
+		Attempt:        1,
+		Status:         "proposed",
+		SourceResolved: true,
+		Repo:           "acme/dbt-repo",
+		CommitSHA:      "abc123",
+		FilePath:       "models/orders.sql",
+		CreatedAt:      time.Now().UTC(),
+	}
+	require.NoError(t, repo.Upsert(ctx, p))
+	var id string
+	require.NoError(t, db.GetContext(ctx, &id,
+		`SELECT id FROM proposal WHERE release_id='rel-1' AND node_id='model.p.orders'`))
+	_, err := repo.BeginPR(ctx, id, "remediation/rel-1/model-p-orders-attempt1")
+	require.NoError(t, err)
+	openedAt := time.Now().UTC()
+	require.NoError(t, repo.RecordPR(ctx, id, "http://gh/pull/1", 1, "dev", openedAt))
+
+	// The open PR is listed with the fields the reconciler needs.
+	open, err := repo.ListOpenPullRequests(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, open, 1)
+	require.Equal(t, id, open[0].ID)
+	require.Equal(t, "acme/dbt-repo", open[0].Repo)
+	require.Equal(t, 1, open[0].PRNumber)
+	require.Equal(t, "rel-1", open[0].ReleaseID)
+	require.Equal(t, "model.p.orders", open[0].NodeID)
+	require.Equal(t, 1, open[0].Attempt)
+
+	// First CAS fires; second is an idempotent no-op.
+	closedAt := time.Now().UTC().Truncate(time.Microsecond)
+	hit, err := repo.RecordPROutcome(ctx, id, proposal.PROutcomeMerged, closedAt)
+	require.NoError(t, err)
+	require.True(t, hit, "first RecordPROutcome must fire the CAS")
+	hit, err = repo.RecordPROutcome(ctx, id, proposal.PROutcomeRejected, closedAt)
+	require.NoError(t, err)
+	require.False(t, hit, "second RecordPROutcome must be a no-op")
+
+	// The row is terminal 'merged' with pr_closed_at set, and no longer listed.
+	v, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "merged", v.PrState)
+	require.NotNil(t, v.PrClosedAt)
+	require.WithinDuration(t, closedAt, *v.PrClosedAt, time.Second)
+	open, err = repo.ListOpenPullRequests(ctx, 10)
+	require.NoError(t, err)
+	require.Empty(t, open)
+}
+
+// TestRecordPROutcome_RejectedAndNonOpenRows verifies the rejected transition
+// and that rows in '', 'opening', and 'failed' states are never transitioned
+// nor listed.
+func TestRecordPROutcome_RejectedAndNonOpenRows(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	seed := func(node string) string {
+		p := proposal.Proposal{
+			Source: "validation", ReleaseID: "rel-2", NodeID: node,
+			ErrorSignature: "sig", Attempt: 1, Status: "proposed",
+			SourceResolved: true, Repo: "acme/dbt-repo", CreatedAt: time.Now().UTC(),
+		}
+		require.NoError(t, repo.Upsert(ctx, p))
+		var id string
+		require.NoError(t, db.GetContext(ctx, &id,
+			`SELECT id FROM proposal WHERE release_id='rel-2' AND node_id=$1`, node))
+		return id
+	}
+
+	// Row A reaches 'open' then is rejected.
+	a := seed("model.p.a")
+	_, err := repo.BeginPR(ctx, a, "remediation/rel-2/model-p-a-attempt1")
+	require.NoError(t, err)
+	require.NoError(t, repo.RecordPR(ctx, a, "http://gh/pull/2", 2, "dev", time.Now().UTC()))
+	hit, err := repo.RecordPROutcome(ctx, a, proposal.PROutcomeRejected, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, hit)
+	v, err := repo.Get(ctx, a)
+	require.NoError(t, err)
+	require.Equal(t, "rejected", v.PrState)
+
+	// Row B stays in 'opening' (claimed, never recorded): not listed, CAS misses.
+	b := seed("model.p.b")
+	_, err = repo.BeginPR(ctx, b, "remediation/rel-2/model-p-b-attempt1")
+	require.NoError(t, err)
+	open, err := repo.ListOpenPullRequests(ctx, 10)
+	require.NoError(t, err)
+	require.Empty(t, open, "'opening' and 'rejected' rows must not be listed")
+	hit, err = repo.RecordPROutcome(ctx, b, proposal.PROutcomeMerged, time.Now().UTC())
+	require.NoError(t, err)
+	require.False(t, hit, "a non-'open' row must never be transitioned")
+	v, err = repo.Get(ctx, b)
+	require.NoError(t, err)
+	require.Equal(t, "opening", v.PrState)
+}

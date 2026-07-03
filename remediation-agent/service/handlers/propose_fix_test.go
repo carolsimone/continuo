@@ -190,6 +190,14 @@ func (r *fakeProposalRepo) FailPR(_ context.Context, _ string) error {
 	return nil
 }
 
+func (r *fakeProposalRepo) ListOpenPullRequests(_ context.Context, _ int) ([]proposal.OpenPR, error) {
+	return nil, nil
+}
+
+func (r *fakeProposalRepo) RecordPROutcome(_ context.Context, _ string, _ proposal.PROutcome, _ time.Time) (bool, error) {
+	return false, nil
+}
+
 // fakeOutbox satisfies outbox.Repository in memory. Create takes a pointer to
 // match the real pkg/outbox.Repository interface. The read-path and retry
 // methods are no-ops as they are not exercised by ProposeFix.
