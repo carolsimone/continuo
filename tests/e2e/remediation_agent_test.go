@@ -258,6 +258,47 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	require.Equal(t, 1, finalRow.PRNumber, "proposal pr_number must be 1")
 	t.Logf("proposal PR state confirmed: pr_state=%s pr_url=%s pr_number=%d",
 		finalRow.PRState, finalRow.PRUrl, finalRow.PRNumber)
+
+	// (j) Merge the PR in stub-github; the reconciler must observe the merge
+	//     and flip the proposal to the terminal pr_state='merged' with
+	//     pr_closed_at set.
+	var repoName string
+	require.NoError(t, clients.remediationAgentDB.GetContext(ctx, &repoName,
+		`SELECT repo FROM proposal WHERE id = $1`, proposalID))
+	// The e2e suite runs inside the orchestrator container, so stub-github is
+	// reached by its compose service name (the same base URL the
+	// remediation-agent uses via GITHUB_BASE_URL).
+	mergeURL := fmt.Sprintf("http://stub-github:9200/repos/%s/pulls/%d/merge", repoName, finalRow.PRNumber)
+	mergeReq, err := http.NewRequestWithContext(ctx, http.MethodPut, mergeURL, nil)
+	require.NoError(t, err, "build stub merge request")
+	mergeResp, err := (&http.Client{Timeout: 10 * time.Second}).Do(mergeReq)
+	require.NoError(t, err, "PUT %s", mergeURL)
+	defer mergeResp.Body.Close()
+	require.Equal(t, http.StatusOK, mergeResp.StatusCode, "stub merge must succeed")
+
+	var closedRow struct {
+		PRState    string     `db:"pr_state"`
+		PRClosedAt *time.Time `db:"pr_closed_at"`
+	}
+	pollUntil(t, ctx, 60*time.Second, 2*time.Second, func() (bool, error) {
+		err := clients.remediationAgentDB.GetContext(ctx, &closedRow,
+			`SELECT pr_state, pr_closed_at FROM proposal WHERE id = $1`, proposalID)
+		if err != nil {
+			return false, nil
+		}
+		return closedRow.PRState == "merged", nil
+	}, fmt.Sprintf("timeout waiting for proposal %s to reach pr_state='merged'", proposalID))
+	require.NotNil(t, closedRow.PRClosedAt, "pr_closed_at must be set on merge")
+
+	// (k) The terminal outcome was emitted atomically: a remediation_pr_closed
+	//     outbox row exists for this proposal (pending or already published).
+	var outboxCount int
+	require.NoError(t, clients.remediationAgentDB.GetContext(ctx, &outboxCount,
+		`SELECT count(*) FROM remediation_agent_outbox
+		  WHERE event_type = 'remediation_pr_closed'
+		    AND payload->>'proposal_id' = $1`, proposalID))
+	require.GreaterOrEqual(t, outboxCount, 1, "expected a remediation.pr_closed:v1 outbox row for this proposal")
+	t.Logf("close-loop confirmed: pr_state=merged pr_closed_at=%s", closedRow.PRClosedAt)
 }
 
 // remediationProposedPayload mirrors the remediation.proposed:v1 wire shape
