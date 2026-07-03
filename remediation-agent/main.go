@@ -57,7 +57,7 @@ func main() {
 		logger.Error("postgres connect", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	rc, err := rredis.NewClient(ctx, rredis.Config{
 		Host:     cfg.Redis.Host,
@@ -68,7 +68,7 @@ func main() {
 		logger.Error("redis connect", "error", err)
 		os.Exit(1)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	store := s3.NewS3(
 		cfg.S3.EndpointURL,
@@ -132,7 +132,7 @@ func main() {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux}
+	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.ListenAndServe() }()
 
 	// Start the RemediationProposals gRPC server. The proposal service uses a

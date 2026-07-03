@@ -42,7 +42,7 @@ func TestGetJobStatus_StartedAt_FromJobWhenPodsGone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.JobStatusSucceeded, result.Status)
 	require.NotNil(t, result.StartedAt, "StartedAt must be set from job.Status.StartTime even when no pods exist")
-	assert.Equal(t, startTime.Time.UTC(), result.StartedAt.UTC())
+	assert.Equal(t, startTime.UTC(), result.StartedAt.UTC())
 }
 
 func TestGetJobMeta_ReturnsLabelsAndAnnotations(t *testing.T) {

@@ -14,24 +14,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// badCompileModelSource is the exact malformed-Jinja defect this scenario
-// stages — the real daily_transactions.sql failure: the config() call is
-// closed too early and tags is hoisted outside it, so dbt cannot parse the
-// model and `dbt compile` aborts for the whole service project.
+// The malformed-Jinja defect this scenario stages is the real
+// daily_transactions.sql failure: the config() call is closed too early and
+// tags is hoisted outside it, so dbt cannot parse the model and `dbt compile`
+// aborts for the whole service project:
 //
 //	{{ config(materialized='table'), tags=[...])}}
 //	select 1 as id
 //
-// It is kept here as documentation of the fixture a cold-stack harness must
-// bake into the COMPILE_FIXTURE_SERVICE image. It is NOT compiled by anything
-// in this package (tests/e2e is a Go module; *.sql files here are inert), and
-// it is deliberately NOT placed under dbt/services/* — setup.sh compiles every
+// This is documentation of the fixture a cold-stack harness must bake into
+// the COMPILE_FIXTURE_SERVICE image. It is NOT compiled by anything in this
+// package (tests/e2e is a Go module; *.sql files here are inert), and it is
+// deliberately NOT placed under dbt/services/* — setup.sh compiles every
 // manifest under dbt/services via `dbt_upload load --services-dir /app/services`,
 // so a malformed model there would break the baseline manifest build and every
 // other e2e test. See task-7.1-report.md for the full enablement recipe.
-const badCompileModelSource = `{{ config(materialized='table'), tags=['daily']) }}
-select 1 as id
-`
 
 // TestE2E_Remediation_CompileFailureProposesFix drives a dbt COMPILE failure end
 // to end and proves it (a) rejects the release with per-node compile detail and
@@ -56,7 +53,8 @@ select 1 as id
 // Harness prerequisite (skip-gated). A clean `dbt compile` is required for the
 // three real e2e services (setup.sh compiles their manifests), so the failing
 // model cannot live in service-1/2/3. The scenario needs a DEDICATED fixture
-// service whose image is built with badCompileModelSource and loaded into kind,
+// service whose image is built with the malformed-Jinja model source documented
+// above and loaded into kind,
 // whose image tag is reachable, and whose name is mapped in
 // remediation-agent/config/service_repos.yaml (so the agent resolves the repo
 // prefix). Until a cold-stack harness provisions that fixture and exports

@@ -1,0 +1,36 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - gosec
+    - depguard
+  settings:
+    gosec:
+      excludes:
+        # G104 (unhandled errors) duplicates errcheck; let errcheck own it.
+        - G104
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: github.com/carolsimone/continuo/state
+              desc: "cli consumes services only via public gRPC; no backend internals (CLAUDE.md)"
+            - pkg: github.com/carolsimone/continuo/orchestrator
+              desc: "cli consumes services only via public gRPC; no backend internals (CLAUDE.md)"
+            - pkg: github.com/carolsimone/continuo/pkg
+              desc: "cli consumes services only via public gRPC; no backend internals (CLAUDE.md)"
+  exclusions:
+    generated: lax
+    paths:
+      - proto   # generated gRPC stubs, relative to the cli module root
+    rules:
+      - path: _test\.go$
+        linters:
+          - errcheck
+
+issues:
+  # Report every finding; golangci-lint's defaults suppress repeated ones.
+  max-issues-per-linter: 0
+  max-same-issues: 0

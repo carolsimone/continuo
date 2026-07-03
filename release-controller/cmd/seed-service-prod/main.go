@@ -54,7 +54,7 @@ func main() {
 		logger.Error("postgres connect", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	ctx := context.Background()
 

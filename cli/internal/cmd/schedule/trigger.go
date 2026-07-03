@@ -57,7 +57,7 @@ Errors:
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 
 			resp, err := c.TriggerSchedule(ctx, scheduleName)
 			if err != nil {

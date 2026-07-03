@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/carolsimone/continuo/pkg/num"
 	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
@@ -151,7 +152,7 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		ReleaseId:           v.ReleaseID,
 		NodeId:              v.NodeID,
 		ErrorSignature:      v.ErrorSignature,
-		Attempt:             int32(v.Attempt),
+		Attempt:             num.ClampInt32(v.Attempt),
 		Status:              string(v.Status),
 		Confidence:          string(v.Confidence),
 		Rationale:           v.Rationale,
@@ -166,7 +167,7 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		Model:               v.Model,
 		CreatedAt:           v.CreatedAt.Format(time.RFC3339),
 		PrUrl:               v.PrURL,
-		PrNumber:            int32(v.PrNumber),
+		PrNumber:            num.ClampInt32(v.PrNumber),
 		PrState:             v.PrState,
 		PrOpenedAt:          prOpenedAt,
 		PrOpenedBy:          v.PrOpenedBy,
@@ -184,7 +185,7 @@ func claimToProto(c proposal.PRClaim) *remediationv1.BeginPullRequestResponse {
 		DiffUri:        c.DiffURI,
 		ReleaseId:      c.ReleaseID,
 		NodeId:         c.NodeID,
-		Attempt:        int32(c.Attempt),
+		Attempt:        num.ClampInt32(c.Attempt),
 		Rationale:      c.Rationale,
 		Confidence:     string(c.Confidence),
 		Model:          c.Model,

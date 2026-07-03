@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain"
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/google/uuid"
 )
 
@@ -324,7 +325,7 @@ func (r *Run) AcceptDispatch(
 		}
 	}
 
-	total := int32(len(projection))
+	total := num.ClampInt32(len(projection))
 	r.totalTaskCount = &total
 	r.terminalTaskCount = terminal
 	r.initStatus = InitStatusCompleted

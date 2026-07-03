@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/num"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/validationresult"
@@ -122,7 +123,11 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 	retryCount := cmd.RetryCount
 	maxRetries := cmd.MaxRetries
 	if maxRetries == 0 {
-		maxRetries = int32(h.config.DefaultTaskMaxRetries)
+		converted, err := num.Int32(h.config.DefaultTaskMaxRetries, "default_task_max_retries")
+		if err != nil {
+			return fmt.Errorf("check job status: %w", err)
+		}
+		maxRetries = converted
 	}
 
 	cancelled, err := h.cancelledSchedules.Exists(ctx, cmd.ScheduleID)
@@ -653,7 +658,11 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 
 	maxRetries := cmd.MaxRetries
 	if maxRetries == 0 {
-		maxRetries = int32(h.config.DefaultTaskMaxRetries)
+		converted, err := num.Int32(h.config.DefaultTaskMaxRetries, "default_task_max_retries")
+		if err != nil {
+			return fmt.Errorf("check job status: %w", err)
+		}
+		maxRetries = converted
 	}
 
 	// Determine the outbox entry ID to carry forward for future dedup; use a new UUID

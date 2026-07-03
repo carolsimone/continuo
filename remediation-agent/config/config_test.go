@@ -121,7 +121,7 @@ func TestLoad_ServiceRepoMapPath_LoadsYAML(t *testing.T) {
   svc-a: services/svc-a
   svc-b: services/svc-b
 `
-	require.NoError(t, os.WriteFile(yamlPath, []byte(content), 0o644))
+	require.NoError(t, os.WriteFile(yamlPath, []byte(content), 0o600))
 	t.Setenv("SERVICE_REPO_MAP_PATH", yamlPath)
 
 	v := &pkgconfig.Validator{}

@@ -26,7 +26,7 @@ func NewOrchestratorQueryRepository(client Neo4jClient, logger *slog.Logger) *Or
 // including cross-boundary upstream dependencies (e.g. seeds).
 func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	query := `
         OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
@@ -142,7 +142,7 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 // the gRPC handler clamps both before calling.
 func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	// count and page share the same MATCH so their filter can never drift.
 	countQuery := `
@@ -206,7 +206,7 @@ func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName
 // GetRunGraph returns nodes with their execution status and edges for a run.
 func (r *OrchestratorQueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	nodeQuery := `
 		MATCH (:Run {run_id: $run_id})-[exec:EXECUTES]->(n:Table)
@@ -275,7 +275,7 @@ func (r *OrchestratorQueryRepository) GetRunGraph(ctx context.Context, runID str
 // 0 means "drift unknown".
 func (r *OrchestratorQueryRepository) GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	query := `
 		MATCH (r:Run {run_id: $run_id})
@@ -306,7 +306,7 @@ func (r *OrchestratorQueryRepository) GetRunTopologyGeneration(ctx context.Conte
 // the responsibility of the caller (RunQueryService).
 func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	query := `
         MATCH (r:Run)
@@ -348,7 +348,7 @@ func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*do
 // Null schedule_name rows are defensively excluded.
 func (r *OrchestratorQueryRepository) ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	query := `
         MATCH (t:Table)
@@ -416,7 +416,7 @@ func (r *OrchestratorQueryRepository) parseNeo4jTimestamp(field, value string) t
 // when uniqueID is not an active :Table.
 func (r *OrchestratorQueryRepository) GetNodeAncestry(ctx context.Context, uniqueID string, maxDepth int) ([]*domain.NodeAncestor, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	// Cypher cannot parameterize the *1..N path-length bound, so interpolate the
 	// validated integer (handler enforces 0..100). Unbounded when maxDepth <= 0.

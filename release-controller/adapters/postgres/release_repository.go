@@ -244,7 +244,7 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 	if err != nil {
 		return nil, nil, fmt.Errorf("list releases: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []*release.Release
 	for rows.Next() {
@@ -296,7 +296,7 @@ func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff tim
 	if err != nil {
 		return 0, fmt.Errorf("delete resolved releases: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ids []string
 	for rows.Next() {

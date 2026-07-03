@@ -9,7 +9,7 @@ import (
 )
 
 // TestSentinelMarkersMatchPythonContract guards the cross-language structured-
-// result contract. The validation pod (Python, dbt/base/validation_result.py)
+// result contract. The validation pod (Python, validation-runner/validation_result.py)
 // prints the result block framed by sentinel markers, and the Go side splits the
 // pod log on the constants in this package. Nothing generates one side from the
 // other, so a drift would silently empty run_results_uri and degrade remediation
@@ -18,8 +18,8 @@ import (
 // they diverge.
 //
 // It lives in pkg (not k8s-controller) because the per-service test containers
-// hold only their own module — the dbt/ tree is present only in the full-repo
-// checkout, where the pkg static-guard suite runs.
+// hold only their own module — the validation-runner tree is present only in the
+// full-repo checkout, where the pkg static-guard suite runs.
 func TestSentinelMarkersMatchPythonContract(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -27,8 +27,8 @@ func TestSentinelMarkersMatchPythonContract(t *testing.T) {
 	}
 	// <root>/pkg/validationresult/<this> → up two to the repo root.
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
-	pyPath := filepath.Join(repoRoot, "dbt", "base", "validation_result.py")
-	src, err := os.ReadFile(pyPath)
+	pyPath := filepath.Join(repoRoot, "validation-runner", "validation_result.py")
+	src, err := os.ReadFile(pyPath) //nolint:gosec // G304: pyPath is built from runtime.Caller(0) plus fixed literal segments, not external input
 	if err != nil {
 		t.Fatalf("read python contract %s: %v", pyPath, err)
 	}

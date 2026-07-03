@@ -39,7 +39,7 @@ func cleanupNeo4j(t *testing.T, ctx context.Context, clients *testClients, sched
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
 		AccessMode: neo4jdriver.AccessModeWrite,
 	})
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	// Delete Run snapshot nodes (and their EXECUTES edges) created by e2e tests.
 	_, err := session.Run(ctx, `

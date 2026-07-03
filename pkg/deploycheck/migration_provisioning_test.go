@@ -71,7 +71,7 @@ func TestDockerfileMigrateCoversAllDatabases(t *testing.T) {
 
 	// --- read migrate-all.sh DATABASES list ---
 	scriptPath := filepath.Join(root, "db", "migrate-all.sh")
-	scriptRaw, err := os.ReadFile(scriptPath)
+	scriptRaw, err := os.ReadFile(scriptPath) //nolint:gosec // G304: scriptPath is repoRoot(t) (discovered by walking up for go.work) joined with fixed literal segments, not external input
 	if err != nil {
 		t.Fatalf("read %s: %v", scriptPath, err)
 	}
@@ -82,7 +82,7 @@ func TestDockerfileMigrateCoversAllDatabases(t *testing.T) {
 
 	// --- read Dockerfile.migrate COPY lines ---
 	dockerfilePath := filepath.Join(root, "db", "Dockerfile.migrate")
-	dfRaw, err := os.ReadFile(dockerfilePath)
+	dfRaw, err := os.ReadFile(dockerfilePath) //nolint:gosec // G304: dockerfilePath is repoRoot(t) joined with fixed literal segments, not external input
 	if err != nil {
 		t.Fatalf("read %s: %v", dockerfilePath, err)
 	}
@@ -147,7 +147,7 @@ func TestDockerfileMigrateCoversAllDatabases(t *testing.T) {
 func TestMigrateAllProvisionsEveryDatabaseItMigrates(t *testing.T) {
 	root := repoRoot(t)
 	scriptPath := filepath.Join(root, "db", "migrate-all.sh")
-	raw, err := os.ReadFile(scriptPath)
+	raw, err := os.ReadFile(scriptPath) //nolint:gosec // G304: scriptPath is repoRoot(t) joined with fixed literal segments, not external input
 	if err != nil {
 		t.Fatalf("read %s: %v", scriptPath, err)
 	}
@@ -181,7 +181,7 @@ func TestMigrateAllProvisionsEveryDatabaseItMigrates(t *testing.T) {
 	// Every migrated database must also be provisioned by the infra chart's
 	// initdb list, so fresh clusters and the migration job stay consistent.
 	infraPath := filepath.Join(root, "deploy", "infra", "values.yaml")
-	infraRaw, err := os.ReadFile(infraPath)
+	infraRaw, err := os.ReadFile(infraPath) //nolint:gosec // G304: infraPath is repoRoot(t) joined with fixed literal segments, not external input
 	if err != nil {
 		t.Fatalf("read %s: %v", infraPath, err)
 	}

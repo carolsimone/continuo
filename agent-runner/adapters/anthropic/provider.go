@@ -72,6 +72,8 @@ func (p *Provider) StreamTurn(ctx context.Context, req ports.TurnRequest, onDelt
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
 	}
 
+	//nolint:gosec // G704: p.baseURL is always the hardcoded "https://api.anthropic.com"
+	// literal passed by main.go; it is never sourced from operator config or user input.
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/messages", bytes.NewReader(encoded))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: build request: %w", err)
@@ -80,11 +82,11 @@ func (p *Provider) StreamTurn(ctx context.Context, req ports.TurnRequest, onDelt
 	httpReq.Header.Set("x-api-key", p.apiKey)
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) //nolint:gosec // G704: see NewRequestWithContext above; same trusted URL.
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

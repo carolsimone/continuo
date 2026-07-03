@@ -594,7 +594,7 @@ func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) 
 	if err != nil {
 		return nil, fmt.Errorf("get last run per schedule: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]LastRunData)
 	for rows.Next() {
@@ -628,7 +628,7 @@ func (r *schedulerTrackerRepository) ListStuckCandidates(ctx context.Context, cu
 	if err != nil {
 		return nil, fmt.Errorf("list stuck candidates: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []StuckCandidate
 	for rows.Next() {

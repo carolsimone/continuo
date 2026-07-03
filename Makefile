@@ -59,6 +59,10 @@ lint:
 format:
 	uv run ruff format .
 
+.PHONY: lint-go
+lint-go:  ## Run golangci-lint over Go modules (all, or MODULE=<name>)
+	@bash scripts/lint-go.sh $(MODULE)
+
 .PHONY: e2e-setup
 e2e-setup:  ## Provision K8s test environment for E2E testing
 	@echo "Setting up K8s controllers..."

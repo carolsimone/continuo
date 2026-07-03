@@ -25,11 +25,6 @@ func NewRerunBinding(
 				"message_id", msg.ID, "error", err)
 			return err
 		}
-		return handler.Handle(ctx, model.DerivedRunInput{
-			ScheduleName: cmd.ScheduleName,
-			RunID:        cmd.RunID,
-			SourceRunID:  cmd.SourceRunID,
-			InitiatedBy:  cmd.InitiatedBy,
-		}, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
+		return handler.Handle(ctx, model.DerivedRunInput(cmd), msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values))
 	}
 }

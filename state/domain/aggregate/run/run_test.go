@@ -175,7 +175,7 @@ func (f *fakeTaskCollection) BulkCreate(_ context.Context, tasks []run.Task) err
 	f.bulkCreated = append(f.bulkCreated, tasks...)
 	for _, t := range tasks {
 		f.statuses[t.TaskID] = t.Status
-		f.attempts[t.TaskID] = int32(t.RetryCount)
+		f.attempts[t.TaskID] = int32(t.RetryCount) //nolint:gosec // G115: test fixture; RetryCount is a small literal set by the test table, never attacker-controlled input.
 	}
 	return nil
 }

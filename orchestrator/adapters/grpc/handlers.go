@@ -8,6 +8,7 @@ import (
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
+	"github.com/carolsimone/continuo/pkg/num"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -116,7 +117,7 @@ func (h *QueryHandler) ListRuns(ctx context.Context, req *orchestratorv1.ListRun
 	}
 	resp := &orchestratorv1.ListRunsResponse{
 		Runs:       make([]*orchestratorv1.RunSummary, 0, len(runs)),
-		TotalCount: int32(total),
+		TotalCount: num.ClampInt32(total),
 	}
 	for _, r := range runs {
 		resp.Runs = append(resp.Runs, &orchestratorv1.RunSummary{
@@ -189,7 +190,7 @@ func (h *QueryHandler) ListScheduleTopologies(ctx context.Context, _ *orchestrat
 	for _, s := range summaries {
 		item := &orchestratorv1.ScheduleTopologySummary{
 			ScheduleName: s.ScheduleName,
-			NodeCount:    int32(s.NodeCount),
+			NodeCount:    num.ClampInt32(s.NodeCount),
 		}
 		if !s.LastUpdatedAt.IsZero() {
 			item.LastUpdatedAt = timestamppb.New(s.LastUpdatedAt)
@@ -234,7 +235,7 @@ func domainToProtoAncestor(a *domain.NodeAncestor) *orchestratorv1.AncestorNode 
 		TableName:     a.TableName,
 		ServiceName:   a.ServiceName,
 		NodeType:      a.NodeType,
-		Depth:         int32(a.Depth),
+		Depth:         num.ClampInt32(a.Depth),
 		LastCommitSha: a.LastCommitSHA,
 		LastRepo:      a.LastRepo,
 		LastReleaseId: a.LastReleaseID,

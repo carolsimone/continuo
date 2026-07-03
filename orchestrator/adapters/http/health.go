@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
@@ -30,26 +31,33 @@ func NewHealthServer(port int, registry *liveness.Registry, logger *slog.Logger)
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			logger.Warn("Failed to write health response", "error", err)
+		}
 	})
 
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		failures := registry.Check(r.Context())
 		if len(failures) == 0 {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("READY"))
+			if _, err := w.Write([]byte("READY")); err != nil {
+				logger.Warn("Failed to write readiness response", "error", err)
+			}
 			return
 		}
 		for _, f := range failures {
 			logger.Warn("Readiness check failed", "component", f.Name, "error", f.Err)
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, "NOT READY: %d component(s) unhealthy", len(failures))
+		if _, err := fmt.Fprintf(w, "NOT READY: %d component(s) unhealthy", len(failures)); err != nil {
+			logger.Warn("Failed to write readiness response", "error", err)
+		}
 	})
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	return &HealthServer{

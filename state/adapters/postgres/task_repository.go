@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -197,7 +198,7 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to prepare count query: %w", err)
 	}
-	defer countStmt.Close()
+	defer func() { _ = countStmt.Close() }()
 
 	if err := countStmt.GetContext(ctx, &total, args); err != nil {
 		return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
@@ -221,7 +222,7 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to prepare query: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	var tasks []*TaskTracker
 	if err := stmt.SelectContext(ctx, &tasks, args); err != nil {
@@ -283,7 +284,7 @@ func (r *taskTrackerRepository) SetStatusAndAttemptTx(ctx context.Context, tx *s
 	if err != nil {
 		return 0, err
 	}
-	return int32(n), nil
+	return num.ClampInt32(n), nil
 }
 
 // LoadStatusAndAttemptTx returns the current status and retry_count of the

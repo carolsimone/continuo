@@ -112,7 +112,7 @@ func (r *ThreadRepository) ListMessages(ctx context.Context, threadID uuid.UUID)
 	if err != nil {
 		return nil, fmt.Errorf("list messages for thread %s: %w", threadID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := []domain.Message{}
 	for rows.Next() {
@@ -203,7 +203,7 @@ func (r *ThreadRepository) ListIdleThreads(ctx context.Context, cutoff time.Time
 	if err != nil {
 		return nil, fmt.Errorf("list idle threads: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var threads []domain.Thread
 	for rows.Next() {

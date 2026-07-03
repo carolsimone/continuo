@@ -443,7 +443,19 @@ func (c *StreamConsumer) laneFor(msg goredis.XMessage) int {
 	key, _ := msg.Values[c.aggregateKeyField].(string)
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(key))
-	return int(h.Sum32() % uint32(c.workerCount))
+	return int(h.Sum32() % uint32(boundedWorkerCount(c.workerCount))) //nolint:gosec // G115: boundedWorkerCount floors its result at 1, so this int -> uint32 conversion never sees a negative value
+}
+
+// boundedWorkerCount clamps a worker-pool size to at least 1 before it is
+// converted to uint32 for the lane-hashing modulo below. workerCount is
+// already clamped to >=1 in NewStreamConsumer, so this is a defensive
+// floor — it guarantees the int -> uint32 conversion can never see a
+// negative value, regardless of how the field is set in the future.
+func boundedWorkerCount(n int) int {
+	if n < 1 {
+		return 1
+	}
+	return n
 }
 
 // processOne runs the read-path handler for one message and ACKs it as soon as

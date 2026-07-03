@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/remediation/adapters/postgres"
@@ -51,7 +52,7 @@ func main() {
 		logger.Error("postgres connect", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	rc, err := rredis.NewClient(ctx, rredis.Config{
 		Host:     cfg.Redis.Host,
@@ -62,7 +63,7 @@ func main() {
 		logger.Error("redis connect", "error", err)
 		os.Exit(1)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	logReader := rs3.NewLogReader(
 		cfg.S3.EndpointURL,
@@ -96,7 +97,7 @@ func main() {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux}
+	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.ListenAndServe() }()
 
 	logger.Info("remediation service started", "http_port", cfg.HTTPPort)

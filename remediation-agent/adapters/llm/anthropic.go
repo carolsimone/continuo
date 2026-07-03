@@ -127,7 +127,7 @@ func (p *anthropicProvider) Propose(ctx context.Context, req ports.ProposeReques
 	if err != nil {
 		return ports.ProposeResult{}, fmt.Errorf("anthropic: http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		limitedBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))

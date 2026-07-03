@@ -46,11 +46,15 @@ func run() error {
 		return err
 	}
 	yamlPath := filepath.Join(root, "pkg", "streams", "contract.yaml")
-	f, err := os.Open(yamlPath)
+	f, err := os.Open(yamlPath) //nolint:gosec // G304: yamlPath is built from a fixed relative path under a repo root discovered by walking up for go.work, not from external input
 	if err != nil {
 		return fmt.Errorf("open contract: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintln(os.Stderr, "gen-streams: close contract:", closeErr)
+		}
+	}()
 
 	c, err := loadAndValidate(f)
 	if err != nil {
@@ -62,7 +66,7 @@ func run() error {
 		return fmt.Errorf("emit go: %w", err)
 	}
 	goOut := filepath.Join(root, "pkg", "streams", "streams.gen.go")
-	if err := os.WriteFile(goOut, []byte(goSrc), 0o644); err != nil {
+	if err := os.WriteFile(goOut, []byte(goSrc), 0o600); err != nil {
 		return fmt.Errorf("write go: %w", err)
 	}
 
@@ -71,7 +75,7 @@ func run() error {
 		return fmt.Errorf("emit go test access: %w", err)
 	}
 	accessOut := filepath.Join(root, "pkg", "streams", "streams_test_access.gen.go")
-	if err := os.WriteFile(accessOut, []byte(accessSrc), 0o644); err != nil {
+	if err := os.WriteFile(accessOut, []byte(accessSrc), 0o600); err != nil {
 		return fmt.Errorf("write go test access: %w", err)
 	}
 
@@ -80,7 +84,7 @@ func run() error {
 		return fmt.Errorf("emit python: %w", err)
 	}
 	pyOut := filepath.Join(root, "manifest-controller", "streams_contract.py")
-	if err := os.WriteFile(pyOut, []byte(pySrc), 0o644); err != nil {
+	if err := os.WriteFile(pyOut, []byte(pySrc), 0o600); err != nil {
 		return fmt.Errorf("write python: %w", err)
 	}
 

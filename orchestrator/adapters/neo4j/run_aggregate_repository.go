@@ -38,7 +38,7 @@ func (r *RunAggregateRepository) Rehydrate(ctx context.Context, runID string, sc
 // rehydrateFull reads every node and edge for the run.
 func (r *RunAggregateRepository) rehydrateFull(ctx context.Context, runID string) (*domainRun.Run, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	result, err := session.Run(ctx, `
         MATCH (run:Run {run_id: $run_id})
@@ -83,7 +83,7 @@ func (r *RunAggregateRepository) rehydrateFull(ctx context.Context, runID string
 //	           "are all upstreams terminal?" for unblocking.
 func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, runID string, s domainRun.ScopeNodeCompletion) (*domainRun.Run, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	var query string
 	if s.Status == "FAILED" {
@@ -177,7 +177,7 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
 // plus counters, version, and run status if finalized.
 func (r *RunAggregateRepository) Save(ctx context.Context, agg *domainRun.Run) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	tx, err := session.BeginTransaction(ctx)
 	if err != nil {
@@ -271,7 +271,7 @@ func (r *RunAggregateRepository) Save(ctx context.Context, agg *domainRun.Run) e
 // exercised (e.g. full-inherited rebases with no node.updated:v1 traffic).
 func (r *RunAggregateRepository) FinalizeRun(ctx context.Context, runID, terminalStatus string) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	// Normalize to the canonical lowercase form so this writer agrees with Save
 	// and the snapshot writer. state's run.finalized:v1 already emits lowercase
@@ -298,7 +298,7 @@ func (r *RunAggregateRepository) FinalizeRun(ctx context.Context, runID, termina
 // DeleteExpiredRuns removes Run nodes older than retentionDays. Called by the sweeper.
 func (r *RunAggregateRepository) DeleteExpiredRuns(ctx context.Context, retentionDays int) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	result, err := session.Run(ctx, `
         MATCH (run:Run)

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -24,10 +23,10 @@ func verifyServicesHealthy(t *testing.T) {
 	}
 
 	for _, url := range dockerComposeServices {
-		resp, err := http.Get(url)
+		resp, err := http.Get(url) //nolint:gosec // url is one of the fixed dockerComposeServices literals above, not external input
 		require.NoError(t, err, "Failed to reach service: %s", url)
 		require.Equal(t, http.StatusOK, resp.StatusCode, "Service unhealthy: %s", url)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	// k8s controllers
@@ -71,7 +70,7 @@ func portForwardHealthy(t *testing.T, deployment string, port int) {
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		pf := exec.Command("kubectl", "port-forward",
+		pf := exec.Command("kubectl", "port-forward", //nolint:gosec // deployment/port come from the fixed k8sControllers map in verifyServicesHealthy, not external input
 			fmt.Sprintf("deployment/%s", deployment),
 			fmt.Sprintf("%d:%d", port, port),
 			"-n", "default",
@@ -96,7 +95,7 @@ func portForwardHealthy(t *testing.T, deployment string, port int) {
 					lastErr = err
 					continue
 				}
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					ok = true
 					break probeLoop
@@ -200,7 +199,7 @@ type k8sJobList struct {
 
 // getK8sJobs retrieves jobs from k8s cluster
 func getK8sJobs(ctx context.Context, labelSelector string) (*k8sJobList, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "jobs",
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "jobs", //nolint:gosec // labelSelector is always a fixed literal ("app=dbt-job") or an internally-built "table_name=<const>" string, not external input
 		"-n", "default",
 		"-l", labelSelector,
 		"-o", "json")
@@ -214,70 +213,6 @@ func getK8sJobs(ctx context.Context, labelSelector string) (*k8sJobList, error) 
 		return nil, err
 	}
 	return &jobList, nil
-}
-
-// getK8sJobLogs retrieves logs from a k8s job's pod
-func getK8sJobLogs(ctx context.Context, t *testing.T, tableName string) string {
-	// Get pod name
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "pods",
-		"-l", fmt.Sprintf("table_name=%s", tableName),
-		"-o", "jsonpath={.items[0].metadata.name}")
-	podName, err := cmd.Output()
-	require.NoError(t, err, "Failed to get pod name for table: %s", tableName)
-
-	// Get logs
-	cmd = exec.CommandContext(ctx, "kubectl", "logs", string(podName))
-	logs, err := cmd.Output()
-	require.NoError(t, err, "Failed to get logs for pod: %s", string(podName))
-
-	return string(logs)
-}
-
-// verifyRedisStreamHasMessages checks Redis stream message count
-func verifyRedisStreamHasMessages(
-	t *testing.T,
-	ctx context.Context,
-	clients *testClients,
-	streamName string,
-	minCount int64,
-) {
-	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
-		messages, err := clients.redisClient.XRange(ctx, streamName, "-", "+").Result()
-		if err != nil {
-			return false, err
-		}
-		return int64(len(messages)) >= minCount, nil
-	}, fmt.Sprintf("Timeout waiting for %d messages in Redis stream %s", minCount, streamName))
-
-	t.Logf("✅ Redis stream %s has at least %d messages", streamName, minCount)
-}
-
-// manifestControllerLogContains tails the manifest-controller container's log
-// file (where its main loop writes via start-services.sh's bash launch line).
-func manifestControllerLogContains(t *testing.T, substr string) bool {
-	t.Helper()
-	cmd := exec.Command("docker", "exec", "manifest-controller",
-		"cat", "/tmp/mc.log")
-	out, err := cmd.Output()
-	if err != nil {
-		t.Logf("docker exec manifest-controller cat /tmp/mc.log failed: %v", err)
-		return false
-	}
-	return contains(string(out), substr)
-}
-
-// contains is a tiny string-substring shim so we don't add a `strings` import
-// solely for this one call site.
-func contains(haystack, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }
 
 // scheduleState captures the fields the watchdog test asserts on.
@@ -309,17 +244,6 @@ func readScheduleState(t *testing.T, ctx context.Context, clients *testClients, 
 	return st
 }
 
-// triggerSchedule calls state.TriggerSchedule via gRPC and returns the new run's
-// schedule_id (UUID string).
-func triggerSchedule(t *testing.T, ctx context.Context, clients *testClients, scheduleName string) string {
-	t.Helper()
-	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
-		ScheduleName: scheduleName,
-	})
-	require.NoError(t, err, "TriggerSchedule(%q) failed", scheduleName)
-	return resp.GetScheduleId()
-}
-
 // queryNeo4jRunKind returns the :Run.kind property for a run, or "" if the node
 // is not found. Used by PR0 audit assertions to verify the kind is stamped on
 // the Neo4j run snapshot.
@@ -328,7 +252,7 @@ func queryNeo4jRunKind(t *testing.T, clients *testClients, runID uuid.UUID) stri
 	session := clients.neo4jDriver.NewSession(context.Background(), neo4jdriver.SessionConfig{
 		AccessMode: neo4jdriver.AccessModeRead,
 	})
-	defer session.Close(context.Background())
+	defer func() { _ = session.Close(context.Background()) }()
 	result, err := session.Run(context.Background(),
 		`MATCH (r:Run {run_id: $run_id}) RETURN COALESCE(r.kind, "") AS kind`,
 		map[string]interface{}{"run_id": runID.String()})

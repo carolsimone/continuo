@@ -76,7 +76,7 @@ Errors:
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 
 			// Each RPC gets its own --timeout deadline, matching the documented
 			// per-call contract.
@@ -131,7 +131,9 @@ Errors:
 						Status:      taskStatusString(t.GetStatus()),
 					})
 				}
-				if len(tasks) == 0 || int32(len(payload.Nodes)) >= resp.GetTotalCount() {
+				// Widen TotalCount (int32) to int rather than narrow len() down,
+				// so this comparison can never overflow.
+				if len(tasks) == 0 || len(payload.Nodes) >= int(resp.GetTotalCount()) {
 					break
 				}
 			}

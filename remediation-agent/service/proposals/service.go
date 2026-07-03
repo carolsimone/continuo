@@ -165,7 +165,9 @@ func sanitizeBranchSegment(s string) string {
 		if r > unicode.MaxASCII || (!isAlphaNum(r) && r != '_' && r != '-') {
 			b = append(b, '-')
 		} else {
-			b = append(b, byte(r))
+			// Safe: the branch above already excludes any r > unicode.MaxASCII
+			// (127), so r fits in a byte without truncation.
+			b = append(b, byte(r)) //nolint:gosec // G115: r <= unicode.MaxASCII is guaranteed above.
 		}
 	}
 	return string(b)

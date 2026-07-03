@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/identity"
@@ -32,7 +33,7 @@ type ScheduleEntry struct {
 // LoadSchedulesConfig reads and parses the YAML file at path.
 // Returns an error if the file is missing or malformed.
 func LoadSchedulesConfig(path string) (*SchedulesConfig, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // G304: path comes from SCHEDULES_CONFIG_PATH, a trusted operator-set config path, not external/user input.
 	if err != nil {
 		return nil, fmt.Errorf("failed to read schedules config %q: %w", path, err)
 	}

@@ -105,7 +105,7 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 // getJSON performs a GET request and returns the parsed JSON body.
 // Returns an error on any network, HTTP, or parse failure (safe to use inside pollUntil).
 func getJSON(url string) (map[string]interface{}, error) {
-	resp, err := http.Get(url) //nolint:noctx
+	resp, err := http.Get(url) //nolint:noctx,gosec // getJSON is only ever called with internally-built ui-service base-URL requests from this harness, not external input
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}

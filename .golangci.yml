@@ -1,0 +1,33 @@
+version: "2"
+
+linters:
+  # `standard` = the default set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - bodyclose  # HTTP response bodies must be closed
+    - gosec      # security-focused static analysis
+  settings:
+    gosec:
+      excludes:
+        # G104 (unhandled errors) duplicates errcheck, which already owns this
+        # rule and is scoped to skip test files. Let errcheck be the single source.
+        - G104
+  exclusions:
+    # Skip files carrying the "// Code generated ... DO NOT EDIT." header.
+    generated: lax
+    # Explicit safety net for generated code without a header.
+    paths:
+      - cli/proto          # generated gRPC stubs (state, orchestrator)
+      - ".*\\.gen\\.go$"   # e.g. pkg/streams/streams.gen.go
+      - ".*\\.pb\\.go$"    # protobuf stubs
+    rules:
+      - path: _test\.go$
+        linters:
+          - errcheck
+
+issues:
+  # Report every finding. golangci-lint defaults (max-same-issues: 3,
+  # max-issues-per-linter: 50) silently suppress repeated findings, which would
+  # make a "zero findings" CI gate unreliable and hide real work during cleanup.
+  max-issues-per-linter: 0
+  max-same-issues: 0

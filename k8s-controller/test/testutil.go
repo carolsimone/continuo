@@ -3,8 +3,6 @@ package test
 import (
 	"context"
 	"fmt"
-	"net"
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -28,25 +26,6 @@ func k8sMigrationDir() (string, error) {
 	// thisFile = <repo>/k8s-controller/test/testutil.go
 	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 	return filepath.Join(repoRoot, "db", "migration", "k8s"), nil
-}
-
-// getEnvOrDefault returns the value of an env var or a fallback default.
-func getEnvOrDefault(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultVal
-}
-
-// checkTCPReachable returns an error if addr (host:port) is not reachable
-// within timeout. Used to skip integration tests when services are absent.
-func checkTCPReachable(addr string, timeout time.Duration) error {
-	conn, err := net.DialTimeout("tcp", addr, timeout)
-	if err != nil {
-		return fmt.Errorf("service not reachable at %s: %w", addr, err)
-	}
-	conn.Close()
-	return nil
 }
 
 // setupPostgres starts a PostgreSQL testcontainer and runs migrations to create
@@ -114,8 +93,8 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 
 	// Cleanup function
 	cleanup := func() {
-		db.Close()
-		postgresContainer.Terminate(ctx)
+		_ = db.Close()
+		_ = postgresContainer.Terminate(ctx)
 	}
 
 	return db, cleanup

@@ -43,7 +43,7 @@ func (r *ServiceProdRepository) List(ctx context.Context) ([]*release.ServicePro
 	if err != nil {
 		return nil, fmt.Errorf("list service_prod: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []*release.ServiceProd
 	for rows.Next() {

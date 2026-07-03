@@ -266,7 +266,7 @@ func main() {
 		logger.Error("Failed to dial state gRPC", "endpoint", cfg.StateGRPCAddr, "error", err)
 		os.Exit(1)
 	}
-	defer stateConn.Close()
+	defer func() { _ = stateConn.Close() }()
 	stateGRPCClient := statev1.NewStateServiceClient(stateConn)
 
 	stuckScheduleAdapter := grpcinfra.NewStuckScheduleAdapter(stateGRPCClient)

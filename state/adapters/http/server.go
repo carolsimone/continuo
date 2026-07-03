@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
@@ -24,8 +25,9 @@ func NewServer(port string, registry *liveness.Registry, logger *slog.Logger) *S
 
 	return &Server{
 		httpServer: &http.Server{
-			Addr:    ":" + port,
-			Handler: mux,
+			Addr:              ":" + port,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
 		},
 		logger: logger,
 	}

@@ -62,7 +62,7 @@ const awaitIndexTimeoutSeconds = 300
 // architecture doc for the one-off dedup query to run before first rollout.
 func InitSchema(ctx context.Context, client Neo4jClient, logger *slog.Logger) error {
 	session := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	// Bolt surfaces a DDL failure either from Run or only when the result
 	// summary is pulled, so every statement is consumed and checked — a

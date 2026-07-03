@@ -60,7 +60,7 @@ func (s *S3) Fetch(ctx context.Context, uri string) (string, error) {
 		}
 		return "", err
 	}
-	defer out.Body.Close()
+	defer func() { _ = out.Body.Close() }()
 	body, err := io.ReadAll(out.Body)
 	if err != nil {
 		return "", err

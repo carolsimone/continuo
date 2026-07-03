@@ -9,6 +9,7 @@ import (
 
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/num"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 
@@ -76,7 +77,7 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 		ScheduleID:     d.RunID,
 		ScheduleName:   d.ScheduleName,
 		AllTasks:       allTasks,
-		TotalTaskCount: int32(len(allTasks)),
+		TotalTaskCount: num.ClampInt32(len(allTasks)),
 	}
 	dispatchedPayload, err := json.Marshal(dispatchedEvt)
 	if err != nil {

@@ -298,7 +298,7 @@ func (c *K8sClient) streamPodLogs(ctx context.Context, namespace, podName string
 	if err != nil {
 		return "", fmt.Errorf("failed to open log stream: %w", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, stream); err != nil {
