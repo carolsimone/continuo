@@ -4,3 +4,4 @@
 # are ignored. When empty, `scripts/lint-go.sh --ci` lints nothing and exits 0.
 remediation
 cli
+release-controller
