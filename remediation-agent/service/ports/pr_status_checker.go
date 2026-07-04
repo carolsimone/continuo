@@ -2,8 +2,16 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrPermissionDenied signals that the credential used to read pull request
+// status lacks the required GitHub permission (HTTP 401/403). It is a
+// persistent, human-actionable failure — distinct from a transient error or a
+// genuinely still-open PR — so the reconciler can surface it as degraded rather
+// than retrying silently forever.
+var ErrPermissionDenied = errors.New("pull request status: permission denied")
 
 // PRStatus is the observed state of a GitHub pull request.
 type PRStatus struct {

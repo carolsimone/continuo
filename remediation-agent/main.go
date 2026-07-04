@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
@@ -134,9 +135,26 @@ func main() {
 		}
 	}()
 
+	// reconcileHealth is shared between the PR-outcome reconciler (writer) and
+	// the status endpoint (reader) so operators can see when PR reads are
+	// blocked by a token-permission gap.
+	reconcileHealth := proposals.NewReconcileHealth()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+	// /reconcile/status reports whether PR-outcome reconciliation is degraded.
+	// It always returns 200 (degraded state is reported in the body) so a token
+	// permission gap surfaces to operators without crash-looping the pod.
+	mux.HandleFunc("/reconcile/status", func(w http.ResponseWriter, _ *http.Request) {
+		degraded, reason := reconcileHealth.Snapshot()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(struct {
+			Degraded bool   `json:"degraded"`
+			Reason   string `json:"reason,omitempty"`
+		}{Degraded: degraded, Reason: reason})
 	})
 	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.ListenAndServe() }()
@@ -171,6 +189,7 @@ func main() {
 		Recorder: proposalSvc,
 		Clock:    ports.SystemClock{},
 		Logger:   logger,
+		Health:   reconcileHealth,
 		Interval: cfg.PRPollInterval,
 	})
 	go reconciler.Run(ctx)

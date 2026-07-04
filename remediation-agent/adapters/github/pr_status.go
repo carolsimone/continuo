@@ -34,6 +34,13 @@ func (g *GitHub) PRStatus(ctx context.Context, repo string, number int) (ports.P
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		// 401/403 means the token cannot read PR state (missing Pull requests:
+		// Read). Tag it so the reconciler surfaces a degraded signal instead of
+		// treating it like a transient error.
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return ports.PRStatus{}, fmt.Errorf("github get pull %s#%d: status %d: %s: %w",
+				repo, number, resp.StatusCode, truncate(errBody, 512), ports.ErrPermissionDenied)
+		}
 		return ports.PRStatus{}, fmt.Errorf("github get pull %s#%d: status %d: %s",
 			repo, number, resp.StatusCode, truncate(errBody, 512))
 	}

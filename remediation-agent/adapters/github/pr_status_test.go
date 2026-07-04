@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
 
 func prStatusServer(t *testing.T, wantPath string, status int, body string) *httptest.Server {
@@ -63,4 +65,26 @@ func TestPRStatus_NotFoundIsError(t *testing.T) {
 	g := NewSourceReader(srv.URL, "tkn", srv.Client())
 	_, err := g.PRStatus(context.Background(), "acme/dbt-repo", 7)
 	require.Error(t, err, "a vanished PR must surface as an error so the row stays open and is retried")
+	require.NotErrorIs(t, err, ports.ErrPermissionDenied,
+		"a 404 is a missing PR, not a permission problem, and must not be classified as one")
+}
+
+func TestPRStatus_ForbiddenIsPermissionDenied(t *testing.T) {
+	srv := prStatusServer(t, "/repos/acme/dbt-repo/pulls/7", http.StatusForbidden,
+		`{"message":"Resource not accessible by personal access token"}`)
+	defer srv.Close()
+	g := NewSourceReader(srv.URL, "tkn", srv.Client())
+	_, err := g.PRStatus(context.Background(), "acme/dbt-repo", 7)
+	require.ErrorIs(t, err, ports.ErrPermissionDenied,
+		"a 403 means the token lacks Pull requests: Read and must be classified as a permission error")
+}
+
+func TestPRStatus_UnauthorizedIsPermissionDenied(t *testing.T) {
+	srv := prStatusServer(t, "/repos/acme/dbt-repo/pulls/7", http.StatusUnauthorized,
+		`{"message":"Bad credentials"}`)
+	defer srv.Close()
+	g := NewSourceReader(srv.URL, "tkn", srv.Client())
+	_, err := g.PRStatus(context.Background(), "acme/dbt-repo", 7)
+	require.ErrorIs(t, err, ports.ErrPermissionDenied,
+		"a 401 means the token is missing or invalid and must be classified as a permission error")
 }

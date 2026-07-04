@@ -119,3 +119,89 @@ func TestReconcileOnce_ZeroClosedAtFallsBackToClock(t *testing.T) {
 	require.Len(t, recorder.calls, 1)
 	require.Equal(t, fixedClock{}.Now(), recorder.calls[0].ClosedAt)
 }
+
+// TestReconcileOnce_PermissionErrorMarksDegraded verifies a token that cannot
+// read PR status flips the reconciler health to degraded so operators get a
+// signal instead of a silent, forever-retrying loop.
+func TestReconcileOnce_PermissionErrorMarksDegraded(t *testing.T) {
+	lister := &fakeLister{prs: []proposal.OpenPR{{ID: "p1", Repo: "acme/r", PRNumber: 1}}}
+	checker := &fakeChecker{errs: map[int]error{1: ports.ErrPermissionDenied}}
+	rec := newReconciler(lister, checker, &fakeRecorder{})
+
+	require.False(t, rec.Health().Degraded(), "health starts healthy")
+	rec.ReconcileOnce(context.Background())
+
+	require.True(t, rec.Health().Degraded())
+	require.NotEmpty(t, rec.Health().Reason())
+}
+
+// TestReconcileOnce_TransientErrorDoesNotDegrade verifies a non-permission
+// error (e.g. a network blip) on one row does not flip health to degraded when
+// another row reads cleanly.
+func TestReconcileOnce_TransientErrorDoesNotDegrade(t *testing.T) {
+	lister := &fakeLister{prs: []proposal.OpenPR{
+		{ID: "p-boom", Repo: "acme/r", PRNumber: 1},
+		{ID: "p-ok", Repo: "acme/r", PRNumber: 2},
+	}}
+	checker := &fakeChecker{
+		errs:     map[int]error{1: errors.New("connection reset")},
+		statuses: map[int]ports.PRStatus{2: {Closed: true, Merged: true}},
+	}
+	rec := newReconciler(lister, checker, &fakeRecorder{})
+
+	rec.ReconcileOnce(context.Background())
+
+	require.False(t, rec.Health().Degraded())
+}
+
+// TestReconcileOnce_RecoversAfterSuccessfulRead verifies health clears once a
+// pass reads PR status cleanly again after a permission failure.
+func TestReconcileOnce_RecoversAfterSuccessfulRead(t *testing.T) {
+	lister := &fakeLister{prs: []proposal.OpenPR{{ID: "p1", Repo: "acme/r", PRNumber: 1}}}
+	checker := &fakeChecker{errs: map[int]error{1: ports.ErrPermissionDenied}}
+	rec := newReconciler(lister, checker, &fakeRecorder{})
+
+	rec.ReconcileOnce(context.Background())
+	require.True(t, rec.Health().Degraded())
+
+	// The permission is granted: the next pass reads cleanly.
+	checker.errs = nil
+	checker.statuses = map[int]ports.PRStatus{1: {Closed: true, Merged: true}}
+	rec.ReconcileOnce(context.Background())
+
+	require.False(t, rec.Health().Degraded(), "a clean read must clear the degraded state")
+}
+
+// TestReconcileOnce_LogsErrorOnceOnDegradeTransition verifies the actionable
+// ERROR is logged only when health transitions into degraded, not on every
+// pass, so a standing permission gap does not flood the logs.
+func TestReconcileOnce_LogsErrorOnceOnDegradeTransition(t *testing.T) {
+	lister := &fakeLister{prs: []proposal.OpenPR{{ID: "p1", Repo: "acme/r", PRNumber: 1}}}
+	checker := &fakeChecker{errs: map[int]error{1: ports.ErrPermissionDenied}}
+	counter := &levelCounter{}
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:   lister,
+		Checker:  checker,
+		Recorder: &fakeRecorder{},
+		Clock:    fixedClock{},
+		Logger:   slog.New(counter),
+	})
+
+	rec.ReconcileOnce(context.Background())
+	rec.ReconcileOnce(context.Background())
+
+	require.Equal(t, 1, counter.errors, "the actionable ERROR must fire only on the degrade transition")
+}
+
+// levelCounter is a minimal slog.Handler that counts records by level.
+type levelCounter struct{ errors int }
+
+func (c *levelCounter) Enabled(context.Context, slog.Level) bool { return true }
+func (c *levelCounter) Handle(_ context.Context, r slog.Record) error {
+	if r.Level >= slog.LevelError {
+		c.errors++
+	}
+	return nil
+}
+func (c *levelCounter) WithAttrs([]slog.Attr) slog.Handler { return c }
+func (c *levelCounter) WithGroup(string) slog.Handler      { return c }
