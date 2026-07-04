@@ -10,10 +10,6 @@ import (
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
 
-// permissionDeniedReason is the operator-facing guidance surfaced while the
-// reconciler cannot read PR status.
-const permissionDeniedReason = "github: pull request reads denied — grant the GitHub token 'Pull requests: Read' on the target repository"
-
 // OpenPRLister is the repository slice the reconciler reads: proposals whose
 // PR awaits a terminal outcome.
 type OpenPRLister interface {
@@ -34,9 +30,6 @@ type ReconcilerDeps struct {
 	Recorder OutcomeRecorder
 	Clock    ports.Clock
 	Logger   *slog.Logger
-	// Health receives the reconciler's degraded/healthy signal; a nil value is
-	// replaced with a fresh healthy tracker so callers may ignore it.
-	Health *ReconcileHealth
 	// Interval between reconcile passes; <=0 falls back to one minute.
 	Interval time.Duration
 	// BatchLimit caps the open-PR rows fetched per pass; <=0 falls back to 50.
@@ -53,9 +46,12 @@ type Reconciler struct {
 	recorder   OutcomeRecorder
 	clock      ports.Clock
 	logger     *slog.Logger
-	health     *ReconcileHealth
 	interval   time.Duration
 	batchLimit int
+	// degraded records whether the last pass that probed GitHub could not read
+	// PR status because of a permission error. Accessed only from the single
+	// reconcile goroutine (and tests), so it needs no synchronization.
+	degraded bool
 }
 
 // NewReconciler constructs a Reconciler, applying defaults for Interval (1m)
@@ -67,24 +63,20 @@ func NewReconciler(d ReconcilerDeps) *Reconciler {
 	if d.BatchLimit <= 0 {
 		d.BatchLimit = 50
 	}
-	if d.Health == nil {
-		d.Health = NewReconcileHealth()
-	}
 	return &Reconciler{
 		lister:     d.Lister,
 		checker:    d.Checker,
 		recorder:   d.Recorder,
 		clock:      d.Clock,
 		logger:     d.Logger,
-		health:     d.Health,
 		interval:   d.Interval,
 		batchLimit: d.BatchLimit,
 	}
 }
 
-// Health exposes the reconciler's degraded/healthy signal for status handlers
-// and tests.
-func (r *Reconciler) Health() *ReconcileHealth { return r.health }
+// Degraded reports whether PR reads are currently failing on a permission
+// error, exposed for tests to assert the reconciler's health tracking.
+func (r *Reconciler) Degraded() bool { return r.degraded }
 
 // Run executes ReconcileOnce on every tick until ctx is cancelled.
 func (r *Reconciler) Run(ctx context.Context) {
@@ -142,20 +134,23 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 	r.updateHealth(permissionDenied, cleanRead)
 }
 
-// updateHealth reconciles the health signal from one pass. A permission error
+// updateHealth reconciles the degraded flag from one pass. A permission error
 // degrades it; a clean read recovers it. A pass that neither read cleanly nor
 // hit a permission error (no open PRs, or only transient errors) leaves the
 // prior state untouched so momentary blips do not flap the signal. The
-// actionable log fires only on the healthy<->degraded transition.
+// actionable log fires only on the healthy<->degraded transition, so a standing
+// permission gap does not flood the logs every pass.
 func (r *Reconciler) updateHealth(permissionDenied, cleanRead bool) {
 	switch {
 	case permissionDenied:
-		if r.health.markDegraded(permissionDeniedReason) {
+		if !r.degraded {
+			r.degraded = true
 			r.logger.Error("pr reconciler: cannot read pull request status; PR outcomes will not reconcile until fixed",
 				"action", "grant the GitHub token 'Pull requests: Read' on the target repository")
 		}
 	case cleanRead:
-		if r.health.markHealthy() {
+		if r.degraded {
+			r.degraded = false
 			r.logger.Info("pr reconciler: pull request reads recovered; resuming outcome reconciliation")
 		}
 	}

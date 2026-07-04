@@ -128,11 +128,10 @@ func TestReconcileOnce_PermissionErrorMarksDegraded(t *testing.T) {
 	checker := &fakeChecker{errs: map[int]error{1: ports.ErrPermissionDenied}}
 	rec := newReconciler(lister, checker, &fakeRecorder{})
 
-	require.False(t, rec.Health().Degraded(), "health starts healthy")
+	require.False(t, rec.Degraded(), "health starts healthy")
 	rec.ReconcileOnce(context.Background())
 
-	require.True(t, rec.Health().Degraded())
-	require.NotEmpty(t, rec.Health().Reason())
+	require.True(t, rec.Degraded())
 }
 
 // TestReconcileOnce_TransientErrorDoesNotDegrade verifies a non-permission
@@ -151,7 +150,7 @@ func TestReconcileOnce_TransientErrorDoesNotDegrade(t *testing.T) {
 
 	rec.ReconcileOnce(context.Background())
 
-	require.False(t, rec.Health().Degraded())
+	require.False(t, rec.Degraded())
 }
 
 // TestReconcileOnce_RecoversAfterSuccessfulRead verifies health clears once a
@@ -162,14 +161,14 @@ func TestReconcileOnce_RecoversAfterSuccessfulRead(t *testing.T) {
 	rec := newReconciler(lister, checker, &fakeRecorder{})
 
 	rec.ReconcileOnce(context.Background())
-	require.True(t, rec.Health().Degraded())
+	require.True(t, rec.Degraded())
 
 	// The permission is granted: the next pass reads cleanly.
 	checker.errs = nil
 	checker.statuses = map[int]ports.PRStatus{1: {Closed: true, Merged: true}}
 	rec.ReconcileOnce(context.Background())
 
-	require.False(t, rec.Health().Degraded(), "a clean read must clear the degraded state")
+	require.False(t, rec.Degraded(), "a clean read must clear the degraded state")
 }
 
 // TestReconcileOnce_LogsErrorOnceOnDegradeTransition verifies the actionable
