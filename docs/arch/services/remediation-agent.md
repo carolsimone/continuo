@@ -379,7 +379,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 |---|---|
 | `remediation.requested:v1` consumer | Dispatches each inbound message to the `ProposeFix` handler. |
 | Outbox publisher | Drains `remediation_agent_outbox` and XADDs each pending row to `remediation.proposed:v1`, `remediation.pr_opened:v1`, or `remediation.pr_closed:v1` depending on the row's stream field. |
-| PR-outcome reconciler | Ticks every `REMEDIATION_PR_POLL_INTERVAL` (default 60s). Each pass lists up to 50 proposals with `pr_state='open'`, oldest-opened first; for each it calls `GET /repos/{repo}/pulls/{number}` (GitHub Pulls API) and maps a merged PR to `merged` and a closed-unmerged PR to `rejected`. A closed PR calls `Service.RecordOutcome`, which performs the single-winner CAS `pr_state: open → merged|rejected` and enqueues the `remediation.pr_closed:v1` outbox row in one transaction; a CAS miss (the row already left `open`) is a no-op. Per-row errors (a failed GitHub read or a failed `RecordOutcome`) are logged and skipped — one bad row never blocks the rest of the batch — and are retried on the next pass. |
+| PR-outcome reconciler | Ticks every `REMEDIATION_PR_POLL_INTERVAL` (default 60s). Each pass lists up to 50 proposals with `pr_state='open'`, oldest-opened first; for each it calls `GET /repos/{repo}/pulls/{number}` (GitHub Pulls API) and maps a merged PR to `merged` and a closed-unmerged PR to `rejected`. A closed PR calls `Service.RecordOutcome`, which performs the single-winner CAS `pr_state: open → merged|rejected` and enqueues the `remediation.pr_closed:v1` outbox row in one transaction; a CAS miss (the row already left `open`) is a no-op. Per-row errors (a failed GitHub read or a failed `RecordOutcome`) are logged and skipped — one bad row never blocks the rest of the batch — and are retried on the next pass. A `401`, or a `403` that is not rate limiting (no `Retry-After` header and `X-RateLimit-Remaining` != 0), signals the token lacks `Pull requests: Read` and is classified as a permission error that flips the reconciler to a degraded state; rate-limited `403`s and `429`s are treated as transient and simply retried. While degraded, an actionable ERROR log (`grant the GitHub token 'Pull requests: Read'`) fires only on the healthy→degraded transition — not every pass — and a subsequent clean read clears it (recovery logged once). This distinguishes a standing permission gap — which stalls the whole close-loop and never self-resolves — from transient errors or genuinely still-open PRs. |
 
 ## Configuration Reference
 
@@ -420,7 +420,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Seed fixer (CSV read, one LLM call) | `remediation-agent/service/fixer/seed.go` |
 | Validation fixer (two-step candidate + real-source flow) | `remediation-agent/service/fixer/validation.go` |
 | PR lifecycle application service (claim/record/fail/record-outcome + outbox) | `remediation-agent/service/proposals/service.go` |
-| PR-outcome reconciler loop | `remediation-agent/service/proposals/reconciler.go` |
+| PR-outcome reconciler loop (incl. permission-gap degraded signal) | `remediation-agent/service/proposals/reconciler.go` |
 | Port interfaces | `remediation-agent/service/ports/` |
 | Postgres UoW + proposal repo (incl. CAS for BeginPR and RecordPROutcome, open-PR listing) | `remediation-agent/adapters/postgres/` |
 | S3 evidence reader + artifact writer | `remediation-agent/adapters/s3/` |

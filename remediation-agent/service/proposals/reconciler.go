@@ -2,6 +2,7 @@ package proposals
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -47,6 +48,10 @@ type Reconciler struct {
 	logger     *slog.Logger
 	interval   time.Duration
 	batchLimit int
+	// degraded records whether the last pass that probed GitHub could not read
+	// PR status because of a permission error. Accessed only from the single
+	// reconcile goroutine (and tests), so it needs no synchronization.
+	degraded bool
 }
 
 // NewReconciler constructs a Reconciler, applying defaults for Interval (1m)
@@ -69,6 +74,10 @@ func NewReconciler(d ReconcilerDeps) *Reconciler {
 	}
 }
 
+// Degraded reports whether PR reads are currently failing on a permission
+// error, exposed for tests to assert the reconciler's health tracking.
+func (r *Reconciler) Degraded() bool { return r.degraded }
+
 // Run executes ReconcileOnce on every tick until ctx is cancelled.
 func (r *Reconciler) Run(ctx context.Context) {
 	t := time.NewTicker(r.interval)
@@ -90,13 +99,19 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 		r.logger.Warn("pr reconciler: list open pull requests", "error", err)
 		return
 	}
+	permissionDenied := false
+	cleanRead := false
 	for _, pr := range open {
 		st, err := r.checker.PRStatus(ctx, pr.Repo, pr.PRNumber)
 		if err != nil {
+			if errors.Is(err, ports.ErrPermissionDenied) {
+				permissionDenied = true
+			}
 			r.logger.Warn("pr reconciler: fetch pr status",
 				"proposal_id", pr.ID, "repo", pr.Repo, "pr_number", pr.PRNumber, "error", err)
 			continue
 		}
+		cleanRead = true
 		if !st.Closed {
 			continue
 		}
@@ -115,5 +130,28 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 		}
 		r.logger.Info("pr reconciler: proposal PR reached terminal outcome",
 			"proposal_id", pr.ID, "repo", pr.Repo, "pr_number", pr.PRNumber, "outcome", string(outcome))
+	}
+	r.updateHealth(permissionDenied, cleanRead)
+}
+
+// updateHealth reconciles the degraded flag from one pass. A permission error
+// degrades it; a clean read recovers it. A pass that neither read cleanly nor
+// hit a permission error (no open PRs, or only transient errors) leaves the
+// prior state untouched so momentary blips do not flap the signal. The
+// actionable log fires only on the healthy<->degraded transition, so a standing
+// permission gap does not flood the logs every pass.
+func (r *Reconciler) updateHealth(permissionDenied, cleanRead bool) {
+	switch {
+	case permissionDenied:
+		if !r.degraded {
+			r.degraded = true
+			r.logger.Error("pr reconciler: cannot read pull request status; PR outcomes will not reconcile until fixed",
+				"action", "grant the GitHub token 'Pull requests: Read' on the target repository")
+		}
+	case cleanRead:
+		if r.degraded {
+			r.degraded = false
+			r.logger.Info("pr reconciler: pull request reads recovered; resuming outcome reconciliation")
+		}
 	}
 }
