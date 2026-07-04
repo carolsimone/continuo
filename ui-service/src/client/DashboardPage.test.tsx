@@ -70,17 +70,16 @@ function renderDashboard() {
 }
 
 describe('DashboardPage — Remediation tab count badge', () => {
-  it('counts only proposals awaiting a human (pr_state empty or failed), excluding opened PRs', async () => {
+  it('counts proposals with an open PR (pr_state=open)', async () => {
     const proposals = [
-      makeProposal({ id: 'p1', pr_state: '' }),       // awaiting → counted
-      makeProposal({ id: 'p2', pr_state: 'failed' }),  // retryable → counted
-      makeProposal({ id: 'p3', pr_state: 'open' }),    // PR already open → NOT counted
+      makeProposal({ id: 'p1', pr_state: 'open' }),
+      makeProposal({ id: 'p2', pr_state: 'open' }),
     ];
     mockFetchProposals.mockResolvedValue(proposals);
 
     renderDashboard();
 
-    // Two of the three proposals are awaiting a human, so the badge shows 2.
+    // The server returns only open-PR proposals; the badge is the list length.
     await waitFor(() => {
       const remediationTab = screen.getByRole('tab', { name: /remediation/i });
       expect(remediationTab).toBeInTheDocument();
@@ -89,11 +88,11 @@ describe('DashboardPage — Remediation tab count badge', () => {
       expect(badge?.textContent).toBe('2');
     });
 
-    // Ensure fetchProposals was called with 'proposed'
-    expect(mockFetchProposals).toHaveBeenCalledWith('proposed');
+    // The badge fetches only open-PR proposals.
+    expect(mockFetchProposals).toHaveBeenCalledWith({ pr_state: 'open' });
   });
 
-  it('omits the count badge on the Remediation tab when there are no pending proposals', async () => {
+  it('omits the count badge on the Remediation tab when there are no open PRs', async () => {
     mockFetchProposals.mockResolvedValue([]);
 
     renderDashboard();
@@ -101,7 +100,7 @@ describe('DashboardPage — Remediation tab count badge', () => {
     await waitFor(() => {
       const remediationTab = screen.getByRole('tab', { name: /remediation/i });
       expect(remediationTab).toBeInTheDocument();
-      // No pending proposals → no pill (like the count-less Releases tab).
+      // No open PRs → no pill (like the count-less Releases tab).
       expect(remediationTab.querySelector('.tabs__count')).toBeNull();
     });
   });
