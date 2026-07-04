@@ -11,11 +11,13 @@ export interface CreatePullRequestError {
   message: string;
 }
 
-export function fetchProposals(status?: string): Promise<ProposalDTO[]> {
+export function fetchProposals(filter: { status?: string; pr_state?: string } = {}): Promise<ProposalDTO[]> {
   const qs = new URLSearchParams();
-  if (status) qs.set('status', status);
-  const url = status
-    ? `/api/remediation/proposals?${qs.toString()}`
+  if (filter.status) qs.set('status', filter.status);
+  if (filter.pr_state) qs.set('pr_state', filter.pr_state);
+  const query = qs.toString();
+  const url = query
+    ? `/api/remediation/proposals?${query}`
     : '/api/remediation/proposals';
   return fetch(url)
     .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))

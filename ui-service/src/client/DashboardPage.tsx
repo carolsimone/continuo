@@ -16,7 +16,7 @@ export default function DashboardPage() {
   const [topologies, setTopologies] = useState<ScheduleTopologySummary[]>([]);
   const [topologiesError, setTopologiesError] = useState<string | null>(null);
   const [nodeTotal, setNodeTotal] = useState(0);
-  const [pendingRemediationCount, setPendingRemediationCount] = useState(0);
+  const [openPrCount, setOpenPrCount] = useState(0);
 
   useEffect(() => {
     const fetch_ = () =>
@@ -54,7 +54,7 @@ export default function DashboardPage() {
     { slug: 'topology', label: 'Topology', count: topologies.length },
     { slug: 'releases', label: 'Releases' },
     { slug: 'nodes', label: 'Nodes', count: nodeTotal },
-    { slug: 'remediation', label: 'Remediation', count: pendingRemediationCount > 0 ? pendingRemediationCount : undefined },
+    { slug: 'remediation', label: 'Remediation', count: openPrCount > 0 ? openPrCount : undefined },
   ];
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
 
@@ -67,17 +67,14 @@ export default function DashboardPage() {
       .catch(() => {});
   }, [activeTab]);
 
-  // Remediation-tab count badge: proposals awaiting a human — status=proposed
-  // and no PR yet (pr_state '' or 'failed'); proposals whose PR is already open
-  // are not pending. The pill is omitted when the count is zero.
-  // Fetched on mount only; no poll — proposal arrivals are infrequent.
+  // Remediation-tab count badge: open remediation PRs — proposals whose PR is
+  // up on GitHub and awaiting a human (pr_state='open'). The server filters, so
+  // the count is the returned list length. The pill is omitted when it is zero.
+  // Fetched on mount only; no poll — open-PR counts change only when the
+  // close-loop reconciler runs, and proposal arrivals are infrequent.
   useEffect(() => {
-    fetchProposals('proposed')
-      .then(proposals =>
-        setPendingRemediationCount(
-          (proposals || []).filter(p => !p.pr_state || p.pr_state === 'failed').length,
-        ),
-      )
+    fetchProposals({ pr_state: 'open' })
+      .then(proposals => setOpenPrCount((proposals || []).length))
       .catch(() => {});
   }, []);
 
