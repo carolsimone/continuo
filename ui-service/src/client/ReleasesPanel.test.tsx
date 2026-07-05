@@ -31,6 +31,8 @@ describe('ReleasesPanel — reason column', () => {
     // The raw token and the old error box must be gone.
     expect(screen.queryByText('compile_failed')).toBeNull();
     expect(document.querySelector('.info-strip--error')).toBeNull();
+    expect(document.querySelector('.nodes-reason')).not.toBeNull();
+    expect(document.querySelector('.nodes-dash')).toBeNull();
   });
 
   it('renders a dash in the Reason column for a promoted row', async () => {
