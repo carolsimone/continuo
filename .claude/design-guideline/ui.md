@@ -309,6 +309,11 @@ Rules:
 - A cell may carry a secondary metadata line under its primary value with
   `.nodes-node-subpath` (11.5px gray monospace) — e.g. the offending source
   `file_path` under a compile/seed node id. One line only; never actions.
+- A table may carry an optional muted-text qualifier cell (`.nodes-reason`,
+  12px slate gray) for a per-row attribute present only on some rows — e.g.
+  the failed stage on a rejected release. Rows without the attribute render
+  the `.nodes-dash` marker (`—`), never a coloured info-strip. Do not use
+  `info-strip--error` as a persistent per-row label.
 
 ### Load more
 
