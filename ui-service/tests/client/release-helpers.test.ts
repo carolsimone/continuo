@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { firstInFlight, IN_FLIGHT_STATUSES, releasePillClass } from '../../src/client/release-helpers';
+import { firstInFlight, IN_FLIGHT_STATUSES, releasePillClass, reasonLabel } from '../../src/client/release-helpers';
 import { ReleaseListItem } from '../../src/client/types';
 
 const mk = (id: string, status: string): ReleaseListItem => ({
@@ -49,5 +49,16 @@ describe('releasePillClass', () => {
 
   it('falls back to pending for unknown statuses', () => {
     expect(releasePillClass('weird')).toBe('pill--pending');
+  });
+});
+
+describe('reasonLabel', () => {
+  it('humanizes reject_reason stage tokens', () => {
+    expect(reasonLabel('compile_failed')).toBe('Compilation');
+    expect(reasonLabel('seed_build_failed')).toBe('Seed build');
+    expect(reasonLabel('validation_failed')).toBe('Validation');
+  });
+  it('falls back to the raw value for an unknown reason', () => {
+    expect(reasonLabel('meteor_strike')).toBe('meteor_strike');
   });
 });
