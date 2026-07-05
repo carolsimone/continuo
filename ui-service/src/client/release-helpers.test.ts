@@ -29,7 +29,7 @@ describe('groupByStage', () => {
 describe('stageLabel', () => {
   it('maps known literals to display labels and falls back to the raw value', () => {
     expect(stageLabel('compile')).toBe('Compilation');
-    expect(stageLabel('seed_build')).toBe('Seed');
+    expect(stageLabel('seed_build')).toBe('Seed build');
     expect(stageLabel('validation')).toBe('Validation');
     expect(stageLabel('mystery')).toBe('mystery');
   });
