@@ -451,6 +451,10 @@ body {
    source file under a compile/seed node id). */
 .nodes-node-subpath { font-size: 11.5px; color: #6b7280; margin-top: 2px;
                       font-family: 'SF Mono', 'Fira Mono', monospace; }
+/* Muted per-row qualifier cell (e.g. the failed stage on a rejected release).
+   Present only on some rows; absent values use .nodes-dash, never a coloured
+   info-strip. */
+.nodes-reason { font-size: 12px; color: #64748b; }
 .nodes-attempt    { font-size: 12px; color: #64748b; white-space: nowrap; }
 .nodes-ts         { font-size: 12px; color: #64748b; white-space: nowrap; }
 .nodes-ts--dim    { color: #d1d5db; }

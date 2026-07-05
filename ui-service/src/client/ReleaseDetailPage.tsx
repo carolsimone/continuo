@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ReleaseDetail, NodeValidationResult } from './types';
-import { releasePillClass, groupByStage, stageLabel, proposalKey } from './release-helpers';
+import { releasePillClass, groupByStage, stageLabel, proposalKey, reasonLabel } from './release-helpers';
 import { fetchProposals } from './remediation-api';
 
 // Cadence for re-checking whether a remediation proposal has been persisted for a
@@ -158,7 +158,7 @@ export default function ReleaseDetailPage() {
 
       {rel.reject_reason && (
         <div className="info-strip info-strip--error">
-          <span className="info-strip__icon">⚠</span>{rel.reject_reason}
+          <span className="info-strip__icon">⚠</span>{reasonLabel(rel.reject_reason)}
         </div>
       )}
 

@@ -23,24 +23,40 @@ function mockFetch(releases: ReleaseListItem[]) {
 
 beforeEach(() => { vi.clearAllMocks(); });
 
-describe('ReleasesPanel — reject_reason', () => {
-  it('shows the reject reason on a rejected row', async () => {
+describe('ReleasesPanel — reason column', () => {
+  it('shows the humanized reason in the Reason column for a rejected row', async () => {
     mockFetch([item({ release_id: 'rel-1', status: 'rejected', reject_reason: 'compile_failed' })]);
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
-    expect(await screen.findByText('compile_failed')).toBeInTheDocument();
+    expect(await screen.findByText('Compilation')).toBeInTheDocument();
+    // The raw token and the old error box must be gone.
+    expect(screen.queryByText('compile_failed')).toBeNull();
+    expect(document.querySelector('.info-strip--error')).toBeNull();
+    expect(document.querySelector('.nodes-reason')).not.toBeNull();
+    expect(document.querySelector('.nodes-dash')).toBeNull();
   });
 
-  it('does not render a reason chip for a non-rejected row', async () => {
+  it('renders a dash in the Reason column for a promoted row', async () => {
     mockFetch([item({ release_id: 'rel-2', status: 'promoted', node_count: 5 })]);
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText('rel-2')).toBeInTheDocument());
-    expect(screen.queryByText('compile_failed')).toBeNull();
+    expect(screen.queryByText('Compilation')).toBeNull();
+    expect(document.querySelector('.nodes-reason')).toBeNull();
+    expect(document.querySelector('.nodes-dash')).not.toBeNull();
   });
 
-  it('does not render a reason chip for a rejected row with an empty reject_reason', async () => {
+  it('renders a dash for a rejected row with an empty reject_reason', async () => {
     mockFetch([item({ release_id: 'rel-3', status: 'rejected', reject_reason: '' })]);
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
     expect(await screen.findByText('rel-3')).toBeInTheDocument();
-    expect(screen.queryByText('compile_failed')).toBeNull();
+    expect(document.querySelector('.nodes-reason')).toBeNull();
+    expect(document.querySelector('.nodes-dash')).not.toBeNull();
+  });
+
+  it('has a Reason column header between Status and When', async () => {
+    mockFetch([item({ release_id: 'rel-4', status: 'promoted' })]);
+    render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('rel-4')).toBeInTheDocument());
+    const headers = Array.from(document.querySelectorAll('thead th')).map(th => th.textContent);
+    expect(headers).toEqual(['Release', 'Status', 'Reason', 'When', 'Nodes']);
   });
 });

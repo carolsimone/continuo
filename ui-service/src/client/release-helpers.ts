@@ -39,7 +39,7 @@ export const STAGE_ORDER = ['compile', 'seed_build', 'validation'] as const;
 
 const STAGE_LABELS: Record<string, string> = {
   compile: 'Compilation',
-  seed_build: 'Seed',
+  seed_build: 'Seed build',
   validation: 'Validation',
 };
 
@@ -47,6 +47,14 @@ const STAGE_LABELS: Record<string, string> = {
 // to the raw value for an unrecognized stage.
 export function stageLabel(stage: string): string {
   return STAGE_LABELS[stage] ?? stage;
+}
+
+// reasonLabel humanizes a release reject_reason token (e.g. "compile_failed")
+// by dropping the "_failed" suffix and reusing the stage-label vocabulary, so
+// the Releases list and the release detail page speak the same words. An
+// unrecognized token falls through to its raw value.
+export function reasonLabel(reason: string): string {
+  return stageLabel(reason.replace(/_failed$/, ''));
 }
 
 // groupByStage buckets per-node results by stage and returns the buckets in

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ReleaseListItem, ReleasesListResponse, CurrentProd } from './types';
-import { firstInFlight, releasePillClass } from './release-helpers';
+import { firstInFlight, releasePillClass, reasonLabel } from './release-helpers';
 
 const STATUS_FILTERS = ['', 'promoted', 'rejected', 'superseded', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
 
@@ -92,7 +92,7 @@ export default function ReleasesPanel() {
           </div>
           <table className="nodes-table">
             <thead>
-              <tr><th>Release</th><th>Status</th><th>When</th><th>Nodes</th></tr>
+              <tr><th>Release</th><th>Status</th><th>Reason</th><th>When</th><th>Nodes</th></tr>
             </thead>
             <tbody>
               {items.map(r => (
@@ -121,10 +121,12 @@ export default function ReleasesPanel() {
                     <span className={`pill-sm ${releasePillClass(r.status).replace('pill--', 'pill-sm--')}`}>
                       {r.status}
                     </span>
-                    {r.status === 'rejected' && r.reject_reason && (
-                      <span className="info-strip info-strip--error info-strip--inline" style={{ marginLeft: 8 }}>
-                        {r.reject_reason}
-                      </span>
+                  </td>
+                  <td>
+                    {r.status === 'rejected' && r.reject_reason ? (
+                      <span className="nodes-reason">{reasonLabel(r.reject_reason)}</span>
+                    ) : (
+                      <span className="nodes-dash">—</span>
                     )}
                   </td>
                   <td className="nodes-ts">{(r.resolved_at || r.created_at || '').slice(0, 19).replace('T', ' ')}</td>
