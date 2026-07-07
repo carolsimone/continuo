@@ -194,6 +194,15 @@ type k8sJobList struct {
 		Status struct {
 			Succeeded int `json:"succeeded"`
 		} `json:"status"`
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Command []string `json:"command"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
 	} `json:"items"`
 }
 

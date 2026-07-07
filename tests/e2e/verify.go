@@ -155,6 +155,47 @@ func verifyFullDAGExecution(
 	t.Log("✅ Full DAG execution completed successfully")
 }
 
+// verifyDialectRouting asserts that production dbt Jobs are actually routed
+// through the per-service command dialect configured via the dbt-commands
+// ConfigMap, rather than silently falling back to the built-in dialect. The
+// e2e cluster maps service-1 to the "wise-dbt" alias (tests/e2e/k8s/
+// executor-controller-deployment.yaml) while service-2/3 have no override and
+// use built-in plain dbt. Without this assertion, a broken env var, volume
+// mount, or ConfigMap wiring would silently fall back to the built-in dialect
+// for every service and the suite would stay green.
+func verifyDialectRouting(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	// "!mode" excludes seed_build/compile/validation Jobs (which carry a mode
+	// label) so only plain production query/seed Jobs — the ones this test's
+	// DAG actually deploys — are inspected.
+	service1Jobs, err := getK8sJobs(ctx, "app=dbt-job,service_name=service-1,!mode")
+	require.NoError(t, err, "Failed to query K8s jobs for service-1")
+	require.NotEmpty(t, service1Jobs.Items, "Expected at least one service-1 job to assert dialect routing on")
+	for _, job := range service1Jobs.Items {
+		require.NotEmpty(t, job.Spec.Template.Spec.Containers, "service-1 job %s has no containers", job.Metadata.Name)
+		command := job.Spec.Template.Spec.Containers[0].Command
+		require.NotEmpty(t, command, "service-1 job %s has an empty container command", job.Metadata.Name)
+		assert.Equal(t, "wise-dbt", command[0],
+			"service-1 jobs must run through the wise-dbt dialect (dbt-commands ConfigMap wiring) — job %s ran %v instead",
+			job.Metadata.Name, command)
+	}
+
+	builtinJobs, err := getK8sJobs(ctx, "app=dbt-job,service_name in (service-2,service-3),!mode")
+	require.NoError(t, err, "Failed to query K8s jobs for service-2/3")
+	require.NotEmpty(t, builtinJobs.Items, "Expected at least one service-2/3 job to assert built-in dialect fallback on")
+	for _, job := range builtinJobs.Items {
+		require.NotEmpty(t, job.Spec.Template.Spec.Containers, "job %s has no containers", job.Metadata.Name)
+		command := job.Spec.Template.Spec.Containers[0].Command
+		require.NotEmpty(t, command, "job %s has an empty container command", job.Metadata.Name)
+		assert.Equal(t, "dbt", command[0],
+			"service-2/3 jobs must run through the built-in plain dbt dialect — job %s ran %v instead",
+			job.Metadata.Name, command)
+	}
+
+	t.Log("✅ dialect routing verified: service-1 jobs run wise-dbt, service-2/3 jobs run built-in dbt")
+}
+
 // verifyOrchestratorPublishedRootNodes verifies that the orchestrator published
 // the expected root node messages to query.model:v1 after processing scheduler.started:v1.
 func verifyOrchestratorPublishedRootNodes(
