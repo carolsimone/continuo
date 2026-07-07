@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -21,7 +22,7 @@ func Load(path string, logger *slog.Logger) (*Resolver, error) {
 		logger.Info("DBT_COMMANDS_CONFIG_PATH not set, using built-in dbt commands")
 		return Defaults(), nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // G304: path comes from DBT_COMMANDS_CONFIG_PATH, a trusted operator-set config path, not external/user input.
 	if errors.Is(err, os.ErrNotExist) {
 		logger.Info("dbt commands config not found, using built-in dbt commands", "path", path)
 		return Defaults(), nil

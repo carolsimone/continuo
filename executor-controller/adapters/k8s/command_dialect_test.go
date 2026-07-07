@@ -19,7 +19,7 @@ import (
 func newDialectTestClient(t *testing.T, yaml string) *K8sClient {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "dbt-commands.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	resolver, err := commandcfg.Load(path, logger)
 	require.NoError(t, err)

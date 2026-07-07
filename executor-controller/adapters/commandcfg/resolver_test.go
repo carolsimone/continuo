@@ -38,7 +38,7 @@ func TestDefaults_CompileCommand(t *testing.T) {
 func loadTestConfig(t *testing.T, content string) *Resolver {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "dbt-commands.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	r, err := Load(path, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	require.NoError(t, err)
 	return r
