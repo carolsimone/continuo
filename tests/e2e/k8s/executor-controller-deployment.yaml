@@ -5,10 +5,12 @@ metadata:
   namespace: default
 data:
   dbt-commands.yaml: |
-    default:
-      run:      ["dbt", "run", "--select", "{{ node }}"]
-      seed:     ["dbt", "seed", "--select", "{{ node }}"]
-      snapshot: ["dbt", "snapshot", "--select", "{{ node }}"]
+    services:
+      service-1:
+        run:      ["wise-dbt", "run", "--select", "{{ node }}"]
+        seed:     ["wise-dbt", "seed", "--select", "{{ node }}"]
+        snapshot: ["wise-dbt", "snapshot", "--select", "{{ node }}"]
+        seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
 ---
 apiVersion: v1
 kind: ServiceAccount
