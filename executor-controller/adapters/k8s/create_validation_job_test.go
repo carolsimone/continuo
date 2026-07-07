@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/carolsimone/continuo/executor-controller/adapters/commandcfg"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +24,7 @@ func newValidationTestClient(objects ...*batchv1.Job) *K8sClient {
 		runtimeObjs = append(runtimeObjs, o)
 	}
 	cs := fake.NewSimpleClientset(runtimeObjs...)
-	c := &K8sClient{logger: slog.New(slog.NewTextHandler(os.Stderr, nil))}
+	c := &K8sClient{logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), commands: commandcfg.Defaults()}
 	c.setClientsetForTest(cs)
 	return c
 }

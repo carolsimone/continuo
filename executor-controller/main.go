@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/executor-controller/adapters/commandcfg"
 	"github.com/carolsimone/continuo/executor-controller/adapters/http"
 	"github.com/carolsimone/continuo/executor-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
@@ -117,7 +118,15 @@ func main() {
 	})
 
 	// 3. K8s client (in-cluster config)
-	k8sClient, err := k8s.NewK8sClient(logger)
+	// dbt command dialect: resolved per service at Job-build time. A missing
+	// file means built-in plain-dbt commands; an invalid file is fatal so a
+	// config typo surfaces at boot, never mid-release.
+	cmdResolver, err := commandcfg.Load(os.Getenv("DBT_COMMANDS_CONFIG_PATH"), logger)
+	if err != nil {
+		logger.Error("Invalid dbt commands config", "error", err)
+		os.Exit(1)
+	}
+	k8sClient, err := k8s.NewK8sClient(logger, cmdResolver)
 	if err != nil {
 		logger.Error("Failed to create K8s client", "error", err)
 		os.Exit(1)

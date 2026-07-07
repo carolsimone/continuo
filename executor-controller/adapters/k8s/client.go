@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	validationmodel "github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	batchv1 "k8s.io/api/batch/v1"
@@ -44,12 +45,14 @@ type JobParams struct {
 type K8sClient struct {
 	clientset kubernetes.Interface
 	logger    *slog.Logger
+	commands  ports.CommandResolver
 }
 
 // NewK8sClient creates a new K8sClient.
 // Uses KUBECONFIG when set (local/docker-compose), otherwise falls back to
-// in-cluster config (K8s pod with a ServiceAccount).
-func NewK8sClient(logger *slog.Logger) (*K8sClient, error) {
+// in-cluster config (K8s pod with a ServiceAccount). commands resolves the
+// per-service dbt command dialect for every Job this client builds.
+func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver) (*K8sClient, error) {
 	var restConfig *rest.Config
 	var err error
 
@@ -76,6 +79,7 @@ func NewK8sClient(logger *slog.Logger) (*K8sClient, error) {
 	return &K8sClient{
 		clientset: clientset,
 		logger:    logger,
+		commands:  commands,
 	}, nil
 }
 
@@ -134,7 +138,8 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	}
 
 	// Step 2: Build Job spec
-	podSpec, err := buildPodSpec(params)
+	podSpec, err := buildPodSpec(params,
+		c.commands.NodeCommand(params.ServiceName, params.NodeType, params.TableName))
 	if err != nil {
 		return fmt.Errorf("failed to build pod spec: %w", err)
 	}
@@ -470,7 +475,8 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 		return nil
 	}
 
-	podSpec, err := buildSeedBuildPodSpec(params)
+	podSpec, err := buildSeedBuildPodSpec(params,
+		c.commands.SeedBuildCommand(params.ServiceName, params.TableName, params.CandidateSchema))
 	if err != nil {
 		return fmt.Errorf("failed to build seed-build pod spec: %w", err)
 	}
@@ -513,7 +519,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
 // generate_schema_name macro materializes the seed into the candidate schema.
 // ImageTag must be non-empty — the team image must be explicitly versioned.
-func buildSeedBuildPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
+func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from seed-build job params for service %s",
 			events.ErrPermanent, p.ServiceName)
@@ -547,7 +553,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 				Name:            "dbt-job",
 				Image:           image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command:         p.NodeType.Command(p.TableName),
+				Command:         command,
 				Env:             envVars,
 			},
 		},
@@ -557,9 +563,9 @@ func buildSeedBuildPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 // CreateCompileJob builds and creates a mode=compile K8s Job (idempotent by
 // job name). The Job pod has a shared emptyDir volume "shared" mounted at
 // /shared in both containers:
-//   - initContainer "compile": team image runs `dbt compile --profiles-dir
-//     /project && cp .../manifest.json /shared/manifest.json` with the
-//     standard DBT_POSTGRES_* warehouse envs.
+//   - initContainer "compile": team image runs the service's resolved compile
+//     command and copies the manifest from its declared path into
+//     /shared/manifest.json, with the standard DBT_POSTGRES_* warehouse envs.
 //   - main container "upload": the shared s3-sidecar image (S3_SIDECAR_IMAGE
 //     env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest) runs
 //     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH +
@@ -582,7 +588,8 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 		return nil
 	}
 
-	podSpec, err := buildCompilePodSpec(params)
+	compileArgv, manifestPath := c.commands.CompileCommand(params.ServiceName)
+	podSpec, err := buildCompilePodSpec(params, compileArgv, manifestPath)
 	if err != nil {
 		return fmt.Errorf("failed to build compile pod spec: %w", err)
 	}
@@ -621,13 +628,13 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 // buildCompilePodSpec constructs the PodSpec for a compile Job. The pod has:
 //   - a shared emptyDir volume "shared" mounted at /shared in both containers;
 //   - an initContainer "compile" using the team image (ImageTag must be
-//     non-empty) that runs `dbt compile --profiles-dir /project` and copies
-//     the resulting manifest.json into /shared/manifest.json;
+//     non-empty) that runs the service's resolved compile command and copies
+//     the manifest from its declared path into /shared/manifest.json;
 //   - a main container "upload" using the shared s3-sidecar image (no dbt;
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
 //     MANIFEST_S3_URI, and the S3 credential envs forwarded from the executor-controller env.
-func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
+func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPath string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from compile job params for service %s",
 			events.ErrPermanent, p.ServiceName)
@@ -670,7 +677,7 @@ func buildCompilePodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command: []string{
 					"sh", "-c",
-					"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json",
+					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json",
 				},
 				Env:          initEnvVars,
 				VolumeMounts: []corev1.VolumeMount{mount},
@@ -697,7 +704,7 @@ func (c *K8sClient) setClientsetForTest(cs kubernetes.Interface) { c.clientset =
 // own environment so dbt pods can reach the same database.
 // Returns an error if ImageTag is empty — content-addressed tags must be explicit;
 // falling back to "latest" is intentionally refused.
-func buildPodSpec(params JobParams) (corev1.PodSpec, error) {
+func buildPodSpec(params JobParams, command []string) (corev1.PodSpec, error) {
 	if params.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for service %s",
 			events.ErrPermanent, params.ServiceName)
@@ -731,7 +738,7 @@ func buildPodSpec(params JobParams) (corev1.PodSpec, error) {
 				Name:            "dbt-job",
 				Image:           image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command:         params.NodeType.Command(params.TableName),
+				Command:         command,
 				Env:             envVars,
 			},
 		},
