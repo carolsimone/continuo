@@ -38,6 +38,10 @@ app.kubernetes.io/name: {{ .service }}
 {{- printf "%s-schedules" (include "continuo-app.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "continuo-app.dbtCommandsConfigMapName" -}}
+{{- printf "%s-dbt-commands" (include "continuo-app.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "continuo-app.migrationsJobName" -}}
 {{- printf "%s-db-migrate" (include "continuo-app.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
