@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "continuo-app.dbtCommandsConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo-app.labels" . | nindent 4 }}
+data:
+  dbt-commands.yaml: |
+    {{- .Files.Get "files/dbt-commands.yaml" | nindent 4 }}

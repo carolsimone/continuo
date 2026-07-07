@@ -199,6 +199,15 @@ services:
       HTTP_PORT: "8084"
       DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__
       IMAGE_TAG: latest
+      DBT_COMMANDS_CONFIG_PATH: /etc/continuo/dbt-commands.yaml
+    volumeMounts:
+      - name: dbt-commands
+        mountPath: /etc/continuo
+        readOnly: true
+    volumes:
+      - name: dbt-commands
+        configMap:
+          name: ""
 
   - name: k8s-controller
     enabled: true

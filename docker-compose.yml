@@ -206,6 +206,8 @@ services:
       - S3_SIDECAR_IMAGE=s3-sidecar:latest
       # dbt PostgreSQL target (forwarded to K8s job pods)
       - DBT_POSTGRES_DB=continuo_dbt
+      # dbt command dialect (per-service command templates for K8s Jobs)
+      - DBT_COMMANDS_CONFIG_PATH=/etc/continuo/dbt-commands.yaml
       # S3 credentials forwarded into both the validation pod (which fetches
       # CANDIDATE_SQL_URI itself) and the compile pod's s3-sidecar (manifest upload).
       # Points at LocalStack on the compose network. NOTE: like POSTGRES_HOST above,
@@ -235,6 +237,7 @@ services:
       - ./agent-runner:/app/agent-runner
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
+      - ./config/dbt-commands.yaml:/etc/continuo/dbt-commands.yaml:ro
     networks:
       - default
       - kind

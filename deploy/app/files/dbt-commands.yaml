@@ -1,0 +1,21 @@
+# dbt command dialect for executor-created Kubernetes Jobs.
+#
+# Resolution per operation: services.<service_name> -> default -> built-in
+# plain dbt. Missing file or missing operation means the built-in command.
+# Placeholders: {{ node }} (required in run/seed/snapshot/seed_build),
+# {{ target_schema }} (seed_build only; receives the candidate schema).
+# seed_build is optional: when omitted, seed-build jobs run the seed command
+# and route the schema via the DBT_TARGET_SCHEMA env var + the
+# generate_schema_name macro baked into the dbt base image.
+default:
+  run:      ["dbt", "run", "--select", "{{ node }}"]
+  seed:     ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot: ["dbt", "snapshot", "--select", "{{ node }}"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+
+# Per-team overrides, e.g. a team whose wrapper is `wise-dbt`:
+# services:
+#   wise:
+#     run: ["wise-dbt", "run", "--select", "{{ node }}"]

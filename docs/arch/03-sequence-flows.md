@@ -410,7 +410,7 @@ sequenceDiagram
 
   Note over EC,RC: Phase 1b — compile (changed service's manifest is compiled first)
   R->>EC: consume compile.requested:v1
-  Note over EC: CreateCompileJob (two-container: initContainer dbt compile + s3-sidecar upload)<br/>emits compile.node.completed:v1 via k8s-controller → aggregate compile.completed:v1
+  Note over EC: CreateCompileJob (two-container: initContainer runs the resolved compile command + s3-sidecar upload)<br/>emits compile.node.completed:v1 via k8s-controller → aggregate compile.completed:v1
   EC->>R: publish compile.completed:v1 {release_id, status, per_node[{node_id, status, dbt_log_uri}]}
   R->>RC: consume compile.completed:v1
   alt compile failed
@@ -450,7 +450,7 @@ sequenceDiagram
       Note over RC: transition SeedBuilding
       RC->>R: publish seed.build.requested:v1 {release_id, per changed-seed node}
       R->>EC: consume seed.build.requested:v1
-      Note over EC: CreateSeedBuildJob per changed seed (dbt seed --select, DBT_TARGET_SCHEMA=candidate)<br/>aggregate → seed.build.completed:v1
+      Note over EC: CreateSeedBuildJob per changed seed (resolved seed_build command, DBT_TARGET_SCHEMA=candidate)<br/>aggregate → seed.build.completed:v1
       EC->>R: publish seed.build.completed:v1 {release_id, status, per_node[{node_id,status,dbt_log_uri}]}
       R->>RC: consume seed.build.completed:v1
       alt seed_build failed

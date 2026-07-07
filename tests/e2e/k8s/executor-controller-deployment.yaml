@@ -1,4 +1,21 @@
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dbt-commands
+  namespace: default
+data:
+  dbt-commands.yaml: |
+    services:
+      service-1:
+        run:      ["wise-dbt", "run", "--select", "{{ node }}"]
+        seed:     ["wise-dbt", "seed", "--select", "{{ node }}"]
+        snapshot: ["wise-dbt", "snapshot", "--select", "{{ node }}"]
+        # seed_build is identical to seed on purpose: plain dbt has no schema
+        # flag, so the always-injected DBT_TARGET_SCHEMA env var is what
+        # routes this job at the candidate schema, not the argv.
+        seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: executor-controller
@@ -93,6 +110,8 @@ spec:
               value: "INFO"
             - name: DBT_POSTGRES_DB
               value: "continuo_dbt"
+            - name: DBT_COMMANDS_CONFIG_PATH
+              value: "/etc/continuo/dbt-commands.yaml"
             # S3 access for the validation Job: the executor forwards these into
             # each validation pod so validation_runner.py can fetch the candidate
             # SQL from CANDIDATE_SQL_URI. The endpoint points at LocalStack via the
@@ -125,6 +144,14 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 3
+          volumeMounts:
+            - name: dbt-commands
+              mountPath: /etc/continuo
+              readOnly: true
+      volumes:
+        - name: dbt-commands
+          configMap:
+            name: dbt-commands
 ---
 apiVersion: v1
 kind: Service
