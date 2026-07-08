@@ -38,3 +38,13 @@ func TestResolve_InvalidTimeoutFallsBackToDefault(t *testing.T) {
 	cfg := Resolve(Inputs{EnvTimeout: "not-a-duration"})
 	assert.Equal(t, 10*time.Second, cfg.Timeout)
 }
+
+func TestResolve_ActorFromEnv(t *testing.T) {
+	cfg := Resolve(Inputs{EnvActor: "agent-runner-llm"})
+	assert.Equal(t, "agent-runner-llm", cfg.Actor)
+}
+
+func TestResolve_ActorEmptyByDefault(t *testing.T) {
+	cfg := Resolve(Inputs{})
+	assert.Equal(t, "", cfg.Actor)
+}

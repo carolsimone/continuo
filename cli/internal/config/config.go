@@ -4,17 +4,21 @@ package config
 import "time"
 
 const (
-	defaultStateEndpoint       = "localhost:50051"
+	defaultStateEndpoint        = "localhost:50051"
 	defaultOrchestratorEndpoint = "localhost:50052"
 	defaultTimeout              = 10 * time.Second
 )
 
 // Config is the resolved configuration a command uses at runtime.
 type Config struct {
-	StateEndpoint       string
+	StateEndpoint        string
 	OrchestratorEndpoint string
-	Timeout             time.Duration
-	Human               bool
+	Timeout              time.Duration
+	Human                bool
+	// Actor labels who is performing an action (e.g. schedule cancel's
+	// cancelled_by). Sourced from CONTINUO_ACTOR; empty means "let the server
+	// record its system identity". Env-only: there is no flag for it.
+	Actor string
 }
 
 // Inputs carries raw strings from flags and environment. Empty strings mean "not set".
@@ -26,6 +30,7 @@ type Inputs struct {
 	EnvStateAddr             string
 	EnvOrchestratorAddr      string
 	EnvTimeout               string
+	EnvActor                 string
 }
 
 // Resolve applies precedence: flag > env > default. Invalid durations fall back silently to the default.
@@ -54,5 +59,6 @@ func Resolve(in Inputs) Config {
 	if d, err := time.ParseDuration(in.FlagTimeout); err == nil {
 		cfg.Timeout = d
 	}
+	cfg.Actor = in.EnvActor
 	return cfg
 }
