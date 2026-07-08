@@ -4,7 +4,7 @@ package config
 import "time"
 
 const (
-	defaultStateEndpoint       = "localhost:50051"
+	defaultStateEndpoint        = "localhost:50051"
 	defaultOrchestratorEndpoint = "localhost:50052"
 	defaultTimeout              = 10 * time.Second
 )
