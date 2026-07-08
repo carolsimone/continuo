@@ -96,7 +96,9 @@ Port 8091: HTTP health endpoints `/health` (liveness) and `/ready` (readiness); 
 
 ### `continuo` CLI subprocess (tool execution)
 
-The `continuo` binary is bundled in the agent-runner container image. It is invoked via direct argv exec (no shell) for each tool call. The subprocess inherits `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` from agent-runner's environment.
+The `continuo` binary is bundled in the agent-runner container image. It is invoked via direct argv exec (no shell) for each tool call. The subprocess inherits `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` from agent-runner's environment, and agent-runner additionally stamps `CONTINUO_ACTOR=agent-runner-llm` into the subprocess environment so any mutating CLI command attributes its action to the agent rather than to an individual operator.
+
+Because the discovered tool menu is derived from `continuo describe`, it includes a mutating `schedule_cancel` tool whose `reason` is a required positional argument (the LLM must supply a non-empty reason) and whose cancelling identity is always the stamped `agent-runner-llm` actor rather than anything the LLM passes.
 
 | Subprocess call | Purpose |
 |---|---|

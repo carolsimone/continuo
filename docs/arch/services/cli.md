@@ -7,7 +7,7 @@
 It provides:
 - `schedule list` — every schedule and its last-run status
 - `schedule trigger <name>` — start a new run of a schedule now
-- `schedule cancel <name>` — stop the active run of a schedule
+- `schedule cancel <name> <reason>` — stop the active run of a schedule, recording why
 - `schedule status <name>` — the per-node status of a schedule's latest run
 - `schedule graph <name>` — the dependency graph (nodes and edges) of a schedule
 - `describe` — a machine-readable catalog of every command, for LLM discovery
@@ -35,6 +35,7 @@ None.
 | `--timeout` | `CONTINUO_TIMEOUT` | gRPC deadline applied to each call |
 | `--human` | — | emit human text on stderr instead of JSON on stdout |
 | `--json` | — | forward-compatibility no-op; JSON is the default output |
+| — | `CONTINUO_ACTOR` | identity recorded as `cancelled_by` on `schedule cancel`; empty selects the `state` service's own system identity |
 
 ## Commands and the RPC each consumes
 
@@ -42,12 +43,14 @@ None.
 |---|---|---|
 | `schedule list` | `state` | `ListAllSchedules` |
 | `schedule trigger <name>` | `state` | `TriggerSchedule` |
-| `schedule cancel <name>` | `state` | `CancelSchedule` |
+| `schedule cancel <name> <reason>` | `state` | `CancelSchedule` |
 | `schedule status <name>` | `state` | `ListAllSchedules` + `ListTasks` (composed client-side) |
 | `schedule graph <name>` | `orchestrator` | `GetScheduleGraph` |
 | `describe` | — | none (pure introspection of the cobra tree) |
 
 `schedule status` has no dedicated server RPC. It resolves the schedule name to its latest `run_id` via `ListAllSchedules`, then pages through `ListTasks` (page size 200) for that run, collecting every node's status. The composition is entirely client-side; the services expose no combined endpoint.
+
+`schedule cancel <name> <reason>` requires a non-empty `reason` positional describing why the run is being stopped; a blank reason is rejected before the RPC is sent. The cancelling identity (`cancelled_by`) is sourced from the `CONTINUO_ACTOR` environment variable rather than a command argument — when it is unset or empty, the `state` service records its own system identity as the canceller.
 
 ## Output contract
 
