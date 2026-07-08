@@ -22,6 +22,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 		EnvStateAddr:        os.Getenv("CONTINUO_STATE_ADDR"),
 		EnvOrchestratorAddr: os.Getenv("CONTINUO_ORCHESTRATOR_ADDR"),
 		EnvTimeout:          os.Getenv("CONTINUO_TIMEOUT"),
+		EnvActor:            os.Getenv("CONTINUO_ACTOR"),
 	}
 	var (
 		flagEndpoint             string

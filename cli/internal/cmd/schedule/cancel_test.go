@@ -19,11 +19,12 @@ import (
 )
 
 // runCancel invokes the cancel command end-to-end with the provided fake client
-// and args, capturing stdout/stderr and returning the exit code.
-func runCancel(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
+// and args, capturing stdout/stderr and returning the exit code. actor is the
+// resolved CONTINUO_ACTOR value (config.Config.Actor) forwarded as cancelled_by.
+func runCancel(t *testing.T, fake client.StateClient, args []string, human bool, actor string) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
-	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
+	cfg := &config.Config{Timeout: 2 * time.Second, Human: human, Actor: actor}
 	cmd := NewCancelCommand(func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
@@ -44,7 +45,7 @@ func runCancel(t *testing.T, fake client.StateClient, args []string, human bool)
 func TestCancel_SuccessEmitsJSON(t *testing.T) {
 	fake := &fakeState{cancelResp: &statev1.CancelScheduleResponse{ScheduleId: "sched_123"}}
 
-	stdout, stderr, exit := runCancel(t, fake, []string{"daily_ingest", "--reason", "bad upstream data"}, false)
+	stdout, stderr, exit := runCancel(t, fake, []string{"daily_ingest", "bad upstream data"}, false, "")
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
@@ -58,31 +59,52 @@ func TestCancel_SuccessEmitsJSON(t *testing.T) {
 	assert.Equal(t, "bad upstream data", fake.gotCancelReason)
 }
 
-func TestCancel_ForwardsBy(t *testing.T) {
+func TestCancel_ForwardsActorAsCancelledBy(t *testing.T) {
 	fake := &fakeState{cancelResp: &statev1.CancelScheduleResponse{ScheduleId: "sched_123"}}
 
-	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "--reason", "cleanup", "--by", "alice"}, false)
+	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "cleanup"}, false, "agent-runner-llm")
 
 	assert.Equal(t, 0, exit)
-	assert.Equal(t, "alice", fake.gotCancelBy)
+	assert.Equal(t, "agent-runner-llm", fake.gotCancelBy)
 }
 
-func TestCancel_MissingReasonExits2(t *testing.T) {
+func TestCancel_EmptyActorSendsEmptyCancelledBy(t *testing.T) {
+	fake := &fakeState{cancelResp: &statev1.CancelScheduleResponse{ScheduleId: "sched_123"}}
+
+	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "cleanup"}, false, "")
+
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, "", fake.gotCancelBy)
+}
+
+func TestCancel_MissingReasonArgumentExits2(t *testing.T) {
 	fake := &fakeState{}
 
-	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest"}, false)
+	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest"}, false, "")
 
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
 	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 	assert.Equal(t, output.CodeUsage, env["error"].Code)
-	assert.Empty(t, fake.gotScheduleName, "RPC must not be issued when --reason is missing")
+	assert.Empty(t, fake.gotScheduleName, "RPC must not be issued when reason is missing")
 }
 
-func TestCancel_MissingArgumentExits2(t *testing.T) {
+func TestCancel_BlankReasonExits2(t *testing.T) {
 	fake := &fakeState{}
 
-	stdout, _, exit := runCancel(t, fake, []string{"--reason", "x"}, false)
+	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest", ""}, false, "")
+
+	assert.Equal(t, 2, exit)
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
+	assert.Empty(t, fake.gotScheduleName, "RPC must not be issued when reason is blank")
+}
+
+func TestCancel_TooManyArgumentsExits2(t *testing.T) {
+	fake := &fakeState{}
+
+	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest", "reason", "extra"}, false, "")
 
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -93,7 +115,7 @@ func TestCancel_MissingArgumentExits2(t *testing.T) {
 func TestCancel_FailedPreconditionExits4(t *testing.T) {
 	fake := &fakeState{cancelErr: status.Error(codes.FailedPrecondition, "no active run for schedule \"daily_ingest\"")}
 
-	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest", "--reason", "x"}, false)
+	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest", "x"}, false, "")
 
 	assert.Equal(t, 4, exit)
 	var envelope struct {
@@ -107,7 +129,7 @@ func TestCancel_FailedPreconditionExits4(t *testing.T) {
 func TestCancel_UnavailableExits5(t *testing.T) {
 	fake := &fakeState{cancelErr: status.Error(codes.Unavailable, "server down")}
 
-	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "--reason", "x"}, false)
+	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "x"}, false, "")
 
 	assert.Equal(t, 5, exit)
 }
@@ -115,7 +137,7 @@ func TestCancel_UnavailableExits5(t *testing.T) {
 func TestCancel_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
 	fake := &fakeState{cancelResp: &statev1.CancelScheduleResponse{ScheduleId: "sched_123"}}
 
-	stdout, stderr, exit := runCancel(t, fake, []string{"daily_ingest", "--reason", "x"}, true)
+	stdout, stderr, exit := runCancel(t, fake, []string{"daily_ingest", "x"}, true, "")
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stdout)

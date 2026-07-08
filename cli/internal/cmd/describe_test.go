@@ -125,6 +125,24 @@ func TestDescribe_ExtraArgEmitsUsageEnvelopeExits2(t *testing.T) {
 	assert.Equal(t, "usage", env.Error.Code)
 }
 
+func TestDescribe_CancelUsesPositionalReasonAndNoCommandFlags(t *testing.T) {
+	p := runDescribe(t)
+
+	cancel := findCmd(t, p, "schedule cancel")
+	assert.Equal(t, []string{"<schedule-name>", "<reason>"}, cancel.Args)
+
+	flagNames := map[string]bool{}
+	for _, f := range cancel.Flags {
+		flagNames[f.Name] = true
+	}
+	assert.False(t, flagNames["reason"], "cancel must not expose a --reason flag")
+	assert.False(t, flagNames["by"], "cancel must not expose a --by flag")
+	// Global persistent flags are still present.
+	for _, want := range []string{"human", "endpoint", "timeout"} {
+		assert.True(t, flagNames[want], "expected global flag --%s on cancel", want)
+	}
+}
+
 func TestDescribe_MutatingFlagMarksMutatingCommands(t *testing.T) {
 	p := runDescribe(t)
 
