@@ -37,6 +37,21 @@ func TestCatalog_DerivesToolsFromDescribe(t *testing.T) {
 	assert.Empty(t, list.Params)
 }
 
+func TestCatalog_CancelIsTwoPositionalMutatingTool(t *testing.T) {
+	c := loadCatalog(t)
+
+	cancel, ok := c.Lookup("schedule_cancel")
+	require.True(t, ok)
+	assert.Equal(t, []string{"schedule", "cancel"}, cancel.CLIPath)
+	assert.True(t, cancel.Mutating)
+	require.Len(t, cancel.Params, 2)
+	assert.Equal(t, "schedule-name", cancel.Params[0].Name)
+	assert.True(t, cancel.Params[0].Required)
+	assert.Equal(t, "reason", cancel.Params[1].Name)
+	assert.True(t, cancel.Params[1].Required)
+	assert.Equal(t, []string{"schedule-name", "reason"}, cancel.ParamOrder)
+}
+
 func TestCatalog_ExcludesDescribeItself(t *testing.T) {
 	c := loadCatalog(t)
 	_, ok := c.Lookup("describe")

@@ -96,6 +96,10 @@ func main() {
 		os.Environ(),
 		"CONTINUO_STATE_ADDR="+cfg.StateAddr,
 		"CONTINUO_ORCHESTRATOR_ADDR="+cfg.OrchestratorAddr,
+		// Stamp cancellations (and future actor-attributed actions) run via the
+		// chat agent with a fixed identity, since the CLI is otherwise an
+		// unauthenticated system caller.
+		"CONTINUO_ACTOR=agent-runner-llm",
 	)
 	executor := cliexec.NewExecutor(catalog, cfg.CLIPath, cliEnv, cfg.ToolTimeout, cfg.ToolResultMaxBytes, logger)
 
