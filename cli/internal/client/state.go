@@ -16,6 +16,7 @@ type StateClient interface {
 	TriggerSchedule(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error)
 	ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error)
 	ListTasks(ctx context.Context, scheduleID string, status statev1.TaskStatus, pageSize, pageOffset int32) (*statev1.ListTasksResponse, error)
+	CancelSchedule(ctx context.Context, scheduleName, reason, by string) (*statev1.CancelScheduleResponse, error)
 	Close() error
 }
 
@@ -48,6 +49,14 @@ func (c *stateGRPCClient) ListTasks(ctx context.Context, scheduleID string, task
 		Status:     taskStatus,
 		PageSize:   pageSize,
 		PageOffset: pageOffset,
+	})
+}
+
+func (c *stateGRPCClient) CancelSchedule(ctx context.Context, scheduleName, reason, by string) (*statev1.CancelScheduleResponse, error) {
+	return c.api.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
+		ScheduleName:       scheduleName,
+		CancellationReason: reason,
+		CancelledBy:        by,
 	})
 }
 
