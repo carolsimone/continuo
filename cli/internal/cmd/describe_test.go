@@ -45,7 +45,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule trigger", "schedule graph", "schedule status", "describe"} {
+	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "describe"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }
@@ -125,11 +125,14 @@ func TestDescribe_ExtraArgEmitsUsageEnvelopeExits2(t *testing.T) {
 	assert.Equal(t, "usage", env.Error.Code)
 }
 
-func TestDescribe_MutatingFlagMarksTriggerOnly(t *testing.T) {
+func TestDescribe_MutatingFlagMarksMutatingCommands(t *testing.T) {
 	p := runDescribe(t)
 
 	trigger := findCmd(t, p, "schedule trigger")
 	assert.True(t, trigger.Mutating, "schedule trigger must be marked mutating")
+
+	cancel := findCmd(t, p, "schedule cancel")
+	assert.True(t, cancel.Mutating, "schedule cancel must be marked mutating")
 
 	for _, path := range []string{"schedule status", "schedule list", "schedule graph", "describe"} {
 		c := findCmd(t, p, path)

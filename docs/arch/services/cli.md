@@ -7,6 +7,7 @@
 It provides:
 - `schedule list` — every schedule and its last-run status
 - `schedule trigger <name>` — start a new run of a schedule now
+- `schedule cancel <name>` — stop the active run of a schedule
 - `schedule status <name>` — the per-node status of a schedule's latest run
 - `schedule graph <name>` — the dependency graph (nodes and edges) of a schedule
 - `describe` — a machine-readable catalog of every command, for LLM discovery
@@ -41,6 +42,7 @@ None.
 |---|---|---|
 | `schedule list` | `state` | `ListAllSchedules` |
 | `schedule trigger <name>` | `state` | `TriggerSchedule` |
+| `schedule cancel <name>` | `state` | `CancelSchedule` |
 | `schedule status <name>` | `state` | `ListAllSchedules` + `ListTasks` (composed client-side) |
 | `schedule graph <name>` | `orchestrator` | `GetScheduleGraph` |
 | `describe` | — | none (pure introspection of the cobra tree) |
@@ -57,7 +59,7 @@ Errors are emitted as a structured JSON envelope (to stdout, or to stderr under 
 |---|---|---|
 | `usage` | 2 | argument/flag problem detected before the RPC, or `InvalidArgument` from the server |
 | `not_found` | 3 | named schedule does not exist |
-| `conflict` | 4 | a run is already active for the schedule (`FailedPrecondition` / `AlreadyExists` / `Aborted`) |
+| `conflict` | 4 | a run is already active for the schedule (trigger), or there is no active run to cancel / it already finished (cancel) (`FailedPrecondition` / `AlreadyExists` / `Aborted`) |
 | `unavailable` | 5 | the target service is unreachable (`Unavailable` / `DeadlineExceeded`) |
 | `internal` | 6 | unexpected server error (`Internal` / `Unknown`) |
 
@@ -77,5 +79,5 @@ None. The CLI runs no server and consumes no Redis streams.
 
 | Service | Methods used |
 |---|---|
-| `state` | `ListAllSchedules`, `ListTasks`, `TriggerSchedule` |
+| `state` | `ListAllSchedules`, `ListTasks`, `TriggerSchedule`, `CancelSchedule` |
 | `orchestrator` | `GetScheduleGraph` |
