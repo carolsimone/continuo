@@ -31,8 +31,10 @@ Arguments:
 
 Flags:
   --reason  (required) Why the run is being cancelled; recorded for audit.
-  --by      (optional) Identity to attribute the cancellation to; defaults to
-            the system identity when omitted.
+  --by      (optional) Identity to attribute the cancellation to; recorded
+            as-is (an unauthenticated attribution hint, not a verified
+            identity) and honored only for unauthenticated system callers.
+            Defaults to the system identity when omitted.
 
 Output (stdout, JSON):
   {"schedule_id":string,"schedule_name":string,"cancelled_at":string}
@@ -86,7 +88,7 @@ Errors:
 		},
 	}
 	cmd.Flags().StringVar(&flagReason, "reason", "", "why the run is being cancelled (required; recorded for audit)")
-	cmd.Flags().StringVar(&flagBy, "by", "", "identity to attribute the cancellation to (optional; defaults to system)")
+	cmd.Flags().StringVar(&flagBy, "by", "", "identity to attribute the cancellation to (optional; unauthenticated attribution hint recorded as-is, honored only for system callers; defaults to system)")
 	// Intercept argument/flag-validation errors so they exit 2 with a CLIError.
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
