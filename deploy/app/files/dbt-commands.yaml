@@ -19,3 +19,14 @@ default:
 # services:
 #   wise:
 #     run: ["wise-dbt", "run", "--select", "{{ node }}"]
+
+services:
+  # Team "wise" runs finance through its own dbt CLI (baked into the finance
+  # image at /usr/local/bin/wise-dbt). run/seed/compile route through it; seed's
+  # override also covers the candidate seed_build leg via the resolver fallback.
+  finance:
+    run:  ["wise-dbt", "build-model", "{{ node }}"]
+    seed: ["wise-dbt", "load-seed",  "{{ node }}"]
+    compile:
+      command:       ["wise-dbt", "compile-project"]
+      manifest_path: "/project/target/manifest.json"
