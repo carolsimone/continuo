@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { GrpcClient } from '../grpc-client';
+import { grpcToHttpStatus } from './grpc-status';
+import { parseLimit, parseOffset } from './paging';
 
 interface ProtoTimestamp {
   seconds: string;
@@ -15,12 +17,19 @@ function toISO(ts: ProtoTimestamp | null | undefined): string | null {
 export function createExecutionsRouter(stateClient: GrpcClient) {
   const router = Router();
 
+  // GET /api/schedulers/:id/executions?limit=&offset= — attempt history for a
+  // run (paged). The max of 200 mirrors state's maxTaskExecutionsPageSize, so
+  // the page size requested is the page size returned.
   router.get('/:id/executions', (req, res) => {
     stateClient.listTaskExecutions(
-      { schedule_id: req.params.id, page_size: 500, page_offset: 0 },
+      {
+        schedule_id: req.params.id,
+        page_size: parseLimit(req.query.limit, { def: 200, max: 200 }),
+        page_offset: parseOffset(req.query.offset),
+      },
       (err: any, response: any) => {
         if (err) {
-          return res.status(500).json({ error: err.message });
+          return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
         }
         const executions = (response.task_executions || []).map((e: any) => ({
           id: e.id,
@@ -31,7 +40,7 @@ export function createExecutionsRouter(stateClient: GrpcClient) {
           completed_at: toISO(e.completed_at),
           log_s3_key: e.log_s3_key || null,
         }));
-        res.json({ executions });
+        res.json({ total_count: Number(response.total_count ?? 0), executions });
       }
     );
   });
