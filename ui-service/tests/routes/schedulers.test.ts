@@ -77,6 +77,89 @@ describe('GET /api/schedulers/:id/tasks', () => {
     const res = await request(app).get('/api/schedulers/bad-id/tasks');
     expect(res.status).toBe(500);
   });
+
+  it('defaults to page_size 200 and page_offset 0 when no query params', async () => {
+    mockListTasks.mockImplementation((_req: any, callback: any) => {
+      callback(null, { tasks: [], total_count: 0 });
+    });
+
+    await request(app).get('/api/schedulers/abc-123/tasks');
+
+    expect(mockListTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ schedule_id: 'abc-123', page_size: 200, page_offset: 0 }),
+      expect.any(Function)
+    );
+  });
+
+  it('forwards limit and offset query params', async () => {
+    mockListTasks.mockImplementation((_req: any, callback: any) => {
+      callback(null, { tasks: [], total_count: 0 });
+    });
+
+    await request(app).get('/api/schedulers/abc-123/tasks?limit=50&offset=100');
+
+    expect(mockListTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ page_size: 50, page_offset: 100 }),
+      expect.any(Function)
+    );
+  });
+
+  it('clamps limit above the max of 500', async () => {
+    mockListTasks.mockImplementation((_req: any, callback: any) => {
+      callback(null, { tasks: [], total_count: 0 });
+    });
+
+    await request(app).get('/api/schedulers/abc-123/tasks?limit=9999');
+
+    expect(mockListTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ page_size: 500 }),
+      expect.any(Function)
+    );
+  });
+
+  it('falls back to the default for a malformed limit', async () => {
+    mockListTasks.mockImplementation((_req: any, callback: any) => {
+      callback(null, { tasks: [], total_count: 0 });
+    });
+
+    await request(app).get('/api/schedulers/abc-123/tasks?limit=abc');
+
+    expect(mockListTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ page_size: 200 }),
+      expect.any(Function)
+    );
+  });
+
+  it('returns total_count in the body', async () => {
+    mockListTasks.mockImplementation((_req: any, callback: any) => {
+      callback(null, { tasks: [], total_count: 412 });
+    });
+
+    const res = await request(app).get('/api/schedulers/abc-123/tasks');
+    expect(res.status).toBe(200);
+    expect(res.body.total_count).toBe(412);
+    expect(res.body.tasks).toEqual([]);
+  });
+
+  it('returns 400 for INVALID_ARGUMENT', async () => {
+    const err = Object.assign(new Error('invalid schedule_id format'), {
+      code: grpc.status.INVALID_ARGUMENT,
+    });
+    mockListTasks.mockImplementation((_req: any, cb: any) => cb(err, null));
+
+    const res = await request(app).get('/api/schedulers/not-a-uuid/tasks');
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 404 for NOT_FOUND', async () => {
+    const err = Object.assign(new Error('no such schedule'), {
+      code: grpc.status.NOT_FOUND,
+    });
+    mockListTasks.mockImplementation((_req: any, cb: any) => cb(err, null));
+
+    const res = await request(app).get('/api/schedulers/abc-123/tasks');
+    expect(res.status).toBe(404);
+  });
 });
 
 describe('POST /api/schedulers/:id/rerun', () => {

@@ -1,19 +1,7 @@
 import { Router } from 'express';
-import * as grpc from '@grpc/grpc-js';
 import { GrpcClient, userMetadata } from '../grpc-client';
-
-function grpcToHttpStatus(code: number): number {
-  switch (code) {
-    case grpc.status.INVALID_ARGUMENT:
-      return 400;
-    case grpc.status.NOT_FOUND:
-      return 404;
-    case grpc.status.FAILED_PRECONDITION:
-      return 409;
-    default:
-      return 500;
-  }
-}
+import { grpcToHttpStatus } from './grpc-status';
+import { parseLimit, parseOffset } from './paging';
 
 export function createNodesRouter(stateClient: GrpcClient) {
   const router = Router();
@@ -24,15 +12,11 @@ export function createNodesRouter(stateClient: GrpcClient) {
       const v = Number(n ?? -1);
       return v < 0 ? null : v;
     };
-    const intOrDefault = (raw: any, def: number, min: number): number => {
-      const n = parseInt(String(raw), 10);
-      return Number.isNaN(n) || n < min ? def : n;
-    };
     const q = {
       search: typeof req.query.search === 'string' ? req.query.search : '',
       service_name: typeof req.query.service === 'string' ? req.query.service : '',
-      limit: intOrDefault(req.query.limit, 50, 1),
-      offset: intOrDefault(req.query.offset, 0, 0),
+      limit: parseLimit(req.query.limit, { def: 50, max: 500 }),
+      offset: parseOffset(req.query.offset),
     };
     stateClient.listNodes(q, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });

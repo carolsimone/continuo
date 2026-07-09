@@ -11,6 +11,7 @@ import {
   TaskExecution,
 } from './types';
 import { resolveActiveGraph, headerDriftLabel } from './detail-page-helpers';
+import { fetchAllPages } from './fetch-all-pages';
 import { getDriftState, getDriftBadge } from './drift-helpers';
 import DAGPanel from './DAGPanel';
 import NodesPanel from './NodesPanel';
@@ -237,6 +238,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     if (mode === 'latest') return;
     let cancelled = false;
     let timer: number | undefined;
+    const controller = new AbortController();
 
     const fetchDynamic = () => {
       const schedulerRequest = fetch(`/api/schedulers/${lastRunId}`)
@@ -250,19 +252,21 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           return null;
         });
 
-      fetch(`/api/schedulers/${lastRunId}/tasks`)
-        .then((response) => response.json())
-        .then((data: { tasks: Task[] }) => {
-          if (!cancelled) setTasks(data.tasks || []);
+      fetchAllPages<Task>(`/api/schedulers/${lastRunId}/tasks`, 'tasks', {
+        signal: controller.signal,
+      })
+        .then((all) => {
+          if (!cancelled) setTasks(all);
         })
         .catch(() => {
           if (!cancelled) setTasks([]);
         });
 
-      fetch(`/api/schedulers/${lastRunId}/executions`)
-        .then((response) => response.json())
-        .then((data: { executions: TaskExecution[] }) => {
-          if (!cancelled) setExecutions(data.executions || []);
+      fetchAllPages<TaskExecution>(`/api/schedulers/${lastRunId}/executions`, 'executions', {
+        signal: controller.signal,
+      })
+        .then((all) => {
+          if (!cancelled) setExecutions(all);
         })
         .catch(() => {
           if (!cancelled) setExecutions([]);
@@ -288,6 +292,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
     return () => {
       cancelled = true;
+      controller.abort();
       if (timer !== undefined) {
         window.clearInterval(timer);
       }
