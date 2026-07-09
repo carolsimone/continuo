@@ -8,6 +8,7 @@ import {
 import { getDriftState, getDriftBadge } from './drift-helpers';
 import { ScheduleSummary, Task } from './types';
 import CancelDialog from './CancelDialog';
+import { fetchAllPages } from './fetch-all-pages';
 
 function formatTime(iso: string | null): string {
   if (!iso) return '—';
@@ -37,14 +38,16 @@ export default function SchedulerCard({ schedule }: Props) {
   useEffect(() => {
     if (neverRun) return;
     let cancelled = false;
+    const controller = new AbortController();
     const fetch_ = () =>
-      fetch(`/api/schedulers/${schedule.last_run_id}/tasks`)
-        .then(r => r.json())
-        .then(data => { if (!cancelled) setTasks(data.tasks || []); })
+      fetchAllPages<Task>(`/api/schedulers/${schedule.last_run_id}/tasks`, 'tasks', {
+        signal: controller.signal,
+      })
+        .then(all => { if (!cancelled) setTasks(all); })
         .catch(() => {});
     fetch_();
     const id = setInterval(fetch_, 5000);
-    return () => { cancelled = true; clearInterval(id); };
+    return () => { cancelled = true; controller.abort(); clearInterval(id); };
   }, [schedule.last_run_id]);
 
   useEffect(() => {
