@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import * as grpc from '@grpc/grpc-js';
 import { GrpcClient, userMetadata } from '../grpc-client';
+import { grpcToHttpStatus } from './grpc-status';
 
 interface ProtoTimestamp {
   seconds: string;
@@ -15,19 +15,6 @@ function toISO(ts: ProtoTimestamp | null | undefined): string | null {
 
 function normalizeStatus(status: string): string {
   return status.replace(/^(SCHEDULER_STATUS_|TASK_STATUS_)/, '').toLowerCase();
-}
-
-function grpcToHttpStatus(code: number): number {
-  switch (code) {
-    case grpc.status.INVALID_ARGUMENT:
-      return 400;
-    case grpc.status.NOT_FOUND:
-      return 404;
-    case grpc.status.FAILED_PRECONDITION:
-      return 409;
-    default:
-      return 500;
-  }
 }
 
 export function createSchedulersRouter(client: GrpcClient) {

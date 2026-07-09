@@ -1,19 +1,6 @@
 import { Router } from 'express';
-import * as grpc from '@grpc/grpc-js';
 import { GrpcClient, userMetadata } from '../grpc-client';
-
-function grpcToHttpStatus(code: number): number {
-  switch (code) {
-    case grpc.status.INVALID_ARGUMENT:
-      return 400;
-    case grpc.status.NOT_FOUND:
-      return 404;
-    case grpc.status.FAILED_PRECONDITION:
-      return 409;
-    default:
-      return 500;
-  }
-}
+import { grpcToHttpStatus } from './grpc-status';
 
 export function createNodesRouter(stateClient: GrpcClient) {
   const router = Router();
