@@ -3,13 +3,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import DetailPage from '../../src/client/DetailPage';
+import { TaskExecution } from '../../src/client/types';
 
-function mockFetchSequence(routes: Record<string, () => Promise<unknown>>) {
+// The `url` argument lets a route handler inspect query params (e.g. `offset`)
+// to serve a distinct page per request. Existing handlers that ignore the
+// extra argument (`async () => (...)`) keep working unchanged.
+function mockFetchSequence(routes: Record<string, (url: string) => Promise<unknown>>) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString();
     for (const [pattern, handler] of Object.entries(routes)) {
       if (url.includes(pattern)) {
-        const body = await handler();
+        const body = await handler(url);
         return { ok: true, status: 200, json: async () => body } as Response;
       }
     }
@@ -706,5 +710,86 @@ describe('DetailPage in latest mode', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('DetailPage — executions pagination regression (Task 7)', () => {
+  // The executions endpoint pages at 200 rows. Regression: DetailPage used to
+  // issue a single raw fetch and silently dropped any execution past row 200.
+  // This fixture serves 412 executions across three pages (200/200/12) for a
+  // single task, with the execution holding the true latest `started_at` (and
+  // therefore the one NodesPanel should render) sitting at index 400 — deep
+  // into the third page. A mock that ignored `offset` would defeat this test,
+  // so the handler below slices the full list by the requested offset/limit.
+  const TOTAL_EXECUTIONS = 412;
+  const LATEST_INDEX = 400;
+  const LATEST_ERROR_MESSAGE = 'DISTINCT_ERROR_BEYOND_PAGE_1';
+  const LATEST_LOG_S3_KEY = 'logs/task-t1-exec-400.log';
+
+  function buildExecutions(): TaskExecution[] {
+    const execs: TaskExecution[] = [];
+    for (let i = 0; i < TOTAL_EXECUTIONS; i++) {
+      if (i === LATEST_INDEX) {
+        execs.push({
+          id: `exec-${i}`,
+          task_id: 't1',
+          error_message: LATEST_ERROR_MESSAGE,
+          execution_time_seconds: 12,
+          started_at: '2026-01-01T10:00:00Z', // strictly later than every other row below
+          completed_at: '2026-01-01T10:01:00Z',
+          log_s3_key: LATEST_LOG_S3_KEY,
+        });
+      } else {
+        execs.push({
+          id: `exec-${i}`,
+          task_id: 't1',
+          error_message: `stale-error-${i}`,
+          execution_time_seconds: 1,
+          started_at: '2026-01-01T00:00:00Z',
+          completed_at: '2026-01-01T00:01:00Z',
+          log_s3_key: `logs/task-t1-exec-${i}.log`,
+        });
+      }
+    }
+    return execs;
+  }
+
+  function pagedExecutionsHandler(url: string) {
+    const parsed = new URL(url, 'http://localhost');
+    const offset = Number(parsed.searchParams.get('offset') ?? '0');
+    const limit = Number(parsed.searchParams.get('limit') ?? '200');
+    const all = buildExecutions();
+    return Promise.resolve({
+      executions: all.slice(offset, offset + limit),
+      total_count: all.length,
+    });
+  }
+
+  it('renders the error message and log link of an execution beyond page 1 (index 400 of 412)', async () => {
+    const fetchMock = mockFetchSequence({
+      ...failedRoutes(),
+      [`/api/schedulers/${RUN_ID}/executions`]: pagedExecutionsHandler,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    // The true latest execution lives on page 3 (offset=400); if DetailPage
+    // regressed to a single fetch, only the stale page-1 execution would ever
+    // be considered "latest" for task t1, and this text would never appear.
+    // (ErrorCell renders the message twice — a truncated span plus a
+    // full-text div revealed via CSS on "more" — hence findAllByText.)
+    expect((await screen.findAllByText(LATEST_ERROR_MESSAGE)).length).toBeGreaterThan(0);
+
+    const logLink = screen.getByRole('link', { name: /logs/i });
+    expect(logLink.getAttribute('href')).toContain(encodeURIComponent(LATEST_LOG_S3_KEY));
+
+    // Guard against a mock that ignores `offset` (which would pass even
+    // against a broken single-fetch implementation): assert the component
+    // actually requested pages 2 and 3.
+    const calls = fetchMock.mock.calls.map(c => String(c[0]));
+    const executionCalls = calls.filter(u => u.includes(`/api/schedulers/${RUN_ID}/executions`));
+    expect(executionCalls.some(u => u.includes('offset=200'))).toBe(true);
+    expect(executionCalls.some(u => u.includes('offset=400'))).toBe(true);
   });
 });
