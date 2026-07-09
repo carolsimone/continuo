@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { GrpcClient, userMetadata } from '../grpc-client';
 import { grpcToHttpStatus } from './grpc-status';
+import { parseLimit, parseOffset } from './paging';
 
 interface ProtoTimestamp {
   seconds: string;
@@ -20,12 +21,19 @@ function normalizeStatus(status: string): string {
 export function createSchedulersRouter(client: GrpcClient) {
   const router = Router();
 
+  // GET /api/schedulers/:id/tasks?limit=&offset= — tasks for a run (paged).
+  // `total_count` lets a caller detect truncation; state imposes no server-side
+  // cap here, so the max is enforced on this side.
   router.get('/:id/tasks', (req, res) => {
     client.listTasks(
-      { schedule_id: req.params.id, page_size: 200, page_offset: 0 },
+      {
+        schedule_id: req.params.id,
+        page_size: parseLimit(req.query.limit, { def: 200, max: 500 }),
+        page_offset: parseOffset(req.query.offset),
+      },
       (err: any, response: any) => {
         if (err) {
-          return res.status(500).json({ error: err.message });
+          return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
         }
         const tasks = (response.tasks || []).map((t: any) => ({
           task_id: t.task_id,
@@ -39,7 +47,7 @@ export function createSchedulersRouter(client: GrpcClient) {
           max_retries: t.max_retries,
           created_at: toISO(t.created_at),
         }));
-        res.json({ tasks });
+        res.json({ total_count: Number(response.total_count ?? 0), tasks });
       }
     );
   });
