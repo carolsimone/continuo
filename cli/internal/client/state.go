@@ -8,6 +8,7 @@ import (
 	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
 // StateClient is the narrow interface the CLI depends on. Fakes in tests
@@ -17,6 +18,8 @@ type StateClient interface {
 	ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error)
 	ListTasks(ctx context.Context, scheduleID string, status statev1.TaskStatus, pageSize, pageOffset int32) (*statev1.ListTasksResponse, error)
 	CancelSchedule(ctx context.Context, scheduleName, reason, by string) (*statev1.CancelScheduleResponse, error)
+	ListNodeRuns(ctx context.Context, service, schema, table string, limit int32) (*statev1.ListNodeRunsResponse, error)
+	TriggerNodeRun(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	Close() error
 }
 
@@ -57,6 +60,34 @@ func (c *stateGRPCClient) CancelSchedule(ctx context.Context, scheduleName, reas
 		ScheduleName:       scheduleName,
 		CancellationReason: reason,
 		CancelledBy:        by,
+	})
+}
+
+// userIDMetadataKey is the gRPC metadata header the state service reads to
+// attribute an action to an initiating identity. It mirrors
+// pkg/identity.MetadataKey, which the CLI cannot import (public-gRPC-only rule),
+// so the literal is duplicated here deliberately.
+const userIDMetadataKey = "x-continuo-user-id"
+
+func (c *stateGRPCClient) ListNodeRuns(ctx context.Context, service, schema, table string, limit int32) (*statev1.ListNodeRunsResponse, error) {
+	return c.api.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{
+		ServiceName: service,
+		SchemaName:  schema,
+		TableName:   table,
+		Limit:       limit,
+	})
+}
+
+func (c *stateGRPCClient) TriggerNodeRun(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	if actor != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, userIDMetadataKey, actor)
+	}
+	return c.api.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    service,
+		SchemaName:     schema,
+		TableName:      table,
+		MetadataSource: "latest",
+		SourceRunId:    "",
 	})
 }
 

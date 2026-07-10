@@ -42,6 +42,14 @@ func (f *fakeStateList) CancelSchedule(_ context.Context, _, _, _ string) (*stat
 	panic("CancelSchedule should not be called in list tests")
 }
 
+func (f *fakeStateList) ListNodeRuns(_ context.Context, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
+	panic("ListNodeRuns should not be called in schedule tests")
+}
+
+func (f *fakeStateList) TriggerNodeRun(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	panic("TriggerNodeRun should not be called in schedule tests")
+}
+
 func (f *fakeStateList) Close() error { return nil }
 
 // runList invokes the list command end-to-end with the provided fake client.
