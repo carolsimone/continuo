@@ -127,13 +127,6 @@ func toHistoryPayload(runs []*statev1.NodeRun) historyPayload {
 	return historyPayload{Runs: out}
 }
 
-// NewTriggerCommand is a temporary placeholder replaced by trigger.go in the
-// next task; it exists only so the package compiles while node history is
-// developed in isolation.
-func NewTriggerCommand(_ StateClientFactory, _ *config.Config, _, _ io.Writer) *cobra.Command {
-	return &cobra.Command{Use: "trigger", Short: "placeholder", RunE: func(*cobra.Command, []string) error { return nil }}
-}
-
 // humanHistory writes one line per run to stderr:
 //
 //	<run_id>  <task_status>  <kind>  <completed_at>
