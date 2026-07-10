@@ -191,4 +191,4 @@ A standalone command-line client, invoked by humans and LLM agents rather than r
 | gRPC server methods owned | none |
 | Redis consumes | none |
 | Redis produces | none |
-| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `TriggerSchedule`; `orchestrator`: `GetScheduleGraph` |
+| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `TriggerSchedule`, `CancelSchedule`, `ListNodeRuns`, `TriggerSingleNodeRun`; `orchestrator`: `GetScheduleGraph` |
