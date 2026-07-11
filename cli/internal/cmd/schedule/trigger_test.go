@@ -51,6 +51,14 @@ func (f *fakeState) ListTasks(_ context.Context, _ string, _ statev1.TaskStatus,
 	panic("ListTasks should not be called in trigger tests")
 }
 
+func (f *fakeState) ListNodeRuns(_ context.Context, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
+	panic("ListNodeRuns should not be called in schedule tests")
+}
+
+func (f *fakeState) TriggerNodeRun(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	panic("TriggerNodeRun should not be called in schedule tests")
+}
+
 // run invokes the trigger command end-to-end with the provided fake client and args.
 // It captures stdout/stderr and returns the exit code.
 func run(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
