@@ -27,14 +27,14 @@ func TestLoad_EmptyPathUsesDefaults(t *testing.T) {
 	r, err := Load("", testLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dbt", "run", "--select", "t"},
-		r.NodeCommand("svc", pkg_model.NodeTypeDbtModel, "t"))
+		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "t"))
 }
 
 func TestLoad_MissingFileUsesDefaults(t *testing.T) {
 	r, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml"), testLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dbt", "seed", "--select", "t"},
-		r.NodeCommand("svc", pkg_model.NodeTypeDbtSeed, "t"))
+		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "t"))
 }
 
 func TestLoad_ValidFile(t *testing.T) {

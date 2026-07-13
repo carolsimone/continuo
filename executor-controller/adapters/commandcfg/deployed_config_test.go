@@ -18,7 +18,7 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 		t.Fatalf("shipped deploy/app/files/dbt-commands.yaml must load: %v", err)
 	}
 
-	gotRun := r.NodeCommand("finance", pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
+	gotRun := r.NodeCommand("finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
 	wantRun := []string{"wise-dbt", "build-model", "fx_transactions_eur"}
 	assertArgv(t, "finance run", gotRun, wantRun)
 
@@ -33,7 +33,7 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	}
 
 	// A service with no override falls back to built-in plain dbt.
-	gotOther := r.NodeCommand("service-3", pkg_model.NodeTypeDbtModel, "some_model")
+	gotOther := r.NodeCommand("service-3", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "some_model")
 	assertArgv(t, "service-3 run fallback", gotOther, []string{"dbt", "run", "--select", "some_model"})
 }
 

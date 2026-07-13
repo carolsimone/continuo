@@ -10,9 +10,11 @@ import (
 // default > built-in plain dbt, so events keep carrying intent (node type +
 // table name) and command strings exist only at Job-build time.
 type CommandResolver interface {
-	// NodeCommand returns the argv for a production run of nt (model, seed,
-	// or snapshot) against node, for the given service.
-	NodeCommand(serviceName string, nt pkg_model.NodeType, node string) []string
+	// NodeCommand returns the argv for op against node, for the given
+	// service. For OperationRun, nt (model, seed, or snapshot) selects the
+	// verb; OperationTest and OperationBuild resolve to a fixed dbt verb
+	// regardless of nt.
+	NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) []string
 	// SeedBuildCommand returns the argv for building a seed into the
 	// release's candidate schema. When the service has no seed_build
 	// template it falls back to the seed command; schema routing then relies

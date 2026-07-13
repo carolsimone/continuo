@@ -138,8 +138,10 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	}
 
 	// Step 2: Build Job spec
+	// TODO(Task 8): pass params.Operation once JobParams carries it; for now
+	// every dispatch through this path is a production run.
 	podSpec, err := buildPodSpec(params,
-		c.commands.NodeCommand(params.ServiceName, params.NodeType, params.TableName))
+		c.commands.NodeCommand(params.ServiceName, pkg_model.OperationRun, params.NodeType, params.TableName))
 	if err != nil {
 		return fmt.Errorf("failed to build pod spec: %w", err)
 	}
