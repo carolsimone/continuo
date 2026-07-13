@@ -93,6 +93,19 @@ func TestCreateCompileJob_UsesDialectAndQuotesManifestPath(t *testing.T) {
 		line, "manifest path with a space must be shell-quoted")
 }
 
+func TestCreateQueryJob_TestOperation_RunsDbtTest(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	c := newDialectTestClient(t, "")
+	require.NoError(t, c.CreateQueryJob(context.Background(), JobParams{
+		JobName: "j6", ServiceName: "service-1", TableName: "orders",
+		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t1", Namespace: "default",
+		Operation: pkg_model.OperationTest,
+	}))
+	job := fetchJob(t, c, "default", "j6")
+	assert.Equal(t, []string{"dbt", "test", "--select", "orders"},
+		job.Spec.Template.Spec.Containers[0].Command)
+}
+
 func TestCreateCompileJob_DefaultLineByteIdentical(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newDialectTestClient(t, "")

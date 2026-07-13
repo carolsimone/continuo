@@ -32,6 +32,10 @@ type JobParams struct {
 	Namespace    string
 	NodeType     pkg_model.NodeType
 	ImageTag     string
+	// Operation selects the dbt verb the executor runs for this node.
+	// pkg_model.OperationRun (empty) is the default: dbt run/seed/snapshot by
+	// NodeType. pkg_model.OperationTest runs `dbt test --select <node>`.
+	Operation pkg_model.Operation
 	// Mode is the optional dispatch mode. Empty for normal production jobs;
 	// set to events.ModePromoteSeed for promote-seed jobs. When non-empty the
 	// value is stamped as a "mode" label on the Job and its pod template so
@@ -138,10 +142,8 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	}
 
 	// Step 2: Build Job spec
-	// TODO(Task 8): pass params.Operation once JobParams carries it; for now
-	// every dispatch through this path is a production run.
 	podSpec, err := buildPodSpec(params,
-		c.commands.NodeCommand(params.ServiceName, pkg_model.OperationRun, params.NodeType, params.TableName))
+		c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName))
 	if err != nil {
 		return fmt.Errorf("failed to build pod spec: %w", err)
 	}

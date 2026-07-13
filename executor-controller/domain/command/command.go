@@ -24,6 +24,10 @@ type DeployTask struct {
 	ImageTag       string `json:"image_tag"`
 	TaskRetryCount int    `json:"task_retry_count"`
 	TaskMaxRetries int    `json:"task_max_retries"`
+	// Operation selects the dbt verb the executor runs for this node. Empty
+	// (pkg_model.OperationRun) is the default: dbt run/seed/snapshot by
+	// NodeType. "test" runs `dbt test --select <node>`.
+	Operation string `json:"operation"`
 	// Mode is the optional dispatch mode (omitempty on the query.model wire).
 	// Empty for normal production jobs; events.ModePromoteSeed for promote-seed
 	// jobs. Persisted in job_params and forwarded to the k8s JobSpec so the
@@ -74,6 +78,7 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		TableName:    c.TableName,
 		NodeType:     c.NodeType,
 		ImageTag:     c.ImageTag,
+		Operation:    c.Operation,
 		Mode:         c.Mode,
 	}
 }
