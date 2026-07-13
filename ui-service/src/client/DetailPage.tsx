@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import {
@@ -11,6 +11,7 @@ import {
   TaskExecution,
 } from './types';
 import { resolveActiveGraph, headerDriftLabel } from './detail-page-helpers';
+import { buildServiceColors, listServices, serviceOfNode } from './service-helpers';
 import { fetchAllPages } from './fetch-all-pages';
 import { getDriftState, getDriftBadge } from './drift-helpers';
 import DAGPanel from './DAGPanel';
@@ -106,6 +107,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [liveRunGraph, setLiveRunGraph] = useState<RunGraph | null>(null);
   const [runGraph, setRunGraph] = useState<RunGraph | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunState, setRerunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [rerunError, setRerunError] = useState<string | null>(null);
@@ -127,6 +129,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setLiveRunGraph(null);
     setRunGraph(null);
     setSelectedNodeId(null);
+    setExpandedServices(new Set());
     setGraphState('loading');
   }, [location.state, name]);
 
@@ -401,6 +404,44 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     mode, scheduleGraph: graph, liveRunGraph, selectedRunGraph: runGraph, selectedRunId,
   });
   const activeTasks = selectedRunId ? deriveHistoricalTasks(runGraph) : tasks;
+
+  // Service-level grouping shared by the graph and the nodes table. A graph
+  // with a single service always renders expanded — a lone service vertex
+  // would carry no information.
+  const services = useMemo(
+    () => listServices(activeGraph?.nodes ?? [], activeTasks),
+    [activeGraph, activeTasks],
+  );
+  const serviceColors = useMemo(() => buildServiceColors(services), [services]);
+  const effectiveExpandedServices = useMemo(
+    () => (services.length <= 1 ? new Set(services) : expandedServices),
+    [services, expandedServices],
+  );
+
+  // Selecting a node (graph click, table click, or search) also expands its
+  // service so the selection is visible in both panels.
+  const handleNodeSelect = useCallback((nodeId: string | null) => {
+    setSelectedNodeId(nodeId);
+    if (nodeId) {
+      const svc = serviceOfNode(nodeId);
+      setExpandedServices((prev) => (prev.has(svc) ? prev : new Set([...prev, svc])));
+    }
+  }, []);
+
+  const handleServiceToggle = useCallback((service: string) => {
+    const isCollapsing = expandedServices.has(service);
+    setExpandedServices((prev) => {
+      const next = new Set(prev);
+      if (next.has(service)) next.delete(service);
+      else next.add(service);
+      return next;
+    });
+    if (isCollapsing) {
+      // Collapsing hides the service's nodes; a selection inside it would
+      // point at a node no longer on screen.
+      setSelectedNodeId((sel) => (sel && serviceOfNode(sel) === service ? null : sel));
+    }
+  }, [expandedServices]);
   const liveSchedulerStatus =
     normalizeStatus(scheduler?.status) ||
     (lastRunId === undefined ? 'loading' : lastRunId === null ? 'never run' : 'loading');
@@ -456,6 +497,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const handleSelectRun = (runId: string | null) => {
     setSelectedRunId(runId);
     setSelectedNodeId(null);
+    setExpandedServices(new Set());
   };
 
   const driftLabel: string | null = (() => {
@@ -618,8 +660,12 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
                     graphEdges={activeGraph.edges}
                     tasks={isLatest ? [] : activeTasks}
                     selectedNodeId={selectedNodeId}
-                    onNodeClick={setSelectedNodeId}
+                    onNodeClick={handleNodeSelect}
                     colorByStatus={!isLatest}
+                    serviceView={!isLatest}
+                    expandedServices={effectiveExpandedServices}
+                    onServiceClick={handleServiceToggle}
+                    serviceColors={serviceColors}
                   />
                 </ReactFlowProvider>
                 {selectedNodeId && !selectedRunId && lastRunId && (
@@ -710,7 +756,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
                         tasks={activeTasks}
                         executions={selectedRunId ? [] : latestExecutions}
                         selectedNodeId={selectedNodeId}
-                        onNodeSelect={setSelectedNodeId}
+                        onNodeSelect={handleNodeSelect}
+                        expandedServices={effectiveExpandedServices}
+                        onServiceToggle={handleServiceToggle}
+                        serviceColors={serviceColors}
                       />
                     )}
                   </div>

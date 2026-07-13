@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, fireEvent } from '@testing-library/react';
 import { ReactFlowProvider } from '@xyflow/react';
 import DAGPanel from '../../src/client/DAGPanel';
 import type { GraphNode, GraphEdge, Task } from '../../src/client/types';
@@ -111,5 +111,115 @@ describe('DAGPanel colorByStatus', () => {
     expect(selected.style.border).toContain('rgb(99, 102, 241)');
     // Non-selected, non-related node: dimmed to opacity 0.2.
     expect(other.style.opacity).toBe('0.2');
+  });
+});
+
+// ---- Service-level view ----
+
+const SVC_NODES: GraphNode[] = [
+  { node_id: 'svc-a.sch.n1', node_type: 'dbt-model', schedule_name: 's' },
+  { node_id: 'svc-a.sch.n2', node_type: 'dbt-model', schedule_name: 's' },
+  { node_id: 'svc-b.sch.m1', node_type: 'dbt-model', schedule_name: 's' },
+];
+const SVC_EDGES: GraphEdge[] = [
+  { from_node_id: 'svc-a.sch.n1', to_node_id: 'svc-a.sch.n2' },
+  { from_node_id: 'svc-a.sch.n2', to_node_id: 'svc-b.sch.m1' },
+];
+const SVC_TASKS: Task[] = [
+  {
+    task_id: 'svc-a.sch.n1', service_name: 'svc-a', schema_name: 'sch', table_name: 'n1',
+    job_name: '', status: 'failed', retry_count: 0, max_retries: 0, created_at: null,
+  },
+  {
+    task_id: 'svc-a.sch.n2', service_name: 'svc-a', schema_name: 'sch', table_name: 'n2',
+    job_name: '', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
+  },
+  {
+    task_id: 'svc-b.sch.m1', service_name: 'svc-b', schema_name: 'sch', table_name: 'm1',
+    job_name: '', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
+  },
+];
+
+function setupServiceView(expanded: Set<string>, onServiceClick = () => {}) {
+  const serviceColors = new Map([['svc-a', '#0ea5e9'], ['svc-b', '#f59e0b']]);
+  return render(
+    <ReactFlowProvider>
+      <DAGPanel
+        graphNodes={SVC_NODES}
+        graphEdges={SVC_EDGES}
+        tasks={SVC_TASKS}
+        selectedNodeId={null}
+        onNodeClick={() => {}}
+        serviceView
+        expandedServices={expanded}
+        onServiceClick={onServiceClick}
+        serviceColors={serviceColors}
+      />
+    </ReactFlowProvider>,
+  );
+}
+
+describe('DAGPanel service view', () => {
+  it('renders one vertex per collapsed service and no model nodes by default', () => {
+    const { container } = setupServiceView(new Set());
+    const ids = [...container.querySelectorAll('.react-flow__node')].map(n => n.getAttribute('data-id'));
+    expect(ids.sort()).toEqual(['svc:svc-a', 'svc:svc-b']);
+  });
+
+  it('paints a collapsed service vertex with its rolled-up status (failed wins)', () => {
+    const { container } = setupServiceView(new Set());
+    const vertexA = container.querySelector('.react-flow__node[data-id="svc:svc-a"]') as HTMLElement;
+    // failed background #fef2f2
+    expect(vertexA.style.background).toBe('rgb(254, 242, 242)');
+    const vertexB = container.querySelector('.react-flow__node[data-id="svc:svc-b"]') as HTMLElement;
+    // succeeded background #f0fdf4
+    expect(vertexB.style.background).toBe('rgb(240, 253, 244)');
+  });
+
+  it('shows the service name and node count on the vertex', () => {
+    const { container } = setupServiceView(new Set());
+    const vertexA = container.querySelector('.react-flow__node[data-id="svc:svc-a"]') as HTMLElement;
+    expect(vertexA.textContent).toContain('svc-a');
+    expect(vertexA.textContent).toContain('2');
+  });
+
+  it('reveals a service\'s model nodes when it is expanded, keeping others collapsed', () => {
+    const { container } = setupServiceView(new Set(['svc-a']));
+    const ids = [...container.querySelectorAll('.react-flow__node')].map(n => n.getAttribute('data-id'));
+    expect(ids.sort()).toEqual(['svc-a.sch.n1', 'svc-a.sch.n2', 'svc:svc-b']);
+  });
+
+  it('invokes onServiceClick with the service name when its vertex is clicked', () => {
+    const onServiceClick = vi.fn();
+    const { container } = setupServiceView(new Set(), onServiceClick);
+    const vertexA = container.querySelector('.react-flow__node[data-id="svc:svc-a"]') as HTMLElement;
+    fireEvent.click(vertexA);
+    expect(onServiceClick).toHaveBeenCalledWith('svc-a');
+  });
+
+  it('lays out a cyclic service graph without crashing', () => {
+    // svc-a→svc-b via n1→m1 and svc-b→svc-a via m1→n2: the collapsed service
+    // graph is a 2-cycle even though the model graph is a DAG.
+    const cyclicEdges: GraphEdge[] = [
+      { from_node_id: 'svc-a.sch.n1', to_node_id: 'svc-b.sch.m1' },
+      { from_node_id: 'svc-b.sch.m1', to_node_id: 'svc-a.sch.n2' },
+    ];
+    const { container } = render(
+      <ReactFlowProvider>
+        <DAGPanel
+          graphNodes={SVC_NODES}
+          graphEdges={cyclicEdges}
+          tasks={SVC_TASKS}
+          selectedNodeId={null}
+          onNodeClick={() => {}}
+          serviceView
+          expandedServices={new Set()}
+          onServiceClick={() => {}}
+          serviceColors={new Map()}
+        />
+      </ReactFlowProvider>,
+    );
+    const ids = [...container.querySelectorAll('.react-flow__node')].map(n => n.getAttribute('data-id'));
+    expect(ids.sort()).toEqual(['svc:svc-a', 'svc:svc-b']);
   });
 });

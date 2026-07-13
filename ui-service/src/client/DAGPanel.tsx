@@ -13,16 +13,47 @@ import '@xyflow/react/dist/style.css';
 import * as dagre from 'dagre';
 import { GraphEdge, GraphNode, Task } from './types';
 import { resolveNodeStatus, taskNodeId } from './detail-page-helpers';
+import {
+  DisplayEdge,
+  ServiceVertex,
+  buildServiceDisplayGraph,
+  isServiceVertexId,
+  serviceFromVertexId,
+  serviceOfNode,
+  serviceVertexId,
+} from './service-helpers';
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 44;
+const SERVICE_WIDTH = 200;
+const SERVICE_HEIGHT = 56;
+
+const EMPTY_SERVICES = new Set<string>();
 
 type FocusRole = 'selected' | 'parent' | 'child' | 'dim' | null;
+
+const STATUS_BG: Record<string, string> = {
+  running: '#eef2ff',
+  succeeded: '#f0fdf4',
+  failed: '#fef2f2',
+  pending: '#fff',
+  cancelled: '#f8fafc',
+  external: '#fafafa',
+};
+const STATUS_BORDER: Record<string, string> = {
+  running: '#a5b4fc',
+  succeeded: '#86efac',
+  failed: '#fca5a5',
+  pending: '#d1d5db',
+  cancelled: '#e2e8f0',
+  external: '#9ca3af',
+};
 
 function nodeStyle(
   status: string,
   isExternal: boolean,
   role: FocusRole,
+  accent?: string,
 ): React.CSSProperties {
   const base: React.CSSProperties = {
     borderRadius: 8,
@@ -33,28 +64,17 @@ function nodeStyle(
   };
 
   if (role === 'dim') {
-    return { ...base, background: '#fff', border: '1px solid #e5e7eb', opacity: 0.2 };
+    return {
+      ...base,
+      background: '#fff',
+      border: '1px solid #e5e7eb',
+      ...(accent ? { borderLeft: `4px solid ${accent}` } : {}),
+      opacity: 0.2,
+    };
   }
 
-  const bgMap: Record<string, string> = {
-    running: '#eef2ff',
-    succeeded: '#f0fdf4',
-    failed: '#fef2f2',
-    pending: '#fff',
-    cancelled: '#f8fafc',
-    external: '#fafafa',
-  };
-  const borderColorMap: Record<string, string> = {
-    running: '#a5b4fc',
-    succeeded: '#86efac',
-    failed: '#fca5a5',
-    pending: '#d1d5db',
-    cancelled: '#e2e8f0',
-    external: '#9ca3af',
-  };
-
-  let bg = bgMap[status] ?? '#f3f4f6';
-  let borderColor = borderColorMap[status] ?? '#d1d5db';
+  let bg = STATUS_BG[status] ?? '#f3f4f6';
+  let borderColor = STATUS_BORDER[status] ?? '#d1d5db';
   let borderWidth = '1.5px';
   let borderStyleVal = isExternal ? 'dashed' : 'solid';
   let boxShadow: string | undefined;
@@ -83,6 +103,43 @@ function nodeStyle(
     ...base,
     background: bg,
     border: `${borderWidth} ${borderStyleVal} ${borderColor}`,
+    ...(accent ? { borderLeft: `4px solid ${accent}` } : {}),
+    boxShadow,
+  };
+}
+
+function serviceVertexStyle(
+  status: string,
+  accent: string,
+  role: FocusRole,
+): React.CSSProperties {
+  const base: React.CSSProperties = {
+    borderRadius: 10,
+    width: SERVICE_WIDTH,
+    fontSize: 12,
+    cursor: 'pointer',
+    transition: 'opacity 0.15s, box-shadow 0.15s',
+  };
+
+  if (role === 'dim') {
+    return {
+      ...base,
+      background: '#fff',
+      border: '1px solid #e5e7eb',
+      borderLeft: `5px solid ${accent}`,
+      opacity: 0.2,
+    };
+  }
+
+  let boxShadow: string | undefined;
+  if (role === 'parent') boxShadow = '0 0 0 2px rgba(165, 180, 252, 0.3)';
+  else if (role === 'child') boxShadow = '0 0 0 2px rgba(134, 239, 172, 0.3)';
+
+  return {
+    ...base,
+    background: STATUS_BG[status] ?? '#f3f4f6',
+    border: `1.5px solid ${STATUS_BORDER[status] ?? '#d1d5db'}`,
+    borderLeft: `5px solid ${accent}`,
     boxShadow,
   };
 }
@@ -100,56 +157,107 @@ function edgeStyle(
   return { stroke: '#e5e7eb', strokeWidth: 1, opacity: 0.2 };
 }
 
+function focusRole(
+  id: string,
+  selectedNodeId: string | null,
+  parentIds: Set<string>,
+  childIds: Set<string>,
+): FocusRole {
+  if (!selectedNodeId) return null;
+  if (id === selectedNodeId) return 'selected';
+  if (parentIds.has(id)) return 'parent';
+  if (childIds.has(id)) return 'child';
+  return 'dim';
+}
+
 function buildLayout(
   graphNodes: GraphNode[],
   graphEdges: GraphEdge[],
   tasks: Task[],
   selectedNodeId: string | null,
   colorByStatus: boolean,
+  serviceView: boolean,
+  expandedServices: Set<string>,
+  serviceColors: Map<string, string>,
 ): { nodes: Node[]; edges: Edge[] } {
+  let modelNodes: GraphNode[];
+  let serviceVertices: ServiceVertex[];
+  let displayEdges: DisplayEdge[];
+
+  if (serviceView) {
+    const view = buildServiceDisplayGraph(graphNodes, graphEdges, tasks, expandedServices, colorByStatus);
+    modelNodes = view.modelNodes;
+    serviceVertices = view.serviceVertices;
+    displayEdges = view.edges;
+  } else {
+    modelNodes = graphNodes;
+    serviceVertices = [];
+    displayEdges = graphEdges.map((e) => ({ from: e.from_node_id, to: e.to_node_id }));
+  }
+
+  // The service-level projection may be cyclic even though the model graph is
+  // a DAG; dagre's layout breaks cycles internally by reversing back-edges, so
+  // a cyclic display graph lays out without special handling.
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 60 });
 
-  graphNodes.forEach((n) => g.setNode(n.node_id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
-  graphEdges.forEach((e) => g.setEdge(e.from_node_id, e.to_node_id));
+  modelNodes.forEach((n) => g.setNode(n.node_id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
+  serviceVertices.forEach((v) =>
+    g.setNode(serviceVertexId(v.service), { width: SERVICE_WIDTH, height: SERVICE_HEIGHT }),
+  );
+  displayEdges.forEach((e) => g.setEdge(e.from, e.to));
   dagre.layout(g);
 
   const parentIds = selectedNodeId
-    ? new Set(graphEdges.filter((e) => e.to_node_id === selectedNodeId).map((e) => e.from_node_id))
+    ? new Set(displayEdges.filter((e) => e.to === selectedNodeId).map((e) => e.from))
     : new Set<string>();
   const childIds = selectedNodeId
-    ? new Set(graphEdges.filter((e) => e.from_node_id === selectedNodeId).map((e) => e.to_node_id))
+    ? new Set(displayEdges.filter((e) => e.from === selectedNodeId).map((e) => e.to))
     : new Set<string>();
 
-  const nodes: Node[] = graphNodes.map((n) => {
+  const nodes: Node[] = modelNodes.map((n) => {
     const pos = g.node(n.node_id);
     const task = tasks.find((candidate) => taskNodeId(candidate) === n.node_id);
     const status = colorByStatus ? resolveNodeStatus(n, tasks) : 'pending';
     const isExternal = colorByStatus ? !task && !n.status : false;
-
-    let role: FocusRole = null;
-    if (selectedNodeId) {
-      if (n.node_id === selectedNodeId) role = 'selected';
-      else if (parentIds.has(n.node_id)) role = 'parent';
-      else if (childIds.has(n.node_id)) role = 'child';
-      else role = 'dim';
-    }
+    const role = focusRole(n.node_id, selectedNodeId, parentIds, childIds);
+    const accent = serviceView ? serviceColors.get(serviceOfNode(n.node_id)) : undefined;
 
     return {
       id: n.node_id,
       position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
       data: { label: n.node_id.split('.').pop() ?? n.node_id },
-      style: nodeStyle(status, isExternal, role),
+      style: nodeStyle(status, isExternal, role, accent),
     };
   });
 
-  const edges: Edge[] = graphEdges.map((e, i) => ({
+  serviceVertices.forEach((v) => {
+    const id = serviceVertexId(v.service);
+    const pos = g.node(id);
+    const accent = serviceColors.get(v.service) ?? '#94a3b8';
+    nodes.push({
+      id,
+      position: { x: pos.x - SERVICE_WIDTH / 2, y: pos.y - SERVICE_HEIGHT / 2 },
+      data: {
+        label: (
+          <div className="dag-service-vertex">
+            <span className="dag-service-vertex-dot" style={{ background: accent }} />
+            <span className="dag-service-vertex-name">{v.service}</span>
+            <span className="dag-service-vertex-count">{v.nodeCount}</span>
+          </div>
+        ),
+      },
+      style: serviceVertexStyle(v.status, accent, focusRole(id, selectedNodeId, parentIds, childIds)),
+    });
+  });
+
+  const edges: Edge[] = displayEdges.map((e, i) => ({
     id: `e-${i}`,
-    source: e.from_node_id,
-    target: e.to_node_id,
+    source: e.from,
+    target: e.to,
     type: 'smoothstep',
-    style: edgeStyle(e.from_node_id, e.to_node_id, selectedNodeId, parentIds, childIds),
+    style: edgeStyle(e.from, e.to, selectedNodeId, parentIds, childIds),
   }));
 
   return { nodes, edges };
@@ -172,6 +280,12 @@ interface Props {
   selectedNodeId: string | null;
   onNodeClick: (nodeId: string | null) => void;
   colorByStatus?: boolean;
+  // Service-level abstraction: collapsed services render as single vertices
+  // with a rolled-up status; clicking one calls onServiceClick to toggle it.
+  serviceView?: boolean;
+  expandedServices?: Set<string>;
+  onServiceClick?: (service: string) => void;
+  serviceColors?: Map<string, string>;
 }
 
 export default function DAGPanel({
@@ -181,10 +295,28 @@ export default function DAGPanel({
   selectedNodeId,
   onNodeClick,
   colorByStatus = true,
+  serviceView = false,
+  expandedServices = EMPTY_SERVICES,
+  onServiceClick,
+  serviceColors,
 }: Props) {
+  const colors = useMemo(
+    () => serviceColors ?? new Map<string, string>(),
+    [serviceColors],
+  );
   const layout = useMemo(
-    () => buildLayout(graphNodes, graphEdges, tasks, selectedNodeId, colorByStatus),
-    [graphEdges, graphNodes, selectedNodeId, tasks, colorByStatus],
+    () =>
+      buildLayout(
+        graphNodes,
+        graphEdges,
+        tasks,
+        selectedNodeId,
+        colorByStatus,
+        serviceView,
+        expandedServices,
+        colors,
+      ),
+    [graphEdges, graphNodes, selectedNodeId, tasks, colorByStatus, serviceView, expandedServices, colors],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
@@ -248,11 +380,16 @@ export default function DAGPanel({
     }
 
     if (lastSearchMatchRef.current === match.node_id) return;
-    lastSearchMatchRef.current = match.node_id;
+    // Selecting the match also expands its service (handled by the parent), so
+    // a node hidden inside a collapsed service becomes visible. Until it is in
+    // the layout, skip fitView; the layout change re-runs this effect.
     onNodeClick(match.node_id);
+    const matchInLayout = layout.nodes.filter((n) => n.id === match.node_id);
+    if (matchInLayout.length === 0) return;
+    lastSearchMatchRef.current = match.node_id;
     fitView({
       padding: 0.3,
-      nodes: layout.nodes.filter((n) => n.id === match.node_id),
+      nodes: matchInLayout,
       maxZoom: 1.4,
       duration: 400,
     });
@@ -264,9 +401,13 @@ export default function DAGPanel({
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
+      if (isServiceVertexId(node.id)) {
+        onServiceClick?.(serviceFromVertexId(node.id));
+        return;
+      }
       onNodeClick(node.id === selectedNodeId ? null : node.id);
     },
-    [onNodeClick, selectedNodeId],
+    [onNodeClick, onServiceClick, selectedNodeId],
   );
 
   return (

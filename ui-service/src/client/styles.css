@@ -402,6 +402,37 @@ body {
 .dag-focus-dot--child    { background: #86efac; }
 .dag-focus-dot--dim      { background: #e5e7eb; }
 
+/* Collapsed service vertex label (rendered inside a React Flow node) */
+.dag-service-vertex {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px;
+}
+.dag-service-vertex-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+.dag-service-vertex-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dag-service-vertex-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
 /* ---- Nodes table ---- */
 .nodes-table-scroll {
   overflow-y: auto;
@@ -444,6 +475,25 @@ body {
   color: #334155;
   vertical-align: top;
 }
+
+/* Collapsible per-service group header rows */
+.nodes-table tbody tr.nodes-group-row { background: #f8fafc; }
+.nodes-table tbody tr.nodes-group-row:hover { background: #f1f5f9; }
+.nodes-table tbody tr.nodes-group-row td { padding: 7px 14px; }
+.nodes-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nodes-group-chevron { color: #94a3b8; font-size: 10px; width: 10px; }
+.nodes-group-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+.nodes-group-name  { font-weight: 600; color: #1e293b; font-size: 12.5px; }
+.nodes-group-count { color: #94a3b8; font-size: 11px; margin-right: auto; }
 
 .nodes-node-name  { font-weight: 600; color: #1e293b; font-size: 12.5px; text-decoration: none; }
 .nodes-node-schema { color: #94a3b8; font-size: 11px; margin-top: 1px; }
