@@ -270,7 +270,10 @@ services:
       # The __AUTH_*__ sentinels are expanded by the deployment template from
       # global.auth.* (see global.auth above), so per-deployment identity config
       # lives in the on-box secret values file, not in this committed chart.
-      CHAT_BRIDGE_ENABLED: "false"
+      # Attaches the /ws/chat bridge to agent-runner and lets the client render the
+      # chat panel. Operator-gated client-side; agent-runner must have a working
+      # LLM_API_KEY (anthropic) for the agent to answer.
+      CHAT_BRIDGE_ENABLED: "true"
       AUTH_MODE: oidc
       AUTH_OIDC_ISSUER_URL: __AUTH_ISSUER_URL__
       AUTH_OIDC_CLIENT_ID: __AUTH_CLIENT_ID__
