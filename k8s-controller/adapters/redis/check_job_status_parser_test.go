@@ -145,3 +145,38 @@ func TestParseCheckK8s_InvalidJSONErrors(t *testing.T) {
 		t.Fatal("expected error for malformed payload JSON")
 	}
 }
+
+// TestParseNodeDeployed_CarriesOperation verifies the dbt verb rides the durable
+// node.deployed:v1 payload into CheckJobStatus, so it never depends on Job labels.
+func TestParseNodeDeployed_CarriesOperation(t *testing.T) {
+	cmd, err := ParseNodeDeployed(payloadMsg(t, pkgevents.NodeDeployed{
+		TaskID:     uuid.New().String(),
+		ScheduleID: uuid.New().String(),
+		JobName:    "job-op",
+		Operation:  "test",
+	}), 3)
+	if err != nil {
+		t.Fatalf("ParseNodeDeployed: %v", err)
+	}
+	if cmd.Operation != "test" {
+		t.Fatalf("expected Operation=test from node.deployed payload, got %q", cmd.Operation)
+	}
+}
+
+// TestParseCheckK8s_CarriesOperation verifies the re-poll loop preserves the dbt
+// verb across check.k8s:v1 hops, so a check that lands after the Job is TTL-reaped
+// still retains the verb for retry.
+func TestParseCheckK8s_CarriesOperation(t *testing.T) {
+	cmd, err := ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{
+		TaskID:     uuid.New().String(),
+		ScheduleID: uuid.New().String(),
+		JobName:    "job-op",
+		Operation:  "test",
+	}), 3)
+	if err != nil {
+		t.Fatalf("ParseCheckK8s: %v", err)
+	}
+	if cmd.Operation != "test" {
+		t.Fatalf("expected Operation=test carried from check.k8s payload, got %q", cmd.Operation)
+	}
+}

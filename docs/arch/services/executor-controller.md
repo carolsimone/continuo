@@ -103,8 +103,10 @@ On terminal failure (permanent error or retry-budget exhaustion), the dispatcher
 `node.deployed:v1` is emitted as a typed JSON `payload` field (`pkg/events.NodeDeployed`), with `outbox_entry_id` as a flat sibling field for consumer-side dedup. Payload fields:
 - `task_id`, `schedule_id`, `schedule_name`
 - `service_name`, `schema_name`, `table_name`, `job_name`
-- `node_type`, `image_tag`
+- `node_type`, `image_tag`, `operation` (omitted when empty)
 - `task_retry_count`, `max_retries`
+
+`operation` is the dbt verb the Job runs (e.g. `test`); it is empty for a normal `dbt run` (whose wire format is unchanged) and rides `node.deployed:v1` so `k8s-controller` carries it through its durable check/retry chain rather than re-deriving it from Job metadata.
 
 ### Command resolution (`dbt-commands.yaml`)
 

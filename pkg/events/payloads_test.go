@@ -104,6 +104,7 @@ func TestNodeDeployed_RoundTrip(t *testing.T) {
 		JobName:        "job-1",
 		NodeType:       "dbt-model",
 		ImageTag:       "sha-abc",
+		Operation:      "test",
 		TaskRetryCount: 2,
 		MaxRetries:     5,
 	}
@@ -111,6 +112,8 @@ func TestNodeDeployed_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	// node.deployed:v1 carries the task-level retry count under task_retry_count.
 	assert.Contains(t, string(b), `"task_retry_count":2`)
+	// Operation rides the durable payload so a retry keeps the dbt verb.
+	assert.Contains(t, string(b), `"operation":"test"`)
 	var out events.NodeDeployed
 	require.NoError(t, json.Unmarshal(b, &out))
 	assert.Equal(t, in, out)
@@ -127,6 +130,7 @@ func TestCheckK8s_RoundTrip(t *testing.T) {
 		JobName:      "job-1",
 		NodeType:     "dbt-model",
 		ImageTag:     "sha-abc",
+		Operation:    "test",
 		RetryCount:   3,
 		MaxRetries:   5,
 	}
@@ -134,6 +138,8 @@ func TestCheckK8s_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	// check.k8s:v1 carries the task-level retry count under retry_count.
 	assert.Contains(t, string(b), `"retry_count":3`)
+	// Operation recirculates on the self-poll loop so it survives to retry.
+	assert.Contains(t, string(b), `"operation":"test"`)
 	var out events.CheckK8s
 	require.NoError(t, json.Unmarshal(b, &out))
 	assert.Equal(t, in, out)
@@ -177,4 +183,20 @@ func TestTaskExecutionRecordedToMap_OmitsEmptyOptionalFields(t *testing.T) {
 	require.Contains(t, m, "task_id")
 	require.Contains(t, m, "job_name")
 	require.Contains(t, m, "execution_seconds")
+}
+
+// TestNodeDeployed_OmitsEmptyOperation verifies a normal `dbt run` (empty
+// Operation) stays wire-identical: no operation key is emitted.
+func TestNodeDeployed_OmitsEmptyOperation(t *testing.T) {
+	b, err := json.Marshal(events.NodeDeployed{TaskID: uuid.New().String()})
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "operation")
+}
+
+// TestCheckK8s_OmitsEmptyOperation verifies the check.k8s:v1 self-poll payload
+// omits operation for a normal `dbt run`.
+func TestCheckK8s_OmitsEmptyOperation(t *testing.T) {
+	b, err := json.Marshal(events.CheckK8s{TaskID: uuid.New().String()})
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "operation")
 }

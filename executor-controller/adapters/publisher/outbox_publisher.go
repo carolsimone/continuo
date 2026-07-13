@@ -85,6 +85,7 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 			JobName:        e.JobName,
 			NodeType:       e.NodeType,
 			ImageTag:       e.ImageTag,
+			Operation:      e.Operation,
 			TaskRetryCount: taskRetryCount,
 			MaxRetries:     maxRetries,
 		})

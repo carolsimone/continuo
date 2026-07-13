@@ -64,7 +64,7 @@ func TestPublisher_NodeDeployed(t *testing.T) {
 
 	payload, err := json.Marshal(event.JobDeployed{
 		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "sha-abc", TaskRetryCount: 2, MaxRetries: 5,
+		ImageTag: "sha-abc", Operation: "test", TaskRetryCount: 2, MaxRetries: 5,
 	})
 	require.NoError(t, err)
 
@@ -85,7 +85,7 @@ func TestPublisher_NodeDeployed(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(payloadStr), &nd))
 	assert.Equal(t, pkgevents.NodeDeployed{
 		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "sha-abc", TaskRetryCount: 2, MaxRetries: 5,
+		ImageTag: "sha-abc", Operation: "test", TaskRetryCount: 2, MaxRetries: 5,
 	}, nd)
 }
 

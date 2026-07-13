@@ -158,12 +158,12 @@ Each completed row's `aggregate_id` is a deterministic UUIDv5 over an immutable 
 ## Redis Payload Reference
 
 ### `check.k8s:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`, `retry_count`, `max_retries`, `image_tag`, `running_announced`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`, `retry_count`, `max_retries`, `image_tag`, `operation` (omitted when empty), `running_announced`
 
 ### `retry.task:v1`
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `image_tag`, `task_retry_count`, `max_retries`, `node_type`, `operation` (omitted when empty)
 
-`operation` is read from the failed Job's `operation` label (stamped by `executor-controller` at `CreateQueryJob` time, alongside the existing `mode` label) and carried onto the retry so a retried `dbt test` Job is redeployed as `dbt test` rather than defaulting to `dbt run`. Normal production retries have no `operation` label, so the field is omitted and the wire format is unchanged for them.
+`operation` is the dbt verb the Job runs (e.g. `test`). It is sourced from durable check/retry data, not from Job metadata: it arrives on `node.deployed:v1`, is held on `CheckJobStatus.Operation`, recirculates on every `check.k8s:v1` self-poll ticket, and is copied onto `retry.task:v1`. Sourcing it from the Job's labels would be unsafe because a TTL-reaped ("vanished") Job returns empty labels from `GetJobMeta`, which would silently rebuild a `dbt test` Job as `dbt run`; carrying it in the durable payload keeps a retried `dbt test` Job a `dbt test`. Normal production runs have an empty `operation`, so the field is omitted and the wire format is unchanged for them.
 
 ### `task.failed:v1`
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `error_message`, `retry_count`

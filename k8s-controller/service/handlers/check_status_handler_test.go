@@ -307,21 +307,25 @@ func TestHandleFailedWithRetry(t *testing.T) {
 	}
 }
 
-// TestHandleFailedWithRetry_PropagatesOperationLabel guards against the false-green
-// bug where a retried `dbt test` Job comes back as `dbt run`: the Job's "operation"
-// label (stamped by the executor) must flow into the task_retry payload so the
-// rebuilt Job keeps running the original operation.
-func TestHandleFailedWithRetry_PropagatesOperationLabel(t *testing.T) {
+// TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob guards against
+// the false-green bug where a retried `dbt test` Job comes back as `dbt run`. The
+// operation must be read from the durable CheckJobStatus.Operation, NOT from the
+// failed Job's labels: a TTL-reaped ("vanished") Job returns EMPTY labels from
+// GetJobMeta, so a label-sourced read would silently emit `dbt run`. Here the fake
+// client returns empty labels (vanished Job) yet cmd.Operation=="test", and the
+// task_retry payload must stay "test".
+func TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob(t *testing.T) {
 	outbox := &fakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{
 		status: failedResult(),
-		labels: map[string]string{"operation": "test"},
+		labels: map[string]string{}, // vanished Job: GetJobMeta returns empty labels
 	}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
 		TaskID:     uuid.New(),
 		ScheduleID: uuid.New(),
 		JobName:    "job-abc",
+		Operation:  "test", // durable, carried on node.deployed:v1 / check.k8s:v1
 		RetryCount: 0,
 		MaxRetries: 3,
 	}
@@ -343,11 +347,11 @@ func TestHandleFailedWithRetry_PropagatesOperationLabel(t *testing.T) {
 	}
 }
 
-// TestHandleFailedWithRetry_NoOperationLabelStaysEmpty guards the normal `dbt run`
-// path: a Job with no "operation" label (the common case) must produce a
-// task_retry payload with an empty/absent operation so the wire format is
-// unchanged for production runs.
-func TestHandleFailedWithRetry_NoOperationLabelStaysEmpty(t *testing.T) {
+// TestHandleFailedWithRetry_NoOperationStaysEmpty guards the normal `dbt run`
+// path: a command with no Operation (the common case) must produce a task_retry
+// payload with an empty/absent operation so the wire format is unchanged for
+// production runs.
+func TestHandleFailedWithRetry_NoOperationStaysEmpty(t *testing.T) {
 	outbox := &fakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{
 		status: failedResult(),
@@ -526,6 +530,47 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 	}
 	if got := int(payload["max_retries"].(float64)); got != 5 {
 		t.Errorf("expected max_retries=5, got %d", got)
+	}
+}
+
+// TestHandleRunning_RecirculatesOperation verifies the dbt verb rides the
+// check.k8s:v1 self-poll loop: a running Job with cmd.Operation=="test" must emit
+// a check_delayed ticket whose payload carries operation="test". Without this, a
+// re-check that lands after the Job is TTL-reaped would lose the verb and a later
+// retry would rebuild `dbt run` — the vanished-Job regression, one hop upstream.
+func TestHandleRunning_RecirculatesOperation(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		JobName:          "job-running",
+		Operation:        "test",
+		RetryCount:       1,
+		MaxRetries:       5,
+		RunningAnnounced: true,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entry := findEntryByEventType(outbox.entries, "check_delayed")
+	if entry == nil {
+		t.Fatal("missing check_delayed entry")
+	}
+	// Decode the recirculated ticket and assert the verb survives the
+	// running -> re-check hop (the check.k8s:v1 payload carries operation).
+	var payload map[string]interface{}
+	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal check_delayed: %v", err)
+	}
+	if got, _ := payload["operation"].(string); got != "test" {
+		t.Fatalf("check.k8s ticket dropped operation: got %q, want %q (payload=%v)", got, "test", payload)
 	}
 }
 

@@ -191,7 +191,7 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 		if retryCount >= maxRetries {
 			return h.handleFailedPermanent(ctx, u, cmd, result, retryCount)
 		}
-		return h.handleFailedWithRetry(ctx, u, cmd, result, retryCount, maxRetries, labels["operation"])
+		return h.handleFailedWithRetry(ctx, u, cmd, result, retryCount, maxRetries)
 	default:
 		return h.handleUnknown(ctx, u, cmd, result)
 	}
@@ -565,7 +565,7 @@ func retryJobName(baseJobName string, retryCount int32) string {
 //   - task_status_updated (FAILED)
 //   - task_execution_recorded
 //   - task_retry (→ retry.task:v1)
-func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount, maxRetries int32, operation string) error {
+func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount, maxRetries int32) error {
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
 
@@ -605,7 +605,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 		RetryCount:   int(newRetryCount),
 		MaxRetries:   int(maxRetries),
 		NodeType:     cmd.NodeType,
-		Operation:    operation,
+		Operation:    cmd.Operation,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal task_retry: %w", err)
@@ -681,6 +681,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 		CheckAfter:       checkAfter.Unix(),
 		NodeType:         cmd.NodeType,
 		ImageTag:         cmd.ImageTag,
+		Operation:        cmd.Operation,
 		RetryCount:       int(cmd.RetryCount),
 		MaxRetries:       int(maxRetries),
 		RunningAnnounced: true,

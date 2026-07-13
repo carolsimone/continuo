@@ -34,6 +34,10 @@ type JobCheckRequest struct {
 	CheckAfter   int64  `json:"check_after"` // Unix timestamp for delayed processing
 	NodeType     string `json:"node_type"`
 	ImageTag     string `json:"image_tag"`
+	// Operation is the dbt verb the Job runs (e.g. "test"); empty for a normal
+	// production `dbt run`. It recirculates on every check.k8s:v1 self-poll so a
+	// check that lands after the Job is TTL-reaped still carries the verb for retry.
+	Operation    string `json:"operation,omitempty"`
 	RetryCount   int    `json:"retry_count"` // current task retry count
 	MaxRetries   int    `json:"max_retries"` // maximum task retries allowed
 	// RunningAnnounced is true once RUNNING has been announced for this attempt.
@@ -87,8 +91,10 @@ type TaskRetry struct {
 	NodeType     string `json:"node_type"`
 	// Operation is the dbt verb the retried Job should run (e.g. "test").
 	// Empty for normal production `dbt run` retries — their wire format is
-	// unchanged. Set from the failed Job's "operation" label so a retried
-	// `dbt test` Job stays `dbt test` instead of rebuilding as `dbt run`.
+	// unchanged. Sourced from the durable CheckJobStatus.Operation (which rides
+	// node.deployed:v1 / check.k8s:v1), never from the failed Job's labels: a
+	// TTL-reaped Job has no labels, so a retried `dbt test` Job stays `dbt test`
+	// instead of rebuilding as `dbt run`.
 	Operation string `json:"operation,omitempty"`
 }
 
