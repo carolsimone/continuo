@@ -411,16 +411,6 @@ func stringField(rec *neo4j.Record, k string) string {
 	return ""
 }
 
-// intField extracts an int-typed field from a Neo4j record, returning 0 for
-// nil or non-numeric values. Neo4j's driver returns integer properties as
-// int64, so this converts down to Go's native int.
-func intField(rec *neo4j.Record, k string) int {
-	if v, _ := rec.Get(k); v != nil {
-		return int(toInt64(v))
-	}
-	return 0
-}
-
 // intFieldPresent returns the int value of key and whether the field was
 // present and non-null (a Neo4j property that does not exist reads as nil).
 func intFieldPresent(rec *neo4j.Record, k string) (int, bool) {
