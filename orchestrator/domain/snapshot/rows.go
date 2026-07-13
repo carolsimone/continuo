@@ -20,6 +20,7 @@ type SourceTaskRow struct {
 type LatestTableRow struct {
 	ScheduleName    string
 	NodeType        string
+	TestCount       int
 	ImageTag        string
 	ManifestVersion string
 }

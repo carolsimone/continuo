@@ -38,6 +38,7 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           t.service_name  AS service_name,
 		           t.schedule_name AS schedule_name,
 		           COALESCE(t.node_type, 'dbt-model')      AS node_type,
+		           COALESCE(t.test_count, 0)                AS test_count,
 		           COALESCE(t.image_tag, '')                AS image_tag,
 		           COALESCE(t.manifest_version, '')         AS manifest_version
 
@@ -52,11 +53,12 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           s.service_name  AS service_name,
 		           s.schedule_name AS schedule_name,
 		           s.node_type     AS node_type,
+		           COALESCE(s.test_count, 0)        AS test_count,
 		           COALESCE(s.image_tag, '')        AS image_tag,
 		           COALESCE(s.manifest_version, '') AS manifest_version
 		}
 		RETURN DISTINCT schema_name, table_name, service_name, schedule_name,
-		                node_type, image_tag, manifest_version
+		                node_type, test_count, image_tag, manifest_version
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{"schedule_name": scheduleName})
 	if err != nil {
@@ -75,6 +77,7 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		out[f] = snapshot.LatestTableRow{
 			ScheduleName:    schedName,
 			NodeType:        stringField(rec, "node_type"),
+			TestCount:       intField(rec, "test_count"),
 			ImageTag:        stringField(rec, "image_tag"),
 			ManifestVersion: stringField(rec, "manifest_version"),
 		}
@@ -308,6 +311,7 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 		WHERE ($sched = '' OR tbl.schedule_name = $sched) AND COALESCE(tbl.active, true)
 		RETURN tbl.schedule_name AS schedule_name,
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
+		       COALESCE(tbl.test_count, 0)          AS test_count,
 		       COALESCE(tbl.image_tag, '')          AS image_tag,
 		       COALESCE(tbl.manifest_version, '')   AS manifest_version
 		LIMIT 1
@@ -329,6 +333,7 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 	return snapshot.LatestTableRow{
 		ScheduleName:    stringField(rec, "schedule_name"),
 		NodeType:        stringField(rec, "node_type"),
+		TestCount:       intField(rec, "test_count"),
 		ImageTag:        stringField(rec, "image_tag"),
 		ManifestVersion: stringField(rec, "manifest_version"),
 	}, true, nil
@@ -342,6 +347,7 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		WHERE ($sched = '' OR tbl.schedule_name = $sched)
 		RETURN tbl.schedule_name AS schedule_name,
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
+		       COALESCE(tbl.test_count, 0)          AS test_count,
 		       COALESCE(srcEdge.image_tag, '')        AS image_tag,
 		       COALESCE(srcEdge.manifest_version, '') AS manifest_version
 		LIMIT 1
@@ -364,6 +370,7 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 	return snapshot.LatestTableRow{
 		ScheduleName:    stringField(rec, "schedule_name"),
 		NodeType:        stringField(rec, "node_type"),
+		TestCount:       intField(rec, "test_count"),
 		ImageTag:        stringField(rec, "image_tag"),
 		ManifestVersion: stringField(rec, "manifest_version"),
 	}, true, nil
@@ -378,6 +385,18 @@ func stringField(rec *neo4j.Record, k string) string {
 		}
 	}
 	return ""
+}
+
+// intField extracts an int-typed field from a Neo4j record, returning 0 for
+// nil or non-numeric values. Neo4j's driver returns integer properties as
+// int64, so this converts down to Go's native int.
+func intField(rec *neo4j.Record, k string) int {
+	if v, _ := rec.Get(k); v != nil {
+		if i, ok := v.(int64); ok {
+			return int(i)
+		}
+	}
+	return 0
 }
 
 // NewTopologyReaderForTest exposes newTopologyReader to package-external tests
