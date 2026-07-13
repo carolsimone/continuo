@@ -64,3 +64,22 @@ func assertSliceEqual(t *testing.T, want, got []string) {
 		}
 	}
 }
+
+func TestParseOperation(t *testing.T) {
+	cases := map[string]struct{ want model.Operation; wantErr bool }{
+		"":      {model.OperationRun, false},
+		"run":   {model.OperationRun, false},
+		"test":  {model.OperationTest, false},
+		"build": {model.OperationBuild, false},
+		"bogus": {"", true},
+	}
+	for in, c := range cases {
+		got, err := model.ParseOperation(in)
+		if (err != nil) != c.wantErr {
+			t.Fatalf("ParseOperation(%q) err=%v wantErr=%v", in, err, c.wantErr)
+		}
+		if err == nil && got != c.want {
+			t.Fatalf("ParseOperation(%q)=%q want %q", in, got, c.want)
+		}
+	}
+}
