@@ -54,7 +54,7 @@ func validate(cfg *fileConfig) error {
 	}
 	for name, ops := range cfg.Services {
 		if ops == nil || (ops.Run == nil && ops.Seed == nil && ops.Snapshot == nil &&
-			ops.SeedBuild == nil && ops.Compile == nil) {
+			ops.SeedBuild == nil && ops.Test == nil && ops.Build == nil && ops.Compile == nil) {
 			return fmt.Errorf("services.%s: no operations defined", name)
 		}
 		if err := validateOpSet("services."+name, ops); err != nil {
@@ -70,6 +70,7 @@ func validateOpSet(path string, ops *opSet) error {
 		argv []string
 	}{
 		{"run", ops.Run}, {"seed", ops.Seed}, {"snapshot", ops.Snapshot},
+		{"test", ops.Test}, {"build", ops.Build},
 	}
 	for _, op := range nodeOps {
 		if op.argv == nil {

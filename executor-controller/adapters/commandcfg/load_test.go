@@ -53,6 +53,27 @@ services:
 	require.NoError(t, err)
 }
 
+func TestLoad_ValidTestOverride(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  test: ["dbt", "test", "--select", "{{ node }}"]
+`)
+	r, err := Load(path, testLogger())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dbt", "test", "--select", "x"},
+		r.NodeCommand("svc", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
+}
+
+func TestLoad_ServiceWithOnlyTestOverrideIsNotEmpty(t *testing.T) {
+	path := writeConfig(t, `
+services:
+  wise:
+    test: ["wise-dbt", "test", "--select", "{{ node }}"]
+`)
+	_, err := Load(path, testLogger())
+	require.NoError(t, err)
+}
+
 func TestLoad_ValidationErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -128,6 +149,21 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			name:    "service with no operations",
 			yaml:    "services:\n  wise: {}",
 			wantErr: "services.wise: no operations defined",
+		},
+		{
+			name:    "empty test argv",
+			yaml:    "default:\n  test: []",
+			wantErr: "default.test: must not be empty",
+		},
+		{
+			name:    "empty build argv",
+			yaml:    "default:\n  build: []",
+			wantErr: "default.build: must not be empty",
+		},
+		{
+			name:    "test missing node placeholder",
+			yaml:    "default:\n  test: [\"dbt\", \"test\"]",
+			wantErr: "default.test: missing required {{ node }} placeholder",
 		},
 	}
 	for _, tt := range tests {
