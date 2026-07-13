@@ -103,6 +103,45 @@ func TestRebasePartition_DroppedSourceRowsExcluded(t *testing.T) {
 	}
 }
 
+func TestRebasePartition_SourceRunIsTest_ReturnsErrRerunOfTestUnsupported(t *testing.T) {
+	srcID := uuid.New()
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+	r := &fakeTopologyReader{
+		SourceRunOperationByID: map[string]string{srcID.String(): "test"},
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {a: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"}},
+		},
+		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
+			a: {ScheduleName: "x", NodeType: "dbt-model"},
+		},
+	}
+	_, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, ScheduleName: "x"})
+	if !errors.Is(err, snapshot.ErrRerunOfTestUnsupported) {
+		t.Fatalf("want ErrRerunOfTestUnsupported, got %v", err)
+	}
+}
+
+func TestRebasePartition_SourceRunIsRun_ProceedsNormally(t *testing.T) {
+	srcID := uuid.New()
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+	r := &fakeTopologyReader{
+		SourceRunOperationByID: map[string]string{srcID.String(): "run"},
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {a: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"}},
+		},
+		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
+			a: {ScheduleName: "x", NodeType: "dbt-model"},
+		},
+	}
+	got, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, ScheduleName: "x"})
+	if err != nil {
+		t.Fatalf("unexpected error for run-operation source: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 task, got %d", len(got))
+	}
+}
+
 func TestRebasePartition_NoSourceRunID_Errors(t *testing.T) {
 	r := &fakeTopologyReader{}
 	_, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})

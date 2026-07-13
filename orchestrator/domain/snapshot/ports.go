@@ -59,6 +59,13 @@ type TopologyReader interface {
 	// predates test_count capture. The bool is false (with no error) when the
 	// source run has no :EXECUTES edge to a :Table with that identity.
 	LoadSingleTableFromSourceRun(ctx context.Context, sourceRunID string, fqn FQN) (LatestTableRow, bool, error)
+
+	// SourceRunOperation returns the source :Run's operation property
+	// ("" | "run" | "test" | "build"). Returns "" (no error) when the run
+	// doesn't exist or has no operation stamped. Used by the SourcePinnedDAG
+	// and RebasePartition selectors to reject a rerun/rebase whose source was
+	// a test run (see ErrRerunOfTestUnsupported).
+	SourceRunOperation(ctx context.Context, sourceRunID string) (string, error)
 }
 
 // SnapshotWriter is the write-side port for snapshot policies. Implementations

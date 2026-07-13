@@ -382,6 +382,24 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 	}, true, nil
 }
 
+func (r *topologyReader) SourceRunOperation(ctx context.Context, sourceRunID string) (string, error) {
+	const q = `
+		MATCH (r:Run {run_id: $source_run_id})
+		RETURN COALESCE(r.operation, '') AS operation
+	`
+	result, err := r.tx.Run(ctx, q, map[string]interface{}{"source_run_id": sourceRunID})
+	if err != nil {
+		return "", fmt.Errorf("topology_reader: SourceRunOperation: %w", err)
+	}
+	if !result.Next(ctx) {
+		if rerr := result.Err(); rerr != nil {
+			return "", fmt.Errorf("topology_reader: SourceRunOperation result: %w", rerr)
+		}
+		return "", nil
+	}
+	return stringField(result.Record(), "operation"), nil
+}
+
 // stringField extracts a string-typed field from a Neo4j record, returning ""
 // for nil or non-string values. Mirrors today's helper in domain/snapshot.
 func stringField(rec *neo4j.Record, k string) string {

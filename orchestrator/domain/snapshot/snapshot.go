@@ -33,6 +33,18 @@ var ErrTargetNotFound = errors.New("snapshot: target table not found")
 // reason "no_tests" instead of dispatching a pointless Job.
 var ErrNoTests = errors.New("snapshot: node has no tests")
 
+// ErrRerunOfTestUnsupported is returned by the SourcePinnedDAG (rerun) and
+// RebasePartition (rebase) selectors when the source :Run's operation is
+// "test". A rerun/rebase derives its dispatch from the source run's
+// TaskProjection, which carries no per-task operation — so a rerun of a test
+// run would silently issue `dbt run` against the failed nodes instead of
+// `dbt test`, either mutating models or falsely reporting success. Rather
+// than preserve/rerun-as-test, rerun/rebase of a test run is rejected
+// outright: the caller triggers a fresh `node test` / `schedule test`
+// instead. Handlers map this to run.entries.dispatch_failed:v1 with reason
+// "rerun_of_test_unsupported".
+var ErrRerunOfTestUnsupported = errors.New("snapshot: rerun/rebase of a test run is not supported")
+
 // Params is the input to a snapshot.
 type Params struct {
 	RunID        string

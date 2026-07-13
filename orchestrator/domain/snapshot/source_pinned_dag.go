@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 )
@@ -30,6 +31,12 @@ type SourcePinnedDAG struct{}
 func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params) ([]TaskProjection, error) {
 	if p.SourceRunID == nil {
 		return nil, fmt.Errorf("SourcePinnedDAG: SourceRunID required")
+	}
+
+	if op, err := r.SourceRunOperation(ctx, p.SourceRunID.String()); err != nil {
+		return nil, fmt.Errorf("SourcePinnedDAG: source operation: %w", err)
+	} else if op == string(pkgModel.OperationTest) {
+		return nil, ErrRerunOfTestUnsupported
 	}
 
 	source, err := r.LoadSourceTasks(ctx, p.SourceRunID.String())

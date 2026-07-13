@@ -345,6 +345,59 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 	)
 }
 
+// ── SourceRunOperation ─────────────────────────────────────────────────────────
+
+func TestTopologyReader_SourceRunOperation_HitAndMiss(t *testing.T) {
+	sched := "test-tr-sro-" + uuid.New().String()[:8]
+	testRunID := uuid.New().String()
+	runRunID := uuid.New().String()
+	unsetRunID := uuid.New().String()
+	missingRunID := uuid.New().String()
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			if err := txSeedRun(ctx, tx, testRunID, sched); err != nil {
+				return err
+			}
+			if _, err := tx.Run(ctx,
+				"MATCH (r:Run {run_id: $run_id}) SET r.operation = $operation",
+				map[string]interface{}{"run_id": testRunID, "operation": "test"},
+			); err != nil {
+				return err
+			}
+			if err := txSeedRun(ctx, tx, runRunID, sched); err != nil {
+				return err
+			}
+			if _, err := tx.Run(ctx,
+				"MATCH (r:Run {run_id: $run_id}) SET r.operation = $operation",
+				map[string]interface{}{"run_id": runRunID, "operation": "run"},
+			); err != nil {
+				return err
+			}
+			// unsetRunID: :Run exists but never got r.operation set.
+			return txSeedRun(ctx, tx, unsetRunID, sched)
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			op, err := r.SourceRunOperation(ctx, testRunID)
+			require.NoError(t, err)
+			assert.Equal(t, "test", op)
+
+			op, err = r.SourceRunOperation(ctx, runRunID)
+			require.NoError(t, err)
+			assert.Equal(t, "run", op)
+
+			op, err = r.SourceRunOperation(ctx, unsetRunID)
+			require.NoError(t, err)
+			assert.Equal(t, "", op, "unset operation must read as empty string")
+
+			op, err = r.SourceRunOperation(ctx, missingRunID)
+			require.NoError(t, err)
+			assert.Equal(t, "", op, "missing run must read as empty string, no error")
+			return nil
+		},
+	)
+}
+
 // ── DescendantsInLatestTopologyBatch ──────────────────────────────────────────
 
 func TestTopologyReader_DescendantsInLatestTopologyBatch_ActiveFilter(t *testing.T) {

@@ -284,7 +284,7 @@ Payload fields:
 - `kind` — always `"rerun"`
 - `source_run_id` — UUID of the source run (carries the pinned snapshot)
 
-Effect: `orchestrator.HandleRerun` runs `Snapshot(SourcePinnedDAG{})` against the new run, producing a `:Run` node + `:EXECUTES` edges that mirror the source's DAG, with all non-SUCCEEDED tasks + their descendants flipped to PENDING (rebased, will dispatch) and the rest carried forward as inherited at their source status.
+Effect: `orchestrator.HandleRerun` runs `Snapshot(SourcePinnedDAG{})` against the new run, producing a `:Run` node + `:EXECUTES` edges that mirror the source's DAG, with all non-SUCCEEDED tasks + their descendants flipped to PENDING (rebased, will dispatch) and the rest carried forward as inherited at their source status. If the source run's operation was `test`, the selector rejects the rerun outright (`run.entries.dispatch_failed:v1`, `reason=rerun_of_test_unsupported`) instead of dispatching `dbt run` against tasks that were never meant to run: the newly-minted `scheduler_tracker` row finalizes as `failed`.
 
 #### `trigger.rebase:v1`
 
@@ -295,7 +295,7 @@ Payload fields:
 - `schedule_name`
 - `source_run_id` — UUID of the source (terminal `FAILED`/`CANCELLED`) run
 
-Effect: `orchestrator.HandleRebase` runs `Snapshot(RebasePartition)` against the new run, computing the rebase set ∪ inherit set against the latest topology and projecting the result onto the new `:Run` with split metadata (rebased rows = latest pair; inherited rows = source's pinned pair + root-resolved `inherited_from_task_id`).
+Effect: `orchestrator.HandleRebase` runs `Snapshot(RebasePartition)` against the new run, computing the rebase set ∪ inherit set against the latest topology and projecting the result onto the new `:Run` with split metadata (rebased rows = latest pair; inherited rows = source's pinned pair + root-resolved `inherited_from_task_id`). Same guard as rerun: a source run with operation `test` is rejected (`reason=rerun_of_test_unsupported`), not rebased.
 
 #### `trigger.single_node_run:v1`
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 )
@@ -20,6 +21,12 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 	}
 	if p.ScheduleName == "" {
 		return nil, fmt.Errorf("RebasePartition: ScheduleName required")
+	}
+
+	if op, err := r.SourceRunOperation(ctx, p.SourceRunID.String()); err != nil {
+		return nil, fmt.Errorf("RebasePartition: source operation: %w", err)
+	} else if op == string(pkgModel.OperationTest) {
+		return nil, ErrRerunOfTestUnsupported
 	}
 
 	source, err := r.LoadSourceTasks(ctx, p.SourceRunID.String())

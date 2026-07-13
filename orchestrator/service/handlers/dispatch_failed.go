@@ -82,9 +82,10 @@ func EmitDispatchFailed(
 //
 // Returns (reason, true) only for the sentinels that express an
 // expected "no work to dispatch" outcome:
-//   - snapshot.ErrTargetNotFound  -> DispatchFailedReasonTargetNotFound
-//   - snapshot.ErrEmptyProjection -> DispatchFailedReasonEmptyProjection
-//   - snapshot.ErrNoTests         -> DispatchFailedReasonNoTests
+//   - snapshot.ErrTargetNotFound         -> DispatchFailedReasonTargetNotFound
+//   - snapshot.ErrEmptyProjection        -> DispatchFailedReasonEmptyProjection
+//   - snapshot.ErrNoTests                -> DispatchFailedReasonNoTests
+//   - snapshot.ErrRerunOfTestUnsupported -> DispatchFailedReasonRerunOfTestUnsupported
 //
 // Returns ("", false) for every other error. When false is returned the
 // caller MUST propagate err unchanged (typically wrapped with
@@ -103,6 +104,8 @@ func dispatchFailedReason(err error) (pkgEvents.DispatchFailedReason, bool) {
 		return pkgEvents.DispatchFailedReasonEmptyProjection, true
 	case errors.Is(err, snapshot.ErrNoTests):
 		return pkgEvents.DispatchFailedReasonNoTests, true
+	case errors.Is(err, snapshot.ErrRerunOfTestUnsupported):
+		return pkgEvents.DispatchFailedReasonRerunOfTestUnsupported, true
 	default:
 		return "", false
 	}

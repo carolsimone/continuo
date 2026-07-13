@@ -50,6 +50,12 @@ const (
 	// to do, so the orchestrator fails the dispatch fast instead of
 	// scheduling a pointless Job.
 	DispatchFailedReasonNoTests DispatchFailedReason = "no_tests"
+	// DispatchFailedReasonRerunOfTestUnsupported is emitted when a rerun or
+	// rebase's source :Run has operation "test". A rerun/rebase derives its
+	// dispatch from the source run's projection, which carries no per-task
+	// operation, so it cannot safely reissue a `dbt test` run; the caller
+	// must trigger a fresh `node test` / `schedule test` instead.
+	DispatchFailedReasonRerunOfTestUnsupported DispatchFailedReason = "rerun_of_test_unsupported"
 )
 
 // RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1

@@ -149,6 +149,8 @@ sequenceDiagram
 
 **Differences vs. Flow 5 (rebase):** rerun reads against the source's pinned `:EXECUTES` set (no drift, no new arrivals), whereas rebase reads against latest topology and adds new arrivals. The eligibility checks, payload shape, helper code paths, and downstream pipeline (`run.entries.dispatched:v1` + `query.model:v1`) are otherwise identical.
 
+**Test-run source rejected:** before projecting, `SourcePinnedDAG.SelectTasks` reads the source `:Run.operation` via `TopologyReader.SourceRunOperation`. If it is `"test"`, the selector returns `ErrRerunOfTestUnsupported` instead of a projection, and `DerivedRunHandler` emits `run.entries.dispatch_failed:v1` (`reason=rerun_of_test_unsupported`) — a rerun's projection carries no per-task operation, so it cannot safely reissue `dbt test` against the failed nodes; the caller must trigger a fresh `node test` instead. `RebasePartition` (Flow 5) applies the identical guard. This does not affect single-node `snapshot_of_run` reruns, which legitimately allow a test-operation source.
+
 ## 5. Service Process Startup (Pre-Flight)
 
 Before any service participates in the flows above, it runs an environment validation step:
