@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -34,6 +35,7 @@ func NewTriggerSingleNodeRunHandler(logger *slog.Logger) *TriggerSingleNodeRunHa
 type TriggerSingleNodeRunInput struct {
 	Target         run.NodeID
 	MetadataSource run.MetadataSource
+	Operation      model.Operation
 	SourceRunID    *uuid.UUID
 	Initiator      identity.Identity
 }
@@ -74,7 +76,7 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 
 	id := uuid.New()
 	scheduleName := "single-node-run-" + strings.ReplaceAll(id.String(), "-", "")[:8]
-	newRun, evt, err := run.NewSingleNodeRun(scheduleName, in.Target, in.MetadataSource, in.SourceRunID, in.Initiator.UserID, u.Clock().Now())
+	newRun, evt, err := run.NewSingleNodeRun(scheduleName, in.Target, in.MetadataSource, in.Operation, in.SourceRunID, in.Initiator.UserID, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}

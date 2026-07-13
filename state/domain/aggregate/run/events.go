@@ -1,6 +1,9 @@
 package run
 
-import "github.com/google/uuid"
+import (
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/google/uuid"
+)
 
 // DomainEvent is the marker interface for every event a Run aggregate records
 // during mutation. The OutboxPublisher adapter dispatches on the concrete type
@@ -82,6 +85,7 @@ type SingleNodeRunRequested struct {
 	Name           string
 	Target         NodeID
 	MetadataSource MetadataSource
+	Operation      model.Operation
 	SourceID       *uuid.UUID
 	InitiatedBy    string
 }

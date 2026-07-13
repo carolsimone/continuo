@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/google/uuid"
 )
@@ -173,11 +174,15 @@ func NewDerivedRun(
 	return r, evt, nil
 }
 
-// NewSingleNodeRun creates a RUNNING single-task Run.
+// NewSingleNodeRun creates a RUNNING single-task Run. operation selects the
+// dbt verb (run/test/build) the downstream orchestrator applies to the
+// target node; state itself does not act on it — it only forwards the value
+// onto the emitted SingleNodeRunRequested event.
 func NewSingleNodeRun(
 	scheduleName string,
 	target NodeID,
 	metadataSource MetadataSource,
+	operation model.Operation,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
 	now time.Time,
@@ -201,7 +206,8 @@ func NewSingleNodeRun(
 	r.changes.created = true
 	evt := SingleNodeRunRequested{
 		ID: id, Name: scheduleName, Target: target,
-		MetadataSource: metadataSource, SourceID: sourceRunID, InitiatedBy: initiatedBy,
+		MetadataSource: metadataSource, Operation: operation,
+		SourceID: sourceRunID, InitiatedBy: initiatedBy,
 	}
 	return r, evt, nil
 }
