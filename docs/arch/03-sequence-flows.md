@@ -44,6 +44,8 @@ sequenceDiagram
 
 > On the success path (right side of the alt), stages 2A (state) and 2B (executor) race — the seed K8s Job can start before the matching `task_tracker` row exists. `TaskStatusUpdatedHandler` tolerates this by NACKing until `RunEntriesDispatchedHandler` has caught up. On the failure path (left side), if a schedule's topology has zero active `:Table` nodes — typically a configuration error in the dbt manifest — the cron run fails fast via `run.entries.dispatch_failed:v1` with `reason=empty_projection`; the state consumer is the same `RunEntriesDispatchFailedHandler` used by single-node, rerun, and rebase paths.
 
+> `scheduler.started:v1` also carries `operation` (`""` \| `"test"` \| `"build"`, default `run`). A manual `TriggerSchedule` call (not the cron path shown above) can set `operation=test`: `HandleSchedulerStartedHandler` still runs `Snapshot(LatestFullDAG)`, but the selector drops any node with `test_count == 0` and marks every kept node `ReadyToDispatch` — a flat, edgeless fan-out where every `query.model:v1` dispatches `dbt test --select <node>` immediately, with no seeds-first-else-roots ordering and no `NodeUnblocked` follow-up. If the schedule has zero tested nodes, the projection is empty and the run fails fast via `run.entries.dispatch_failed:v1` (`reason=empty_projection`), same as the zero-`:Table` case above.
+
 ## 2. Steady-State Success Path
 
 ```mermaid
@@ -309,23 +311,23 @@ sequenceDiagram
   participant EC as executor-controller
 
   U->>UI: POST /api/nodes/{node}/run (out of scope for this flow)
-  UI->>ST: TriggerSingleNodeRun(service_name, schema_name, table_name, metadata_source, source_run_id?)
+  UI->>ST: TriggerSingleNodeRun(service_name, schema_name, table_name, metadata_source, source_run_id?, operation?)
   Note over ST: SingleNodeRunHandler.Handle (sync, 1 tx)<br/>validate fields (INVALID_ARGUMENT on bad input)<br/>scheduler_tracker INSERT — kind='single_node_run', schedule_name='single-node-run-<8hex>'<br/>state_outbox INSERT for trigger.single_node_run:v1<br/>synthesised schedule_name NOT inserted into schedule_catalog
   ST-->>UI: TriggerSingleNodeRunResponse { run_id, schedule_name }
   UI-->>U: 200 OK
 
   ST->>R: publish trigger.single_node_run:v1 (via pkg/outbox.Processor)
-  Note right of R: payload — schedule_id, schedule_name, service_name,<br/>schema_name, table_name, metadata_source, source_run_id?, initiated_by
+  Note right of R: payload — schedule_id, schedule_name, service_name,<br/>schema_name, table_name, metadata_source, source_run_id?, operation?, initiated_by
 
   R->>OR: consume trigger.single_node_run:v1
-  Note over OR: HandleSingleNodeRunHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Neo4j: Snapshot(SingleNode{Target, MetadataSource, SourceRunID?})<br/>  latest mode → selector reads :TopologyRoot + :Table for metadata, new :Run inherits from :TopologyRoot<br/>  stale mode  → selector reads source :Run's EXECUTES edge, new :Run inherits topology_generation + service_metadata from source :Run
-  alt ErrTargetNotFound (node absent in Neo4j)
-    OR->>R: publish run.entries.dispatch_failed:v1 (synthesised run will be marked terminal-failed)
+  Note over OR: HandleSingleNodeRunHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Neo4j: Snapshot(SingleNode{Target, MetadataSource, SourceRunID?}, Operation)<br/>  latest mode → selector reads :TopologyRoot + :Table for metadata, new :Run inherits from :TopologyRoot<br/>  stale mode  → selector reads source :Run's EXECUTES edge, new :Run inherits topology_generation + service_metadata from source :Run
+  alt ErrTargetNotFound (node absent in Neo4j) or ErrNoTests (operation=test and the node's test_count is 0)
+    OR->>R: publish run.entries.dispatch_failed:v1 (reason=target_not_found or reason=no_tests; synthesised run will be marked terminal-failed)
     R->>ST: consume run.entries.dispatch_failed:v1
     Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, FinalizeRunTx → status='failed'<br/>state_outbox INSERT for run.finalized:v1
-  else node found
+  else node found (and, for operation=test, test_count > 0)
     OR->>R: publish run.entries.dispatched:v1 (1 task entry, MaxRetries=DefaultTaskMaxRetries)
-    OR->>R: publish query.model:v1 (single dispatch)
+    OR->>R: publish query.model:v1 (single dispatch, carrying operation)
   end
 
   par state registers run skeleton
@@ -338,6 +340,8 @@ sequenceDiagram
 ```
 
 > Differences vs. Flow 1 (schedule startup): synchronous gRPC entry; synthesised `schedule_name` is not in `schedule_catalog`; `Snapshot(SingleNode)` creates exactly one `EXECUTES` edge (no full topology snapshot); only a single `query.model:v1` is produced; on `ErrTargetNotFound` the synthesised run is immediately failed.
+>
+> `operation=test` runs `dbt test --select <node>` for the target instead of its default verb. Unlike the whole-DAG case (Flow 1), a single-node test against an untested node (`test_count == 0`) is its own dispatch-failed reason, `no_tests`, distinct from `empty_projection`.
 
 ### ListNodeRuns read path
 

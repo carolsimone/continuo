@@ -105,7 +105,7 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 | Method | Catalog check | Active-run check | Outbox write |
 |---|---|---|---|
 | `ActivateSchedule` | Yes (NotFound if absent) | Yes (skips if active) | Yes — transactional via `ScheduleActivationService` |
-| `TriggerSchedule` | Yes (NotFound if absent) | Yes (FailedPrecondition if active) | Yes — transactional via `ScheduleActivationService` |
+| `TriggerSchedule` | Yes (NotFound if absent) | Yes (FailedPrecondition if active) | Yes — transactional via `ScheduleActivationService`. Accepts an optional `operation` (`""` \| `"run"` \| `"test"` \| `"build"`, default `run`) forwarded onto `scheduler.started:v1` for the orchestrator to build the run projection; state does not act on it. |
 | `CancelSchedule` | No | Looks up active run | No — direct cancel via `scheduler_tracker`; records the authenticated user (metadata header, else request `cancelled_by`) into `cancelled_by` |
 | `ListAllSchedules` | Reads catalog | — | No |
 | `ListStuckCandidates` | No | — | No — read-only, one indexed query |
@@ -133,12 +133,12 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 | `ListTasks` | Paginated list with filters |
 | `ListNodeRuns` | Read-only query returning the most recent task instances that executed on a given node, ordered by `scheduler_tracker.created_at DESC`. See `ListNodeRuns` detail below. |
 | `TriggerRerun` | Mint a new `scheduler_tracker` row (`kind='rerun'`, `source_run_id=src`) on the source's schedule + write `trigger.rerun:v1` outbox entry. Same eligibility as `TriggerRebase`: source FAILED/CANCELLED, has ≥1 non-SUCCEEDED task, no active run on `schedule_name`. Backed by the shared `synthesise_derived_run.go` helper. Returns `run_id` + `schedule_name`. |
-| `TriggerSingleNodeRun` | Create a one-task run for a single node; write `trigger.single_node_run:v1` outbox entry |
+| `TriggerSingleNodeRun` | Create a one-task run for a single node; write `trigger.single_node_run:v1` outbox entry. Accepts an optional `operation` (`""` \| `"run"` \| `"test"` \| `"build"`, default `run`), forwarded onto `trigger.single_node_run:v1` for the orchestrator to resolve the dbt verb and, for `test`, gate zero-test nodes. |
 | `TriggerRebase` | Mint a new `scheduler_tracker` row (`kind='rebase'`, `source_run_id=src`) on the source's schedule + write `trigger.rebase:v1` outbox entry. Source row is left untouched. Returns `run_id` + `schedule_name`. |
 
 ##### `TriggerSingleNodeRun`
 
-Request fields: `service_name`, `schema_name`, `table_name`, `metadata_source` (enum: `latest` / `snapshot_of_run`), `source_run_id` (UUID string; required when `metadata_source=snapshot_of_run`).
+Request fields: `service_name`, `schema_name`, `table_name`, `metadata_source` (enum: `latest` / `snapshot_of_run`), `source_run_id` (UUID string; required when `metadata_source=snapshot_of_run`), `operation` (optional: `""` \| `"run"` \| `"test"` \| `"build"`, default `run`).
 
 Response fields: `run_id` (UUID of the new `scheduler_tracker` row), `schedule_name` (synthesised as `"single-node-run-<8 random hex chars>"`).
 
@@ -270,8 +270,9 @@ Payload fields:
 - `service_metadata` — map of service name → `{ manifest_version, image_tag }` (snake_case keys), pinned from `schedule_catalog` at activation
 - `kind` — run discriminator string (`cron`, `trigger`, `rerun`, etc.); sourced from `scheduler_tracker.kind`
 - `source_run_id` — optional UUID string; omitted or empty for `cron`/`trigger` runs; set for `rerun` and `rebase` runs
+- `operation` — optional dbt verb string (`""` \| `"run"` \| `"test"` \| `"build"`, default `run`); only a manual `TriggerSchedule` caller passes a non-default value — the cron path always sends `run`. State does not act on it; it is forwarded verbatim for `orchestrator` to build the run projection.
 
-Effect: `orchestrator` begins task graph initialization, stamping `:Run.kind` and `:Run.source_run_id` in Neo4j.
+Effect: `orchestrator` begins task graph initialization, stamping `:Run.kind`, `:Run.operation`, and `:Run.source_run_id` in Neo4j. `operation="test"` selects the `LatestFullDAG` selector's flat-fan-out mode: only nodes with `test_count > 0` are projected, each dispatching `dbt test` independently with no blocking frontier.
 
 #### `trigger.rerun:v1`
 
@@ -306,8 +307,9 @@ Payload fields:
 - `service_name`, `schema_name`, `table_name` — target node coordinates
 - `metadata_source` — `"latest"` or `"snapshot_of_run"`
 - `source_run_id` — source run UUID (stale mode only; omitted for latest)
+- `operation` — optional dbt verb string (`""` \| `"run"` \| `"test"` \| `"build"`, default `run`), passed through from the `TriggerSingleNodeRun` request
 
-Effect: `orchestrator` snapshots the single node and dispatches it for execution.
+Effect: `orchestrator` snapshots the single node and dispatches it for execution. For `operation="test"`, the `SingleNode` selector runs `dbt test --select <node>` instead of the node's default verb, and gates the dispatch: a target with `test_count == 0` produces `run.entries.dispatch_failed:v1` (`reason=no_tests`) instead of a Job.
 
 #### `run.finalized:v1`
 

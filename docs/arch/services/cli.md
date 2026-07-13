@@ -7,11 +7,13 @@
 It provides:
 - `schedule list` — every schedule and its last-run status
 - `schedule trigger <name>` — start a new run of a schedule now
+- `schedule test <name>` — run dbt tests for every tested model in a schedule now
 - `schedule cancel <name> <reason>` — stop the active run of a schedule, recording why
 - `schedule status <name>` — the per-node status of a schedule's latest run
 - `schedule graph <name>` — the dependency graph (nodes and edges) of a schedule
 - `node history <service> <schema> <table>` — the recent run history of one model node
 - `node trigger <service> <schema> <table>` — run one model node now using its latest metadata
+- `node test <service> <schema> <table>` — run one model node's dbt tests now using its latest metadata
 - `describe` — a machine-readable catalog of every command, for LLM discovery
 
 It owns no storage, constructs no Redis client, and runs no server. It is invoked on demand and exits.
@@ -45,11 +47,13 @@ None.
 |---|---|---|
 | `schedule list` | `state` | `ListAllSchedules` |
 | `schedule trigger <name>` | `state` | `TriggerSchedule` |
+| `schedule test <name>` | `state` | `TriggerSchedule` (`operation=test`) |
 | `schedule cancel <name> <reason>` | `state` | `CancelSchedule` |
 | `schedule status <name>` | `state` | `ListAllSchedules` + `ListTasks` (composed client-side) |
 | `schedule graph <name>` | `orchestrator` | `GetScheduleGraph` |
 | `node history <service> <schema> <table>` | `state` | `ListNodeRuns` |
 | `node trigger <service> <schema> <table>` | `state` | `TriggerSingleNodeRun` |
+| `node test <service> <schema> <table>` | `state` | `TriggerSingleNodeRun` (`operation=test`) |
 | `describe` | — | none (pure introspection of the cobra tree) |
 
 `schedule status` has no dedicated server RPC. It resolves the schedule name to its latest `run_id` via `ListAllSchedules`, then pages through `ListTasks` (page size 200) for that run, collecting every node's status. The composition is entirely client-side; the services expose no combined endpoint.
@@ -59,6 +63,10 @@ None.
 `node history` and `node trigger` both address a single model node by its `<service> <schema> <table>` identity triple. `node history` requests the newest 50 runs of that node (the page size is fixed; `state` clamps it) and passes every `NodeRun` field through to JSON, so the caller sees the image and manifest version each run used alongside its status and any error. An unknown node yields `{"runs":[]}`, not an error.
 
 `node trigger` starts a fresh run of the node using its latest topology metadata; it deliberately exposes only the "latest" mode of `TriggerSingleNodeRun`, not the snapshot-of-a-previous-run mode. The initiating identity is forwarded from `CONTINUO_ACTOR` as the `x-continuo-user-id` gRPC metadata header (the CLI cannot import `state`'s identity package, so the header name is mirrored as a local constant). The command reports acceptance, not completion: `state` durably records the new run and its outbox event synchronously, but if the node is absent from the topology that failure is surfaced asynchronously downstream, not by this command.
+
+`node test` is identical to `node trigger` except it calls `TriggerSingleNodeRun` with `operation=test`, so the target runs its dbt tests (`dbt test --select <node>`) rather than being built. It shares the "latest" mode restriction, the `CONTINUO_ACTOR` identity forwarding, and the acceptance-not-completion contract with `node trigger`: if the node has no dbt tests defined (`test_count == 0`), that failure also surfaces asynchronously, not by this command.
+
+`schedule test` is identical to `schedule trigger` except it calls `TriggerSchedule` with `operation=test`: every node in the schedule with dbt tests defined runs `dbt test` independently (a flat fan-out, not the schedule's normal dependency order); nodes with no tests defined are silently skipped rather than failed.
 
 ## Output contract
 
