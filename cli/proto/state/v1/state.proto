@@ -321,6 +321,7 @@ message TriggerSingleNodeRunRequest {
   string table_name      = 3;  // Required
   string metadata_source = 4;  // Required: "latest" | "snapshot_of_run"
   string source_run_id   = 5;  // Required iff metadata_source == "snapshot_of_run"
+  string operation       = 6;  // Optional: "" | "run" | "test" | "build" (default run)
 }
 
 message TriggerSingleNodeRunResponse {

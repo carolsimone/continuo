@@ -29,7 +29,6 @@ type singleNodeRunFixture struct {
 	SchedulerRepo postgres.SchedulerTrackerRepository
 	TaskRepo      postgres.TaskTrackerRepository
 	DB            *sqlx.DB
-	Cleanup       func()
 }
 
 // outboxRow holds the fields read back from state_outbox in tests.
@@ -75,13 +74,19 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	useCase := svchandlers.NewTriggerSingleNodeRunHandler(logger)
 	handler := NewSingleNodeRunHandler(useCase, factory, logger)
 
-	cleanup := func() { db.Close() }
+	// Register the DB close via t.Cleanup (not a bare defer in the calling
+	// test) so it runs after this fixture's own t.Cleanup callbacks. A test
+	// function's defers run as the function returns, before any t.Cleanup
+	// fires; a bare `defer fx.Cleanup()` at the call site would therefore
+	// close the DB before the per-test row-deletion cleanups below ran
+	// against it, silently leaking seeded rows across test runs.
+	t.Cleanup(func() { db.Close() })
+
 	return &singleNodeRunFixture{
 		Handler:       handler,
 		SchedulerRepo: schedulerRepo,
 		TaskRepo:      taskRepo,
 		DB:            db,
-		Cleanup:       cleanup,
 	}
 }
 
@@ -89,7 +94,6 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 
 func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
-	defer fx.Cleanup()
 
 	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
@@ -128,6 +132,7 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	require.Equal(t, "public", payload["schema_name"])
 	require.Equal(t, "users", payload["table_name"])
 	require.Equal(t, "", payload["source_run_id"])
+	require.Equal(t, "", payload["operation"], "absent operation defaults to run (empty)")
 
 	// Cleanup seeded rows.
 	t.Cleanup(func() {
@@ -136,9 +141,34 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	})
 }
 
+func TestSingleNodeRunHandler_Operation_HappyPath(t *testing.T) {
+	fx := setupSingleNodeRunFixture(t)
+
+	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    "svcA",
+		SchemaName:     "public",
+		TableName:      "users",
+		MetadataSource: "latest",
+		Operation:      "test",
+	})
+	require.NoError(t, err)
+
+	scheduleID := uuid.MustParse(resp.RunId)
+	found := getOutboxByAggregate(t, fx.DB, scheduleID)
+	require.NotNil(t, found, "expected outbox entry for schedule %s", scheduleID)
+
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(found.Payload, &payload))
+	require.Equal(t, "test", payload["operation"])
+
+	t.Cleanup(func() {
+		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+	})
+}
+
 func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
-	defer fx.Cleanup()
 
 	// Seed a terminal source run with a matching task.
 	srcID := uuid.New()
@@ -203,7 +233,6 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 
 func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
-	defer fx.Cleanup()
 
 	// Seed a non-terminal source run for FAILED_PRECONDITION coverage.
 	runningID := uuid.New()
@@ -241,6 +270,7 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 		{"empty schema", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "", TableName: "t", MetadataSource: "latest"}, codes.InvalidArgument},
 		{"empty table", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "", MetadataSource: "latest"}, codes.InvalidArgument},
 		{"unknown source", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "bogus"}, codes.InvalidArgument},
+		{"invalid operation", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "latest", Operation: "bogus"}, codes.InvalidArgument},
 		{"latest with src", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "latest", SourceRunId: uuid.NewString()}, codes.InvalidArgument},
 		{"stale no src", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "snapshot_of_run", SourceRunId: ""}, codes.InvalidArgument},
 		{"stale bad uuid", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "snapshot_of_run", SourceRunId: "not-a-uuid"}, codes.InvalidArgument},

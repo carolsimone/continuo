@@ -5,12 +5,13 @@ import (
 	"errors"
 	"log/slog"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -69,9 +70,15 @@ func (h *SingleNodeRunHandler) TriggerSingleNodeRun(ctx context.Context, req *st
 		srcPtr = &parsed
 	}
 
+	op, err := pkg_model.ParseOperation(req.Operation)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
+	}
+
 	in := svchandlers.TriggerSingleNodeRunInput{
 		Target:         run.NodeID{ServiceName: req.ServiceName, SchemaName: req.SchemaName, TableName: req.TableName},
 		MetadataSource: run.MetadataSource(req.MetadataSource),
+		Operation:      op,
 		SourceRunID:    srcPtr,
 		Initiator:      identity.FromContext(ctx),
 	}

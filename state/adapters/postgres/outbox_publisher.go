@@ -137,6 +137,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"table_name":      e.Target.TableName,
 			"kind":            "single_node_run",
 			"metadata_source": string(e.MetadataSource),
+			"operation":       string(e.Operation),
 			"source_run_id":   sourceIDStr(e.SourceID),
 			"initiated_by":    identity.OrSystem(e.InitiatedBy),
 		})
