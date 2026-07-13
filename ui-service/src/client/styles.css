@@ -423,14 +423,15 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Same count-pill treatment as .section-header__count / .tabs__count. */
 .dag-service-vertex-count {
   margin-left: auto;
+  background: #f1f3f5;
+  color: #555;
   font-size: 11px;
-  color: #64748b;
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid #e2e8f0;
+  padding: 1px 7px;
   border-radius: 999px;
-  padding: 0 6px;
+  font-weight: 500;
 }
 
 /* ---- Nodes table ---- */
@@ -493,7 +494,10 @@ body {
   flex: none;
 }
 .nodes-group-name  { font-weight: 600; color: #1e293b; font-size: 12.5px; }
-.nodes-group-count { color: #94a3b8; font-size: 11px; margin-right: auto; }
+/* Same count-pill treatment as .section-header__count / .tabs__count. */
+.nodes-group-count { background: #f1f3f5; color: #555; font-size: 11px;
+                     padding: 1px 7px; border-radius: 999px; font-weight: 500;
+                     margin-right: auto; }
 
 .nodes-node-name  { font-weight: 600; color: #1e293b; font-size: 12.5px; text-decoration: none; }
 .nodes-node-schema { color: #94a3b8; font-size: 11px; margin-top: 1px; }

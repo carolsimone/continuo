@@ -139,7 +139,7 @@ export default function NodesPanel({
                       style={{ background: serviceColors.get(group.service) ?? '#94a3b8' }}
                     />
                     <span className="nodes-group-name">{group.service}</span>
-                    <span className="nodes-group-count">{group.tasks.length} nodes</span>
+                    <span className="nodes-group-count">{group.tasks.length}</span>
                     <span className={`pill-sm ${pillClass(group.status)}`}>{group.status}</span>
                   </div>
                 </td>

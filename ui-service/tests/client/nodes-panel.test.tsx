@@ -42,11 +42,11 @@ function setup(overrides: {
 
 describe('NodesPanel service grouping', () => {
   it('renders one collapsed group header per service and hides node rows by default', () => {
-    setup();
+    const { container } = setup();
     expect(screen.getByText('svc-a')).toBeInTheDocument();
     expect(screen.getByText('svc-b')).toBeInTheDocument();
-    expect(screen.getByText('2 nodes')).toBeInTheDocument();
-    expect(screen.getByText('1 nodes')).toBeInTheDocument();
+    const counts = [...container.querySelectorAll('.nodes-group-count')].map(el => el.textContent);
+    expect(counts.sort()).toEqual(['1', '2']);
     expect(screen.queryByText('n1')).toBeNull();
     expect(screen.queryByText('m1')).toBeNull();
   });

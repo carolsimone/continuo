@@ -375,6 +375,60 @@ Rules:
 - This is distinct from the Tables truncate-with-`more` rule, which
   covers short inline error text inside a single cell.
 
+## Service accents and grouped rows
+
+The run detail page groups both of its panels by service. Two patterns
+support this; reuse them for any future service-scoped surface.
+
+### Service accent colors
+
+Each service gets a stable accent color from the fixed 8-color palette in
+`ui-service/src/client/service-helpers.ts` (`buildServiceColors`), assigned
+by sorted service name so the same service is painted identically on every
+surface in a view. Accents are identity cues, deliberately distinct from
+the status hues (indigo/green/red) — never use an accent to convey state,
+and never use a status hue as an identity accent.
+
+Accents render as a 10px rounded square dot (`.nodes-group-dot`,
+`.dag-service-vertex-dot`) and, on graph canvas nodes, as a 4–5px left
+border. Because the color is data-driven (resolved per service at runtime)
+it is applied via the `style` attribute; this is the sanctioned exception
+to the no-inline-style rule, matching the React Flow canvas whose node API
+only accepts style objects.
+
+### Grouped table rows
+
+A `.nodes-table` may group its rows under collapsible per-group header rows:
+
+```jsx
+<tr className="nodes-group-row" role="button" aria-expanded={isExpanded}>
+  <td colSpan={6}>
+    <div className="nodes-group-header">
+      <span className="nodes-group-chevron">▸</span>
+      <span className="nodes-group-dot" style={{ background: accent }} />
+      <span className="nodes-group-name">service-1</span>
+      <span className="nodes-group-count">8</span>
+      <span className="pill-sm pill-sm--failed">failed</span>
+    </div>
+  </td>
+</tr>
+```
+
+Rules:
+
+- The header row spans every column and toggles its group on click and on
+  Enter/Space (`role="button"`, `aria-expanded`).
+- `.nodes-group-count` uses the same count-pill treatment as
+  `.section-header__count` / `.tabs__count` (bare number, `#f1f3f5` pill).
+- The trailing status pill is the group's rolled-up status using the
+  existing `.pill-sm--*` vocabulary (failed > running > pending >
+  succeeded > cancelled).
+- Node rows inside an expanded group keep the table's normal columns
+  unchanged — grouping never alters row content.
+- Collapsed service vertices on the graph canvas mirror the header:
+  accent dot, service name, count pill (`.dag-service-vertex-*`), with the
+  vertex fill/border painted by rolled-up status.
+
 ## Snapshot tiles
 
 Used inside the homepage `Topology` tab. One tile per schedule
