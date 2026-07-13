@@ -13,6 +13,10 @@ type SchedulerStarted struct {
 	// for cron / platform-initiated runs. Defaults to "system" when absent on
 	// the incoming message (runs that predate provenance tracking).
 	InitiatedBy string
+	// Operation is "" | "run" | "test" | "build"; "" for normal cron/trigger
+	// runs. Set to "test" for a whole-DAG TEST run, threaded onto
+	// snapshot.Params and stamped on every dispatched query.model:v1 payload.
+	Operation string
 }
 
 // ScheduleCancelled is the typed form of schedule.cancelled:v1.

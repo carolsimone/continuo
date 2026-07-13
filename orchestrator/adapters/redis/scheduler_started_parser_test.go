@@ -68,6 +68,29 @@ func TestParseSchedulerStartedEvent_EmptySourceRunIDIsNil(t *testing.T) {
 	assert.Nil(t, evt.SourceRunID)
 }
 
+func TestParseSchedulerStartedEvent_CarriesOperation(t *testing.T) {
+	runnerID := uuid.New()
+	msg := map[string]interface{}{
+		"runner_id":     runnerID.String(),
+		"schedule_name": "test_schedule",
+		"operation":     "test",
+	}
+	evt, err := redis.ParseSchedulerStartedEvent(msg)
+	require.NoError(t, err)
+	assert.Equal(t, "test", evt.Operation)
+}
+
+func TestParseSchedulerStartedEvent_MissingOperationDefaultsEmpty(t *testing.T) {
+	runnerID := uuid.New()
+	msg := map[string]interface{}{
+		"runner_id":     runnerID.String(),
+		"schedule_name": "test_schedule",
+	}
+	evt, err := redis.ParseSchedulerStartedEvent(msg)
+	require.NoError(t, err)
+	assert.Equal(t, "", evt.Operation)
+}
+
 func TestParseSchedulerStartedEvent_InvalidRunnerID(t *testing.T) {
 	msg := map[string]interface{}{
 		"runner_id":     "not-a-uuid",

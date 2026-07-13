@@ -83,6 +83,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		Kind:         evt.Kind,
 		SourceRunID:  evt.SourceRunID,
 		InitiatedBy:  evt.InitiatedBy,
+		Operation:    evt.Operation,
 		Selector:     snapshot.LatestFullDAG{},
 	})
 	if err != nil {
@@ -185,6 +186,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 			NodeType:        string(nodeType),
 			ManifestVersion: task.ManifestVersion,
 			ImageTag:        task.ImageTag,
+			Operation:       evt.Operation,
 		}
 
 		evtPayload, err := json.Marshal(nodeEvt)

@@ -46,11 +46,14 @@ func ParseSchedulerStartedEvent(values map[string]interface{}) (domain.Scheduler
 	rawInitiatedBy, _ := values["initiated_by"].(string)
 	initiatedBy := identity.OrSystem(rawInitiatedBy)
 
+	operation, _ := values["operation"].(string)
+
 	return domain.SchedulerStarted{
 		ScheduleID:   schedulerID,
 		ScheduleName: scheduleName,
 		Kind:         kind,
 		SourceRunID:  sourceRunID,
 		InitiatedBy:  initiatedBy,
+		Operation:    operation,
 	}, nil
 }
