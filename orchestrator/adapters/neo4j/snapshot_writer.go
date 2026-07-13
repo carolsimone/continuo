@@ -28,9 +28,15 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 //	created_at, source_run_id?, topology_generation, service_metadata,
 //	total_nodes, terminal_count, version
 //
-// :EXECUTES edge:  task_id, status, image_tag, manifest_version,
+// :EXECUTES edge:  task_id, status, image_tag, manifest_version, test_count?,
 //
 //	inherited_from_task_id?
+//
+// test_count is set only when the projection entry's TestCountKnown is true
+// (assigning a nil parameter to a Cypher SET removes/leaves the property
+// unset), so a source :EXECUTES edge with no pinned test_count degrades
+// gracefully to "unknown" for later stale (snapshot_of_run) reads instead of
+// silently pinning zero.
 //
 // topology_generation + service_metadata are stamped on CREATE from the source
 // :Run if source_run_id is set, otherwise from :TopologyRoot. Falls back to
@@ -52,6 +58,10 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		if t.InheritedFromTaskID != nil {
 			inheritedFrom = t.InheritedFromTaskID.String()
 		}
+		var testCount interface{}
+		if t.TestCountKnown {
+			testCount = t.TestCount
+		}
 		tasks[i] = map[string]interface{}{
 			"task_id":                t.TaskID.String(),
 			"service_name":           t.ServiceName,
@@ -61,6 +71,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 			"initial_status":         t.InitialStatus,
 			"image_tag":              t.ImageTag,
 			"manifest_version":       t.ManifestVersion,
+			"test_count":             testCount,
 			"inherited_from_task_id": inheritedFrom,
 		}
 	}
@@ -105,7 +116,8 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		ON CREATE SET e.status           = t.initial_status,
 		              e.task_id          = t.task_id,
 		              e.image_tag        = t.image_tag,
-		              e.manifest_version = t.manifest_version
+		              e.manifest_version = t.manifest_version,
+		              e.test_count       = t.test_count
 		FOREACH (_ IN CASE WHEN t.inherited_from_task_id IS NULL THEN [] ELSE [1] END |
 		    SET e.inherited_from_task_id = t.inherited_from_task_id
 		)

@@ -351,7 +351,7 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		WHERE ($sched = '' OR tbl.schedule_name = $sched)
 		RETURN tbl.schedule_name AS schedule_name,
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
-		       tbl.test_count                       AS test_count,
+		       srcEdge.test_count                     AS test_count,
 		       COALESCE(srcEdge.image_tag, '')        AS image_tag,
 		       COALESCE(srcEdge.manifest_version, '') AS manifest_version
 		LIMIT 1

@@ -83,6 +83,8 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 			InitialStatus:   "PENDING",
 			ImageTag:        "img:1",
 			ManifestVersion: "v1",
+			TestCount:       3,
+			TestCountKnown:  true,
 			MaxRetries:      2,
 		},
 		{
@@ -141,7 +143,8 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 			MATCH (run:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table)
 			WHERE t.schedule_name = $sched
 			RETURN t.table_name AS tbl, e.status AS status, e.image_tag AS img,
-			       e.manifest_version AS mv, e.task_id AS tid, e.inherited_from_task_id AS inh
+			       e.manifest_version AS mv, e.task_id AS tid, e.inherited_from_task_id AS inh,
+			       e.test_count AS test_count
 			ORDER BY tbl`,
 			map[string]interface{}{"run_id": runID, "sched": scheduleName})
 		if err != nil {
@@ -162,21 +165,24 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	rows := rec2.([]map[string]interface{})
 	require.Len(t, rows, 2)
 
-	// Row "a" — rebased PENDING.
+	// Row "a" — rebased PENDING, known test_count stamped on the edge.
 	require.Equal(t, "a", rows[0]["tbl"])
 	require.Equal(t, "PENDING", rows[0]["status"])
 	require.Equal(t, "img:1", rows[0]["img"])
 	require.Equal(t, "v1", rows[0]["mv"])
 	require.Equal(t, taskA.String(), rows[0]["tid"])
 	require.Nil(t, rows[0]["inh"])
+	require.Equal(t, int64(3), rows[0]["test_count"], "TestCountKnown=true must stamp e.test_count")
 
-	// Row "b" — inherited SUCCEEDED with root pointer.
+	// Row "b" — inherited SUCCEEDED with root pointer; TestCountKnown=false must
+	// leave e.test_count unset (nil), not stamp a zero.
 	require.Equal(t, "b", rows[1]["tbl"])
 	require.Equal(t, "SUCCEEDED", rows[1]["status"])
 	require.Equal(t, "img:0", rows[1]["img"])
 	require.Equal(t, "v0", rows[1]["mv"])
 	require.Equal(t, taskB.String(), rows[1]["tid"])
 	require.Equal(t, rootB.String(), rows[1]["inh"])
+	require.Nil(t, rows[1]["test_count"], "TestCountKnown=false must not stamp e.test_count")
 }
 
 func TestSnapshotWriter_EmptyProjectionReturnsErr(t *testing.T) {

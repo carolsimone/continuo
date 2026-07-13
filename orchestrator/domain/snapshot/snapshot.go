@@ -57,6 +57,8 @@ type TaskProjection struct {
 	InitialStatus       string // "PENDING" | "SUCCEEDED"
 	ImageTag            string
 	ManifestVersion     string
+	TestCount           int
+	TestCountKnown      bool       // true iff the pinned source (:Table or source :EXECUTES edge) had a test_count property
 	InheritedFromTaskID *uuid.UUID // non-nil iff InitialStatus == "SUCCEEDED" via inherit; root pointer
 	MaxRetries          int32
 	// ReadyToDispatch marks a PENDING node as part of the run's initial dispatch

@@ -46,6 +46,8 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 				InitialStatus:   "PENDING",
 				ImageTag:        row.ImageTag,
 				ManifestVersion: row.ManifestVersion,
+				TestCount:       row.TestCount,
+				TestCountKnown:  row.TestCountKnown,
 				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
 				ReadyToDispatch: true, // edgeless: no blocking frontier for tests
 			})
@@ -88,6 +90,8 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 			InitialStatus:   "PENDING",
 			ImageTag:        row.ImageTag,
 			ManifestVersion: row.ManifestVersion,
+			TestCount:       row.TestCount,
+			TestCountKnown:  row.TestCountKnown,
 			MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
 			ReadyToDispatch: !isBlocked,
 		})

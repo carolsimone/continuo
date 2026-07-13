@@ -100,6 +100,8 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				InitialStatus:   "PENDING",
 				ImageTag:        lt.ImageTag,
 				ManifestVersion: lt.ManifestVersion,
+				TestCount:       lt.TestCount,
+				TestCountKnown:  lt.TestCountKnown,
 				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
 				ReadyToDispatch: !blocked,
 			})
@@ -120,6 +122,7 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				InitialStatus:       "SUCCEEDED",
 				ImageTag:            st.ImageTag,
 				ManifestVersion:     st.ManifestVersion,
+				TestCountKnown:      false, // SourceTaskRow carries no test_count; inherited rows never gate on it
 				InheritedFromTaskID: &root,
 				MaxRetries:          0,
 			})

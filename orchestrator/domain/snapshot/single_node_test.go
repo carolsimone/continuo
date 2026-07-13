@@ -202,4 +202,10 @@ func TestSingleNode_SnapshotOfRunMode_TestOperation_WithTests_ReturnsProjection(
 	if len(got) != 1 {
 		t.Fatalf("len=%d", len(got))
 	}
+	// The projection must carry the pinned test_count through to the writer, so
+	// the :EXECUTES edge stamps it (P2-1): a later promotion changing the node's
+	// tests must not retroactively change the no_tests gate for this stale rerun.
+	if got[0].TestCount != 2 || !got[0].TestCountKnown {
+		t.Errorf("TestCount=%d TestCountKnown=%v, want 2/true (pinned from source row)", got[0].TestCount, got[0].TestCountKnown)
+	}
 }
