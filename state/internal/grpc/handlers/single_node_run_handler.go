@@ -74,6 +74,9 @@ func (h *SingleNodeRunHandler) TriggerSingleNodeRun(ctx context.Context, req *st
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
+	if op == pkg_model.OperationBuild {
+		return nil, status.Errorf(codes.InvalidArgument, "operation %q is not supported", req.Operation)
+	}
 
 	in := svchandlers.TriggerSingleNodeRunInput{
 		Target:         run.NodeID{ServiceName: req.ServiceName, SchemaName: req.SchemaName, TableName: req.TableName},

@@ -87,7 +87,7 @@ type Operation string
 const (
 	OperationRun   Operation = ""      // default: dbt run/seed/snapshot by NodeType
 	OperationTest  Operation = "test"  // dbt test --select <node>
-	OperationBuild Operation = "build" // dbt build --select <node> (reserved, not yet wired)
+	OperationBuild Operation = "build" // dbt build --select <node>; resolved by the executor but rejected at the state trigger boundary until intentionally wired
 )
 
 // ParseOperation normalizes a raw operation string. Empty ⇒ run.
