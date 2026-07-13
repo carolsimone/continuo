@@ -133,7 +133,7 @@ The snapshot pipeline follows a strict layered model:
 - `handlers.SnapshotService` is a narrow handler-local interface `{ Snapshot(ctx, snapshot.Params) ([]snapshot.TaskProjection, error) }`, satisfied by `*snapshotsvc.Service`. Defined here so handler tests can substitute a fake.
 - Three handler implementations receive a `SnapshotService`: `HandleSchedulerStartedHandler`, `DerivedRunHandler` (one parameterized implementation behind both the rerun and rebase triggers — `NewHandleRerunHandler`/`NewHandleRebaseHandler` configure it with the kind, stream, and selector), and `HandleSingleNodeRunHandler`. `HandleNodeCompleted` does not snapshot.
 
-The `Params` struct (defined in `orchestrator/domain/snapshot/`) carries `RunID`, `ScheduleName`, `Kind`, `SourceRunID`, `Operation` (`""` | `"run"` | `"test"` | `"build"`; consumed by `LatestFullDAG` and `SingleNode`), plus a `Selector` interface that decides which tasks land in the projection and with which `(initial_status, image_tag, manifest_version, inherited_from_task_id?)`.
+The `Params` struct (defined in `orchestrator/domain/snapshot/`) carries `RunID`, `ScheduleName`, `Kind`, `SourceRunID`, `Operation` (`""` | `"run"` | `"test"` | `"build"`; consumed by `LatestFullDAG` and `SingleNode` — in practice only `""`/`"run"`/`"test"` arrive, since the state trigger boundary rejects `build` before any run reaches orchestrator), plus a `Selector` interface that decides which tasks land in the projection and with which `(initial_status, image_tag, manifest_version, inherited_from_task_id?)`.
 
 Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read all topology data through the `TopologyReader` port:
 

@@ -47,7 +47,7 @@ It is responsible for:
 - `task_id`, `schedule_id`, `schedule_name`
 - `service_name`, `schema_name`, `table_name`, `job_name`
 - `node_type`
-- `operation` — the dbt verb to run: `""` (default, `run`) or `test`; selects the argv `CommandResolver.NodeCommand` builds for the node, independently of `node_type`
+- `operation` — the dbt verb to run: `""` (default, `run`) or `test`; selects the argv `CommandResolver.NodeCommand` builds for the node, independently of `node_type`. The resolver also maps `build`, but no orchestrator dispatch produces it — the state trigger boundary rejects `operation=build`, so this value never reaches the executor.
 
 ### Inbound message processing
 
@@ -117,7 +117,7 @@ Container commands for production runs, seed-build, and compile Jobs are resolve
 | `snapshot` | `dbt snapshot --select <node>` |
 | `seed_build` | falls back to the resolved `seed` command (schema routing then relies on the `DBT_TARGET_SCHEMA` env var contract) |
 | `test` | `dbt test --select <node>` |
-| `build` | `dbt build --select <node>` (reserved — no trigger surface sets `operation=build` yet, so this path is unreachable) |
+| `build` | `dbt build --select <node>` — the resolver builds this argv, but the state trigger boundary rejects `operation=build` (`InvalidArgument`), so no run ever carries it to the executor |
 | `compile` | `dbt compile --profiles-dir /project`, writing its manifest to `/project/target/manifest.json` |
 
 `run`, `seed`, and `snapshot` are selected by the node's `node_type` when the query's `operation` is empty (the default). `test` and `build` are selected by `operation` directly — `CommandResolver.NodeCommand(serviceName, operation, nodeType, node)` resolves the `test`/`build` template regardless of `node_type` once `operation` requests it.
