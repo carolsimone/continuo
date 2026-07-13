@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -315,7 +316,7 @@ func (h *SchedulerHandler) ActivateSchedule(
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
 	u := h.uowFactory()
-	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil, identity.FromContext(ctx))
+	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil, identity.FromContext(ctx), pkg_model.OperationRun)
 	if err != nil {
 		switch {
 		case errors.Is(err, run.ErrScheduleNotInCatalog):
@@ -410,8 +411,12 @@ func (h *SchedulerHandler) TriggerSchedule(
 	if req.ScheduleName == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
+	operation, err := pkg_model.ParseOperation(req.Operation)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
+	}
 	u := h.uowFactory()
-	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindTrigger, nil, identity.FromContext(ctx))
+	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindTrigger, nil, identity.FromContext(ctx), operation)
 	if err != nil {
 		switch {
 		case errors.Is(err, run.ErrScheduleNotInCatalog):

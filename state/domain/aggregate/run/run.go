@@ -102,12 +102,18 @@ func HydrateRun(
 // NewPendingRun creates a fresh PENDING Run for activation. Caller flow:
 // SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.IsScheduleAvailable
 // → NewPendingRun → SaveRun → OutboxPublisher.Append.
+//
+// operation selects the dbt verb (run/test/build) the downstream orchestrator
+// applies to the whole DAG; state itself does not act on it — it only
+// forwards the value onto the emitted RunStarted event. Callers other than a
+// manual TriggerSchedule (cron, etc.) pass model.OperationRun.
 func NewPendingRun(
 	scheduleName string,
 	kind Kind,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
 	metadata map[string]ServiceMetadata,
+	operation model.Operation,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
 	if scheduleName == "" {
@@ -132,7 +138,7 @@ func NewPendingRun(
 		serviceMetadata: metadata,
 	}
 	r.changes.created = true
-	evt := RunStarted{ID: id, Name: scheduleName, K: kind, SourceID: sourceRunID, InitiatedBy: initiatedBy, ServiceMetadata: metadata}
+	evt := RunStarted{ID: id, Name: scheduleName, K: kind, SourceID: sourceRunID, InitiatedBy: initiatedBy, ServiceMetadata: metadata, Operation: operation}
 	return r, evt, nil
 }
 

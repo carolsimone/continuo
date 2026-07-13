@@ -74,6 +74,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			"kind":             string(e.K),
 			"source_run_id":    sourceIDStr(e.SourceID),
 			"initiated_by":     identity.OrSystem(e.InitiatedBy),
+			"operation":        string(e.Operation),
 		})
 		if err != nil {
 			return nil, false, err

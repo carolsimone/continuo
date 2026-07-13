@@ -276,6 +276,7 @@ message ListAllSchedulesResponse {
 
 message TriggerScheduleRequest {
   string schedule_name = 1;
+  string operation = 2;  // Optional: "" | "run" | "test" | "build"
 }
 
 // schedule_id is always non-empty on success.

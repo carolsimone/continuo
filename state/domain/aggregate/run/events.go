@@ -25,6 +25,12 @@ type RunStarted struct {
 	SourceID        *uuid.UUID
 	InitiatedBy     string
 	ServiceMetadata map[string]ServiceMetadata
+	// Operation is the dbt verb requested for a whole-DAG run ("" | "test" |
+	// "build"). Only a manual TriggerSchedule caller passes a non-default
+	// value; cron and other activate.Handle callers always pass OperationRun.
+	// State does not act on it — it only forwards the value onto
+	// scheduler.started:v1 for the orchestrator to build the run projection.
+	Operation model.Operation
 }
 
 func (RunStarted) runDomainEvent()         {}

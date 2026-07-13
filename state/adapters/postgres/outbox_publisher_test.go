@@ -115,6 +115,48 @@ func TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase(t *testing.T
 	assert.False(t, hasPascal, "must not leak Go field name ManifestVersion onto the wire")
 }
 
+// TestOutboxPublisher_RunStarted_CarriesOperation pins the scheduler.started:v1
+// wire contract for the dbt-verb requested on a whole-DAG run: RunStarted.Operation
+// serializes onto the payload as "operation" so the orchestrator can build the
+// full-DAG test/build projection. An unset Operation (the cron/default path)
+// serializes as the empty string, not an omitted key.
+func TestOutboxPublisher_RunStarted_CarriesOperation(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	pub := postgres.NewOutboxPublisher(tx, discardLogger())
+
+	scheduleID := uuid.New()
+	err = pub.Append(ctx, []run.DomainEvent{
+		run.RunStarted{
+			ID:              scheduleID,
+			Name:            "daily",
+			K:               run.KindTrigger,
+			ServiceMetadata: map[string]run.ServiceMetadata{},
+			Operation:       model.OperationTest,
+		},
+	}, uuid.Nil)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
+
+	var payload []byte
+	require.NoError(t, db.GetContext(ctx, &payload,
+		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+		scheduleID, streams.SchedulerStartedV1,
+	))
+
+	var decoded struct {
+		Operation string `json:"operation"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &decoded))
+	assert.Equal(t, "test", decoded.Operation)
+}
+
 // TestOutboxPublisher_RunCancelledPair verifies that appending the
 // [RunCancelled, RunFinalized] pair (as produced by Run.Cancel) writes exactly
 // two outbox rows on their respective streams, and that the run.finalized:v1

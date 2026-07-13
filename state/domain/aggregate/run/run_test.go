@@ -20,7 +20,7 @@ func TestNewPendingRun_RecordsRunStarted(t *testing.T) {
 		"orders": {ManifestVersion: "v1", ImageTag: "abc"},
 	}
 
-	r, evt, err := run.NewPendingRun("daily_orders", run.KindCron, nil, identity.SystemUserID, meta, now)
+	r, evt, err := run.NewPendingRun("daily_orders", run.KindCron, nil, identity.SystemUserID, meta, model.OperationRun, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestNewRun_StampsInitiatorOnAggregateAndEvent(t *testing.T) {
 	src := uuid.New()
 
 	t.Run("pending run", func(t *testing.T) {
-		r, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|alice", nil, now)
+		r, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|alice", nil, model.OperationRun, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -128,15 +128,45 @@ func TestNewSingleNodeRun_CarriesOperation(t *testing.T) {
 	})
 }
 
+// TestNewPendingRun_CarriesOperation verifies the Operation passed to
+// NewPendingRun rides onto the emitted RunStarted event. State does not act
+// on the operation itself — it only forwards it for the orchestrator (via
+// scheduler.started:v1) to build the whole-DAG run projection.
+func TestNewPendingRun_CarriesOperation(t *testing.T) {
+	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+
+	t.Run("test operation", func(t *testing.T) {
+		_, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|carol", nil, model.OperationTest, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		started := evt.(run.RunStarted)
+		if started.Operation != model.OperationTest {
+			t.Fatalf("Operation: got %q want %q", started.Operation, model.OperationTest)
+		}
+	})
+
+	t.Run("run operation defaults to empty", func(t *testing.T) {
+		_, evt, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		started := evt.(run.RunStarted)
+		if started.Operation != "" {
+			t.Fatalf("Operation: got %q want empty string", started.Operation)
+		}
+	})
+}
+
 func TestNewPendingRun_RejectsEmptyName(t *testing.T) {
-	_, _, err := run.NewPendingRun("", run.KindCron, nil, identity.SystemUserID, nil, time.Now())
+	_, _, err := run.NewPendingRun("", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
 	if err != run.ErrScheduleNameRequired {
 		t.Fatalf("err: got %v want %v", err, run.ErrScheduleNameRequired)
 	}
 }
 
 func TestNewPendingRun_RejectsInvalidKind(t *testing.T) {
-	_, _, err := run.NewPendingRun("x", run.Kind("bogus"), nil, identity.SystemUserID, nil, time.Now())
+	_, _, err := run.NewPendingRun("x", run.Kind("bogus"), nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
 	if err != run.ErrInvalidKind {
 		t.Fatalf("err: got %v want %v", err, run.ErrInvalidKind)
 	}
@@ -228,7 +258,7 @@ func (f *fakeTaskCollection) Update(_ context.Context, t run.Task) error {
 // zero counters — the state on entry to AcceptDispatch.
 func freshPendingRun(t *testing.T) *run.Run {
 	t.Helper()
-	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, time.Now())
+	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}

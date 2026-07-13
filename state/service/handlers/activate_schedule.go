@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/policy"
@@ -44,6 +45,10 @@ func NewActivateScheduleHandler(logger *slog.Logger) *ActivateScheduleHandler {
 //
 // Returns (id, OutcomeActivated) on success, (uuid.Nil, OutcomeSkippedActive)
 // when the schedule already has an active run, or an error otherwise.
+//
+// operation selects the dbt verb (run/test/build) the downstream orchestrator
+// applies to the whole DAG. Only the manual TriggerSchedule caller passes a
+// non-default value; every other caller (cron, etc.) passes model.OperationRun.
 func (h *ActivateScheduleHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
@@ -51,6 +56,7 @@ func (h *ActivateScheduleHandler) Handle(
 	kind run.Kind,
 	sourceRunID *uuid.UUID,
 	initiator identity.Identity,
+	operation model.Operation,
 ) (uuid.UUID, ActivationOutcome, error) {
 	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), name); err != nil {
 		return uuid.Nil, 0, err
@@ -76,7 +82,7 @@ func (h *ActivateScheduleHandler) Handle(
 		}
 	}()
 
-	newRun, evt, err := run.NewPendingRun(name, kind, sourceRunID, initiator.UserID, metadata, u.Clock().Now())
+	newRun, evt, err := run.NewPendingRun(name, kind, sourceRunID, initiator.UserID, metadata, operation, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, 0, err
 	}

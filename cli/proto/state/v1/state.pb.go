@@ -1436,6 +1436,7 @@ func (x *ListAllSchedulesResponse) GetSchedules() []*ScheduleSummary {
 type TriggerScheduleRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleName  string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
+	Operation     string                 `protobuf:"bytes,2,opt,name=operation,proto3" json:"operation,omitempty"` // Optional: "" | "run" | "test" | "build"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1473,6 +1474,13 @@ func (*TriggerScheduleRequest) Descriptor() ([]byte, []int) {
 func (x *TriggerScheduleRequest) GetScheduleName() string {
 	if x != nil {
 		return x.ScheduleName
+	}
+	return ""
+}
+
+func (x *TriggerScheduleRequest) GetOperation() string {
+	if x != nil {
+		return x.Operation
 	}
 	return ""
 }
@@ -2796,9 +2804,10 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x0flast_run_status\x18\a \x01(\tR\rlastRunStatus\x12\x1e\n" +
 	"\vlast_run_id\x18\b \x01(\tR\tlastRunId\"S\n" +
 	"\x18ListAllSchedulesResponse\x127\n" +
-	"\tschedules\x18\x01 \x03(\v2\x19.state.v1.ScheduleSummaryR\tschedules\"=\n" +
+	"\tschedules\x18\x01 \x03(\v2\x19.state.v1.ScheduleSummaryR\tschedules\"[\n" +
 	"\x16TriggerScheduleRequest\x12#\n" +
-	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\":\n" +
+	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x1c\n" +
+	"\toperation\x18\x02 \x01(\tR\toperation\":\n" +
 	"\x17TriggerScheduleResponse\x12\x1f\n" +
 	"\vschedule_id\x18\x01 \x01(\tR\n" +
 	"scheduleId\"\x90\x01\n" +

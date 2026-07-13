@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -127,7 +128,7 @@ func (s *CronScheduler) activateSchedule(name string) {
 	defer cancel()
 	// A cron trigger has no authenticated user; the run is platform-initiated, so
 	// it carries the system identity sentinel.
-	_, _, err := s.activate.Handle(ctx, s.uowFactory(), name, run.KindCron, nil, identity.System())
+	_, _, err := s.activate.Handle(ctx, s.uowFactory(), name, run.KindCron, nil, identity.System(), model.OperationRun)
 	if err != nil {
 		s.logger.Error("Failed to activate schedule", "schedule_name", name, "error", err)
 	}
