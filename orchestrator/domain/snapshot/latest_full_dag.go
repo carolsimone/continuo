@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 )
@@ -25,6 +26,31 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 	rows, err := r.LoadLatestSourceDAG(ctx, p.ScheduleName)
 	if err != nil {
 		return nil, fmt.Errorf("LatestFullDAG: %w", err)
+	}
+
+	// Whole-DAG test runs are edgeless: every node with tests dispatches
+	// `dbt test` independently, with no blocking/frontier ordering at all.
+	if p.Operation == string(pkgModel.OperationTest) {
+		projection := make([]TaskProjection, 0, len(rows))
+		for f, row := range rows {
+			if row.TestCount == 0 {
+				continue // flat fan-out: only nodes that have tests
+			}
+			projection = append(projection, TaskProjection{
+				TaskID:          uuid.New(),
+				ServiceName:     f.Service,
+				SchemaName:      f.Schema,
+				TableName:       f.Table,
+				ScheduleName:    row.ScheduleName,
+				NodeType:        row.NodeType,
+				InitialStatus:   "PENDING",
+				ImageTag:        row.ImageTag,
+				ManifestVersion: row.ManifestVersion,
+				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				ReadyToDispatch: true, // edgeless: no blocking frontier for tests
+			})
+		}
+		return projection, nil
 	}
 
 	// Compute the dispatch frontier. A node is blocked when it is the immediate
