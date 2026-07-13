@@ -495,6 +495,58 @@ Identity + sign-out, right-aligned in the homepage `.page-header`.
 The sign-out action is a `.btn--secondary` following the standard button state
 rules (`Sign out` → `Signing out…` with `.is-loading`).
 
+## Assistant panel
+
+The agent-runner chat, docked as a fixed 360px right-hand sidebar. It reuses
+the system's buttons and info-strips; the only things it adds are message
+bubbles, an inline confirm prompt, and an input row. It introduces no new
+button or banner language.
+
+```css
+.chat-panel          { flex: 0 0 360px; display: flex; flex-direction: column;
+                       border-left: 1px solid #e2e8f0; background: #f8f9fa;
+                       height: 100vh; position: sticky; top: 0; }
+.chat-panel__header  { display: flex; align-items: center; gap: 8px;
+                       padding: 12px 14px; border-bottom: 1px solid #e2e8f0;
+                       background: #fff; }
+.chat-panel__title   { /* .section-header__title treatment */
+                       font-size: 11px; font-weight: 700; color: #94a3b8;
+                       text-transform: uppercase; letter-spacing: 0.7px;
+                       margin-right: auto; }
+.chat-msg            { padding: 8px 12px; border-radius: 6px; font-size: 13px;
+                       line-height: 1.45; max-width: 88%; }
+.chat-msg--user      { align-self: flex-end; background: #4338ca; color: #fff; }
+.chat-msg--assistant { align-self: flex-start; background: #fff;
+                       border: 1px solid #e2e8f0; }
+.chat-msg--tool      { align-self: flex-start; color: #6b7280; font-size: 12px; }
+```
+
+Rules:
+
+- **Header** carries the `Assistant` title using the `.section-header__title`
+  micro-label treatment. `Stop` (only while streaming) and `New chat` are
+  `.btn .btn--secondary`, right-aligned.
+- **Message bubbles.** User messages are solid indigo, right-aligned; assistant
+  messages are white cards with an `#e2e8f0` border, left-aligned; both use a
+  6px radius. The tool line (`running <code>…</code>…`) is gray 12px,
+  left-aligned. Inline `code` inside a bubble renders at 11.5px monospace, the
+  same idiom as the log block.
+- **Confirm prompt.** When the assistant asks to run a tool, the prompt renders
+  inline as an `.info-strip--info` followed by a `.chat-confirm__actions` row
+  with `Confirm` (`.btn--primary`, the confirming verb) and `Deny`
+  (`.btn--secondary`). Once resolved it collapses to muted italic outcome text
+  (`.chat-confirm__outcome`: `confirmed` / `denied`) with no active buttons.
+  This is a deliberate, bounded exception to the Modals rule: a conversational
+  agent must not throw a full-screen overlay for every tool it wants to run, so
+  the confirmation stays in the message flow. It does not license inline
+  confirmations anywhere else — outside the chat panel, confirmations are still
+  modals.
+- **Errors** render as a standard `.info-strip--error`, left-aligned in the
+  message column. The panel has no bespoke error style.
+- **Input row.** A bordered input (4px radius, 12px control font) with a
+  trailing `Send` (`.btn--secondary`). The input and `Send` are disabled while
+  the assistant is streaming or a confirm is pending.
+
 ## Things to avoid
 
 - New `.foo-btn` or `.foo-banner` classes — extend `.btn` / `.info-strip`

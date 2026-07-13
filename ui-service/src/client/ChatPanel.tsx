@@ -32,11 +32,11 @@ export default function ChatPanel({ items, connected, pendingConfirm, streaming,
       <header className="chat-panel__header">
         <span className="chat-panel__title">Assistant</span>
         {streaming && (
-          <button type="button" className="chat-panel__stop" onClick={onInterrupt}>
+          <button type="button" className="btn btn--secondary" onClick={onInterrupt}>
             Stop
           </button>
         )}
-        <button type="button" className="chat-panel__new" onClick={onNewChat}>
+        <button type="button" className="btn btn--secondary" onClick={onNewChat}>
           New chat
         </button>
       </header>
@@ -58,26 +58,30 @@ export default function ChatPanel({ items, connected, pendingConfirm, streaming,
           }
           if (item.kind === 'error') {
             return (
-              <div key={i} className="chat-msg chat-msg--error">
-                {item.message}
+              <div key={i} className="info-strip info-strip--error">
+                <span className="info-strip__icon">⚠</span>
+                <span>{item.message}</span>
               </div>
             );
           }
           if (item.kind === 'confirm') {
             return (
-              <div key={i} className="chat-msg chat-msg--confirm">
-                <span>{item.summary}</span>
+              <div key={i} className="chat-confirm">
+                <div className="info-strip info-strip--info">
+                  <span className="info-strip__icon">ⓘ</span>
+                  <span>{item.summary}</span>
+                </div>
                 {item.resolved === null ? (
-                  <span className="chat-msg__confirm-actions">
-                    <button type="button" onClick={() => onConfirm(item.actionId, true)}>
+                  <div className="chat-confirm__actions">
+                    <button type="button" className="btn btn--primary" onClick={() => onConfirm(item.actionId, true)}>
                       Confirm
                     </button>
-                    <button type="button" onClick={() => onConfirm(item.actionId, false)}>
+                    <button type="button" className="btn btn--secondary" onClick={() => onConfirm(item.actionId, false)}>
                       Deny
                     </button>
-                  </span>
+                  </div>
                 ) : (
-                  <em>{item.resolved ? 'confirmed' : 'denied'}</em>
+                  <span className="chat-confirm__outcome">{item.resolved ? 'confirmed' : 'denied'}</span>
                 )}
               </div>
             );
@@ -97,7 +101,7 @@ export default function ChatPanel({ items, connected, pendingConfirm, streaming,
           placeholder="Ask about your schedules…"
           disabled={inputDisabled}
         />
-        <button type="submit" disabled={inputDisabled}>
+        <button type="submit" className="btn btn--secondary" disabled={inputDisabled}>
           Send
         </button>
       </form>

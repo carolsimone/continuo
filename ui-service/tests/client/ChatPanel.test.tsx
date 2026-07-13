@@ -182,4 +182,99 @@ describe('ChatPanel', () => {
     );
     expect(screen.getByText('confirmed')).toBeInTheDocument();
   });
+
+  it('renders all action buttons with the .btn design-system classes', () => {
+    render(
+      <ChatPanel
+        items={[]}
+        connected
+        pendingConfirm={null}
+        streaming={true}
+        onSend={() => {}}
+        onNewChat={() => {}}
+        onConfirm={noopConfirm}
+        onInterrupt={noopInterrupt}
+      />,
+    );
+    for (const name of ['New chat', 'Stop', 'Send']) {
+      const btn = screen.getByRole('button', { name });
+      expect(btn).toHaveClass('btn', 'btn--secondary');
+    }
+  });
+
+  it('renders the header title with the micro-label class', () => {
+    render(
+      <ChatPanel
+        items={[]}
+        connected
+        pendingConfirm={null}
+        streaming={false}
+        onSend={() => {}}
+        onNewChat={() => {}}
+        onConfirm={noopConfirm}
+        onInterrupt={noopInterrupt}
+      />,
+    );
+    expect(screen.getByText('Assistant')).toHaveClass('chat-panel__title');
+  });
+
+  it('renders an unresolved confirm as an info-strip with primary/secondary buttons', () => {
+    const items: ChatItem[] = [
+      { kind: 'confirm', actionId: 'a1', summary: 'Run finance.fx_transactions_eur?', resolved: null },
+    ];
+    const { container } = render(
+      <ChatPanel
+        items={items}
+        connected
+        pendingConfirm="a1"
+        streaming={false}
+        onSend={() => {}}
+        onNewChat={() => {}}
+        onConfirm={noopConfirm}
+        onInterrupt={noopInterrupt}
+      />,
+    );
+    expect(container.querySelector('.chat-confirm .info-strip--info')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Confirm' })).toHaveClass('btn', 'btn--primary');
+    expect(screen.getByRole('button', { name: 'Deny' })).toHaveClass('btn', 'btn--secondary');
+  });
+
+  it('renders an error item as an info-strip--error and not the legacy chat-msg--error', () => {
+    const items: ChatItem[] = [{ kind: 'error', message: 'agent failed' }];
+    const { container } = render(
+      <ChatPanel
+        items={items}
+        connected
+        pendingConfirm={null}
+        streaming={false}
+        onSend={() => {}}
+        onNewChat={() => {}}
+        onConfirm={noopConfirm}
+        onInterrupt={noopInterrupt}
+      />,
+    );
+    expect(container.querySelector('.info-strip--error')).toBeTruthy();
+    expect(container.querySelector('.chat-msg--error')).toBeNull();
+    expect(screen.getByText('agent failed')).toBeInTheDocument();
+  });
+
+  it('renders a resolved confirm as muted outcome text with no active buttons', () => {
+    const items: ChatItem[] = [
+      { kind: 'confirm', actionId: 'a1', summary: 'Run finance.fx_transactions_eur?', resolved: false },
+    ];
+    const { container } = render(
+      <ChatPanel
+        items={items}
+        connected
+        pendingConfirm={null}
+        streaming={false}
+        onSend={() => {}}
+        onNewChat={() => {}}
+        onConfirm={noopConfirm}
+        onInterrupt={noopInterrupt}
+      />,
+    );
+    expect(container.querySelector('.chat-confirm__outcome')?.textContent).toBe('denied');
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
+  });
 });
