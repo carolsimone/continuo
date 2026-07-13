@@ -41,12 +41,17 @@ describe('service vertex ids', () => {
 });
 
 describe('rollupStatus', () => {
-  it('applies failed > running > pending > succeeded > cancelled precedence', () => {
+  it('applies failed > running > pending > skipped > succeeded > cancelled precedence', () => {
     expect(rollupStatus(['succeeded', 'failed', 'running'])).toBe('failed');
     expect(rollupStatus(['succeeded', 'running'])).toBe('running');
     expect(rollupStatus(['succeeded', 'pending'])).toBe('pending');
+    expect(rollupStatus(['succeeded', 'skipped'])).toBe('skipped');
     expect(rollupStatus(['succeeded', 'cancelled'])).toBe('succeeded');
     expect(rollupStatus(['cancelled', 'cancelled'])).toBe('cancelled');
+  });
+
+  it('reports a fully cascade-skipped service as skipped, not external', () => {
+    expect(rollupStatus(['skipped', 'skipped'])).toBe('skipped');
   });
 
   it('falls back to external for unknown statuses and pending for empty input', () => {

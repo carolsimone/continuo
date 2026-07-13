@@ -13,7 +13,7 @@ interface Props {
 }
 
 const STATUS_ORDER: Record<string, number> = {
-  failed: 0, running: 1, pending: 2, succeeded: 3, cancelled: 4,
+  failed: 0, running: 1, pending: 2, skipped: 3, succeeded: 4, cancelled: 5,
 };
 
 function sortTasks(tasks: Task[]): Task[] {
@@ -26,6 +26,7 @@ function pillClass(status: string): string {
   const map: Record<string, string> = {
     running: 'pill-sm--running', succeeded: 'pill-sm--succeeded',
     failed: 'pill-sm--failed', pending: 'pill-sm--pending', cancelled: 'pill-sm--cancelled',
+    skipped: 'pill-sm--skipped',
   };
   return map[status] ?? 'pill-sm--pending';
 }

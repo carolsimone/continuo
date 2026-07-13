@@ -50,7 +50,9 @@ export function buildServiceColors(services: string[]): Map<string, string> {
 }
 
 // Most-severe-first, matching the row-sort precedence used by the nodes table.
-const ROLLUP_PRECEDENCE = ['failed', 'running', 'pending', 'succeeded', 'cancelled'];
+// `skipped` (cascade-skipped downstream of a failure) outranks `succeeded` so
+// a partially- or fully-skipped service is flagged rather than reading green.
+const ROLLUP_PRECEDENCE = ['failed', 'running', 'pending', 'skipped', 'succeeded', 'cancelled'];
 
 export function rollupStatus(statuses: string[]): string {
   for (const status of ROLLUP_PRECEDENCE) {

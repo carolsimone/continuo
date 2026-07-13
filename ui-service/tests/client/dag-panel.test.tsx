@@ -52,8 +52,8 @@ describe('DAGPanel colorByStatus', () => {
       const style = (n as HTMLElement).style;
       // Pending style: white background, solid 1.5px grey border, no dashed (external) treatment.
       expect(style.background).toBe('rgb(255, 255, 255)');
-      expect(style.border).toContain('solid');
-      expect(style.border).toContain('rgb(209, 213, 219)');
+      expect(style.borderStyle).toBe('solid');
+      expect(style.borderColor).toBe('rgb(209, 213, 219)');
     });
   });
 
@@ -108,7 +108,7 @@ describe('DAGPanel colorByStatus', () => {
     expect(other).not.toBeNull();
 
     // Selected node: indigo border (#6366f1 → rgb(99, 102, 241)) overriding neutral base.
-    expect(selected.style.border).toContain('rgb(99, 102, 241)');
+    expect(selected.style.borderColor).toBe('rgb(99, 102, 241)');
     // Non-selected, non-related node: dimmed to opacity 0.2.
     expect(other.style.opacity).toBe('0.2');
   });
@@ -195,6 +195,35 @@ describe('DAGPanel service view', () => {
     const vertexA = container.querySelector('.react-flow__node[data-id="svc:svc-a"]') as HTMLElement;
     fireEvent.click(vertexA);
     expect(onServiceClick).toHaveBeenCalledWith('svc-a');
+  });
+
+  it('keeps the service accent on a selected model node (longhand border regression)', () => {
+    // The focus role rewrites the border; the left service accent must
+    // survive it. A `border` shorthand mixed with a `borderLeft` longhand
+    // used to drop the accent on re-render.
+    const serviceColors = new Map([['svc-a', '#0ea5e9'], ['svc-b', '#f59e0b']]);
+    const { container } = render(
+      <ReactFlowProvider>
+        <DAGPanel
+          graphNodes={SVC_NODES}
+          graphEdges={SVC_EDGES}
+          tasks={SVC_TASKS}
+          selectedNodeId="svc-a.sch.n1"
+          onNodeClick={() => {}}
+          serviceView
+          expandedServices={new Set(['svc-a'])}
+          onServiceClick={() => {}}
+          serviceColors={serviceColors}
+        />
+      </ReactFlowProvider>,
+    );
+    const selected = container.querySelector('.react-flow__node[data-id="svc-a.sch.n1"]') as HTMLElement;
+    expect(selected.style.borderColor).toBe('rgb(99, 102, 241)'); // focus indigo
+    expect(selected.style.borderLeftColor).toBe('rgb(14, 165, 233)'); // svc-a accent survives
+    // A dimmed collapsed vertex keeps its accent too.
+    const dimVertex = container.querySelector('.react-flow__node[data-id="svc:svc-b"]') as HTMLElement;
+    expect(dimVertex.style.opacity).toBe('0.2');
+    expect(dimVertex.style.borderLeftColor).toBe('rgb(245, 158, 11)'); // svc-b accent
   });
 
   it('lays out a cyclic service graph without crashing', () => {

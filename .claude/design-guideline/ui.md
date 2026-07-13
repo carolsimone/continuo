@@ -422,7 +422,7 @@ Rules:
   `.section-header__count` / `.tabs__count` (bare number, `#f1f3f5` pill).
 - The trailing status pill is the group's rolled-up status using the
   existing `.pill-sm--*` vocabulary (failed > running > pending >
-  succeeded > cancelled).
+  skipped > succeeded > cancelled).
 - Node rows inside an expanded group keep the table's normal columns
   unchanged — grouping never alters row content.
 - Collapsed service vertices on the graph canvas mirror the header:

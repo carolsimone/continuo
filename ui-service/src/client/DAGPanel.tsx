@@ -38,6 +38,7 @@ const STATUS_BG: Record<string, string> = {
   failed: '#fef2f2',
   pending: '#fff',
   cancelled: '#f8fafc',
+  skipped: '#f1f5f9',
   external: '#fafafa',
 };
 const STATUS_BORDER: Record<string, string> = {
@@ -46,8 +47,34 @@ const STATUS_BORDER: Record<string, string> = {
   failed: '#fca5a5',
   pending: '#d1d5db',
   cancelled: '#e2e8f0',
+  skipped: '#cbd5e1',
   external: '#9ca3af',
 };
+
+// Borders are expressed with longhand properties only. Mixing the `border`
+// shorthand with a `borderLeft*` accent breaks on re-render: React re-applies
+// the changed shorthand, which resets the left border and drops the service
+// accent (and warns about the shorthand/longhand mix).
+function borderProps(
+  width: string,
+  style: string,
+  color: string,
+  accent: string | undefined,
+  accentWidth: string,
+): React.CSSProperties {
+  return {
+    borderWidth: width,
+    borderStyle: style,
+    borderColor: color,
+    ...(accent
+      ? {
+          borderLeftWidth: accentWidth,
+          borderLeftStyle: 'solid' as const,
+          borderLeftColor: accent,
+        }
+      : {}),
+  };
+}
 
 function nodeStyle(
   status: string,
@@ -67,8 +94,7 @@ function nodeStyle(
     return {
       ...base,
       background: '#fff',
-      border: '1px solid #e5e7eb',
-      ...(accent ? { borderLeft: `4px solid ${accent}` } : {}),
+      ...borderProps('1px', 'solid', '#e5e7eb', accent, '4px'),
       opacity: 0.2,
     };
   }
@@ -102,8 +128,7 @@ function nodeStyle(
   return {
     ...base,
     background: bg,
-    border: `${borderWidth} ${borderStyleVal} ${borderColor}`,
-    ...(accent ? { borderLeft: `4px solid ${accent}` } : {}),
+    ...borderProps(borderWidth, borderStyleVal, borderColor, accent, '4px'),
     boxShadow,
   };
 }
@@ -125,8 +150,7 @@ function serviceVertexStyle(
     return {
       ...base,
       background: '#fff',
-      border: '1px solid #e5e7eb',
-      borderLeft: `5px solid ${accent}`,
+      ...borderProps('1px', 'solid', '#e5e7eb', accent, '5px'),
       opacity: 0.2,
     };
   }
@@ -138,8 +162,7 @@ function serviceVertexStyle(
   return {
     ...base,
     background: STATUS_BG[status] ?? '#f3f4f6',
-    border: `1.5px solid ${STATUS_BORDER[status] ?? '#d1d5db'}`,
-    borderLeft: `5px solid ${accent}`,
+    ...borderProps('1.5px', 'solid', STATUS_BORDER[status] ?? '#d1d5db', accent, '5px'),
     boxShadow,
   };
 }
