@@ -30,6 +30,13 @@ type fakeNodeState struct {
 	trigErr    error
 	gotActor   string
 	gotTrigSvc string
+
+	testResp      *statev1.TriggerSingleNodeRunResponse
+	testErr       error
+	gotTestActor  string
+	gotTestSvc    string
+	gotTestSchema string
+	gotTestTable  string
 }
 
 func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table string, limit int32) (*statev1.ListNodeRunsResponse, error) {
@@ -40,6 +47,11 @@ func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table s
 func (f *fakeNodeState) TriggerNodeRun(_ context.Context, service, _, _, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	f.gotTrigSvc, f.gotActor = service, actor
 	return f.trigResp, f.trigErr
+}
+
+func (f *fakeNodeState) TriggerNodeTest(_ context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	f.gotTestSvc, f.gotTestSchema, f.gotTestTable, f.gotTestActor = service, schema, table, actor
+	return f.testResp, f.testErr
 }
 
 func (f *fakeNodeState) TriggerSchedule(context.Context, string) (*statev1.TriggerScheduleResponse, error) {

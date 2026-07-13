@@ -59,6 +59,10 @@ func (f *fakeState) TriggerNodeRun(_ context.Context, _, _, _, _ string) (*state
 	panic("TriggerNodeRun should not be called in schedule tests")
 }
 
+func (f *fakeState) TriggerNodeTest(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	panic("TriggerNodeTest should not be called in schedule tests")
+}
+
 // run invokes the trigger command end-to-end with the provided fake client and args.
 // It captures stdout/stderr and returns the exit code.
 func run(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {

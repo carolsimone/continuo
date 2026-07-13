@@ -60,6 +60,10 @@ func (f *fakeStateStatus) TriggerNodeRun(_ context.Context, _, _, _, _ string) (
 	panic("TriggerNodeRun should not be called in schedule tests")
 }
 
+func (f *fakeStateStatus) TriggerNodeTest(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	panic("TriggerNodeTest should not be called in schedule tests")
+}
+
 func (f *fakeStateStatus) Close() error { return nil }
 
 func runStatus(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
