@@ -164,6 +164,12 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	if params.Mode != "" {
 		jobLabels["mode"] = params.Mode
 	}
+	// Stamp the operation label only when the caller provides one. k8s-controller
+	// reads this label back on a FAILED retry so the rebuilt Job stays the same
+	// dbt verb (e.g. `dbt test`) instead of defaulting to `dbt run`.
+	if params.Operation != "" {
+		jobLabels["operation"] = string(params.Operation)
+	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      params.JobName,

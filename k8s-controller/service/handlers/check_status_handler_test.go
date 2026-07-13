@@ -307,6 +307,78 @@ func TestHandleFailedWithRetry(t *testing.T) {
 	}
 }
 
+// TestHandleFailedWithRetry_PropagatesOperationLabel guards against the false-green
+// bug where a retried `dbt test` Job comes back as `dbt run`: the Job's "operation"
+// label (stamped by the executor) must flow into the task_retry payload so the
+// rebuilt Job keeps running the original operation.
+func TestHandleFailedWithRetry_PropagatesOperationLabel(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{
+		status: failedResult(),
+		labels: map[string]string{"operation": "test"},
+	}, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-abc",
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	retryEntry := findEntryByEventType(outbox.entries, "task_retry")
+	if retryEntry == nil {
+		t.Fatal("missing task_retry entry")
+	}
+	var retryPayload map[string]interface{}
+	if err := json.Unmarshal(retryEntry.Payload, &retryPayload); err != nil {
+		t.Fatalf("unmarshal task_retry: %v", err)
+	}
+	if got, _ := retryPayload["operation"].(string); got != "test" {
+		t.Errorf("task_retry operation: expected %q, got %q (payload=%v)", "test", got, retryPayload)
+	}
+}
+
+// TestHandleFailedWithRetry_NoOperationLabelStaysEmpty guards the normal `dbt run`
+// path: a Job with no "operation" label (the common case) must produce a
+// task_retry payload with an empty/absent operation so the wire format is
+// unchanged for production runs.
+func TestHandleFailedWithRetry_NoOperationLabelStaysEmpty(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{
+		status: failedResult(),
+		labels: map[string]string{},
+	}, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-abc",
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	retryEntry := findEntryByEventType(outbox.entries, "task_retry")
+	if retryEntry == nil {
+		t.Fatal("missing task_retry entry")
+	}
+	var retryPayload map[string]interface{}
+	if err := json.Unmarshal(retryEntry.Payload, &retryPayload); err != nil {
+		t.Fatalf("unmarshal task_retry: %v", err)
+	}
+	if got, _ := retryPayload["operation"].(string); got != "" {
+		t.Errorf("task_retry operation: expected empty, got %q", got)
+	}
+}
+
 // TestHandleSucceededStampsAttemptRetryCount guards against regressing the
 // SUCCEEDED row to a hardcoded retry_count: it must carry the attempt that ran
 // (cmd.RetryCount) so a late stale RUNNING for the same attempt is recognized as

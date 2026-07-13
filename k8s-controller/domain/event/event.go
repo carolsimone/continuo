@@ -85,6 +85,11 @@ type TaskRetry struct {
 	RetryCount   int    `json:"retry_count"`
 	MaxRetries   int    `json:"max_retries"`
 	NodeType     string `json:"node_type"`
+	// Operation is the dbt verb the retried Job should run (e.g. "test").
+	// Empty for normal production `dbt run` retries — their wire format is
+	// unchanged. Set from the failed Job's "operation" label so a retried
+	// `dbt test` Job stays `dbt test` instead of rebuilding as `dbt run`.
+	Operation string `json:"operation,omitempty"`
 }
 
 func (TaskRetry) isEvent() {}
@@ -92,7 +97,7 @@ func (TaskRetry) isEvent() {}
 // ToMap converts TaskRetry event to a map for Redis publishing.
 // Uses task_retry_count (not retry_count) to match executor-controller's consumer key.
 func (e TaskRetry) ToMap() map[string]interface{} {
-	return map[string]interface{}{
+	m := map[string]interface{}{
 		"task_id":          e.TaskID,
 		"schedule_id":      e.ScheduleID,
 		"schedule_name":    e.ScheduleName,
@@ -105,6 +110,12 @@ func (e TaskRetry) ToMap() map[string]interface{} {
 		"max_retries":      e.MaxRetries,
 		"node_type":        e.NodeType,
 	}
+	// Only stamp operation when non-empty so normal `dbt run` retries stay
+	// wire-identical to before this field existed.
+	if e.Operation != "" {
+		m["operation"] = e.Operation
+	}
+	return m
 }
 
 // NodeStatusUpdated represents an event that a node's status has changed

@@ -197,3 +197,73 @@ func TestCreateQueryJob_NormalProduction_HasNoModeLabel(t *testing.T) {
 	assert.False(t, hasPodModeLabel,
 		"pod template of normal production job must also have no mode label")
 }
+
+// TestCreateQueryJob_TestOperation_StampsOperationLabel verifies that CreateQueryJob
+// stamps an "operation" label on both the Job and its pod template when
+// params.Operation is non-empty (e.g. OperationTest). k8s-controller reads this
+// label back on a FAILED retry so the rebuilt Job stays the same dbt verb instead
+// of defaulting to `dbt run` — the false-green bug this test guards against.
+func TestCreateQueryJob_TestOperation_StampsOperationLabel(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	c := newQueryTestClient()
+	ctx := context.Background()
+
+	params := JobParams{
+		JobName:      "test-svc-analytics-orders-abc789",
+		TaskID:       "task-3",
+		ScheduleID:   "sched-3",
+		ScheduleName: "daily",
+		ServiceName:  "svc",
+		SchemaName:   "analytics",
+		TableName:    "orders",
+		Namespace:    "default",
+		NodeType:     pkg_model.NodeTypeDbtModel,
+		ImageTag:     "v1",
+		Operation:    pkg_model.OperationTest,
+	}
+
+	require.NoError(t, c.CreateQueryJob(ctx, params))
+
+	job, err := c.clientset.BatchV1().Jobs("default").Get(ctx, params.JobName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	assert.Equal(t, string(pkg_model.OperationTest), job.Labels["operation"],
+		"Job must carry operation label for dbt test jobs")
+	assert.Equal(t, string(pkg_model.OperationTest), job.Spec.Template.Labels["operation"],
+		"Pod template must also carry the operation label")
+}
+
+// TestCreateQueryJob_NormalRunOperation_HasNoOperationLabel verifies that a
+// normal `dbt run` job (empty Operation) gets NO "operation" label, so retry
+// payloads for production jobs stay wire-identical.
+func TestCreateQueryJob_NormalRunOperation_HasNoOperationLabel(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	c := newQueryTestClient()
+	ctx := context.Background()
+
+	params := JobParams{
+		JobName:      "prod-svc-analytics-orders-def123",
+		TaskID:       "task-4",
+		ScheduleID:   "sched-4",
+		ScheduleName: "daily",
+		ServiceName:  "svc",
+		SchemaName:   "analytics",
+		TableName:    "orders",
+		Namespace:    "default",
+		NodeType:     pkg_model.NodeTypeDbtModel,
+		ImageTag:     "v1",
+		Operation:    "", // normal production job — no operation
+	}
+
+	require.NoError(t, c.CreateQueryJob(ctx, params))
+
+	job, err := c.clientset.BatchV1().Jobs("default").Get(ctx, params.JobName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	_, hasOperationLabel := job.Labels["operation"]
+	assert.False(t, hasOperationLabel,
+		"normal production job must have no operation label")
+	_, hasPodOperationLabel := job.Spec.Template.Labels["operation"]
+	assert.False(t, hasPodOperationLabel,
+		"pod template of normal production job must also have no operation label")
+}

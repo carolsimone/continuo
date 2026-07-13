@@ -56,6 +56,21 @@ func TestParseRetryTask_DefaultsZeroWhenFieldsAbsent(t *testing.T) {
 	assert.Equal(t, 0, evt.MaxRetries)
 }
 
+// TestParseRetryTask_OperationThreadsThrough guards the false-green retry bug:
+// ParseRetryTask delegates the shared fields to ParseQueryModel, which must
+// carry "operation" through so a retried `dbt test` Job's deployment command
+// stays `dbt test` instead of defaulting to `dbt run`.
+func TestParseRetryTask_OperationThreadsThrough(t *testing.T) {
+	evt, err := ParseRetryTask(goredis.XMessage{ID: "2-0", Values: map[string]interface{}{
+		"task_id":     uuid.New().String(),
+		"schedule_id": uuid.New().String(),
+		"node_type":   "dbt-model",
+		"operation":   "test",
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, pkg_model.OperationTest, evt.Operation)
+}
+
 func TestParseRetryTask_NonNumericRetryCount(t *testing.T) {
 	_, err := ParseRetryTask(goredis.XMessage{ID: "2-0", Values: map[string]interface{}{
 		"task_id":          uuid.New().String(),
