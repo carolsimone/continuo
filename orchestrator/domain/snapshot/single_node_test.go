@@ -82,3 +82,84 @@ func TestSingleNode_BlankIdentity_Errors(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestSingleNode_LatestMode_TestOperation_ZeroTests_ReturnsErrNoTests(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test"})
+	if !errors.Is(err, snapshot.ErrNoTests) {
+		t.Fatalf("got %v, want ErrNoTests", err)
+	}
+}
+
+func TestSingleNode_LatestMode_TestOperation_WithTests_ReturnsProjection(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 3},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d", len(got))
+	}
+}
+
+func TestSingleNode_LatestMode_RunOperation_ZeroTests_DoesNotGate(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d", len(got))
+	}
+}
+
+func TestSingleNode_SnapshotOfRunMode_TestOperation_ZeroTests_ReturnsErrNoTests(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	srcID := uuid.New()
+	r := &fakeTopologyReader{
+		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 0}},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
+	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "test"})
+	if !errors.Is(err, snapshot.ErrNoTests) {
+		t.Fatalf("got %v, want ErrNoTests", err)
+	}
+}
+
+func TestSingleNode_SnapshotOfRunMode_TestOperation_WithTests_ReturnsProjection(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	srcID := uuid.New()
+	r := &fakeTopologyReader{
+		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 2}},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d", len(got))
+	}
+}

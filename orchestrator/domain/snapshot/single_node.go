@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 )
@@ -33,6 +34,9 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 		if !ok {
 			return nil, ErrTargetNotFound
 		}
+		if p.Operation == string(pkgModel.OperationTest) && row.TestCount == 0 {
+			return nil, ErrNoTests
+		}
 		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil
 	case "snapshot_of_run":
 		if p.SourceRunID == nil {
@@ -44,6 +48,9 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 		}
 		if !ok {
 			return nil, ErrTargetNotFound
+		}
+		if p.Operation == string(pkgModel.OperationTest) && row.TestCount == 0 {
+			return nil, ErrNoTests
 		}
 		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil
 	default:

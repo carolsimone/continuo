@@ -88,6 +88,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		Kind:         "single_node_run",
 		SourceRunID:  sourceRunUUID,
 		InitiatedBy:  cmd.InitiatedBy,
+		Operation:    cmd.Operation,
 		Selector: snapshot.SingleNode{
 			ServiceName:    cmd.ServiceName,
 			SchemaName:     cmd.SchemaName,
@@ -183,6 +184,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		NodeType:        nodeType,
 		ManifestVersion: manifestVersion,
 		ImageTag:        imageTag,
+		Operation:       cmd.Operation,
 	}
 	queryPayload, err := json.Marshal(queryEvt)
 	if err != nil {

@@ -77,6 +77,22 @@ func TestOutboxPublisher_NodeReadyForExecution(t *testing.T) {
 	// Production dispatches carry no mode (wire shape unchanged).
 	_, hasMode := vals["mode"]
 	assert.False(t, hasMode, "production node_ready_for_execution must not carry a mode field")
+	// Plain run-operation dispatches carry no operation field (wire shape unchanged).
+	_, hasOperation := vals["operation"]
+	assert.False(t, hasOperation, "run-operation node_ready_for_execution must not carry an operation field")
+}
+
+func TestOutboxPublisher_NodeReadyForExecution_CarriesTestOperation(t *testing.T) {
+	// The executor needs the operation on the wire to run `dbt test` instead of
+	// the default `dbt run`/`dbt seed`/`dbt snapshot` for this node type.
+	evt := domain.NodeReadyForExecution{
+		ScheduleID: "sched-1", ScheduleName: "daily", ServiceName: "svc",
+		SchemaName: "public", TableName: "orders", TaskID: "task-1", JobName: "job-1",
+		NodeType: "dbt-model", ImageTag: "v1", Operation: "test",
+	}
+	entry := makeEntry("node_ready_for_execution", mustMarshal(t, evt))
+	vals := payloadToValuesFor(t, entry)
+	assert.Equal(t, "test", vals["operation"])
 }
 
 func TestOutboxPublisher_NodeReadyForExecution_CarriesPromoteSeedMode(t *testing.T) {

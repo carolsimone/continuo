@@ -27,6 +27,12 @@ var ErrEmptyProjection = errors.New("snapshot: empty projection")
 // set. Handlers map this to run.entries.dispatch_failed:v1.
 var ErrTargetNotFound = errors.New("snapshot: target table not found")
 
+// ErrNoTests is returned by the SingleNode selector when Operation is "test"
+// and the resolved target has zero dbt tests: there is no work for `dbt
+// test` to do. Handlers map this to run.entries.dispatch_failed:v1 with
+// reason "no_tests" instead of dispatching a pointless Job.
+var ErrNoTests = errors.New("snapshot: node has no tests")
+
 // Params is the input to a snapshot.
 type Params struct {
 	RunID        string
@@ -34,6 +40,7 @@ type Params struct {
 	Kind         string     // "cron" | "trigger" | "rerun" | "single_node_run" | "rebase"
 	SourceRunID  *uuid.UUID // nil for cron/trigger and latest-mode single-node-run
 	InitiatedBy  string     // user who initiated the run, or "system"; stamped on the :Run node
+	Operation    string     // "" | "run" | "test" | "build"; consumed by SingleNode to gate zero-test TEST runs
 	Selector     Selector
 	Cancelled    bool // schedule was already cancelled at snapshot time → writer stamps the :Run terminal on create
 }

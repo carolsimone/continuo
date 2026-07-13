@@ -45,6 +45,11 @@ const (
 	DispatchFailedReasonTargetNotFound  DispatchFailedReason = "target_not_found"
 	DispatchFailedReasonEmptyProjection DispatchFailedReason = "empty_projection"
 	DispatchFailedReasonInvalidNodeType DispatchFailedReason = "invalid_node_type"
+	// DispatchFailedReasonNoTests is emitted when a single-node TEST run
+	// targets a node with zero dbt tests: there is no work for `dbt test`
+	// to do, so the orchestrator fails the dispatch fast instead of
+	// scheduling a pointless Job.
+	DispatchFailedReasonNoTests DispatchFailedReason = "no_tests"
 )
 
 // RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1
