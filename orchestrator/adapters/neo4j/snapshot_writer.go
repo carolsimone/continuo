@@ -23,10 +23,10 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 // WriteRunAndExecutesEdges writes the :Run node and one :EXECUTES edge per
 // projection entry. Idempotent on rerun.
 //
-// :Run properties: run_id, schedule_name, kind, initiated_by, created_at,
+// :Run properties: run_id, schedule_name, kind, operation, initiated_by,
 //
-//	source_run_id?, topology_generation, service_metadata, total_nodes,
-//	terminal_count, version
+//	created_at, source_run_id?, topology_generation, service_metadata,
+//	total_nodes, terminal_count, version
 //
 // :EXECUTES edge:  task_id, status, image_tag, manifest_version,
 //
@@ -80,6 +80,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		ON CREATE SET run.schedule_name      = $schedule_name,
 		              run.created_at         = datetime(),
 		              run.kind               = $kind,
+		              run.operation           = $operation,
 		              run.initiated_by        = $initiated_by,
 		              run.topology_generation = topo_gen,
 		              run.service_metadata    = svc_meta,
@@ -115,6 +116,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		"run_id":        p.RunID,
 		"schedule_name": p.ScheduleName,
 		"kind":          p.Kind,
+		"operation":     p.Operation,
 		"initiated_by":  initiatedBy,
 		"source_run_id": sourceRunIDParam,
 		"tasks":         tasks,

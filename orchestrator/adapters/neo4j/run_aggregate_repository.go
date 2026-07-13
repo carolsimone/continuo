@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	domainRun "github.com/carolsimone/continuo/orchestrator/domain/run"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -46,6 +47,7 @@ func (r *RunAggregateRepository) rehydrateFull(ctx context.Context, runID string
         RETURN
             run.schedule_name                  AS schedule_name,
             run.terminal_status                AS terminal_status,
+            COALESCE(run.operation,      '')   AS operation,
             COALESCE(run.total_nodes,    0)    AS total_nodes,
             COALESCE(run.terminal_count, 0)    AS terminal_count,
             COALESCE(run.failed_count,   0)    AS failed_count,
@@ -100,6 +102,7 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
             RETURN
                 run.schedule_name                  AS schedule_name,
                 run.terminal_status                AS terminal_status,
+                COALESCE(run.operation,      '')   AS operation,
                 COALESCE(run.total_nodes,    0)    AS total_nodes,
                 COALESCE(run.terminal_count, 0)    AS terminal_count,
                 COALESCE(run.failed_count,   0)    AS failed_count,
@@ -139,6 +142,7 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
             RETURN
                 run.schedule_name                  AS schedule_name,
                 run.terminal_status                AS terminal_status,
+                COALESCE(run.operation,      '')   AS operation,
                 COALESCE(run.total_nodes,    0)    AS total_nodes,
                 COALESCE(run.terminal_count, 0)    AS terminal_count,
                 COALESCE(run.failed_count,   0)    AS failed_count,
@@ -329,6 +333,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 	var (
 		scheduleName   string
 		terminalStatus string
+		operation      string
 		totalNodes     int
 		terminalCount  int
 		failedCount    int
@@ -345,6 +350,8 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 			scheduleName = safeString(v)
 			v, _ = rec.Get("terminal_status")
 			terminalStatus = safeString(v)
+			v, _ = rec.Get("operation")
+			operation = safeString(v)
 			v, _ = rec.Get("total_nodes")
 			totalNodes = int(toInt64(v))
 			v, _ = rec.Get("terminal_count")
@@ -375,6 +382,15 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		}
 		taskUUID, _ := uuid.Parse(safeString(taskIDVal))
 
+		// A "test" operation's rehydrated nodes carry no ups/downs: whole-DAG
+		// test runs are a flat fan-out, so CompleteNode must not unblock or
+		// cascade-skip anything based on the shared :Table DEPENDS_ON topology.
+		ups := extractNodeKeys(upsRaw)
+		downs := extractNodeKeys(downsRaw)
+		if operation == string(pkgModel.OperationTest) {
+			ups, downs = nil, nil
+		}
+
 		nodes = append(nodes, &domainRun.RunNode{
 			Key:             nodeKey,
 			TaskID:          taskUUID,
@@ -383,8 +399,8 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 			NodeType:        safeString(ntypeVal),
 			ManifestVersion: safeString(mvVal),
 			ImageTag:        safeString(itVal),
-			Upstreams:       extractNodeKeys(upsRaw),
-			Downstreams:     extractNodeKeys(downsRaw),
+			Upstreams:       ups,
+			Downstreams:     downs,
 		})
 	}
 	if err := result.Err(); err != nil {

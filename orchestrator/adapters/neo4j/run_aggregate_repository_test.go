@@ -139,6 +139,20 @@ func seedRun(
 	}
 }
 
+// setRunOperation stamps :Run.operation after seedRun, for tests that need to
+// exercise operation-conditional rehydrate behavior (edgeless test runs)
+// without changing seedRun's signature for every existing caller.
+func setRunOperation(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, runID, operation string) {
+	t.Helper()
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx,
+		"MATCH (run:Run {run_id: $run_id}) SET run.operation = $operation",
+		map[string]any{"run_id": runID, "operation": operation},
+	)
+	require.NoError(t, err)
+}
+
 func nodeByKey(agg *domainRun.Run, k domainRun.NodeKey) *domainRun.RunNode {
 	for _, n := range agg.Nodes() {
 		if n.Key == k {
@@ -183,6 +197,110 @@ func TestRunAggregateRepository_RehydrateScopeFull_ReturnsAllNodes(t *testing.T)
 	require.NotNil(t, nB, "node B must be loaded")
 	assert.Contains(t, nA.Downstreams, kB, "A.Downstreams must contain B")
 	assert.Contains(t, nB.Upstreams, kA, "B.Upstreams must contain A")
+}
+
+// TestRunAggregateRepository_RehydrateScopeFull_TestOperation_NodesAreEdgeless
+// guards Task 15: a run stamped operation="test" must rehydrate every node
+// with empty Upstreams/Downstreams, even though the shared :Table DEPENDS_ON
+// topology has a real parent->child edge. Whole-DAG test runs are a flat
+// fan-out, so CompleteNode must never see edges to unblock/cascade over.
+func TestRunAggregateRepository_RehydrateScopeFull_TestOperation_NodesAreEdgeless(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestAggRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-%s", t.Name())
+	seedRun(t, ctx, client, runID, 2, 0, 0,
+		[]seededNode{
+			{"public", "a", "svc-1", "PENDING"},
+			{"public", "b", "svc-1", "PENDING"},
+		},
+		[]seededEdge{
+			{childSchema: "public", childTable: "b", parentSchema: "public", parentTable: "a"},
+		},
+	)
+	setRunOperation(t, ctx, client, runID, "test")
+
+	agg, err := repo.Rehydrate(ctx, runID, domainRun.ScopeFull{})
+	require.NoError(t, err)
+	require.Len(t, agg.Nodes(), 2)
+	for _, n := range agg.Nodes() {
+		assert.Empty(t, n.Upstreams, "test-operation node %v must have no upstreams", n.Key)
+		assert.Empty(t, n.Downstreams, "test-operation node %v must have no downstreams", n.Key)
+	}
+}
+
+// TestRunAggregateRepository_RehydrateScopeNodeCompletion_TestOperation_NodesAreEdgeless
+// exercises the exact scope CompleteNode rehydrates through (ScopeNodeCompletion)
+// to confirm edgelessness holds on the completion path, not just ScopeFull.
+func TestRunAggregateRepository_RehydrateScopeNodeCompletion_TestOperation_NodesAreEdgeless(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestAggRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-%s", t.Name())
+	seedRun(t, ctx, client, runID, 2, 0, 0,
+		[]seededNode{
+			{"public", "a", "svc-1", "PENDING"},
+			{"public", "b", "svc-1", "PENDING"},
+		},
+		[]seededEdge{
+			{childSchema: "public", childTable: "b", parentSchema: "public", parentTable: "a"},
+		},
+	)
+	setRunOperation(t, ctx, client, runID, "test")
+
+	kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
+	agg, err := repo.Rehydrate(ctx, runID,
+		domainRun.ScopeNodeCompletion{Key: kA, Status: "SUCCEEDED"})
+	require.NoError(t, err)
+	require.NotEmpty(t, agg.Nodes())
+	for _, n := range agg.Nodes() {
+		assert.Empty(t, n.Upstreams, "test-operation node %v must have no upstreams", n.Key)
+		assert.Empty(t, n.Downstreams, "test-operation node %v must have no downstreams", n.Key)
+	}
+}
+
+// TestRunAggregateRepository_RehydrateScopeFull_RunOperation_NodesKeepEdges is
+// the control for Task 15: a run with operation="run" (or unset) must keep
+// rehydrating real edges from the shared :Table DEPENDS_ON topology.
+func TestRunAggregateRepository_RehydrateScopeFull_RunOperation_NodesKeepEdges(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestAggRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-%s", t.Name())
+	seedRun(t, ctx, client, runID, 2, 0, 0,
+		[]seededNode{
+			{"public", "a", "svc-1", "PENDING"},
+			{"public", "b", "svc-1", "PENDING"},
+		},
+		[]seededEdge{
+			{childSchema: "public", childTable: "b", parentSchema: "public", parentTable: "a"},
+		},
+	)
+	setRunOperation(t, ctx, client, runID, "run")
+
+	agg, err := repo.Rehydrate(ctx, runID, domainRun.ScopeFull{})
+	require.NoError(t, err)
+
+	kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
+	kB := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "b"}
+	nA := nodeByKey(agg, kA)
+	nB := nodeByKey(agg, kB)
+	require.NotNil(t, nA)
+	require.NotNil(t, nB)
+	assert.Contains(t, nA.Downstreams, kB, "run-operation A.Downstreams must still contain B")
+	assert.Contains(t, nB.Upstreams, kA, "run-operation B.Upstreams must still contain A")
 }
 
 func TestRunAggregateRepository_RehydrateScopeNodeCompletion_Failed_IncludesTransitiveDownstream(t *testing.T) {
