@@ -34,7 +34,7 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 		if !ok {
 			return nil, ErrTargetNotFound
 		}
-		if p.Operation == string(pkgModel.OperationTest) && row.TestCount == 0 {
+		if p.Operation == string(pkgModel.OperationTest) && row.TestCountKnown && row.TestCount == 0 {
 			return nil, ErrNoTests
 		}
 		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil
@@ -49,7 +49,7 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 		if !ok {
 			return nil, ErrTargetNotFound
 		}
-		if p.Operation == string(pkgModel.OperationTest) && row.TestCount == 0 {
+		if p.Operation == string(pkgModel.OperationTest) && row.TestCountKnown && row.TestCount == 0 {
 			return nil, ErrNoTests
 		}
 		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil

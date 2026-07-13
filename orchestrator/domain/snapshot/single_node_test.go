@@ -87,7 +87,7 @@ func TestSingleNode_LatestMode_TestOperation_ZeroTests_ReturnsErrNoTests(t *test
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0},
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
@@ -97,11 +97,31 @@ func TestSingleNode_LatestMode_TestOperation_ZeroTests_ReturnsErrNoTests(t *test
 	}
 }
 
+// Graceful degradation: topology written before test_count existed has the
+// property absent (TestCountKnown == false). Absent must NOT gate the test
+// operation — dbt just no-ops if the model truly has no tests.
+func TestSingleNode_LatestMode_TestOperation_TestCountAbsent_DoesNotGate(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: false},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test"})
+	if err != nil {
+		t.Fatalf("got err %v, want nil (absent test_count must not gate)", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d, want 1", len(got))
+	}
+}
+
 func TestSingleNode_LatestMode_TestOperation_WithTests_ReturnsProjection(t *testing.T) {
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 3},
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 3, TestCountKnown: true},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
@@ -136,7 +156,7 @@ func TestSingleNode_SnapshotOfRunMode_TestOperation_ZeroTests_ReturnsErrNoTests(
 	srcID := uuid.New()
 	r := &fakeTopologyReader{
 		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
-			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 0}},
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 0, TestCountKnown: true}},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
@@ -146,12 +166,32 @@ func TestSingleNode_SnapshotOfRunMode_TestOperation_ZeroTests_ReturnsErrNoTests(
 	}
 }
 
+// Graceful degradation for the snapshot_of_run mode: absent test_count on the
+// source :EXECUTES-pinned row must not gate.
+func TestSingleNode_SnapshotOfRunMode_TestOperation_TestCountAbsent_DoesNotGate(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	srcID := uuid.New()
+	r := &fakeTopologyReader{
+		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 0, TestCountKnown: false}},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "test"})
+	if err != nil {
+		t.Fatalf("got err %v, want nil (absent test_count must not gate)", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d, want 1", len(got))
+	}
+}
+
 func TestSingleNode_SnapshotOfRunMode_TestOperation_WithTests_ReturnsProjection(t *testing.T) {
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	srcID := uuid.New()
 	r := &fakeTopologyReader{
 		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
-			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 2}},
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 2, TestCountKnown: true}},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}

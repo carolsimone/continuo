@@ -214,6 +214,29 @@ func TestTopologyReader_LoadLatestSourceDAG_InactiveTablesExcluded(t *testing.T)
 	)
 }
 
+// Graceful degradation: LoadLatestSourceDAG must surface an absent test_count
+// property (pre-capture topology) as TestCountKnown == false, not collapse it
+// to an explicit zero.
+func TestTopologyReader_LoadLatestSourceDAG_TestCountAbsent(t *testing.T) {
+	sched := "test-tr-lsd-tc-" + uuid.New().String()[:8]
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			return txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", "v1", true)
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			got, err := r.LoadLatestSourceDAG(ctx, sched)
+			require.NoError(t, err)
+			fqnA := snapshot.FQN{Service: "svc", Schema: "s", Table: "a", ScheduleName: sched}
+			rowA, ok := got[fqnA]
+			require.True(t, ok, "missing row for table a")
+			assert.False(t, rowA.TestCountKnown, "test_count was never set: TestCountKnown must be false")
+			assert.Equal(t, 0, rowA.TestCount)
+			return nil
+		},
+	)
+}
+
 // Regression test for P1: a non-seed :Table in a different schedule that is a
 // transitive upstream of a schedule-x table must NOT appear in
 // LoadLatestSourceDAG("x").  The pre-refactor UNION query only includes direct
@@ -440,6 +463,47 @@ func TestTopologyReader_LoadSingleLatestTable_HitAndMiss(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, found, "missing table must return found=false")
 			assert.Equal(t, snapshot.LatestTableRow{}, zero, "miss must return zero value")
+			return nil
+		},
+	)
+}
+
+// Graceful degradation for pre-capture topology: a :Table created before
+// test_count existed has the property entirely absent (not zero). The reader
+// must surface that as TestCountKnown == false, distinct from an explicit
+// test_count = 0 (TestCountKnown == true), so callers don't collapse "unknown"
+// into "no tests".
+func TestTopologyReader_LoadSingleLatestTable_TestCountAbsent_vs_ExplicitZero(t *testing.T) {
+	sched := "test-tr-tc-" + uuid.New().String()[:8]
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			// Pre-capture style: MERGE without ever setting test_count.
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "absent", "img:1", "v1", true); err != nil {
+				return err
+			}
+			// Explicit zero: test_count set to 0.
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "known-zero", "img:2", "v2", true); err != nil {
+				return err
+			}
+			_, err := tx.Run(ctx, `
+				MATCH (t:Table {schedule_name: $sched, table_name: "known-zero"})
+				SET t.test_count = 0`,
+				map[string]interface{}{"sched": sched})
+			return err
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			absentRow, found, err := r.LoadSingleLatestTable(ctx, snapshot.FQN{Service: "svc", Schema: "s", Table: "absent"})
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.False(t, absentRow.TestCountKnown, "test_count was never set: TestCountKnown must be false")
+			assert.Equal(t, 0, absentRow.TestCount)
+
+			knownRow, found, err := r.LoadSingleLatestTable(ctx, snapshot.FQN{Service: "svc", Schema: "s", Table: "known-zero"})
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.True(t, knownRow.TestCountKnown, "test_count = 0 was explicitly set: TestCountKnown must be true")
+			assert.Equal(t, 0, knownRow.TestCount)
 			return nil
 		},
 	)

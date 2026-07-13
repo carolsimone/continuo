@@ -21,6 +21,7 @@ type LatestTableRow struct {
 	ScheduleName    string
 	NodeType        string
 	TestCount       int
+	TestCountKnown  bool // true iff the :Table had a test_count property (false for pre-capture topology)
 	ImageTag        string
 	ManifestVersion string
 }

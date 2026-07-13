@@ -72,9 +72,9 @@ func TestLatestFullDAG_TestOperation_FiltersZeroTestsAndAllReady(t *testing.T) {
 	noTests := snapshot.FQN{Service: "svc", Schema: "sch", Table: "no_tests", ScheduleName: "x"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			root:       {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 2},
-			downstream: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 1},
-			noTests:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0},
+			root:       {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 2, TestCountKnown: true},
+			downstream: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 1, TestCountKnown: true},
+			noTests:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
 		},
 		// downstream is the immediate descendant of root, so in a normal run it
 		// would be blocked (ReadyToDispatch == false).
@@ -101,6 +101,30 @@ func TestLatestFullDAG_TestOperation_FiltersZeroTestsAndAllReady(t *testing.T) {
 	}
 	if !seen["root"] || !seen["downstream"] {
 		t.Fatalf("want root and downstream projected, got %+v", seen)
+	}
+}
+
+// Graceful degradation: a node with test_count absent (topology written before
+// test_count existed) must NOT be filtered out of a whole-DAG test run — only
+// a KNOWN, explicit zero excludes a node.
+func TestLatestFullDAG_TestOperation_TestCountAbsent_Included(t *testing.T) {
+	known := snapshot.FQN{Service: "svc", Schema: "sch", Table: "known_zero", ScheduleName: "x"}
+	absent := snapshot.FQN{Service: "svc", Schema: "sch", Table: "absent", ScheduleName: "x"}
+	r := &fakeTopologyReader{
+		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
+			known:  {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
+			absent: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: false},
+		},
+	}
+	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test", ScheduleName: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d, want 1 (only absent included): %+v", len(got), got)
+	}
+	if got[0].TableName != "absent" {
+		t.Errorf("table=%q, want %q", got[0].TableName, "absent")
 	}
 }
 

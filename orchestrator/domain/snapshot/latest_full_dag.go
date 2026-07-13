@@ -33,8 +33,8 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 	if p.Operation == string(pkgModel.OperationTest) {
 		projection := make([]TaskProjection, 0, len(rows))
 		for f, row := range rows {
-			if row.TestCount == 0 {
-				continue // flat fan-out: only nodes that have tests
+			if row.TestCountKnown && row.TestCount == 0 {
+				continue // flat fan-out: only nodes with a known, explicit zero test count
 			}
 			projection = append(projection, TaskProjection{
 				TaskID:          uuid.New(),
