@@ -1,0 +1,20 @@
+version: 2
+
+# dbt tests for the e2e seed tables. These give the test-operation e2e flows
+# real tests to execute: `dbt test --select seed_table_1` runs not_null + unique,
+# `dbt test --select seed_table_3` runs not_null. seed_table_2 intentionally has
+# no tests so a single-node test on it is gated as no_tests. The per-node
+# test_count seeded into the topology (tests/e2e/seed_topology_test.go) mirrors
+# these counts (seed_table_1=2, seed_table_3=1, seed_table_2=0).
+seeds:
+  - name: seed_table_1
+    columns:
+      - name: id
+        data_tests:
+          - not_null
+          - unique
+  - name: seed_table_3
+    columns:
+      - name: id
+        data_tests:
+          - not_null

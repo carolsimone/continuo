@@ -1,0 +1,215 @@
+package e2e
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	"github.com/google/uuid"
+	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestSingleNodeTestOperation verifies the `test` run operation end-to-end for a
+// single node that has tests. seed_table_1 is seeded with test_count=2 and
+// carries real dbt tests (not_null + unique on id), so a TriggerSingleNodeRun
+// with operation="test" dispatches a `dbt test --select seed_table_1` Job that
+// runs those tests, succeeds, and finalizes the run 'succeeded' with exactly one
+// task. The :Run node records operation="test", proving the operation threaded
+// from the trigger through to the run projection.
+func TestSingleNodeTestOperation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	const (
+		targetService = "service-1"
+		targetSchema  = "e2e_schema"
+		targetTable   = "seed_table_1" // seeded test_count=2, real dbt tests not_null+unique
+	)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+
+	cleanupTestData(t, ctx, clients, "single-node-test-op")
+	seedTopology(t, ctx, clients)
+
+	t.Logf("TriggerSingleNodeRun operation=test: %s.%s.%s", targetService, targetSchema, targetTable)
+	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    targetService,
+		SchemaName:     targetSchema,
+		TableName:      targetTable,
+		MetadataSource: "latest",
+		Operation:      "test",
+	})
+	require.NoError(t, err, "TriggerSingleNodeRun(operation=test) failed")
+	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
+
+	runID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
+	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
+
+	t.Log("Waiting for test-operation single-node run to reach 'succeeded'...")
+	verifySchedulerSucceeded(t, ctx, clients, runID)
+
+	// Exactly one task was dispatched (the tested node).
+	var taskCount int
+	err = clients.stateDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, runID).Scan(&taskCount)
+	require.NoError(t, err, "failed to count task_tracker rows")
+	assert.Equal(t, 1, taskCount, "expected exactly 1 task for a single-node test run")
+
+	// The run was created as a test run — proves operation threaded end-to-end.
+	assert.Equal(t, "test", queryNeo4jRunOperation(t, clients, runID),
+		":Run.operation must be 'test' for a test-operation run")
+
+	t.Log("TestSingleNodeTestOperation passed")
+}
+
+// TestSingleNodeTestOperationNoTests verifies the no_tests gate: a single-node
+// test on a node with no tests (seed_table_2, test_count=0) is rejected by the
+// orchestrator (run.entries.dispatch_failed:v1 reason no_tests) rather than
+// dispatching a pointless Job. The run finalizes 'failed' with zero tasks.
+func TestSingleNodeTestOperationNoTests(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	const (
+		targetService = "service-1"
+		targetSchema  = "e2e_schema"
+		targetTable   = "seed_table_2" // seeded with no tests (test_count=0)
+	)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+
+	cleanupTestData(t, ctx, clients, "single-node-test-no-tests")
+	seedTopology(t, ctx, clients)
+
+	t.Logf("TriggerSingleNodeRun operation=test on a zero-test node: %s.%s.%s", targetService, targetSchema, targetTable)
+	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    targetService,
+		SchemaName:     targetSchema,
+		TableName:      targetTable,
+		MetadataSource: "latest",
+		Operation:      "test",
+	})
+	require.NoError(t, err, "TriggerSingleNodeRun must succeed even when the node has no tests — the gate routes through events")
+	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
+
+	runID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
+	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
+
+	t.Log("Waiting for the no_tests gate to finalize the run 'failed'...")
+	verifySchedulerFailed(t, ctx, clients, runID)
+
+	// The gate must NOT create any task_tracker row — no Job was dispatched.
+	var taskCount int
+	err = clients.stateDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, runID).Scan(&taskCount)
+	require.NoError(t, err, "failed to count task_tracker rows")
+	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for a no_tests-gated run")
+
+	t.Log("TestSingleNodeTestOperationNoTests passed")
+}
+
+// TestWholeDAGTestOperation verifies whole-DAG "flat fan-out" test runs. The
+// "seed" schedule holds seed_table_1 (test_count=2), seed_table_2 (0), and
+// seed_table_3 (1). A TriggerSchedule with operation="test" dispatches ONLY the
+// nodes that have tests, each independently: seed_table_1 and seed_table_3 run
+// their tests and the run finalizes 'succeeded', while seed_table_2 (no tests)
+// is omitted from the projection entirely.
+func TestWholeDAGTestOperation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	const seedSchedule = "seed"
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+
+	cleanupTestData(t, ctx, clients, seedSchedule)
+	defer cleanupTestData(t, ctx, clients, seedSchedule)
+	seedTopology(t, ctx, clients)
+
+	t.Logf("TriggerSchedule operation=test on %q", seedSchedule)
+	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+		ScheduleName: seedSchedule,
+		Operation:    "test",
+	})
+	require.NoError(t, err, "TriggerSchedule(operation=test) failed")
+	require.NotEmpty(t, resp.ScheduleId, "must return a non-empty schedule_id")
+
+	scheduleID, err := uuid.Parse(resp.ScheduleId)
+	require.NoError(t, err, "schedule_id must be a valid UUID")
+
+	t.Log("Waiting for the whole-DAG test run to reach 'succeeded'...")
+	verifySchedulerSucceeded(t, ctx, clients, scheduleID)
+
+	// Flat fan-out: only the tested nodes get a task; seed_table_2 (no tests) is
+	// excluded. Assert the dispatched set is exactly {seed_table_1, seed_table_3}.
+	rows, err := clients.stateDB.QueryContext(ctx,
+		`SELECT table_name FROM task_tracker WHERE schedule_id = $1 ORDER BY table_name`, scheduleID)
+	require.NoError(t, err, "failed to query task_tracker rows")
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var table string
+		require.NoError(t, rows.Scan(&table))
+		tables = append(tables, table)
+	}
+	require.NoError(t, rows.Err())
+
+	assert.ElementsMatch(t, []string{"seed_table_1", "seed_table_3"}, tables,
+		"whole-DAG test run must dispatch exactly the nodes with tests (test_count>0), omitting seed_table_2")
+
+	// The run was created as a test run.
+	assert.Equal(t, "test", queryNeo4jRunOperation(t, clients, scheduleID),
+		":Run.operation must be 'test' for a whole-DAG test run")
+
+	t.Log("TestWholeDAGTestOperation passed")
+}
+
+// queryNeo4jRunOperation returns the :Run.operation property for the given
+// run_id ("" if absent or the node is not found).
+func queryNeo4jRunOperation(t *testing.T, clients *testClients, runID uuid.UUID) string {
+	t.Helper()
+	session := clients.neo4jDriver.NewSession(context.Background(), neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeRead,
+	})
+	defer func() { _ = session.Close(context.Background()) }()
+	result, err := session.Run(context.Background(),
+		`MATCH (r:Run {run_id: $run_id}) RETURN COALESCE(r.operation, "") AS operation`,
+		map[string]interface{}{"run_id": runID.String()})
+	require.NoError(t, err, "Neo4j query for :Run.operation failed")
+	if !result.Next(context.Background()) {
+		return ""
+	}
+	raw, _ := result.Record().Get("operation")
+	s, _ := raw.(string)
+	return s
+}
