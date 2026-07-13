@@ -57,6 +57,9 @@ func (f *fakeNodeState) TriggerNodeTest(_ context.Context, service, schema, tabl
 func (f *fakeNodeState) TriggerSchedule(context.Context, string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerSchedule should not be called in node tests")
 }
+func (f *fakeNodeState) TriggerScheduleTest(context.Context, string) (*statev1.TriggerScheduleResponse, error) {
+	panic("TriggerScheduleTest should not be called in node tests")
+}
 func (f *fakeNodeState) ListAllSchedules(context.Context) (*statev1.ListAllSchedulesResponse, error) {
 	panic("ListAllSchedules should not be called in node tests")
 }

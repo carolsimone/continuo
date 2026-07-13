@@ -23,6 +23,10 @@ type fakeState struct {
 	err             error
 	gotScheduleName string
 
+	testResp            *statev1.TriggerScheduleResponse
+	testErr             error
+	gotTestScheduleName string
+
 	cancelResp      *statev1.CancelScheduleResponse
 	cancelErr       error
 	gotCancelReason string
@@ -32,6 +36,11 @@ type fakeState struct {
 func (f *fakeState) TriggerSchedule(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
 	f.gotScheduleName = name
 	return f.resp, f.err
+}
+
+func (f *fakeState) TriggerScheduleTest(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
+	f.gotTestScheduleName = name
+	return f.testResp, f.testErr
 }
 
 func (f *fakeState) CancelSchedule(_ context.Context, name, reason, by string) (*statev1.CancelScheduleResponse, error) {
