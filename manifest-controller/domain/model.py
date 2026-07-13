@@ -37,6 +37,7 @@ class ManifestNode:
     manifest_version: str = ""
     image_tag: str = ""
     original_file_path: str = ""  # dbt original_file_path (project-relative)
+    test_count: int = 0  # number of dbt tests attached to this node
     upstream_deps: list[UpstreamDep] = field(default_factory=list)
 
 
