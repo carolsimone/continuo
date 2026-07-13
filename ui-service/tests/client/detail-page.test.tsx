@@ -793,3 +793,133 @@ describe('DetailPage — executions pagination regression (Task 7)', () => {
     expect(executionCalls.some(u => u.includes('offset=400'))).toBe(true);
   });
 });
+
+describe('DetailPage — service grouping sync between graph and table', () => {
+  const NODE_A = 'svc1.public.orders';
+  const NODE_B = 'svc2.public.payments';
+
+  function multiServiceRoutes() {
+    return {
+      ...failedRoutes(),
+      [`/api/runs/${RUN_ID}/graph`]: async () => ({
+        nodes: [
+          { node_id: NODE_A, node_type: 'dbt-model', schedule_name: SCHED, status: 'succeeded' },
+          { node_id: NODE_B, node_type: 'dbt-model', schedule_name: SCHED, status: 'failed' },
+        ],
+        edges: [{ from_node_id: NODE_A, to_node_id: NODE_B }],
+        run_topology_generation: 7,
+        latest_topology_generation: 7,
+      }),
+      [`/api/schedulers/${RUN_ID}/tasks`]: async () => ({
+        tasks: [
+          {
+            task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
+            job_name: '', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
+          },
+          {
+            task_id: 't2', service_name: 'svc2', schema_name: 'public', table_name: 'payments',
+            job_name: '', status: 'failed', retry_count: 0, max_retries: 0, created_at: null,
+          },
+        ],
+      }),
+    };
+  }
+
+  // Node names appear both as graph vertices and table rows once a service is
+  // expanded, so table assertions go through the row-name class, not by text.
+  function tableNodeNames(container: HTMLElement): (string | null)[] {
+    return [...container.querySelectorAll('.nodes-node-name')].map(el => el.textContent);
+  }
+
+  it('defaults both panels to collapsed service groups when several services exist', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+
+      // Graph: one vertex per service, no model-node vertices.
+      await waitFor(() => {
+        expect(container.querySelector('.react-flow__node[data-id="svc:svc1"]')).toBeTruthy();
+        expect(container.querySelector('.react-flow__node[data-id="svc:svc2"]')).toBeTruthy();
+      });
+      expect(container.querySelector(`.react-flow__node[data-id="${NODE_A}"]`)).toBeNull();
+
+      // Table: group headers visible, node rows hidden.
+      expect(container.querySelectorAll('.nodes-group-row')).toHaveLength(2);
+      expect(screen.queryByText('orders')).toBeNull();
+      expect(screen.queryByText('payments')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('expanding a group in the table reveals its model nodes in the graph', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      await waitFor(() => {
+        expect(container.querySelectorAll('.nodes-group-row').length).toBe(2);
+      });
+
+      const svc1Header = [...container.querySelectorAll('.nodes-group-row')]
+        .find(h => h.textContent?.includes('svc1'))!;
+      fireEvent.click(svc1Header);
+
+      await waitFor(() => {
+        expect(tableNodeNames(container)).toContain('orders');
+        expect(container.querySelector(`.react-flow__node[data-id="${NODE_A}"]`)).toBeTruthy();
+      });
+      // The other service stays collapsed in both panels.
+      expect(container.querySelector('.react-flow__node[data-id="svc:svc2"]')).toBeTruthy();
+      expect(tableNodeNames(container)).not.toContain('payments');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('clicking a service vertex in the graph expands its group in the table', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      await waitFor(() => {
+        expect(container.querySelector('.react-flow__node[data-id="svc:svc2"]')).toBeTruthy();
+      });
+
+      fireEvent.click(container.querySelector('.react-flow__node[data-id="svc:svc2"]')!);
+
+      await waitFor(() => {
+        expect(tableNodeNames(container)).toContain('payments');
+      });
+      expect(tableNodeNames(container)).not.toContain('orders');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('collapsing the service of the selected node clears the selection', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      await waitFor(() => {
+        expect(container.querySelectorAll('.nodes-group-row').length).toBe(2);
+      });
+
+      const svc1Header = [...container.querySelectorAll('.nodes-group-row')]
+        .find(h => h.textContent?.includes('svc1'))!;
+      fireEvent.click(svc1Header);
+      await waitFor(() => {
+        expect(tableNodeNames(container)).toContain('orders');
+      });
+      const ordersRow = [...container.querySelectorAll('.nodes-node-name')]
+        .find(el => el.textContent === 'orders')!.closest('tr')!;
+      fireEvent.click(ordersRow);
+      expect(await screen.findByRole('link', { name: /open node detail/i })).toBeInTheDocument();
+
+      fireEvent.click(svc1Header); // collapse again
+      await waitFor(() => {
+        expect(screen.queryByRole('link', { name: /open node detail/i })).toBeNull();
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
