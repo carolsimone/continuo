@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { GrpcClient, userMetadata } from '../grpc-client';
+import { GrpcGraphClient } from '../grpc-graph-client';
 import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
 
-export function createNodesRouter(stateClient: GrpcClient) {
+export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
   // GET /api/nodes?search=&service=&limit=&offset= — node catalog (paged)
@@ -96,6 +97,26 @@ export function createNodesRouter(stateClient: GrpcClient) {
       (err: any, response: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
         res.json({ run_id: response.run_id, schedule_name: response.schedule_name });
+      },
+    );
+  });
+
+  // GET /:service/:schema/:table/meta — per-node topology metadata (test_count)
+  // used by the UI to gate single-node "test" on a zero-test node.
+  router.get('/:service/:schema/:table/meta', (req, res) => {
+    graphClient.getNode(
+      {
+        service_name: req.params.service,
+        schema_name:  req.params.schema,
+        table_name:   req.params.table,
+      },
+      (err: any, response: any) => {
+        if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+        res.json({
+          node_type:        response.node_type || '',
+          test_count:       Number(response.test_count ?? 0),
+          test_count_known: Boolean(response.test_count_known),
+        });
       },
     );
   });
