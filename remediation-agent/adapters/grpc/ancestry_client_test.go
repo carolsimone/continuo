@@ -115,3 +115,24 @@ func TestMapNodeContext_NoDepthZeroNode(t *testing.T) {
 	require.Len(t, ancestors, 1)
 	assert.Equal(t, "service_b.schema.upstream_node", ancestors[0].NodeID)
 }
+
+func TestMapNodeContext_CarriesLastRepo(t *testing.T) {
+	resp := &orchestratorv1.GetNodeAncestryResponse{
+		Ancestors: []*orchestratorv1.AncestorNode{
+			{UniqueId: "svc_a.self", ServiceName: "service_a", FilePath: "models/self.sql", Depth: 0},
+			{
+				UniqueId:      "svc_b.up",
+				ServiceName:   "service_b",
+				LastCommitSha: "def456",
+				LastRepo:      "owner/service-b-repo",
+				FilePath:      "models/up.sql",
+				Depth:         1,
+			},
+		},
+	}
+
+	_, _, ancestors := grpcadapter.MapNodeContext(resp)
+
+	require.Len(t, ancestors, 1)
+	assert.Equal(t, "owner/service-b-repo", ancestors[0].LastRepo, "ancestor must carry last_repo for the diff fetch")
+}

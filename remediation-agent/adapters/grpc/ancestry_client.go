@@ -78,6 +78,7 @@ func MapNodeContext(resp *orchestratorv1.GetNodeAncestryResponse) (filePath stri
 			NodeID:        n.UniqueId,
 			ServiceName:   n.ServiceName,
 			LastCommitSHA: n.LastCommitSha,
+			LastRepo:      n.LastRepo,
 			FilePath:      n.FilePath,
 			LastChangedAt: lastChangedAt,
 			Depth:         int(n.Depth),

@@ -13,6 +13,7 @@ type Ancestor struct {
 	NodeID        string
 	ServiceName   string
 	LastCommitSHA string
+	LastRepo      string
 	FilePath      string
 	LastChangedAt string
 	Depth         int
