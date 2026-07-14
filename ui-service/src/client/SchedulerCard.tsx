@@ -33,6 +33,7 @@ export default function SchedulerCard({ schedule }: Props) {
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [triggerStatus, setTriggerStatus] = useState<'idle' | 'success'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [operation, setOperation] = useState<'run' | 'test' | 'build'>('run');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -104,7 +105,11 @@ export default function SchedulerCard({ schedule }: Props) {
     e.stopPropagation();
     setTriggerLoading(true);
     setTriggerError(null);
-    fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/trigger`, { method: 'POST' })
+    fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/trigger`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operation: operation === 'run' ? '' : operation }),
+    })
       .then(async r => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
@@ -122,6 +127,9 @@ export default function SchedulerCard({ schedule }: Props) {
     setCancelDialogOpen(true);
   };
 
+  const triggerIdleLabel =
+    operation === 'test' ? 'Trigger test' : operation === 'build' ? 'Trigger build' : 'Trigger run';
+
   return (
     <>
       {cancelDialogOpen && createPortal(
@@ -136,7 +144,10 @@ export default function SchedulerCard({ schedule }: Props) {
         onClick={handleClick}
         role="button"
         tabIndex={0}
-        onKeyDown={e => e.key === 'Enter' && handleClick()}
+        // Navigate only when the card itself is focused. Restricting to
+        // currentTarget keeps Enter on a nested control (the operation select,
+        // the Trigger/Cancel buttons) from bubbling up and navigating away.
+        onKeyDown={e => { if (e.key === 'Enter' && e.target === e.currentTarget) handleClick(); }}
       >
         <div className="scheduler-card-header">
           <span className="schedule-name">{schedule.schedule_name}</span>
@@ -148,6 +159,19 @@ export default function SchedulerCard({ schedule }: Props) {
               {schedule.last_run_at && <>last run {formatTime(schedule.last_run_at)}</>}
             </span>
           )}
+          <div className="form-field" onClick={e => e.stopPropagation()}>
+            <label htmlFor={`op-${schedule.schedule_name}`}>Operation</label>
+            <select
+              id={`op-${schedule.schedule_name}`}
+              value={operation}
+              disabled={schedule.is_running || triggerLoading}
+              onChange={e => setOperation(e.target.value as 'run' | 'test' | 'build')}
+            >
+              <option value="run">Run</option>
+              <option value="test">Test</option>
+              <option value="build">Build</option>
+            </select>
+          </div>
           <button
             type="button"
             className={[
@@ -160,7 +184,7 @@ export default function SchedulerCard({ schedule }: Props) {
             onClick={handleTrigger}
             title={schedule.is_running ? 'A run is already active' : 'Trigger a full DAG run'}
           >
-            {triggerLoading ? 'Triggering…' : triggerStatus === 'success' ? 'Triggered' : 'Trigger run'}
+            {triggerLoading ? 'Triggering…' : triggerStatus === 'success' ? 'Triggered' : triggerIdleLabel}
           </button>
           {schedule.is_running && (
             <button

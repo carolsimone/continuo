@@ -102,6 +102,9 @@ func (stubScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domai
 func (stubScheduleAndRunLists) GetNodeAncestry(context.Context, string, int) ([]*domain.NodeAncestor, error) {
 	return nil, nil
 }
+func (stubScheduleAndRunLists) GetNode(context.Context, string, string, string) (*domain.NodeMeta, error) {
+	return nil, nil
+}
 
 // stubDriftAwareRuns satisfies grpcadapter.DriftAwareRunReader.
 type stubDriftAwareRuns struct{}

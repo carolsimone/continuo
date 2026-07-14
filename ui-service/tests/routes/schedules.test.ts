@@ -82,7 +82,7 @@ describe('POST /api/schedules/:name/trigger', () => {
     expect(res.status).toBe(200);
     expect(res.body.schedule_id).toBe('aaa-bbb-ccc');
     expect(mockTriggerSchedule).toHaveBeenCalledWith(
-      { schedule_name: 'hourly' },
+      { schedule_name: 'hourly', operation: '' },
       expect.any(Object),
       expect.any(Function)
     );
@@ -153,6 +153,23 @@ describe('POST /api/schedules/:name/trigger', () => {
     const res = await request(app).post('/api/schedules/hourly/trigger');
 
     expect(res.status).toBe(500);
+  });
+
+  it('forwards operation=test', async () => {
+    mockTriggerSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(null, { schedule_id: 's1' }));
+    const res = await request(app).post('/api/schedules/daily/trigger').send({ operation: 'test' });
+    expect(res.status).toBe(200);
+    expect(mockTriggerSchedule).toHaveBeenCalledWith(
+      { schedule_name: 'daily', operation: 'test' },
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it('rejects a bad operation with 400 and no gRPC call', async () => {
+    const res = await request(app).post('/api/schedules/daily/trigger').send({ operation: 'drop' });
+    expect(res.status).toBe(400);
+    expect(mockTriggerSchedule).not.toHaveBeenCalled();
   });
 });
 

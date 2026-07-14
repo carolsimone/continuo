@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { GrpcClient, userMetadata } from '../grpc-client';
 import { GrpcGraphClient } from '../grpc-graph-client';
 import { grpcToHttpStatus } from './grpc-status';
+import { parseOperation } from './operation';
 
 interface ProtoTimestamp {
   seconds: string;
@@ -78,8 +79,12 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
 
   // POST /api/schedules/:name/trigger — trigger a full DAG run
   router.post('/:name/trigger', (req, res) => {
+    const operation = parseOperation(req.body?.operation);
+    if (operation === null) {
+      return res.status(400).json({ error: 'operation must be one of "", run, test, build' });
+    }
     stateClient.triggerSchedule(
-      { schedule_name: req.params.name },
+      { schedule_name: req.params.name, operation },
       userMetadata(req),
       (err: any, response: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });

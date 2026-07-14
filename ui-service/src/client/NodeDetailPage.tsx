@@ -5,6 +5,12 @@ import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './node-helpers';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
 
+interface NodeMetaResponse {
+  node_type?: string;
+  test_count?: number;
+  test_count_known?: boolean;
+}
+
 function formatTime(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -79,6 +85,8 @@ export default function NodeDetailPage() {
   const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [runError, setRunError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [operation, setOperation] = useState<'run' | 'test' | 'build'>('run');
+  const [testCount, setTestCount] = useState<{ count: number; known: boolean } | null>(null);
 
   const parts = (fqn ?? '').split('.');
   const service = parts[0] ?? '';
@@ -95,13 +103,32 @@ export default function NodeDetailPage() {
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
+  useEffect(() => {
+    if (!service || !schema || !table) return;
+    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/meta`)
+      .then(r => (r.ok ? r.json() : null))
+      .then((m: NodeMetaResponse | null) => setTestCount(m && typeof m.test_count === 'number'
+        ? { count: m.test_count, known: Boolean(m.test_count_known) }
+        : null))
+      .catch(() => setTestCount(null));
+  }, [service, schema, table]);
+
+  // latestHasNoTests reflects the LATEST topology's test_count only. It gates the
+  // latest-mode trigger (which the backend evaluates against latest metadata) but
+  // NOT the old-snapshot path: a snapshot_of_run test is validated against the
+  // source run's own pinned test_count, which this page does not know, so testing
+  // an older version stays available and the backend's no_tests check is the
+  // backstop there.
+  const latestHasNoTests = testCount !== null && testCount.known && testCount.count === 0;
+
   const postRun = useCallback(async (body: object) => {
     setRunState('loading');
     setRunError(null);
     try {
+      const withOp = { ...body, operation: operation === 'run' ? '' : operation };
       const res = await fetch(
         `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
       );
       if (res.ok) {
         setRunState('success');
@@ -116,7 +143,7 @@ export default function NodeDetailPage() {
       setRunError('Request failed — please try again');
       setRunState('error');
     }
-  }, [service, schema, table, fetchRuns]);
+  }, [service, schema, table, fetchRuns, operation]);
 
   const handleRunLatest  = useCallback(() => postRun({}), [postRun]);
   const handlePickSource = useCallback((runId: string) => {
@@ -128,11 +155,21 @@ export default function NodeDetailPage() {
 
   const runLatestClass = ['btn', 'btn--secondary', runState === 'loading' ? 'is-loading' : '', runState === 'success' ? 'is-success' : ''].filter(Boolean).join(' ');
 
+  const runVerb =
+    operation === 'test' ? '🧪 Test this node'
+    : operation === 'build' ? '🔨 Build this node'
+    : '▶ Run this node';
+
+  // The latest-mode test trigger is the only one gated by latest metadata; the
+  // old-snapshot trigger is never blocked here (see latestHasNoTests).
+  const latestTestBlocked = operation === 'test' && latestHasNoTests;
+
   return (
     <div className="page">
       {pickerOpen && createPortal(
         <RunSourcePickerDialog
           runs={runs}
+          operation={operation}
           onPick={handlePickSource}
           onClose={() => setPickerOpen(false)}
         />,
@@ -147,14 +184,29 @@ export default function NodeDetailPage() {
       </header>
 
       <div className="page-action-row">
+        <div className="form-field">
+          <label htmlFor="node-operation">Operation</label>
+          <select
+            id="node-operation"
+            value={operation}
+            disabled={runState === 'loading'}
+            onChange={e => setOperation(e.target.value as 'run' | 'test' | 'build')}
+          >
+            <option value="run">Run</option>
+            <option value="test">Test</option>
+            <option value="build">Build</option>
+          </select>
+        </div>
         <button
           type="button"
           className={runLatestClass}
-          disabled={runState === 'loading' || runState === 'success'}
+          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked}
           onClick={handleRunLatest}
-          title="Run only this node against the latest topology"
+          title={latestTestBlocked
+            ? 'The latest version of this node has no tests'
+            : 'Run only this node against the latest topology'}
         >
-          {runState === 'loading' ? 'Triggering…' : runState === 'success' ? 'Triggered' : '▶ Run this node'}
+          {runState === 'loading' ? 'Triggering…' : runState === 'success' ? 'Triggered' : runVerb}
         </button>
         <button
           type="button"
@@ -166,6 +218,12 @@ export default function NodeDetailPage() {
           ⏱ Run with old snapshot…
         </button>
       </div>
+
+      {latestTestBlocked && (
+        <div className="info-strip info-strip--info">
+          The latest version of this node has no tests. Run with an old snapshot to test a version that did, or choose another operation.
+        </div>
+      )}
 
       {runState === 'error' && runError && (
         <div className="info-strip info-strip--error">{runError}</div>

@@ -70,7 +70,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Category | Owned / used surface |
 |---|---|
 | Durable state | Neo4j `Table` nodes (+ `image_tag`, `topology_generation` props), `Run` nodes (+ `topology_generation`, `service_metadata` props), `DEPENDS_ON` edges, `EXECUTES` edges (+ `image_tag` prop); Neo4j `:TopologyRoot {id:'singleton'}` (generation + service_metadata); Postgres `topology_state`, `message_processing`, `orchestrator_outbox` |
-| gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` |
+| gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts`, `GetNode` |
 | Redis consumes | `node.updated:v1`, `release.promoted:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1` |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1` (SKIPPED on cascade-skip of a downstream node) |
 | Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `CancelSchedule` (watchdog only) |
@@ -160,7 +160,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | gRPC server methods owned | none |
 | Redis consumes | none (no stream consumption; session keys only) |
 | Redis produces | none (no stream production; session keys only) |
-| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph`; `agent-runner`: `AgentChat.Chat` (bidirectional streaming, `/ws/chat` relay, operator-only, feature-flagged by `CHAT_BRIDGE_ENABLED`); `remediation-agent`: `ListProposals`, `GetProposal`, `BeginPullRequest`, `RecordPullRequest`, `FailPullRequest` |
+| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetNode`; `agent-runner`: `AgentChat.Chat` (bidirectional streaming, `/ws/chat` relay, operator-only, feature-flagged by `CHAT_BRIDGE_ENABLED`); `remediation-agent`: `ListProposals`, `GetProposal`, `BeginPullRequest`, `RecordPullRequest`, `FailPullRequest` |
 | External write | GitHub App API — create branch + commit file + open pull request on `continuo-dbt-demo` (operator-only, one repo, `contents:write` + `pull-requests:write`) |
 
 ## `agent-runner`

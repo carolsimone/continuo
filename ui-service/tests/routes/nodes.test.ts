@@ -8,6 +8,7 @@ const mockListNodeRuns = vi.fn();
 const mockTriggerSingleNodeRun = vi.fn();
 const mockListNodes = vi.fn();
 const mockListNodeNames = vi.fn();
+const mockGetNode = vi.fn();
 
 const mockStateClient = {
   listNodeRuns: mockListNodeRuns,
@@ -16,10 +17,12 @@ const mockStateClient = {
   listNodeNames: mockListNodeNames,
 };
 
+const mockGraphClient = { getNode: mockGetNode };
+
 function makeApp() {
   const app = express();
   app.use(express.json());
-  app.use('/api/nodes', createNodesRouter(mockStateClient as any));
+  app.use('/api/nodes', createNodesRouter(mockStateClient as any, mockGraphClient as any));
   return app;
 }
 
@@ -29,6 +32,7 @@ describe('nodes router', () => {
     mockTriggerSingleNodeRun.mockReset();
     mockListNodes.mockReset();
     mockListNodeNames.mockReset();
+    mockGetNode.mockReset();
   });
 
   it('GET /:svc/:schema/:table/runs returns parsed rows', async () => {
@@ -75,7 +79,7 @@ describe('nodes router', () => {
     expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
       {
         service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
-        metadata_source: 'latest', source_run_id: '',
+        metadata_source: 'latest', source_run_id: '', operation: '',
       },
       expect.any(Object),
       expect.any(Function),
@@ -177,5 +181,45 @@ describe('nodes router', () => {
     expect(res.status).toBe(200);
     expect(res.body.names).toEqual(['customers', 'orders']);
     expect(mockListNodeNames).toHaveBeenCalledWith({ service_name: 'svc' }, expect.any(Function));
+  });
+
+  it('GET /:svc/:schema/:table/meta maps node metadata', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'dbt-model', test_count: 0, test_count_known: true }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+    expect(mockGetNode).toHaveBeenCalledWith(
+      { service_name: 'svc', schema_name: 'schema', table_name: 'tbl' },
+      expect.any(Function),
+    );
+  });
+
+  it('GET /meta maps gRPC NOT_FOUND to 404', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb({ code: grpc.status.NOT_FOUND, message: 'node missing' }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain('node missing');
+  });
+
+  it('POST /run forwards operation=build', async () => {
+    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+      cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
+    );
+    await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'build' });
+    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'build', metadata_source: 'latest' }),
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it('POST /run rejects a bad operation with 400', async () => {
+    const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'nope' });
+    expect(res.status).toBe(400);
+    expect(mockTriggerSingleNodeRun).not.toHaveBeenCalled();
   });
 });

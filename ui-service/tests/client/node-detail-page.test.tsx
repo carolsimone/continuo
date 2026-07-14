@@ -69,7 +69,7 @@ describe('NodeDetailPage', () => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const postCall = calls.find(c => String(c[0]).includes('/api/nodes/svc/schema/tbl/run') && c[1]?.method === 'POST');
       expect(postCall).toBeDefined();
-      expect(postCall![1]).toMatchObject({ method: 'POST', body: '{}' });
+      expect(postCall![1]).toMatchObject({ method: 'POST', body: JSON.stringify({ operation: '' }) });
     });
   });
 
@@ -117,8 +117,100 @@ describe('NodeDetailPage', () => {
       expect(postCall).toBeDefined();
       expect(postCall![1]).toMatchObject({
         method: 'POST',
-        body: JSON.stringify({ source_run_id: 'pick-me' }),
+        body: JSON.stringify({ source_run_id: 'pick-me', operation: '' }),
       });
+    });
+  });
+
+  it('latest button verb tracks the operation select and POSTs the operation', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
+      return jsonResp({ runs: [] });
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'build' } });
+    const btn = await screen.findByRole('button', { name: /build this node/i });
+    fireEvent.click(btn);
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
+      const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
+      expect(post![1]!.body).toBe(JSON.stringify({ operation: 'build' }));
+    });
+  });
+
+  it('gates only the latest trigger (not the option or old-snapshot) when the latest topology has known-zero tests', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+      return jsonResp({ runs: [] });
+    });
+    renderPage();
+    const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
+    // Test stays selectable — an old-snapshot test may still be valid.
+    expect((screen.getByRole('option', { name: /test/i }) as HTMLOptionElement).disabled).toBe(false);
+
+    fireEvent.change(select, { target: { value: 'test' } });
+    // The latest "Test this node" button is disabled and a hint appears...
+    await waitFor(() => expect(screen.getByRole('button', { name: /test this node/i })).toBeDisabled());
+    expect(document.querySelector('.info-strip--info')).toBeInTheDocument();
+    // ...but the old-snapshot trigger stays available.
+    expect(screen.getByRole('button', { name: /run with old snapshot/i })).not.toBeDisabled();
+  });
+
+  it('allows an old-snapshot test even when the latest topology has no tests', async () => {
+    // Regression: the latest test_count must NOT gate the snapshot_of_run path.
+    // The backend validates a snapshot_of_run test against the source run's own
+    // pinned test_count, so an old-snapshot test stays available (and POSTs
+    // operation:test) even when the latest node version has zero tests.
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+      return jsonResp({ runs: [mkRun({ run_id: 'pick-me' })] });
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
+    const oldSnap = await screen.findByRole('button', { name: /run with old snapshot/i });
+    expect(oldSnap).not.toBeDisabled();
+    fireEvent.click(oldSnap);
+    fireEvent.click(await screen.findByRole('button', { name: /pick-me/ }));
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
+      const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
+      expect(post![1]!.body).toBe(JSON.stringify({ source_run_id: 'pick-me', operation: 'test' }));
+    });
+  });
+
+  it('leaves the latest test trigger enabled and shows no hint when test_count is unknown', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: false });
+      return jsonResp({ runs: [] });
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
+    const btn = await screen.findByRole('button', { name: /test this node/i });
+    expect(btn).not.toBeDisabled();
+    expect(document.querySelector('.info-strip--info')).not.toBeInTheDocument();
+  });
+
+  it('picking an old snapshot POSTs the selected operation alongside source_run_id', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
+      return jsonResp({ runs: [mkRun({ run_id: 'pick-me' })] });
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
+    fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /pick-me/ }));
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
+      const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
+      expect(post![1]!.body).toBe(JSON.stringify({ source_run_id: 'pick-me', operation: 'test' }));
     });
   });
 });
