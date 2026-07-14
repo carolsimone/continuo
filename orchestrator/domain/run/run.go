@@ -14,7 +14,11 @@ type Run struct {
 	TerminalCount int
 	FailedCount   int
 	Version       int
-	nodes         map[NodeKey]*RunNode
+	// Operation is the run's operation ("" | "test" | "build"), set from the
+	// :Run node on rehydrate. It is stamped onto every NodeUnblocked so the
+	// downstream unblock dispatch runs the same dbt verb as the frontier.
+	Operation string
+	nodes     map[NodeKey]*RunNode
 }
 
 // NewRun constructs a Run aggregate from its initial node set.
@@ -179,6 +183,7 @@ func (r *Run) checkUnblocked(from NodeKey) []DomainEvent {
 				NodeType:        downstream.NodeType,
 				ManifestVersion: downstream.ManifestVersion,
 				ImageTag:        downstream.ImageTag,
+				Operation:       r.Operation,
 			})
 		}
 	}

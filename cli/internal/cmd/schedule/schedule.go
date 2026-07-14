@@ -29,6 +29,7 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	}
 	cmd.AddCommand(NewTriggerCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewTestCommand(defaultFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewBuildCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewListCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewStatusCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewGraphCommand(defaultOrchestratorFactory, cfg, stdout, stderr))

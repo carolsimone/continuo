@@ -34,6 +34,10 @@ func (f *fakeStateList) TriggerScheduleTest(_ context.Context, _ string) (*state
 	panic("TriggerScheduleTest should not be called in list tests")
 }
 
+func (f *fakeStateList) TriggerScheduleBuild(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
+	panic("TriggerScheduleBuild should not be called in list tests")
+}
+
 func (f *fakeStateList) ListAllSchedules(_ context.Context) (*statev1.ListAllSchedulesResponse, error) {
 	return f.resp, f.err
 }
@@ -56,6 +60,10 @@ func (f *fakeStateList) TriggerNodeRun(_ context.Context, _, _, _, _ string) (*s
 
 func (f *fakeStateList) TriggerNodeTest(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	panic("TriggerNodeTest should not be called in schedule tests")
+}
+
+func (f *fakeStateList) TriggerNodeBuild(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	panic("TriggerNodeBuild should not be called in schedule tests")
 }
 
 func (f *fakeStateList) Close() error { return nil }

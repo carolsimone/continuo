@@ -45,6 +45,7 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 		Kind:                "rerun",
 		MessageProcessingID: msgProcID,
 		Projection:          projection,
+		Operation:           "build",
 	})
 	require.NoError(t, err)
 
@@ -68,6 +69,7 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 	var qevt domain.NodeReadyForExecution
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
 	assert.Equal(t, "tgt", qevt.TableName)
+	assert.Equal(t, "build", qevt.Operation, "frontier query.model carries the derived run's operation")
 }
 
 func TestDispatchDerivedRun_PreservesTerminalInherits(t *testing.T) {

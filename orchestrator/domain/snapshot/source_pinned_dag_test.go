@@ -238,12 +238,12 @@ func TestSourcePinnedDAG_SourceRunIsTest_ReturnsErrRerunOfTestUnsupported(t *tes
 	srcID := uuid.New()
 	failed := snapshot.FQN{Service: "svc", Schema: "sch", Table: "f", ScheduleName: "x"}
 	r := &fakeTopologyReader{
-		SourceRunOperationByID: map[string]string{srcID.String(): "test"},
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {
 				failed: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
 			},
 		},
+		SourceRunOperationByID: map[string]string{srcID.String(): "test"},
 	}
 	_, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
 	if !errors.Is(err, snapshot.ErrRerunOfTestUnsupported) {
@@ -255,14 +255,13 @@ func TestSourcePinnedDAG_SourceRunIsRun_ProceedsNormally(t *testing.T) {
 	srcID := uuid.New()
 	failed := snapshot.FQN{Service: "svc", Schema: "sch", Table: "f", ScheduleName: "x"}
 	r := &fakeTopologyReader{
-		SourceRunOperationByID: map[string]string{srcID.String(): "run"},
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {
 				failed: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
 			},
 		},
 	}
-	got, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
+	got, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "run"})
 	if err != nil {
 		t.Fatalf("unexpected error for run-operation source: %v", err)
 	}

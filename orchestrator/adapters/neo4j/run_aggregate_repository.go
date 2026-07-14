@@ -411,6 +411,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 	}
 
 	rebuilt := domainRun.NewRun(runID, scheduleName, nodes)
+	rebuilt.Operation = operation
 	rebuilt.TotalNodes = totalNodes
 	rebuilt.TerminalCount = terminalCount
 	rebuilt.FailedCount = failedCount

@@ -22,12 +22,19 @@ type fakeSnapshotService struct {
 	projection []snapshot.TaskProjection
 	err        error
 
+	sourceOp    string
+	sourceOpErr error
+
 	capturedParams snapshot.Params
 }
 
 func (f *fakeSnapshotService) Snapshot(_ context.Context, p snapshot.Params) ([]snapshot.TaskProjection, error) {
 	f.capturedParams = p
 	return f.projection, f.err
+}
+
+func (f *fakeSnapshotService) SourceOperation(_ context.Context, _ string) (string, error) {
+	return f.sourceOp, f.sourceOpErr
 }
 
 // TestHandleSchedulerStarted_InvalidNodeType_FailsRun verifies that a dispatch

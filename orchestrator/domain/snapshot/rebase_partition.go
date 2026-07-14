@@ -23,6 +23,11 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		return nil, fmt.Errorf("RebasePartition: ScheduleName required")
 	}
 
+	// Reject rebase of a TEST run. The source operation is read authoritatively
+	// from the reader (not from a caller-populated p.Operation) so this guard is
+	// self-contained: it cannot be silently bypassed by a caller that forgets to
+	// populate Operation. A test run's projection carries no per-task operation,
+	// so rebasing it would re-issue dbt run/test incoherently.
 	if op, err := r.SourceRunOperation(ctx, p.SourceRunID.String()); err != nil {
 		return nil, fmt.Errorf("RebasePartition: source operation: %w", err)
 	} else if op == string(pkgModel.OperationTest) {

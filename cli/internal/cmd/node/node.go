@@ -25,6 +25,7 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(NewHistoryCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewTriggerCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewTestCommand(defaultFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewBuildCommand(defaultFactory, cfg, stdout, stderr))
 	return cmd
 }
 

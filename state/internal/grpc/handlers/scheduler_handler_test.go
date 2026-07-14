@@ -356,6 +356,27 @@ func TestTriggerSchedule_Operation_ThreadsOntoRunStarted(t *testing.T) {
 		assert.Equal(t, model.OperationTest, started.Operation)
 	})
 
+	t.Run("build operation threads through", func(t *testing.T) {
+		catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
+		runRepo := &activateFakeRunRepo{hasActive: false}
+		outbox := &activateFakeOutbox{}
+		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+
+		activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+		h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
+
+		resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
+			ScheduleName: "daily",
+			Operation:    "build",
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, resp.ScheduleId)
+		require.Len(t, outbox.appended, 1)
+		started, ok := outbox.appended[0].(run.RunStarted)
+		require.True(t, ok, "expected RunStarted, got %T", outbox.appended[0])
+		assert.Equal(t, model.OperationBuild, started.Operation)
+	})
+
 	t.Run("absent operation defaults to run", func(t *testing.T) {
 		catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
 		runRepo := &activateFakeRunRepo{hasActive: false}
@@ -395,29 +416,6 @@ func TestTriggerSchedule_InvalidOperation(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.Empty(t, outbox.appended, "no run should be created on invalid operation")
-}
-
-// TestTriggerSchedule_BuildNotSupported verifies that operation="build" is
-// rejected before the activation use case runs: OperationBuild parses
-// successfully (the executor resolver branch remains as scaffolding) but has
-// no CLI surface, no tests, and no e2e coverage, so it must not be
-// triggerable in production yet.
-func TestTriggerSchedule_BuildNotSupported(t *testing.T) {
-	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
-	runRepo := &activateFakeRunRepo{hasActive: false}
-	outbox := &activateFakeOutbox{}
-	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
-
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
-	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
-
-	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
-		ScheduleName: "daily",
-		Operation:    "build",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-	assert.Empty(t, outbox.appended, "no run should be created when operation is build")
 }
 
 func TestTriggerSchedule_AlreadyRunning(t *testing.T) {

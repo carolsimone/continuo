@@ -61,6 +61,20 @@ func (s *Service) Snapshot(ctx context.Context, p snapshot.Params) ([]snapshot.T
 	return projection, nil
 }
 
+// SourceOperation reads the operation stamped on a source run's :Run node.
+func (s *Service) SourceOperation(ctx context.Context, sourceRunID string) (string, error) {
+	var op string
+	err := s.runner.Run(ctx, func(r snapshot.TopologyReader, _ snapshot.SnapshotWriter) error {
+		v, rerr := r.SourceRunOperation(ctx, sourceRunID)
+		if rerr != nil {
+			return rerr
+		}
+		op = v
+		return nil
+	})
+	return op, err
+}
+
 // scheduleCancelled reports whether the run's schedule is already in the
 // cancelled_schedules guard. run_id is the schedule_id; when it is set, the
 // snapshot stamps the :Run terminal on create so a quick-cancelled run never

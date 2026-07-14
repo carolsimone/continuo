@@ -65,6 +65,18 @@ func (f *fakeCancelledRepo) DeleteExpired(context.Context, time.Duration) (int64
 	return 0, nil
 }
 
+// opStubReader satisfies snapshot.TopologyReader via an embedded (nil)
+// interface; only SourceRunOperation is exercised by these tests.
+type opStubReader struct {
+	snapshot.TopologyReader
+	op  string
+	err error
+}
+
+func (r opStubReader) SourceRunOperation(context.Context, string) (string, error) {
+	return r.op, r.err
+}
+
 func newSvc(reader snapshot.TopologyReader, writer snapshot.SnapshotWriter) *snapshotsvc.Service {
 	return newSvcCancel(reader, writer, &fakeCancelledRepo{})
 }
@@ -170,6 +182,17 @@ func TestService_NotCancelled_LeavesCancelledFalse(t *testing.T) {
 	}
 	if w.gotParams.Cancelled {
 		t.Error("expected Params.Cancelled=false for a non-cancelled schedule")
+	}
+}
+
+func TestService_SourceOperation_ReadsSourceRunOperation(t *testing.T) {
+	svc := newSvc(opStubReader{op: "build"}, &fakeWriter{})
+	got, err := svc.SourceOperation(context.Background(), uuid.New().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "build" {
+		t.Errorf("got %q, want build", got)
 	}
 }
 

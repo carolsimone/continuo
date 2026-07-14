@@ -22,6 +22,8 @@ type StateClient interface {
 	ListNodeRuns(ctx context.Context, service, schema, table string, limit int32) (*statev1.ListNodeRunsResponse, error)
 	TriggerNodeRun(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeTest(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeBuild(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
+	TriggerScheduleBuild(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error)
 	Close() error
 }
 
@@ -46,6 +48,10 @@ func (c *stateGRPCClient) TriggerSchedule(ctx context.Context, scheduleName stri
 
 func (c *stateGRPCClient) TriggerScheduleTest(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error) {
 	return c.api.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: scheduleName, Operation: "test"})
+}
+
+func (c *stateGRPCClient) TriggerScheduleBuild(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error) {
+	return c.api.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: scheduleName, Operation: "build"})
 }
 
 func (c *stateGRPCClient) ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error) {
@@ -108,6 +114,20 @@ func (c *stateGRPCClient) TriggerNodeTest(ctx context.Context, service, schema, 
 		MetadataSource: "latest",
 		SourceRunId:    "",
 		Operation:      "test",
+	})
+}
+
+func (c *stateGRPCClient) TriggerNodeBuild(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	if actor != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, userIDMetadataKey, actor)
+	}
+	return c.api.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    service,
+		SchemaName:     schema,
+		TableName:      table,
+		MetadataSource: "latest",
+		SourceRunId:    "",
+		Operation:      "build",
 	})
 }
 
