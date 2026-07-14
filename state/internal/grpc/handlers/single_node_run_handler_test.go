@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -167,6 +168,32 @@ func TestSingleNodeRunHandler_Operation_HappyPath(t *testing.T) {
 	})
 }
 
+func TestSingleNodeRunHandler_Operation_Build(t *testing.T) {
+	fx := setupSingleNodeRunFixture(t)
+
+	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    "svcA",
+		SchemaName:     "public",
+		TableName:      "users",
+		MetadataSource: "latest",
+		Operation:      "build",
+	})
+	require.NoError(t, err)
+
+	scheduleID := uuid.MustParse(resp.RunId)
+	found := getOutboxByAggregate(t, fx.DB, scheduleID)
+	require.NotNil(t, found, "expected outbox entry for schedule %s", scheduleID)
+
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(found.Payload, &payload))
+	require.Equal(t, string(model.OperationBuild), payload["operation"])
+
+	t.Cleanup(func() {
+		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+	})
+}
+
 func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 
@@ -271,7 +298,6 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 		{"empty table", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "", MetadataSource: "latest"}, codes.InvalidArgument},
 		{"unknown source", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "bogus"}, codes.InvalidArgument},
 		{"invalid operation", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "latest", Operation: "bogus"}, codes.InvalidArgument},
-		{"build operation not supported", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "latest", Operation: "build"}, codes.InvalidArgument},
 		{"latest with src", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "latest", SourceRunId: uuid.NewString()}, codes.InvalidArgument},
 		{"stale no src", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "snapshot_of_run", SourceRunId: ""}, codes.InvalidArgument},
 		{"stale bad uuid", &statev1.TriggerSingleNodeRunRequest{ServiceName: "x", SchemaName: "s", TableName: "t", MetadataSource: "snapshot_of_run", SourceRunId: "not-a-uuid"}, codes.InvalidArgument},
