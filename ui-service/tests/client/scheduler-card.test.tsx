@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import SchedulerCard from '../../src/client/SchedulerCard';
 import { ScheduleSummary } from '../../src/client/types';
@@ -60,6 +60,33 @@ describe('SchedulerCard — trigger button uses .btn', () => {
     expect(btn.className).toMatch(/\bbtn--secondary\b/);
     expect(btn.className).not.toMatch(/\btrigger-run-btn\b/);
     expect(btn).toHaveTextContent('Trigger run');
+  });
+});
+
+describe('SchedulerCard — operation selector', () => {
+  it('trigger button verb tracks the operation select, POST carries operation', async () => {
+    const handler = installFetch();
+    renderCard(baseSchedule({ is_running: false, last_run_id: 'r1' }));
+
+    const btn = screen.getByTitle('Trigger a full DAG run');
+    expect(btn).toHaveTextContent(/trigger run/i);
+
+    const sel = screen.getByLabelText(/operation/i);
+    fireEvent.change(sel, { target: { value: 'build' } });
+
+    expect(btn).toHaveTextContent(/trigger build/i);
+
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      const triggerCall = handler.mock.calls.find(([input]) =>
+        String(input).includes('/trigger'),
+      );
+      expect(triggerCall).toBeDefined();
+      const [, init] = triggerCall as [RequestInfo, RequestInit];
+      const body = JSON.parse(String(init?.body));
+      expect(body).toMatchObject({ operation: 'build' });
+    });
   });
 });
 
