@@ -20,6 +20,11 @@ import (
 // use and LLM token overruns.
 const maxSourceBytes = 1 << 20 // 1 MiB
 
+// maxCommitFilePages bounds how many pages of a commit's file list CommitFileDiff
+// will walk while following the GitHub Link header, so a pathological commit
+// cannot loop unboundedly.
+const maxCommitFilePages = 30
+
 type GitHub struct {
 	baseURL string
 	token   string
@@ -121,12 +126,38 @@ func (g *GitHub) ListDir(ctx context.Context, repo, ref, dir string) ([]string, 
 // CommitFileDiff returns the unified patch for path as it changed in commit sha,
 // read from the GitHub commit endpoint. A 404 (unknown commit or repo), a commit
 // that did not touch path, or a file GitHub returns without a patch all map to
-// ErrSourceNotFound so the caller can skip that upstream without failing.
+// ErrSourceNotFound so the caller can skip that upstream without failing. A
+// commit that touches more than one page of files paginates via the Link header;
+// each page is walked (following rel="next") until the target file is found or
+// the pages are exhausted, so a target on a later page is not falsely reported as
+// not found.
 func (g *GitHub) CommitFileDiff(ctx context.Context, repo, sha, path string) (string, error) {
 	u := fmt.Sprintf("%s/repos/%s/commits/%s", g.baseURL, repo, sha)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	for page := 0; page < maxCommitFilePages && u != ""; page++ {
+		patch, found, next, err := g.commitFilesPage(ctx, u, repo, sha, path)
+		if err != nil {
+			return "", err
+		}
+		if found {
+			if patch == "" {
+				return "", ports.ErrSourceNotFound
+			}
+			return patch, nil
+		}
+		u = next
+	}
+	return "", ports.ErrSourceNotFound
+}
+
+// commitFilesPage fetches one page of a commit's file list from url and looks for
+// path. found reports whether path appears on this page (patch may still be empty
+// if GitHub returned the file without a diff); next is the rel="next" Link URL, or
+// "" when there are no more pages. A 404 maps to ErrSourceNotFound; any other
+// non-2xx or transport error is returned so the caller redelivers or degrades.
+func (g *GitHub) commitFilesPage(ctx context.Context, url, repo, sha, path string) (patch string, found bool, next string, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("build github request: %w", err)
+		return "", false, "", fmt.Errorf("build github request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -135,15 +166,15 @@ func (g *GitHub) CommitFileDiff(ctx context.Context, repo, sha, path string) (st
 	}
 	resp, err := g.hc.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("github commit %s@%s: %w", path, sha, err)
+		return "", false, "", fmt.Errorf("github commit %s@%s: %w", path, sha, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		return "", ports.ErrSourceNotFound
+		return "", false, "", ports.ErrSourceNotFound
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("github commit %s@%s: status %d: %s", path, sha, resp.StatusCode, truncate(errBody, 512))
+		return "", false, "", fmt.Errorf("github commit %s@%s: status %d: %s", path, sha, resp.StatusCode, truncate(errBody, 512))
 	}
 	var commit struct {
 		Files []struct {
@@ -152,17 +183,28 @@ func (g *GitHub) CommitFileDiff(ctx context.Context, repo, sha, path string) (st
 		} `json:"files"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSourceBytes+1)).Decode(&commit); err != nil {
-		return "", fmt.Errorf("github commit %s@%s: decode: %w", path, sha, err)
+		return "", false, "", fmt.Errorf("github commit %s@%s: decode: %w", path, sha, err)
 	}
 	for _, f := range commit.Files {
 		if f.Filename == path {
-			if f.Patch == "" {
-				return "", ports.ErrSourceNotFound
-			}
-			return f.Patch, nil
+			return f.Patch, true, "", nil
 		}
 	}
-	return "", ports.ErrSourceNotFound
+	return "", false, nextLink(resp.Header.Get("Link")), nil
+}
+
+// nextLink extracts the rel="next" URL from a GitHub Link header, or "" if there
+// is none. The header form is: <url>; rel="next", <url>; rel="last".
+func nextLink(header string) string {
+	for _, part := range strings.Split(header, ",") {
+		segs := strings.SplitN(part, ";", 2)
+		if len(segs) < 2 || strings.TrimSpace(segs[1]) != `rel="next"` {
+			continue
+		}
+		url := strings.TrimSpace(segs[0])
+		return strings.TrimSuffix(strings.TrimPrefix(url, "<"), ">")
+	}
+	return ""
 }
 
 func truncate(b []byte, n int) string {

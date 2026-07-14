@@ -198,3 +198,55 @@ func TestCommitFileDiff_EmptyPatch_ErrSourceNotFound(t *testing.T) {
 		t.Fatalf("err = %v, want ErrSourceNotFound", err)
 	}
 }
+
+func TestCommitFileDiff_FollowsPaginationToLaterPage(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"files":[{"filename":"models/target.sql","patch":"@@ found @@"}]}`))
+			return
+		}
+		// First page: target absent, point to page 2 via the Link header.
+		w.Header().Set("Link", "<"+srv.URL+"/repos/o/r/commits/sha?page=2>; rel=\"next\"")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"models/other.sql","patch":"@@ x @@"}]}`))
+	}))
+	defer srv.Close()
+
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	patch, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/target.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch != "@@ found @@" {
+		t.Fatalf("patch = %q, want the second-page patch", patch)
+	}
+}
+
+func TestCommitFileDiff_PaginationExhaustedIsNotFound(t *testing.T) {
+	var srv *httptest.Server
+	pages := 0
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		w.Header().Set("Content-Type", "application/json")
+		// The first page links to a "last" page; the last page carries no next
+		// link, so the walk terminates without finding the target.
+		if r.URL.Query().Get("page") != "last" {
+			w.Header().Set("Link", "<"+srv.URL+"/repos/o/r/commits/sha?page=last>; rel=\"next\"")
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"models/other.sql","patch":"@@ x @@"}]}`))
+	}))
+	defer srv.Close()
+
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	_, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/target.sql")
+	if !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound", err)
+	}
+	if pages < 2 {
+		t.Fatalf("expected pagination to be followed, got %d page(s)", pages)
+	}
+}

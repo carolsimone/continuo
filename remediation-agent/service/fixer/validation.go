@@ -23,14 +23,18 @@ const (
 // of the most-recently-changed upstream ancestors. Ancestors arrive already
 // ordered most-recently-changed first. Only an ancestor that carries a stamped
 // commit (i.e. changed in some release), a repo, a file path, and a known
-// service-to-repo-path mapping is eligible; at most maxUpstreamDiffs are fetched.
-// Any per-ancestor read error is logged and skipped, and each diff is truncated
-// to maxUpstreamDiffBytes. A whole failure yields an empty slice, leaving the
-// prompt at its metadata-only content.
+// service-to-repo-path mapping is eligible. At most maxUpstreamDiffs eligible
+// ancestors are attempted — the cap counts fetch attempts, not successes, so a
+// GitHub outage over a wide ancestry cannot issue an unbounded number of calls.
+// Each diff is sanitized (so a secret in a patched line does not leak to the LLM)
+// and then truncated to maxUpstreamDiffBytes. A per-ancestor read error is logged
+// and skipped; a whole failure yields an empty slice, leaving the prompt at its
+// metadata-only content.
 func gatherUpstreamDiffs(ctx context.Context, svc Services, ancestors []prompt.Ancestor) []prompt.UpstreamDiff {
 	out := make([]prompt.UpstreamDiff, 0, maxUpstreamDiffs)
+	attempts := 0
 	for _, a := range ancestors {
-		if len(out) >= maxUpstreamDiffs {
+		if attempts >= maxUpstreamDiffs {
 			break
 		}
 		if a.LastCommitSHA == "" || a.LastRepo == "" || a.FilePath == "" {
@@ -41,6 +45,7 @@ func gatherUpstreamDiffs(ctx context.Context, svc Services, ancestors []prompt.A
 			continue
 		}
 		fullPath := path.Join(prefix, a.FilePath)
+		attempts++
 		diff, err := svc.Source.CommitFileDiff(ctx, a.LastRepo, a.LastCommitSHA, fullPath)
 		if err != nil {
 			svc.Logger.Warn("upstream diff unavailable; skipping ancestor",
@@ -50,7 +55,7 @@ func gatherUpstreamDiffs(ctx context.Context, svc Services, ancestors []prompt.A
 		out = append(out, prompt.UpstreamDiff{
 			NodeID:      a.NodeID,
 			ServiceName: a.ServiceName,
-			Diff:        truncateDiff(diff, maxUpstreamDiffBytes),
+			Diff:        truncateDiff(svc.Sanitizer.Sanitize(diff), maxUpstreamDiffBytes),
 		})
 	}
 	return out

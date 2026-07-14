@@ -382,3 +382,53 @@ func TestValidation_UpstreamDiffs_BestEffortOnError(t *testing.T) {
 		t.Fatalf("failed diff fetch must not add a diff block:\n%s", llm.requests[0].User)
 	}
 }
+
+// TestValidation_UpstreamDiffs_CapsAttemptsOnError verifies the five-fetch cap
+// counts attempts, not successes: when every eligible ancestor's diff read fails,
+// the loop still issues at most maxUpstreamDiffs CommitFileDiff calls rather than
+// one per ancestor. This bounds the blast radius of a GitHub outage over a wide
+// ancestry on a serial consumer.
+func TestValidation_UpstreamDiffs_CapsAttemptsOnError(t *testing.T) {
+	src := &fakeSource{content: "SELECT 0 -- original", diffErr: fmt.Errorf("github 503")}
+	var ancestors []prompt.Ancestor
+	for i := 0; i < 8; i++ {
+		ancestors = append(ancestors, prompt.Ancestor{
+			NodeID: fmt.Sprintf("up.%d", i), ServiceName: "up-svc", LastCommitSHA: "s",
+			LastRepo: "o/up-repo", FilePath: fmt.Sprintf("models/up%d.sql", i), Depth: 1,
+		})
+	}
+	svc := validationSvc(ancestors, src)
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
+		t.Fatal(err)
+	}
+	if len(src.diffPaths) != maxUpstreamDiffs {
+		t.Fatalf("attempted %d fetches on all-error ancestry, want cap of %d", len(src.diffPaths), maxUpstreamDiffs)
+	}
+}
+
+// TestValidation_UpstreamDiffs_SanitizesPatch verifies the upstream patch is run
+// through the LogSanitizer before it is embedded in the prompt, so a secret in a
+// patched line is redacted rather than sent to the external LLM.
+func TestValidation_UpstreamDiffs_SanitizesPatch(t *testing.T) {
+	llm := &fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+	}}
+	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ -1 +1 @@\n-old\n+password = SEKRET"}
+	svc := validationSvc([]prompt.Ancestor{
+		{NodeID: "up.node", ServiceName: "up-svc", LastCommitSHA: "upsha", LastRepo: "o/up-repo", FilePath: "models/up.sql", Depth: 1},
+	}, src)
+	svc.LLM = llm
+	svc.Sanitizer = redactingSanitizer{secret: "SEKRET", marker: "[redacted]"}
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(llm.requests[0].User, "SEKRET") {
+		t.Fatalf("unsanitized secret leaked into the prompt:\n%s", llm.requests[0].User)
+	}
+	if !strings.Contains(llm.requests[0].User, "[redacted]") {
+		t.Fatalf("sanitized marker missing from the embedded diff:\n%s", llm.requests[0].User)
+	}
+}
