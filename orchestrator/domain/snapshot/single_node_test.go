@@ -97,10 +97,11 @@ func TestSingleNode_LatestMode_TestOperation_ZeroTests_ReturnsErrNoTests(t *test
 	}
 }
 
-// Graceful degradation: topology written before test_count existed has the
-// property absent (TestCountKnown == false). Absent must NOT gate the test
-// operation — dbt just no-ops if the model truly has no tests.
-func TestSingleNode_LatestMode_TestOperation_TestCountAbsent_DoesNotGate(t *testing.T) {
+// A node whose test_count is absent (TestCountKnown == false — topology written
+// before test_count capture) has no known tests, so a test operation is gated
+// with ErrNoTests: we never dispatch a `dbt test` we cannot confirm has tests.
+// A re-release backfills a concrete test_count and makes such a node runnable.
+func TestSingleNode_LatestMode_TestOperation_TestCountAbsent_ReturnsErrNoTests(t *testing.T) {
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
@@ -108,12 +109,9 @@ func TestSingleNode_LatestMode_TestOperation_TestCountAbsent_DoesNotGate(t *test
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
-	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test"})
-	if err != nil {
-		t.Fatalf("got err %v, want nil (absent test_count must not gate)", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("len=%d, want 1", len(got))
+	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test"})
+	if !errors.Is(err, snapshot.ErrNoTests) {
+		t.Fatalf("got %v, want ErrNoTests (absent test_count must gate)", err)
 	}
 }
 
@@ -166,9 +164,10 @@ func TestSingleNode_SnapshotOfRunMode_TestOperation_ZeroTests_ReturnsErrNoTests(
 	}
 }
 
-// Graceful degradation for the snapshot_of_run mode: absent test_count on the
-// source :EXECUTES-pinned row must not gate.
-func TestSingleNode_SnapshotOfRunMode_TestOperation_TestCountAbsent_DoesNotGate(t *testing.T) {
+// The snapshot_of_run mode gates identically: an absent test_count on the
+// source :EXECUTES-pinned row has no known tests, so a test operation returns
+// ErrNoTests rather than dispatching a `dbt test` that cannot be confirmed.
+func TestSingleNode_SnapshotOfRunMode_TestOperation_TestCountAbsent_ReturnsErrNoTests(t *testing.T) {
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	srcID := uuid.New()
 	r := &fakeTopologyReader{
@@ -177,12 +176,9 @@ func TestSingleNode_SnapshotOfRunMode_TestOperation_TestCountAbsent_DoesNotGate(
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
-	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "test"})
-	if err != nil {
-		t.Fatalf("got err %v, want nil (absent test_count must not gate)", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("len=%d, want 1", len(got))
+	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "test"})
+	if !errors.Is(err, snapshot.ErrNoTests) {
+		t.Fatalf("got %v, want ErrNoTests (absent test_count must gate)", err)
 	}
 }
 

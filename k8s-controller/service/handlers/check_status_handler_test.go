@@ -28,14 +28,12 @@ import (
 type fakeK8sClient struct {
 	status      *model.K8sPodResult
 	err         error
-	labels        map[string]string
-	annotations   map[string]string
-	podLog        string // full pod log returned by GetPodLogs (tail mirrors it)
-	lastOperation string // operation arg captured on the last GetJobStatus call
+	labels      map[string]string
+	annotations map[string]string
+	podLog      string // full pod log returned by GetPodLogs (tail mirrors it)
 }
 
-func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _, operation string) (*model.K8sPodResult, error) {
-	f.lastOperation = operation
+func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
 	return f.status, f.err
 }
 
@@ -573,30 +571,6 @@ func TestHandleRunning_RecirculatesOperation(t *testing.T) {
 	}
 	if got, _ := payload["operation"].(string); got != "test" {
 		t.Fatalf("check.k8s ticket dropped operation: got %q, want %q (payload=%v)", got, "test", payload)
-	}
-}
-
-// TestHandle_PassesOperationToJobStatus guards the wiring that lets the K8s
-// client interpret a "Nothing to do" no-op correctly: the durable cmd.Operation
-// must reach GetJobStatus. If it is dropped here, a `dbt test` no-op would be
-// misread as a missing-model failure by the client's no-op backstop.
-func TestHandle_PassesOperationToJobStatus(t *testing.T) {
-	k8s := &fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusSucceeded}}
-	handler := newHandler(k8s, noopCancelledRepo(), 3)
-
-	cmd := command.CheckJobStatus{
-		TaskID:     uuid.New(),
-		ScheduleID: uuid.New(),
-		JobName:    "job-x",
-		Operation:  "test",
-		MaxRetries: 5,
-	}
-
-	if err := handler.Handle(context.Background(), newFakeUoW(&fakeOutboxRepo{}), cmd, uuid.Nil); err != nil {
-		t.Fatalf("Handle: %v", err)
-	}
-	if k8s.lastOperation != "test" {
-		t.Fatalf("GetJobStatus operation: got %q, want %q", k8s.lastOperation, "test")
 	}
 }
 

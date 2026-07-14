@@ -129,24 +129,22 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 	t.Log("TestSingleNodeTestOperationNoTests passed")
 }
 
-// TestSingleNodeTestOperationUnsetTestCountNoOpSucceeds is the regression guard for
-// the production incident where a single-node `test` on a node with no tests failed
-// and retried 3× with dbt "Nothing to do".
+// TestSingleNodeTestOperationUnsetTestCountIsGated is the regression guard for the
+// production incident where a single-node `test` on a node with no tests dispatched
+// a `dbt test` Job that no-op'd ("Nothing to do") and failed-and-retried 3×.
 //
 // It reproduces the exact prod state: a node whose `test_count` is *unset* on the
 // :Table (topology promoted before test_count capture existed, never re-released).
-// Because the count is unknown, orchestrator's zero-test gate deliberately does NOT
-// block — it attempts the run — so a real `dbt test --select seed_table_2` Job is
-// dispatched. seed_table_2 has no dbt tests, so dbt exits 0 emitting "Nothing to
-// do". k8s-controller's no-op backstop must recognise that for a `test` operation
-// this is a legitimate no-op (Succeeded), NOT a missing-model failure. The run must
-// finalize 'succeeded' with exactly one succeeded task — never fail-and-retry.
-func TestSingleNodeTestOperationUnsetTestCountNoOpSucceeds(t *testing.T) {
+// An unset count is treated as "no known tests", so the orchestrator gates the run
+// with reason no_tests — no Job is dispatched at all. This is symmetric with the
+// known-zero gate: only a KNOWN, positive test_count is runnable. The run finalizes
+// 'failed' with zero tasks, never dispatching a Job that could no-op and retry.
+func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -155,7 +153,7 @@ func TestSingleNodeTestOperationUnsetTestCountNoOpSucceeds(t *testing.T) {
 	const (
 		targetService = "service-1"
 		targetSchema  = "e2e_schema"
-		targetTable   = "seed_table_2" // no dbt tests: `dbt test` on it is a no-op
+		targetTable   = "seed_table_2" // no dbt tests
 	)
 
 	verifyServicesHealthy(t)
@@ -165,7 +163,7 @@ func TestSingleNodeTestOperationUnsetTestCountNoOpSucceeds(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	// Simulate a legacy node predating test_count capture: strip the property so
-	// the orchestrator reads test_count as unknown and does not gate the run.
+	// the orchestrator reads test_count as unknown (test_count_known=false).
 	unsetNeo4jTestCount(t, ctx, clients, targetSchema+"."+targetTable)
 
 	t.Logf("TriggerSingleNodeRun operation=test on an unset-test_count node: %s.%s.%s", targetService, targetSchema, targetTable)
@@ -176,25 +174,24 @@ func TestSingleNodeTestOperationUnsetTestCountNoOpSucceeds(t *testing.T) {
 		MetadataSource: "latest",
 		Operation:      "test",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun(operation=test) failed")
+	require.NoError(t, err, "TriggerSingleNodeRun must succeed even when the node is gated — the gate routes through events")
 	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
 
 	runID, err := uuid.Parse(resp.RunId)
 	require.NoError(t, err, "run_id must be a valid UUID")
 	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
 
-	t.Log("Waiting for the unset-test_count no-op run to reach 'succeeded' (the backstop must not fail it)...")
-	verifySchedulerSucceeded(t, ctx, clients, runID)
+	t.Log("Waiting for the unset-test_count no_tests gate to finalize the run 'failed'...")
+	verifySchedulerFailed(t, ctx, clients, runID)
 
-	// Unlike the gated no_tests path, the run IS dispatched — one task ran the
-	// no-op `dbt test` Job and finalized succeeded via the backstop.
+	// The gate must NOT dispatch any Job — no task_tracker row, so no no-op run.
 	var taskCount int
 	err = clients.stateDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, runID).Scan(&taskCount)
 	require.NoError(t, err, "failed to count task_tracker rows")
-	assert.Equal(t, 1, taskCount, "expected exactly 1 dispatched task for an ungated single-node test run")
+	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for a gated unset-test_count run")
 
-	t.Log("TestSingleNodeTestOperationUnsetTestCountNoOpSucceeds passed")
+	t.Log("TestSingleNodeTestOperationUnsetTestCountIsGated passed")
 }
 
 // TestWholeDAGTestOperation verifies whole-DAG "flat fan-out" test runs. The

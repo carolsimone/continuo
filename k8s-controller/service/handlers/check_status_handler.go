@@ -64,7 +64,7 @@ func SplitValidationResult(log string) (cleanLog, structuredJSON string) {
 
 // K8sStatusChecker defines interface for checking K8s job status
 type K8sStatusChecker interface {
-	GetJobStatus(ctx context.Context, namespace, jobName, operation string) (*model.K8sPodResult, error)
+	GetJobStatus(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error)
 	GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (fullLog, tail string, err error)
 	// GetJobMeta returns the Job's labels and annotations. The `mode` label routes
 	// validation vs production; the raw release/node identity for a validation Job
@@ -115,7 +115,7 @@ func NewCheckStatusHandler(
 func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, msgProcID uuid.UUID) error {
 	h.logger.Info("Checking K8s job status", "task_id", cmd.TaskID, "job_name", cmd.JobName)
 
-	result, err := h.k8sClient.GetJobStatus(ctx, h.config.K8sNamespace, cmd.JobName, cmd.Operation)
+	result, err := h.k8sClient.GetJobStatus(ctx, h.config.K8sNamespace, cmd.JobName)
 	if err != nil {
 		return fmt.Errorf("failed to get job status: %w", err)
 	}

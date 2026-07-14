@@ -38,7 +38,7 @@ func TestGetJobStatus_StartedAt_FromJobWhenPodsGone(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset(job) // no pods registered
 	client := &K8sClient{clientset: fakeClient, logger: slog.Default()}
 
-	result, err := client.GetJobStatus(context.Background(), "default", "test-job", "")
+	result, err := client.GetJobStatus(context.Background(), "default", "test-job")
 	require.NoError(t, err)
 	assert.Equal(t, model.JobStatusSucceeded, result.Status)
 	require.NotNil(t, result.StartedAt, "StartedAt must be set from job.Status.StartTime even when no pods exist")
@@ -106,7 +106,7 @@ func TestGetJobStatus_ImagePullBackOff_ReturnsJobStatusFailed(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset(job, pod)
 	client := &K8sClient{clientset: fakeClient, logger: slog.Default()}
 
-	result, err := client.GetJobStatus(context.Background(), "default", "test-job", "")
+	result, err := client.GetJobStatus(context.Background(), "default", "test-job")
 	require.NoError(t, err)
 	assert.Equal(t, model.JobStatusFailed, result.Status)
 	assert.Contains(t, result.TerminationMsg, "ImagePullBackOff")
@@ -139,58 +139,7 @@ func TestGetJobStatus_DbtNoop_ReturnsJobStatusFailed(t *testing.T) {
 
 	client := newClientServingLogs(t, job, pod, noopLog)
 
-	result, err := client.GetJobStatus(context.Background(), "default", "test-job", "")
-	require.NoError(t, err)
-	assert.Equal(t, model.JobStatusFailed, result.Status)
-	assert.Contains(t, result.TerminationMsg, "dbt matched no models")
-}
-
-// newDbtNoopJob builds a Job/pod pair that exited 0 with a "Nothing to do" log tail.
-func newDbtNoopJob() (*batchv1.Job, *corev1.Pod, string) {
-	startTime := metav1.NewTime(time.Date(2026, 4, 21, 11, 23, 0, 0, time.UTC))
-	completedAt := metav1.NewTime(time.Date(2026, 4, 21, 11, 24, 0, 0, time.UTC))
-	job := &batchv1.Job{
-		TypeMeta:   metav1.TypeMeta{Kind: "Job", APIVersion: "batch/v1"},
-		ObjectMeta: metav1.ObjectMeta{Name: "test-job", Namespace: "default"},
-		Status: batchv1.JobStatus{
-			Succeeded:      1,
-			StartTime:      &startTime,
-			CompletionTime: &completedAt,
-		},
-	}
-	pod := &corev1.Pod{
-		TypeMeta: metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-job-pod",
-			Namespace: "default",
-			Labels:    map[string]string{"job-name": "test-job"},
-		},
-	}
-	noopLog := "12:00:00  Running with dbt=1.9.0\n12:00:01  Nothing to do. Try checking your model configs.\n"
-	return job, pod, noopLog
-}
-
-// TestGetJobStatus_DbtNoop_TestOperation_ReturnsJobStatusSucceeded verifies that a
-// `dbt test` Job which exits 0 with "Nothing to do" (the target node has no tests)
-// is a legitimate no-op, not a failure. Unlike a materializing verb, `dbt test`
-// producing nothing means "no tests to run", which is success.
-func TestGetJobStatus_DbtNoop_TestOperation_ReturnsJobStatusSucceeded(t *testing.T) {
-	job, pod, noopLog := newDbtNoopJob()
-	client := newClientServingLogs(t, job, pod, noopLog)
-
-	result, err := client.GetJobStatus(context.Background(), "default", "test-job", "test")
-	require.NoError(t, err)
-	assert.Equal(t, model.JobStatusSucceeded, result.Status)
-}
-
-// TestGetJobStatus_DbtNoop_BuildOperation_ReturnsJobStatusFailed guards that the
-// no-op exemption is test-only: a materializing verb ("build") that matches no
-// models still means the model is missing from the image, which is a failure.
-func TestGetJobStatus_DbtNoop_BuildOperation_ReturnsJobStatusFailed(t *testing.T) {
-	job, pod, noopLog := newDbtNoopJob()
-	client := newClientServingLogs(t, job, pod, noopLog)
-
-	result, err := client.GetJobStatus(context.Background(), "default", "test-job", "build")
+	result, err := client.GetJobStatus(context.Background(), "default", "test-job")
 	require.NoError(t, err)
 	assert.Equal(t, model.JobStatusFailed, result.Status)
 	assert.Contains(t, result.TerminationMsg, "dbt matched no models")
@@ -226,7 +175,7 @@ func TestGetJobStatus_DbtSuccess_ReturnsJobStatusSucceeded(t *testing.T) {
 
 	client := newClientServingLogs(t, job, pod, successLog)
 
-	result, err := client.GetJobStatus(context.Background(), "default", "test-job", "")
+	result, err := client.GetJobStatus(context.Background(), "default", "test-job")
 	require.NoError(t, err)
 	assert.Equal(t, model.JobStatusSucceeded, result.Status)
 }
@@ -269,7 +218,7 @@ func TestGetJobStatus_InitContainerImagePullBackOff_ReturnsJobStatusFailed(t *te
 	fakeClient := fake.NewSimpleClientset(job, pod)
 	client := &K8sClient{clientset: fakeClient, logger: slog.Default()}
 
-	result, err := client.GetJobStatus(context.Background(), "default", "test-job", "")
+	result, err := client.GetJobStatus(context.Background(), "default", "test-job")
 	require.NoError(t, err)
 	assert.Equal(t, model.JobStatusFailed, result.Status)
 	assert.Contains(t, result.TerminationMsg, "ImagePullBackOff")

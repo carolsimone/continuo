@@ -118,8 +118,11 @@ export default function NodeDetailPage() {
   // NOT the old-snapshot path: a snapshot_of_run test is validated against the
   // source run's own pinned test_count, which this page does not know, so testing
   // an older version stays available and the backend's no_tests check is the
-  // backstop there.
-  const latestHasNoTests = testCount !== null && testCount.known && testCount.count === 0;
+  // backstop there. Only a KNOWN, positive test_count is runnable: a known zero
+  // and an unset count (a node predating test_count capture, so test_count_known
+  // is false) are both treated as "no tests" and gate the latest-mode trigger,
+  // matching the orchestrator's single-node gate.
+  const latestHasNoTests = testCount !== null && !(testCount.known && testCount.count > 0);
 
   const postRun = useCallback(async (body: object) => {
     setRunState('loading');

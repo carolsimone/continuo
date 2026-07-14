@@ -100,13 +100,6 @@ Production and all candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `m
 6. Commit (message_processing insert + outbox entries land atomically)
 ```
 
-### Job status determination
-
-`GetJobStatus` maps the K8s Job/pod state to `Running` / `Succeeded` / `Failed`, plus two backstops for terminal states the Job controller never surfaces on `Job.Status.Failed`:
-
-- **Image-pull backstop** — a pod stuck on an unpullable image (main or init container) never increments `Status.Failed`, so it is detected directly from the pod's `ContainerStatus.Waiting.Reason` and mapped to `Failed`; otherwise a broken image would hang the run forever.
-- **dbt no-op backstop** — dbt exits 0 emitting `Nothing to do` when its selector matches no enabled nodes, so the Job is marked `Succeeded` even though nothing ran. Its meaning depends on the run's dbt verb, read from the durable `CheckJobStatus.Operation` (never from Job metadata — a vanished Job returns empty labels): for a **materializing verb** (`run`/`build`, i.e. empty or `"build"`) a no-op means the model is missing from the service image, so it is mapped to `Failed` with a "matched no models" message; for **`test`** it means the target node simply has no tests, which is a legitimate `Succeeded` — never a failure. This keeps a single-node `dbt test` on an as-yet-ungated node (one whose `test_count` predates capture, so orchestrator's zero-test gate could not block it) from failing spuriously and retrying.
-
 ### Outcome branches
 
 | Status | Action |

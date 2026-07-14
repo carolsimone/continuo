@@ -36,7 +36,7 @@ func TestCheckAfterElapsed(t *testing.T) {
 
 type countingK8sClient struct{ calls int }
 
-func (c *countingK8sClient) GetJobStatus(context.Context, string, string, string) (*model.K8sPodResult, error) {
+func (c *countingK8sClient) GetJobStatus(context.Context, string, string) (*model.K8sPodResult, error) {
 	c.calls++
 	return &model.K8sPodResult{Status: model.JobStatusSucceeded}, nil
 }
