@@ -19,6 +19,14 @@ type Ancestor struct {
 	Depth         int
 }
 
+// UpstreamDiff is the diff of a recent change to one upstream ancestor, shown to
+// the model as diagnostic context for a validation failure.
+type UpstreamDiff struct {
+	NodeID      string
+	ServiceName string
+	Diff        string
+}
+
 type Evidence struct {
 	NodeID         string
 	ErrorSignature string
@@ -28,6 +36,7 @@ type Evidence struct {
 	CommitSHA      string
 	FilePath       string
 	Ancestors      []Ancestor
+	UpstreamDiffs  []UpstreamDiff
 }
 
 type ToolParam struct {
@@ -159,6 +168,7 @@ Rules:
 - Return the COMPLETE corrected SQL for the failed model, not a diff.
 - Reference upstream tables by their physical schema.table name; never introduce {{ ref(...) }} or {{ source(...) }} (the dbt projects are independent and these do not resolve across them).
 - Do not invent columns, sources, or refs that are not justified by the evidence.
+- When upstream change diffs are provided, treat them as the most likely root cause and account for what changed upstream when correcting the failed model.
 - If you cannot determine a safe fix, return the original SQL unchanged with a low confidence and an explanation.
 - Always respond by calling the propose_fix tool.`
 
@@ -176,6 +186,12 @@ func Assemble(ev Evidence) ProposeRequest {
 				a.NodeID, a.ServiceName, a.Depth, a.LastChangedAt, a.LastCommitSHA)
 		}
 		u.WriteString("\n")
+	}
+	if len(ev.UpstreamDiffs) > 0 {
+		u.WriteString("Recent upstream changes (diffs of what changed in those upstream models):\n")
+		for _, d := range ev.UpstreamDiffs {
+			fmt.Fprintf(&u, "Upstream %s (service=%s):\n```diff\n%s\n```\n\n", d.NodeID, d.ServiceName, d.Diff)
+		}
 	}
 	u.WriteString("Propose a corrected version of the failed model's SQL.")
 
