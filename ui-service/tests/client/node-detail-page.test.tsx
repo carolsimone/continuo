@@ -152,6 +152,32 @@ describe('NodeDetailPage', () => {
     expect(container.querySelector('.info-strip--info')).toBeInTheDocument();
   });
 
+  it('reverts a selected Test operation to Run once /meta resolves known-zero (revert race)', async () => {
+    // /meta resolves AFTER initial render (both requests start from the same
+    // synchronous render pass, but a real network response is never
+    // instantaneous), so the user can select "test" before the known-zero
+    // gate has evaluated. The revert-race useEffect must catch that and flip
+    // the select back to "run" once test_count_known:true / test_count:0
+    // lands, and the Test option must show up disabled.
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+      return jsonResp({ runs: [] });
+    });
+    renderPage();
+
+    const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
+    // Attempt to select Test before/while the known-zero gate settles.
+    fireEvent.change(select, { target: { value: 'test' } });
+
+    await waitFor(() => {
+      const testOption = screen.getByRole('option', { name: /test/i }) as HTMLOptionElement;
+      expect(testOption.disabled).toBe(true);
+      expect(select.value).toBe('run');
+    });
+    expect(document.querySelector('.info-strip--info')).toBeInTheDocument();
+  });
+
   it('leaves Test enabled when test_count is unknown', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
