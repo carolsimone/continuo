@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
@@ -61,12 +62,18 @@ func gatherUpstreamDiffs(ctx context.Context, svc Services, ancestors []prompt.A
 	return out
 }
 
-// truncateDiff caps a diff at max bytes, appending a marker when it was cut.
+// truncateDiff caps a diff at max bytes, appending a marker when it was cut. The
+// cut is backed up to a UTF-8 rune boundary so truncation never splits a
+// multibyte character (which would otherwise render as U+FFFD in the prompt).
 func truncateDiff(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "\n… (diff truncated)"
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "\n… (diff truncated)"
 }
 
 // validationFixer handles validation-rejection failures, which carry a

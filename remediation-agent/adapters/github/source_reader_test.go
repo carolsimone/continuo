@@ -250,3 +250,42 @@ func TestCommitFileDiff_PaginationExhaustedIsNotFound(t *testing.T) {
 		t.Fatalf("expected pagination to be followed, got %d page(s)", pages)
 	}
 }
+
+// TestCommitFileDiff_DoesNotFollowOffHostNextLink verifies the pagination walk
+// only follows a Link whose URL stays within the configured GitHub host. A next
+// link to another origin ends the walk as not-found rather than issuing a
+// cross-host request (which would surface as a transport error, not
+// ErrSourceNotFound).
+func TestCommitFileDiff_DoesNotFollowOffHostNextLink(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", `<http://127.0.0.1:1/repos/o/r/commits/sha?page=2>; rel="next"`)
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"models/other.sql","patch":"@@ x @@"}]}`))
+	}))
+	defer srv.Close()
+
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	_, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/target.sql")
+	if !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound (off-host next must not be followed)", err)
+	}
+}
+
+func TestNextLink(t *testing.T) {
+	cases := []struct {
+		name, header, want string
+	}{
+		{"empty", "", ""},
+		{"single next", `<https://api.github.com/x?page=2>; rel="next"`, "https://api.github.com/x?page=2"},
+		{"next then last", `<https://api.github.com/x?page=2>; rel="next", <https://api.github.com/x?page=9>; rel="last"`, "https://api.github.com/x?page=2"},
+		{"last then next", `<https://api.github.com/x?page=9>; rel="last", <https://api.github.com/x?page=2>; rel="next"`, "https://api.github.com/x?page=2"},
+		{"prev only", `<https://api.github.com/x?page=1>; rel="prev"`, ""},
+		{"malformed no rel", `<https://api.github.com/x?page=2>`, ""},
+	}
+	for _, c := range cases {
+		if got := nextLink(c.header); got != c.want {
+			t.Errorf("%s: nextLink(%q) = %q, want %q", c.name, c.header, got, c.want)
+		}
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
@@ -430,5 +431,35 @@ func TestValidation_UpstreamDiffs_SanitizesPatch(t *testing.T) {
 	}
 	if !strings.Contains(llm.requests[0].User, "[redacted]") {
 		t.Fatalf("sanitized marker missing from the embedded diff:\n%s", llm.requests[0].User)
+	}
+}
+
+// TestTruncateDiff_ShortStringUnchanged verifies a diff at or under the cap is
+// returned verbatim, with no truncation marker.
+func TestTruncateDiff_ShortStringUnchanged(t *testing.T) {
+	s := "a short diff"
+	if got := truncateDiff(s, 100); got != s {
+		t.Fatalf("got %q, want the input unchanged", got)
+	}
+}
+
+// TestTruncateDiff_BacksUpOffMultibyteRune verifies the cut is moved to a rune
+// boundary so a multibyte character is never split: the result must be valid
+// UTF-8 and must drop the partial rune rather than emit a replacement character.
+func TestTruncateDiff_BacksUpOffMultibyteRune(t *testing.T) {
+	// "é" is 2 bytes (0xC3 0xA9). Byte index 6 lands on the continuation byte of
+	// the first "é", so the cut must back up to index 5 (end of the ASCII run).
+	s := strings.Repeat("a", 5) + strings.Repeat("é", 5) // 5 + 10 bytes
+	got := truncateDiff(s, 6)
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("result is not valid UTF-8: %q", got)
+	}
+	kept := strings.TrimSuffix(got, "\n… (diff truncated)")
+	if kept != "aaaaa" {
+		t.Fatalf("kept = %q, want %q (cut backed up off the split rune)", kept, "aaaaa")
+	}
+	if !strings.Contains(got, "diff truncated") {
+		t.Fatalf("missing truncation marker: %q", got)
 	}
 }

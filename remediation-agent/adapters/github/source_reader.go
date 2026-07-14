@@ -144,6 +144,12 @@ func (g *GitHub) CommitFileDiff(ctx context.Context, repo, sha, path string) (st
 			}
 			return patch, nil
 		}
+		// Only follow a next link that stays within the configured GitHub host, so
+		// a malformed or unexpected Link value cannot redirect the walk to another
+		// origin. An off-host link ends the walk as not-found.
+		if next != "" && !strings.HasPrefix(next, g.baseURL) {
+			break
+		}
 		u = next
 	}
 	return "", ports.ErrSourceNotFound
