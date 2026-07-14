@@ -4,6 +4,7 @@ import { kindLabel } from './node-helpers';
 
 interface Props {
   runs: NodeRun[];
+  operation: 'run' | 'test' | 'build';
   onPick: (runId: string) => void;
   onClose: () => void;
 }
@@ -23,7 +24,7 @@ function formatTime(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-export default function RunSourcePickerDialog({ runs, onPick, onClose }: Props) {
+export default function RunSourcePickerDialog({ runs, operation, onPick, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -31,6 +32,7 @@ export default function RunSourcePickerDialog({ runs, onPick, onClose }: Props) 
   }, [onClose]);
 
   const eligible = runs.filter(isTerminalRun);
+  const opWord = operation === 'test' ? 'test' : operation === 'build' ? 'build' : 'run';
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
@@ -43,7 +45,8 @@ export default function RunSourcePickerDialog({ runs, onPick, onClose }: Props) 
       >
         <h2 id="run-source-picker-title" className="dialog-title">Pick a past run</h2>
         <p className="dialog-subtitle">
-          The node will execute with the (image_tag, manifest_version) pair from the run you pick.
+          Pick a past run to {opWord} this node against — it will execute with that run's
+          (image_tag, manifest_version) pair.
         </p>
         {eligible.length === 0 ? (
           <p className="dialog-empty">No past runs available for this node yet.</p>

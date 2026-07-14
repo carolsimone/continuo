@@ -28,7 +28,7 @@ describe('RunSourcePickerDialog', () => {
       // already succeeded; state would reject with FAILED_PRECONDITION.
       mkRun({ run_id: 'r3', terminal_status: '', task_status: 'succeeded' }),
     ];
-    render(<RunSourcePickerDialog runs={runs} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<RunSourcePickerDialog runs={runs} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByRole('button', { name: /r1/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /r2/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /r3/ })).toBeNull();
@@ -37,14 +37,14 @@ describe('RunSourcePickerDialog', () => {
   it('calls onPick with the selected run_id', () => {
     const onPick = vi.fn();
     const runs: NodeRun[] = [mkRun({ run_id: 'pick-me' })];
-    render(<RunSourcePickerDialog runs={runs} onPick={onPick} onClose={vi.fn()} />);
+    render(<RunSourcePickerDialog runs={runs} operation="run" onPick={onPick} onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /pick-me/ }));
     expect(onPick).toHaveBeenCalledWith('pick-me');
   });
 
   it('calls onClose when the backdrop is clicked', () => {
     const onClose = vi.fn();
-    render(<RunSourcePickerDialog runs={[]} onPick={vi.fn()} onClose={onClose} />);
+    render(<RunSourcePickerDialog runs={[]} operation="run" onPick={vi.fn()} onClose={onClose} />);
     const dialogOverlay = document.querySelector('.dialog-overlay');
     expect(dialogOverlay).toBeTruthy();
     fireEvent.click(dialogOverlay!);
@@ -52,14 +52,19 @@ describe('RunSourcePickerDialog', () => {
   });
 
   it('renders empty-state message when no eligible runs', () => {
-    render(<RunSourcePickerDialog runs={[]} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<RunSourcePickerDialog runs={[]} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByText(/no past runs available/i)).toBeInTheDocument();
+  });
+
+  it('subtitle reflects the operation prop', () => {
+    render(<RunSourcePickerDialog runs={[]} operation="test" onPick={vi.fn()} onClose={vi.fn()} />);
+    expect(document.querySelector('.dialog-subtitle')?.textContent).toMatch(/test this node/i);
   });
 });
 
 describe('RunSourcePickerDialog — buttons use .btn foundation', () => {
   it('Cancel button uses .btn.btn--secondary, no legacy class', () => {
-    render(<RunSourcePickerDialog runs={[]} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<RunSourcePickerDialog runs={[]} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
     const cancel = screen.getByRole('button', { name: /cancel/i });
     expect(cancel.className).toMatch(/\bbtn\b/);
     expect(cancel.className).toMatch(/\bbtn--secondary\b/);

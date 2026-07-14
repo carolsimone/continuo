@@ -69,7 +69,7 @@ describe('NodeDetailPage', () => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const postCall = calls.find(c => String(c[0]).includes('/api/nodes/svc/schema/tbl/run') && c[1]?.method === 'POST');
       expect(postCall).toBeDefined();
-      expect(postCall![1]).toMatchObject({ method: 'POST', body: '{}' });
+      expect(postCall![1]).toMatchObject({ method: 'POST', body: JSON.stringify({ operation: '' }) });
     });
   });
 
@@ -117,8 +117,67 @@ describe('NodeDetailPage', () => {
       expect(postCall).toBeDefined();
       expect(postCall![1]).toMatchObject({
         method: 'POST',
-        body: JSON.stringify({ source_run_id: 'pick-me' }),
+        body: JSON.stringify({ source_run_id: 'pick-me', operation: '' }),
       });
+    });
+  });
+
+  it('latest button verb tracks the operation select and POSTs the operation', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
+      return jsonResp({ runs: [] });
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'build' } });
+    const btn = await screen.findByRole('button', { name: /build this node/i });
+    fireEvent.click(btn);
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
+      const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
+      expect(post![1]!.body).toBe(JSON.stringify({ operation: 'build' }));
+    });
+  });
+
+  it('disables Test and shows a hint when test_count is known-zero', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+      return jsonResp({ runs: [] });
+    });
+    const { container } = renderPage();
+    const testOption = await screen.findByRole('option', { name: /test/i });
+    expect((testOption as HTMLOptionElement).disabled).toBe(true);
+    expect(container.querySelector('.info-strip--info')).toBeInTheDocument();
+  });
+
+  it('leaves Test enabled when test_count is unknown', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: false });
+      return jsonResp({ runs: [] });
+    });
+    renderPage();
+    const testOption = await screen.findByRole('option', { name: /test/i });
+    expect((testOption as HTMLOptionElement).disabled).toBe(false);
+  });
+
+  it('picking an old snapshot POSTs the selected operation alongside source_run_id', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
+      return jsonResp({ runs: [mkRun({ run_id: 'pick-me' })] });
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
+    fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /pick-me/ }));
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
+      const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
+      expect(post![1]!.body).toBe(JSON.stringify({ source_run_id: 'pick-me', operation: 'test' }));
     });
   });
 });
