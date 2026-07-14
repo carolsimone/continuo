@@ -65,6 +65,18 @@ func (f *fakeCancelledRepo) DeleteExpired(context.Context, time.Duration) (int64
 	return 0, nil
 }
 
+// opStubReader satisfies snapshot.TopologyReader via an embedded (nil)
+// interface; only SourceRunOperation is exercised by these tests.
+type opStubReader struct {
+	snapshot.TopologyReader
+	op  string
+	err error
+}
+
+func (r opStubReader) SourceRunOperation(context.Context, string) (string, error) {
+	return r.op, r.err
+}
+
 func newSvc(reader snapshot.TopologyReader, writer snapshot.SnapshotWriter) *snapshotsvc.Service {
 	return newSvcCancel(reader, writer, &fakeCancelledRepo{})
 }
@@ -170,6 +182,42 @@ func TestService_NotCancelled_LeavesCancelledFalse(t *testing.T) {
 	}
 	if w.gotParams.Cancelled {
 		t.Error("expected Params.Cancelled=false for a non-cancelled schedule")
+	}
+}
+
+func TestService_DerivedRun_InheritsSourceOperation(t *testing.T) {
+	src := uuid.New()
+	w := &fakeWriter{}
+	svc := newSvc(opStubReader{op: "build"}, w)
+	_, err := svc.Snapshot(context.Background(), snapshot.Params{
+		RunID: uuid.New().String(), ScheduleName: "s", Kind: "rerun",
+		SourceRunID: &src,
+		Selector:    stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.gotParams.Operation != "build" {
+		t.Errorf("expected inherited operation \"build\", got %q", w.gotParams.Operation)
+	}
+}
+
+func TestService_SingleNodeOfSource_DoesNotInheritOperation(t *testing.T) {
+	src := uuid.New()
+	w := &fakeWriter{}
+	// A single-node snapshot-of-run: SourceRunID set, but its own Operation ("")
+	// must be preserved, not overwritten by the source's "build".
+	svc := newSvc(opStubReader{op: "build"}, w)
+	_, err := svc.Snapshot(context.Background(), snapshot.Params{
+		RunID: uuid.New().String(), ScheduleName: "s", Kind: "single_node_run",
+		SourceRunID: &src, Operation: "",
+		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.gotParams.Operation != "" {
+		t.Errorf("single_node_run must not inherit source operation, got %q", w.gotParams.Operation)
 	}
 }
 

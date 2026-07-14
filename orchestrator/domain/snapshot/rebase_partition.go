@@ -23,9 +23,7 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		return nil, fmt.Errorf("RebasePartition: ScheduleName required")
 	}
 
-	if op, err := r.SourceRunOperation(ctx, p.SourceRunID.String()); err != nil {
-		return nil, fmt.Errorf("RebasePartition: source operation: %w", err)
-	} else if op == string(pkgModel.OperationTest) {
+	if p.Operation == string(pkgModel.OperationTest) {
 		return nil, ErrRerunOfTestUnsupported
 	}
 
