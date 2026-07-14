@@ -68,7 +68,8 @@ One class for the shape, three variants, two orthogonal states.
 
 ```css
 .btn            { display: inline-flex; align-items: center; gap: 6px;
-                  padding: 4px 12px; font: 500 12px/1.4 inherit;
+                  padding: 4px 12px;
+                  font-weight: 500; font-size: 12px; line-height: 1.4;
                   border-radius: 4px; border: 1px solid transparent;
                   background: #fff; color: #374151; cursor: pointer;
                   white-space: nowrap; text-decoration: none;
@@ -284,7 +285,8 @@ The sanctioned wrapper for a labelled native control (e.g. a filter
 .form-field          { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
 .form-field > label  { font-size: 11px; font-weight: 700; color: #94a3b8;
                        text-transform: uppercase; letter-spacing: 0.7px; }
-.form-field > select { font: 500 12px/1.4 inherit; padding: 4px 8px;
+.form-field > select { font-weight: 500; font-size: 12px; line-height: 1.4;
+                       padding: 4px 8px;
                        border: 1px solid #d1d5db; border-radius: 4px;
                        background: #fff; color: #374151; cursor: pointer; }
 ```
