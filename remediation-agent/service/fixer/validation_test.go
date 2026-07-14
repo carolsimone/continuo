@@ -269,3 +269,116 @@ func TestValidation_AncestryError_ProceedsDegraded(t *testing.T) {
 		t.Fatal("expected SourceResolved=false when ancestry errors")
 	}
 }
+
+// validationSvc builds a Services wired for a validation-fix happy path with the
+// given ancestors and source.
+func validationSvc(ancestors []prompt.Ancestor, src *fakeSource) Services {
+	return Services{
+		LLM: &fakeLLM{queue: []ports.ProposeResult{
+			{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+			{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+		}},
+		Evidence:         fakeEvidence{data: map[string]string{"s3://cand": "SELECT 0", "s3://log": "boom"}},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Ancestry:         fakeAncestry{filePath: "models/self.sql", service: "svc", ancestry: ancestors},
+		Artifacts:        &fakeArtifacts{},
+		Logger:           testLogger(),
+		ServiceRepoPaths: map[string]string{"svc": "services/svc", "up-svc": "services/up-svc"},
+	}
+}
+
+func validationInput() Input {
+	return Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
+		CandidateSQLURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
+}
+
+// TestValidation_UpstreamDiffs_EmbeddedInStep1Prompt verifies that a changed
+// ancestor's diff is fetched at its own repo/commit and rendered into the Step-1
+// prompt.
+func TestValidation_UpstreamDiffs_EmbeddedInStep1Prompt(t *testing.T) {
+	llm := &fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+	}}
+	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ -1 +1 @@\n-old_col\n+new_col"}
+	svc := validationSvc([]prompt.Ancestor{
+		{NodeID: "up.node", ServiceName: "up-svc", LastCommitSHA: "upsha", LastRepo: "o/up-repo", FilePath: "models/up.sql", Depth: 1},
+	}, src)
+	svc.LLM = llm
+
+	_, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(src.diffPaths) != 1 || src.diffPaths[0] != "services/up-svc/models/up.sql" {
+		t.Fatalf("CommitFileDiff paths = %v, want [services/up-svc/models/up.sql]", src.diffPaths)
+	}
+	if len(llm.requests) == 0 || !strings.Contains(llm.requests[0].User, "new_col") {
+		t.Fatalf("step-1 prompt must contain the upstream diff:\n%s", llm.requests[0].User)
+	}
+}
+
+// TestValidation_UpstreamDiffs_SkipsUnstampedAncestors verifies ancestors without
+// a commit sha, repo, file path, or a known service mapping are not fetched.
+func TestValidation_UpstreamDiffs_SkipsUnstampedAncestors(t *testing.T) {
+	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ x @@"}
+	svc := validationSvc([]prompt.Ancestor{
+		{NodeID: "no-sha", ServiceName: "up-svc", LastRepo: "o/up-repo", FilePath: "models/a.sql", Depth: 1},
+		{NodeID: "no-repo", ServiceName: "up-svc", LastCommitSHA: "s", FilePath: "models/b.sql", Depth: 1},
+		{NodeID: "no-map", ServiceName: "unknown", LastCommitSHA: "s", LastRepo: "o/x", FilePath: "c.sql", Depth: 1},
+	}, src)
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
+		t.Fatal(err)
+	}
+	if len(src.diffPaths) != 0 {
+		t.Fatalf("no diff should be fetched for unstamped/unmapped ancestors, got %v", src.diffPaths)
+	}
+}
+
+// TestValidation_UpstreamDiffs_CapsAtFive verifies at most maxUpstreamDiffs diffs
+// are fetched even when more eligible ancestors are present.
+func TestValidation_UpstreamDiffs_CapsAtFive(t *testing.T) {
+	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ x @@"}
+	var ancestors []prompt.Ancestor
+	for i := 0; i < 8; i++ {
+		ancestors = append(ancestors, prompt.Ancestor{
+			NodeID: fmt.Sprintf("up.%d", i), ServiceName: "up-svc", LastCommitSHA: "s",
+			LastRepo: "o/up-repo", FilePath: fmt.Sprintf("models/up%d.sql", i), Depth: 1,
+		})
+	}
+	svc := validationSvc(ancestors, src)
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
+		t.Fatal(err)
+	}
+	if len(src.diffPaths) != maxUpstreamDiffs {
+		t.Fatalf("fetched %d diffs, want cap of %d", len(src.diffPaths), maxUpstreamDiffs)
+	}
+}
+
+// TestValidation_UpstreamDiffs_BestEffortOnError verifies a CommitFileDiff error
+// is swallowed: the proposal is still produced and no diff block is added.
+func TestValidation_UpstreamDiffs_BestEffortOnError(t *testing.T) {
+	llm := &fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+	}}
+	src := &fakeSource{content: "SELECT 0 -- original", diffErr: fmt.Errorf("github 503")}
+	svc := validationSvc([]prompt.Ancestor{
+		{NodeID: "up.node", ServiceName: "up-svc", LastCommitSHA: "upsha", LastRepo: "o/up-repo", FilePath: "models/up.sql", Depth: 1},
+	}, src)
+	svc.LLM = llm
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed {
+		t.Fatalf("status = %v want proposed", r.Proposal.Status)
+	}
+	if strings.Contains(llm.requests[0].User, "```diff") {
+		t.Fatalf("failed diff fetch must not add a diff block:\n%s", llm.requests[0].User)
+	}
+}
