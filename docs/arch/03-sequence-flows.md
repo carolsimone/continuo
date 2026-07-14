@@ -354,6 +354,10 @@ sequenceDiagram
 
 Before triggering a single-node run the UI fetches the node's run history: `GET /api/nodes/:service/:schema/:table/runs` → `state.ListNodeRuns(service_name, schema_name, table_name, limit=50)`. This is a pure read with no side effects. `state` executes one SQL query (`NodeRunRepository.List`) that joins `task_tracker × scheduler_tracker × task_execution` via a `target_tasks → latest_exec` CTE chain and returns the most recent rows ordered by `scheduler_tracker.created_at DESC`. The result drives the node detail page and populates the source-run picker used by the `metadata_source=snapshot_of_run` branch of Flow 9.
 
+### GetNode read path
+
+The node detail page also fetches per-node topology metadata: `GET /api/nodes/:service/:schema/:table/meta` → `orchestrator.GetNode(service_name, schema_name, table_name)`, an uncached single-row Neo4j `:Table` lookup returning `{node_type, test_count, test_count_known}`. The UI uses `test_count_known && test_count == 0` to disable the page's `test` operation option before it ever reaches `TriggerSingleNodeRun`, so an untested node's `no_tests` dispatch-failed path (Flow 9) is a defensive backstop rather than the primary UX signal.
+
 ## 10. Rebase from Failed/Cancelled Run
 
 A new run on the source's schedule that re-executes the failed/cancelled tasks + descendants + new arrivals against the latest topology, while inheriting everything that succeeded. The source run is never mutated; the schedule's run history grows by one row per rebase trigger.

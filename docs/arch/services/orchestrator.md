@@ -211,6 +211,7 @@ Each consumer is wired as a `parser → handler` binding under `adapters/redis/`
 | `ListActiveRunDrifts` | Returns one `ActiveRunDrift` row per schedule that has an in-flight run (`schedule_name`, `run_id`, `run_topology_generation`) plus the orchestrator's current `latest_topology_generation`. "In-flight" means `completed_at IS NULL` on the `:Run` node — a property stamped by the `run.finalized:v1` projection for all terminal outcomes (succeeded, failed, cancelled). The underlying `ListActiveRuns` query orders results by `schedule_name`, then `created_at DESC`; `RunQueryService.ListActiveRunDrifts` keeps the single newest in-flight run per schedule, so each schedule contributes at most one drift row to the response. Consumed by e2e tests as an active-run state probe. |
 | `ListScheduleTopologies` | Returns one entry per schedule with at least one active `:Table`: `schedule_name`, `node_count`, `last_updated_at = max(:Table.last_updated_at)`. Backs the ui-service homepage `Topology` tab tile grid. |
 | `GetNodeAncestry` | Returns a node and its transitive upstream ancestry (outgoing `:DEPENDS_ON`) for a given `:Table` `unique_id`, up to a configurable `max_depth`. Only active nodes are traversed — every node on a returned path is active, so retired tables (kept for run history) and any ancestor reachable only through a retired node are excluded, reflecting the current topology. Each result entry includes per-node provenance (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) and `file_path`, ranked by change-recency (`last_changed_at` DESC, nulls last). Returns `NOT_FOUND` for an unknown or inactive node. |
+| `GetNode` | Returns per-node topology metadata — `node_type`, `test_count`, `test_count_known` — for a single active `:Table` addressed by `(service_name, schema_name, table_name)`. `test_count_known` is `false` when the node predates `test_count` capture (the property is unset on the `:Table`); consumers must treat unknown as "don't gate", never as zero. Backs the UI's decision on whether a single-node `test` operation is meaningful before submitting it. Returns `NOT_FOUND` for an unknown or inactive node. Not cached — it is a single-row lookup and `test_count` can change on the next release promotion. |
 
 ### HTTP (port 8087)
 
@@ -374,7 +375,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListScheduleTopologies` |
+| `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListScheduleTopologies`, `GetNode` |
 | `continuo CLI` | `GetScheduleGraph` |
 
 Orchestrator calls no external gRPC services.
