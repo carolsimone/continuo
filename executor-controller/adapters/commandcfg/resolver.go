@@ -36,22 +36,37 @@ func (r *Resolver) template(serviceName string, pick func(*opSet) []string) []st
 	return nil
 }
 
-// NodeCommand resolves the production argv for nt against node.
-func (r *Resolver) NodeCommand(serviceName string, nt pkg_model.NodeType, node string) []string {
-	pick := func(o *opSet) []string {
-		switch nt {
-		case pkg_model.NodeTypeDbtSeed:
-			return o.Seed
-		case pkg_model.NodeTypeDbtSnapshot:
-			return o.Snapshot
-		default:
-			return o.Run
+// NodeCommand resolves the argv for op against node. OperationRun dispatches
+// on nt (model/seed/snapshot); OperationTest and OperationBuild resolve to a
+// fixed dbt verb regardless of nt.
+func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) []string {
+	switch op {
+	case pkg_model.OperationTest:
+		if t := r.template(serviceName, func(o *opSet) []string { return o.Test }); t != nil {
+			return substitute(t, map[string]string{"node": node})
 		}
+		return []string{"dbt", "test", "--select", node}
+	case pkg_model.OperationBuild:
+		if t := r.template(serviceName, func(o *opSet) []string { return o.Build }); t != nil {
+			return substitute(t, map[string]string{"node": node})
+		}
+		return []string{"dbt", "build", "--select", node}
+	default: // OperationRun
+		pick := func(o *opSet) []string {
+			switch nt {
+			case pkg_model.NodeTypeDbtSeed:
+				return o.Seed
+			case pkg_model.NodeTypeDbtSnapshot:
+				return o.Snapshot
+			default:
+				return o.Run
+			}
+		}
+		if t := r.template(serviceName, pick); t != nil {
+			return substitute(t, map[string]string{"node": node})
+		}
+		return nt.Command(node)
 	}
-	if t := r.template(serviceName, pick); t != nil {
-		return substitute(t, map[string]string{"node": node})
-	}
-	return nt.Command(node)
 }
 
 // SeedBuildCommand resolves the argv for building a seed into targetSchema.
@@ -61,7 +76,7 @@ func (r *Resolver) SeedBuildCommand(serviceName, node, targetSchema string) []st
 	if t := r.template(serviceName, func(o *opSet) []string { return o.SeedBuild }); t != nil {
 		return substitute(t, map[string]string{"node": node, "target_schema": targetSchema})
 	}
-	return r.NodeCommand(serviceName, pkg_model.NodeTypeDbtSeed, node)
+	return r.NodeCommand(serviceName, pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, node)
 }
 
 // CompileCommand resolves the compile argv and manifest.json path.

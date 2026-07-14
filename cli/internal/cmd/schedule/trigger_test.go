@@ -23,6 +23,10 @@ type fakeState struct {
 	err             error
 	gotScheduleName string
 
+	testResp            *statev1.TriggerScheduleResponse
+	testErr             error
+	gotTestScheduleName string
+
 	cancelResp      *statev1.CancelScheduleResponse
 	cancelErr       error
 	gotCancelReason string
@@ -32,6 +36,11 @@ type fakeState struct {
 func (f *fakeState) TriggerSchedule(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
 	f.gotScheduleName = name
 	return f.resp, f.err
+}
+
+func (f *fakeState) TriggerScheduleTest(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
+	f.gotTestScheduleName = name
+	return f.testResp, f.testErr
 }
 
 func (f *fakeState) CancelSchedule(_ context.Context, name, reason, by string) (*statev1.CancelScheduleResponse, error) {
@@ -57,6 +66,10 @@ func (f *fakeState) ListNodeRuns(_ context.Context, _, _, _ string, _ int32) (*s
 
 func (f *fakeState) TriggerNodeRun(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	panic("TriggerNodeRun should not be called in schedule tests")
+}
+
+func (f *fakeState) TriggerNodeTest(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	panic("TriggerNodeTest should not be called in schedule tests")
 }
 
 // run invokes the trigger command end-to-end with the provided fake client and args.

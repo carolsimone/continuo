@@ -3,7 +3,7 @@ This is a monorepo with multiple microservices.
 
 ## Go services (8)
 * `state` — owns run lifecycle state (pending → running → finalized) and schedule records; the authoritative write-path for task and run transitions.
-* `orchestrator` — owns Neo4j topology and run projections, Postgres outbox/dedup. Consumes `node.updated:v1`, `manifest.loaded:v1`, `scheduler.started:v1`, `release.promoted:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1`. Produces `query.model:v1`, `schedules.loaded:v1`. Serves gRPC `OrchestratorQuery` for UI reads.
+* `orchestrator` — owns Neo4j topology and run projections, Postgres outbox/dedup. Consumes `node.updated:v1`, `scheduler.started:v1`, `release.promoted:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1`. Produces `query.model:v1`, `schedules.loaded:v1`. Serves gRPC `OrchestratorQuery` for UI reads.
 * `executor-controller` — schedules dbt task execution; emits K8s Job specs and publishes execution events downstream.
 * `k8s-controller` — watches Kubernetes Jobs and surfaces their terminal status back into the run lifecycle.
 * `release-controller` — manages blue/green candidate-release lifecycle; tracks the `current_prod` pointer and drives promotion/rejection.
@@ -12,7 +12,7 @@ This is a monorepo with multiple microservices.
 * `agent-runner` — chat and agent gRPC backend; hosts the conversational LLM interface used by the UI.
 
 ## Python service (1)
-* `manifest-controller` — Python 3.12/uv service (not Go); consumes `update.graph:v1` Redis Stream events, batch-loads all dbt manifest.json files from `/manifests` (mounted from `dbt/services/`), resolves cross-service upstream deps via sqlglot, and publishes topology to `manifest.loaded:v1` for the orchestrator. Run tests with `docker exec manifest-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.
+* `manifest-controller` — Python 3.12/uv service (not Go); consumes `release.requested:v1` Redis Stream events, batch-loads the release's dbt manifest.json files, resolves cross-service upstream deps via sqlglot, and publishes the resolved candidate topology to `manifest.loaded.candidate:v1` for release-controller (which promotes it into the orchestrator's Neo4j topology via `release.promoted:v1`). Run tests with `docker exec manifest-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.
 
 ## Node service (1)
 * `ui-service` — HTTP API and web UI; serves the operator dashboard and proxies gRPC reads from `orchestrator` and other backend services.

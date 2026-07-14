@@ -44,6 +44,10 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 			return events.QueryModel{}, fmt.Errorf("invalid outbox_entry_id: %w", err)
 		}
 	}
+	operation, err := pkg_model.ParseOperation(stringField(msg.Values, "operation"))
+	if err != nil {
+		return events.QueryModel{}, fmt.Errorf("invalid operation: %w", err)
+	}
 	return events.QueryModel{
 		OutboxEntryID: outboxEntryID,
 		TaskID:        taskID,
@@ -55,6 +59,7 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 		JobName:       stringField(msg.Values, "job_name"),
 		NodeType:      nodeType,
 		ImageTag:      stringField(msg.Values, "image_tag"),
+		Operation:     operation,
 		Mode:          stringField(msg.Values, "mode"),
 	}, nil
 }

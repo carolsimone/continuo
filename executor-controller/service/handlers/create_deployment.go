@@ -46,6 +46,7 @@ func createDeployment(
 		ImageTag:       base.ImageTag,
 		TaskRetryCount: taskRetryCount,
 		TaskMaxRetries: taskMaxRetries,
+		Operation:      string(base.Operation),
 		Mode:           base.Mode,
 	}
 

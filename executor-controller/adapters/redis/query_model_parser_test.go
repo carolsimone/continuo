@@ -87,3 +87,34 @@ func TestParseQueryModel_UnknownNodeType(t *testing.T) {
 	}})
 	require.Error(t, err)
 }
+
+func TestParseQueryModel_OperationTestParses(t *testing.T) {
+	evt, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
+		"task_id":     uuid.New().String(),
+		"schedule_id": uuid.New().String(),
+		"node_type":   "dbt-model",
+		"operation":   "test",
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, pkg_model.OperationTest, evt.Operation)
+}
+
+func TestParseQueryModel_OperationAbsentDefaultsToRun(t *testing.T) {
+	evt, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
+		"task_id":     uuid.New().String(),
+		"schedule_id": uuid.New().String(),
+		"node_type":   "dbt-model",
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, pkg_model.OperationRun, evt.Operation)
+}
+
+func TestParseQueryModel_InvalidOperationIsPermanentError(t *testing.T) {
+	_, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
+		"task_id":     uuid.New().String(),
+		"schedule_id": uuid.New().String(),
+		"node_type":   "dbt-model",
+		"operation":   "no_such_operation",
+	}})
+	require.Error(t, err)
+}

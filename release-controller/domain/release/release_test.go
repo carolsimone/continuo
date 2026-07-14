@@ -147,6 +147,21 @@ func TestNode_CandidateSQLURIRoundTrips(t *testing.T) {
 	assert.Equal(t, n.CandidateSQLURI, n2.CandidateSQLURI, "round-trip preserves value")
 }
 
+func TestNode_TestCountRoundTrips(t *testing.T) {
+	in := release.Node{UniqueID: "model.svc_a.orders", NodeType: "dbt-model", TestCount: 3}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out release.Node
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.TestCount != 3 {
+		t.Fatalf("TestCount = %d, want 3", out.TestCount)
+	}
+}
+
 func TestTopology_WithoutCandidateSQLURI_ClearsField(t *testing.T) {
 	// WithoutCandidateSQLURI must return a copy with every node's CandidateSQLURI
 	// cleared, leaving other fields intact.

@@ -80,10 +80,12 @@ func EmitDispatchFailed(
 // dispatchFailedReason maps an error returned by SnapshotService.Snapshot
 // to a DispatchFailedReason for the run.entries.dispatch_failed:v1 stream.
 //
-// Returns (reason, true) only for the two sentinels that express an
+// Returns (reason, true) only for the sentinels that express an
 // expected "no work to dispatch" outcome:
-//   - snapshot.ErrTargetNotFound  -> DispatchFailedReasonTargetNotFound
-//   - snapshot.ErrEmptyProjection -> DispatchFailedReasonEmptyProjection
+//   - snapshot.ErrTargetNotFound         -> DispatchFailedReasonTargetNotFound
+//   - snapshot.ErrEmptyProjection        -> DispatchFailedReasonEmptyProjection
+//   - snapshot.ErrNoTests                -> DispatchFailedReasonNoTests
+//   - snapshot.ErrRerunOfTestUnsupported -> DispatchFailedReasonRerunOfTestUnsupported
 //
 // Returns ("", false) for every other error. When false is returned the
 // caller MUST propagate err unchanged (typically wrapped with
@@ -100,6 +102,10 @@ func dispatchFailedReason(err error) (pkgEvents.DispatchFailedReason, bool) {
 		return pkgEvents.DispatchFailedReasonTargetNotFound, true
 	case errors.Is(err, snapshot.ErrEmptyProjection):
 		return pkgEvents.DispatchFailedReasonEmptyProjection, true
+	case errors.Is(err, snapshot.ErrNoTests):
+		return pkgEvents.DispatchFailedReasonNoTests, true
+	case errors.Is(err, snapshot.ErrRerunOfTestUnsupported):
+		return pkgEvents.DispatchFailedReasonRerunOfTestUnsupported, true
 	default:
 		return "", false
 	}

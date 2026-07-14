@@ -35,6 +35,9 @@ type fakeStateStatus struct {
 func (f *fakeStateStatus) TriggerSchedule(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerSchedule should not be called in status tests")
 }
+func (f *fakeStateStatus) TriggerScheduleTest(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
+	panic("TriggerScheduleTest should not be called in status tests")
+}
 func (f *fakeStateStatus) ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error) {
 	_, f.listAllHadDeadline = ctx.Deadline()
 	return f.schedules, f.schedulesErr
@@ -58,6 +61,10 @@ func (f *fakeStateStatus) ListNodeRuns(_ context.Context, _, _, _ string, _ int3
 
 func (f *fakeStateStatus) TriggerNodeRun(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	panic("TriggerNodeRun should not be called in schedule tests")
+}
+
+func (f *fakeStateStatus) TriggerNodeTest(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	panic("TriggerNodeTest should not be called in schedule tests")
 }
 
 func (f *fakeStateStatus) Close() error { return nil }

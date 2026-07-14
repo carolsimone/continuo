@@ -18,6 +18,9 @@ type fakeTopologyReader struct {
 	ImmDescendantsSource map[string]map[snapshot.FQN][]snapshot.FQN
 	SingleLatest         map[snapshot.FQN]snapshot.LatestTableRow
 	SingleFromSourceRun  map[string]map[snapshot.FQN]snapshot.LatestTableRow
+	// SourceRunOperation keyed by sourceRunID; missing key returns "" (mirrors
+	// the adapter's "not found" behaviour).
+	SourceRunOperationByID map[string]string
 
 	LatestDAGErr           error
 	SourceTasksErr         error
@@ -25,6 +28,7 @@ type fakeTopologyReader struct {
 	DescendantsSourceErr   error
 	SingleLatestErr        error
 	SingleFromSourceRunErr error
+	SourceRunOperationErr  error
 
 	// Per-method call counters let tests assert that a selector pass issues a
 	// single batched reader call rather than one per FQN.
@@ -123,4 +127,11 @@ func (f *fakeTopologyReader) LoadSingleTableFromSourceRun(ctx context.Context, s
 		return row, hit, nil
 	}
 	return snapshot.LatestTableRow{}, false, nil
+}
+
+func (f *fakeTopologyReader) SourceRunOperation(ctx context.Context, sourceRunID string) (string, error) {
+	if f.SourceRunOperationErr != nil {
+		return "", f.SourceRunOperationErr
+	}
+	return f.SourceRunOperationByID[sourceRunID], nil
 }

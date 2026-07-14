@@ -117,6 +117,15 @@ func TestParseSingleNodeRun_LatestValid(t *testing.T) {
 	assert.Equal(t, testScheduleID, cmd.RunID)
 	assert.Equal(t, "latest", cmd.MetadataSource)
 	assert.Empty(t, cmd.SourceRunID)
+	assert.Empty(t, cmd.Operation, "operation absent from the message should parse as empty")
+}
+
+func TestParseSingleNodeRun_OperationPresent(t *testing.T) {
+	values := singleNodeRunValues()
+	values["operation"] = "test"
+	cmd, err := redis.ParseSingleNodeRun(goredis.XMessage{ID: "1-0", Values: values})
+	require.NoError(t, err)
+	assert.Equal(t, "test", cmd.Operation)
 }
 
 func TestParseSingleNodeRun_SnapshotValid(t *testing.T) {

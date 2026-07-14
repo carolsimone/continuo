@@ -16,9 +16,21 @@ func TestDefaults_NodeCommand_MatchesPkgNodeType(t *testing.T) {
 	for _, nt := range []pkg_model.NodeType{
 		pkg_model.NodeTypeDbtModel, pkg_model.NodeTypeDbtSeed, pkg_model.NodeTypeDbtSnapshot,
 	} {
-		assert.Equal(t, nt.Command("orders"), r.NodeCommand("any-service", nt, "orders"),
+		assert.Equal(t, nt.Command("orders"), r.NodeCommand("any-service", pkg_model.OperationRun, nt, "orders"),
 			"built-in default for %s must delegate to pkg NodeType.Command", nt)
 	}
+}
+
+func TestNodeCommand_TestOperation_BuiltIn(t *testing.T) {
+	r := Defaults()
+	got := r.NodeCommand("svc_a", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "orders")
+	assert.Equal(t, []string{"dbt", "test", "--select", "orders"}, got)
+}
+
+func TestNodeCommand_RunOperation_UnchangedByNodeType(t *testing.T) {
+	r := Defaults()
+	got := r.NodeCommand("svc_a", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "raw_x")
+	assert.Equal(t, []string{"dbt", "seed", "--select", "raw_x"}, got)
 }
 
 func TestDefaults_SeedBuildCommand_FallsBackToSeed(t *testing.T) {
@@ -59,16 +71,16 @@ services:
 func TestResolver_ServiceOverrideBeatsDefault(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
 	assert.Equal(t, []string{"wise-dbt", "run", "--select", "orders"},
-		r.NodeCommand("wise", pkg_model.NodeTypeDbtModel, "orders"))
+		r.NodeCommand("wise", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Equal(t, []string{"default-dbt", "run", "--select", "orders"},
-		r.NodeCommand("other-service", pkg_model.NodeTypeDbtModel, "orders"),
+		r.NodeCommand("other-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
 		"service not in services: falls to default")
 }
 
 func TestResolver_PerOperationFallthrough(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
 	assert.Equal(t, []string{"dbt", "seed", "--select", "fx"},
-		r.NodeCommand("wise", pkg_model.NodeTypeDbtSeed, "fx"),
+		r.NodeCommand("wise", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
 		"wise overrides run only; seed falls through default (which has no seed) to built-in")
 }
 
@@ -104,14 +116,14 @@ default:
 `)
 	assert.Equal(t,
 		[]string{"wise-dbt", "run", "--select", "model:orders", "--log-prefix", "orders-orders"},
-		r.NodeCommand("svc", pkg_model.NodeTypeDbtModel, "orders"),
+		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
 		"tokens inside elements, without inner spaces, and repeated all substitute")
 }
 
 func TestResolver_TemplateNotMutatedAcrossCalls(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
-	first := r.NodeCommand("wise", pkg_model.NodeTypeDbtModel, "orders")
-	second := r.NodeCommand("wise", pkg_model.NodeTypeDbtModel, "users")
+	first := r.NodeCommand("wise", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders")
+	second := r.NodeCommand("wise", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "users")
 	assert.Equal(t, []string{"wise-dbt", "run", "--select", "orders"}, first)
 	assert.Equal(t, []string{"wise-dbt", "run", "--select", "users"}, second)
 }

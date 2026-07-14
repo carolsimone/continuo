@@ -79,3 +79,27 @@ func (t NodeType) Command(tableName string) []string {
 		return []string{"dbt", "run", "--select", tableName}
 	}
 }
+
+// Operation is the dbt verb a run applies to its nodes. It is orthogonal to
+// NodeType: NodeType is what a node IS; Operation is which verb runs against it.
+type Operation string
+
+const (
+	OperationRun   Operation = ""      // default: dbt run/seed/snapshot by NodeType
+	OperationTest  Operation = "test"  // dbt test --select <node>
+	OperationBuild Operation = "build" // dbt build --select <node>; resolved by the executor but rejected at the state trigger boundary until intentionally wired
+)
+
+// ParseOperation normalizes a raw operation string. Empty ⇒ run.
+func ParseOperation(s string) (Operation, error) {
+	switch Operation(s) {
+	case OperationRun, "run":
+		return OperationRun, nil
+	case OperationTest:
+		return OperationTest, nil
+	case OperationBuild:
+		return OperationBuild, nil
+	default:
+		return "", fmt.Errorf("unknown operation %q", s)
+	}
+}

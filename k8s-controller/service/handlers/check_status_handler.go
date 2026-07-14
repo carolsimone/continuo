@@ -605,6 +605,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 		RetryCount:   int(newRetryCount),
 		MaxRetries:   int(maxRetries),
 		NodeType:     cmd.NodeType,
+		Operation:    cmd.Operation,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal task_retry: %w", err)
@@ -680,6 +681,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 		CheckAfter:       checkAfter.Unix(),
 		NodeType:         cmd.NodeType,
 		ImageTag:         cmd.ImageTag,
+		Operation:        cmd.Operation,
 		RetryCount:       int(cmd.RetryCount),
 		MaxRetries:       int(maxRetries),
 		RunningAnnounced: true,

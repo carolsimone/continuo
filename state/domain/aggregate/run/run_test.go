@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -19,7 +20,7 @@ func TestNewPendingRun_RecordsRunStarted(t *testing.T) {
 		"orders": {ManifestVersion: "v1", ImageTag: "abc"},
 	}
 
-	r, evt, err := run.NewPendingRun("daily_orders", run.KindCron, nil, identity.SystemUserID, meta, now)
+	r, evt, err := run.NewPendingRun("daily_orders", run.KindCron, nil, identity.SystemUserID, meta, model.OperationRun, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +53,7 @@ func TestNewRun_StampsInitiatorOnAggregateAndEvent(t *testing.T) {
 	src := uuid.New()
 
 	t.Run("pending run", func(t *testing.T) {
-		r, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|alice", nil, now)
+		r, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|alice", nil, model.OperationRun, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -79,28 +80,93 @@ func TestNewRun_StampsInitiatorOnAggregateAndEvent(t *testing.T) {
 
 	t.Run("single node run", func(t *testing.T) {
 		target := run.NodeID{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"}
-		r, evt, err := run.NewSingleNodeRun("single-node-run-abcd1234", target, run.MetadataSourceLatest, nil, "okta|carol", now)
+		r, evt, err := run.NewSingleNodeRun("single-node-run-abcd1234", target, run.MetadataSourceLatest, model.OperationRun, nil, "okta|carol", now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if r.InitiatedBy() != "okta|carol" {
 			t.Fatalf("aggregate InitiatedBy: got %q want okta|carol", r.InitiatedBy())
 		}
-		if sn := evt.(run.SingleNodeRunRequested); sn.InitiatedBy != "okta|carol" {
+		sn := evt.(run.SingleNodeRunRequested)
+		if sn.InitiatedBy != "okta|carol" {
 			t.Fatalf("SingleNodeRunRequested.InitiatedBy: got %q want okta|carol", sn.InitiatedBy)
+		}
+		if sn.Operation != model.OperationRun {
+			t.Fatalf("SingleNodeRunRequested.Operation: got %q want %q (empty/run)", sn.Operation, model.OperationRun)
+		}
+	})
+}
+
+// TestNewSingleNodeRun_CarriesOperation verifies the Operation passed to
+// NewSingleNodeRun rides onto the emitted SingleNodeRunRequested event.
+// State does not act on the operation itself — it only forwards it for the
+// orchestrator (via trigger.single_node_run:v1) to select the dbt verb.
+func TestNewSingleNodeRun_CarriesOperation(t *testing.T) {
+	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+	target := run.NodeID{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"}
+
+	t.Run("test operation", func(t *testing.T) {
+		_, evt, err := run.NewSingleNodeRun("single-node-run-test1234", target, run.MetadataSourceLatest, model.OperationTest, nil, "okta|carol", now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		sn := evt.(run.SingleNodeRunRequested)
+		if sn.Operation != model.OperationTest {
+			t.Fatalf("Operation: got %q want %q", sn.Operation, model.OperationTest)
+		}
+	})
+
+	t.Run("run operation defaults to empty", func(t *testing.T) {
+		_, evt, err := run.NewSingleNodeRun("single-node-run-run12345", target, run.MetadataSourceLatest, model.OperationRun, nil, "okta|carol", now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		sn := evt.(run.SingleNodeRunRequested)
+		if sn.Operation != "" {
+			t.Fatalf("Operation: got %q want empty string", sn.Operation)
+		}
+	})
+}
+
+// TestNewPendingRun_CarriesOperation verifies the Operation passed to
+// NewPendingRun rides onto the emitted RunStarted event. State does not act
+// on the operation itself — it only forwards it for the orchestrator (via
+// scheduler.started:v1) to build the whole-DAG run projection.
+func TestNewPendingRun_CarriesOperation(t *testing.T) {
+	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+
+	t.Run("test operation", func(t *testing.T) {
+		_, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|carol", nil, model.OperationTest, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		started := evt.(run.RunStarted)
+		if started.Operation != model.OperationTest {
+			t.Fatalf("Operation: got %q want %q", started.Operation, model.OperationTest)
+		}
+	})
+
+	t.Run("run operation defaults to empty", func(t *testing.T) {
+		_, evt, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		started := evt.(run.RunStarted)
+		if started.Operation != "" {
+			t.Fatalf("Operation: got %q want empty string", started.Operation)
 		}
 	})
 }
 
 func TestNewPendingRun_RejectsEmptyName(t *testing.T) {
-	_, _, err := run.NewPendingRun("", run.KindCron, nil, identity.SystemUserID, nil, time.Now())
+	_, _, err := run.NewPendingRun("", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
 	if err != run.ErrScheduleNameRequired {
 		t.Fatalf("err: got %v want %v", err, run.ErrScheduleNameRequired)
 	}
 }
 
 func TestNewPendingRun_RejectsInvalidKind(t *testing.T) {
-	_, _, err := run.NewPendingRun("x", run.Kind("bogus"), nil, identity.SystemUserID, nil, time.Now())
+	_, _, err := run.NewPendingRun("x", run.Kind("bogus"), nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
 	if err != run.ErrInvalidKind {
 		t.Fatalf("err: got %v want %v", err, run.ErrInvalidKind)
 	}
@@ -192,7 +258,7 @@ func (f *fakeTaskCollection) Update(_ context.Context, t run.Task) error {
 // zero counters — the state on entry to AcceptDispatch.
 func freshPendingRun(t *testing.T) *run.Run {
 	t.Helper()
-	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, time.Now())
+	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}

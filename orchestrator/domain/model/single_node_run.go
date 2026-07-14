@@ -17,5 +17,6 @@ type SingleNodeRunInput struct {
 	TableName      string
 	MetadataSource string // "latest" | "snapshot_of_run"
 	SourceRunID    string // empty in latest mode
+	Operation      string // "" | "run" | "test" | "build"; empty means run
 	InitiatedBy    string // user who triggered the run, or "system"
 }

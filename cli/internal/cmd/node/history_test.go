@@ -30,6 +30,13 @@ type fakeNodeState struct {
 	trigErr    error
 	gotActor   string
 	gotTrigSvc string
+
+	testResp      *statev1.TriggerSingleNodeRunResponse
+	testErr       error
+	gotTestActor  string
+	gotTestSvc    string
+	gotTestSchema string
+	gotTestTable  string
 }
 
 func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table string, limit int32) (*statev1.ListNodeRunsResponse, error) {
@@ -42,8 +49,16 @@ func (f *fakeNodeState) TriggerNodeRun(_ context.Context, service, _, _, actor s
 	return f.trigResp, f.trigErr
 }
 
+func (f *fakeNodeState) TriggerNodeTest(_ context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	f.gotTestSvc, f.gotTestSchema, f.gotTestTable, f.gotTestActor = service, schema, table, actor
+	return f.testResp, f.testErr
+}
+
 func (f *fakeNodeState) TriggerSchedule(context.Context, string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerSchedule should not be called in node tests")
+}
+func (f *fakeNodeState) TriggerScheduleTest(context.Context, string) (*statev1.TriggerScheduleResponse, error) {
+	panic("TriggerScheduleTest should not be called in node tests")
 }
 func (f *fakeNodeState) ListAllSchedules(context.Context) (*statev1.ListAllSchedulesResponse, error) {
 	panic("ListAllSchedules should not be called in node tests")

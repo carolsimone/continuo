@@ -15,11 +15,13 @@ import (
 // implement this; the real implementation lives in stateGRPCClient.
 type StateClient interface {
 	TriggerSchedule(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error)
+	TriggerScheduleTest(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error)
 	ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error)
 	ListTasks(ctx context.Context, scheduleID string, status statev1.TaskStatus, pageSize, pageOffset int32) (*statev1.ListTasksResponse, error)
 	CancelSchedule(ctx context.Context, scheduleName, reason, by string) (*statev1.CancelScheduleResponse, error)
 	ListNodeRuns(ctx context.Context, service, schema, table string, limit int32) (*statev1.ListNodeRunsResponse, error)
 	TriggerNodeRun(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeTest(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	Close() error
 }
 
@@ -40,6 +42,10 @@ type stateGRPCClient struct {
 
 func (c *stateGRPCClient) TriggerSchedule(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error) {
 	return c.api.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: scheduleName})
+}
+
+func (c *stateGRPCClient) TriggerScheduleTest(ctx context.Context, scheduleName string) (*statev1.TriggerScheduleResponse, error) {
+	return c.api.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: scheduleName, Operation: "test"})
 }
 
 func (c *stateGRPCClient) ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error) {
@@ -88,6 +94,20 @@ func (c *stateGRPCClient) TriggerNodeRun(ctx context.Context, service, schema, t
 		TableName:      table,
 		MetadataSource: "latest",
 		SourceRunId:    "",
+	})
+}
+
+func (c *stateGRPCClient) TriggerNodeTest(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	if actor != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, userIDMetadataKey, actor)
+	}
+	return c.api.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    service,
+		SchemaName:     schema,
+		TableName:      table,
+		MetadataSource: "latest",
+		SourceRunId:    "",
+		Operation:      "test",
 	})
 }
 

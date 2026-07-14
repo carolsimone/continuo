@@ -536,6 +536,38 @@ func TestHandleParseOK_EmitsCandidateSQLURIPerNode(t *testing.T) {
 	assert.Equal(t, "", prodSchema["a2"])
 }
 
+// TestHandleParsedManifest_OK_TestCountSurvivesToCandidateTopology verifies
+// that test_count on the manifest.loaded.candidate:v1 payload survives
+// unmarshalling into HandleParsedManifestInput (the same JSON decode the
+// real Redis binding performs) and persists on the release's candidate
+// topology.
+func TestHandleParsedManifest_OK_TestCountSurvivesToCandidateTopology(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+
+	rawPayload := []byte(`{
+		"release_id": "rA",
+		"status": "ok",
+		"topology": [
+			{"unique_id": "a", "service_name": "svc-a", "test_count": 3},
+			{"unique_id": "b", "service_name": "svc-a", "upstream_unique_ids": ["a"], "test_count": 0}
+		]
+	}`)
+	var in handlers.HandleParsedManifestInput
+	require.NoError(t, json.Unmarshal(rawPayload, &in))
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, in))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+
+	byID := map[string]release.Node{}
+	for _, n := range r.CandidateTopology() {
+		byID[n.UniqueID] = n
+	}
+	assert.Equal(t, 3, byID["a"].TestCount)
+	assert.Equal(t, 0, byID["b"].TestCount)
+}
+
 // TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI verifies that the
 // validation.requested:v1 payload carries upstream_node_ids per node and does
 // NOT contain defer_state_uri. Single-service chain a1->a2, both changed.

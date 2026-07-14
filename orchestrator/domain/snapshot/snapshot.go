@@ -27,6 +27,24 @@ var ErrEmptyProjection = errors.New("snapshot: empty projection")
 // set. Handlers map this to run.entries.dispatch_failed:v1.
 var ErrTargetNotFound = errors.New("snapshot: target table not found")
 
+// ErrNoTests is returned by the SingleNode selector when Operation is "test"
+// and the resolved target has zero dbt tests: there is no work for `dbt
+// test` to do. Handlers map this to run.entries.dispatch_failed:v1 with
+// reason "no_tests" instead of dispatching a pointless Job.
+var ErrNoTests = errors.New("snapshot: node has no tests")
+
+// ErrRerunOfTestUnsupported is returned by the SourcePinnedDAG (rerun) and
+// RebasePartition (rebase) selectors when the source :Run's operation is
+// "test". A rerun/rebase derives its dispatch from the source run's
+// TaskProjection, which carries no per-task operation — so a rerun of a test
+// run would silently issue `dbt run` against the failed nodes instead of
+// `dbt test`, either mutating models or falsely reporting success. Rather
+// than preserve/rerun-as-test, rerun/rebase of a test run is rejected
+// outright: the caller triggers a fresh `node test` / `schedule test`
+// instead. Handlers map this to run.entries.dispatch_failed:v1 with reason
+// "rerun_of_test_unsupported".
+var ErrRerunOfTestUnsupported = errors.New("snapshot: rerun/rebase of a test run is not supported")
+
 // Params is the input to a snapshot.
 type Params struct {
 	RunID        string
@@ -34,6 +52,7 @@ type Params struct {
 	Kind         string     // "cron" | "trigger" | "rerun" | "single_node_run" | "rebase"
 	SourceRunID  *uuid.UUID // nil for cron/trigger and latest-mode single-node-run
 	InitiatedBy  string     // user who initiated the run, or "system"; stamped on the :Run node
+	Operation    string     // "" | "run" | "test" | "build"; consumed by SingleNode to gate zero-test TEST runs
 	Selector     Selector
 	Cancelled    bool // schedule was already cancelled at snapshot time → writer stamps the :Run terminal on create
 }
@@ -50,6 +69,8 @@ type TaskProjection struct {
 	InitialStatus       string // "PENDING" | "SUCCEEDED"
 	ImageTag            string
 	ManifestVersion     string
+	TestCount           int
+	TestCountKnown      bool       // true iff the pinned source (:Table or source :EXECUTES edge) had a test_count property
 	InheritedFromTaskID *uuid.UUID // non-nil iff InitialStatus == "SUCCEEDED" via inherit; root pointer
 	MaxRetries          int32
 	// ReadyToDispatch marks a PENDING node as part of the run's initial dispatch

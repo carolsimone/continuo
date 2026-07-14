@@ -19,6 +19,10 @@ type JobDeployed struct {
 	JobName        string `json:"job_name"`
 	NodeType       string `json:"node_type"`
 	ImageTag       string `json:"image_tag"`
+	// Operation is the dbt verb this Job runs (e.g. "test"); empty for a normal
+	// production `dbt run`. It flows onto node.deployed:v1 so k8s-controller
+	// carries it through the durable check/retry chain.
+	Operation      string `json:"operation,omitempty"`
 	TaskRetryCount int    `json:"task_retry_count"` // task-level retry count (not outbox delivery retries)
 	MaxRetries     int    `json:"max_retries"`      // maximum task retries allowed
 }

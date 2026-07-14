@@ -90,6 +90,7 @@ def parse_manifest(manifest_path: str, manifest_version: str, image_tag: str = "
 
     macros = manifest.get("macros", {})
     nodes = []
+    node_by_id: dict[str, ManifestNode] = {}
     for node_id, node in manifest["nodes"].items():
         resource_type = node["resource_type"]
         if resource_type not in SUPPORTED_RESOURCE_TYPES:
@@ -117,7 +118,7 @@ def parse_manifest(manifest_path: str, manifest_version: str, image_tag: str = "
 
         criticality = node.get("config", {}).get("meta", {}).get("criticality", "SECONDARY")
 
-        nodes.append(ManifestNode(
+        manifest_node = ManifestNode(
             table_name=node["name"],
             schema_name=node["schema"],
             service_name=node["fqn"][0].replace("_", "-"),
@@ -130,5 +131,24 @@ def parse_manifest(manifest_path: str, manifest_version: str, image_tag: str = "
             manifest_version=manifest_version,
             image_tag=image_tag,
             original_file_path=node.get("original_file_path", ""),
-        ))
+        )
+        nodes.append(manifest_node)
+        node_by_id[node_id] = manifest_node
+
+    # Second pass: count tests attached to each tracked node. Generic tests
+    # carry attached_node; singular tests carry only depends_on.nodes. A test
+    # attributes once, to attached_node when present else to each tracked
+    # depends_on target.
+    for node_id, node in manifest["nodes"].items():
+        if node.get("resource_type") != "test":
+            continue
+        attached = node.get("attached_node")
+        targets = [attached] if attached else node.get("depends_on", {}).get("nodes", [])
+        counted = set()
+        for t in targets:
+            tgt = node_by_id.get(t)
+            if tgt is not None and id(tgt) not in counted:
+                tgt.test_count += 1
+                counted.add(id(tgt))
+
     return nodes

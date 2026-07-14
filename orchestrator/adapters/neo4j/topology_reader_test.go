@@ -98,6 +98,7 @@ type txEdge struct {
 	Img, Mv             string
 	InheritedFromTaskID string // empty = not inherited
 	Sched               string // override schedule; empty = use outer sched
+	TestCount           *int   // nil = property left absent (pre-capture edge); non-nil = pinned value
 }
 
 func txSeedExecEdges(ctx context.Context, tx neo4j.ManagedTransaction, runID, defaultSched string, edges []txEdge) error {
@@ -110,6 +111,10 @@ func txSeedExecEdges(ctx context.Context, tx neo4j.ManagedTransaction, runID, de
 		if e.InheritedFromTaskID != "" {
 			inheritedFrom = e.InheritedFromTaskID
 		}
+		var testCount interface{}
+		if e.TestCount != nil {
+			testCount = *e.TestCount
+		}
 		_, err := tx.Run(ctx, `
 			MATCH (r:Run {run_id: $run_id})
 			MATCH (t:Table {service_name: $svc, schema_name: $schema, table_name: $tbl, schedule_name: $sched})
@@ -118,11 +123,15 @@ func txSeedExecEdges(ctx context.Context, tx neo4j.ManagedTransaction, runID, de
 			              ex.image_tag = $img, ex.manifest_version = $mv
 			FOREACH (_ IN CASE WHEN $inherited_from IS NULL THEN [] ELSE [1] END |
 			    SET ex.inherited_from_task_id = $inherited_from
+			)
+			FOREACH (_ IN CASE WHEN $test_count IS NULL THEN [] ELSE [1] END |
+			    SET ex.test_count = $test_count
 			)`,
 			map[string]interface{}{
 				"run_id": runID, "svc": e.Svc, "schema": e.Schema, "tbl": e.Tbl,
 				"sched": sched, "status": e.Status, "task_id": e.TaskID,
 				"img": e.Img, "mv": e.Mv, "inherited_from": inheritedFrom,
+				"test_count": testCount,
 			})
 		if err != nil {
 			return err
@@ -209,6 +218,29 @@ func TestTopologyReader_LoadLatestSourceDAG_InactiveTablesExcluded(t *testing.T)
 			fqnInactive := snapshot.FQN{Service: "svc", Schema: "s", Table: "inactive", ScheduleName: sched}
 			_, ok = got[fqnInactive]
 			assert.False(t, ok, "inactive table must not be present")
+			return nil
+		},
+	)
+}
+
+// Graceful degradation: LoadLatestSourceDAG must surface an absent test_count
+// property (pre-capture topology) as TestCountKnown == false, not collapse it
+// to an explicit zero.
+func TestTopologyReader_LoadLatestSourceDAG_TestCountAbsent(t *testing.T) {
+	sched := "test-tr-lsd-tc-" + uuid.New().String()[:8]
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			return txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", "v1", true)
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			got, err := r.LoadLatestSourceDAG(ctx, sched)
+			require.NoError(t, err)
+			fqnA := snapshot.FQN{Service: "svc", Schema: "s", Table: "a", ScheduleName: sched}
+			rowA, ok := got[fqnA]
+			require.True(t, ok, "missing row for table a")
+			assert.False(t, rowA.TestCountKnown, "test_count was never set: TestCountKnown must be false")
+			assert.Equal(t, 0, rowA.TestCount)
 			return nil
 		},
 	)
@@ -308,6 +340,59 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 			require.True(t, ok, "missing row for b")
 			assert.Equal(t, "FAILED", rowB.Status)
 			assert.Nil(t, rowB.InheritedFromRoot, "b has no inherited_from")
+			return nil
+		},
+	)
+}
+
+// ── SourceRunOperation ─────────────────────────────────────────────────────────
+
+func TestTopologyReader_SourceRunOperation_HitAndMiss(t *testing.T) {
+	sched := "test-tr-sro-" + uuid.New().String()[:8]
+	testRunID := uuid.New().String()
+	runRunID := uuid.New().String()
+	unsetRunID := uuid.New().String()
+	missingRunID := uuid.New().String()
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			if err := txSeedRun(ctx, tx, testRunID, sched); err != nil {
+				return err
+			}
+			if _, err := tx.Run(ctx,
+				"MATCH (r:Run {run_id: $run_id}) SET r.operation = $operation",
+				map[string]interface{}{"run_id": testRunID, "operation": "test"},
+			); err != nil {
+				return err
+			}
+			if err := txSeedRun(ctx, tx, runRunID, sched); err != nil {
+				return err
+			}
+			if _, err := tx.Run(ctx,
+				"MATCH (r:Run {run_id: $run_id}) SET r.operation = $operation",
+				map[string]interface{}{"run_id": runRunID, "operation": "run"},
+			); err != nil {
+				return err
+			}
+			// unsetRunID: :Run exists but never got r.operation set.
+			return txSeedRun(ctx, tx, unsetRunID, sched)
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			op, err := r.SourceRunOperation(ctx, testRunID)
+			require.NoError(t, err)
+			assert.Equal(t, "test", op)
+
+			op, err = r.SourceRunOperation(ctx, runRunID)
+			require.NoError(t, err)
+			assert.Equal(t, "run", op)
+
+			op, err = r.SourceRunOperation(ctx, unsetRunID)
+			require.NoError(t, err)
+			assert.Equal(t, "", op, "unset operation must read as empty string")
+
+			op, err = r.SourceRunOperation(ctx, missingRunID)
+			require.NoError(t, err)
+			assert.Equal(t, "", op, "missing run must read as empty string, no error")
 			return nil
 		},
 	)
@@ -445,6 +530,47 @@ func TestTopologyReader_LoadSingleLatestTable_HitAndMiss(t *testing.T) {
 	)
 }
 
+// Graceful degradation for pre-capture topology: a :Table created before
+// test_count existed has the property entirely absent (not zero). The reader
+// must surface that as TestCountKnown == false, distinct from an explicit
+// test_count = 0 (TestCountKnown == true), so callers don't collapse "unknown"
+// into "no tests".
+func TestTopologyReader_LoadSingleLatestTable_TestCountAbsent_vs_ExplicitZero(t *testing.T) {
+	sched := "test-tr-tc-" + uuid.New().String()[:8]
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			// Pre-capture style: MERGE without ever setting test_count.
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "absent", "img:1", "v1", true); err != nil {
+				return err
+			}
+			// Explicit zero: test_count set to 0.
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "known-zero", "img:2", "v2", true); err != nil {
+				return err
+			}
+			_, err := tx.Run(ctx, `
+				MATCH (t:Table {schedule_name: $sched, table_name: "known-zero"})
+				SET t.test_count = 0`,
+				map[string]interface{}{"sched": sched})
+			return err
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			absentRow, found, err := r.LoadSingleLatestTable(ctx, snapshot.FQN{Service: "svc", Schema: "s", Table: "absent"})
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.False(t, absentRow.TestCountKnown, "test_count was never set: TestCountKnown must be false")
+			assert.Equal(t, 0, absentRow.TestCount)
+
+			knownRow, found, err := r.LoadSingleLatestTable(ctx, snapshot.FQN{Service: "svc", Schema: "s", Table: "known-zero"})
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.True(t, knownRow.TestCountKnown, "test_count = 0 was explicitly set: TestCountKnown must be true")
+			assert.Equal(t, 0, knownRow.TestCount)
+			return nil
+		},
+	)
+}
+
 func TestTopologyReader_LoadSingleLatestTable_InactiveExcluded(t *testing.T) {
 	sched := "test-tr-slt-inactive-" + uuid.New().String()[:8]
 
@@ -496,6 +622,92 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_HitAndMiss(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, found, "absent table must return found=false")
 			assert.Equal(t, snapshot.LatestTableRow{}, zero)
+			return nil
+		},
+	)
+}
+
+// P2-1: LoadSingleTableFromSourceRun must read test_count from the PINNED
+// source :EXECUTES edge, not the mutable current :Table. Otherwise a later
+// promotion that changes a node's tests would retroactively change the
+// no_tests gate for a stale (snapshot_of_run) test rerun against an older
+// source run — evaluating the gate against different metadata than the image
+// that will actually execute.
+func TestTopologyReader_LoadSingleTableFromSourceRun_ReadsPinnedTestCountNotCurrentTable(t *testing.T) {
+	sched := "test-tr-sfr-tc-" + uuid.New().String()[:8]
+	runID := uuid.New().String()
+	taskID := uuid.New().String()
+	pinned := 0
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:1", "v1", true); err != nil {
+				return err
+			}
+			// Table had test_count = 0 at snapshot time.
+			if _, err := tx.Run(ctx, `
+				MATCH (t:Table {schedule_name: $sched, table_name: "z"})
+				SET t.test_count = 0`,
+				map[string]interface{}{"sched": sched}); err != nil {
+				return err
+			}
+			if err := txSeedRun(ctx, tx, runID, sched); err != nil {
+				return err
+			}
+			// Source edge pins test_count = 0, mirroring the table at snapshot time.
+			if err := txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
+				{Svc: "svc", Schema: "s", Tbl: "z", Status: "SUCCEEDED", TaskID: taskID,
+					Img: "img:1", Mv: "v1", TestCount: &pinned},
+			}); err != nil {
+				return err
+			}
+			// Simulate a later promotion that changed the node's tests: mutate the
+			// CURRENT :Table.test_count, leaving the pinned edge untouched.
+			_, err := tx.Run(ctx, `
+				MATCH (t:Table {schedule_name: $sched, table_name: "z"})
+				SET t.test_count = 5`,
+				map[string]interface{}{"sched": sched})
+			return err
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			row, found, err := r.LoadSingleTableFromSourceRun(ctx, runID, snapshot.FQN{Service: "svc", Schema: "s", Table: "z"})
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.True(t, row.TestCountKnown, "edge pinned test_count = 0 explicitly")
+			assert.Equal(t, 0, row.TestCount, "must read the PINNED edge value (0), not the current :Table value (5)")
+			return nil
+		},
+	)
+}
+
+// Graceful degradation: a source :EXECUTES edge written before test_count
+// existed has the property entirely absent. The reader must surface that as
+// TestCountKnown == false rather than silently reading the current :Table's
+// (unrelated) value.
+func TestTopologyReader_LoadSingleTableFromSourceRun_TestCountAbsentOnEdge(t *testing.T) {
+	sched := "test-tr-sfr-tc-absent-" + uuid.New().String()[:8]
+	runID := uuid.New().String()
+	taskID := uuid.New().String()
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:1", "v1", true); err != nil {
+				return err
+			}
+			if err := txSeedRun(ctx, tx, runID, sched); err != nil {
+				return err
+			}
+			// Pre-capture source edge: no test_count property at all.
+			return txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
+				{Svc: "svc", Schema: "s", Tbl: "z", Status: "SUCCEEDED", TaskID: taskID,
+					Img: "img:1", Mv: "v1"},
+			})
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			row, found, err := r.LoadSingleTableFromSourceRun(ctx, runID, snapshot.FQN{Service: "svc", Schema: "s", Table: "z"})
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.False(t, row.TestCountKnown, "pre-capture source edge has no test_count property")
 			return nil
 		},
 	)

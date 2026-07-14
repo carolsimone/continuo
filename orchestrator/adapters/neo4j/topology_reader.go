@@ -38,6 +38,7 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           t.service_name  AS service_name,
 		           t.schedule_name AS schedule_name,
 		           COALESCE(t.node_type, 'dbt-model')      AS node_type,
+		           t.test_count                             AS test_count,
 		           COALESCE(t.image_tag, '')                AS image_tag,
 		           COALESCE(t.manifest_version, '')         AS manifest_version
 
@@ -52,11 +53,12 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           s.service_name  AS service_name,
 		           s.schedule_name AS schedule_name,
 		           s.node_type     AS node_type,
+		           s.test_count                     AS test_count,
 		           COALESCE(s.image_tag, '')        AS image_tag,
 		           COALESCE(s.manifest_version, '') AS manifest_version
 		}
 		RETURN DISTINCT schema_name, table_name, service_name, schedule_name,
-		                node_type, image_tag, manifest_version
+		                node_type, test_count, image_tag, manifest_version
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{"schedule_name": scheduleName})
 	if err != nil {
@@ -72,9 +74,12 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 			Table:        stringField(rec, "table_name"),
 			ScheduleName: schedName,
 		}
+		tc, tcKnown := intFieldPresent(rec, "test_count")
 		out[f] = snapshot.LatestTableRow{
 			ScheduleName:    schedName,
 			NodeType:        stringField(rec, "node_type"),
+			TestCount:       tc,
+			TestCountKnown:  tcKnown,
 			ImageTag:        stringField(rec, "image_tag"),
 			ManifestVersion: stringField(rec, "manifest_version"),
 		}
@@ -308,6 +313,7 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 		WHERE ($sched = '' OR tbl.schedule_name = $sched) AND COALESCE(tbl.active, true)
 		RETURN tbl.schedule_name AS schedule_name,
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
+		       tbl.test_count                       AS test_count,
 		       COALESCE(tbl.image_tag, '')          AS image_tag,
 		       COALESCE(tbl.manifest_version, '')   AS manifest_version
 		LIMIT 1
@@ -326,9 +332,12 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 		return snapshot.LatestTableRow{}, false, nil
 	}
 	rec := result.Record()
+	tc, tcKnown := intFieldPresent(rec, "test_count")
 	return snapshot.LatestTableRow{
 		ScheduleName:    stringField(rec, "schedule_name"),
 		NodeType:        stringField(rec, "node_type"),
+		TestCount:       tc,
+		TestCountKnown:  tcKnown,
 		ImageTag:        stringField(rec, "image_tag"),
 		ManifestVersion: stringField(rec, "manifest_version"),
 	}, true, nil
@@ -342,6 +351,7 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		WHERE ($sched = '' OR tbl.schedule_name = $sched)
 		RETURN tbl.schedule_name AS schedule_name,
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
+		       srcEdge.test_count                     AS test_count,
 		       COALESCE(srcEdge.image_tag, '')        AS image_tag,
 		       COALESCE(srcEdge.manifest_version, '') AS manifest_version
 		LIMIT 1
@@ -361,12 +371,33 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		return snapshot.LatestTableRow{}, false, nil
 	}
 	rec := result.Record()
+	tc, tcKnown := intFieldPresent(rec, "test_count")
 	return snapshot.LatestTableRow{
 		ScheduleName:    stringField(rec, "schedule_name"),
 		NodeType:        stringField(rec, "node_type"),
+		TestCount:       tc,
+		TestCountKnown:  tcKnown,
 		ImageTag:        stringField(rec, "image_tag"),
 		ManifestVersion: stringField(rec, "manifest_version"),
 	}, true, nil
+}
+
+func (r *topologyReader) SourceRunOperation(ctx context.Context, sourceRunID string) (string, error) {
+	const q = `
+		MATCH (r:Run {run_id: $source_run_id})
+		RETURN COALESCE(r.operation, '') AS operation
+	`
+	result, err := r.tx.Run(ctx, q, map[string]interface{}{"source_run_id": sourceRunID})
+	if err != nil {
+		return "", fmt.Errorf("topology_reader: SourceRunOperation: %w", err)
+	}
+	if !result.Next(ctx) {
+		if rerr := result.Err(); rerr != nil {
+			return "", fmt.Errorf("topology_reader: SourceRunOperation result: %w", rerr)
+		}
+		return "", nil
+	}
+	return stringField(result.Record(), "operation"), nil
 }
 
 // stringField extracts a string-typed field from a Neo4j record, returning ""
@@ -378,6 +409,16 @@ func stringField(rec *neo4j.Record, k string) string {
 		}
 	}
 	return ""
+}
+
+// intFieldPresent returns the int value of key and whether the field was
+// present and non-null (a Neo4j property that does not exist reads as nil).
+func intFieldPresent(rec *neo4j.Record, k string) (int, bool) {
+	v, ok := rec.Get(k)
+	if !ok || v == nil {
+		return 0, false
+	}
+	return int(toInt64(v)), true
 }
 
 // NewTopologyReaderForTest exposes newTopologyReader to package-external tests

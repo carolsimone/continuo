@@ -82,3 +82,130 @@ func TestSingleNode_BlankIdentity_Errors(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestSingleNode_LatestMode_TestOperation_ZeroTests_ReturnsErrNoTests(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test"})
+	if !errors.Is(err, snapshot.ErrNoTests) {
+		t.Fatalf("got %v, want ErrNoTests", err)
+	}
+}
+
+// Graceful degradation: topology written before test_count existed has the
+// property absent (TestCountKnown == false). Absent must NOT gate the test
+// operation — dbt just no-ops if the model truly has no tests.
+func TestSingleNode_LatestMode_TestOperation_TestCountAbsent_DoesNotGate(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: false},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test"})
+	if err != nil {
+		t.Fatalf("got err %v, want nil (absent test_count must not gate)", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d, want 1", len(got))
+	}
+}
+
+func TestSingleNode_LatestMode_TestOperation_WithTests_ReturnsProjection(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 3, TestCountKnown: true},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d", len(got))
+	}
+}
+
+func TestSingleNode_LatestMode_RunOperation_ZeroTests_DoesNotGate(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d", len(got))
+	}
+}
+
+func TestSingleNode_SnapshotOfRunMode_TestOperation_ZeroTests_ReturnsErrNoTests(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	srcID := uuid.New()
+	r := &fakeTopologyReader{
+		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 0, TestCountKnown: true}},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
+	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "test"})
+	if !errors.Is(err, snapshot.ErrNoTests) {
+		t.Fatalf("got %v, want ErrNoTests", err)
+	}
+}
+
+// Graceful degradation for the snapshot_of_run mode: absent test_count on the
+// source :EXECUTES-pinned row must not gate.
+func TestSingleNode_SnapshotOfRunMode_TestOperation_TestCountAbsent_DoesNotGate(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	srcID := uuid.New()
+	r := &fakeTopologyReader{
+		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 0, TestCountKnown: false}},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "test"})
+	if err != nil {
+		t.Fatalf("got err %v, want nil (absent test_count must not gate)", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d, want 1", len(got))
+	}
+}
+
+func TestSingleNode_SnapshotOfRunMode_TestOperation_WithTests_ReturnsProjection(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	srcID := uuid.New()
+	r := &fakeTopologyReader{
+		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 2, TestCountKnown: true}},
+		},
+	}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
+	got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d", len(got))
+	}
+	// The projection must carry the pinned test_count through to the writer, so
+	// the :EXECUTES edge stamps it (P2-1): a later promotion changing the node's
+	// tests must not retroactively change the no_tests gate for this stale rerun.
+	if got[0].TestCount != 2 || !got[0].TestCountKnown {
+		t.Errorf("TestCount=%d TestCountKnown=%v, want 2/true (pinned from source row)", got[0].TestCount, got[0].TestCountKnown)
+	}
+}

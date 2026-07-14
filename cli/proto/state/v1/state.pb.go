@@ -1436,6 +1436,7 @@ func (x *ListAllSchedulesResponse) GetSchedules() []*ScheduleSummary {
 type TriggerScheduleRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleName  string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
+	Operation     string                 `protobuf:"bytes,2,opt,name=operation,proto3" json:"operation,omitempty"` // Optional: "" | "run" | "test" | "build"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1473,6 +1474,13 @@ func (*TriggerScheduleRequest) Descriptor() ([]byte, []int) {
 func (x *TriggerScheduleRequest) GetScheduleName() string {
 	if x != nil {
 		return x.ScheduleName
+	}
+	return ""
+}
+
+func (x *TriggerScheduleRequest) GetOperation() string {
+	if x != nil {
+		return x.Operation
 	}
 	return ""
 }
@@ -1862,6 +1870,7 @@ type TriggerSingleNodeRunRequest struct {
 	TableName      string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`                // Required
 	MetadataSource string                 `protobuf:"bytes,4,opt,name=metadata_source,json=metadataSource,proto3" json:"metadata_source,omitempty"` // Required: "latest" | "snapshot_of_run"
 	SourceRunId    string                 `protobuf:"bytes,5,opt,name=source_run_id,json=sourceRunId,proto3" json:"source_run_id,omitempty"`        // Required iff metadata_source == "snapshot_of_run"
+	Operation      string                 `protobuf:"bytes,6,opt,name=operation,proto3" json:"operation,omitempty"`                                 // Optional: "" | "run" | "test" | "build" (default run)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1927,6 +1936,13 @@ func (x *TriggerSingleNodeRunRequest) GetMetadataSource() string {
 func (x *TriggerSingleNodeRunRequest) GetSourceRunId() string {
 	if x != nil {
 		return x.SourceRunId
+	}
+	return ""
+}
+
+func (x *TriggerSingleNodeRunRequest) GetOperation() string {
+	if x != nil {
+		return x.Operation
 	}
 	return ""
 }
@@ -2788,9 +2804,10 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x0flast_run_status\x18\a \x01(\tR\rlastRunStatus\x12\x1e\n" +
 	"\vlast_run_id\x18\b \x01(\tR\tlastRunId\"S\n" +
 	"\x18ListAllSchedulesResponse\x127\n" +
-	"\tschedules\x18\x01 \x03(\v2\x19.state.v1.ScheduleSummaryR\tschedules\"=\n" +
+	"\tschedules\x18\x01 \x03(\v2\x19.state.v1.ScheduleSummaryR\tschedules\"[\n" +
 	"\x16TriggerScheduleRequest\x12#\n" +
-	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\":\n" +
+	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x1c\n" +
+	"\toperation\x18\x02 \x01(\tR\toperation\":\n" +
 	"\x17TriggerScheduleResponse\x12\x1f\n" +
 	"\vschedule_id\x18\x01 \x01(\tR\n" +
 	"scheduleId\"\x90\x01\n" +
@@ -2812,7 +2829,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\rsource_run_id\x18\x01 \x01(\tR\vsourceRunId\"R\n" +
 	"\x14TriggerRerunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
-	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\xcd\x01\n" +
+	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\xeb\x01\n" +
 	"\x1bTriggerSingleNodeRunRequest\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
@@ -2820,7 +2837,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\n" +
 	"table_name\x18\x03 \x01(\tR\ttableName\x12'\n" +
 	"\x0fmetadata_source\x18\x04 \x01(\tR\x0emetadataSource\x12\"\n" +
-	"\rsource_run_id\x18\x05 \x01(\tR\vsourceRunId\"Z\n" +
+	"\rsource_run_id\x18\x05 \x01(\tR\vsourceRunId\x12\x1c\n" +
+	"\toperation\x18\x06 \x01(\tR\toperation\"Z\n" +
 	"\x1cTriggerSingleNodeRunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\":\n" +

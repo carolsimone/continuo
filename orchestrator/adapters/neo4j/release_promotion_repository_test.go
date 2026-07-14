@@ -515,6 +515,34 @@ func TestReleasePromotionRepository_DeletesOrphanedTablesWithNoRunReferences(t *
 	assert.Equal(t, int64(1), bCount, ":Table 'b' must exist after rB promotion")
 }
 
+// TestPromotion_PersistsTestCount verifies that PromoteRelease writes
+// test_count onto the resulting :Table node, so that later readers (and
+// eventually single-node-run gating) can see how many dbt tests a node
+// carries.
+func TestPromotion_PersistsTestCount(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t) // skips if Neo4j is unreachable
+	wipeReleaseFixtures(t, client)
+	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
+
+	repo := newReleaseRepo(client)
+	nodes := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
+			TestCount: 2, UpstreamUniqueIDs: []string{}},
+	}
+	changed, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	s := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `MATCH (t:Table {unique_id:'a'}) RETURN t.test_count AS test_count`, nil)
+	require.NoError(t, err)
+	require.True(t, res.Next(ctx))
+	tc, _ := res.Record().Get("test_count")
+	assert.Equal(t, int64(2), tc)
+}
+
 func TestReleasePromotionRepository_SetsOriginalFilePathUnconditionally(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t) // skips if Neo4j unreachable

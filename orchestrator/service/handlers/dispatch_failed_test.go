@@ -43,6 +43,30 @@ func TestDispatchFailedReason(t *testing.T) {
 			wantOK:     true,
 		},
 		{
+			name:       "ErrNoTests maps to no_tests",
+			err:        snapshot.ErrNoTests,
+			wantReason: pkgEvents.DispatchFailedReasonNoTests,
+			wantOK:     true,
+		},
+		{
+			name:       "wrapped ErrNoTests still matches",
+			err:        fmt.Errorf("snapshot failed: %w", snapshot.ErrNoTests),
+			wantReason: pkgEvents.DispatchFailedReasonNoTests,
+			wantOK:     true,
+		},
+		{
+			name:       "ErrRerunOfTestUnsupported maps to rerun_of_test_unsupported",
+			err:        snapshot.ErrRerunOfTestUnsupported,
+			wantReason: pkgEvents.DispatchFailedReasonRerunOfTestUnsupported,
+			wantOK:     true,
+		},
+		{
+			name:       "wrapped ErrRerunOfTestUnsupported still matches",
+			err:        fmt.Errorf("snapshot failed: %w", snapshot.ErrRerunOfTestUnsupported),
+			wantReason: pkgEvents.DispatchFailedReasonRerunOfTestUnsupported,
+			wantOK:     true,
+		},
+		{
 			name:       "unknown error returns false",
 			err:        errors.New("boom"),
 			wantReason: "",

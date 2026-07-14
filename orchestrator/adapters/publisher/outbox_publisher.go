@@ -126,6 +126,12 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		if evt.Mode != "" {
 			values["mode"] = evt.Mode
 		}
+		// Operation is carried only for non-default dispatches (e.g. "test"): the
+		// executor uses it to pick the dbt verb instead of the NodeType default.
+		// Omitted for normal run dispatches so their wire shape is unchanged.
+		if evt.Operation != "" {
+			values["operation"] = evt.Operation
+		}
 		return values, nil
 
 	case "cascade_task_skipped":

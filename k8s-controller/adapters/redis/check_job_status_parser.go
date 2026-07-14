@@ -29,6 +29,7 @@ func ParseNodeDeployed(msg goredis.XMessage, defaultMaxRetries int) (command.Che
 		jobName:      wire.JobName,
 		nodeType:     wire.NodeType,
 		imageTag:     wire.ImageTag,
+		operation:    wire.Operation,
 		retryCount:   wire.TaskRetryCount,
 		maxRetries:   wire.MaxRetries,
 	}, defaultMaxRetries)
@@ -52,6 +53,7 @@ func ParseCheckK8s(msg goredis.XMessage, defaultMaxRetries int) (command.CheckJo
 		jobName:          wire.JobName,
 		nodeType:         wire.NodeType,
 		imageTag:         wire.ImageTag,
+		operation:        wire.Operation,
 		retryCount:       wire.RetryCount,
 		maxRetries:       wire.MaxRetries,
 		runningAnnounced: wire.RunningAnnounced,
@@ -81,6 +83,7 @@ type checkJobFields struct {
 	jobName          string
 	nodeType         string
 	imageTag         string
+	operation        string
 	retryCount       int32
 	maxRetries       int32
 	runningAnnounced bool
@@ -118,6 +121,7 @@ func buildCheckJobStatus(f checkJobFields, defaultMaxRetries int) (command.Check
 		JobName:          f.jobName,
 		NodeType:         f.nodeType,
 		ImageTag:         f.imageTag,
+		Operation:        f.operation,
 		RetryCount:       f.retryCount,
 		MaxRetries:       maxRetries,
 		RunningAnnounced: f.runningAnnounced,

@@ -20,6 +20,8 @@ type opSet struct {
 	Seed      []string     `yaml:"seed"`
 	Snapshot  []string     `yaml:"snapshot"`
 	SeedBuild []string     `yaml:"seed_build"`
+	Test      []string     `yaml:"test"`
+	Build     []string     `yaml:"build"`
 	Compile   *compileSpec `yaml:"compile"`
 }
 

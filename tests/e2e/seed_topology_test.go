@@ -51,6 +51,17 @@ var e2eDAG = []topoNode{
 
 const seedSchemaName = "e2e_schema"
 
+// e2eTestCounts assigns a per-node dbt test count to selected nodes so the
+// test-operation flows have topology to exercise: seed_table_1 and seed_table_3
+// carry tests (test-operation runs dispatch them), while seed_table_2 has none
+// (a single-node test on it is gated as no_tests). Nodes absent from this map
+// default to 0, which is correct for every non-test run since test_count is
+// only consulted for operation=test.
+var e2eTestCounts = map[string]int{
+	"seed_table_1": 2,
+	"seed_table_3": 1,
+}
+
 // promotedNode mirrors orchestrator/domain/event.ReleasePromotedNode (the
 // release.promoted:v1 topology element).
 type promotedNode struct {
@@ -62,6 +73,7 @@ type promotedNode struct {
 	ImageTag          string   `json:"image_tag"`
 	Schedule          string   `json:"schedule"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
+	TestCount         int      `json:"test_count"`
 }
 
 // seedTopology installs the full e2e topology by publishing a release.promoted:v1
@@ -113,6 +125,7 @@ func seedTopology(t *testing.T, ctx context.Context, clients *testClients) {
 			ImageTag:          imageTags[n.service],
 			Schedule:          n.schedule,
 			UpstreamUniqueIDs: ups,
+			TestCount:         e2eTestCounts[n.table],
 		})
 	}
 

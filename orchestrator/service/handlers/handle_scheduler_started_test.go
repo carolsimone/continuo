@@ -16,12 +16,17 @@ import (
 )
 
 // fakeSnapshotService returns a fixed projection (or error) from Snapshot.
+// It captures the Params it was called with so tests can assert on what the
+// handler threaded through (e.g. Operation).
 type fakeSnapshotService struct {
 	projection []snapshot.TaskProjection
 	err        error
+
+	capturedParams snapshot.Params
 }
 
-func (f *fakeSnapshotService) Snapshot(_ context.Context, _ snapshot.Params) ([]snapshot.TaskProjection, error) {
+func (f *fakeSnapshotService) Snapshot(_ context.Context, p snapshot.Params) ([]snapshot.TaskProjection, error) {
+	f.capturedParams = p
 	return f.projection, f.err
 }
 
@@ -125,4 +130,110 @@ func TestHandleSchedulerStarted_ValidNodeType_Dispatches(t *testing.T) {
 	assert.Equal(t, 1, dispatched, "one run.entries.dispatched")
 	assert.Equal(t, 1, queryModel, "one query.model dispatch")
 	assert.Equal(t, 0, dispatchFailed, "no dispatch_failed on the happy path")
+}
+
+// TestHandleSchedulerStarted_Operation_ThreadedToSnapshotAndDispatch verifies
+// that evt.Operation ("test") is passed through to snapshot.Params AND
+// stamped on every emitted query.model NodeReadyForExecution payload — this
+// is what lets a whole-DAG TEST run reach the executor.
+func TestHandleSchedulerStarted_Operation_ThreadedToSnapshotAndDispatch(t *testing.T) {
+	ctx := context.Background()
+	u := newFakeUnitOfWork()
+	scheduleID := uuid.New()
+
+	snap := &fakeSnapshotService{
+		projection: []snapshot.TaskProjection{
+			{
+				TaskID:          uuid.New(),
+				ServiceName:     "svc",
+				SchemaName:      "p",
+				TableName:       "t1",
+				ScheduleName:    "daily",
+				NodeType:        "dbt-model",
+				InitialStatus:   "PENDING",
+				ReadyToDispatch: true,
+				MaxRetries:      2,
+			},
+			{
+				TaskID:          uuid.New(),
+				ServiceName:     "svc",
+				SchemaName:      "p",
+				TableName:       "t2",
+				ScheduleName:    "daily",
+				NodeType:        "dbt-model",
+				InitialStatus:   "PENDING",
+				ReadyToDispatch: true,
+				MaxRetries:      2,
+			},
+		},
+	}
+
+	h := handlers.NewHandleSchedulerStartedHandler(u, snap, newTestLogger())
+	err := h.Handle(ctx, domain.SchedulerStarted{
+		ScheduleID:   scheduleID,
+		ScheduleName: "daily",
+		Kind:         "cron",
+		Operation:    "test",
+	}, "msg-3", nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test", snap.capturedParams.Operation, "Operation must be threaded onto snapshot.Params")
+
+	var queryModelCount int
+	for _, e := range u.outboxRepo.CreatedEntries {
+		if e.StreamName != streams.QueryModelV1 {
+			continue
+		}
+		queryModelCount++
+		var payload domain.NodeReadyForExecution
+		require.NoError(t, json.Unmarshal(e.Payload, &payload))
+		assert.Equal(t, "test", payload.Operation, "every dispatched node.query.model payload must carry Operation")
+	}
+	assert.Equal(t, 2, queryModelCount)
+}
+
+// TestHandleSchedulerStarted_EmptyOperation_OmittedFromDispatch is the control:
+// a normal (non-test) run has evt.Operation == "" and the dispatched
+// query.model payloads must not carry an operation field at all (omitempty
+// keeps normal-run messages wire-identical).
+func TestHandleSchedulerStarted_EmptyOperation_OmittedFromDispatch(t *testing.T) {
+	ctx := context.Background()
+	u := newFakeUnitOfWork()
+	scheduleID := uuid.New()
+
+	snap := &fakeSnapshotService{
+		projection: []snapshot.TaskProjection{
+			{
+				TaskID:          uuid.New(),
+				ServiceName:     "svc",
+				SchemaName:      "p",
+				TableName:       "t1",
+				ScheduleName:    "daily",
+				NodeType:        "dbt-model",
+				InitialStatus:   "PENDING",
+				ReadyToDispatch: true,
+				MaxRetries:      2,
+			},
+		},
+	}
+
+	h := handlers.NewHandleSchedulerStartedHandler(u, snap, newTestLogger())
+	err := h.Handle(ctx, domain.SchedulerStarted{
+		ScheduleID:   scheduleID,
+		ScheduleName: "daily",
+		Kind:         "cron",
+	}, "msg-4", nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, "", snap.capturedParams.Operation)
+
+	var queryModelCount int
+	for _, e := range u.outboxRepo.CreatedEntries {
+		if e.StreamName != streams.QueryModelV1 {
+			continue
+		}
+		queryModelCount++
+		assert.NotContains(t, string(e.Payload), `"operation"`, "omitempty must drop operation from the wire payload")
+	}
+	assert.Equal(t, 1, queryModelCount)
 }

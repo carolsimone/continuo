@@ -160,6 +160,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		ServiceName       string   `json:"service_name"`
 		NodeType          string   `json:"node_type"`
 		ContentHash       string   `json:"content_hash"`
+		TestCount         int      `json:"test_count"`
 		ImageTag          string   `json:"image_tag"`
 		UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 		Schedule          string   `json:"schedule"`
@@ -175,6 +176,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 			ServiceName:       n.ServiceName,
 			NodeType:          n.NodeType,
 			ContentHash:       n.ContentHash,
+			TestCount:         n.TestCount,
 			ImageTag:          n.ImageTag,
 			UpstreamUniqueIDs: n.UpstreamUniqueIDs,
 			Schedule:          n.Schedule,

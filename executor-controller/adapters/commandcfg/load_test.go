@@ -27,14 +27,14 @@ func TestLoad_EmptyPathUsesDefaults(t *testing.T) {
 	r, err := Load("", testLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dbt", "run", "--select", "t"},
-		r.NodeCommand("svc", pkg_model.NodeTypeDbtModel, "t"))
+		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "t"))
 }
 
 func TestLoad_MissingFileUsesDefaults(t *testing.T) {
 	r, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml"), testLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dbt", "seed", "--select", "t"},
-		r.NodeCommand("svc", pkg_model.NodeTypeDbtSeed, "t"))
+		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "t"))
 }
 
 func TestLoad_ValidFile(t *testing.T) {
@@ -48,6 +48,27 @@ services:
     compile:
       command: ["wise-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/target/manifest.json"
+`)
+	_, err := Load(path, testLogger())
+	require.NoError(t, err)
+}
+
+func TestLoad_ValidTestOverride(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  test: ["dbt", "test", "--select", "{{ node }}"]
+`)
+	r, err := Load(path, testLogger())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dbt", "test", "--select", "x"},
+		r.NodeCommand("svc", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
+}
+
+func TestLoad_ServiceWithOnlyTestOverrideIsNotEmpty(t *testing.T) {
+	path := writeConfig(t, `
+services:
+  wise:
+    test: ["wise-dbt", "test", "--select", "{{ node }}"]
 `)
 	_, err := Load(path, testLogger())
 	require.NoError(t, err)
@@ -128,6 +149,21 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			name:    "service with no operations",
 			yaml:    "services:\n  wise: {}",
 			wantErr: "services.wise: no operations defined",
+		},
+		{
+			name:    "empty test argv",
+			yaml:    "default:\n  test: []",
+			wantErr: "default.test: must not be empty",
+		},
+		{
+			name:    "empty build argv",
+			yaml:    "default:\n  build: []",
+			wantErr: "default.build: must not be empty",
+		},
+		{
+			name:    "test missing node placeholder",
+			yaml:    "default:\n  test: [\"dbt\", \"test\"]",
+			wantErr: "default.test: missing required {{ node }} placeholder",
 		},
 	}
 	for _, tt := range tests {

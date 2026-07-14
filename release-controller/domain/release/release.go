@@ -53,6 +53,7 @@ type Node struct {
 	ServiceName       string   `json:"service_name"`
 	NodeType          string   `json:"node_type"`
 	ContentHash       string   `json:"content_hash"`
+	TestCount         int      `json:"test_count"`
 	ImageTag          string   `json:"image_tag"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Schedule          string   `json:"schedule"`

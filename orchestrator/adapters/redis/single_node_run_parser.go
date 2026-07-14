@@ -38,6 +38,7 @@ func ParseSingleNodeRun(msg goredis.XMessage) (model.SingleNodeRunInput, error) 
 
 	metadataSource, _ := msg.Values["metadata_source"].(string)
 	sourceRunID, _ := msg.Values["source_run_id"].(string)
+	operation, _ := msg.Values["operation"].(string)
 	switch metadataSource {
 	case "latest":
 		if sourceRunID != "" {
@@ -62,6 +63,7 @@ func ParseSingleNodeRun(msg goredis.XMessage) (model.SingleNodeRunInput, error) 
 		TableName:      tableName,
 		MetadataSource: metadataSource,
 		SourceRunID:    sourceRunID,
+		Operation:      operation,
 		InitiatedBy:    optionalUserField(msg, "initiated_by"),
 	}, nil
 }

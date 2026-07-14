@@ -27,6 +27,11 @@ type NodeDeployed struct {
 	JobName        string `json:"job_name"`
 	NodeType       string `json:"node_type"`
 	ImageTag       string `json:"image_tag"`
+	// Operation is the dbt verb this Job runs (e.g. "test"). Empty for a normal
+	// production `dbt run`, whose wire format is unchanged. It rides the durable
+	// check/retry chain so a retry after the Job is TTL-reaped still rebuilds the
+	// same verb — it is never re-derived from Job metadata that may be gone.
+	Operation      string `json:"operation,omitempty"`
 	TaskRetryCount int32  `json:"task_retry_count"`
 	MaxRetries     int32  `json:"max_retries"`
 }
@@ -48,6 +53,10 @@ type CheckK8s struct {
 	JobName      string `json:"job_name"`
 	NodeType     string `json:"node_type"`
 	ImageTag     string `json:"image_tag"`
+	// Operation is the dbt verb this Job runs (e.g. "test"); empty for a normal
+	// production `dbt run`. It recirculates on every check.k8s:v1 self-poll so a
+	// check that lands after the Job is gone still retains the verb for retry.
+	Operation    string `json:"operation,omitempty"`
 	RetryCount   int32  `json:"retry_count"`
 	MaxRetries   int32  `json:"max_retries"`
 	// RunningAnnounced is true once k8s-controller has announced this attempt as

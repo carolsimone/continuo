@@ -349,6 +349,7 @@ type promotedNodeWire struct {
 	ServiceName       string   `json:"service_name"`
 	NodeType          string   `json:"node_type"`
 	ContentHash       string   `json:"content_hash"`
+	TestCount         int      `json:"test_count"`
 	ImageTag          string   `json:"image_tag"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Schedule          string   `json:"schedule"`
@@ -495,4 +496,38 @@ func TestHandleValidationResult_Promote_EmitsOriginalFilePath(t *testing.T) {
 	require.NoError(t, json.Unmarshal(last.Payload, &p))
 	require.Len(t, p.Topology, 1)
 	assert.Equal(t, "models/a.sql", p.Topology[0].OriginalFilePath)
+}
+
+// TestHandleValidationResult_Promote_EmitsTestCount verifies that promotion
+// carries the per-node test_count from the candidate topology through to the
+// release.promoted:v1 event, allowing the orchestrator to persist it onto the
+// Neo4j node.
+func TestHandleValidationResult_Promote_EmitsTestCount(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA", Status: "ok",
+		Topology: release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a", TestCount: 3, UpstreamUniqueIDs: []string{}},
+		},
+	}))
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA", PerNodeResults: []handlers.NodeResult{{NodeID: "a", Status: "ok"}}, AggregateStatus: "ok",
+	}))
+
+	entries := outboxEntries(store)
+	last := entries[len(entries)-1]
+	require.Equal(t, streams.ReleasePromotedV1, last.StreamName)
+	var p promotedPayload
+	require.NoError(t, json.Unmarshal(last.Payload, &p))
+	require.Len(t, p.Topology, 1)
+	assert.Equal(t, 3, p.Topology[0].TestCount, "release.promoted:v1 must carry per-node test_count")
 }

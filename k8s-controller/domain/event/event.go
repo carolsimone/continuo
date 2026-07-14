@@ -34,6 +34,10 @@ type JobCheckRequest struct {
 	CheckAfter   int64  `json:"check_after"` // Unix timestamp for delayed processing
 	NodeType     string `json:"node_type"`
 	ImageTag     string `json:"image_tag"`
+	// Operation is the dbt verb the Job runs (e.g. "test"); empty for a normal
+	// production `dbt run`. It recirculates on every check.k8s:v1 self-poll so a
+	// check that lands after the Job is TTL-reaped still carries the verb for retry.
+	Operation    string `json:"operation,omitempty"`
 	RetryCount   int    `json:"retry_count"` // current task retry count
 	MaxRetries   int    `json:"max_retries"` // maximum task retries allowed
 	// RunningAnnounced is true once RUNNING has been announced for this attempt.
@@ -85,6 +89,13 @@ type TaskRetry struct {
 	RetryCount   int    `json:"retry_count"`
 	MaxRetries   int    `json:"max_retries"`
 	NodeType     string `json:"node_type"`
+	// Operation is the dbt verb the retried Job should run (e.g. "test").
+	// Empty for normal production `dbt run` retries — their wire format is
+	// unchanged. Sourced from the durable CheckJobStatus.Operation (which rides
+	// node.deployed:v1 / check.k8s:v1), never from the failed Job's labels: a
+	// TTL-reaped Job has no labels, so a retried `dbt test` Job stays `dbt test`
+	// instead of rebuilding as `dbt run`.
+	Operation string `json:"operation,omitempty"`
 }
 
 func (TaskRetry) isEvent() {}
@@ -92,7 +103,7 @@ func (TaskRetry) isEvent() {}
 // ToMap converts TaskRetry event to a map for Redis publishing.
 // Uses task_retry_count (not retry_count) to match executor-controller's consumer key.
 func (e TaskRetry) ToMap() map[string]interface{} {
-	return map[string]interface{}{
+	m := map[string]interface{}{
 		"task_id":          e.TaskID,
 		"schedule_id":      e.ScheduleID,
 		"schedule_name":    e.ScheduleName,
@@ -105,6 +116,12 @@ func (e TaskRetry) ToMap() map[string]interface{} {
 		"max_retries":      e.MaxRetries,
 		"node_type":        e.NodeType,
 	}
+	// Only stamp operation when non-empty so normal `dbt run` retries stay
+	// wire-identical to before this field existed.
+	if e.Operation != "" {
+		m["operation"] = e.Operation
+	}
+	return m
 }
 
 // NodeStatusUpdated represents an event that a node's status has changed

@@ -266,6 +266,7 @@ func toDomainNodes(wire []domainEvent.ReleasePromotedNode, repo, commitSHA strin
 			TableName:         n.TableName,
 			ServiceName:       n.ServiceName,
 			NodeType:          n.NodeType,
+			TestCount:         n.TestCount,
 			ImageTag:          n.ImageTag,
 			Schedule:          n.Schedule,
 			UpstreamUniqueIDs: append([]string(nil), n.UpstreamUniqueIDs...),

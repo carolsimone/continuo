@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -112,6 +113,48 @@ func TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase(t *testing.T
 	assert.Equal(t, "sha-abc", svc["image_tag"], "snake_case image_tag key")
 	_, hasPascal := svc["ManifestVersion"]
 	assert.False(t, hasPascal, "must not leak Go field name ManifestVersion onto the wire")
+}
+
+// TestOutboxPublisher_RunStarted_CarriesOperation pins the scheduler.started:v1
+// wire contract for the dbt-verb requested on a whole-DAG run: RunStarted.Operation
+// serializes onto the payload as "operation" so the orchestrator can build the
+// full-DAG test/build projection. An unset Operation (the cron/default path)
+// serializes as the empty string, not an omitted key.
+func TestOutboxPublisher_RunStarted_CarriesOperation(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	pub := postgres.NewOutboxPublisher(tx, discardLogger())
+
+	scheduleID := uuid.New()
+	err = pub.Append(ctx, []run.DomainEvent{
+		run.RunStarted{
+			ID:              scheduleID,
+			Name:            "daily",
+			K:               run.KindTrigger,
+			ServiceMetadata: map[string]run.ServiceMetadata{},
+			Operation:       model.OperationTest,
+		},
+	}, uuid.Nil)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
+
+	var payload []byte
+	require.NoError(t, db.GetContext(ctx, &payload,
+		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+		scheduleID, streams.SchedulerStartedV1,
+	))
+
+	var decoded struct {
+		Operation string `json:"operation"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &decoded))
+	assert.Equal(t, "test", decoded.Operation)
 }
 
 // TestOutboxPublisher_RunCancelledPair verifies that appending the
@@ -423,6 +466,57 @@ func TestOutboxPublisher_InitiatedByProvenance(t *testing.T) {
 			var payload map[string]interface{}
 			require.NoError(t, json.Unmarshal(raw, &payload))
 			assert.Equal(t, tc.want, payload["initiated_by"], "initiated_by on %s", tc.wantStream)
+		})
+	}
+}
+
+// TestOutboxPublisher_SingleNodeRunRequested_Operation verifies that the
+// Operation field carried by SingleNodeRunRequested is serialized onto the
+// trigger.single_node_run:v1 outbox payload, and that an unset Operation
+// (the zero value, model.OperationRun) serializes as an empty string.
+func TestOutboxPublisher_SingleNodeRunRequested_Operation(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	cases := []struct {
+		name string
+		op   model.Operation
+		want string
+	}{
+		{"test operation", model.OperationTest, "test"},
+		{"unset operation defaults to empty", model.OperationRun, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			aggID := uuid.New()
+			tx, err := db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+
+			pub := postgres.NewOutboxPublisher(tx, discardLogger())
+			evt := run.SingleNodeRunRequested{
+				ID:   aggID,
+				Name: "sched",
+				Target: run.NodeID{
+					ServiceName: "svc",
+					SchemaName:  "sch",
+					TableName:   "tbl",
+				},
+				MetadataSource: run.MetadataSourceLatest,
+				Operation:      tc.op,
+			}
+			require.NoError(t, pub.Append(ctx, []run.DomainEvent{evt}, uuid.Nil))
+			require.NoError(t, tx.Commit())
+			defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", aggID)
+
+			var raw []byte
+			require.NoError(t, db.GetContext(ctx, &raw,
+				`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+				aggID, streams.TriggerSingleNodeRunV1,
+			))
+			var payload map[string]interface{}
+			require.NoError(t, json.Unmarshal(raw, &payload))
+			assert.Equal(t, tc.want, payload["operation"])
 		})
 	}
 }
