@@ -243,7 +243,7 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeR
 	}
 	return &orchestratorv1.GetNodeResponse{
 		NodeType:       meta.NodeType,
-		TestCount:      int32(meta.TestCount),
+		TestCount:      num.ClampInt32(meta.TestCount),
 		TestCountKnown: meta.TestCountKnown,
 	}, nil
 }

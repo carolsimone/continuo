@@ -159,16 +159,18 @@ func triggerNodeRunOperationHTTP(t *testing.T, base, service, schema, table, ope
 	body, err := json.Marshal(map[string]string{"operation": operation})
 	require.NoError(t, err)
 
-	url := fmt.Sprintf("%s/api/nodes/%s/%s/%s/run", base, service, schema, table)
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
-	require.NoError(t, err, "POST %s: request failed", url)
+	resp, err := http.Post(
+		fmt.Sprintf("%s/api/nodes/%s/%s/%s/run", base, service, schema, table),
+		"application/json", bytes.NewReader(body),
+	)
+	require.NoError(t, err, "POST /api/nodes/%s/%s/%s/run: request failed", service, schema, table)
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
 	require.Equal(t, http.StatusOK, resp.StatusCode,
-		"POST %s: expected 200, got %d: %s", url, resp.StatusCode, string(raw))
+		"POST /api/nodes/%s/%s/%s/run: expected 200, got %d: %s", service, schema, table, resp.StatusCode, string(raw))
 
 	var result map[string]interface{}
 	require.NoError(t, json.Unmarshal(raw, &result))
