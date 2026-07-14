@@ -28,6 +28,10 @@ type DerivedRunDispatch struct {
 	Kind                string // "rerun" | "rebase"
 	MessageProcessingID uuid.UUID
 	Projection          []snapshot.TaskProjection
+	// Operation is the derived run's operation ("" | "test" | "build"),
+	// propagated to the frontier query.model so re-run/rebased build nodes run
+	// `dbt build`, not a bare `dbt run`.
+	Operation string
 }
 
 // DispatchDerivedRun writes ONE run.entries.dispatched:v1 outbox entry covering
@@ -113,6 +117,7 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 			NodeType:        t.NodeType,
 			ManifestVersion: t.ManifestVersion,
 			ImageTag:        t.ImageTag,
+			Operation:       d.Operation,
 		}
 		queryPayload, err := json.Marshal(queryEvt)
 		if err != nil {

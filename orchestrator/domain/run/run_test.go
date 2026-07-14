@@ -230,6 +230,25 @@ func TestCompleteNode_Succeeded_DoesNotUnblockWhenUpstreamStillPending(t *testin
 	assert.Empty(t, unblocked)
 }
 
+func TestCompleteNode_Unblock_CarriesOperation(t *testing.T) {
+	kU := key("public", "u")
+	kD := key("public", "d") // depends on U
+	r := makeRun(
+		node(kU, "RUNNING", nil, []run.NodeKey{kD}),
+		node(kD, "PENDING", []run.NodeKey{kU}, nil),
+	)
+	r.Operation = "build"
+
+	events, err := r.CompleteNode(kU, "SUCCEEDED")
+
+	require.NoError(t, err)
+	unblocked := filterEvents[run.NodeUnblocked](events)
+	require.Len(t, unblocked, 1)
+	assert.Equal(t, kD, unblocked[0].Key)
+	assert.Equal(t, "build", unblocked[0].Operation,
+		"unblock dispatch must carry the run's operation so downstream build nodes run dbt build")
+}
+
 // helper
 
 func filterEvents[T run.DomainEvent](events []run.DomainEvent) []T {

@@ -34,17 +34,6 @@ func NewService(runner snapshot.TxRunner, cancelledRepo repository.CancelledSche
 func (s *Service) Snapshot(ctx context.Context, p snapshot.Params) ([]snapshot.TaskProjection, error) {
 	var projection []snapshot.TaskProjection
 	err := s.runner.Run(ctx, func(r snapshot.TopologyReader, w snapshot.SnapshotWriter) error {
-		// Derived runs (rerun/rebase) inherit their operation from the source
-		// :Run so a re-run of a build re-runs `dbt build` (models + tests),
-		// not a bare `dbt run`. Fresh runs and single-node runs carry their own
-		// Operation in Params already, so they are excluded by the Kind guard.
-		if p.SourceRunID != nil && (p.Kind == "rerun" || p.Kind == "rebase") {
-			op, opErr := r.SourceRunOperation(ctx, p.SourceRunID.String())
-			if opErr != nil {
-				return fmt.Errorf("snapshot: source operation: %w", opErr)
-			}
-			p.Operation = op
-		}
 		sel, err := p.Selector.SelectTasks(ctx, r, p)
 		if err != nil {
 			return err
@@ -70,6 +59,20 @@ func (s *Service) Snapshot(ctx context.Context, p snapshot.Params) ([]snapshot.T
 		"tasks", len(projection),
 	)
 	return projection, nil
+}
+
+// SourceOperation reads the operation stamped on a source run's :Run node.
+func (s *Service) SourceOperation(ctx context.Context, sourceRunID string) (string, error) {
+	var op string
+	err := s.runner.Run(ctx, func(r snapshot.TopologyReader, _ snapshot.SnapshotWriter) error {
+		v, rerr := r.SourceRunOperation(ctx, sourceRunID)
+		if rerr != nil {
+			return rerr
+		}
+		op = v
+		return nil
+	})
+	return op, err
 }
 
 // scheduleCancelled reports whether the run's schedule is already in the

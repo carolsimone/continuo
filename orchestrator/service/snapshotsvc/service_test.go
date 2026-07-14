@@ -185,39 +185,14 @@ func TestService_NotCancelled_LeavesCancelledFalse(t *testing.T) {
 	}
 }
 
-func TestService_DerivedRun_InheritsSourceOperation(t *testing.T) {
-	src := uuid.New()
-	w := &fakeWriter{}
-	svc := newSvc(opStubReader{op: "build"}, w)
-	_, err := svc.Snapshot(context.Background(), snapshot.Params{
-		RunID: uuid.New().String(), ScheduleName: "s", Kind: "rerun",
-		SourceRunID: &src,
-		Selector:    stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
-	})
+func TestService_SourceOperation_ReadsSourceRunOperation(t *testing.T) {
+	svc := newSvc(opStubReader{op: "build"}, &fakeWriter{})
+	got, err := svc.SourceOperation(context.Background(), uuid.New().String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w.gotParams.Operation != "build" {
-		t.Errorf("expected inherited operation \"build\", got %q", w.gotParams.Operation)
-	}
-}
-
-func TestService_SingleNodeOfSource_DoesNotInheritOperation(t *testing.T) {
-	src := uuid.New()
-	w := &fakeWriter{}
-	// A single-node snapshot-of-run: SourceRunID set, but its own Operation ("")
-	// must be preserved, not overwritten by the source's "build".
-	svc := newSvc(opStubReader{op: "build"}, w)
-	_, err := svc.Snapshot(context.Background(), snapshot.Params{
-		RunID: uuid.New().String(), ScheduleName: "s", Kind: "single_node_run",
-		SourceRunID: &src, Operation: "",
-		Selector: stubSelector{projection: []snapshot.TaskProjection{{TaskID: uuid.New()}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w.gotParams.Operation != "" {
-		t.Errorf("single_node_run must not inherit source operation, got %q", w.gotParams.Operation)
+	if got != "build" {
+		t.Errorf("got %q, want build", got)
 	}
 }
 

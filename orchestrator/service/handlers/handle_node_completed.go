@@ -230,6 +230,7 @@ func (h *HandleNodeCompletedHandler) writeNodeUnblockedEntry(
 		NodeType:        string(nodeType),
 		ManifestVersion: e.ManifestVersion,
 		ImageTag:        e.ImageTag,
+		Operation:       e.Operation,
 	}
 	evtPayload, err := json.Marshal(evt)
 	if err != nil {

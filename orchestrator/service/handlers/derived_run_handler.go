@@ -102,12 +102,21 @@ func (h *DerivedRunHandler) Handle(ctx context.Context, cmd domainModel.DerivedR
 		return fmt.Errorf("invalid source_run_id %q: %w", cmd.SourceRunID, err)
 	}
 
+	// A derived run inherits the source run's operation so a rerun/rebase of a
+	// build re-runs `dbt build` DAG-wide. The source run's operation is
+	// immutable once its :Run exists, so this standalone read is race-free.
+	op, err := h.snapshotSvc.SourceOperation(ctx, cmd.SourceRunID)
+	if err != nil {
+		return fmt.Errorf("source operation: %w", err)
+	}
+
 	projection, snapErr := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        cmd.RunID,
 		ScheduleName: cmd.ScheduleName,
 		Kind:         h.cfg.kind,
 		SourceRunID:  &sourceRunUUID,
 		InitiatedBy:  cmd.InitiatedBy,
+		Operation:    op,
 		Selector:     h.cfg.selector,
 	})
 	if snapErr != nil {
@@ -134,6 +143,7 @@ func (h *DerivedRunHandler) Handle(ctx context.Context, cmd domainModel.DerivedR
 		Kind:                h.cfg.kind,
 		MessageProcessingID: msgProcessingID,
 		Projection:          projection,
+		Operation:           op,
 	}); err != nil {
 		return err
 	}
