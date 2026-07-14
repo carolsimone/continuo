@@ -3,6 +3,7 @@ import { GrpcClient, userMetadata } from '../grpc-client';
 import { GrpcGraphClient } from '../grpc-graph-client';
 import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
+import { parseOperation } from './operation';
 
 export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
@@ -83,6 +84,10 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
   // POST /api/nodes/:service/:schema/:table/run
   // Body: {} → latest mode; { source_run_id } → snapshot_of_run mode.
   router.post('/:service/:schema/:table/run', (req, res) => {
+    const operation = parseOperation(req.body?.operation);
+    if (operation === null) {
+      return res.status(400).json({ error: 'operation must be one of "", run, test, build' });
+    }
     const sourceRunID: string = (req.body?.source_run_id ?? '').trim();
     const metadataSource = sourceRunID === '' ? 'latest' : 'snapshot_of_run';
     stateClient.triggerSingleNodeRun(
@@ -92,6 +97,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
         table_name:      req.params.table,
         metadata_source: metadataSource,
         source_run_id:   sourceRunID,
+        operation,
       },
       userMetadata(req),
       (err: any, response: any) => {

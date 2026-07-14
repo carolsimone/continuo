@@ -79,7 +79,7 @@ describe('nodes router', () => {
     expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
       {
         service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
-        metadata_source: 'latest', source_run_id: '',
+        metadata_source: 'latest', source_run_id: '', operation: '',
       },
       expect.any(Object),
       expect.any(Function),
@@ -203,5 +203,23 @@ describe('nodes router', () => {
     const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
     expect(res.status).toBe(404);
     expect(res.body.error).toContain('node missing');
+  });
+
+  it('POST /run forwards operation=build', async () => {
+    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+      cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
+    );
+    await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'build' });
+    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'build', metadata_source: 'latest' }),
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it('POST /run rejects a bad operation with 400', async () => {
+    const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'nope' });
+    expect(res.status).toBe(400);
+    expect(mockTriggerSingleNodeRun).not.toHaveBeenCalled();
   });
 });
