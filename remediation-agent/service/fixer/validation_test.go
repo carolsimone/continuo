@@ -93,12 +93,16 @@ func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, e
 	return "s3://bucket/" + key, nil
 }
 
-// fakeSource returns a fixed file content or an error. readPath records the
-// last path argument passed to ReadFile so tests can assert the full path.
+// fakeSource returns a fixed file content or an error for ReadFile, and a fixed
+// diff or an error for CommitFileDiff. readPath records the last ReadFile path;
+// diffPaths records every CommitFileDiff path so tests can assert selection.
 type fakeSource struct {
-	content  string
-	err      error
-	readPath string
+	content   string
+	err       error
+	readPath  string
+	diff      string
+	diffErr   error
+	diffPaths []string
 }
 
 func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, error) {
@@ -108,6 +112,11 @@ func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, err
 
 func (f *fakeSource) ListDir(_ context.Context, _, _, _ string) ([]string, error) {
 	return nil, nil
+}
+
+func (f *fakeSource) CommitFileDiff(_ context.Context, _, _, path string) (string, error) {
+	f.diffPaths = append(f.diffPaths, path)
+	return f.diff, f.diffErr
 }
 
 // TestValidation_NoCandidateSQL_Skips verifies that a validation trigger with

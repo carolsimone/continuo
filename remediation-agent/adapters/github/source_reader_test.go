@@ -132,3 +132,69 @@ func TestListDir_NotFound(t *testing.T) {
 		t.Fatalf("want ErrSourceNotFound, got %v", err)
 	}
 }
+
+func TestCommitFileDiff_ReturnsMatchingFilePatch(t *testing.T) {
+	var gotPath, gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAccept = r.URL.Path, r.Header.Get("Accept")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[
+			{"filename":"services/svc/models/a.sql","patch":"@@ -1 +1 @@\n-old\n+new"},
+			{"filename":"services/svc/models/other.sql","patch":"@@ noise @@"}
+		]}`))
+	}))
+	defer srv.Close()
+
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	patch, err := gh.CommitFileDiff(context.Background(), "owner/repo", "deadbeef", "services/svc/models/a.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch != "@@ -1 +1 @@\n-old\n+new" {
+		t.Fatalf("patch = %q", patch)
+	}
+	if gotPath != "/repos/owner/repo/commits/deadbeef" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotAccept != "application/vnd.github+json" {
+		t.Errorf("accept = %q", gotAccept)
+	}
+}
+
+func TestCommitFileDiff_404IsErrSourceNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	if _, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "p"); !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+func TestCommitFileDiff_PathNotInCommit_ErrSourceNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"other/file.sql","patch":"@@ x @@"}]}`))
+	}))
+	defer srv.Close()
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	if _, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/a.sql"); !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+func TestCommitFileDiff_EmptyPatch_ErrSourceNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"models/a.sql","patch":""}]}`))
+	}))
+	defer srv.Close()
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	if _, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/a.sql"); !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound", err)
+	}
+}
