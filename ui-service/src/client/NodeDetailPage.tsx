@@ -113,10 +113,13 @@ export default function NodeDetailPage() {
       .catch(() => setTestCount(null));
   }, [service, schema, table]);
 
-  const testDisabled = testCount !== null && testCount.known && testCount.count === 0;
-  useEffect(() => {
-    if (testDisabled && operation === 'test') setOperation('run');
-  }, [testDisabled, operation]);
+  // latestHasNoTests reflects the LATEST topology's test_count only. It gates the
+  // latest-mode trigger (which the backend evaluates against latest metadata) but
+  // NOT the old-snapshot path: a snapshot_of_run test is validated against the
+  // source run's own pinned test_count, which this page does not know, so testing
+  // an older version stays available and the backend's no_tests check is the
+  // backstop there.
+  const latestHasNoTests = testCount !== null && testCount.known && testCount.count === 0;
 
   const postRun = useCallback(async (body: object) => {
     setRunState('loading');
@@ -157,6 +160,10 @@ export default function NodeDetailPage() {
     : operation === 'build' ? '🔨 Build this node'
     : '▶ Run this node';
 
+  // The latest-mode test trigger is the only one gated by latest metadata; the
+  // old-snapshot trigger is never blocked here (see latestHasNoTests).
+  const latestTestBlocked = operation === 'test' && latestHasNoTests;
+
   return (
     <div className="page">
       {pickerOpen && createPortal(
@@ -186,16 +193,18 @@ export default function NodeDetailPage() {
             onChange={e => setOperation(e.target.value as 'run' | 'test' | 'build')}
           >
             <option value="run">Run</option>
-            <option value="test" disabled={testDisabled}>Test</option>
+            <option value="test">Test</option>
             <option value="build">Build</option>
           </select>
         </div>
         <button
           type="button"
           className={runLatestClass}
-          disabled={runState === 'loading' || runState === 'success'}
+          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked}
           onClick={handleRunLatest}
-          title="Run only this node against the latest topology"
+          title={latestTestBlocked
+            ? 'The latest version of this node has no tests'
+            : 'Run only this node against the latest topology'}
         >
           {runState === 'loading' ? 'Triggering…' : runState === 'success' ? 'Triggered' : runVerb}
         </button>
@@ -210,8 +219,10 @@ export default function NodeDetailPage() {
         </button>
       </div>
 
-      {testDisabled && (
-        <div className="info-strip info-strip--info">This node has no tests, so the test operation is unavailable.</div>
+      {latestTestBlocked && (
+        <div className="info-strip info-strip--info">
+          The latest version of this node has no tests. Run with an old snapshot to test a version that did, or choose another operation.
+        </div>
       )}
 
       {runState === 'error' && runError && (

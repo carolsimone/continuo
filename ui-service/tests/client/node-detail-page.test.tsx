@@ -140,52 +140,60 @@ describe('NodeDetailPage', () => {
     });
   });
 
-  it('disables Test and shows a hint when test_count is known-zero', async () => {
-    mockFetch.mockImplementation((input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString();
-      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
-      return jsonResp({ runs: [] });
-    });
-    const { container } = renderPage();
-    const testOption = await screen.findByRole('option', { name: /test/i });
-    expect((testOption as HTMLOptionElement).disabled).toBe(true);
-    expect(container.querySelector('.info-strip--info')).toBeInTheDocument();
-  });
-
-  it('disables Test and settles on run when the node has known-zero tests', async () => {
-    // The user selects "test" while /meta is still in flight; once the
-    // response lands with test_count_known:true / test_count:0, the
-    // known-zero gate flips the select back to "run" and the Test option
-    // ends up disabled. This asserts the settled end-state, not the
-    // intermediate ordering.
+  it('gates only the latest trigger (not the option or old-snapshot) when the latest topology has known-zero tests', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
       return jsonResp({ runs: [] });
     });
     renderPage();
-
     const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
-    // Attempt to select Test before/while the known-zero gate settles.
-    fireEvent.change(select, { target: { value: 'test' } });
+    // Test stays selectable — an old-snapshot test may still be valid.
+    expect((screen.getByRole('option', { name: /test/i }) as HTMLOptionElement).disabled).toBe(false);
 
-    await waitFor(() => {
-      const testOption = screen.getByRole('option', { name: /test/i }) as HTMLOptionElement;
-      expect(testOption.disabled).toBe(true);
-      expect(select.value).toBe('run');
-    });
+    fireEvent.change(select, { target: { value: 'test' } });
+    // The latest "Test this node" button is disabled and a hint appears...
+    await waitFor(() => expect(screen.getByRole('button', { name: /test this node/i })).toBeDisabled());
     expect(document.querySelector('.info-strip--info')).toBeInTheDocument();
+    // ...but the old-snapshot trigger stays available.
+    expect(screen.getByRole('button', { name: /run with old snapshot/i })).not.toBeDisabled();
   });
 
-  it('leaves Test enabled when test_count is unknown', async () => {
+  it('allows an old-snapshot test even when the latest topology has no tests', async () => {
+    // Regression: the latest test_count must NOT gate the snapshot_of_run path.
+    // The backend validates a snapshot_of_run test against the source run's own
+    // pinned test_count, so an old-snapshot test stays available (and POSTs
+    // operation:test) even when the latest node version has zero tests.
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+      return jsonResp({ runs: [mkRun({ run_id: 'pick-me' })] });
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
+    const oldSnap = await screen.findByRole('button', { name: /run with old snapshot/i });
+    expect(oldSnap).not.toBeDisabled();
+    fireEvent.click(oldSnap);
+    fireEvent.click(await screen.findByRole('button', { name: /pick-me/ }));
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
+      const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
+      expect(post![1]!.body).toBe(JSON.stringify({ source_run_id: 'pick-me', operation: 'test' }));
+    });
+  });
+
+  it('leaves the latest test trigger enabled and shows no hint when test_count is unknown', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: false });
       return jsonResp({ runs: [] });
     });
     renderPage();
-    const testOption = await screen.findByRole('option', { name: /test/i });
-    expect((testOption as HTMLOptionElement).disabled).toBe(false);
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
+    const btn = await screen.findByRole('button', { name: /test this node/i });
+    expect(btn).not.toBeDisabled();
+    expect(document.querySelector('.info-strip--info')).not.toBeInTheDocument();
   });
 
   it('picking an old snapshot POSTs the selected operation alongside source_run_id', async () => {

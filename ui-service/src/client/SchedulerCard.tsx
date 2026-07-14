@@ -144,7 +144,10 @@ export default function SchedulerCard({ schedule }: Props) {
         onClick={handleClick}
         role="button"
         tabIndex={0}
-        onKeyDown={e => e.key === 'Enter' && handleClick()}
+        // Navigate only when the card itself is focused. Restricting to
+        // currentTarget keeps Enter on a nested control (the operation select,
+        // the Trigger/Cancel buttons) from bubbling up and navigating away.
+        onKeyDown={e => { if (e.key === 'Enter' && e.target === e.currentTarget) handleClick(); }}
       >
         <div className="scheduler-card-header">
           <span className="schedule-name">{schedule.schedule_name}</span>

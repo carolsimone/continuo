@@ -20,8 +20,8 @@ import (
 // ui-service HTTP API — POST /api/schedules/:name/trigger with a JSON
 // {"operation":"test"} body — the exact wire path the UI's operation selector
 // uses. It proves the operation survives the HTTP → gRPC TriggerSchedule hop
-// by asserting the resulting :Run node's operation property, complementing
-// #252's gRPC-level TestWholeDAGTestOperation.
+// by asserting the resulting :Run node's operation property, covering the
+// ui-service HTTP layer on top of the gRPC-level whole-DAG test coverage.
 func TestUIWholeDAGTestOperation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -60,10 +60,9 @@ func TestUIWholeDAGTestOperation(t *testing.T) {
 // TestUISingleNodeBuildOperation drives a single-node `build` run through the
 // ui-service HTTP API — POST /api/nodes/:service/:schema/:table/run with a
 // JSON {"operation":"build"} body — the exact wire path NodeDetailPage's
-// operation selector uses. It reuses seed_table_1 (the same node identity as
-// the #254 build-operation e2e) and asserts the dispatched Job's command
-// carries `dbt build`, proving the operation threaded through the HTTP →
-// TriggerSingleNodeRun → Job-assembly path.
+// operation selector uses. It runs against the seed_table_1 node and asserts
+// the dispatched Job's command carries `dbt build`, proving the operation
+// threaded through the HTTP → TriggerSingleNodeRun → Job-assembly path.
 func TestUISingleNodeBuildOperation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -78,7 +77,7 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 	const (
 		targetService = "service-1"
 		targetSchema  = "e2e_schema"
-		targetTable   = "seed_table_1" // same seed node used by #254's build-operation e2e
+		targetTable   = "seed_table_1"
 	)
 
 	verifyServicesHealthy(t)

@@ -120,6 +120,24 @@ describe('SchedulerCard — operation selector', () => {
       expect(screen.getByText('SCHEDULE DETAIL')).toBeInTheDocument();
     });
   });
+
+  it('pressing Enter on the operation select does not navigate, unlike Enter on the card', async () => {
+    const schedule = baseSchedule({ is_running: false, last_run_id: 'r1' });
+    renderCardWithRouteProbe(schedule);
+
+    // Enter on a nested control must not bubble up and navigate the card.
+    fireEvent.keyDown(screen.getByLabelText(/operation/i), { key: 'Enter' });
+    await Promise.resolve();
+    expect(screen.queryByText('SCHEDULE DETAIL')).toBeNull();
+
+    // Contrast: Enter on the card itself (the focused role=button) navigates.
+    const card = screen.getByText(schedule.schedule_name).closest('.scheduler-card');
+    expect(card).not.toBeNull();
+    fireEvent.keyDown(card as Element, { key: 'Enter' });
+    await waitFor(() => {
+      expect(screen.getByText('SCHEDULE DETAIL')).toBeInTheDocument();
+    });
+  });
 });
 
 describe('SchedulerCard — cancel button uses .btn', () => {
