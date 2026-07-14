@@ -73,8 +73,8 @@ const (
 
 // e2eUpstreamFilePath is the repository-relative path of the upstream model whose
 // diff the remediation flow fetches: ServiceRepoPaths["service-2"] ("services/
-// service-2") joined with the ancestor's original_file_path ("models/ftable_c.sql").
-const e2eUpstreamFilePath = "services/service-2/models/ftable_c.sql"
+// service-2") joined with the ancestor's original_file_path ("models/ftable_upstream_diff.sql").
+const e2eUpstreamFilePath = "services/service-2/models/ftable_upstream_diff.sql"
 
 // ftableCPatch is the canned unified diff returned for any commit lookup. It
 // stands in for a recent upstream change so the remediation-agent's upstream-diff

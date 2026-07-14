@@ -207,7 +207,7 @@ func TestHandleCommits_ReturnsCannedFilePatch(t *testing.T) {
 	if len(commit.Files) == 0 || commit.Files[0].Patch == "" {
 		t.Fatalf("expected a file with a patch, got %+v", commit.Files)
 	}
-	if commit.Files[0].Filename != "services/service-2/models/ftable_c.sql" {
-		t.Errorf("filename = %q, want services/service-2/models/ftable_c.sql", commit.Files[0].Filename)
+	if commit.Files[0].Filename != "services/service-2/models/ftable_upstream_diff.sql" {
+		t.Errorf("filename = %q, want services/service-2/models/ftable_upstream_diff.sql", commit.Files[0].Filename)
 	}
 }
