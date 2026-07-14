@@ -4,7 +4,7 @@
 
 `remediation-agent` acts on healable failures surfaced by the `remediation` classifier, across all three failure sources: `validation`, `compile`, and `seed_build`. It consumes `remediation.requested:v1` — one trigger per failing dbt node — and produces a fix proposal. A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, persistence, and the outbox emit; it dispatches each trigger to a per-error-class `Fixer` that decides which source files to read, whether it needs the dbt log (each class fetches and sanitizes it itself, only when needed), which prompt to send, and how to interpret the model's answer. Validation failures carry a pre-compiled candidate SQL and use a two-step LLM flow (candidate diagnosis, then real-source fix). Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. For each successful proposal the driver enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
-**Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (`GetNodeAncestry`, port 50052), and GitHub, exclusively via read-only GETs against the Contents API (source file/directory reads) and the Pulls API (PR status polling for the reconciler).
+**Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (`GetNodeAncestry`, port 50052), and GitHub, exclusively via read-only GETs against the Contents API (source file/directory reads), the commit API (upstream-change diffs for validation), and the Pulls API (PR status polling for the reconciler).
 
 ## Owned Storage
 
@@ -54,20 +54,21 @@ All events are written to `remediation_agent_outbox` inside the same transaction
 
 | Method | Purpose |
 |---|---|
-| `OrchestratorQuery.GetNodeAncestry` (via the `AncestryClient.NodeContext` port) | For validation proposals: called once, returning the failing node's own `file_path`, its `service_name`, and its ranked upstream ancestors together; best-effort, degrades to an empty/absent result on failure (Step 1 proceeds without ancestor context; Step 2 is skipped). For seed_build: called only as a fallback when `file_path` or `service` is absent on the trigger; an error or empty result skips the proposal. For compile: not called — the offending file path comes from the trigger and the service is the trigger's `node_id`. |
+| `OrchestratorQuery.GetNodeAncestry` (via the `AncestryClient.NodeContext` port) | For validation proposals: called once, returning the failing node's own `file_path`, its `service_name`, and its ranked upstream ancestors together (each carrying `last_repo`/`last_commit_sha`/`last_changed_at` when the ancestor has changed); best-effort, degrades to an empty/absent result on failure (Step 1 proceeds without ancestor context; Step 2 is skipped). The returned ancestors also drive a best-effort upstream-diff gather: up to the 5 most-recently-changed eligible ancestors are read via the GitHub commit API and their diffs are embedded in the Step-1 prompt. For seed_build: called only as a fallback when `file_path` or `service` is absent on the trigger; an error or empty result skips the proposal. For compile: not called — the offending file path comes from the trigger and the service is the trigger's `node_id`. |
 
 Its own inbound gRPC surface (`RemediationProposals`) is described in the inbound interfaces section above.
 
-### Outbound HTTP — GitHub Contents API
+### Outbound HTTP — GitHub Contents & commit API
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /repos/{repo}/contents/{path}?ref={commit_sha}` | Read-only fetch of one file's raw text at the release commit. `Accept: application/vnd.github.raw+json`. Authenticated with `Authorization: Bearer <GITHUB_TOKEN>` when the token is set; unauthenticated otherwise. A 404 maps to `ErrSourceNotFound`. For the compile and seed fixers' offending-file read, a 404 is a definitive skip (no retry) and any other non-2xx status or network error is returned to the caller as a transient failure so the trigger is redelivered. The validation fixer's Step-2 real-source read instead treats any error — 404 or otherwise — as a silent degrade to the Step-1 candidate proposal, with no retry. Response bodies over 1 MiB are rejected rather than silently truncated. |
 | `GET /repos/{repo}/contents/{dir}?ref={commit_sha}` | Read-only directory listing. `Accept: application/vnd.github+json`. Returns the repo-relative paths of the files (not sub-directories) directly under `{dir}`. Used only by the compile fixer to find `.yml`/`.yaml` siblings co-located with a failing `.sql` model; a 404 or any error is swallowed (this context is best-effort) and the read is simply skipped. |
+| `GET /repos/{repo}/commits/{sha}` | Read-only fetch of one commit's changed files and their unified diffs. `Accept: application/vnd.github+json`. Returns the commit's `files[]`, each with a `patch`; the adapter (`SourceReader.CommitFileDiff(repo, sha, path)`) returns the patch for the file matching `path`. A 404, a commit that did not touch `path`, or a file GitHub returns without a `patch` all map to `ErrSourceNotFound`. Used only by the validation fixer, to fetch the diff of the recent change to each of its most-recently-changed upstream ancestors; every per-ancestor read is best-effort — an error is logged and that ancestor is skipped, never retried, and a total failure simply leaves the Step-1 prompt at its metadata-only content. |
 
-The `{path}` for the offending file is formed by joining the owning service's `repo_path` (from `service_repos.yaml`, keyed by service name) with the dbt-project-relative source path. For compile, the service key is the trigger's `node_id` (the synthetic service id) and the file path comes directly from the trigger. For seed_build, the file path and service are threaded from the candidate topology on the trigger, falling back to orchestrator `GetNodeAncestry` when either is absent. For validation, the offending file's path and service come from the single `GetNodeAncestry` call. The `{repo}` comes from the trigger payload in all cases. No write requests are issued anywhere in this service; it holds no GitHub write permissions.
+The `{path}` for the offending file is formed by joining the owning service's `repo_path` (from `service_repos.yaml`, keyed by service name) with the dbt-project-relative source path. For compile, the service key is the trigger's `node_id` (the synthetic service id) and the file path comes directly from the trigger. For seed_build, the file path and service are threaded from the candidate topology on the trigger, falling back to orchestrator `GetNodeAncestry` when either is absent. For validation, the offending file's path and service come from the single `GetNodeAncestry` call; each upstream ancestor's diff path is instead formed by joining its own `service_name`'s `repo_path` with its own `file_path`, read at its own `last_repo`/`last_commit_sha` rather than the failing node's `{repo}`/`commit_sha`. No write requests are issued anywhere in this service; it holds no GitHub write permissions.
 
-`ReadFile` itself always returns the same shape of error (`ErrSourceNotFound` on 404, a wrapped error otherwise); how a caller reacts differs by class. The compile and seed fixers treat their offending-file read as load-bearing: a 404 is a definitive skip, any other error is transient and the trigger is redelivered. The compile fixer's extra context reads (co-located `.yml`/`.yaml` files, `dbt_project.yml`, via `ListDir`) swallow every error, including 404s, since that context is optional. Validation's Step-2 real-source read is best-effort at a higher level: any error there — 404 or otherwise — degrades silently to the Step-1 candidate proposal rather than causing a retry, because Step 1 already produced a usable (if lower-fidelity) result.
+`ReadFile` and `CommitFileDiff` both always return the same shape of error (`ErrSourceNotFound` on 404 or an absent/empty result, a wrapped error otherwise); how a caller reacts differs by class. The compile and seed fixers treat their offending-file read as load-bearing: a 404 is a definitive skip, any other error is transient and the trigger is redelivered. The compile fixer's extra context reads (co-located `.yml`/`.yaml` files, `dbt_project.yml`, via `ListDir`) swallow every error, including 404s, since that context is optional. Validation's Step-2 real-source read is best-effort at a higher level: any error there — 404 or otherwise — degrades silently to the Step-1 candidate proposal rather than causing a retry, because Step 1 already produced a usable (if lower-fidelity) result. The validation fixer's upstream-diff reads (`CommitFileDiff`) are best-effort at the same level as the compile fixer's extra context: an ancestor is eligible only when it carries a non-empty `last_commit_sha`, `last_repo`, and `file_path` and its `service_name` has a known `service_repos.yaml` mapping (an ancestor that never changed carries no stamped commit and is naturally excluded); at most 5 eligible ancestors, most-recently-changed first, are diffed, and each diff is truncated to roughly 8 KiB before being embedded in the prompt.
 
 `GITHUB_TOKEN` is injected at deploy time from the chart-managed secret `continuo-app-credentials` (key `GITHUB_TOKEN`, sourced from `global.github.token` in Helm values). No out-of-band secret mechanism is used.
 
@@ -246,11 +247,24 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
    own file_path, its service_name, and its ranked upstream ancestors together.
    Best-effort: on error, proceed with no ancestors and empty file_path/service_name
    (Step 1 still runs; Step 2 is skipped below).
+3a. Best-effort: gather the diff of the recent change to each of the most-
+    recently-changed upstream ancestors, up to 5. An ancestor is eligible only
+    when it carries a non-empty last_commit_sha, last_repo, and file_path, and
+    its service_name has a known service_repos.yaml mapping (an ancestor that
+    never changed carries no stamped commit and is naturally excluded). For
+    each eligible ancestor, join its service_repos.yaml path with its own
+    file_path and read the unified diff via the GitHub commit API
+    (GET /repos/{last_repo}/commits/{last_commit_sha}) — the ancestor's own
+    repo and commit, not the failing node's. Each diff is truncated to ~8 KiB.
+    Any per-ancestor read error is logged and that ancestor is skipped; a
+    total failure leaves the Step-1 prompt at its metadata-only content.
 
 ── Step 1: candidate-based diagnosis ─────────────────────────────────────────
 
 4. Assemble a ProposeRequest from (node_id, error_signature, candidateSQL,
-   sanitized dbt log, repo, commit_sha, ancestors).
+   sanitized dbt log, repo, commit_sha, ancestors, upstream diffs from 3a).
+   The diffs are additive to the per-ancestor metadata bullets already sent —
+   both are included whenever present.
 5. Forced single-shot LLM tool call (propose_fix): the LLM must invoke the tool;
    no streaming; result parsed from the tool arguments (proposed_sql, rationale,
    confidence, suspected_root_cause_node).
@@ -309,7 +323,7 @@ The `LLMProvider` port is backed by one of three adapters selected at boot via `
 
 Every adapter forces the same `propose_fix` tool on every call — no streaming, no free-form text response — but the number of calls and which tool fields are populated differ per error class:
 
-- **Validation**: two non-streaming calls per proposal. Step 1 is given the candidate SQL, sanitized dbt log, and ranked upstream ancestors, and returns `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node`. Step 2 is given the real model source and the Step-1 rationale, and returns a corrected `proposed_sql`. Step 2 is made only when the file path and service resolve; a failure, empty result, unchanged result, or low-confidence result falls back silently to the Step-1 candidate proposal.
+- **Validation**: two non-streaming calls per proposal. Step 1 is given the candidate SQL, sanitized dbt log, ranked upstream ancestors, and — best-effort, up to 5 most-recently-changed eligible ancestors — the diff of each ancestor's recent upstream change, and returns `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node`. Step 2 is given the real model source and the Step-1 rationale, and returns a corrected `proposed_sql`. Step 2 is made only when the file path and service resolve; a failure, empty result, unchanged result, or low-confidence result falls back silently to the Step-1 candidate proposal.
 - **Compile**: one non-streaming call per proposal. The adapter is given every gathered file (the offending file plus any co-located `.yml`/`.yaml` siblings and `dbt_project.yml`) and the sanitized dbt compile error, and returns `target_file` (which shown file to change), `proposed_content` (that file's complete corrected content), `rationale`, `confidence`, and `suspected_root_cause_node`.
 - **Seed**: one non-streaming call per proposal. The adapter is given the failing CSV and the sanitized dbt seed error, and returns `proposed_content` (the complete corrected CSV), `rationale`, and `confidence`. The seed prompt has no `suspected_root_cause_node` field — a bad seed value has no upstream node to blame.
 
@@ -418,7 +432,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Per-error-class fixers — `Fixer` interface, `For` factory, shared single-shot pipeline | `remediation-agent/service/fixer/fixer.go` |
 | Compile fixer (offending file + co-located YAML/`dbt_project.yml` context, one LLM call) | `remediation-agent/service/fixer/compile.go` |
 | Seed fixer (CSV read, one LLM call) | `remediation-agent/service/fixer/seed.go` |
-| Validation fixer (two-step candidate + real-source flow) | `remediation-agent/service/fixer/validation.go` |
+| Validation fixer (two-step candidate + real-source flow, best-effort upstream-diff gather) | `remediation-agent/service/fixer/validation.go` |
 | PR lifecycle application service (claim/record/fail/record-outcome + outbox) | `remediation-agent/service/proposals/service.go` |
 | PR-outcome reconciler loop (incl. permission-gap degraded signal) | `remediation-agent/service/proposals/reconciler.go` |
 | Port interfaces | `remediation-agent/service/ports/` |
@@ -426,7 +440,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | S3 evidence reader + artifact writer | `remediation-agent/adapters/s3/` |
 | gRPC ancestry client | `remediation-agent/adapters/grpc/ancestry_client.go` |
 | gRPC `RemediationProposals` server | `remediation-agent/adapters/grpc/server.go` |
-| GitHub read-only source reader (file read + directory list) | `remediation-agent/adapters/github/source_reader.go` |
+| GitHub read-only source reader (file read + directory list + commit diff) | `remediation-agent/adapters/github/source_reader.go` |
 | GitHub read-only PR status reader (Pulls API) | `remediation-agent/adapters/github/pr_status.go` |
 | Service→repo map config loader | `remediation-agent/config.go` (reads `SERVICE_REPO_MAP_PATH`, parses `service_repos.yaml`) |
 | Service→repo map file (dev + e2e) | `remediation-agent/config/service_repos.yaml` |
