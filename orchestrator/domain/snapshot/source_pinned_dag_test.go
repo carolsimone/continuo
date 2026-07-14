@@ -243,8 +243,9 @@ func TestSourcePinnedDAG_SourceRunIsTest_ReturnsErrRerunOfTestUnsupported(t *tes
 				failed: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
 			},
 		},
+		SourceRunOperationByID: map[string]string{srcID.String(): "test"},
 	}
-	_, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "test"})
+	_, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
 	if !errors.Is(err, snapshot.ErrRerunOfTestUnsupported) {
 		t.Fatalf("want ErrRerunOfTestUnsupported, got %v", err)
 	}

@@ -113,8 +113,9 @@ func TestRebasePartition_SourceRunIsTest_ReturnsErrRerunOfTestUnsupported(t *tes
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
 			a: {ScheduleName: "x", NodeType: "dbt-model"},
 		},
+		SourceRunOperationByID: map[string]string{srcID.String(): "test"},
 	}
-	_, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, ScheduleName: "x", Operation: "test"})
+	_, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, ScheduleName: "x"})
 	if !errors.Is(err, snapshot.ErrRerunOfTestUnsupported) {
 		t.Fatalf("want ErrRerunOfTestUnsupported, got %v", err)
 	}
