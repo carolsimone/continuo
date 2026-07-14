@@ -726,6 +726,7 @@ body {
 
 .page-action-row {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-bottom: 12px;
@@ -737,7 +738,9 @@ body {
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  font: 500 12px/1.4 inherit;
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.4;
   border-radius: 4px;
   border: 1px solid transparent;
   background: #fff;
@@ -888,7 +891,9 @@ body {
 }
 
 .form-field > select {
-  font: 500 12px/1.4 inherit;
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.4;
   padding: 4px 8px;
   border: 1px solid #d1d5db;
   border-radius: 4px;
@@ -985,7 +990,7 @@ body {
 
 /* ---- NodesCatalogPanel: load-more footer and search input ---- */
 .nodes-loadmore { display: flex; justify-content: center; padding: 12px; }
-.node-search-input { font: 500 12px/1.4 inherit; padding: 4px 8px;
+.node-search-input { font-weight: 500; font-size: 12px; line-height: 1.4; padding: 4px 8px;
   border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #374151; min-width: 220px; }
 
 /* Chat assistant panel */
@@ -1096,7 +1101,9 @@ body {
   padding: 6px 10px;
   border: 1px solid #d1d5db;
   border-radius: 4px;
-  font: 500 12px/1.4 inherit;
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.4;
   color: #374151;
 }
 
