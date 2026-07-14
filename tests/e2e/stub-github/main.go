@@ -23,6 +23,10 @@
 //	PUT  /repos/{owner}/{repo}/contents/{path}
 //	    Creates or updates a file (stub). Returns 201 with stub commit SHA.
 //
+//	GET  /repos/{owner}/{repo}/commits/{sha}
+//	    Returns a canned commit whose files[] carries a patch for the upstream
+//	    model, exercising the remediation-agent upstream-diff read path.
+//
 //	POST /repos/{owner}/{repo}/pulls
 //	    Opens a PR (stub). Returns 201 with deterministic number and html_url.
 //
@@ -66,6 +70,16 @@ const (
 	stubBranch    = "stub"
 	stubPRNumber  = 1
 )
+
+// e2eUpstreamFilePath is the repository-relative path of the upstream model whose
+// diff the remediation flow fetches: ServiceRepoPaths["service-2"] ("services/
+// service-2") joined with the ancestor's original_file_path ("models/ftable_c.sql").
+const e2eUpstreamFilePath = "services/service-2/models/ftable_c.sql"
+
+// ftableCPatch is the canned unified diff returned for any commit lookup. It
+// stands in for a recent upstream change so the remediation-agent's upstream-diff
+// read path is exercised end to end.
+const ftableCPatch = "@@ -1,3 +1,3 @@\n select id, name\n-  , legacy_col\n+  , renamed_col\n from source"
 
 // stubClosedAt is the fixed terminal timestamp reported for closed stub PRs.
 const stubClosedAt = "2026-01-01T00:00:00Z"
@@ -134,6 +148,8 @@ func handleRepos(w http.ResponseWriter, r *http.Request) {
 		handleGitRefs(w, r)
 	case strings.HasPrefix(rest, "contents/"):
 		handleContents(w, r)
+	case strings.HasPrefix(rest, "commits/"):
+		handleCommits(w, r)
 	case rest == "pulls" || strings.HasPrefix(rest, "pulls"):
 		handlePulls(w, r)
 	default:
@@ -226,6 +242,25 @@ func handleContents(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleCommits responds to GET /repos/{owner}/{repo}/commits/{sha} with a canned
+// commit whose files[] carries a patch for the upstream model the remediation
+// flow reads. The filename matches the upstream ancestor's repository-relative
+// path used in the e2e topology.
+func handleCommits(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"sha": stubCommitSHA,
+		"files": []map[string]string{
+			{"filename": e2eUpstreamFilePath, "patch": ftableCPatch},
+		},
+	})
 }
 
 // handlePulls routes /repos/{o}/{r}/pulls[...]:
