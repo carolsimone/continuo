@@ -498,6 +498,45 @@ func (r *OrchestratorQueryRepository) GetNodeAncestry(ctx context.Context, uniqu
 	return out, nil
 }
 
+// GetNode returns per-node topology metadata for a single active :Table,
+// addressed by its (service, schema, table) identity. Returns
+// domain.ErrNodeNotFound when no active node matches. test_count is read via
+// intFieldPresent so a node predating test_count capture reports TestCountKnown
+// = false rather than a misleading zero.
+func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+
+	query := `
+		MATCH (t:Table {service_name: $service, schema_name: $schema, table_name: $table})
+		WHERE COALESCE(t.active, true)
+		RETURN t.node_type AS node_type, t.test_count AS test_count
+	`
+	result, err := session.Run(ctx, query, map[string]interface{}{
+		"service": service,
+		"schema":  schema,
+		"table":   table,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetNode query failed: %w", err)
+	}
+	if !result.Next(ctx) {
+		if err := result.Err(); err != nil {
+			return nil, fmt.Errorf("GetNode query error: %w", err)
+		}
+		return nil, domain.ErrNodeNotFound
+	}
+	rec := result.Record()
+	nodeType, _ := rec.Get("node_type")
+	tc, tcKnown := intFieldPresent(rec, "test_count")
+	nt, _ := nodeType.(string)
+	return &domain.NodeMeta{
+		NodeType:       nt,
+		TestCount:      tc,
+		TestCountKnown: tcKnown,
+	}, nil
+}
+
 func ancestorFromProps(props map[string]interface{}, depth int) *domain.NodeAncestor {
 	a := &domain.NodeAncestor{
 		UniqueID:      safeString(props["unique_id"]),

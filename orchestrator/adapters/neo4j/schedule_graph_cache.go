@@ -26,6 +26,7 @@ type ScheduleGraphProvider interface {
 	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
 	GetNodeAncestry(ctx context.Context, nodeUniqueID string, maxDepth int) ([]*domain.NodeAncestor, error)
+	GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error)
 }
 
 // GenerationProvider returns the orchestrator's current topology_generation.
@@ -123,6 +124,13 @@ func (c *CachingScheduleGraphReader) ListScheduleTopologies(ctx context.Context)
 // GetNodeAncestry passes through to the underlying reader; ancestry queries are not cached.
 func (c *CachingScheduleGraphReader) GetNodeAncestry(ctx context.Context, nodeUniqueID string, maxDepth int) ([]*domain.NodeAncestor, error) {
 	return c.inner.GetNodeAncestry(ctx, nodeUniqueID, maxDepth)
+}
+
+// GetNode passes through to the underlying reader; node metadata is not cached
+// (test_count can change on the next promotion, and the read is a single-row
+// lookup).
+func (c *CachingScheduleGraphReader) GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error) {
+	return c.inner.GetNode(ctx, service, schema, table)
 }
 
 func (c *CachingScheduleGraphReader) get(key scheduleGraphKey) (*domain.ScheduleGraph, bool) {

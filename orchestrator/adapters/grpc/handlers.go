@@ -23,6 +23,7 @@ type ScheduleAndRunListReader interface {
 	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
 	GetNodeAncestry(ctx context.Context, nodeUniqueID string, maxDepth int) ([]*domain.NodeAncestor, error)
+	GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error)
 }
 
 // DriftAwareRunReader returns view-shaped run data composed from Neo4j
@@ -226,6 +227,25 @@ func (h *QueryHandler) GetNodeAncestry(ctx context.Context, req *orchestratorv1.
 		resp.Ancestors = append(resp.Ancestors, domainToProtoAncestor(a))
 	}
 	return resp, nil
+}
+
+func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeRequest) (*orchestratorv1.GetNodeResponse, error) {
+	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
+		return nil, status.Error(codes.InvalidArgument, "service_name, schema_name and table_name are required")
+	}
+	meta, err := h.scheduleAndRunLists.GetNode(ctx, req.ServiceName, req.SchemaName, req.TableName)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return nil, status.Errorf(codes.NotFound, "node %s.%s.%s not found", req.ServiceName, req.SchemaName, req.TableName)
+		}
+		h.logger.Error("GetNode failed", "service", req.ServiceName, "schema", req.SchemaName, "table", req.TableName, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetNode: %v", err)
+	}
+	return &orchestratorv1.GetNodeResponse{
+		NodeType:       meta.NodeType,
+		TestCount:      int32(meta.TestCount),
+		TestCountKnown: meta.TestCountKnown,
+	}, nil
 }
 
 func domainToProtoAncestor(a *domain.NodeAncestor) *orchestratorv1.AncestorNode {
