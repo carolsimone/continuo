@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import SchedulerCard from '../../src/client/SchedulerCard';
 import { ScheduleSummary } from '../../src/client/types';
 
@@ -23,6 +23,19 @@ function renderCard(schedule: ScheduleSummary) {
   return render(
     <MemoryRouter>
       <SchedulerCard schedule={schedule} />
+    </MemoryRouter>,
+  );
+}
+
+// Renders the card behind a route so navigation can be observed by asserting
+// which route ends up on screen, rather than mocking useNavigate.
+function renderCardWithRouteProbe(schedule: ScheduleSummary) {
+  return render(
+    <MemoryRouter initialEntries={['/']}>
+      <Routes>
+        <Route path="/" element={<SchedulerCard schedule={schedule} />} />
+        <Route path="/schedule/:name" element={<div>SCHEDULE DETAIL</div>} />
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -86,6 +99,25 @@ describe('SchedulerCard — operation selector', () => {
       const [, init] = triggerCall as [RequestInfo, RequestInit];
       const body = JSON.parse(String(init?.body));
       expect(body).toMatchObject({ operation: 'build' });
+    });
+  });
+
+  it('clicking the operation .form-field does not navigate the card, unlike the card body', async () => {
+    const schedule = baseSchedule({ is_running: false, last_run_id: 'r1' });
+    renderCardWithRouteProbe(schedule);
+
+    const formField = screen.getByLabelText(/operation/i).closest('.form-field');
+    expect(formField).not.toBeNull();
+    fireEvent.click(formField as Element);
+
+    // Give any (unwanted) navigation a chance to happen before asserting.
+    await Promise.resolve();
+    expect(screen.queryByText('SCHEDULE DETAIL')).toBeNull();
+
+    // Contrast: clicking the card body (outside the form-field) does navigate.
+    fireEvent.click(screen.getByText(schedule.schedule_name));
+    await waitFor(() => {
+      expect(screen.getByText('SCHEDULE DETAIL')).toBeInTheDocument();
     });
   });
 });

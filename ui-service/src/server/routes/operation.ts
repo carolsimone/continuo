@@ -5,8 +5,8 @@
 const ALLOWED = new Set(['', 'run', 'test', 'build']);
 
 export function parseOperation(raw: unknown): string | null {
-  const v = typeof raw === 'string' ? raw : raw == null ? '' : String(raw);
   if (typeof raw !== 'string' && raw != null) return null;
+  const v = raw == null ? '' : raw;
   if (!ALLOWED.has(v)) return null;
   return v === 'run' ? '' : v;
 }

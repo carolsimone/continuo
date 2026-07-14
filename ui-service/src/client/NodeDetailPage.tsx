@@ -5,6 +5,12 @@ import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './node-helpers';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
 
+interface NodeMetaResponse {
+  node_type?: string;
+  test_count?: number;
+  test_count_known?: boolean;
+}
+
 function formatTime(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -101,7 +107,7 @@ export default function NodeDetailPage() {
     if (!service || !schema || !table) return;
     fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/meta`)
       .then(r => (r.ok ? r.json() : null))
-      .then(m => setTestCount(m && typeof m.test_count === 'number'
+      .then((m: NodeMetaResponse | null) => setTestCount(m && typeof m.test_count === 'number'
         ? { count: m.test_count, known: Boolean(m.test_count_known) }
         : null))
       .catch(() => setTestCount(null));

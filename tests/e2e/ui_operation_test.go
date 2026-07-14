@@ -100,6 +100,10 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 	assert.Equal(t, "build", queryNeo4jRunOperation(t, clients, runID),
 		":Run.operation must be 'build' for a UI-triggered single-node build run")
 
+	// table_name alone is a sufficient filter here: this test runs a single
+	// serial single-node run against a stack cleaned by cleanupTestData, so no
+	// other job for this table can be in flight and Items[0] is unambiguous —
+	// mirrors the same single-run assumption in build_operation_test.go.
 	jobs, err := getK8sJobs(ctx, fmt.Sprintf("table_name=%s", targetTable))
 	require.NoError(t, err, "failed to query K8s jobs for %s", targetTable)
 	require.NotEmpty(t, jobs.Items, "%s must have been dispatched", targetTable)
