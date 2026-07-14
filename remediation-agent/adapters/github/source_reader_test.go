@@ -132,3 +132,160 @@ func TestListDir_NotFound(t *testing.T) {
 		t.Fatalf("want ErrSourceNotFound, got %v", err)
 	}
 }
+
+func TestCommitFileDiff_ReturnsMatchingFilePatch(t *testing.T) {
+	var gotPath, gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAccept = r.URL.Path, r.Header.Get("Accept")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[
+			{"filename":"services/svc/models/a.sql","patch":"@@ -1 +1 @@\n-old\n+new"},
+			{"filename":"services/svc/models/other.sql","patch":"@@ noise @@"}
+		]}`))
+	}))
+	defer srv.Close()
+
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	patch, err := gh.CommitFileDiff(context.Background(), "owner/repo", "deadbeef", "services/svc/models/a.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch != "@@ -1 +1 @@\n-old\n+new" {
+		t.Fatalf("patch = %q", patch)
+	}
+	if gotPath != "/repos/owner/repo/commits/deadbeef" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotAccept != "application/vnd.github+json" {
+		t.Errorf("accept = %q", gotAccept)
+	}
+}
+
+func TestCommitFileDiff_404IsErrSourceNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	if _, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "p"); !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+func TestCommitFileDiff_PathNotInCommit_ErrSourceNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"other/file.sql","patch":"@@ x @@"}]}`))
+	}))
+	defer srv.Close()
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	if _, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/a.sql"); !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+func TestCommitFileDiff_EmptyPatch_ErrSourceNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"models/a.sql","patch":""}]}`))
+	}))
+	defer srv.Close()
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	if _, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/a.sql"); !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+func TestCommitFileDiff_FollowsPaginationToLaterPage(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"files":[{"filename":"models/target.sql","patch":"@@ found @@"}]}`))
+			return
+		}
+		// First page: target absent, point to page 2 via the Link header.
+		w.Header().Set("Link", "<"+srv.URL+"/repos/o/r/commits/sha?page=2>; rel=\"next\"")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"models/other.sql","patch":"@@ x @@"}]}`))
+	}))
+	defer srv.Close()
+
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	patch, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/target.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch != "@@ found @@" {
+		t.Fatalf("patch = %q, want the second-page patch", patch)
+	}
+}
+
+func TestCommitFileDiff_PaginationExhaustedIsNotFound(t *testing.T) {
+	var srv *httptest.Server
+	pages := 0
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		w.Header().Set("Content-Type", "application/json")
+		// The first page links to a "last" page; the last page carries no next
+		// link, so the walk terminates without finding the target.
+		if r.URL.Query().Get("page") != "last" {
+			w.Header().Set("Link", "<"+srv.URL+"/repos/o/r/commits/sha?page=last>; rel=\"next\"")
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"models/other.sql","patch":"@@ x @@"}]}`))
+	}))
+	defer srv.Close()
+
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	_, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/target.sql")
+	if !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound", err)
+	}
+	if pages < 2 {
+		t.Fatalf("expected pagination to be followed, got %d page(s)", pages)
+	}
+}
+
+// TestCommitFileDiff_DoesNotFollowOffHostNextLink verifies the pagination walk
+// only follows a Link whose URL stays within the configured GitHub host. A next
+// link to another origin ends the walk as not-found rather than issuing a
+// cross-host request (which would surface as a transport error, not
+// ErrSourceNotFound).
+func TestCommitFileDiff_DoesNotFollowOffHostNextLink(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", `<http://127.0.0.1:1/repos/o/r/commits/sha?page=2>; rel="next"`)
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"models/other.sql","patch":"@@ x @@"}]}`))
+	}))
+	defer srv.Close()
+
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	_, err := gh.CommitFileDiff(context.Background(), "o/r", "sha", "models/target.sql")
+	if !errors.Is(err, ports.ErrSourceNotFound) {
+		t.Fatalf("err = %v, want ErrSourceNotFound (off-host next must not be followed)", err)
+	}
+}
+
+func TestNextLink(t *testing.T) {
+	cases := []struct {
+		name, header, want string
+	}{
+		{"empty", "", ""},
+		{"single next", `<https://api.github.com/x?page=2>; rel="next"`, "https://api.github.com/x?page=2"},
+		{"next then last", `<https://api.github.com/x?page=2>; rel="next", <https://api.github.com/x?page=9>; rel="last"`, "https://api.github.com/x?page=2"},
+		{"last then next", `<https://api.github.com/x?page=9>; rel="last", <https://api.github.com/x?page=2>; rel="next"`, "https://api.github.com/x?page=2"},
+		{"prev only", `<https://api.github.com/x?page=1>; rel="prev"`, ""},
+		{"malformed no rel", `<https://api.github.com/x?page=2>`, ""},
+	}
+	for _, c := range cases {
+		if got := nextLink(c.header); got != c.want {
+			t.Errorf("%s: nextLink(%q) = %q, want %q", c.name, c.header, got, c.want)
+		}
+	}
+}

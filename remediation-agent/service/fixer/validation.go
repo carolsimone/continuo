@@ -4,11 +4,77 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
+
+const (
+	// maxUpstreamDiffs bounds how many recently-changed ancestors are diffed into
+	// the prompt, keeping the token footprint predictable on wide fan-in models.
+	maxUpstreamDiffs = 5
+	// maxUpstreamDiffBytes truncates a single upstream diff so one large refactor
+	// cannot dominate the prompt.
+	maxUpstreamDiffBytes = 8192
+)
+
+// gatherUpstreamDiffs fetches, best-effort, the diff of the recent change to each
+// of the most-recently-changed upstream ancestors. Ancestors arrive already
+// ordered most-recently-changed first. Only an ancestor that carries a stamped
+// commit (i.e. changed in some release), a repo, a file path, and a known
+// service-to-repo-path mapping is eligible. At most maxUpstreamDiffs eligible
+// ancestors are attempted — the cap counts fetch attempts, not successes, so a
+// GitHub outage over a wide ancestry cannot issue an unbounded number of calls.
+// Each diff is sanitized (so a secret in a patched line does not leak to the LLM)
+// and then truncated to maxUpstreamDiffBytes. A per-ancestor read error is logged
+// and skipped; a whole failure yields an empty slice, leaving the prompt at its
+// metadata-only content.
+func gatherUpstreamDiffs(ctx context.Context, svc Services, ancestors []prompt.Ancestor) []prompt.UpstreamDiff {
+	out := make([]prompt.UpstreamDiff, 0, maxUpstreamDiffs)
+	attempts := 0
+	for _, a := range ancestors {
+		if attempts >= maxUpstreamDiffs {
+			break
+		}
+		if a.LastCommitSHA == "" || a.LastRepo == "" || a.FilePath == "" {
+			continue
+		}
+		prefix, ok := svc.ServiceRepoPaths[a.ServiceName]
+		if !ok {
+			continue
+		}
+		fullPath := path.Join(prefix, a.FilePath)
+		attempts++
+		diff, err := svc.Source.CommitFileDiff(ctx, a.LastRepo, a.LastCommitSHA, fullPath)
+		if err != nil {
+			svc.Logger.Warn("upstream diff unavailable; skipping ancestor",
+				"node", a.NodeID, "path", fullPath, "commit", a.LastCommitSHA, "error", err)
+			continue
+		}
+		out = append(out, prompt.UpstreamDiff{
+			NodeID:      a.NodeID,
+			ServiceName: a.ServiceName,
+			Diff:        truncateDiff(svc.Sanitizer.Sanitize(diff), maxUpstreamDiffBytes),
+		})
+	}
+	return out
+}
+
+// truncateDiff caps a diff at max bytes, appending a marker when it was cut. The
+// cut is backed up to a UTF-8 rune boundary so truncation never splits a
+// multibyte character (which would otherwise render as U+FFFD in the prompt).
+func truncateDiff(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "\n… (diff truncated)"
+}
 
 // validationFixer handles validation-rejection failures, which carry a
 // candidate SQL (the pre-compiled SQL extracted from object storage at the
@@ -52,6 +118,11 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 		filePath, serviceName = "", ""
 	}
 
+	// Best-effort: the diffs of what recently changed upstream are the highest-
+	// signal evidence for a cross-service validation break. A failure here leaves
+	// the prompt at its metadata-only content.
+	upstreamDiffs := gatherUpstreamDiffs(ctx, svc, ancestors)
+
 	res, err := svc.LLM.Propose(ctx, prompt.Assemble(prompt.Evidence{
 		NodeID:         in.NodeID,
 		ErrorSignature: in.ErrorSignature,
@@ -60,6 +131,7 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 		Repo:           in.Repo,
 		CommitSHA:      in.CommitSHA,
 		Ancestors:      ancestors,
+		UpstreamDiffs:  upstreamDiffs,
 	}))
 	if err != nil {
 		// Transient LLM error: return so the driver redelivers.

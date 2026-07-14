@@ -127,6 +127,10 @@ func (f *fakeSource) ListDir(_ context.Context, _, _, _ string) ([]string, error
 	return nil, ports.ErrSourceNotFound
 }
 
+func (f *fakeSource) CommitFileDiff(_ context.Context, _, _, _ string) (string, error) {
+	return "", ports.ErrSourceNotFound
+}
+
 // fakeClock returns a fixed UTC timestamp.
 type fakeClock struct{}
 

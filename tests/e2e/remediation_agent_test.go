@@ -466,6 +466,40 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 	})
 	require.NoError(t, err, "seed ftable_e topology node in Neo4j")
 
+	// Seed one upstream ancestor with stamped provenance (last_repo, last_commit_sha,
+	// last_changed_at) and a DEPENDS_ON edge from ftable_e, so GetNodeAncestry returns
+	// it as a recently-changed upstream and the remediation-agent fetches its diff from
+	// stub-github. The edge points downstream -> upstream, matching the promotion writer.
+	// This ancestor node is private to this test (not the shared ftable_c fixture owned
+	// by seed_topology_test.go) so cleanup cannot corrupt or delete a node other e2e
+	// tests depend on.
+	_, err = session.Run(ctx, `
+		MERGE (up:Table {unique_id: $up_uid})
+		SET up.schema_name        = $up_schema,
+		    up.table_name         = $up_table,
+		    up.service_name       = $up_service,
+		    up.original_file_path = $up_file,
+		    up.node_type          = 'model',
+		    up.active             = true,
+		    up.last_repo          = $up_repo,
+		    up.last_commit_sha    = $up_sha,
+		    up.last_changed_at    = datetime($up_changed)
+		WITH up
+		MATCH (t:Table {unique_id: $uid})
+		MERGE (t)-[:DEPENDS_ON]->(up)
+	`, map[string]interface{}{
+		"up_uid":     "e2e_schema.ftable_upstream_diff",
+		"up_schema":  "e2e_schema",
+		"up_table":   "ftable_upstream_diff",
+		"up_service": "service-2",
+		"up_file":    "models/ftable_upstream_diff.sql",
+		"up_repo":    "continuo/dbt-service-2",
+		"up_sha":     "upstreamsha0000000000000000000000000000000",
+		"up_changed": "2026-01-01T00:00:00Z",
+		"uid":        "e2e_schema.ftable_e",
+	})
+	require.NoError(t, err, "seed ftable_upstream_diff upstream ancestor in Neo4j")
+
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -474,9 +508,9 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 		})
 		defer cleanupSession.Close(cleanupCtx)
 		_, _ = cleanupSession.Run(cleanupCtx,
-			`MATCH (t:Table {unique_id: 'e2e_schema.ftable_e'}) DETACH DELETE t`,
+			`MATCH (t:Table) WHERE t.unique_id IN ['e2e_schema.ftable_e', 'e2e_schema.ftable_upstream_diff'] DETACH DELETE t`,
 			nil,
 		)
 	})
-	t.Log("seeded ftable_e topology node in Neo4j (unique_id=e2e_schema.ftable_e, service_name=service-2)")
+	t.Log("seeded ftable_e topology node + ftable_upstream_diff upstream ancestor in Neo4j")
 }

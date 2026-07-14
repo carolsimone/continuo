@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
@@ -93,12 +94,16 @@ func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, e
 	return "s3://bucket/" + key, nil
 }
 
-// fakeSource returns a fixed file content or an error. readPath records the
-// last path argument passed to ReadFile so tests can assert the full path.
+// fakeSource returns a fixed file content or an error for ReadFile, and a fixed
+// diff or an error for CommitFileDiff. readPath records the last ReadFile path;
+// diffPaths records every CommitFileDiff path so tests can assert selection.
 type fakeSource struct {
-	content  string
-	err      error
-	readPath string
+	content   string
+	err       error
+	readPath  string
+	diff      string
+	diffErr   error
+	diffPaths []string
 }
 
 func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, error) {
@@ -108,6 +113,11 @@ func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, err
 
 func (f *fakeSource) ListDir(_ context.Context, _, _, _ string) ([]string, error) {
 	return nil, nil
+}
+
+func (f *fakeSource) CommitFileDiff(_ context.Context, _, _, path string) (string, error) {
+	f.diffPaths = append(f.diffPaths, path)
+	return f.diff, f.diffErr
 }
 
 // TestValidation_NoCandidateSQL_Skips verifies that a validation trigger with
@@ -258,5 +268,198 @@ func TestValidation_AncestryError_ProceedsDegraded(t *testing.T) {
 	}
 	if r.Proposal.SourceResolved {
 		t.Fatal("expected SourceResolved=false when ancestry errors")
+	}
+}
+
+// validationSvc builds a Services wired for a validation-fix happy path with the
+// given ancestors and source.
+func validationSvc(ancestors []prompt.Ancestor, src *fakeSource) Services {
+	return Services{
+		LLM: &fakeLLM{queue: []ports.ProposeResult{
+			{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+			{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+		}},
+		Evidence:         fakeEvidence{data: map[string]string{"s3://cand": "SELECT 0", "s3://log": "boom"}},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Ancestry:         fakeAncestry{filePath: "models/self.sql", service: "svc", ancestry: ancestors},
+		Artifacts:        &fakeArtifacts{},
+		Logger:           testLogger(),
+		ServiceRepoPaths: map[string]string{"svc": "services/svc", "up-svc": "services/up-svc"},
+	}
+}
+
+func validationInput() Input {
+	return Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
+		CandidateSQLURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
+}
+
+// TestValidation_UpstreamDiffs_EmbeddedInStep1Prompt verifies that a changed
+// ancestor's diff is fetched at its own repo/commit and rendered into the Step-1
+// prompt.
+func TestValidation_UpstreamDiffs_EmbeddedInStep1Prompt(t *testing.T) {
+	llm := &fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+	}}
+	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ -1 +1 @@\n-old_col\n+new_col"}
+	svc := validationSvc([]prompt.Ancestor{
+		{NodeID: "up.node", ServiceName: "up-svc", LastCommitSHA: "upsha", LastRepo: "o/up-repo", FilePath: "models/up.sql", Depth: 1},
+	}, src)
+	svc.LLM = llm
+
+	_, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(src.diffPaths) != 1 || src.diffPaths[0] != "services/up-svc/models/up.sql" {
+		t.Fatalf("CommitFileDiff paths = %v, want [services/up-svc/models/up.sql]", src.diffPaths)
+	}
+	if len(llm.requests) == 0 || !strings.Contains(llm.requests[0].User, "new_col") {
+		t.Fatalf("step-1 prompt must contain the upstream diff:\n%s", llm.requests[0].User)
+	}
+}
+
+// TestValidation_UpstreamDiffs_SkipsUnstampedAncestors verifies ancestors without
+// a commit sha, repo, file path, or a known service mapping are not fetched.
+func TestValidation_UpstreamDiffs_SkipsUnstampedAncestors(t *testing.T) {
+	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ x @@"}
+	svc := validationSvc([]prompt.Ancestor{
+		{NodeID: "no-sha", ServiceName: "up-svc", LastRepo: "o/up-repo", FilePath: "models/a.sql", Depth: 1},
+		{NodeID: "no-repo", ServiceName: "up-svc", LastCommitSHA: "s", FilePath: "models/b.sql", Depth: 1},
+		{NodeID: "no-map", ServiceName: "unknown", LastCommitSHA: "s", LastRepo: "o/x", FilePath: "c.sql", Depth: 1},
+	}, src)
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
+		t.Fatal(err)
+	}
+	if len(src.diffPaths) != 0 {
+		t.Fatalf("no diff should be fetched for unstamped/unmapped ancestors, got %v", src.diffPaths)
+	}
+}
+
+// TestValidation_UpstreamDiffs_CapsAtFive verifies at most maxUpstreamDiffs diffs
+// are fetched even when more eligible ancestors are present.
+func TestValidation_UpstreamDiffs_CapsAtFive(t *testing.T) {
+	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ x @@"}
+	var ancestors []prompt.Ancestor
+	for i := 0; i < 8; i++ {
+		ancestors = append(ancestors, prompt.Ancestor{
+			NodeID: fmt.Sprintf("up.%d", i), ServiceName: "up-svc", LastCommitSHA: "s",
+			LastRepo: "o/up-repo", FilePath: fmt.Sprintf("models/up%d.sql", i), Depth: 1,
+		})
+	}
+	svc := validationSvc(ancestors, src)
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
+		t.Fatal(err)
+	}
+	if len(src.diffPaths) != maxUpstreamDiffs {
+		t.Fatalf("fetched %d diffs, want cap of %d", len(src.diffPaths), maxUpstreamDiffs)
+	}
+}
+
+// TestValidation_UpstreamDiffs_BestEffortOnError verifies a CommitFileDiff error
+// is swallowed: the proposal is still produced and no diff block is added.
+func TestValidation_UpstreamDiffs_BestEffortOnError(t *testing.T) {
+	llm := &fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+	}}
+	src := &fakeSource{content: "SELECT 0 -- original", diffErr: fmt.Errorf("github 503")}
+	svc := validationSvc([]prompt.Ancestor{
+		{NodeID: "up.node", ServiceName: "up-svc", LastCommitSHA: "upsha", LastRepo: "o/up-repo", FilePath: "models/up.sql", Depth: 1},
+	}, src)
+	svc.LLM = llm
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed {
+		t.Fatalf("status = %v want proposed", r.Proposal.Status)
+	}
+	if strings.Contains(llm.requests[0].User, "```diff") {
+		t.Fatalf("failed diff fetch must not add a diff block:\n%s", llm.requests[0].User)
+	}
+}
+
+// TestValidation_UpstreamDiffs_CapsAttemptsOnError verifies the five-fetch cap
+// counts attempts, not successes: when every eligible ancestor's diff read fails,
+// the loop still issues at most maxUpstreamDiffs CommitFileDiff calls rather than
+// one per ancestor. This bounds the blast radius of a GitHub outage over a wide
+// ancestry on a serial consumer.
+func TestValidation_UpstreamDiffs_CapsAttemptsOnError(t *testing.T) {
+	src := &fakeSource{content: "SELECT 0 -- original", diffErr: fmt.Errorf("github 503")}
+	var ancestors []prompt.Ancestor
+	for i := 0; i < 8; i++ {
+		ancestors = append(ancestors, prompt.Ancestor{
+			NodeID: fmt.Sprintf("up.%d", i), ServiceName: "up-svc", LastCommitSHA: "s",
+			LastRepo: "o/up-repo", FilePath: fmt.Sprintf("models/up%d.sql", i), Depth: 1,
+		})
+	}
+	svc := validationSvc(ancestors, src)
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
+		t.Fatal(err)
+	}
+	if len(src.diffPaths) != maxUpstreamDiffs {
+		t.Fatalf("attempted %d fetches on all-error ancestry, want cap of %d", len(src.diffPaths), maxUpstreamDiffs)
+	}
+}
+
+// TestValidation_UpstreamDiffs_SanitizesPatch verifies the upstream patch is run
+// through the LogSanitizer before it is embedded in the prompt, so a secret in a
+// patched line is redacted rather than sent to the external LLM.
+func TestValidation_UpstreamDiffs_SanitizesPatch(t *testing.T) {
+	llm := &fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+	}}
+	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ -1 +1 @@\n-old\n+password = SEKRET"}
+	svc := validationSvc([]prompt.Ancestor{
+		{NodeID: "up.node", ServiceName: "up-svc", LastCommitSHA: "upsha", LastRepo: "o/up-repo", FilePath: "models/up.sql", Depth: 1},
+	}, src)
+	svc.LLM = llm
+	svc.Sanitizer = redactingSanitizer{secret: "SEKRET", marker: "[redacted]"}
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(llm.requests[0].User, "SEKRET") {
+		t.Fatalf("unsanitized secret leaked into the prompt:\n%s", llm.requests[0].User)
+	}
+	if !strings.Contains(llm.requests[0].User, "[redacted]") {
+		t.Fatalf("sanitized marker missing from the embedded diff:\n%s", llm.requests[0].User)
+	}
+}
+
+// TestTruncateDiff_ShortStringUnchanged verifies a diff at or under the cap is
+// returned verbatim, with no truncation marker.
+func TestTruncateDiff_ShortStringUnchanged(t *testing.T) {
+	s := "a short diff"
+	if got := truncateDiff(s, 100); got != s {
+		t.Fatalf("got %q, want the input unchanged", got)
+	}
+}
+
+// TestTruncateDiff_BacksUpOffMultibyteRune verifies the cut is moved to a rune
+// boundary so a multibyte character is never split: the result must be valid
+// UTF-8 and must drop the partial rune rather than emit a replacement character.
+func TestTruncateDiff_BacksUpOffMultibyteRune(t *testing.T) {
+	// "é" is 2 bytes (0xC3 0xA9). Byte index 6 lands on the continuation byte of
+	// the first "é", so the cut must back up to index 5 (end of the ASCII run).
+	s := strings.Repeat("a", 5) + strings.Repeat("é", 5) // 5 + 10 bytes
+	got := truncateDiff(s, 6)
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("result is not valid UTF-8: %q", got)
+	}
+	kept := strings.TrimSuffix(got, "\n… (diff truncated)")
+	if kept != "aaaaa" {
+		t.Fatalf("kept = %q, want %q (cut backed up off the split rune)", kept, "aaaaa")
+	}
+	if !strings.Contains(got, "diff truncated") {
+		t.Fatalf("missing truncation marker: %q", got)
 	}
 }
