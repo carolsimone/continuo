@@ -207,10 +207,6 @@ func TestBuildOperationRerun(t *testing.T) {
 	newKind := queryPostgresTrackerKind(t, clients.stateDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
 
-	// Operation inheritance: the rerun run must itself be recorded as build.
-	assert.Equal(t, "build", queryNeo4jRunOperation(t, clients, newRunID),
-		":Run.operation must be inherited as 'build' on the rerun run")
-
 	t.Log("Waiting for rerun task_tracker rows to materialise...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var count int
@@ -222,6 +218,16 @@ func TestBuildOperationRerun(t *testing.T) {
 		}
 		return count >= 8, nil // 8 ftable_* nodes in the failure topology (a-h)
 	}, "task_tracker rows for rerun run did not materialise (expected 8)")
+
+	// Operation inheritance: the rerun run must itself be recorded as build.
+	// Asserted only after the task-row poll above: TriggerRerun returns once the
+	// Postgres tracker row exists, but the rerun's Neo4j :Run projection is
+	// written asynchronously by the orchestrator consuming trigger.rerun:v1.
+	// task_tracker rows are written downstream of that projection, so once they
+	// exist the :Run node is guaranteed present (avoids reading "" in the timing
+	// window between TriggerRerun returning and the projection materialising).
+	assert.Equal(t, "build", queryNeo4jRunOperation(t, clients, newRunID),
+		":Run.operation must be inherited as 'build' on the rerun run")
 
 	t.Log("Waiting for ftable_e (rebased) to exhaust retries on the rerun...")
 	verifyNodeExhaustedRetries(t, ctx, clients, newRunID, "ftable_e")
