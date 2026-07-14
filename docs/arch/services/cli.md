@@ -8,12 +8,14 @@ It provides:
 - `schedule list` — every schedule and its last-run status
 - `schedule trigger <name>` — start a new run of a schedule now
 - `schedule test <name>` — run dbt tests for every tested model in a schedule now
+- `schedule build <name>` — dependency-ordered `dbt build` (run + test) of a schedule now, cascade-skipping descendants of a failed node
 - `schedule cancel <name> <reason>` — stop the active run of a schedule, recording why
 - `schedule status <name>` — the per-node status of a schedule's latest run
 - `schedule graph <name>` — the dependency graph (nodes and edges) of a schedule
 - `node history <service> <schema> <table>` — the recent run history of one model node
 - `node trigger <service> <schema> <table>` — run one model node now using its latest metadata
 - `node test <service> <schema> <table>` — run one model node's dbt tests now using its latest metadata
+- `node build <service> <schema> <table>` — run and test one model node now (`dbt build`) using its latest metadata
 - `describe` — a machine-readable catalog of every command, for LLM discovery
 
 It owns no storage, constructs no Redis client, and runs no server. It is invoked on demand and exits.
@@ -48,12 +50,14 @@ None.
 | `schedule list` | `state` | `ListAllSchedules` |
 | `schedule trigger <name>` | `state` | `TriggerSchedule` |
 | `schedule test <name>` | `state` | `TriggerSchedule` (`operation=test`) |
+| `schedule build <name>` | `state` | `TriggerSchedule` (`operation=build`) |
 | `schedule cancel <name> <reason>` | `state` | `CancelSchedule` |
 | `schedule status <name>` | `state` | `ListAllSchedules` + `ListTasks` (composed client-side) |
 | `schedule graph <name>` | `orchestrator` | `GetScheduleGraph` |
 | `node history <service> <schema> <table>` | `state` | `ListNodeRuns` |
 | `node trigger <service> <schema> <table>` | `state` | `TriggerSingleNodeRun` |
 | `node test <service> <schema> <table>` | `state` | `TriggerSingleNodeRun` (`operation=test`) |
+| `node build <service> <schema> <table>` | `state` | `TriggerSingleNodeRun` (`operation=build`) |
 | `describe` | — | none (pure introspection of the cobra tree) |
 
 `schedule status` has no dedicated server RPC. It resolves the schedule name to its latest `run_id` via `ListAllSchedules`, then pages through `ListTasks` (page size 200) for that run, collecting every node's status. The composition is entirely client-side; the services expose no combined endpoint.
@@ -67,6 +71,10 @@ None.
 `node test` is identical to `node trigger` except it calls `TriggerSingleNodeRun` with `operation=test`, so the target runs its dbt tests (`dbt test --select <node>`) rather than being built. It shares the "latest" mode restriction, the `CONTINUO_ACTOR` identity forwarding, and the acceptance-not-completion contract with `node trigger`: if the node has no dbt tests defined (`test_count == 0`), that failure also surfaces asynchronously, not by this command.
 
 `schedule test` is identical to `schedule trigger` except it calls `TriggerSchedule` with `operation=test`: every node in the schedule with dbt tests defined runs `dbt test` independently (a flat fan-out, not the schedule's normal dependency order); nodes with no tests defined are silently skipped rather than failed.
+
+`node build` is identical to `node trigger` except it calls `TriggerSingleNodeRun` with `operation=build`, so the target runs `dbt build` (materialize and test in one invocation) rather than only `dbt run` or only `dbt test`. It shares the "latest" mode restriction, the `CONTINUO_ACTOR` identity forwarding, and the acceptance-not-completion contract with `node trigger` and `node test`. Unlike `node test`, a node with no dbt tests defined is still built; there is no `no_tests` skip for build.
+
+`schedule build` is identical to `schedule trigger` except it calls `TriggerSchedule` with `operation=build`: the whole-DAG run uses `dbt build` in the schedule's normal dependency order (unlike `schedule test`'s flat fan-out), and cascade-skips the descendants of any node that fails, rather than fanning out independently. As with `node build`, a node with no tests defined is still built.
 
 ## Output contract
 
@@ -98,5 +106,5 @@ None. The CLI runs no server and consumes no Redis streams.
 
 | Service | Methods used |
 |---|---|
-| `state` | `ListAllSchedules`, `ListTasks`, `TriggerSchedule`, `CancelSchedule`, `ListNodeRuns`, `TriggerSingleNodeRun` |
+| `state` | `ListAllSchedules`, `ListTasks`, `TriggerSchedule`, `CancelSchedule`, `ListNodeRuns`, `TriggerSingleNodeRun` (`operation` in `{"", "test", "build"}`) |
 | `orchestrator` | `GetScheduleGraph` |

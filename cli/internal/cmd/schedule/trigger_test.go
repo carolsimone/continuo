@@ -31,6 +31,10 @@ type fakeState struct {
 	cancelErr       error
 	gotCancelReason string
 	gotCancelBy     string
+
+	buildResp            *statev1.TriggerScheduleResponse
+	buildErr             error
+	gotBuildScheduleName string
 }
 
 func (f *fakeState) TriggerSchedule(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
@@ -41,6 +45,11 @@ func (f *fakeState) TriggerSchedule(_ context.Context, name string) (*statev1.Tr
 func (f *fakeState) TriggerScheduleTest(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
 	f.gotTestScheduleName = name
 	return f.testResp, f.testErr
+}
+
+func (f *fakeState) TriggerScheduleBuild(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
+	f.gotBuildScheduleName = name
+	return f.buildResp, f.buildErr
 }
 
 func (f *fakeState) CancelSchedule(_ context.Context, name, reason, by string) (*statev1.CancelScheduleResponse, error) {
@@ -70,6 +79,10 @@ func (f *fakeState) TriggerNodeRun(_ context.Context, _, _, _, _ string) (*state
 
 func (f *fakeState) TriggerNodeTest(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	panic("TriggerNodeTest should not be called in schedule tests")
+}
+
+func (f *fakeState) TriggerNodeBuild(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	panic("TriggerNodeBuild should not be called in schedule tests")
 }
 
 // run invokes the trigger command end-to-end with the provided fake client and args.
