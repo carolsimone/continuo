@@ -33,8 +33,12 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 	if p.Operation == string(pkgModel.OperationTest) {
 		projection := make([]TaskProjection, 0, len(rows))
 		for f, row := range rows {
-			if row.TestCountKnown && row.TestCount == 0 {
-				continue // flat fan-out: only nodes with a known, explicit zero test count
+			// Flat fan-out projects only nodes with a KNOWN, positive test count.
+			// An unknown count (topology predating test_count capture) or a known
+			// zero is excluded: we never dispatch a speculative `dbt test` that
+			// would no-op on a node we cannot confirm has tests.
+			if !row.TestCountKnown || row.TestCount <= 0 {
+				continue
 			}
 			projection = append(projection, TaskProjection{
 				TaskID:          uuid.New(),

@@ -3,7 +3,10 @@ version: 2
 # dbt tests for the e2e seed tables. These give the test-operation e2e flows
 # real tests to execute: `dbt test --select seed_table_1` runs not_null + unique,
 # `dbt test --select seed_table_3` runs not_null. seed_table_2 intentionally has
-# no tests so a single-node test on it is gated as no_tests. The per-node
+# no tests: with test_count=0 a single-node test on it is gated as no_tests, and
+# with test_count unset (legacy node) `dbt test --select seed_table_2` is a real
+# "Nothing to do" no-op that the k8s-controller backstop must treat as success.
+# The per-node
 # test_count seeded into the topology (tests/e2e/seed_topology_test.go) mirrors
 # these counts (seed_table_1=2, seed_table_3=1, seed_table_2=0).
 seeds:

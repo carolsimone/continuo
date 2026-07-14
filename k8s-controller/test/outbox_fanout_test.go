@@ -114,7 +114,7 @@ var _ repository.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepoFano
 func newSucceededHandler(logger *slog.Logger) *handlers.CheckStatusHandler {
 	now := time.Now()
 	k8sClient := &fakes.FakeK8sClient{
-		GetJobStatusFunc: func(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
+		GetJobStatusFunc: func(_ context.Context, _, _, _ string) (*model.K8sPodResult, error) {
 			return &model.K8sPodResult{
 				Status:           model.JobStatusSucceeded,
 				StartedAt:        &now,

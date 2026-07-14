@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -59,8 +60,11 @@ func NewK8sClient(logger *slog.Logger) (*K8sClient, error) {
 	}, nil
 }
 
-// GetJobStatus queries K8s API for job/pod status and returns detailed status information
-func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error) {
+// GetJobStatus queries K8s API for job/pod status and returns detailed status
+// information. operation is the dbt verb the Job ran (e.g. "test"); it is used to
+// interpret a "Nothing to do" no-op, which is a failure for a materializing verb
+// but a legitimate outcome for `dbt test` on a node with no tests.
+func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName, operation string) (*model.K8sPodResult, error) {
 	// Step 1: Get Job
 	job, err := c.clientset.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
 	if err != nil {
@@ -86,11 +90,12 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 	result := &model.K8sPodResult{}
 
 	if job.Status.Succeeded > 0 {
-		// dbt exits 0 when no models match the selector ("Nothing to do").
-		// The k8s Job controller marks the pod Succeeded, but nothing was actually
-		// executed — detect it via log tail so the run fails cleanly instead of
-		// silently reporting a false success.
-		if reason := c.checkDbtNoop(ctx, namespace, jobName); reason != "" {
+		// dbt exits 0 when no models match the selector ("Nothing to do"), so the
+		// k8s Job is marked Succeeded even though nothing ran. For a materializing
+		// verb this means the model was missing, so checkDbtNoop maps it to a clean
+		// failure instead of a false success; for `dbt test` a no-op is legitimate
+		// (the node has no tests) and checkDbtNoop returns no reason.
+		if reason := c.checkDbtNoop(ctx, namespace, jobName, operation); reason != "" {
 			result.Status = model.JobStatusFailed
 			result.TerminationMsg = reason
 		} else {
@@ -309,9 +314,15 @@ func (c *K8sClient) streamPodLogs(ctx context.Context, namespace, podName string
 
 // checkDbtNoop detects when dbt exits 0 having matched no models.
 // dbt emits "Nothing to do" when the selector finds no enabled nodes — the
-// pod exits 0 so the k8s Job marks it Succeeded, but no model was run and
-// no table was created. Returns a non-empty reason string when detected.
-func (c *K8sClient) checkDbtNoop(ctx context.Context, namespace, jobName string) string {
+// pod exits 0 so the k8s Job marks it Succeeded. For a materializing verb
+// (run/build) this means the model was missing and no table was produced, so
+// it is a failure. For `dbt test` it means the target node simply has no tests,
+// which is a legitimate success — never a failure. Returns a non-empty reason
+// string only when the no-op should be treated as a failure.
+func (c *K8sClient) checkDbtNoop(ctx context.Context, namespace, jobName, operation string) string {
+	if operation == string(pkgModel.OperationTest) {
+		return ""
+	}
 	_, tail, err := c.GetPodLogs(ctx, namespace, jobName, 5)
 	if err != nil || tail == "" {
 		return ""

@@ -104,16 +104,20 @@ func TestLatestFullDAG_TestOperation_FiltersZeroTestsAndAllReady(t *testing.T) {
 	}
 }
 
-// Graceful degradation: a node with test_count absent (topology written before
-// test_count existed) must NOT be filtered out of a whole-DAG test run — only
-// a KNOWN, explicit zero excludes a node.
-func TestLatestFullDAG_TestOperation_TestCountAbsent_Included(t *testing.T) {
-	known := snapshot.FQN{Service: "svc", Schema: "sch", Table: "known_zero", ScheduleName: "x"}
+// Conservative fan-out: a whole-DAG test run projects a node only when its
+// test count is KNOWN and positive. A node with test_count absent (topology
+// written before test_count existed) is excluded — we do not dispatch a
+// speculative `dbt test` that would no-op on a node we cannot confirm has
+// tests. A known, explicit zero is likewise excluded.
+func TestLatestFullDAG_TestOperation_OnlyKnownPositiveProjected(t *testing.T) {
+	positive := snapshot.FQN{Service: "svc", Schema: "sch", Table: "positive", ScheduleName: "x"}
+	knownZero := snapshot.FQN{Service: "svc", Schema: "sch", Table: "known_zero", ScheduleName: "x"}
 	absent := snapshot.FQN{Service: "svc", Schema: "sch", Table: "absent", ScheduleName: "x"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			known:  {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
-			absent: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: false},
+			positive:  {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 3, TestCountKnown: true},
+			knownZero: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
+			absent:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: false},
 		},
 	}
 	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test", ScheduleName: "x"})
@@ -121,10 +125,10 @@ func TestLatestFullDAG_TestOperation_TestCountAbsent_Included(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 1 {
-		t.Fatalf("len=%d, want 1 (only absent included): %+v", len(got), got)
+		t.Fatalf("len=%d, want 1 (only known-positive projected): %+v", len(got), got)
 	}
-	if got[0].TableName != "absent" {
-		t.Errorf("table=%q, want %q", got[0].TableName, "absent")
+	if got[0].TableName != "positive" {
+		t.Errorf("table=%q, want %q", got[0].TableName, "positive")
 	}
 }
 
