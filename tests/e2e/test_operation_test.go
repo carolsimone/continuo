@@ -129,6 +129,71 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 	t.Log("TestSingleNodeTestOperationNoTests passed")
 }
 
+// TestSingleNodeTestOperationUnsetTestCountIsGated is the regression guard for the
+// production incident where a single-node `test` on a node with no tests dispatched
+// a `dbt test` Job that no-op'd ("Nothing to do") and failed-and-retried 3×.
+//
+// It reproduces the exact prod state: a node whose `test_count` is *unset* on the
+// :Table (topology promoted before test_count capture existed, never re-released).
+// An unset count is treated as "no known tests", so the orchestrator gates the run
+// with reason no_tests — no Job is dispatched at all. This is symmetric with the
+// known-zero gate: only a KNOWN, positive test_count is runnable. The run finalizes
+// 'failed' with zero tasks, never dispatching a Job that could no-op and retry.
+func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	const (
+		targetService = "service-1"
+		targetSchema  = "e2e_schema"
+		targetTable   = "seed_table_2" // no dbt tests
+	)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+
+	cleanupTestData(t, ctx, clients, "single-node-test-unset")
+	seedTopology(t, ctx, clients)
+
+	// Simulate a legacy node predating test_count capture: strip the property so
+	// the orchestrator reads test_count as unknown (test_count_known=false).
+	unsetNeo4jTestCount(t, ctx, clients, targetSchema+"."+targetTable)
+
+	t.Logf("TriggerSingleNodeRun operation=test on an unset-test_count node: %s.%s.%s", targetService, targetSchema, targetTable)
+	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    targetService,
+		SchemaName:     targetSchema,
+		TableName:      targetTable,
+		MetadataSource: "latest",
+		Operation:      "test",
+	})
+	require.NoError(t, err, "TriggerSingleNodeRun must succeed even when the node is gated — the gate routes through events")
+	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
+
+	runID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
+	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
+
+	t.Log("Waiting for the unset-test_count no_tests gate to finalize the run 'failed'...")
+	verifySchedulerFailed(t, ctx, clients, runID)
+
+	// The gate must NOT dispatch any Job — no task_tracker row, so no no-op run.
+	var taskCount int
+	err = clients.stateDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, runID).Scan(&taskCount)
+	require.NoError(t, err, "failed to count task_tracker rows")
+	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for a gated unset-test_count run")
+
+	t.Log("TestSingleNodeTestOperationUnsetTestCountIsGated passed")
+}
+
 // TestWholeDAGTestOperation verifies whole-DAG "flat fan-out" test runs. The
 // "seed" schedule holds seed_table_1 (test_count=2), seed_table_2 (0), and
 // seed_table_3 (1). A TriggerSchedule with operation="test" dispatches ONLY the
@@ -192,6 +257,24 @@ func TestWholeDAGTestOperation(t *testing.T) {
 		":Run.operation must be 'test' for a whole-DAG test run")
 
 	t.Log("TestWholeDAGTestOperation passed")
+}
+
+// unsetNeo4jTestCount strips the test_count property from an active :Table,
+// simulating a topology node promoted before test_count capture existed. After
+// this the orchestrator reads test_count as unknown (test_count_known=false).
+func unsetNeo4jTestCount(t *testing.T, ctx context.Context, clients *testClients, uniqueID string) {
+	t.Helper()
+	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeWrite,
+	})
+	defer func() { _ = session.Close(ctx) }()
+	res, err := session.Run(ctx,
+		`MATCH (t:Table {unique_id: $unique_id}) WHERE t.active REMOVE t.test_count RETURN count(t) AS n`,
+		map[string]interface{}{"unique_id": uniqueID})
+	require.NoError(t, err, "Neo4j REMOVE test_count for %s failed", uniqueID)
+	require.True(t, res.Next(ctx), "no result row from REMOVE test_count for %s", uniqueID)
+	n, _ := res.Record().Get("n")
+	require.Equal(t, int64(1), n, "expected exactly one active :Table matched for %s", uniqueID)
 }
 
 // queryNeo4jRunOperation returns the :Run.operation property for the given

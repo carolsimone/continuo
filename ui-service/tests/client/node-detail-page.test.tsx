@@ -183,7 +183,10 @@ describe('NodeDetailPage', () => {
     });
   });
 
-  it('leaves the latest test trigger enabled and shows no hint when test_count is unknown', async () => {
+  it('gates the latest test trigger and shows a hint when test_count is unknown', async () => {
+    // An unset test_count (a node predating test_count capture) has no known
+    // tests, so it gates the latest test trigger exactly like a known zero — only
+    // a known, positive test_count is runnable. The old-snapshot path stays open.
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: false });
@@ -191,9 +194,9 @@ describe('NodeDetailPage', () => {
     });
     renderPage();
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
-    const btn = await screen.findByRole('button', { name: /test this node/i });
-    expect(btn).not.toBeDisabled();
-    expect(document.querySelector('.info-strip--info')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: /test this node/i })).toBeDisabled());
+    expect(document.querySelector('.info-strip--info')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /run with old snapshot/i })).not.toBeDisabled();
   });
 
   it('picking an old snapshot POSTs the selected operation alongside source_run_id', async () => {
