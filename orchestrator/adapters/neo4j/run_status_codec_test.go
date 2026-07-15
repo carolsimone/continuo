@@ -49,3 +49,15 @@ func TestRunStatusFromStored(t *testing.T) {
 		}
 	}
 }
+
+func TestRunStatusCodec_Skipped_RoundTrips(t *testing.T) {
+	if got := storedTerminalStatus(domainRun.RunStatusSkipped); got != "skipped" {
+		t.Fatalf("storedTerminalStatus(skipped)=%q, want %q", got, "skipped")
+	}
+	if got := runStatusFromStored("skipped"); got != domainRun.RunStatusSkipped {
+		t.Fatalf("runStatusFromStored(skipped)=%q, want RunStatusSkipped", got)
+	}
+	if got := runStatusFromStored("SKIPPED"); got != domainRun.RunStatusSkipped {
+		t.Fatalf("case-insensitive: runStatusFromStored(SKIPPED)=%q, want RunStatusSkipped", got)
+	}
+}

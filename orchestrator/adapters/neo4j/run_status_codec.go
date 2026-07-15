@@ -27,6 +27,8 @@ func storedTerminalStatus(s domainRun.RunStatus) string {
 		return "failed"
 	case domainRun.RunStatusCancelled:
 		return "cancelled"
+	case domainRun.RunStatusSkipped:
+		return "skipped"
 	default:
 		return ""
 	}
@@ -45,6 +47,8 @@ func runStatusFromStored(stored string) domainRun.RunStatus {
 		return domainRun.RunStatusFailed
 	case "cancelled":
 		return domainRun.RunStatusCancelled
+	case "skipped":
+		return domainRun.RunStatusSkipped
 	default:
 		return ""
 	}
