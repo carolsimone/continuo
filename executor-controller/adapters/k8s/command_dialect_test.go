@@ -15,12 +15,16 @@ import (
 )
 
 // newDialectTestClient builds a K8sClient whose resolver is loaded from the
-// given dbt-commands.yaml content.
+// given dbt-commands.yaml content. An empty yaml means "no config file", which
+// resolves every command to the built-in plain-dbt default.
 func newDialectTestClient(t *testing.T, yaml string) *K8sClient {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "dbt-commands.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	path := ""
+	if yaml != "" {
+		path = filepath.Join(t.TempDir(), "dbt-commands.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+	}
 	resolver, err := commandcfg.Load(path, logger)
 	require.NoError(t, err)
 	c := &K8sClient{logger: logger, commands: resolver}
@@ -28,10 +32,26 @@ func newDialectTestClient(t *testing.T, yaml string) *K8sClient {
 	return c
 }
 
+// wiseDialectYAML is a complete dialect config: a complete plain-dbt default
+// plus a complete "wise" override whose run/seed_build/compile the tests assert.
 const wiseDialectYAML = `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
 services:
   wise:
-    run: ["wise-dbt", "run", "--select", "{{ node }}"]
+    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
+    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
     seed_build: ["wise-dbt", "seed", "--select", "{{ node }}", "--schema", "{{ target_schema }}"]
     compile:
       command: ["wise-dbt", "compile", "--profiles-dir", "/project"]
