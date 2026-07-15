@@ -43,23 +43,39 @@ func Load(path string, logger *slog.Logger) (*Resolver, error) {
 	return &Resolver{cfg: &cfg}, nil
 }
 
-// validate enforces the config schema: known operations only, non-empty argv,
-// required placeholders present, placeholders only where allowed, compile
-// manifest_path absolute and literal.
+// validate enforces the config schema: the default block is required and
+// complete, every service override is complete, and each present template
+// passes the per-template checks (non-empty argv, required/allowed placeholders,
+// absolute literal compile manifest_path). Per-template checks run before the
+// completeness check so a malformed present key reports its specific error.
 func validate(cfg *fileConfig) error {
-	if cfg.Default != nil {
-		if err := validateOpSet("default", cfg.Default); err != nil {
-			return err
-		}
+	if cfg.Default == nil {
+		return fmt.Errorf("default: required and must define every command")
+	}
+	if err := validateOpSet("default", cfg.Default); err != nil {
+		return err
+	}
+	if err := requireComplete("default", cfg.Default); err != nil {
+		return err
 	}
 	for name, ops := range cfg.Services {
-		if ops == nil || (ops.Run == nil && ops.Seed == nil && ops.Snapshot == nil &&
-			ops.SeedBuild == nil && ops.Test == nil && ops.Build == nil && ops.Compile == nil) {
-			return fmt.Errorf("services.%s: no operations defined", name)
+		if ops == nil {
+			return fmt.Errorf("services.%s: required and must define every command", name)
 		}
 		if err := validateOpSet("services."+name, ops); err != nil {
 			return err
 		}
+		if err := requireComplete("services."+name, ops); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// requireComplete reports the first incompleteness: the missing required keys.
+func requireComplete(path string, ops *opSet) error {
+	if missing := ops.missingKeys(); len(missing) > 0 {
+		return fmt.Errorf("%s: incomplete command set, missing %v", path, missing)
 	}
 	return nil
 }
