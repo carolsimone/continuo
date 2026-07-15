@@ -16,6 +16,7 @@ function durPair(avg: number | null, p95: number | null): string {
 
 export default function NodesCatalogPanel() {
   const navigate = useNavigate();
+  const [operation, setOperation] = useState('run');
   const [search, setSearch] = useState('');
   const [service, setService] = useState('');
   const [nodes, setNodes] = useState<NodeSummary[]>([]);
@@ -28,6 +29,7 @@ export default function NodesCatalogPanel() {
   const fetchPage = useCallback(async (offset: number, append: boolean) => {
     const myGen = ++genRef.current;
     const params = new URLSearchParams();
+    params.set('operation', operation);
     if (search) params.set('search', search);
     if (service) params.set('service', service);
     params.set('limit', String(PAGE));
@@ -46,7 +48,7 @@ export default function NodesCatalogPanel() {
       if (myGen !== genRef.current) return;
       setError('Failed to load nodes');
     }
-  }, [search, service]);
+  }, [operation, search, service]);
 
   // Refetch the first page on filter change (debounced for search typing).
   useEffect(() => {
@@ -79,6 +81,23 @@ export default function NodesCatalogPanel() {
   return (
     <>
       {error && <div className="info-strip info-strip--error">{error}</div>}
+
+      <div className="form-field">
+        <label htmlFor="node-operation">Operation</label>
+        <select id="node-operation" value={operation} onChange={e => setOperation(e.target.value)}>
+          <option value="run">Model</option>
+          <option value="test">Test</option>
+          <option value="build">Build</option>
+        </select>
+      </div>
+      {operation === 'build' && (
+        <div className="info-strip info-strip--info">
+          <span className="info-strip__icon">ℹ</span>
+          Build runs <code>dbt build</code> — it materializes each model and runs its
+          attached tests together in a single execution (one pod), in dependency
+          order. These stats combine model + tests, not either on its own.
+        </div>
+      )}
 
       <div className="form-field">
         <label htmlFor="node-search">Filter</label>

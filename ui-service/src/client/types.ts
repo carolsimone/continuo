@@ -98,6 +98,7 @@ export interface NodeRun {
   retry_count: number;
   image_tag: string;
   manifest_version: string;
+  operation: string;        // run | test | build
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -178,6 +179,7 @@ export interface NodeSummary {
   flaky_rate_pct: number;
   last_status: string | null;
   last_run_at: string | null;
+  operation: string;        // run | test | build
 }
 
 export interface NodesResponse {
