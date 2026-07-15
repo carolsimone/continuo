@@ -3,6 +3,9 @@ package redis
 import (
 	"context"
 	"log/slog"
+	"strconv"
+	"strings"
+	"time"
 
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -42,6 +45,17 @@ func newValidationCompletedHandler(deps *handlers.Deps, logger *slog.Logger) pkg
 				"message_id", msg.ID, "error", err)
 			return nil // permanent: ACK by returning nil so it is not left in the PEL
 		}
+		// The message ID's millisecond prefix dates when this terminal event was
+		// first published and is stable across redeliveries, giving the handler a
+		// state-free age for its completeness-barrier escape clock. A well-formed
+		// Redis ID always parses; if it somehow does not, leave EmittedAt zero
+		// (which keeps the barrier closed) and log.
+		if emitted, ok := emittedAtFromMsgID(msg.ID); ok {
+			in.EmittedAt = emitted
+		} else {
+			logger.Warn("validation.completed:v1 message ID has no parseable millis prefix; barrier escape clock disabled",
+				"message_id", msg.ID)
+		}
 		if err := handlers.HandleValidationResult(ctx, deps, in); err != nil {
 			return err
 		}
@@ -55,4 +69,21 @@ func newValidationCompletedHandler(deps *handlers.Deps, logger *slog.Logger) pkg
 		}
 		return nil
 	}
+}
+
+// emittedAtFromMsgID parses the millisecond prefix of a Redis stream message ID
+// ("<unixMillis>-<seq>") into the time the entry was first published. The prefix
+// is stable across redeliveries (the same PEL entry keeps its original ID), so
+// it dates the original publish regardless of how many times the message has
+// been redelivered. Returns ok=false when the ID has no numeric millis prefix.
+func emittedAtFromMsgID(id string) (time.Time, bool) {
+	dash := strings.IndexByte(id, '-')
+	if dash < 0 {
+		return time.Time{}, false
+	}
+	ms, err := strconv.ParseInt(id[:dash], 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(ms), true
 }

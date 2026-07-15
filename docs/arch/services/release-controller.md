@@ -151,12 +151,19 @@ completeness barrier: if any id in validation_node_ids has no stored validation 
    return error so the message redelivers (the terminal event overtook a per-node event on
    its separate stream); resolves once every expected node's validation.node.result:v1
    projection has been delivered and applied — each projection is written transactionally
-   with the node's settle, so under normal delivery this clears within redelivery latency,
-   though it still depends on outbox delivery of those rows like any other event. Nodes
-   skipped by a failed upstream are included: executor-controller emits a status="skipped"
-   projection for them even though they never ran. No promote/reject decision is taken while
-   the projection is incomplete.
-all stored nodes ok and aggregate_status ok → handleValidationOK:
+   with the node's settle, so under normal delivery this clears within redelivery latency.
+   Nodes skipped by a failed upstream are included: executor-controller emits a
+   status="skipped" projection for them even though they never ran.
+bounded escape: the barrier still depends on outbox delivery of those projection rows, so a
+   permanently-lost row (e.g. its retries were exhausted during a sustained Redis outage)
+   would otherwise hang the release in validating forever, blocking the single-ActiveRelease
+   queue. The age of the terminal event is read from its Redis message ID (the millisecond
+   prefix, stable across redeliveries, so no extra state). Once that age exceeds a bounded
+   grace (5m ≈ 2–3 PEL redeliveries, far beyond normal sub-second catch-up) the barrier stops
+   waiting, logs the un-projected nodes, and decides from the authoritative aggregate_status.
+   Missing nodes are never fabricated as failing: only stored, non-ok nodes count toward
+   failing, so an escape with aggregate_status ok still promotes.
+all stored (and present) nodes ok and aggregate_status ok → handleValidationOK:
    update current_prod to this release's candidate topology,
    upsert the changed service's service_prod pointer (canonical key + image tag + release id),
    transition to Promoted, emit release.promoted:v1
@@ -175,7 +182,7 @@ Before updating `current_prod`, `promoteToProduction` computes the set of change
 
 - Five consumer groups (`compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.node.result:v1`, `validation.completed:v1`) run in the same process; each maintains its own offset.
 - Inbound messages are deduped via `message_processing` (idempotent on the upstream `outbox_entry_id`), so a redelivery is absorbed.
-- A permanent parse-decode failure is ACKed (logged, not retried); transient errors are not ACKed and replay. The `validation.completed:v1` completeness barrier deliberately uses this replay path: it returns a transient error until every expected per-node result is stored, so the terminal decision never runs on a partial projection.
+- A permanent parse-decode failure is ACKed (logged, not retried); transient errors are not ACKed and replay. The `validation.completed:v1` completeness barrier deliberately uses this replay path: it returns a transient error until every expected per-node result is stored, so the terminal decision normally never runs on a partial projection. This defer is bounded — once the terminal event is older than a fixed grace (dated from its Redis message ID), the barrier escapes and decides from the authoritative `aggregate_status`, so a permanently-lost projection row can no longer hang the release or the queue.
 - A message on any of the inbound streams whose `release_id` no longer has a `releases` row (pruned, or reclaimed from a previous consumer for a deleted release) is logged and dropped rather than processed. The repository's `Get` returns no row as `(nil, nil)`, so all handlers nil-check the aggregate before use; without that guard a reclaimed message for a missing release would crash the consumer on startup.
 - State changes and the outbox row are written in one transaction; the outbox publisher drains rows and XADDs them, injecting `outbox_entry_id` for downstream dedup.
 

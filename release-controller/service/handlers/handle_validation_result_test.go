@@ -90,16 +90,79 @@ func TestHandleValidationResult_IncompleteProjection_ReturnsErrorForRedelivery(t
 	// Only node "a" has been projected; "b" is still in flight.
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 
+	now := deps.Clock.Now()
+
+	// Recently emitted (well within the escape grace): the barrier must defer.
 	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
 		ReleaseID:       "rA",
 		AggregateStatus: "ok",
+		EmittedAt:       now.Add(-1 * time.Minute),
 	})
 	require.Error(t, err, "barrier must defer (error) so the message redelivers until b is projected")
+
+	// A zero EmittedAt (no parseable millis prefix on the message ID) must also
+	// defer rather than escape: without a trustworthy age the barrier stays closed.
+	err = handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rA",
+		AggregateStatus: "ok",
+	})
+	require.Error(t, err, "zero EmittedAt must defer, not escape the barrier")
 
 	// The release must not have been decided while the projection is incomplete.
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusValidating, r.Status())
+}
+
+// TestHandleValidationResult_IncompleteProjection_EscapesAfterGrace_AggregateOK_Promotes
+// is the key correctness case for the bounded barrier escape. A per-node
+// projection row for "b" was permanently lost (its outbox retries were
+// exhausted), so it is never stored. Once the terminal event is older than the
+// escape grace, the barrier stops waiting and decides from the authoritative
+// aggregate_status. Because the aggregate says "ok" (the lost row's node
+// actually passed), the release must PROMOTE — the absent display row must not
+// be treated as a failing node.
+func TestHandleValidationResult_IncompleteProjection_EscapesAfterGrace_AggregateOK_Promotes(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+
+	// Only node "a" projected; "b"'s projection row was permanently lost.
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
+
+	now := deps.Clock.Now()
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rA",
+		AggregateStatus: "ok",
+		EmittedAt:       now.Add(-6 * time.Minute), // older than the escape grace
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusPromoted, r.Status(),
+		"past the grace a missing display row must not reject a release the aggregate says passed")
+	assert.Empty(t, r.FailingNodes(), "the missing node must not be fabricated as failing")
+}
+
+// TestHandleValidationResult_IncompleteProjection_EscapesAfterGrace_AggregateFailed_Rejects
+// verifies the escape still rejects when the authoritative aggregate_status is
+// not ok. Node "b" is missing and node "a" passed, so no present node is
+// failing; the rejection rests entirely on aggregate_status.
+func TestHandleValidationResult_IncompleteProjection_EscapesAfterGrace_AggregateFailed_Rejects(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
+
+	now := deps.Clock.Now()
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rA",
+		AggregateStatus: "failed",
+		EmittedAt:       now.Add(-6 * time.Minute),
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "validation_failed", r.RejectReason())
+	assert.Empty(t, r.FailingNodes(), "no present node failed; rejection is driven by aggregate_status alone")
 }
 
 // TestHandleValidationResult_CompleteProjection_Promotes verifies that once every

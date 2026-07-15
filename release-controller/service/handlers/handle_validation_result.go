@@ -21,7 +21,24 @@ import (
 type HandleValidationResultInput struct {
 	ReleaseID       string `json:"release_id"`
 	AggregateStatus string `json:"aggregate_status"`
+	// EmittedAt is transport metadata derived from the Redis stream message ID
+	// (its millisecond prefix), not a field of the JSON payload; the binding sets
+	// it after decoding. It dates when the terminal event was first published and
+	// is stable across redeliveries, so the completeness barrier can bound how
+	// long it waits for lagging per-node projections. Zero when the message ID had
+	// no parseable millis prefix.
+	EmittedAt time.Time `json:"-"`
 }
+
+// validationBarrierEscapeGrace bounds how long the completeness barrier waits for
+// lagging per-node projections before deciding from the authoritative
+// aggregate_status instead. The consumer's PEL redelivery cadence is ~2 min
+// (reclaimInterval in pkg/redis), so 5 min is roughly 2–3 redeliveries — far
+// beyond the sub-second stream catch-up seen under normal delivery. That makes a
+// false escape effectively impossible while still bounding the hang when a
+// projection outbox row is permanently lost (e.g. its retries were exhausted
+// during a sustained Redis outage) and would otherwise never land.
+const validationBarrierEscapeGrace = 5 * time.Minute
 
 // HandleValidationResult decides the terminal outcome of a release's validation
 // leg from the per-node results the validation.node.result:v1 stream already
@@ -64,16 +81,20 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 		}
 	}
 
-	// Completeness barrier: the decision must see every expected node. If a
+	// Completeness barrier: the decision should see every expected node. If a
 	// per-node projection has not landed yet (the terminal event overtook it on a
-	// separate stream), return an error so the message redelivers and retries once
-	// the stream catches up. This resolves once every expected node's
-	// validation.node.result:v1 projection has been delivered and applied: each
-	// projection is written transactionally with the node's settle, so under
-	// normal delivery this barrier clears within redelivery latency. It still
-	// depends on outbox delivery of those rows, like every other event in the
-	// system — a projection row that exhausts its outbox retries (e.g. a
-	// sustained Redis outage) would leave the barrier unresolved.
+	// separate stream), defer by returning an error so the message redelivers and
+	// retries once the stream catches up. Under normal delivery this clears within
+	// redelivery latency, because each projection is written transactionally with
+	// the node's settle.
+	//
+	// Bounded escape: the barrier still depends on outbox delivery of those rows,
+	// so a projection row that exhausts its outbox retries (e.g. a sustained Redis
+	// outage) would never land and hang the release forever, blocking the
+	// single-ActiveRelease queue. To bound that, once the terminal event is older
+	// than validationBarrierEscapeGrace we stop waiting and decide from the
+	// authoritative aggregate_status (executor computed it from every node's
+	// terminal outcome), logging the un-projected nodes.
 	var missing []string
 	for _, id := range r.ValidationNodeIDs() {
 		if _, ok := stored[id]; !ok {
@@ -81,13 +102,24 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("per-node projection incomplete for %s: awaiting %d node(s) %v",
-			in.ReleaseID, len(missing), missing)
+		if in.EmittedAt.IsZero() || now.Sub(in.EmittedAt) < validationBarrierEscapeGrace {
+			return fmt.Errorf("per-node projection incomplete for %s: awaiting %d node(s) %v",
+				in.ReleaseID, len(missing), missing)
+		}
+		d.Logger.Warn("per-node projection incomplete past barrier grace; deciding from aggregate_status",
+			"release_id", in.ReleaseID, "missing_count", len(missing), "missing", missing, "age", now.Sub(in.EmittedAt))
+		// Fall through to decide from aggregate_status.
 	}
 
+	// Only flag nodes that ARE present and non-ok. A missing node (whose
+	// projection row was lost) has an absent/zero status; treating that as non-ok
+	// would wrongly reject a good release when the escape fires with
+	// aggregate_status == "ok". With this guard, missing nodes neither block nor
+	// fail, and the decision rests on the aggregate. In the normal complete case
+	// every ValidationNodeID is present, so this is identical to before.
 	var failing []string
 	for _, id := range r.ValidationNodeIDs() {
-		if stored[id].Status != "ok" {
+		if n, ok := stored[id]; ok && n.Status != "ok" {
 			failing = append(failing, id)
 		}
 	}
@@ -225,9 +257,10 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 // alongside the raw aggregate_status so operators can distinguish why the release
 // was rejected. The per-node audit rows are sourced from the read model that
 // validation.node.result:v1 projected, not from this terminal event. The
-// completeness barrier in HandleValidationResult blocks this from running until
-// every expected node's projection has been delivered and applied, so there are
-// never missing nodes here.
+// completeness barrier in HandleValidationResult normally blocks this until every
+// expected node's projection has landed; after the bounded barrier escape a node
+// whose projection row was permanently lost may be absent from the read model, in
+// which case only present, non-ok nodes appear in failing.
 func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing []string, now time.Time) error {
 	if err := r.TransitionToRejected("validation_failed", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
@@ -272,7 +305,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		"stage":            "validation",
 		"reason":           "validation_failed",
 		"failing_nodes":    failing,
-		"missing_nodes":    []string{}, // barrier guarantees completeness; kept for payload shape stability
+		"missing_nodes":    []string{}, // un-projected nodes are logged at the barrier escape, not carried here; kept for payload shape stability
 		"aggregate_status": in.AggregateStatus,
 		"per_node":         perNode,
 		"repo":             r.Repo(),
