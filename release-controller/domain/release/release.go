@@ -249,13 +249,19 @@ func (r *Release) TransitionToSeedBuilding(topology Topology, validationNodeIDs 
 }
 
 // TransitionFromSeedBuilding advances a SeedBuilding release to Validating once
-// candidate seeds are built. It stamps validatingStartedAt; the candidate
-// topology + validation IDs are already set by TransitionToSeedBuilding.
-func (r *Release) TransitionFromSeedBuilding(now time.Time) error {
+// candidate seeds are built. It narrows the persisted validation set to
+// validationNodeIDs — the nodes actually sent to the validation leg, which
+// excludes the just-built seeds (already materialised in the candidate schema).
+// This keeps ValidationNodeIDs() equal to the set the executor emits per-node
+// results for, so the terminal completeness barrier never waits on a seed that
+// never validates. It also stamps validatingStartedAt; the candidate topology is
+// already set by TransitionToSeedBuilding.
+func (r *Release) TransitionFromSeedBuilding(validationNodeIDs []string, now time.Time) error {
 	if r.status != StatusSeedBuilding {
 		return fmt.Errorf("cannot transition to validating from %s", r.status)
 	}
 	r.status = StatusValidating
+	r.validationNodeIDs = validationNodeIDs
 	r.validatingStartedAt = &now
 	r.transitions = append(r.transitions, Transition{To: StatusValidating, At: now})
 	return nil

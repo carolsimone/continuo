@@ -225,9 +225,11 @@ func TestTransitionToSeedBuilding_FromParsing(t *testing.T) {
 
 func TestTransitionFromSeedBuilding_ToValidating(t *testing.T) {
 	r := newParsingRelease(t)
-	require.NoError(t, r.TransitionToSeedBuilding(release.Topology{}, nil, t0))
-	require.NoError(t, r.TransitionFromSeedBuilding(t1))
+	require.NoError(t, r.TransitionToSeedBuilding(release.Topology{}, []string{"seed.core.fx", "model.fin.report"}, t0))
+	require.NoError(t, r.TransitionFromSeedBuilding([]string{"model.fin.report"}, t1))
 	assert.Equal(t, release.StatusValidating, r.Status())
+	assert.Equal(t, []string{"model.fin.report"}, r.ValidationNodeIDs(),
+		"TransitionFromSeedBuilding narrows the persisted validation set to the filtered IDs")
 }
 
 func TestTransitionToSeedBuilding_RejectsWrongSource(t *testing.T) {

@@ -132,8 +132,12 @@ status=failed:
   advance queue
 status=ok:
   RecordStageResults("seed_build", per_node results)
-  TransitionFromSeedBuilding (SeedBuilding → Validating)
-  emit validation.requested:v1  (excluding the just-built seeds from the validation set)
+  compute the filtered validation set: all recorded validation ids minus the just-built seeds
+     (seeds already live in the candidate schema and are not validated)
+  TransitionFromSeedBuilding (SeedBuilding → Validating), narrowing the persisted
+     validation_node_ids to that filtered set so the completeness barrier expects exactly the
+     nodes the executor emits per-node results for
+  emit validation.requested:v1 for the same filtered set (single source: persisted set and emit derive from one computation)
   advance queue
   edge case: if excluding the built seeds leaves an empty validation set, promote directly
 ```
