@@ -34,3 +34,33 @@ type fileConfig struct {
 // placeholderRe matches {{ name }} tokens inside argv elements, tolerating
 // inner whitespace ({{node}} and {{ node }} are equivalent).
 var placeholderRe = regexp.MustCompile(`\{\{\s*([a-zA-Z_]+)\s*\}\}`)
+
+// missingKeys returns the required command keys this opSet does not define.
+// An empty result means the opSet is complete. Every configured block (the
+// default and each service override) must be complete so no dispatched job can
+// fall through to a command the team's image cannot run.
+func (o *opSet) missingKeys() []string {
+	var missing []string
+	if o.Run == nil {
+		missing = append(missing, "run")
+	}
+	if o.Seed == nil {
+		missing = append(missing, "seed")
+	}
+	if o.Snapshot == nil {
+		missing = append(missing, "snapshot")
+	}
+	if o.Test == nil {
+		missing = append(missing, "test")
+	}
+	if o.Build == nil {
+		missing = append(missing, "build")
+	}
+	if o.SeedBuild == nil {
+		missing = append(missing, "seed_build")
+	}
+	if o.Compile == nil {
+		missing = append(missing, "compile")
+	}
+	return missing
+}

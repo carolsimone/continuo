@@ -11,6 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBuiltinDefault_IsComplete(t *testing.T) {
+	d := builtinDefault()
+	require.Empty(t, d.missingKeys(), "built-in default must define every key")
+	require.NoError(t, validateOpSet("default", d), "built-in default must pass per-template validation")
+}
+
 func TestDefaults_NodeCommand_MatchesPkgNodeType(t *testing.T) {
 	r := Defaults()
 	for _, nt := range []pkg_model.NodeType{
@@ -21,23 +27,20 @@ func TestDefaults_NodeCommand_MatchesPkgNodeType(t *testing.T) {
 	}
 }
 
-func TestNodeCommand_TestOperation_BuiltIn(t *testing.T) {
+func TestDefaults_TestAndBuildOperations(t *testing.T) {
 	r := Defaults()
-	got := r.NodeCommand("svc_a", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "orders")
-	assert.Equal(t, []string{"dbt", "test", "--select", "orders"}, got)
+	assert.Equal(t, []string{"dbt", "test", "--select", "orders"},
+		r.NodeCommand("svc_a", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "orders"))
+	assert.Equal(t, []string{"dbt", "build", "--select", "orders"},
+		r.NodeCommand("svc_a", pkg_model.OperationBuild, pkg_model.NodeTypeDbtSeed, "orders"),
+		"build is node-agnostic")
 }
 
-func TestNodeCommand_RunOperation_UnchangedByNodeType(t *testing.T) {
-	r := Defaults()
-	got := r.NodeCommand("svc_a", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "raw_x")
-	assert.Equal(t, []string{"dbt", "seed", "--select", "raw_x"}, got)
-}
-
-func TestDefaults_SeedBuildCommand_FallsBackToSeed(t *testing.T) {
+func TestDefaults_SeedBuildCommand(t *testing.T) {
 	r := Defaults()
 	assert.Equal(t, []string{"dbt", "seed", "--select", "fx"},
 		r.SeedBuildCommand("any-service", "fx", "_candidate_rel1"),
-		"without a seed_build template, seed-build uses the seed command (schema routed via DBT_TARGET_SCHEMA env)")
+		"built-in seed_build equals seed; schema routed via DBT_TARGET_SCHEMA env")
 }
 
 func TestDefaults_CompileCommand(t *testing.T) {
@@ -56,15 +59,29 @@ func loadTestConfig(t *testing.T, content string) *Resolver {
 	return r
 }
 
+// precedenceYAML is a complete config: a complete default plus a complete
+// "wise" override, so it satisfies the completeness contract.
 const precedenceYAML = `
 default:
-  run: ["default-dbt", "run", "--select", "{{ node }}"]
+  run:        ["default-dbt", "run", "--select", "{{ node }}"]
+  seed:       ["default-dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["default-dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["default-dbt", "test", "--select", "{{ node }}"]
+  build:      ["default-dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["default-dbt", "seed", "--select", "{{ node }}"]
+  compile:
+    command:       ["default-dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
 services:
   wise:
-    run: ["wise-dbt", "run", "--select", "{{ node }}"]
+    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
+    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
     seed_build: ["wise-dbt", "seed", "--select", "{{ node }}", "--schema", "{{ target_schema }}"]
     compile:
-      command: ["wise-dbt", "compile", "--profiles-dir", "/project"]
+      command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/out/manifest.json"
 `
 
@@ -77,11 +94,13 @@ func TestResolver_ServiceOverrideBeatsDefault(t *testing.T) {
 		"service not in services: falls to default")
 }
 
-func TestResolver_PerOperationFallthrough(t *testing.T) {
+func TestResolver_ServiceUsesOwnSeedAndTest(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
-	assert.Equal(t, []string{"dbt", "seed", "--select", "fx"},
+	assert.Equal(t, []string{"wise-dbt", "seed", "--select", "fx"},
 		r.NodeCommand("wise", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
-		"wise overrides run only; seed falls through default (which has no seed) to built-in")
+		"a complete override uses its own seed, never a fallthrough")
+	assert.Equal(t, []string{"wise-dbt", "test", "--select", "fx"},
+		r.NodeCommand("wise", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx"))
 }
 
 func TestResolver_SeedBuildTemplate_SubstitutesTargetSchema(t *testing.T) {
@@ -91,28 +110,37 @@ func TestResolver_SeedBuildTemplate_SubstitutesTargetSchema(t *testing.T) {
 		r.SeedBuildCommand("wise", "fx", "_candidate_rel1"))
 }
 
-func TestResolver_SeedBuildWithoutTemplate_FallsBackToSeed(t *testing.T) {
+func TestResolver_SeedBuildFromDefault(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
-	assert.Equal(t, []string{"dbt", "seed", "--select", "fx"},
-		r.SeedBuildCommand("other-service", "fx", "_candidate_rel1"))
+	assert.Equal(t, []string{"default-dbt", "seed", "--select", "fx"},
+		r.SeedBuildCommand("other-service", "fx", "_candidate_rel1"),
+		"service not in services: seed_build resolves from the complete default")
 }
 
-func TestResolver_CompileOverride(t *testing.T) {
+func TestResolver_Compile(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
 	argv, mp := r.CompileCommand("wise")
 	assert.Equal(t, []string{"wise-dbt", "compile", "--profiles-dir", "/project"}, argv)
 	assert.Equal(t, "/project/out/manifest.json", mp)
 
 	argv, mp = r.CompileCommand("other-service")
-	assert.Equal(t, []string{"dbt", "compile", "--profiles-dir", "/project"}, argv,
-		"no compile in default: built-in")
+	assert.Equal(t, []string{"default-dbt", "compile", "--profiles-dir", "/project"}, argv,
+		"service not in services: compile resolves from the complete default")
 	assert.Equal(t, "/project/target/manifest.json", mp)
 }
 
 func TestResolver_SubstitutionInsideElementAndRepeated(t *testing.T) {
 	r := loadTestConfig(t, `
 default:
-  run: ["wise-dbt", "run", "--select", "model:{{node}}", "--log-prefix", "{{ node }}-{{ node }}"]
+  run:        ["wise-dbt", "run", "--select", "model:{{node}}", "--log-prefix", "{{ node }}-{{ node }}"]
+  seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["wise-dbt", "test", "--select", "{{ node }}"]
+  build:      ["wise-dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+  compile:
+    command:       ["wise-dbt", "compile"]
+    manifest_path: "/p/m.json"
 `)
 	assert.Equal(t,
 		[]string{"wise-dbt", "run", "--select", "model:orders", "--log-prefix", "orders-orders"},

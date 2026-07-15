@@ -23,6 +23,20 @@ func writeConfig(t *testing.T, content string) string {
 	return path
 }
 
+// completeDefault is a complete default block reused by valid-config tests.
+const completeDefault = `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`
+
 func TestLoad_EmptyPathUsesDefaults(t *testing.T) {
 	r, err := Load("", testLogger())
 	require.NoError(t, err)
@@ -37,41 +51,71 @@ func TestLoad_MissingFileUsesDefaults(t *testing.T) {
 		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "t"))
 }
 
-func TestLoad_ValidFile(t *testing.T) {
-	path := writeConfig(t, `
-default:
-  run: ["dbt", "run", "--select", "{{ node }}"]
+func TestLoad_ValidCompleteFile(t *testing.T) {
+	path := writeConfig(t, completeDefault+`
 services:
   wise:
-    run: ["wise-dbt", "run", "--select", "{{ node }}"]
-    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}", "--schema", "{{ target_schema }}"]
+    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
+    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
+    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
     compile:
-      command: ["wise-dbt", "compile", "--profiles-dir", "/project"]
+      command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/target/manifest.json"
-`)
-	_, err := Load(path, testLogger())
-	require.NoError(t, err)
-}
-
-func TestLoad_ValidTestOverride(t *testing.T) {
-	path := writeConfig(t, `
-default:
-  test: ["dbt", "test", "--select", "{{ node }}"]
 `)
 	r, err := Load(path, testLogger())
 	require.NoError(t, err)
-	assert.Equal(t, []string{"dbt", "test", "--select", "x"},
-		r.NodeCommand("svc", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
+	assert.Equal(t, []string{"wise-dbt", "test", "--select", "x"},
+		r.NodeCommand("wise", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
 }
 
-func TestLoad_ServiceWithOnlyTestOverrideIsNotEmpty(t *testing.T) {
+func TestLoad_FileWithoutDefaultIsError(t *testing.T) {
 	path := writeConfig(t, `
 services:
   wise:
-    test: ["wise-dbt", "test", "--select", "{{ node }}"]
+    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
+    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
+    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+    compile:
+      command:       ["wise-dbt", "compile"]
+      manifest_path: "/p/m.json"
 `)
 	_, err := Load(path, testLogger())
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "default: required")
+}
+
+func TestLoad_IncompleteDefaultIsError(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run: ["dbt", "run", "--select", "{{ node }}"]
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "default: incomplete command set, missing")
+}
+
+// A partial service override — the original finance bug — is now a boot error.
+func TestLoad_PartialServiceOverrideIsError(t *testing.T) {
+	path := writeConfig(t, completeDefault+`
+services:
+  wise:
+    run:  ["wise-dbt", "run", "--select", "{{ node }}"]
+    seed: ["wise-dbt", "seed", "--select", "{{ node }}"]
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "services.wise: incomplete command set, missing")
+	assert.Contains(t, err.Error(), "test")
+	assert.Contains(t, err.Error(), "build")
+	assert.Contains(t, err.Error(), "compile")
+	assert.Contains(t, err.Error(), "snapshot")
+	assert.Contains(t, err.Error(), "seed_build")
 }
 
 func TestLoad_ValidationErrors(t *testing.T) {
@@ -96,14 +140,14 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			wantErr: "field runn not found",
 		},
 		{
-			name:    "empty argv",
+			name:    "empty argv reported before completeness",
 			yaml:    "default:\n  run: []",
 			wantErr: "default.run: must not be empty",
 		},
 		{
-			name:    "run missing node placeholder",
-			yaml:    "services:\n  wise:\n    run: [\"wise-dbt\", \"run\"]",
-			wantErr: "services.wise.run: missing required {{ node }} placeholder",
+			name:    "run missing node placeholder reported before completeness",
+			yaml:    "default:\n  run: [\"dbt\", \"run\"]",
+			wantErr: "default.run: missing required {{ node }} placeholder",
 		},
 		{
 			name:    "unknown placeholder",
@@ -116,19 +160,9 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			wantErr: "default.run: unknown placeholder {{ target_schema }}",
 		},
 		{
-			name:    "seed_build missing node placeholder",
-			yaml:    "default:\n  seed_build: [\"dbt\", \"seed\", \"--schema\", \"{{ target_schema }}\"]",
-			wantErr: "default.seed_build: missing required {{ node }} placeholder",
-		},
-		{
 			name:    "compile with placeholder",
 			yaml:    "default:\n  compile:\n    command: [\"dbt\", \"compile\", \"{{ node }}\"]\n    manifest_path: \"/p/m.json\"",
 			wantErr: "default.compile.command: unknown placeholder {{ node }}",
-		},
-		{
-			name:    "compile without manifest_path",
-			yaml:    "default:\n  compile:\n    command: [\"dbt\", \"compile\"]",
-			wantErr: "default.compile.manifest_path: required",
 		},
 		{
 			name:    "compile relative manifest_path",
@@ -136,34 +170,14 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			wantErr: "default.compile.manifest_path: must be an absolute path",
 		},
 		{
-			name:    "compile manifest_path with placeholder",
-			yaml:    "default:\n  compile:\n    command: [\"dbt\", \"compile\"]\n    manifest_path: \"/project/{{ node }}/manifest.json\"",
-			wantErr: "default.compile.manifest_path: placeholders are not allowed",
+			name:    "incomplete default lists missing keys",
+			yaml:    "default:\n  run: [\"dbt\", \"run\", \"--select\", \"{{ node }}\"]",
+			wantErr: "default: incomplete command set, missing",
 		},
 		{
-			name:    "compile empty command",
-			yaml:    "default:\n  compile:\n    command: []\n    manifest_path: \"/p/m.json\"",
-			wantErr: "default.compile.command: must not be empty",
-		},
-		{
-			name:    "service with no operations",
-			yaml:    "services:\n  wise: {}",
-			wantErr: "services.wise: no operations defined",
-		},
-		{
-			name:    "empty test argv",
-			yaml:    "default:\n  test: []",
-			wantErr: "default.test: must not be empty",
-		},
-		{
-			name:    "empty build argv",
-			yaml:    "default:\n  build: []",
-			wantErr: "default.build: must not be empty",
-		},
-		{
-			name:    "test missing node placeholder",
-			yaml:    "default:\n  test: [\"dbt\", \"test\"]",
-			wantErr: "default.test: missing required {{ node }} placeholder",
+			name:    "empty service is incomplete",
+			yaml:    completeDefault + "services:\n  wise: {}",
+			wantErr: "services.wise: incomplete command set, missing",
 		},
 	}
 	for _, tt := range tests {
