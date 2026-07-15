@@ -38,6 +38,7 @@ function pillClass(status: string): string {
   if (s.includes('succeed')) return 'pill-sm--succeeded';
   if (s.includes('fail')) return 'pill-sm--failed';
   if (s.includes('cancel')) return 'pill-sm--cancelled';
+  if (s.includes('skip')) return 'pill-sm--skipped';
   return 'pill-sm--pending';
 }
 
@@ -45,6 +46,7 @@ function dotClass(status: string): string {
   const s = status.toLowerCase();
   if (s.includes('succeed')) return 'run-dot--ok';
   if (s.includes('fail')) return 'run-dot--fail';
+  if (s.includes('skip')) return 'run-dot--skipped';
   return 'run-dot--current';
 }
 

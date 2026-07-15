@@ -204,7 +204,7 @@ body {
 .pill--pending,   .pill-sm--pending   { background: #f1f5f9; color: #64748b; }
 .pill--cancelled, .pill-sm--cancelled { background: #f8fafc; color: #94a3b8; }
 .pill--current,   .pill-sm--current   { background: #ede9fe; color: #6d28d9; }
-.pill-sm--skipped { background: #e2e8f0; color: #475569; }
+.pill--skipped, .pill-sm--skipped { background: #e2e8f0; color: #475569; }
 
 /* ---- Card ---- */
 .detail-card {
@@ -584,6 +584,7 @@ body {
 .run-dot--ok      { background: #22c55e; }
 .run-dot--fail    { background: #ef4444; }
 .run-dot--current { background: #a78bfa; }
+.run-dot--skipped { background: #94a3b8; }
 
 .run-meta { flex: 1; }
 .run-date { font-size: 12.5px; color: #1e293b; font-weight: 500; }

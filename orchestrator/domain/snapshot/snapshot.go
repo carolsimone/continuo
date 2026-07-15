@@ -27,13 +27,15 @@ var ErrEmptyProjection = errors.New("snapshot: empty projection")
 // set. Handlers map this to run.entries.dispatch_failed:v1.
 var ErrTargetNotFound = errors.New("snapshot: target table not found")
 
-// ErrNoTests is returned by the SingleNode selector when Operation is "test"
-// and the resolved target has no known positive dbt test count — either a known
-// zero, or an unset count (topology written before test_count capture). In both
-// cases there is no test we can confirm exists to run, so the run is gated
-// rather than dispatched. Handlers map this to run.entries.dispatch_failed:v1
-// with reason "no_tests". A re-release backfills a concrete test_count, after
-// which a genuinely-tested node becomes runnable again.
+// ErrNoTests is returned by the SingleNode and LatestFullDAG selectors when
+// Operation is "test" and no resolved target (the single node, or any node in
+// the whole-DAG projection) has a known positive dbt test count — either a
+// known zero, or an unset count (topology written before test_count capture).
+// In both cases there is no test we can confirm exists to run, so the run is
+// gated rather than dispatched. Handlers map this to
+// run.entries.dispatch_failed:v1 with reason "no_tests". A re-release
+// backfills a concrete test_count, after which a genuinely-tested node
+// becomes runnable again.
 var ErrNoTests = errors.New("snapshot: node has no tests")
 
 // ErrRerunOfTestUnsupported is returned by the SourcePinnedDAG (rerun) and
