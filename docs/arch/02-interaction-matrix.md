@@ -79,6 +79,8 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `orchestrator` (watchdog) | `ListStuckCandidates`, `CancelSchedule` |
 | `orchestrator` (reconciler) | `GetScheduler` |
 
+> `ListNodeRuns` and `ListNodes` are both scoped by a `run`\|`test`\|`build` operation parameter (default `run`): a node's model-run history and test-run history are disjoint slices, and `ListNodes` omits a node from the catalog entirely for an operation it has never run under, rather than returning it with empty stats.
+
 ### Calls to `orchestrator`
 
 | Caller | Methods used |
