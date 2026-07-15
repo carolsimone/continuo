@@ -170,6 +170,26 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			wantErr: "default.compile.manifest_path: must be an absolute path",
 		},
 		{
+			name:    "compile empty command",
+			yaml:    "default:\n  compile:\n    command: []\n    manifest_path: \"/p/m.json\"",
+			wantErr: "default.compile.command: must not be empty",
+		},
+		{
+			name:    "compile without manifest_path",
+			yaml:    "default:\n  compile:\n    command: [\"dbt\", \"compile\"]",
+			wantErr: "default.compile.manifest_path: required",
+		},
+		{
+			name:    "compile manifest_path with placeholder",
+			yaml:    "default:\n  compile:\n    command: [\"dbt\", \"compile\"]\n    manifest_path: \"/project/{{ node }}/manifest.json\"",
+			wantErr: "default.compile.manifest_path: placeholders are not allowed",
+		},
+		{
+			name:    "seed_build missing node placeholder",
+			yaml:    "default:\n  seed_build: [\"dbt\", \"seed\", \"--schema\", \"{{ target_schema }}\"]",
+			wantErr: "default.seed_build: missing required {{ node }} placeholder",
+		},
+		{
 			name:    "incomplete default lists missing keys",
 			yaml:    "default:\n  run: [\"dbt\", \"run\", \"--select\", \"{{ node }}\"]",
 			wantErr: "default: incomplete command set, missing",

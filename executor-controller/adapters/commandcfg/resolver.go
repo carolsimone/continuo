@@ -5,8 +5,8 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// Resolver resolves argv templates with precedence
-// services.<name> > default > built-in plain dbt.
+// Resolver resolves argv templates with precedence: a services.<name>
+// override, then the (always-complete) default block.
 type Resolver struct {
 	cfg *fileConfig
 }
@@ -20,8 +20,8 @@ func Defaults() *Resolver {
 }
 
 // template returns the first non-nil template for the operation selected by
-// pick, walking service override then deployment default. Nil means "use the
-// built-in".
+// pick, walking the service override then the default. Because the default
+// is always complete, template always returns a non-nil template.
 func (r *Resolver) template(serviceName string, pick func(*opSet) []string) []string {
 	if ops := r.cfg.Services[serviceName]; ops != nil {
 		if t := pick(ops); t != nil {
