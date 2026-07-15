@@ -86,7 +86,7 @@ func (h *NodeRunHandler) ListNodes(
 		offset = 0
 	}
 
-	rows, total, err := h.repo.ListNodes(ctx, req.Search, req.ServiceName, limit, offset)
+	rows, total, err := h.repo.ListNodes(ctx, req.Search, req.ServiceName, req.GetOperation(), limit, offset)
 	if err != nil {
 		h.logger.Error("ListNodes repo error", "search", req.Search, "service", req.ServiceName, "error", err)
 		return nil, status.Errorf(codes.Internal, "ListNodes: %v", err)
@@ -105,6 +105,7 @@ func (h *NodeRunHandler) ListNodes(
 			FlakyRatePct:   num.ClampInt32(r.FlakyRatePct),
 			LastStatus:     r.LastStatus,
 			LastRunAt:      r.LastRunAt.UTC().Format(time.RFC3339),
+			Operation:      r.Operation,
 		})
 	}
 	return &statev1.ListNodesResponse{Nodes: out, TotalCount: num.ClampInt32(total)}, nil

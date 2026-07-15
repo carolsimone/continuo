@@ -30,7 +30,7 @@ import (
 // NodeRunRepository reads per-node run history.
 type NodeRunRepository interface {
 	List(ctx context.Context, serviceName, schemaName, tableName string, limit int) ([]*projection.NodeRun, error)
-	ListNodes(ctx context.Context, search, serviceName string, limit, offset int) ([]*projection.NodeSummary, int, error)
+	ListNodes(ctx context.Context, search, serviceName, operation string, limit, offset int) ([]*projection.NodeSummary, int, error)
 	ListNodeNames(ctx context.Context, serviceName string) ([]string, error)
 }
 
@@ -170,6 +170,7 @@ type nodeSummaryRow struct {
 	FlakyCount     int       `db:"flaky_count"`
 	LastStatus     string    `db:"last_status"`
 	LastRunAt      time.Time `db:"last_run_at"`
+	Operation      string    `db:"operation"`
 	// TotalCount is COUNT(*) OVER () — the same match count on every page row.
 	// Only populated by the ListNodes page query.
 	TotalCount int `db:"total_count"`
@@ -177,14 +178,16 @@ type nodeSummaryRow struct {
 
 // ListNodes returns the node catalog: one summary per node that has run, with
 // stats aggregated over each node's most recent 50 runs. Filters by exact
-// service (when non-empty) and a case-insensitive exact match on the table name
-// (when non-empty), ordered by last_run_at DESC with (service, schema, table) identity
-// tiebreakers for deterministic paging, and paged by limit/offset. The second
-// return value is the total match count before paging, computed independently of
-// the page so an empty page still reports the true total.
+// service (when non-empty), a case-insensitive exact match on the table name
+// (when non-empty), and the run/test/build operation dimension (operation
+// defaults to "run" when empty), ordered by last_run_at DESC with (service,
+// schema, table) identity tiebreakers for deterministic paging, and paged by
+// limit/offset. The second return value is the total match count before
+// paging, computed independently of the page so an empty page still reports
+// the true total.
 func (r *nodeRunRepository) ListNodes(
 	ctx context.Context,
-	search, serviceName string,
+	search, serviceName, operation string,
 	limit, offset int,
 ) ([]*projection.NodeSummary, int, error) {
 	if limit <= 0 {
@@ -196,18 +199,23 @@ func (r *nodeRunRepository) ListNodes(
 	if offset < 0 {
 		offset = 0
 	}
+	if operation == "" {
+		operation = "run"
+	}
 
 	// rankedWindowedCTE filters and caps each node to its most recent 50 runs.
 	// $1 is a case-insensitive EXACT match on the table name (not a substring):
 	// searching "table_2" returns only "table_2", never "ftable_2" or
-	// "table_2_v2". Service is filtered via $2. The window-function scan over
-	// task_tracker ⋈ scheduler_tracker runs ONCE: the page query layers the
-	// per-node aggregation and a COUNT(*) OVER () total on top of this single
-	// scan, so the match count no longer requires a second pass.
+	// "table_2_v2". Service is filtered via $2, and the run/test/build
+	// dimension via $3 (an exact match — always non-empty, since the caller
+	// defaults it to "run"). The window-function scan over task_tracker ⋈
+	// scheduler_tracker runs ONCE: the page query layers the per-node
+	// aggregation and a COUNT(*) OVER () total on top of this single scan, so
+	// the match count no longer requires a second pass.
 	const rankedWindowedCTE = `
 		WITH ranked AS (
 			SELECT t.task_id, t.service_name, t.schema_name, t.table_name,
-			       t.retry_count, t.status AS run_status, s.created_at,
+			       t.retry_count, t.status AS run_status, s.created_at, t.operation,
 			       ROW_NUMBER() OVER (
 			         PARTITION BY t.service_name, t.schema_name, t.table_name
 			         ORDER BY s.created_at DESC
@@ -216,6 +224,7 @@ func (r *nodeRunRepository) ListNodes(
 			JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
 			WHERE ($1 = '' OR lower(t.table_name) = lower($1))
 			  AND ($2 = '' OR t.service_name = $2)
+			  AND t.operation = $3
 		),
 		windowed AS ( SELECT * FROM ranked WHERE rn <= 50 )`
 
@@ -245,20 +254,21 @@ func (r *nodeRunRepository) ListNodes(
 			  COUNT(*) FILTER (WHERE w.retry_count > 0) AS flaky_count,
 			  -- [1] = most-recent run_status
 			  (ARRAY_AGG(w.run_status ORDER BY w.created_at DESC))[1] AS last_status,
-			  MAX(w.created_at) AS last_run_at
+			  MAX(w.created_at) AS last_run_at,
+			  w.operation
 			FROM windowed w
 			LEFT JOIN latest_exec le ON le.task_id = w.task_id
-			GROUP BY w.service_name, w.schema_name, w.table_name
+			GROUP BY w.service_name, w.schema_name, w.table_name, w.operation
 		)
 		SELECT service_name, schema_name, table_name, run_count, terminal_count,
 		       succeeded_count, avg_dur, p95_dur, flaky_count, last_status, last_run_at,
-		       COUNT(*) OVER () AS total_count
+		       operation, COUNT(*) OVER () AS total_count
 		FROM agg
 		ORDER BY last_run_at DESC, service_name, schema_name, table_name
-		LIMIT $3 OFFSET $4`
+		LIMIT $4 OFFSET $5`
 
 	rows := []nodeSummaryRow{}
-	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, limit, offset); err != nil {
+	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, operation, limit, offset); err != nil {
 		r.logger.Error("Failed to list nodes", "search", search, "service", serviceName, "error", err)
 		return nil, 0, fmt.Errorf("failed to list nodes: %w", err)
 	}
@@ -279,7 +289,7 @@ func (r *nodeRunRepository) ListNodes(
 			SELECT COUNT(*) FROM (
 				SELECT 1 FROM windowed GROUP BY service_name, schema_name, table_name
 			) g`
-		if err := r.db.GetContext(ctx, &total, countQuery, search, serviceName); err != nil {
+		if err := r.db.GetContext(ctx, &total, countQuery, search, serviceName, operation); err != nil {
 			r.logger.Error("Failed to count nodes", "search", search, "service", serviceName, "error", err)
 			return nil, 0, fmt.Errorf("failed to count nodes: %w", err)
 		}
@@ -333,5 +343,6 @@ func toNodeSummary(row nodeSummaryRow) *projection.NodeSummary {
 		FlakyRatePct:   flakyPct,
 		LastStatus:     row.LastStatus,
 		LastRunAt:      row.LastRunAt,
+		Operation:      row.Operation,
 	}
 }
