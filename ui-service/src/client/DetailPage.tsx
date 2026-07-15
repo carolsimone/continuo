@@ -83,9 +83,10 @@ function deriveHistoricalTasks(runGraph: RunGraph | null): Task[] {
   });
 }
 
-function isSuccessStatus(status: string | null | undefined): boolean {
+export function isRerunnableStatus(status: string | null | undefined): boolean {
   if (!status) return false;
-  return status.toLowerCase().includes('succeed');
+  const s = status.toLowerCase();
+  return s.includes('fail') || s.includes('cancel');
 }
 
 interface DetailPageProps {
@@ -513,10 +514,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     );
   })();
 
-  const showRerunFailed =
-    isTerminalStatus(scheduler?.status) &&
-    !isSuccessStatus(scheduler?.status) &&
-    Boolean(lastRunId);
+  const showRerunFailed = isRerunnableStatus(scheduler?.status) && Boolean(lastRunId);
 
   const handleRerunFailedSubmit = async (rerunMode: RerunFailedMode) => {
     setRerunModalOpen(false);

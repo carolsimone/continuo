@@ -47,6 +47,8 @@ func (r *RunStatusReader) GetTerminalStatus(ctx context.Context, runID string) (
 		return "failed", true, nil
 	case statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED:
 		return "cancelled", true, nil
+	case statev1.SchedulerStatus_SCHEDULER_STATUS_SKIPPED:
+		return "skipped", true, nil
 	default:
 		return "", false, nil
 	}

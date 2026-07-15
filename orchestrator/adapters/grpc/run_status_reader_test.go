@@ -35,6 +35,7 @@ func TestRunStatusReader_TerminalMapping(t *testing.T) {
 		{"succeeded", statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED, "succeeded", true},
 		{"failed", statev1.SchedulerStatus_SCHEDULER_STATUS_FAILED, "failed", true},
 		{"cancelled", statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED, "cancelled", true},
+		{"skipped", statev1.SchedulerStatus_SCHEDULER_STATUS_SKIPPED, "skipped", true},
 		{"running", statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING, "", false},
 		{"pending", statev1.SchedulerStatus_SCHEDULER_STATUS_PENDING, "", false},
 	}
