@@ -260,6 +260,61 @@ func TestWholeDAGTestOperation(t *testing.T) {
 	t.Log("TestWholeDAGTestOperation passed")
 }
 
+// TestWholeDAGTestOperationNoTestsFinalizesSkipped is the regression guard for a
+// whole-DAG Test run over a schedule whose nodes all have no tests. Every node of
+// e2e-schedule-failure defaults to test_count=0 (absent from e2eTestCounts), so a
+// TriggerSchedule with operation="test" gates every node: the orchestrator
+// produces an empty projection, surfaces ErrNoTests (reason no_tests), and state
+// finalizes the run 'skipped' — a benign non-failure — rather than 'failed'. No
+// Job is dispatched, so no task_tracker row exists.
+func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	const noTestsSchedule = failureTestScheduleName // e2e-schedule-failure: all nodes test_count=0
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+
+	cleanupTestData(t, ctx, clients, "whole-dag-test-skipped")
+	defer cleanupTestData(t, ctx, clients, "whole-dag-test-skipped")
+	seedTopology(t, ctx, clients)
+
+	t.Logf("TriggerSchedule operation=test on %q (all nodes have no tests)", noTestsSchedule)
+	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+		ScheduleName: noTestsSchedule,
+		Operation:    "test",
+	})
+	require.NoError(t, err, "TriggerSchedule(operation=test) failed")
+	require.NotEmpty(t, resp.ScheduleId, "must return a non-empty schedule_id")
+
+	scheduleID, err := uuid.Parse(resp.ScheduleId)
+	require.NoError(t, err, "schedule_id must be a valid UUID")
+
+	t.Log("Waiting for the all-gated whole-DAG test run to finalize 'skipped'...")
+	verifySchedulerSkipped(t, ctx, clients, scheduleID)
+
+	// No node had tests, so no Job was dispatched — zero task_tracker rows.
+	var taskCount int
+	err = clients.stateDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, scheduleID).Scan(&taskCount)
+	require.NoError(t, err, "failed to count task_tracker rows")
+	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for an all-gated whole-DAG test run")
+
+	// The run was created as a test run.
+	assert.Equal(t, "test", queryNeo4jRunOperation(t, clients, scheduleID),
+		":Run.operation must be 'test' for a whole-DAG test run")
+
+	t.Log("TestWholeDAGTestOperationNoTestsFinalizesSkipped passed")
+}
+
 // TestNodeCatalogOperationScoping verifies the UI-facing node catalog
 // (GET /api/nodes, ui-service's proxy of state.ListNodes) scopes stats per
 // operation dimension end-to-end. A model run and a test run are triggered
