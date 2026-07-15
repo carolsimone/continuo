@@ -605,14 +605,20 @@ func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection, now 
 	return r.finalize(outcome, now), nil
 }
 
-// MarkDispatchFailed is called when orchestrator emits
-// run.entries.dispatch_failed:v1. Records RunFinalized(FAILED) and a side
-// RunDispatchFailed for observability. No-op when r is already terminal.
-func (r *Run) MarkDispatchFailed(reason string, now time.Time) ([]DomainEvent, error) {
+// MarkDispatchTerminal is called when orchestrator emits
+// run.entries.dispatch_failed:v1. A benign outcome (no work to do — a Test run
+// with no tests) finalizes the run as `skipped`; any other reason finalizes it
+// as `failed`. reason is recorded on the RunDispatchFailed side event for
+// observability regardless of outcome. No-op when r is already terminal.
+func (r *Run) MarkDispatchTerminal(benign bool, reason string, now time.Time) ([]DomainEvent, error) {
 	if r.IsTerminal() {
 		return nil, nil
 	}
-	evts := r.finalize(SchedulerStatusFailed, now)
+	outcome := SchedulerStatusFailed
+	if benign {
+		outcome = SchedulerStatusSkipped
+	}
+	evts := r.finalize(outcome, now)
 	side := RunDispatchFailed{ID: r.scheduleID, Name: r.scheduleName, Reason: reason}
 	return append(evts, side), nil
 }

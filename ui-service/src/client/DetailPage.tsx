@@ -39,11 +39,12 @@ function formatStatusLabel(status: string | null | undefined): string {
   return normalized.replace(/_/g, ' ');
 }
 
-function pillClass(status: string | null | undefined): string {
+export function pillClass(status: string | null | undefined): string {
   const normalized = normalizeStatus(status);
   if (normalized.includes('succeed')) return 'pill--succeeded';
   if (normalized.includes('fail')) return 'pill--failed';
   if (normalized.includes('cancel')) return 'pill--cancelled';
+  if (normalized.includes('skip')) return 'pill--skipped';
   if (normalized.includes('run') || normalized.includes('current')) return 'pill--running';
   return 'pill--pending';
 }
@@ -54,9 +55,10 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-function isTerminalStatus(status: string | null | undefined): boolean {
+export function isTerminalStatus(status: string | null | undefined): boolean {
   const normalized = normalizeStatus(status);
-  return normalized.includes('succeed') || normalized.includes('fail') || normalized.includes('cancel');
+  return normalized.includes('succeed') || normalized.includes('fail')
+    || normalized.includes('cancel') || normalized.includes('skip');
 }
 
 function extractScheduler(data: { scheduler?: Scheduler } | Scheduler): Scheduler | null {
@@ -81,9 +83,10 @@ function deriveHistoricalTasks(runGraph: RunGraph | null): Task[] {
   });
 }
 
-function isSuccessStatus(status: string | null | undefined): boolean {
+export function isRerunnableStatus(status: string | null | undefined): boolean {
   if (!status) return false;
-  return status.toLowerCase().includes('succeed');
+  const s = status.toLowerCase();
+  return s.includes('fail') || s.includes('cancel');
 }
 
 interface DetailPageProps {
@@ -511,10 +514,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     );
   })();
 
-  const showRerunFailed =
-    isTerminalStatus(scheduler?.status) &&
-    !isSuccessStatus(scheduler?.status) &&
-    Boolean(lastRunId);
+  const showRerunFailed = isRerunnableStatus(scheduler?.status) && Boolean(lastRunId);
 
   const handleRerunFailedSubmit = async (rerunMode: RerunFailedMode) => {
     setRerunModalOpen(false);

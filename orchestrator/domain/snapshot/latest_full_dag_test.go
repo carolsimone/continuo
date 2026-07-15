@@ -195,3 +195,25 @@ func TestLatestFullDAG_CrossScheduleDuplicates_AreDistinct(t *testing.T) {
 		t.Fatalf("want both schedules x and y, got %+v", schedules)
 	}
 }
+
+// A whole-DAG Test run where every node is gated (known-zero or unknown test
+// count) has nothing to test. The selector must surface the benign ErrNoTests
+// sentinel, NOT an empty projection that the service layer would degrade to
+// ErrEmptyProjection (which finalizes the run as failed).
+func TestLatestFullDAG_TestOperation_AllGated_ReturnsErrNoTests(t *testing.T) {
+	knownZero := snapshot.FQN{Service: "svc", Schema: "sch", Table: "known_zero", ScheduleName: "x"}
+	absent := snapshot.FQN{Service: "svc", Schema: "sch", Table: "absent", ScheduleName: "x"}
+	r := &fakeTopologyReader{
+		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
+			knownZero: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
+			absent:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: false},
+		},
+	}
+	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test", ScheduleName: "x"})
+	if !errors.Is(err, snapshot.ErrNoTests) {
+		t.Fatalf("err=%v, want ErrNoTests", err)
+	}
+	if got != nil {
+		t.Fatalf("want nil projection, got %+v", got)
+	}
+}

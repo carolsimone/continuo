@@ -21,7 +21,7 @@ sequenceDiagram
   alt Snapshot returns ErrEmptyProjection (zero :Table nodes for this schedule)
     OR->>R: publish run.entries.dispatch_failed:v1 (reason=empty_projection)
     R->>ST: consume run.entries.dispatch_failed:v1
-    Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, FinalizeRunTx → status='failed'<br/>state_outbox INSERT for run.finalized:v1
+    Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, MarkDispatchTerminal → status='failed'<br/>state_outbox INSERT for run.finalized:v1
   else snapshot succeeds
     OR->>R: publish run.entries.dispatched v1
     OR->>R: publish query.model v1 (per seed/root)
@@ -46,7 +46,7 @@ sequenceDiagram
 
 > `scheduler.started:v1` also carries `operation` (`""` \| `"run"` \| `"test"` \| `"build"`). A manual `TriggerSchedule` call (not the cron path shown above) can set `operation=test` or `operation=build`; `HandleSchedulerStartedHandler` always runs `Snapshot(LatestFullDAG)`, passing `operation` through to the selector, which branches on it:
 >
-> - `operation=test`: the selector drops any node with `test_count == 0` and marks every kept node `ReadyToDispatch` — a flat, edgeless fan-out where every `query.model:v1` dispatches `dbt test --select <node>` immediately, with no seeds-first-else-roots ordering and no `NodeUnblocked` follow-up. If the schedule has zero tested nodes, the projection is empty and the run fails fast via `run.entries.dispatch_failed:v1` (`reason=empty_projection`), same as the zero-`:Table` case above.
+> - `operation=test`: the selector drops any node whose `test_count` is a known zero or unset and marks every kept node `ReadyToDispatch` — a flat, edgeless fan-out where every `query.model:v1` dispatches `dbt test --select <node>` immediately, with no seeds-first-else-roots ordering and no `NodeUnblocked` follow-up. If every node is gated this way (no schedule node has a known-positive `test_count`), the selector returns `ErrNoTests` instead of an empty projection: the run fails fast via `run.entries.dispatch_failed:v1` (`reason=no_tests`), and state finalizes it `skipped` rather than `failed` — a schedule with no confirmable tests is a benign outcome, distinct from the zero-`:Table` `empty_projection` case above.
 > - `operation=build` (and the default `""`/`"run"`): the selector uses the normal dependency-ordered frontier — the same seeds-first-else-roots computation as a plain run, with `NodeUnblocked` dispatching each node's dependents as it completes. No node is dropped for `test_count == 0`: `dbt build --select <node>` both materializes and tests every node in the DAG. A failed node's descendants are cascade-skipped by the same blocked/unblocked bookkeeping a plain run uses, rather than fanned out independently like `test`.
 >
 > A run's `operation` is stamped onto its `:Run` node and inherited by any derived run (rerun/rebase) and by every `NodeUnblocked`/derived-run dispatch, so re-running or rebasing a build stays a build.
@@ -328,10 +328,10 @@ sequenceDiagram
 
   R->>OR: consume trigger.single_node_run:v1
   Note over OR: HandleSingleNodeRunHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Neo4j: Snapshot(SingleNode{Target, MetadataSource, SourceRunID?}, Operation)<br/>  latest mode → selector reads :TopologyRoot + :Table for metadata, new :Run inherits from :TopologyRoot<br/>  stale mode  → selector reads source :Run's EXECUTES edge, new :Run inherits topology_generation + service_metadata from source :Run
-  alt ErrTargetNotFound (node absent in Neo4j) or ErrNoTests (operation=test and the node's test_count is 0)
-    OR->>R: publish run.entries.dispatch_failed:v1 (reason=target_not_found or reason=no_tests; synthesised run will be marked terminal-failed)
+  alt ErrTargetNotFound (node absent in Neo4j) or ErrNoTests (operation=test and the node's test_count is a known zero or unset)
+    OR->>R: publish run.entries.dispatch_failed:v1 (reason=target_not_found or reason=no_tests; synthesised run will be marked terminal-failed or terminal-skipped respectively)
     R->>ST: consume run.entries.dispatch_failed:v1
-    Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, FinalizeRunTx → status='failed'<br/>state_outbox INSERT for run.finalized:v1
+    Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, MarkDispatchTerminal → status='skipped' (reason=no_tests) or status='failed' (reason=target_not_found)<br/>state_outbox INSERT for run.finalized:v1
   else node found (and, for operation=test, test_count > 0)
     OR->>R: publish run.entries.dispatched:v1 (1 task entry, MaxRetries=DefaultTaskMaxRetries)
     OR->>R: publish query.model:v1 (single dispatch, carrying operation)
@@ -346,9 +346,9 @@ sequenceDiagram
   end
 ```
 
-> Differences vs. Flow 1 (schedule startup): synchronous gRPC entry; synthesised `schedule_name` is not in `schedule_catalog`; `Snapshot(SingleNode)` creates exactly one `EXECUTES` edge (no full topology snapshot); only a single `query.model:v1` is produced; on `ErrTargetNotFound` the synthesised run is immediately failed.
+> Differences vs. Flow 1 (schedule startup): synchronous gRPC entry; synthesised `schedule_name` is not in `schedule_catalog`; `Snapshot(SingleNode)` creates exactly one `EXECUTES` edge (no full topology snapshot); only a single `query.model:v1` is produced; on `ErrTargetNotFound` the synthesised run is immediately failed; on `ErrNoTests` it is immediately skipped.
 >
-> `operation=test` runs `dbt test --select <node>` for the target instead of its default verb. Unlike the whole-DAG case (Flow 1), a single-node test against an untested node (`test_count == 0`) is its own dispatch-failed reason, `no_tests`, distinct from `empty_projection`.
+> `operation=test` runs `dbt test --select <node>` for the target instead of its default verb. A single-node test against a target with no known-positive `test_count` (a known zero or unset count) is its own dispatch-failed reason, `no_tests` — the same reason a whole-DAG test run (Flow 1) surfaces when every node is gated — and both finalize the run `skipped` rather than `failed`, distinct from the `empty_projection` reason (zero active `:Table` nodes on an `operation=run` schedule).
 
 ### ListNodeRuns read path
 

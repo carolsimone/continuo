@@ -255,7 +255,7 @@ Every consumed stream follows the same three-layer path:
 |---|---|---|
 | `schedules.loaded:v1` | state service | `ScheduleCatalogHandler` — reconciles `schedule_catalog` |
 | `run.entries.dispatched:v1` | state service | `RunEntriesDispatchedHandler` — creates tasks (each carries the orchestrator-stamped `MaxRetries=DefaultTaskMaxRetries`); honours per-task `Status` and `InheritedFromTaskID`; sets `total_task_count`, marks `init_status=completed`. Auto-rollups directly to terminal (`SUCCEEDED`/`FAILED`, `completed_at` set) when every dispatched task is already terminal — otherwise marks `status=running`. |
-| `run.entries.dispatch_failed:v1` | state service | `RunEntriesDispatchFailedHandler` — symmetric counterpart of `RunEntriesDispatchedHandler`. Row-locks `scheduler_tracker`, marks status=`failed`, emits `run.finalized:v1`. Idempotent on already-terminal rows. |
+| `run.entries.dispatch_failed:v1` | state service | `RunEntriesDispatchFailedHandler` — symmetric counterpart of `RunEntriesDispatchedHandler`. Row-locks `scheduler_tracker` and finalizes via `MarkDispatchTerminal`, emitting `run.finalized:v1`: the benign `reason=no_tests` marks status=`skipped`, every other reason marks status=`failed`. Idempotent on already-terminal rows. |
 | `task.status.updated:v1` | state service | `TaskStatusUpdatedHandler` — updates task status, drives finalization state machine |
 | `task.execution.recorded:v1` | state service | `TaskExecutionRecordedHandler` — persists task execution records |
 
@@ -325,16 +325,16 @@ Payload fields:
 - `source_run_id` — source run UUID (stale mode only; omitted for latest)
 - `operation` — dbt verb string (`""` \| `"run"` \| `"test"` \| `"build"`), passed through from the `TriggerSingleNodeRun` request
 
-Effect: `orchestrator` snapshots the single node and dispatches it for execution. For `operation="test"`, the `SingleNode` selector runs `dbt test --select <node>` instead of the node's default verb, and gates the dispatch: a target with `test_count == 0` produces `run.entries.dispatch_failed:v1` (`reason=no_tests`) instead of a Job. For `operation="build"`, the selector runs `dbt build --select <node>` with no equivalent gate — a node with zero tests is still built.
+Effect: `orchestrator` snapshots the single node and dispatches it for execution. For `operation="test"`, the `SingleNode` selector runs `dbt test --select <node>` instead of the node's default verb, and gates the dispatch: a target with no known-positive `test_count` produces `run.entries.dispatch_failed:v1` (`reason=no_tests`) instead of a Job, and the run finalizes as `skipped` — a benign non-failure, not an error. For `operation="build"`, the selector runs `dbt build --select <node>` with no equivalent gate — a node with zero tests is still built.
 
 #### `run.finalized:v1`
 
-Emitted on: every terminal outcome — succeeded, failed, or cancelled (see Finalization State Machine below and Cancellation below)
+Emitted on: every terminal outcome — succeeded, failed, cancelled, or skipped (see Finalization State Machine below and Cancellation below)
 
 Payload fields:
 - `schedule_id`
 - `schedule_name`
-- `status` — one of `succeeded | failed | cancelled`
+- `status` — one of `succeeded | failed | cancelled | skipped`
 
 Effect: signals downstream consumers that the run is complete; the orchestrator projects the outcome onto `:Run.terminal_status` and `:Run.completed_at`.
 

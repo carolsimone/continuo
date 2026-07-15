@@ -39,7 +39,7 @@ func (e RunStarted) ScheduleID() uuid.UUID { return e.ID }
 // RunFinalized is recorded by Run.RecordTaskStatus when the run reaches its
 // terminal status through the finalization decision, by Run.AcceptDispatch
 // when every projected task is already terminal (auto-rollup), and by
-// Run.MarkDispatchFailed. Translated to run.finalized:v1.
+// Run.MarkDispatchTerminal. Translated to run.finalized:v1.
 type RunFinalized struct {
 	ID      uuid.UUID
 	Name    string
@@ -99,7 +99,7 @@ type SingleNodeRunRequested struct {
 func (SingleNodeRunRequested) runDomainEvent()         {}
 func (e SingleNodeRunRequested) ScheduleID() uuid.UUID { return e.ID }
 
-// RunDispatchFailed is recorded by Run.MarkDispatchFailed for observability.
+// RunDispatchFailed is recorded by Run.MarkDispatchTerminal for observability.
 // The publisher emits RunFinalized (status=failed) onto run.finalized:v1; this
 // auxiliary event is informational and currently has no downstream stream.
 // Kept so a future "failed dispatch reason" stream is mechanical to add.

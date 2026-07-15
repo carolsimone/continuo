@@ -236,6 +236,8 @@ func domainToProtoSchedulerStatus(s run.SchedulerStatus) statev1.SchedulerStatus
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_FAILED
 	case run.SchedulerStatusCancelled:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED
+	case run.SchedulerStatusSkipped:
+		return statev1.SchedulerStatus_SCHEDULER_STATUS_SKIPPED
 	default:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED
 	}

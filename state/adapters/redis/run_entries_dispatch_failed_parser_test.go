@@ -29,3 +29,21 @@ func TestParseRunEntriesDispatchFailed_BadScheduleID(t *testing.T) {
 	_, err := ParseRunEntriesDispatchFailed(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": `{"schedule_id":"x"}`}})
 	require.Error(t, err)
 }
+
+func TestParseRunEntriesDispatchFailed_NoTestsIsBenign(t *testing.T) {
+	scheduleID := uuid.New()
+	payload := `{"schedule_id":"` + scheduleID.String() + `","schedule_name":"sched","reason":"no_tests"}`
+	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": payload}}
+	evt, err := ParseRunEntriesDispatchFailed(msg)
+	require.NoError(t, err)
+	assert.True(t, evt.Benign, "no_tests must be classified benign")
+}
+
+func TestParseRunEntriesDispatchFailed_EmptyProjectionNotBenign(t *testing.T) {
+	scheduleID := uuid.New()
+	payload := `{"schedule_id":"` + scheduleID.String() + `","schedule_name":"sched","reason":"empty_projection"}`
+	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": payload}}
+	evt, err := ParseRunEntriesDispatchFailed(msg)
+	require.NoError(t, err)
+	assert.False(t, evt.Benign, "empty_projection must NOT be benign")
+}

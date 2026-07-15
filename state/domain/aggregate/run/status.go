@@ -13,12 +13,15 @@ const (
 	SchedulerStatusSucceeded SchedulerStatus = "succeeded"
 	SchedulerStatusFailed    SchedulerStatus = "failed"
 	SchedulerStatusCancelled SchedulerStatus = "cancelled"
+	// SchedulerStatusSkipped is the terminal status for a run that had no work
+	// to do — a Test run over nodes with no dbt tests. It is a benign non-failure.
+	SchedulerStatusSkipped SchedulerStatus = "skipped"
 )
 
 func (s SchedulerStatus) IsValid() bool {
 	switch s {
 	case SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusSucceeded,
-		SchedulerStatusFailed, SchedulerStatusCancelled:
+		SchedulerStatusFailed, SchedulerStatusCancelled, SchedulerStatusSkipped:
 		return true
 	}
 	return false
@@ -26,7 +29,8 @@ func (s SchedulerStatus) IsValid() bool {
 
 func (s SchedulerStatus) IsTerminal() bool {
 	switch s {
-	case SchedulerStatusSucceeded, SchedulerStatusFailed, SchedulerStatusCancelled:
+	case SchedulerStatusSucceeded, SchedulerStatusFailed, SchedulerStatusCancelled,
+		SchedulerStatusSkipped:
 		return true
 	}
 	return false

@@ -31,6 +31,7 @@ const (
 	SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED   SchedulerStatus = 3
 	SchedulerStatus_SCHEDULER_STATUS_FAILED      SchedulerStatus = 4
 	SchedulerStatus_SCHEDULER_STATUS_CANCELLED   SchedulerStatus = 5
+	SchedulerStatus_SCHEDULER_STATUS_SKIPPED     SchedulerStatus = 6
 )
 
 // Enum value maps for SchedulerStatus.
@@ -42,6 +43,7 @@ var (
 		3: "SCHEDULER_STATUS_SUCCEEDED",
 		4: "SCHEDULER_STATUS_FAILED",
 		5: "SCHEDULER_STATUS_CANCELLED",
+		6: "SCHEDULER_STATUS_SKIPPED",
 	}
 	SchedulerStatus_value = map[string]int32{
 		"SCHEDULER_STATUS_UNSPECIFIED": 0,
@@ -50,6 +52,7 @@ var (
 		"SCHEDULER_STATUS_SUCCEEDED":   3,
 		"SCHEDULER_STATUS_FAILED":      4,
 		"SCHEDULER_STATUS_CANCELLED":   5,
+		"SCHEDULER_STATUS_SKIPPED":     6,
 	}
 )
 
@@ -3051,14 +3054,15 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\"8\n" +
 	"\x15ListNodeNamesResponse\x12\x1f\n" +
 	"\vtable_names\x18\x01 \x03(\tR\n" +
-	"tableNames*\xcc\x01\n" +
+	"tableNames*\xea\x01\n" +
 	"\x0fSchedulerStatus\x12 \n" +
 	"\x1cSCHEDULER_STATUS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18SCHEDULER_STATUS_PENDING\x10\x01\x12\x1c\n" +
 	"\x18SCHEDULER_STATUS_RUNNING\x10\x02\x12\x1e\n" +
 	"\x1aSCHEDULER_STATUS_SUCCEEDED\x10\x03\x12\x1b\n" +
 	"\x17SCHEDULER_STATUS_FAILED\x10\x04\x12\x1e\n" +
-	"\x1aSCHEDULER_STATUS_CANCELLED\x10\x05*\xc2\x01\n" +
+	"\x1aSCHEDULER_STATUS_CANCELLED\x10\x05\x12\x1c\n" +
+	"\x18SCHEDULER_STATUS_SKIPPED\x10\x06*\xc2\x01\n" +
 	"\n" +
 	"TaskStatus\x12\x1b\n" +
 	"\x17TASK_STATUS_UNSPECIFIED\x10\x00\x12\x17\n" +

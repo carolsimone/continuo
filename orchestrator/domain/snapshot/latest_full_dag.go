@@ -56,6 +56,14 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 				ReadyToDispatch: true, // edgeless: no blocking frontier for tests
 			})
 		}
+		if len(projection) == 0 {
+			// Every node was gated (known-zero or unknown test count): there is
+			// nothing to test. Surface the benign no-tests sentinel so state
+			// finalizes the run as `skipped`, not `failed`. Returning an empty
+			// projection here would degrade to ErrEmptyProjection at the service
+			// layer, which is reserved for a broken operation=run DAG.
+			return nil, ErrNoTests
+		}
 		return projection, nil
 	}
 

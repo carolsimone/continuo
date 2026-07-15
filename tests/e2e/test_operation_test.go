@@ -78,7 +78,7 @@ func TestSingleNodeTestOperation(t *testing.T) {
 // TestSingleNodeTestOperationNoTests verifies the no_tests gate: a single-node
 // test on a node with no tests (seed_table_2, test_count=0) is rejected by the
 // orchestrator (run.entries.dispatch_failed:v1 reason no_tests) rather than
-// dispatching a pointless Job. The run finalizes 'failed' with zero tasks.
+// dispatching a pointless Job. The run finalizes 'skipped' with zero tasks.
 func TestSingleNodeTestOperationNoTests(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -117,8 +117,8 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 	require.NoError(t, err, "run_id must be a valid UUID")
 	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
 
-	t.Log("Waiting for the no_tests gate to finalize the run 'failed'...")
-	verifySchedulerFailed(t, ctx, clients, runID)
+	t.Log("Waiting for the no_tests gate to finalize the run 'skipped'...")
+	verifySchedulerSkipped(t, ctx, clients, runID)
 
 	// The gate must NOT create any task_tracker row — no Job was dispatched.
 	var taskCount int
@@ -139,7 +139,7 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 // An unset count is treated as "no known tests", so the orchestrator gates the run
 // with reason no_tests — no Job is dispatched at all. This is symmetric with the
 // known-zero gate: only a KNOWN, positive test_count is runnable. The run finalizes
-// 'failed' with zero tasks, never dispatching a Job that could no-op and retry.
+// 'skipped' with zero tasks, never dispatching a Job that could no-op and retry.
 func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -182,8 +182,8 @@ func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	require.NoError(t, err, "run_id must be a valid UUID")
 	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
 
-	t.Log("Waiting for the unset-test_count no_tests gate to finalize the run 'failed'...")
-	verifySchedulerFailed(t, ctx, clients, runID)
+	t.Log("Waiting for the unset-test_count no_tests gate to finalize the run 'skipped'...")
+	verifySchedulerSkipped(t, ctx, clients, runID)
 
 	// The gate must NOT dispatch any Job — no task_tracker row, so no no-op run.
 	var taskCount int
@@ -258,6 +258,57 @@ func TestWholeDAGTestOperation(t *testing.T) {
 		":Run.operation must be 'test' for a whole-DAG test run")
 
 	t.Log("TestWholeDAGTestOperation passed")
+}
+
+// TestWholeDAGTestOperationNoTestsFinalizesSkipped is the regression guard for a
+// whole-DAG Test run over a schedule whose nodes all have no tests. Every node of
+// e2e-schedule-failure defaults to test_count=0 (absent from e2eTestCounts), so a
+// TriggerSchedule with operation="test" gates every node: the orchestrator
+// produces an empty projection, surfaces ErrNoTests (reason no_tests), and state
+// finalizes the run 'skipped' — a benign non-failure — rather than 'failed'. No
+// Job is dispatched, so no task_tracker row exists.
+func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	const noTestsSchedule = failureTestScheduleName // e2e-schedule-failure: all nodes test_count=0
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+
+	cleanupTestData(t, ctx, clients, noTestsSchedule)
+	defer cleanupTestData(t, ctx, clients, noTestsSchedule)
+	seedTopology(t, ctx, clients)
+
+	t.Logf("TriggerSchedule operation=test on %q (all nodes have no tests)", noTestsSchedule)
+	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+		ScheduleName: noTestsSchedule,
+		Operation:    "test",
+	})
+	require.NoError(t, err, "TriggerSchedule(operation=test) failed")
+	require.NotEmpty(t, resp.ScheduleId, "must return a non-empty schedule_id")
+
+	scheduleID, err := uuid.Parse(resp.ScheduleId)
+	require.NoError(t, err, "schedule_id must be a valid UUID")
+
+	t.Log("Waiting for the all-gated whole-DAG test run to finalize 'skipped'...")
+	verifySchedulerSkipped(t, ctx, clients, scheduleID)
+
+	// No node had tests, so no Job was dispatched — zero task_tracker rows.
+	var taskCount int
+	err = clients.stateDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, scheduleID).Scan(&taskCount)
+	require.NoError(t, err, "failed to count task_tracker rows")
+	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for an all-gated whole-DAG test run")
+
+	t.Log("TestWholeDAGTestOperationNoTestsFinalizesSkipped passed")
 }
 
 // TestNodeCatalogOperationScoping verifies the UI-facing node catalog

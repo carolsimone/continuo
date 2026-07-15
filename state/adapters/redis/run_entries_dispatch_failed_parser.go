@@ -30,5 +30,6 @@ func ParseRunEntriesDispatchFailed(msg goredis.XMessage) (events.RunEntriesDispa
 		ScheduleID:   scheduleID,
 		ScheduleName: wire.ScheduleName,
 		Reason:       wire.Reason,
+		Benign:       wire.Reason == pkgevents.DispatchFailedReasonNoTests,
 	}, nil
 }

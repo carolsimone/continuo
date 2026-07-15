@@ -125,10 +125,10 @@ func runFailedTestLogger() *slog.Logger {
 }
 
 // TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed
-// verifies the happy path: a PENDING run is loaded, MarkDispatchFailed
-// transitions it to FAILED, SaveRun persists the change, and Outbox.Append
-// receives RunFinalized + RunDispatchFailed domain events with the correct
-// message processing ID.
+// verifies the happy path: a PENDING run is loaded, MarkDispatchTerminal
+// transitions it to FAILED (non-benign reason), SaveRun persists the change,
+// and Outbox.Append receives RunFinalized + RunDispatchFailed domain events
+// with the correct message processing ID.
 func TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed(t *testing.T) {
 	scheduleID := uuid.New()
 	msgProcID := uuid.New()
@@ -151,7 +151,7 @@ func TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed(t *te
 	assert.True(t, runRepo.saveCalled, "SaveRun must be called")
 	assert.Equal(t, msgProcID, outboxPub.msgProcID, "msgProcID must be forwarded to Append")
 
-	// MarkDispatchFailed emits RunFinalized (status=FAILED) + RunDispatchFailed.
+	// MarkDispatchTerminal emits RunFinalized (status=FAILED) + RunDispatchFailed.
 	require.Len(t, outboxPub.appended, 2)
 
 	var finalized run.RunFinalized
@@ -173,7 +173,7 @@ func TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed(t *te
 
 // TestRunEntriesDispatchFailedHandler_IdempotentOnAlreadyTerminal verifies
 // that re-delivery against a run already in any terminal state is a no-op:
-// MarkDispatchFailed returns nil events, so Append receives an empty slice
+// MarkDispatchTerminal returns nil events, so Append receives an empty slice
 // and the run is saved without changes.
 func TestRunEntriesDispatchFailedHandler_IdempotentOnAlreadyTerminal(t *testing.T) {
 	for _, status := range []run.SchedulerStatus{

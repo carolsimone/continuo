@@ -11,9 +11,11 @@ import (
 )
 
 // RunEntriesDispatchFailedHandler processes run.entries.dispatch_failed:v1
-// events. Loads the Run aggregate, invokes MarkDispatchFailed (which records
+// events. Loads the Run aggregate, invokes MarkDispatchTerminal (which records
 // RunFinalized + RunDispatchFailed events when the run is not already
-// terminal), persists via SaveRun, and publishes via OutboxPublisher.
+// terminal — finalizing as `skipped` for a benign no_tests reason, or
+// `failed` otherwise), persists via SaveRun, and publishes via
+// OutboxPublisher.
 //
 // No-op when the run is already terminal — the aggregate handles the guard.
 type RunEntriesDispatchFailedHandler struct {
@@ -41,9 +43,9 @@ func (h *RunEntriesDispatchFailedHandler) Handle(
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
-	domainEvents, err := r.MarkDispatchFailed(string(evt.Reason), u.Clock().Now())
+	domainEvents, err := r.MarkDispatchTerminal(evt.Benign, string(evt.Reason), u.Clock().Now())
 	if err != nil {
-		return fmt.Errorf("mark dispatch failed: %w", err)
+		return fmt.Errorf("mark dispatch terminal: %w", err)
 	}
 	if err := u.Run().SaveRun(ctx, r); err != nil {
 		return fmt.Errorf("save run: %w", err)

@@ -337,3 +337,26 @@ func verifySchedulerFailed(
 
 	t.Log("✅ Scheduler reached 'failed' status")
 }
+
+// verifySchedulerSkipped polls scheduler_tracker until the schedule reaches
+// 'skipped' status — the benign terminal for a Test run with no tests to run.
+func verifySchedulerSkipped(
+	t *testing.T,
+	ctx context.Context,
+	clients *testClients,
+	schedulerID uuid.UUID,
+) {
+	t.Helper()
+	pollUntil(t, ctx, 5*time.Minute, 3*time.Second, func() (bool, error) {
+		var status string
+		err := clients.stateDB.Get(&status, `
+			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
+		`, schedulerID)
+		if err != nil {
+			return false, err
+		}
+		return status == "skipped", nil
+	}, "Timeout waiting for scheduler to reach 'skipped' status")
+
+	t.Log("✅ Scheduler reached 'skipped' status")
+}
