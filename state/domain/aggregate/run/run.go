@@ -27,7 +27,11 @@ type Run struct {
 	// initiatedBy records the user who triggered this run, or the "system"
 	// sentinel for cron / platform-initiated runs. Stamped at creation and
 	// immutable thereafter.
-	initiatedBy        string
+	initiatedBy string
+	// operation is the dbt verb this run applies to its nodes (run/test/build).
+	// Stamped at construction; stays with the run so its child tasks can be
+	// stamped identically at dispatch.
+	operation          model.Operation
 	createdAt          time.Time
 	startedAt          *time.Time
 	completedAt        *time.Time
@@ -71,6 +75,7 @@ func HydrateRun(
 	kind Kind,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
+	operation model.Operation,
 	createdAt time.Time,
 	startedAt, completedAt, lastHeartbeatAt, cancelledAt *time.Time,
 	cancelledBy, cancellationReason *string,
@@ -86,6 +91,7 @@ func HydrateRun(
 		kind:               kind,
 		sourceRunID:        sourceRunID,
 		initiatedBy:        initiatedBy,
+		operation:          operation,
 		createdAt:          createdAt,
 		startedAt:          startedAt,
 		completedAt:        completedAt,
@@ -134,6 +140,7 @@ func NewPendingRun(
 		kind:            kind,
 		sourceRunID:     sourceRunID,
 		initiatedBy:     initiatedBy,
+		operation:       operation,
 		createdAt:       now,
 		serviceMetadata: metadata,
 	}
@@ -166,6 +173,7 @@ func NewDerivedRun(
 		kind:            kind,
 		sourceRunID:     &sourceRunID,
 		initiatedBy:     initiatedBy,
+		operation:       model.OperationRun,
 		createdAt:       now,
 		lastHeartbeatAt: &now,
 		serviceMetadata: map[string]ServiceMetadata{},
@@ -205,6 +213,7 @@ func NewSingleNodeRun(
 		kind:            KindSingleNodeRun,
 		sourceRunID:     sourceRunID,
 		initiatedBy:     initiatedBy,
+		operation:       operation,
 		createdAt:       now,
 		lastHeartbeatAt: &now,
 		serviceMetadata: map[string]ServiceMetadata{},
@@ -228,6 +237,7 @@ func (r *Run) Status() SchedulerStatus          { return r.status }
 func (r *Run) Kind() Kind                       { return r.kind }
 func (r *Run) SourceRunID() *uuid.UUID          { return r.sourceRunID }
 func (r *Run) InitiatedBy() string              { return r.initiatedBy }
+func (r *Run) Operation() model.Operation       { return r.operation }
 func (r *Run) InitializationStatus() InitStatus { return r.initStatus }
 func (r *Run) CreatedAt() time.Time             { return r.createdAt }
 func (r *Run) StartedAt() *time.Time            { return r.startedAt }
