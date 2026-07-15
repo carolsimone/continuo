@@ -882,6 +882,14 @@ body {
   margin: 8px 0 12px;
 }
 
+/* The 8px/12px block margin suits a filter sitting above a list. Inside an
+   action row (the node / run operation selector) the field sits inline beside
+   buttons; the vertical margin would then inflate the flex row and, being
+   asymmetric, shift the select off the buttons' shared centre line. Zero it so
+   the select and the buttons align. */
+.page-action-row .form-field,
+.scheduler-card-header .form-field { margin: 0; }
+
 .form-field > label {
   font-size: 11px;
   font-weight: 700;
