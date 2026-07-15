@@ -139,7 +139,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	defer db.ExecContext(ctx, "DELETE FROM task_execution WHERE id = $1", exec2.ID)
 
 	// --- query ---
-	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, 50)
+	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, "run", 50)
 	require.NoError(t, err)
 	require.Len(t, rows, 2, "expected exactly 2 rows for (svc, sch, tbl)")
 
@@ -204,7 +204,7 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 
 	// No task_execution row inserted.
 
-	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, 50)
+	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, "run", 50)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Nil(t, rows[0].StartedAt)
@@ -219,7 +219,7 @@ func TestNodeRunRepository_List_NoMatch(t *testing.T) {
 
 	nodeRunRepo := postgres.NewNodeRunRepository(db, discardLogger())
 
-	rows, err := nodeRunRepo.List(ctx, "nonexistent-svc", "nonexistent-sch", "nonexistent-tbl", 50)
+	rows, err := nodeRunRepo.List(ctx, "nonexistent-svc", "nonexistent-sch", "nonexistent-tbl", "run", 50)
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 }

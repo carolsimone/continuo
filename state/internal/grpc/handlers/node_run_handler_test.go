@@ -35,7 +35,7 @@ type fakeNodeRunRepo struct {
 	gotNamesService string
 }
 
-func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _ string, limit int) ([]*projection.NodeRun, error) {
+func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _, _ string, limit int) ([]*projection.NodeRun, error) {
 	f.gotLimit = limit
 	if f.err != nil {
 		return nil, f.err

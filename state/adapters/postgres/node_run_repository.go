@@ -29,7 +29,7 @@ import (
 
 // NodeRunRepository reads per-node run history.
 type NodeRunRepository interface {
-	List(ctx context.Context, serviceName, schemaName, tableName string, limit int) ([]*projection.NodeRun, error)
+	List(ctx context.Context, serviceName, schemaName, tableName, operation string, limit int) ([]*projection.NodeRun, error)
 	ListNodes(ctx context.Context, search, serviceName, operation string, limit, offset int) ([]*projection.NodeSummary, int, error)
 	ListNodeNames(ctx context.Context, serviceName string) ([]string, error)
 }
@@ -57,23 +57,28 @@ func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
 //
 // Tasks with no execution row yield rows with nil timings.
 // limit is clamped to (0, 50]; non-positive or oversized values default to 50.
+// operation defaults to "run" when empty.
 func (r *nodeRunRepository) List(
 	ctx context.Context,
-	serviceName, schemaName, tableName string,
+	serviceName, schemaName, tableName, operation string,
 	limit int,
 ) ([]*projection.NodeRun, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 50
 	}
+	if operation == "" {
+		operation = "run"
+	}
 
 	const query = `
 		WITH target_tasks AS (
 			SELECT t.task_id, t.schedule_id, t.status AS task_status,
-			       t.retry_count, t.image_tag, t.manifest_version
+			       t.retry_count, t.image_tag, t.manifest_version, t.operation
 			FROM task_tracker t
 			WHERE t.service_name = $1
 			  AND t.schema_name  = $2
 			  AND t.table_name   = $3
+			  AND t.operation    = $4
 		),
 		latest_exec AS (
 			SELECT DISTINCT ON (te.task_id)
@@ -96,17 +101,18 @@ func (r *nodeRunRepository) List(
 		       le.started_at        AS started_at,
 		       le.completed_at      AS completed_at,
 		       le.error_message     AS error_message,
-		       le.log_s3_key        AS log_s3_key
+		       le.log_s3_key        AS log_s3_key,
+		       tt.operation         AS operation
 		FROM target_tasks tt
 		JOIN scheduler_tracker s ON s.schedule_id = tt.schedule_id
 		LEFT JOIN latest_exec le ON le.task_id = tt.task_id
 		ORDER BY s.created_at DESC
-		LIMIT $4
+		LIMIT $5
 	`
 
 	rows := []nodeRunRow{}
 	if err := r.db.SelectContext(ctx, &rows, query,
-		serviceName, schemaName, tableName, limit); err != nil {
+		serviceName, schemaName, tableName, operation, limit); err != nil {
 		r.logger.Error("Failed to list node runs",
 			"service", serviceName, "schema", schemaName, "table", tableName,
 			"error", err)
@@ -137,6 +143,7 @@ type nodeRunRow struct {
 	CompletedAt     *time.Time     `db:"completed_at"`
 	ErrorMessage    *string        `db:"error_message"`
 	LogS3Key        *string        `db:"log_s3_key"`
+	Operation       string         `db:"operation"`
 }
 
 func toNodeRun(row nodeRunRow) *projection.NodeRun {
@@ -155,6 +162,7 @@ func toNodeRun(row nodeRunRow) *projection.NodeRun {
 		CompletedAt:     row.CompletedAt,
 		ErrorMessage:    row.ErrorMessage,
 		LogS3Key:        row.LogS3Key,
+		Operation:       row.Operation,
 	}
 }
 

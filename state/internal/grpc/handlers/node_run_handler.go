@@ -38,7 +38,7 @@ func (h *NodeRunHandler) ListNodeRuns(
 			"ListNodeRuns: service_name, schema_name, and table_name are required")
 	}
 
-	rows, err := h.repo.List(ctx, req.ServiceName, req.SchemaName, req.TableName, int(req.Limit))
+	rows, err := h.repo.List(ctx, req.ServiceName, req.SchemaName, req.TableName, req.GetOperation(), int(req.Limit))
 	if err != nil {
 		h.logger.Error("ListNodeRuns repo error",
 			"service", req.ServiceName, "schema", req.SchemaName, "table", req.TableName,
@@ -63,6 +63,7 @@ func (h *NodeRunHandler) ListNodeRuns(
 			CompletedAt:     timePtrToRFC(r.CompletedAt),
 			ErrorMessage:    stringPtrOrEmpty(r.ErrorMessage),
 			LogS3Key:        stringPtrOrEmpty(r.LogS3Key),
+			Operation:       r.Operation,
 		})
 	}
 	return &statev1.ListNodeRunsResponse{Runs: out}, nil

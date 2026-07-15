@@ -53,3 +53,42 @@ func TestListNodes_FiltersByOperation(t *testing.T) {
 		t.Fatalf("run slice = %+v, want 1 succeeded row", runRows)
 	}
 }
+
+// TestListNodeRuns_FiltersByOperation seeds a single test-operation task and
+// asserts List scopes the per-node run-history query by operation: querying
+// "test" returns the row, querying "run" (the default dimension) returns
+// nothing for the same node identity.
+func TestListNodeRuns_FiltersByOperation(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	ctx := context.Background()
+
+	sid, tid := uuid.New(), uuid.New()
+	if _, err := db.Exec(`INSERT INTO scheduler_tracker
+		(schedule_id, schedule_name, status, created_at, initialization_status, operation)
+		VALUES ($1,'op-runs','succeeded',now(),'completed','test')`, sid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO task_tracker
+		(task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+		VALUES ($1,$2,now(),'svc','analytics','opruns',$3,'failed',3,'test')`,
+		tid, sid, "j-"+tid.String()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, sid) })
+
+	testRuns, err := repo.List(ctx, "svc", "analytics", "opruns", "test", 50)
+	if err != nil {
+		t.Fatalf("List test: %v", err)
+	}
+	if len(testRuns) != 1 || testRuns[0].Operation != "test" {
+		t.Fatalf("test runs = %+v, want 1 test row", testRuns)
+	}
+	runRuns, err := repo.List(ctx, "svc", "analytics", "opruns", "run", 50)
+	if err != nil {
+		t.Fatalf("List run: %v", err)
+	}
+	if len(runRuns) != 0 {
+		t.Fatalf("run runs = %+v, want empty", runRuns)
+	}
+}

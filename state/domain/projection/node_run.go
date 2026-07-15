@@ -32,4 +32,5 @@ type NodeRun struct {
 	CompletedAt     *time.Time
 	ErrorMessage    *string
 	LogS3Key        *string
+	Operation       string
 }
