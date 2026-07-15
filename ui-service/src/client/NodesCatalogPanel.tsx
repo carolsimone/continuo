@@ -140,7 +140,7 @@ export default function NodesCatalogPanel() {
               <tbody>
                 {nodes.map(n => {
                   const go = () => navigate(`/node/${encodeURIComponent(fqnOf(n))}`,
-                                            { state: { from: { type: 'nodes' } } });
+                                            { state: { from: { type: 'nodes' }, operation } });
                   return (
                     <tr key={fqnOf(n)} onClick={go} tabIndex={0} role="button"
                         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }}>

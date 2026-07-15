@@ -16,9 +16,10 @@ function jsonResp(body: unknown, status = 200) {
   return Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body } as Response);
 }
 
-function renderPage(from?: NodeDetailFrom) {
+function renderPage(from?: NodeDetailFrom, navOperation?: string) {
+  const state = from || navOperation ? { ...(from ? { from } : {}), ...(navOperation ? { operation: navOperation } : {}) } : null;
   return render(
-    <MemoryRouter initialEntries={[{ pathname: '/node/svc.schema.tbl', state: from ? { from } : null }]}>
+    <MemoryRouter initialEntries={[{ pathname: '/node/svc.schema.tbl', state }]}>
       <Routes>
         <Route path="/" element={<div>NODES TAB</div>} />
         <Route path="/schedule/:name" element={<div>RUN MODE</div>} />
@@ -412,5 +413,89 @@ describe('NodeDetailPage back link', () => {
     const back = await screen.findByRole('button', { name: /back to nodes/i });
     fireEvent.click(back);
     await waitFor(() => expect(screen.getByText('NODES TAB')).toBeInTheDocument());
+  });
+});
+
+describe('NodeDetailPage — operation carried from catalog navigation', () => {
+  it('initializes the operation selector from location.state and fetches operation=test first', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({});
+      return jsonResp({ runs: [] });
+    });
+    renderPage(undefined, 'test');
+    const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
+    expect(select.value).toBe('test');
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
+      expect(calls.some(c => String(c[0]).includes('/runs?operation=test'))).toBe(true);
+    });
+  });
+
+  it('falls back to run when nav state carries a value outside run|test|build', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({});
+      return jsonResp({ runs: [] });
+    });
+    renderPage(undefined, 'bogus');
+    const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
+    expect(select.value).toBe('run');
+  });
+
+  it('carries both the back-link "from" and the operation together', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({});
+      return jsonResp({ runs: [] });
+    });
+    renderPage({ type: 'schedule', name: 'daily', mode: 'run' }, 'build');
+    expect(await screen.findByRole('button', { name: /back to daily/i })).toBeInTheDocument();
+    const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
+    expect(select.value).toBe('build');
+  });
+});
+
+describe('NodeDetailPage — history fetch race guard', () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>(res => { resolve = res; });
+    return { promise, resolve };
+  }
+
+  it('a stale slow run response does not overwrite a newer test response', async () => {
+    const runDeferred = deferred<Response>();
+    const testDeferred = deferred<Response>();
+    const runResp = { runs: [mkRun({ run_id: 'r-run', task_id: 't-run' })].map(r => ({ ...r, image_tag: 'run-img' })) };
+    const testResp = { runs: [mkRun({ run_id: 'r-test', task_id: 't-test' })].map(r => ({ ...r, image_tag: 'test-img' })) };
+
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/runs?operation=run')) return runDeferred.promise;
+      if (url.includes('/runs?operation=test')) return testDeferred.promise;
+      if (url.endsWith('/meta')) return jsonResp({});
+      return jsonResp({ runs: [] });
+    });
+
+    renderPage();
+    await waitFor(() => {
+      expect(mockFetch.mock.calls.some(c => String(c[0]).includes('/runs?operation=run'))).toBe(true);
+    });
+
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
+    await waitFor(() => {
+      expect(mockFetch.mock.calls.some(c => String(c[0]).includes('/runs?operation=test'))).toBe(true);
+    });
+
+    // Newer (test) request resolves first...
+    testDeferred.resolve({ ok: true, json: async () => testResp } as Response);
+    await waitFor(() => expect(screen.getByText('test-img')).toBeInTheDocument());
+
+    // ...then the older, now-stale (run) request resolves. Without the
+    // generation guard this would clobber the correct test-img row.
+    runDeferred.resolve({ ok: true, json: async () => runResp } as Response);
+    await new Promise(r => setTimeout(r, 0));
+    expect(screen.getByText('test-img')).toBeInTheDocument();
+    expect(screen.queryByText('run-img')).toBeNull();
   });
 });
