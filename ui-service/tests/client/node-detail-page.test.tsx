@@ -199,6 +199,35 @@ describe('NodeDetailPage', () => {
     expect(screen.getByRole('button', { name: /run with old snapshot/i })).not.toBeDisabled();
   });
 
+  it('changing the operation select refetches history scoped to that operation', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
+      return jsonResp({ runs: [] });
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
+      const runsCall = calls.find(c => String(c[0]).includes('/runs?operation=test'));
+      expect(runsCall).toBeDefined();
+    });
+  });
+
+  it('shows the build info-strip explaining combined model+test stats when operation is build', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
+      return jsonResp({ runs: [] });
+    });
+    renderPage();
+    expect(document.querySelector('.info-strip--info')).toBeNull();
+    fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'build' } });
+    await waitFor(() => {
+      expect(screen.getByText(/materializes each model and runs its/i)).toBeInTheDocument();
+    });
+  });
+
   it('picking an old snapshot POSTs the selected operation alongside source_run_id', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();

@@ -95,11 +95,11 @@ export default function NodeDetailPage() {
 
   const fetchRuns = useCallback(() => {
     if (!service || !schema || !table) return;
-    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs`)
+    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(operation)}`)
       .then(r => r.json())
       .then((data: NodeRunsResponse) => setRuns(data.runs || []))
       .catch(() => setRuns([]));
-  }, [service, schema, table]);
+  }, [service, schema, table, operation]);
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
@@ -225,6 +225,15 @@ export default function NodeDetailPage() {
       {latestTestBlocked && (
         <div className="info-strip info-strip--info">
           The latest version of this node has no tests. Run with an old snapshot to test a version that did, or choose another operation.
+        </div>
+      )}
+
+      {operation === 'build' && (
+        <div className="info-strip info-strip--info">
+          <span className="info-strip__icon">ℹ</span>
+          Build runs <code>dbt build</code> — it materializes each model and runs its
+          attached tests together in a single execution (one pod), in dependency
+          order. These stats combine model + tests, not either on its own.
         </div>
       )}
 
