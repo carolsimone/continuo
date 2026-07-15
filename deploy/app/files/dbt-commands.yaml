@@ -1,32 +1,36 @@
-# dbt command dialect for executor-created Kubernetes Jobs.
+# dbt command dialect for executor-created Kubernetes Jobs (deployed via Helm
+# ConfigMap). Every configured block must be COMPLETE: `default` is required and
+# defines all seven keys; every `services.<name>` override defines all seven too.
+# No per-key fallback — an incomplete block is a fatal boot error.
 #
-# Resolution per operation: services.<service_name> -> default -> built-in
-# plain dbt. Missing file or missing operation means the built-in command.
-# Placeholders: {{ node }} (required in run/seed/snapshot/seed_build),
-# {{ target_schema }} (seed_build only; receives the candidate schema).
-# seed_build is optional: when omitted, seed-build jobs run the seed command
-# and route the schema via the DBT_TARGET_SCHEMA env var + the
-# generate_schema_name macro baked into the dbt base image.
+# Keys: run / seed / snapshot (by node_type for operation=run), test / build
+# (node-agnostic), seed_build (candidate-schema seed leg; schema via the
+# DBT_TARGET_SCHEMA env var + generate_schema_name macro), compile.
 default:
-  run:      ["dbt", "run", "--select", "{{ node }}"]
-  seed:     ["dbt", "seed", "--select", "{{ node }}"]
-  snapshot: ["dbt", "snapshot", "--select", "{{ node }}"]
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
   compile:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
 
-# Per-team overrides, e.g. a team whose wrapper is `wise-dbt`:
-# services:
-#   wise:
-#     run: ["wise-dbt", "run", "--select", "{{ node }}"]
-
 services:
-  # Team "wise" runs finance through its own dbt CLI (baked into the finance
-  # image at /usr/local/bin/wise-dbt). run/seed/compile route through it; seed's
-  # override also covers the candidate seed_build leg via the resolver fallback.
+  # Team "wise" runs finance through its own dbt CLI, wise-dbt, baked into the
+  # finance image at /usr/local/bin/wise-dbt (continuo-dbt-demo services/finance).
+  # Every key routes through the wrapper; seed_build reuses load-seed (schema via
+  # DBT_TARGET_SCHEMA). Verb map: run-model->run, load-seed->seed,
+  # capture-snapshot->snapshot, test-model->test, build-model->build,
+  # compile-project->compile.
   finance:
-    run:  ["wise-dbt", "build-model", "{{ node }}"]
-    seed: ["wise-dbt", "load-seed",  "{{ node }}"]
+    run:        ["wise-dbt", "run-model", "{{ node }}"]
+    seed:       ["wise-dbt", "load-seed", "{{ node }}"]
+    snapshot:   ["wise-dbt", "capture-snapshot", "{{ node }}"]
+    test:       ["wise-dbt", "test-model", "{{ node }}"]
+    build:      ["wise-dbt", "build-model", "{{ node }}"]
+    seed_build: ["wise-dbt", "load-seed", "{{ node }}"]
     compile:
       command:       ["wise-dbt", "compile-project"]
       manifest_path: "/project/target/manifest.json"
