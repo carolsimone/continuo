@@ -13,6 +13,11 @@ const POLL_INTERVAL_MS = 5000;
 const MAX_POLL_MS = 180000;
 const MAX_POLLS = Math.floor(MAX_POLL_MS / POLL_INTERVAL_MS);
 
+// Release statuses that will never change again. Per-node validation results land
+// incrementally while the release is still progressing (e.g. 'validating'), so the
+// detail page polls until the release reaches one of these, then stops.
+const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'rejected', 'superseded']);
+
 function LogView({ uri }: { uri: string }) {
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState<string | null>(null);
@@ -53,11 +58,28 @@ export default function ReleaseDetailPage() {
   // (skipped/failed/escalated) or none carry no entry and render nothing.
   const [fixState, setFixState] = useState<Map<string, 'proposed' | 'generating'>>(new Map());
 
+  // Poll the release detail while it is still progressing, so per-node validation
+  // results (projected incrementally by the backend) render live without a manual
+  // refresh. Self-schedules the next fetch only while non-terminal, rather than a
+  // fixed interval, so it stops as soon as a terminal status is observed.
   useEffect(() => {
-    fetch(`/api/releases/${id}`)
-      .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then(setRel)
-      .catch(e => setError(e.message));
+    if (!id) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const tick = () => {
+      fetch(`/api/releases/${id}`)
+        .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((data: ReleaseDetail) => {
+          if (cancelled) return;
+          setRel(data);
+          if (!TERMINAL_RELEASE_STATUSES.has(data.status)) timer = setTimeout(tick, POLL_INTERVAL_MS);
+        })
+        .catch(e => { if (!cancelled) setError(e.message); });
+    };
+    tick();
+
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [id]);
 
   // Failed nodes are the only ones eligible for a remediation proposal. A stable
