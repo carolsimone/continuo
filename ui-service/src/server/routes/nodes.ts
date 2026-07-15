@@ -3,7 +3,7 @@ import { GrpcClient, userMetadata } from '../grpc-client';
 import { GrpcGraphClient } from '../grpc-graph-client';
 import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
-import { parseOperation } from './operation';
+import { parseOperation, parseNodeOperation } from './operation';
 
 export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
@@ -14,9 +14,12 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
       const v = Number(n ?? -1);
       return v < 0 ? null : v;
     };
+    const operation = parseNodeOperation(req.query.operation);
+    if (operation === null) return res.status(400).json({ error: 'invalid operation' });
     const q = {
       search: typeof req.query.search === 'string' ? req.query.search : '',
       service_name: typeof req.query.service === 'string' ? req.query.service : '',
+      operation,
       limit: parseLimit(req.query.limit, { def: 50, max: 500 }),
       offset: parseOffset(req.query.offset),
     };
@@ -35,6 +38,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           flaky_rate_pct:   Number(r.flaky_rate_pct ?? 0),
           last_status:      r.last_status || null,
           last_run_at:      r.last_run_at || null,
+          operation:        r.operation ?? 'run',
         })),
       });
     });
@@ -51,12 +55,15 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
 
   // GET /api/nodes/:service/:schema/:table/runs — last 50 raw runs on this node
   router.get('/:service/:schema/:table/runs', (req, res) => {
+    const operation = parseNodeOperation(req.query.operation);
+    if (operation === null) return res.status(400).json({ error: 'invalid operation' });
     stateClient.listNodeRuns(
       {
         service_name: req.params.service,
         schema_name:  req.params.schema,
         table_name:   req.params.table,
         limit:        50,
+        operation,
       },
       (err: any, response: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
@@ -75,6 +82,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           completed_at:     r.completed_at || null,
           error_message:    r.error_message || null,
           log_s3_key:       r.log_s3_key   || null,
+          operation:        r.operation ?? 'run',
         }));
         res.json({ runs });
       },

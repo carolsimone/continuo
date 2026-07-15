@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseOperation } from '../../src/server/routes/operation';
+import { parseOperation, parseNodeOperation } from '../../src/server/routes/operation';
 
 describe('parseOperation', () => {
   it('maps missing / run to empty', () => {
@@ -14,5 +14,21 @@ describe('parseOperation', () => {
   it('rejects anything else with null', () => {
     expect(parseOperation('drop')).toBeNull();
     expect(parseOperation(7)).toBeNull();
+  });
+});
+
+describe('parseNodeOperation', () => {
+  it('maps missing / empty / run to "run"', () => {
+    expect(parseNodeOperation(undefined)).toBe('run');
+    expect(parseNodeOperation('')).toBe('run');
+    expect(parseNodeOperation('run')).toBe('run');
+  });
+  it('passes test and build through', () => {
+    expect(parseNodeOperation('test')).toBe('test');
+    expect(parseNodeOperation('build')).toBe('build');
+  });
+  it('rejects anything else with null', () => {
+    expect(parseNodeOperation('drop')).toBeNull();
+    expect(parseNodeOperation(7)).toBeNull();
   });
 });
