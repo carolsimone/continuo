@@ -260,7 +260,7 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 		wantEventType string
 		wantAggType   string
 		wantRetries   int
-		wantRows      int // expected outbox rows (0 for RunDispatchFailed)
+		wantRows      int // expected outbox rows (0 for RunDispatchTerminal)
 	}{
 		{
 			name: "RunStarted",
@@ -331,8 +331,8 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			wantRows:      1,
 		},
 		{
-			name:     "RunDispatchFailed produces no row",
-			event:    run.RunDispatchFailed{ID: scheduleID, Name: "sched", Reason: "target_not_found"},
+			name:     "RunDispatchTerminal produces no row",
+			event:    run.RunDispatchTerminal{ID: scheduleID, Name: "sched", Reason: "target_not_found"},
 			wantRows: 0,
 		},
 	}
@@ -360,7 +360,7 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 				// Verify no row was inserted.
 				var count int
 				_ = db.GetContext(ctx, &count, `SELECT COUNT(*) FROM state_outbox WHERE aggregate_id = $1`, aggID)
-				assert.Equal(t, 0, count, "RunDispatchFailed should produce no outbox row")
+				assert.Equal(t, 0, count, "RunDispatchTerminal should produce no outbox row")
 				return
 			}
 
@@ -543,7 +543,7 @@ func patchEventID(evt run.DomainEvent, newID uuid.UUID) run.DomainEvent {
 	case run.SingleNodeRunRequested:
 		e.ID = newID
 		return e
-	case run.RunDispatchFailed:
+	case run.RunDispatchTerminal:
 		e.ID = newID
 		return e
 	default:

@@ -18,10 +18,10 @@ sequenceDiagram
 
   R->>OR: consume scheduler.started v1
   Note over OR: HandleSchedulerStartedHandler.Handle (1 tx)<br/>Snapshot(LatestFullDAG) in Neo4j — Run + EXECUTES with pre-assigned task UUIDs<br/>frontier (ReadyToDispatch: seeds-first-else-roots) computed by the selector — no second Neo4j read
-  alt Snapshot returns ErrEmptyProjection (zero :Table nodes for this schedule)
-    OR->>R: publish run.entries.dispatch_failed:v1 (reason=empty_projection)
+  alt Snapshot returns ErrEmptyProjection (operation=run, zero :Table nodes) or ErrNoTests (operation=test, every node gated)
+    OR->>R: publish run.entries.dispatch_failed:v1 (reason=empty_projection or reason=no_tests)
     R->>ST: consume run.entries.dispatch_failed:v1
-    Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, MarkDispatchTerminal → status='failed'<br/>state_outbox INSERT for run.finalized:v1
+    Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, MarkDispatchTerminal → status='failed' (reason=empty_projection) or status='skipped' (reason=no_tests)<br/>state_outbox INSERT for run.finalized:v1
   else snapshot succeeds
     OR->>R: publish run.entries.dispatched v1
     OR->>R: publish query.model v1 (per seed/root)

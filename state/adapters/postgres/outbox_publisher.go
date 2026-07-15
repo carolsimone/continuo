@@ -18,7 +18,7 @@ import (
 
 // OutboxPublisher translates run.DomainEvent values to pkg/outbox.Entry rows
 // and writes them inside the bound transaction.
-// RunDispatchFailed events are informational and produce no outbox row.
+// RunDispatchTerminal events are informational and produce no outbox row.
 type OutboxPublisher struct {
 	tx     *sqlx.Tx
 	logger *slog.Logger
@@ -32,7 +32,7 @@ func NewOutboxPublisher(tx *sqlx.Tx, logger *slog.Logger) *OutboxPublisher {
 
 // Append writes one outbox entry per event into the bound transaction.
 // The per-event mapping (stream_name, event_type, aggregate_type, retry budget,
-// payload shape) is defined in translateRunEvent. RunDispatchFailed is skipped
+// payload shape) is defined in translateRunEvent. RunDispatchTerminal is omitted
 // (no outbox row). An unknown event type returns an error.
 func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, msgProcID uuid.UUID) error {
 	if p.tx == nil {
@@ -56,7 +56,7 @@ func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, 
 
 // translateRunEvent maps one run.DomainEvent to a pkg/outbox.Entry.
 // Returns (entry, false, nil) on success, (nil, true, nil) when the event
-// produces no row (RunDispatchFailed), and (nil, false, err) on marshal failure
+// produces no row (RunDispatchTerminal), and (nil, false, err) on marshal failure
 // or an unknown event type.
 func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Entry, bool, error) {
 	var msgProcPtr *uuid.UUID
@@ -147,7 +147,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		}
 		return buildEntry(e.ID, "scheduler", "single_node_run", streams.TriggerSingleNodeRunV1, payload, 3, msgProcPtr), false, nil
 
-	case run.RunDispatchFailed:
+	case run.RunDispatchTerminal:
 		// Informational event — no downstream stream yet; omit from outbox.
 		return nil, true, nil
 

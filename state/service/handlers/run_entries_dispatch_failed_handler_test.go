@@ -127,7 +127,7 @@ func runFailedTestLogger() *slog.Logger {
 // TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed
 // verifies the happy path: a PENDING run is loaded, MarkDispatchTerminal
 // transitions it to FAILED (non-benign reason), SaveRun persists the change,
-// and Outbox.Append receives RunFinalized + RunDispatchFailed domain events
+// and Outbox.Append receives RunFinalized + RunDispatchTerminal domain events
 // with the correct message processing ID.
 func TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed(t *testing.T) {
 	scheduleID := uuid.New()
@@ -151,16 +151,16 @@ func TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed(t *te
 	assert.True(t, runRepo.saveCalled, "SaveRun must be called")
 	assert.Equal(t, msgProcID, outboxPub.msgProcID, "msgProcID must be forwarded to Append")
 
-	// MarkDispatchTerminal emits RunFinalized (status=FAILED) + RunDispatchFailed.
+	// MarkDispatchTerminal emits RunFinalized (status=FAILED) + RunDispatchTerminal.
 	require.Len(t, outboxPub.appended, 2)
 
 	var finalized run.RunFinalized
-	var dispatchFailed run.RunDispatchFailed
+	var dispatchFailed run.RunDispatchTerminal
 	for _, e := range outboxPub.appended {
 		switch ev := e.(type) {
 		case run.RunFinalized:
 			finalized = ev
-		case run.RunDispatchFailed:
+		case run.RunDispatchTerminal:
 			dispatchFailed = ev
 		}
 	}

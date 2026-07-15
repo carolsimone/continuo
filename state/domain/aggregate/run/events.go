@@ -99,15 +99,16 @@ type SingleNodeRunRequested struct {
 func (SingleNodeRunRequested) runDomainEvent()         {}
 func (e SingleNodeRunRequested) ScheduleID() uuid.UUID { return e.ID }
 
-// RunDispatchFailed is recorded by Run.MarkDispatchTerminal for observability.
-// The publisher emits RunFinalized (status=failed) onto run.finalized:v1; this
-// auxiliary event is informational and currently has no downstream stream.
-// Kept so a future "failed dispatch reason" stream is mechanical to add.
-type RunDispatchFailed struct {
+// RunDispatchTerminal is recorded by Run.MarkDispatchTerminal for observability.
+// The publisher emits RunFinalized (status=skipped for a benign no_tests
+// dispatch, otherwise failed) onto run.finalized:v1; this auxiliary event is
+// informational and currently has no downstream stream. Kept so a future
+// "dispatch outcome reason" stream is mechanical to add.
+type RunDispatchTerminal struct {
 	ID     uuid.UUID
 	Name   string
 	Reason string
 }
 
-func (RunDispatchFailed) runDomainEvent()         {}
-func (e RunDispatchFailed) ScheduleID() uuid.UUID { return e.ID }
+func (RunDispatchTerminal) runDomainEvent()         {}
+func (e RunDispatchTerminal) ScheduleID() uuid.UUID { return e.ID }

@@ -10,7 +10,7 @@ import "context"
 // of the run's snapshot.
 type RunStatusReader interface {
 	// GetTerminalStatus returns (status, true, nil) when the run is terminal in
-	// state (one of "succeeded" | "failed" | "cancelled"), and ("", false, nil)
-	// when the run is still in-flight or unknown to state.
+	// state (one of "succeeded" | "failed" | "cancelled" | "skipped"), and
+	// ("", false, nil) when the run is still in-flight or unknown to state.
 	GetTerminalStatus(ctx context.Context, runID string) (status string, terminal bool, err error)
 }

@@ -12,7 +12,7 @@ import (
 
 // RunEntriesDispatchFailedHandler processes run.entries.dispatch_failed:v1
 // events. Loads the Run aggregate, invokes MarkDispatchTerminal (which records
-// RunFinalized + RunDispatchFailed events when the run is not already
+// RunFinalized + RunDispatchTerminal events when the run is not already
 // terminal — finalizing as `skipped` for a benign no_tests reason, or
 // `failed` otherwise), persists via SaveRun, and publishes via
 // OutboxPublisher.
