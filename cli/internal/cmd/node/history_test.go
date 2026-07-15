@@ -19,12 +19,13 @@ import (
 )
 
 type fakeNodeState struct {
-	runsResp  *statev1.ListNodeRunsResponse
-	runsErr   error
-	gotSvc    string
-	gotSchema string
-	gotTable  string
-	gotLimit  int32
+	runsResp     *statev1.ListNodeRunsResponse
+	runsErr      error
+	gotSvc       string
+	gotSchema    string
+	gotTable     string
+	gotOperation string
+	gotLimit     int32
 
 	trigResp   *statev1.TriggerSingleNodeRunResponse
 	trigErr    error
@@ -46,8 +47,8 @@ type fakeNodeState struct {
 	gotBuildTable  string
 }
 
-func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table string, limit int32) (*statev1.ListNodeRunsResponse, error) {
-	f.gotSvc, f.gotSchema, f.gotTable, f.gotLimit = service, schema, table, limit
+func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table, operation string, limit int32) (*statev1.ListNodeRunsResponse, error) {
+	f.gotSvc, f.gotSchema, f.gotTable, f.gotOperation, f.gotLimit = service, schema, table, operation, limit
 	return f.runsResp, f.runsErr
 }
 
@@ -123,6 +124,7 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	assert.Equal(t, "finance", fake.gotSvc)
 	assert.Equal(t, "analytics", fake.gotSchema)
 	assert.Equal(t, "orders", fake.gotTable)
+	assert.Equal(t, "run", fake.gotOperation)
 
 	var payload struct {
 		Runs []map[string]any `json:"runs"`
@@ -135,6 +137,33 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	assert.Equal(t, "succeeded", r["terminal_status"])
 	assert.Equal(t, "img:v9", r["image_tag"])
 	assert.Equal(t, "m42", r["manifest_version"])
+}
+
+func TestHistory_OperationFlagIsForwarded(t *testing.T) {
+	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
+		RunId: "run_1", TaskStatus: "succeeded", Operation: "test",
+	}}}}
+
+	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders", "--operation", "test"}, false)
+
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, "test", fake.gotOperation)
+
+	var payload struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	require.Len(t, payload.Runs, 1)
+	assert.Equal(t, "test", payload.Runs[0]["operation"])
+}
+
+func TestHistory_InvalidOperationFlagExits2(t *testing.T) {
+	fake := &fakeNodeState{}
+	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders", "--operation", "bogus"}, false)
+	assert.Equal(t, 2, exit)
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
 }
 
 func TestHistory_EmptyResultIsEmptyArrayNotNull(t *testing.T) {

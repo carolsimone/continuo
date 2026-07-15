@@ -22,4 +22,7 @@ type NodeSummary struct {
 	FlakyRatePct   int
 	LastStatus     string
 	LastRunAt      time.Time
+	// Operation is the run/test/build dimension this catalog row was scoped
+	// to when queried: "run" | "test" | "build".
+	Operation string
 }

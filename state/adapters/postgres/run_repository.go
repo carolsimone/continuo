@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
@@ -202,6 +203,7 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 		run.Kind(tr.Kind),
 		tr.SourceRunID,
 		tr.InitiatedBy,
+		operationFromColumn(tr.Operation),
 		tr.CreatedAt,
 		tr.StartedAt, tr.CompletedAt, tr.LastHeartbeatAt, tr.CancelledAt,
 		tr.CancelledBy, tr.CancellationReason,
@@ -209,6 +211,15 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 		tr.TerminalTaskCount,
 		meta,
 	), nil
+}
+
+// operationFromColumn maps the non-empty stored operation ('run'|'test'|'build')
+// back to the domain model.Operation (empty string for run).
+func operationFromColumn(s string) model.Operation {
+	if s == "run" || s == "" {
+		return model.OperationRun
+	}
+	return model.Operation(s)
 }
 
 // nullInt32ToPtr maps the storage-layer sql.NullInt32 to the domain's *int32:
@@ -256,6 +267,7 @@ func dehydrateRun(r *run.Run) (*SchedulerTracker, error) {
 		Kind:                 string(r.Kind()),
 		SourceRunID:          r.SourceRunID(),
 		InitiatedBy:          r.InitiatedBy(),
+		Operation:            operationWithDefault(string(r.Operation())),
 	}, nil
 }
 

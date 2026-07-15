@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
@@ -73,7 +73,12 @@ export default function NodeDetailPage() {
   const { fqn } = useParams<{ fqn: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: NodeDetailFrom } | null)?.from;
+  const navState = location.state as { from?: NodeDetailFrom; operation?: string } | null;
+  const from = navState?.from;
+  const navOperation = navState?.operation;
+  const initialOperation = navOperation === 'test' || navOperation === 'build' || navOperation === 'run'
+    ? navOperation
+    : 'run';
 
   let backLabel = '← Back to Nodes';
   let backPath = '/?tab=nodes';
@@ -85,8 +90,9 @@ export default function NodeDetailPage() {
   const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [runError, setRunError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [operation, setOperation] = useState<'run' | 'test' | 'build'>('run');
+  const [operation, setOperation] = useState<'run' | 'test' | 'build'>(initialOperation);
   const [testCount, setTestCount] = useState<{ count: number; known: boolean } | null>(null);
+  const genRef = useRef(0);
 
   const parts = (fqn ?? '').split('.');
   const service = parts[0] ?? '';
@@ -95,11 +101,18 @@ export default function NodeDetailPage() {
 
   const fetchRuns = useCallback(() => {
     if (!service || !schema || !table) return;
-    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs`)
+    const myGen = ++genRef.current;
+    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(operation)}`)
       .then(r => r.json())
-      .then((data: NodeRunsResponse) => setRuns(data.runs || []))
-      .catch(() => setRuns([]));
-  }, [service, schema, table]);
+      .then((data: NodeRunsResponse) => {
+        if (myGen !== genRef.current) return;
+        setRuns(data.runs || []);
+      })
+      .catch(() => {
+        if (myGen !== genRef.current) return;
+        setRuns([]);
+      });
+  }, [service, schema, table, operation]);
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
@@ -225,6 +238,15 @@ export default function NodeDetailPage() {
       {latestTestBlocked && (
         <div className="info-strip info-strip--info">
           The latest version of this node has no tests. Run with an old snapshot to test a version that did, or choose another operation.
+        </div>
+      )}
+
+      {operation === 'build' && (
+        <div className="info-strip info-strip--info">
+          <span className="info-strip__icon">ℹ</span>
+          Build runs <code>dbt build</code> — it materializes each model and runs its
+          attached tests together in a single execution (one pod), in dependency
+          order. These stats combine model + tests, not either on its own.
         </div>
       )}
 

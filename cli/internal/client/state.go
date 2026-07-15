@@ -19,7 +19,7 @@ type StateClient interface {
 	ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error)
 	ListTasks(ctx context.Context, scheduleID string, status statev1.TaskStatus, pageSize, pageOffset int32) (*statev1.ListTasksResponse, error)
 	CancelSchedule(ctx context.Context, scheduleName, reason, by string) (*statev1.CancelScheduleResponse, error)
-	ListNodeRuns(ctx context.Context, service, schema, table string, limit int32) (*statev1.ListNodeRunsResponse, error)
+	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*statev1.ListNodeRunsResponse, error)
 	TriggerNodeRun(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeTest(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeBuild(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
@@ -81,11 +81,12 @@ func (c *stateGRPCClient) CancelSchedule(ctx context.Context, scheduleName, reas
 // so the literal is duplicated here deliberately.
 const userIDMetadataKey = "x-continuo-user-id"
 
-func (c *stateGRPCClient) ListNodeRuns(ctx context.Context, service, schema, table string, limit int32) (*statev1.ListNodeRunsResponse, error) {
+func (c *stateGRPCClient) ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*statev1.ListNodeRunsResponse, error) {
 	return c.api.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{
 		ServiceName: service,
 		SchemaName:  schema,
 		TableName:   table,
+		Operation:   operation,
 		Limit:       limit,
 	})
 }

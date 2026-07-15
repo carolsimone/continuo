@@ -64,10 +64,10 @@ func TestNodeRunRepository_List(t *testing.T) {
 
 	// execution for task1
 	exec1 := &postgres.TaskExecution{
-		ID:        uuid.New(),
-		TaskID:    task1ID,
-		CreatedAt: time.Now().Add(-2 * time.Minute),
-		StartedAt: ptrTime(time.Now().Add(-90 * time.Second)),
+		ID:          uuid.New(),
+		TaskID:      task1ID,
+		CreatedAt:   time.Now().Add(-2 * time.Minute),
+		StartedAt:   ptrTime(time.Now().Add(-90 * time.Second)),
 		CompletedAt: ptrTime(time.Now().Add(-60 * time.Second)),
 	}
 	require.NoError(t, execRepo.Create(ctx, exec1))
@@ -139,7 +139,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	defer db.ExecContext(ctx, "DELETE FROM task_execution WHERE id = $1", exec2.ID)
 
 	// --- query ---
-	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, 50)
+	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, "run", 50)
 	require.NoError(t, err)
 	require.Len(t, rows, 2, "expected exactly 2 rows for (svc, sch, tbl)")
 
@@ -204,7 +204,7 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 
 	// No task_execution row inserted.
 
-	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, 50)
+	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, "run", 50)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Nil(t, rows[0].StartedAt)
@@ -219,7 +219,7 @@ func TestNodeRunRepository_List_NoMatch(t *testing.T) {
 
 	nodeRunRepo := postgres.NewNodeRunRepository(db, discardLogger())
 
-	rows, err := nodeRunRepo.List(ctx, "nonexistent-svc", "nonexistent-sch", "nonexistent-tbl", 50)
+	rows, err := nodeRunRepo.List(ctx, "nonexistent-svc", "nonexistent-sch", "nonexistent-tbl", "run", 50)
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 }
@@ -247,7 +247,7 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
 			ScheduleID: sid, ScheduleName: sch, Status: schedStatus, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute),
+			CreatedAt:            time.Now().Add(-time.Duration(ageMin) * time.Minute),
 			InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
@@ -272,7 +272,7 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	// node B: 1 run, succeeded, duration 4s — most recent overall
 	seed(tblB, run.SchedulerStatusSucceeded, run.TaskStatusSucceeded, 0, 2, 4)
 
-	nodes, total, err := repo.ListNodes(ctx, "", svc, 50, 0)
+	nodes, total, err := repo.ListNodes(ctx, "", svc, "", 50, 0)
 	require.NoError(t, err)
 	require.Equal(t, 2, total)
 	require.Len(t, nodes, 2)
@@ -283,17 +283,17 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	a := nodes[1]
 	assert.Equal(t, 2, a.RunCount)
 	assert.Equal(t, 50, a.SuccessRatePct)
-	assert.Equal(t, 20, a.AvgDurationSec)  // (10+30)/2
-	assert.Equal(t, 29, a.P95DurationSec)  // PERCENTILE_CONT(0.95) of {10,30} interpolates: 10 + 0.95*(30-10) = 29
-	assert.Equal(t, 50, a.FlakyRatePct)    // 1 of 2 runs had retry>0
+	assert.Equal(t, 20, a.AvgDurationSec) // (10+30)/2
+	assert.Equal(t, 29, a.P95DurationSec) // PERCENTILE_CONT(0.95) of {10,30} interpolates: 10 + 0.95*(30-10) = 29
+	assert.Equal(t, 50, a.FlakyRatePct)   // 1 of 2 runs had retry>0
 	assert.Equal(t, "failed", a.LastStatus)
 
-	none, total2, err := repo.ListNodes(ctx, "", "no-such-svc", 50, 0)
+	none, total2, err := repo.ListNodes(ctx, "", "no-such-svc", "", 50, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 0, total2)
 	assert.Empty(t, none)
 
-	hit, total3, err := repo.ListNodes(ctx, "fct_orders", svc, 50, 0) // exact table-name match
+	hit, total3, err := repo.ListNodes(ctx, "fct_orders", svc, "", 50, 0) // exact table-name match
 	require.NoError(t, err)
 	assert.Equal(t, 1, total3)
 	require.Len(t, hit, 1)
@@ -322,7 +322,7 @@ func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 		CreatedAt: time.Now().Add(-time.Minute),
 	}))
 
-	nodes, _, err := repo.ListNodes(ctx, "", svc, 50, 0)
+	nodes, _, err := repo.ListNodes(ctx, "", svc, "", 50, 0)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	assert.Equal(t, 100, nodes[0].SuccessRatePct, "node task succeeded => 100% despite failed schedule")
@@ -354,12 +354,12 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 		}))
 	}
 
-	page1, total, err := repo.ListNodes(ctx, "", svc, 2, 0)
+	page1, total, err := repo.ListNodes(ctx, "", svc, "", 2, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 3, total)
 	assert.Len(t, page1, 2)
 
-	page2, _, err := repo.ListNodes(ctx, "", svc, 2, 2)
+	page2, _, err := repo.ListNodes(ctx, "", svc, "", 2, 2)
 	require.NoError(t, err)
 	assert.Len(t, page2, 1)
 
@@ -397,7 +397,7 @@ func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 	}
 	seen := map[string]int{}
 	for off := 0; off < 5; off += 2 {
-		page, total, err := repo.ListNodes(ctx, "", svc, 2, off)
+		page, total, err := repo.ListNodes(ctx, "", svc, "", 2, off)
 		require.NoError(t, err)
 		assert.Equal(t, 5, total)
 		for _, n := range page {
@@ -434,7 +434,7 @@ func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 	}
 	mk(run.TaskStatusSucceeded, 10)
 	mk(run.TaskStatusSkipped, 5)
-	nodes, _, err := repo.ListNodes(ctx, "", svc, 50, 0)
+	nodes, _, err := repo.ListNodes(ctx, "", svc, "", 50, 0)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	assert.Equal(t, 50, nodes[0].SuccessRatePct, "succeeded+skipped => 1/2 = 50%")
@@ -468,14 +468,14 @@ func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 	mk("fctxorders")    // substring sibling — must NOT match
 	mk("fct_orders_v2") // suffixed variant — must NOT match
 
-	hit, total, err := repo.ListNodes(ctx, "fct_orders", svc, 50, 0)
+	hit, total, err := repo.ListNodes(ctx, "fct_orders", svc, "", 50, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, total, "exact match -> only fct_orders, not fctxorders or fct_orders_v2")
 	require.Len(t, hit, 1)
 	assert.Equal(t, "fct_orders", hit[0].TableName)
 
 	// match is case-insensitive
-	hitCI, totalCI, err := repo.ListNodes(ctx, "FCT_ORDERS", svc, 50, 0)
+	hitCI, totalCI, err := repo.ListNodes(ctx, "FCT_ORDERS", svc, "", 50, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, totalCI)
 	require.Len(t, hitCI, 1)
@@ -546,7 +546,7 @@ func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {
 			MaxRetries: 3, ManifestVersion: "m", ImageTag: "v", CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
 		}))
 	}
-	page, total, err := repo.ListNodes(ctx, "", svc, 2, 5) // offset past the 3 rows
+	page, total, err := repo.ListNodes(ctx, "", svc, "", 2, 5) // offset past the 3 rows
 	require.NoError(t, err)
 	assert.Empty(t, page)
 	assert.Equal(t, 3, total, "total_count must survive an empty page")

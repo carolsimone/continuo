@@ -40,6 +40,7 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 | `kind` | `character varying(20)` NOT NULL DEFAULT `'cron'` | Run discriminator. CHECK constraint allows: `cron`, `trigger`, `rerun`, `rebase`, `single_node_run`. Set when the row is inserted and immutable thereafter — `rerun` and `rebase` rows are minted as fresh trackers, never by mutating an existing one. Migration: V15. |
 | `source_run_id` | `uuid` NULL | Lineage pointer to a parent run. NULL for `cron`/`trigger`. Populated for `rerun`, `rebase`, and stale-mode `single_node_run`. Not a foreign key — orphans are fine. Migration: V15. |
 | `initiated_by` | `text` NOT NULL DEFAULT `'system'` | The user who initiated the run, or the `system` sentinel for cron / platform-initiated runs. Stamped at row creation from the gRPC `x-continuo-user-id` metadata header (see "User provenance" below); immutable thereafter. `text` (not a fixed width) because an OIDC `issuer-host\|sub` identifier can exceed 255 characters. Migration: V26. |
+| `operation` | `varchar(10)` NOT NULL DEFAULT `'run'`, CHECK `IN ('run','test','build')` | The dbt verb this run applies to its nodes — `run` (model), `test`, or `build`. Stamped at activation from the triggering request/event (`ActivateSchedule`/`TriggerSchedule`/`TriggerSingleNodeRun`, etc.) and immutable thereafter. `ListNodes`/`ListNodeRuns` filter the node catalog on this dimension (denormalized onto `task_tracker.operation` at dispatch — see below). Migration: V28. |
 
 ### New columns on `task_tracker`
 
@@ -47,6 +48,7 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 |---|---|---|
 | `image_tag` | `character varying(255)` NOT NULL DEFAULT `''` | Per-task audit pair to `manifest_version`. Pinned at task creation by `task_repository.Create` from the upstream event payload; never mutated. Migration: V16. |
 | `inherited_from_task_id` | `uuid` NULL | Lineage pointer for rebase-projected rows. `NULL` = a real execution (cron/trigger/rerun/rebased/single-node). Non-NULL = projected inherit from a rebase parent run; the row was never executed in this run, only carried forward from a SUCCEEDED ancestor. **Resolve-to-root semantics:** the value always points to the ROOT executed `task_id` — chain depth is bounded at 1 forever, including rebase-of-rebase (the projector resolves transitively at write time). Not a foreign key — the referenced row may eventually be sweep-deleted; orphan inherits are tolerated by readers. Migration: V17. |
+| `operation` | `varchar(10)` NOT NULL DEFAULT `'run'`, CHECK `IN ('run','test','build')` | The dbt verb this task ran — `run` (model), `test`, or `build`. Denormalized from the owning run's `scheduler_tracker.operation` when the task row is created (`RunEntriesDispatchedHandler`, at dispatch); immutable thereafter. Every `ListNodes`/`ListNodeRuns` query filters on this column, so a node's model-run stats and test-run stats never blend. Migration: V28. |
 
 ### `scheduler_tracker` indexes for schedule_name access
 
@@ -131,7 +133,9 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 | `GetTask` | Fetch by UUID |
 | `GetTaskByScheduleAndNode` | Fetch by `(schedule_id, service_name, schema_name, table_name)` |
 | `ListTasks` | Paginated list with filters |
-| `ListNodeRuns` | Read-only query returning the most recent task instances that executed on a given node, ordered by `scheduler_tracker.created_at DESC`. See `ListNodeRuns` detail below. |
+| `ListNodeRuns` | Read-only query returning the most recent task instances that executed on a given node, ordered by `scheduler_tracker.created_at DESC`, scoped to one `operation`. See `ListNodeRuns` detail below. |
+| `ListNodes` | Read-only query returning the node catalog: one summary row per node that has run under the requested `operation`, with stats aggregated over each node's most recent 50 runs. See `ListNodes` detail below. |
+| `ListNodeNames` | Distinct table names of nodes that have run, optionally filtered by service. Powers the Nodes-tab search autocomplete. |
 | `TriggerRerun` | Mint a new `scheduler_tracker` row (`kind='rerun'`, `source_run_id=src`) on the source's schedule + write `trigger.rerun:v1` outbox entry. Same eligibility as `TriggerRebase`: source FAILED/CANCELLED, has ≥1 non-SUCCEEDED task, no active run on `schedule_name`. Backed by the shared `synthesise_derived_run.go` helper. Returns `run_id` + `schedule_name`. |
 | `TriggerSingleNodeRun` | Create a one-task run for a single node; write `trigger.single_node_run:v1` outbox entry. Accepts an optional `operation` (`""` \| `"run"` \| `"test"` \| `"build"`, default `run`), forwarded onto `trigger.single_node_run:v1` for the orchestrator to resolve the dbt verb and, for `test`, gate zero-test nodes. `operation=build` has no equivalent gate — a node with zero tests is still built (`dbt build --select <node>`). |
 | `TriggerRebase` | Mint a new `scheduler_tracker` row (`kind='rebase'`, `source_run_id=src`) on the source's schedule + write `trigger.rebase:v1` outbox entry. Source row is left untouched. Returns `run_id` + `schedule_name`. |
@@ -166,20 +170,32 @@ On success: a new `scheduler_tracker` row is inserted with `kind='rebase'`, `sou
 
 ##### `ListNodeRuns`
 
-Request fields: `service_name`, `schema_name`, `table_name`, `limit` (capped server-side at 50; passing 0 or a value greater than 50 yields 50).
+Request fields: `service_name`, `schema_name`, `table_name`, `limit` (capped server-side at 50; passing 0 or a value greater than 50 yields 50), `operation` (`""` \| `"run"` \| `"test"` \| `"build"`, default `run`).
 
-Response: an ordered list of node-run rows, most recent first (`scheduler_tracker.created_at DESC`). Each row joins `task_tracker × scheduler_tracker × task_execution` (latest execution per task via `DISTINCT ON`) and carries:
+Response: an ordered list of node-run rows, most recent first (`scheduler_tracker.created_at DESC`), scoped to the requested `operation` — a node's `run`-operation history and `test`-operation history are always disjoint slices, never blended. Each row joins `task_tracker × scheduler_tracker × task_execution` (latest execution per task via `DISTINCT ON`), filtered by `task_tracker.operation = <operation>`, and carries:
 
 - run-level: `run_id` (= `scheduler_tracker.schedule_id`), `schedule_name`, `kind` (`cron` | `trigger` | `rerun` | `rebase` | `single_node_run`), `terminal_status` (empty string while the run is in flight)
-- task-level: `task_id`, `task_status`, `retry_count`, `image_tag`, `manifest_version`
+- task-level: `task_id`, `task_status`, `retry_count`, `image_tag`, `manifest_version`, `operation` (`run` | `test` | `build`)
 - exec-level: `started_at`, `completed_at`, `error_message`, `log_s3_key` — empty/null when no execution record has been written yet (e.g. a task still in `PENDING`)
 
 All timestamps are RFC3339 strings; empty string indicates the field is not yet populated.
 
-Implementation: `postgres.NodeRunRepository.List`. A single SQL query uses a `target_tasks → latest_exec` CTE chain: `target_tasks` filters `task_tracker` to the node coordinates; `latest_exec` applies `DISTINCT ON (task_id)` scoped to the matched task set only (not the full `task_execution` table). The two CTEs join with `scheduler_tracker` to produce the response rows in one round-trip.
+Implementation: `postgres.NodeRunRepository.List`. A single SQL query uses a `target_tasks → latest_exec` CTE chain: `target_tasks` filters `task_tracker` to the node coordinates and the requested `operation`; `latest_exec` applies `DISTINCT ON (task_id)` scoped to the matched task set only (not the full `task_execution` table). The two CTEs join with `scheduler_tracker` to produce the response rows in one round-trip.
 
 Error contract:
 - `INVALID_ARGUMENT` — any of `service_name`, `schema_name`, `table_name` missing
+
+##### `ListNodes`
+
+Request fields: `search` (case-insensitive **exact** match on `table_name`; `""` = no filter — not a substring match despite matching against a single coordinate), `service_name` (exact match; `""` = all services), `limit` (page size, default 50, clamped to `[1, 200]`), `offset` (page offset, default 0, negative treated as 0), `operation` (`""` \| `"run"` \| `"test"` \| `"build"`, default `run`).
+
+Response: `nodes` — one `NodeSummary` per node that has at least one task under the requested `operation`, aggregated over that node's most recent 50 matching runs, ordered by `last_run_at DESC` with `(service_name, schema_name, table_name)` tiebreakers; `total_count` — the full match count before paging. A node with zero runs under the requested `operation` is **absent from the result entirely** (the query filters `task_tracker.operation` inside the aggregation, not a left join against topology) — it never appears with null/zero stats. This is how the Nodes catalog keeps a node's model-run health and test-run health from blending: the same node can appear under `operation=run` with its model stats and simultaneously be absent under `operation=test` if it has never had a test-operation run.
+
+Each `NodeSummary` carries `service_name`, `schema_name`, `table_name`, `run_count`, `success_rate_pct` (-1 when no terminal runs in the window), `avg_duration_sec`/`p95_duration_sec` (-1 when unmeasurable), `flaky_rate_pct`, `last_status`, `last_run_at`, and `operation` (echoing the requested filter).
+
+Implementation: `postgres.NodeRunRepository.ListNodes`. A windowed CTE (`ranked` → `windowed`, capped at each node's most recent 50 matching task rows) filters `task_tracker ⋈ scheduler_tracker` on `search`, `service_name`, and `operation` in one scan; the page query layers per-node aggregation and a `COUNT(*) OVER ()` total on top, so the common case costs a single pass. An empty page (offset past the end, or zero matches) falls back to a cheap count-only query to recover the true `total_count`.
+
+Error contract: none — an empty or non-matching filter set yields an empty `nodes` list with `total_count = 0`, not an error.
 
 ##### Shared gRPC handler helpers
 
@@ -487,7 +503,7 @@ Dedup against `message_processing` is performed by the binding before the handle
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `ListNodeRuns`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule` |
+| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `ListNodeNames`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule` |
 | `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
 | `tests/e2e` | `TriggerSingleNodeRun`, `TriggerRebase` |
 

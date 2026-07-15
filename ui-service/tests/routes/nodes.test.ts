@@ -47,7 +47,7 @@ describe('nodes router', () => {
             created_at: '2026-05-10T10:00:00Z',
             started_at: '2026-05-10T10:00:05Z',
             completed_at: '2026-05-10T10:01:00Z',
-            error_message: '', log_s3_key: '',
+            error_message: '', log_s3_key: '', operation: 'run',
           },
         ],
       }),
@@ -59,10 +59,35 @@ describe('nodes router', () => {
     expect(res.body.runs[0].run_id).toBe('r1');
     expect(res.body.runs[0].kind).toBe('cron');
     expect(res.body.runs[0].retry_count).toBe(0);
+    expect(res.body.runs[0].operation).toBe('run');
     expect(mockListNodeRuns).toHaveBeenCalledWith(
-      { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50 },
+      { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50, operation: 'run' },
       expect.any(Function),
     );
+  });
+
+  it('GET /:svc/:schema/:table/runs rejects an unknown operation with 400', async () => {
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs?operation=bogus');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid operation');
+    expect(mockListNodeRuns).not.toHaveBeenCalled();
+  });
+
+  it('GET /:svc/:schema/:table/runs forwards operation=test to the state client', async () => {
+    mockListNodeRuns.mockImplementation((_req, cb) => cb(null, { runs: [] }));
+    await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs?operation=test');
+    expect(mockListNodeRuns).toHaveBeenCalledWith(
+      { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50, operation: 'test' },
+      expect.any(Function),
+    );
+  });
+
+  it('GET /:svc/:schema/:table/runs defaults a run missing operation to "run"', async () => {
+    mockListNodeRuns.mockImplementation((_req, cb) =>
+      cb(null, { runs: [{ run_id: 'r2', schedule_name: 'x', kind: 'cron' }] }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs');
+    expect(res.body.runs[0].operation).toBe('run');
   });
 
   it('POST /:svc/:schema/:table/run (latest mode) calls TriggerSingleNodeRun', async () => {
@@ -115,12 +140,13 @@ describe('nodes router', () => {
             run_count: 48, success_rate_pct: -1, avg_duration_sec: -1,
             p95_duration_sec: 21, flaky_rate_pct: 4,
             last_status: 'succeeded', last_run_at: '2026-06-08T10:00:00Z',
+            operation: 'run',
           },
           {
             service_name: 'svc', schema_name: 'an', table_name: 'dim',
             run_count: 10, success_rate_pct: 90, avg_duration_sec: 5,
             p95_duration_sec: 9, flaky_rate_pct: 0,
-            last_status: '', last_run_at: '',
+            last_status: '', last_run_at: '', operation: 'test',
           },
         ],
       }),
@@ -134,10 +160,12 @@ describe('nodes router', () => {
     expect(res.body.nodes[0].avg_duration_sec).toBeNull();
     expect(res.body.nodes[0].p95_duration_sec).toBe(21);
     expect(res.body.nodes[0].flaky_rate_pct).toBe(4);
+    expect(res.body.nodes[0].operation).toBe('run');
     expect(res.body.nodes[1].last_status).toBeNull();      // '' -> null
     expect(res.body.nodes[1].last_run_at).toBeNull();
+    expect(res.body.nodes[1].operation).toBe('test');
     expect(mockListNodes).toHaveBeenCalledWith(
-      { search: 'f', service_name: 'svc', limit: 25, offset: 0 },
+      { search: 'f', service_name: 'svc', operation: 'run', limit: 25, offset: 0 },
       expect.any(Function),
     );
   });
@@ -148,9 +176,33 @@ describe('nodes router', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ total_count: 0, nodes: [] });
     expect(mockListNodes).toHaveBeenCalledWith(
-      { search: '', service_name: '', limit: 50, offset: 0 },
+      { search: '', service_name: '', operation: 'run', limit: 50, offset: 0 },
       expect.any(Function),
     );
+  });
+
+  it('GET / rejects an unknown operation with 400', async () => {
+    const res = await request(makeApp()).get('/api/nodes?operation=bogus');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid operation');
+    expect(mockListNodes).not.toHaveBeenCalled();
+  });
+
+  it('GET / forwards operation=test to the state client', async () => {
+    mockListNodes.mockImplementation((_req, cb) => cb(null, { total_count: 0, nodes: [] }));
+    await request(makeApp()).get('/api/nodes?operation=test');
+    expect(mockListNodes).toHaveBeenCalledWith(
+      { search: '', service_name: '', operation: 'test', limit: 50, offset: 0 },
+      expect.any(Function),
+    );
+  });
+
+  it('GET / defaults a node missing operation to "run"', async () => {
+    mockListNodes.mockImplementation((_req, cb) =>
+      cb(null, { total_count: 1, nodes: [{ service_name: 'svc', schema_name: 'an', table_name: 'fct' }] }),
+    );
+    const res = await request(makeApp()).get('/api/nodes');
+    expect(res.body.nodes[0].operation).toBe('run');
   });
 
   it('GET / maps a gRPC error to its HTTP status', async () => {

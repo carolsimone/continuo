@@ -28,6 +28,7 @@ type nodeRun struct {
 	CompletedAt     string `json:"completed_at,omitempty"`
 	ErrorMessage    string `json:"error_message,omitempty"`
 	LogS3Key        string `json:"log_s3_key,omitempty"`
+	Operation       string `json:"operation"`
 }
 
 type historyPayload struct {
@@ -37,6 +38,9 @@ type historyPayload struct {
 // nodeHistoryLimit is the fixed page size. The state service clamps to (0,50];
 // the CLI always requests the full window.
 const nodeHistoryLimit int32 = 50
+
+// validHistoryOperations are the values accepted by --operation.
+var validHistoryOperations = map[string]bool{"run": true, "test": true, "build": true}
 
 // NewHistoryCommand builds `continuo node history <service> <schema> <table>`.
 func NewHistoryCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
@@ -54,20 +58,26 @@ Arguments:
   <schema>   The schema name.
   <table>    The table (model) name.
 
+Flags:
+  --operation  Filter history to one operation kind: run | test | build.
+               Default "run" (dbt run/materialize rows). "test" returns dbt
+               test rows; "build" returns dbt build rows. An unrecognized
+               value is a usage error.
+
 Output (stdout, JSON): up to 50 runs, newest first.
   {"runs":[{"run_id":string,"schedule_name":string,"kind":string,
    "terminal_status":string,"task_id":string,"task_status":string,
    "retry_count":number,"image_tag":string,"manifest_version":string,
    "created_at":string,"started_at":string,"completed_at":string,
-   "error_message":string,"log_s3_key":string}]}
+   "error_message":string,"log_s3_key":string,"operation":string}]}
   terminal_status, started_at, completed_at, error_message, and log_s3_key are
   omitted when empty. An unknown node returns {"runs":[]}, not an error.
 
 Errors:
-  usage      (exit 2)  wrong number of arguments
+  usage      (exit 2)  wrong number of arguments, or --operation is not run|test|build
   unavailable(exit 5)  the state service is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo node history finance analytics orders",
+		Example: "  continuo node history finance analytics orders --operation test",
 		Annotations: map[string]string{
 			"output_schema": `{"runs":"array"}`,
 			"exit_codes":    `[0,2,5,6]`,
@@ -76,11 +86,17 @@ Errors:
 			if len(args) != 3 {
 				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("history requires exactly three arguments: <service> <schema> <table>"))
 			}
+			operation, _ := cmd.Flags().GetString("operation")
+			if !validHistoryOperations[operation] {
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("--operation must be one of run, test, build; got "+operation))
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
+
+			operation, _ := cmd.Flags().GetString("operation")
 
 			c, err := factory(ctx, cfg.StateEndpoint)
 			if err != nil {
@@ -88,7 +104,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.ListNodeRuns(ctx, args[0], args[1], args[2], nodeHistoryLimit)
+			resp, err := c.ListNodeRuns(ctx, args[0], args[1], args[2], operation, nodeHistoryLimit)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -99,6 +115,7 @@ Errors:
 			return output.EmitSuccess(stdout, toHistoryPayload(resp.GetRuns()))
 		},
 	}
+	cmd.Flags().String("operation", "run", "Filter history by operation: run | test | build (default \"run\")")
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
 	return cmd
@@ -122,6 +139,7 @@ func toHistoryPayload(runs []*statev1.NodeRun) historyPayload {
 			CompletedAt:     r.GetCompletedAt(),
 			ErrorMessage:    r.GetErrorMessage(),
 			LogS3Key:        r.GetLogS3Key(),
+			Operation:       r.GetOperation(),
 		})
 	}
 	return historyPayload{Runs: out}
@@ -129,11 +147,11 @@ func toHistoryPayload(runs []*statev1.NodeRun) historyPayload {
 
 // humanHistory writes one line per run to stderr:
 //
-//	<run_id>  <task_status>  <kind>  <completed_at>
+//	<run_id>  <operation>  <task_status>  <kind>  <completed_at>
 func humanHistory(stderr io.Writer, runs []*statev1.NodeRun) error {
 	for _, r := range runs {
-		if _, err := fmt.Fprintf(stderr, "%s  %s  %s  %s\n",
-			r.GetRunId(), r.GetTaskStatus(), r.GetKind(), r.GetCompletedAt()); err != nil {
+		if _, err := fmt.Fprintf(stderr, "%s  %s  %s  %s  %s\n",
+			r.GetRunId(), r.GetOperation(), r.GetTaskStatus(), r.GetKind(), r.GetCompletedAt()); err != nil {
 			return err
 		}
 	}

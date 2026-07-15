@@ -25,16 +25,17 @@ type fakeNodeRunRepo struct {
 	nodeErr       error
 	gotSearch     string
 	gotService    string
+	gotOperation  string
 	gotNodeLimit  int
 	gotNodeOffset int
 
 	// node-names (ListNodeNames) capture + canned return
-	nodeNames      []string
-	nodeNamesErr   error
+	nodeNames       []string
+	nodeNamesErr    error
 	gotNamesService string
 }
 
-func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _ string, limit int) ([]*projection.NodeRun, error) {
+func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _, _ string, limit int) ([]*projection.NodeRun, error) {
 	f.gotLimit = limit
 	if f.err != nil {
 		return nil, f.err
@@ -42,8 +43,8 @@ func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _ string, limit int) ([]
 	return f.rows, nil
 }
 
-func (f *fakeNodeRunRepo) ListNodes(_ context.Context, search, service string, limit, offset int) ([]*projection.NodeSummary, int, error) {
-	f.gotSearch, f.gotService, f.gotNodeLimit, f.gotNodeOffset = search, service, limit, offset
+func (f *fakeNodeRunRepo) ListNodes(_ context.Context, search, service, operation string, limit, offset int) ([]*projection.NodeSummary, int, error) {
+	f.gotSearch, f.gotService, f.gotOperation, f.gotNodeLimit, f.gotNodeOffset = search, service, operation, limit, offset
 	if f.nodeErr != nil {
 		return nil, 0, f.nodeErr
 	}
@@ -62,7 +63,7 @@ func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
 			{
 				ScheduleID: uuid.New(), ScheduleName: "daily", Kind: "cron",
 				TerminalStatus: "succeeded",
-				TaskID: uuid.New(), TaskStatus: run.TaskStatusSucceeded,
+				TaskID:         uuid.New(), TaskStatus: run.TaskStatusSucceeded,
 				RetryCount: 0, ImageTag: "v1", ManifestVersion: "m1",
 				CreatedAt: now,
 			},

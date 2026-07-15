@@ -3,6 +3,7 @@ package run
 import (
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 )
 
@@ -25,6 +26,7 @@ type Task struct {
 	ManifestVersion     string
 	ImageTag            string
 	InheritedFromTaskID *uuid.UUID
+	Operation           model.Operation
 }
 
 // Node returns the (service, schema, table) triple identifying which model

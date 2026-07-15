@@ -2100,7 +2100,8 @@ type ListNodeRunsRequest struct {
 	ServiceName   string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
 	SchemaName    string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
 	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
-	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"` // 0 → server default 50; max 50
+	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`        // 0 → server default 50; max 50
+	Operation     string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"` // run | test | build; "" = run
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2163,6 +2164,13 @@ func (x *ListNodeRunsRequest) GetLimit() int32 {
 	return 0
 }
 
+func (x *ListNodeRunsRequest) GetOperation() string {
+	if x != nil {
+		return x.Operation
+	}
+	return ""
+}
+
 type ListNodeRunsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Runs          []*NodeRun             `protobuf:"bytes,1,rep,name=runs,proto3" json:"runs,omitempty"`
@@ -2223,6 +2231,7 @@ type NodeRun struct {
 	CompletedAt     string                 `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`    // RFC3339, "" if not finished
 	ErrorMessage    string                 `protobuf:"bytes,13,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // "" when none
 	LogS3Key        string                 `protobuf:"bytes,14,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`           // "" when none
+	Operation       string                 `protobuf:"bytes,15,opt,name=operation,proto3" json:"operation,omitempty"`                           // run | test | build
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2355,12 +2364,20 @@ func (x *NodeRun) GetLogS3Key() string {
 	return ""
 }
 
+func (x *NodeRun) GetOperation() string {
+	if x != nil {
+		return x.Operation
+	}
+	return ""
+}
+
 type ListNodesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Search        string                 `protobuf:"bytes,1,opt,name=search,proto3" json:"search,omitempty"`                              // case-insensitive substring on "service.schema.table"; "" = no filter
 	ServiceName   string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // exact service filter; "" = all services
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`                               // page size; 0 -> default 50, clamped to max 200
 	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`                             // page offset; default 0
+	Operation     string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"`                        // run | test | build; "" = run (model)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2421,6 +2438,13 @@ func (x *ListNodesRequest) GetOffset() int32 {
 		return x.Offset
 	}
 	return 0
+}
+
+func (x *ListNodesRequest) GetOperation() string {
+	if x != nil {
+		return x.Operation
+	}
+	return ""
 }
 
 type ListNodesResponse struct {
@@ -2487,6 +2511,7 @@ type NodeSummary struct {
 	FlakyRatePct   int32                  `protobuf:"varint,8,opt,name=flaky_rate_pct,json=flakyRatePct,proto3" json:"flaky_rate_pct,omitempty"`       // % of window runs with retry_count > 0; 0 when none
 	LastStatus     string                 `protobuf:"bytes,9,opt,name=last_status,json=lastStatus,proto3" json:"last_status,omitempty"`                // succeeded|failed|running|cancelled|pending
 	LastRunAt      string                 `protobuf:"bytes,10,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`                // RFC3339 of the most recent run's created_at
+	Operation      string                 `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`                                   // run | test | build
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2587,6 +2612,13 @@ func (x *NodeSummary) GetLastStatus() string {
 func (x *NodeSummary) GetLastRunAt() string {
 	if x != nil {
 		return x.LastRunAt
+	}
+	return ""
+}
+
+func (x *NodeSummary) GetOperation() string {
+	if x != nil {
+		return x.Operation
 	}
 	return ""
 }
@@ -2846,16 +2878,17 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\rsource_run_id\x18\x01 \x01(\tR\vsourceRunId\"S\n" +
 	"\x15TriggerRebaseResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
-	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\x8e\x01\n" +
+	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\"\xac\x01\n" +
 	"\x13ListNodeRunsRequest\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
 	"table_name\x18\x03 \x01(\tR\ttableName\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\x05R\x05limit\"=\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x1c\n" +
+	"\toperation\x18\x05 \x01(\tR\toperation\"=\n" +
 	"\x14ListNodeRunsResponse\x12%\n" +
-	"\x04runs\x18\x01 \x03(\v2\x11.state.v1.NodeRunR\x04runs\"\xc9\x03\n" +
+	"\x04runs\x18\x01 \x03(\v2\x11.state.v1.NodeRunR\x04runs\"\xe7\x03\n" +
 	"\aNodeRun\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\x12\x12\n" +
@@ -2876,16 +2909,18 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\fcompleted_at\x18\f \x01(\tR\vcompletedAt\x12#\n" +
 	"\rerror_message\x18\r \x01(\tR\ferrorMessage\x12\x1c\n" +
 	"\n" +
-	"log_s3_key\x18\x0e \x01(\tR\blogS3Key\"{\n" +
+	"log_s3_key\x18\x0e \x01(\tR\blogS3Key\x12\x1c\n" +
+	"\toperation\x18\x0f \x01(\tR\toperation\"\x99\x01\n" +
 	"\x10ListNodesRequest\x12\x16\n" +
 	"\x06search\x18\x01 \x01(\tR\x06search\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x04 \x01(\x05R\x06offset\"a\n" +
+	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x1c\n" +
+	"\toperation\x18\x05 \x01(\tR\toperation\"a\n" +
 	"\x11ListNodesResponse\x12+\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x15.state.v1.NodeSummaryR\x05nodes\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
-	"totalCount\"\xf2\x02\n" +
+	"totalCount\"\x90\x03\n" +
 	"\vNodeSummary\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
@@ -2900,7 +2935,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\vlast_status\x18\t \x01(\tR\n" +
 	"lastStatus\x12\x1e\n" +
 	"\vlast_run_at\x18\n" +
-	" \x01(\tR\tlastRunAt\"9\n" +
+	" \x01(\tR\tlastRunAt\x12\x1c\n" +
+	"\toperation\x18\v \x01(\tR\toperation\"9\n" +
 	"\x14ListNodeNamesRequest\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\"8\n" +
 	"\x15ListNodeNamesResponse\x12\x1f\n" +
