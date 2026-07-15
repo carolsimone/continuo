@@ -388,11 +388,15 @@ func TestReleaseRepository_Load_BlocksConcurrentLoad(t *testing.T) {
 	unblocked := make(chan struct{})
 	go func() {
 		tx2, err := db.BeginTxx(ctx, nil)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 		defer func() { _ = tx2.Rollback() }()
 		repo2 := postgres.NewReleaseRepository(tx2, nil)
 		_, err = repo2.Load(ctx, "rLock")
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 		close(unblocked)
 	}()
 

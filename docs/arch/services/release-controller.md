@@ -27,7 +27,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | Route | Purpose |
 |---|---|
 | `POST /releases` | Accept a candidate release for a single dbt service. Body: `{service, release_id, image_tag, repo, commit_sha, bootstrap?}`. `repo` (GitHub owner/name) and `commit_sha` (full SHA) are required; missing either returns 400. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
-| `GET /releases/{id}` | Full release detail: `{release_id, status, changed_service, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap, repo, commit_sha}`. `per_node_results` is an array of `{stage, node_id, status, dbt_log_uri, run_results_uri, duration_ms, file_path?}` accumulated across all pipeline legs; the `stage` field (`compile`, `seed_build`, or `validation`) identifies which leg produced each entry. For the compile leg the single entry's `node_id` is the service name; `file_path` is non-empty when the failure maps to a specific source file. |
+| `GET /releases/{id}` | Full release detail: `{release_id, status, changed_service, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap, repo, commit_sha}`. `per_node_results` is an array of `{stage, node_id, status, dbt_log_uri, run_results_uri, duration_ms, file_path?}` accumulated across all pipeline legs; the `stage` field (`compile`, `seed_build`, or `validation`) identifies which leg produced each entry. For the compile leg the single entry's `node_id` is the service name; `file_path` is non-empty when the failure maps to a specific source file. `duration_ms` is populated for the `compile` and `seed_build` legs; the `validation` stage's per-node results come from the incremental `validation.node.result:v1` projection, which does not carry a duration, so `duration_ms` is absent (zero) for those entries. |
 | `GET /releases` | Paginated release history, newest-first. Query params: `status` (optional exact-match filter), `limit` (default 20; values that are unparseable, non-positive, or exceed 100 fall back to the default of 20), `cursor` (opaque keyset cursor). Response: `{"releases":[{release_id, status, created_at, resolved_at, node_count, bootstrap, reject_reason}], "next_cursor":"<opaque or empty>"}`. |
 | `GET /current-prod` | The current promoted release + topology snapshot. |
 | `GET /healthz` | Liveness. |
@@ -149,10 +149,13 @@ The terminal event carries only the decision (`release_id`, `aggregate_status`, 
 load release FOR UPDATE, read stored per_node_results where stage="validation"
 completeness barrier: if any id in validation_node_ids has no stored validation result →
    return error so the message redelivers (the terminal event overtook a per-node event on
-   its separate stream); guaranteed to resolve, since every node projects a result before the
-   aggregate — including nodes skipped by a failed upstream, which executor-controller emits a
-   status="skipped" projection for even though they never ran. No promote/reject decision is
-   taken while the projection is incomplete.
+   its separate stream); resolves once every expected node's validation.node.result:v1
+   projection has been delivered and applied — each projection is written transactionally
+   with the node's settle, so under normal delivery this clears within redelivery latency,
+   though it still depends on outbox delivery of those rows like any other event. Nodes
+   skipped by a failed upstream are included: executor-controller emits a status="skipped"
+   projection for them even though they never ran. No promote/reject decision is taken while
+   the projection is incomplete.
 all stored nodes ok and aggregate_status ok → handleValidationOK:
    update current_prod to this release's candidate topology,
    upsert the changed service's service_prod pointer (canonical key + image tag + release id),

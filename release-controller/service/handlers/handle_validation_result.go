@@ -67,8 +67,13 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	// Completeness barrier: the decision must see every expected node. If a
 	// per-node projection has not landed yet (the terminal event overtook it on a
 	// separate stream), return an error so the message redelivers and retries once
-	// the stream catches up. Guaranteed to resolve: every node emitted its result
-	// before this aggregate was emitted.
+	// the stream catches up. This resolves once every expected node's
+	// validation.node.result:v1 projection has been delivered and applied: each
+	// projection is written transactionally with the node's settle, so under
+	// normal delivery this barrier clears within redelivery latency. It still
+	// depends on outbox delivery of those rows, like every other event in the
+	// system — a projection row that exhausts its outbox retries (e.g. a
+	// sustained Redis outage) would leave the barrier unresolved.
 	var missing []string
 	for _, id := range r.ValidationNodeIDs() {
 		if _, ok := stored[id]; !ok {
@@ -220,8 +225,9 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 // alongside the raw aggregate_status so operators can distinguish why the release
 // was rejected. The per-node audit rows are sourced from the read model that
 // validation.node.result:v1 projected, not from this terminal event. The
-// completeness barrier in HandleValidationResult guarantees every expected node
-// is present before this runs, so there are never missing nodes here.
+// completeness barrier in HandleValidationResult blocks this from running until
+// every expected node's projection has been delivered and applied, so there are
+// never missing nodes here.
 func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing []string, now time.Time) error {
 	if err := r.TransitionToRejected("validation_failed", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)

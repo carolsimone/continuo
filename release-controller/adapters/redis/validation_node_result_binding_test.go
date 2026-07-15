@@ -22,9 +22,9 @@ import (
 func TestDecodeValidationNodeResult(t *testing.T) {
 	rawPayload := `{
 		"release_id":      "rel-1",
-		"stage":            "validate",
+		"stage":            "validation",
 		"node_id":          "core",
-		"status":           "passed",
+		"status":           "ok",
 		"dbt_log_uri":      "s3://log",
 		"run_results_uri":  "s3://results"
 	}`
@@ -44,14 +44,14 @@ func TestDecodeValidationNodeResult(t *testing.T) {
 	if in.ReleaseID != "rel-1" {
 		t.Errorf("ReleaseID: want %q got %q", "rel-1", in.ReleaseID)
 	}
-	if in.Stage != "validate" {
-		t.Errorf("Stage: want %q got %q", "validate", in.Stage)
+	if in.Stage != "validation" {
+		t.Errorf("Stage: want %q got %q", "validation", in.Stage)
 	}
 	if in.NodeID != "core" {
 		t.Errorf("NodeID: want %q got %q", "core", in.NodeID)
 	}
-	if in.Status != "passed" {
-		t.Errorf("Status: want %q got %q", "passed", in.Status)
+	if in.Status != "ok" {
+		t.Errorf("Status: want %q got %q", "ok", in.Status)
 	}
 	if in.DBTLogURI != "s3://log" {
 		t.Errorf("DBTLogURI: want %q got %q", "s3://log", in.DBTLogURI)
@@ -99,9 +99,9 @@ func TestValidationNodeResultHandlerDispatchesDecodedInput(t *testing.T) {
 
 	payload := handlers.NodeValidationResultInput{
 		ReleaseID: "rel-42",
-		Stage:     "validate",
+		Stage:     "validation",
 		NodeID:    "core",
-		Status:    "passed",
+		Status:    "ok",
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
