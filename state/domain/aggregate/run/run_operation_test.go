@@ -29,8 +29,16 @@ func TestNewSingleNodeRun_StoresOperation(t *testing.T) {
 	}
 }
 
-func TestNewDerivedRun_DefaultsToRunOperation(t *testing.T) {
-	r, _, err := NewDerivedRun("sched", KindRerun, uuid.New(), "user-1", time.Now())
+func TestNewDerivedRun_InheritsOperation(t *testing.T) {
+	r, _, err := NewDerivedRun("sched", KindRerun, uuid.New(), "user-1", model.OperationBuild, time.Now())
+	if err != nil {
+		t.Fatalf("NewDerivedRun: %v", err)
+	}
+	if r.Operation() != model.OperationBuild {
+		t.Fatalf("Operation() = %q, want build", r.Operation())
+	}
+
+	r, _, err = NewDerivedRun("sched", KindRerun, uuid.New(), "user-1", model.OperationRun, time.Now())
 	if err != nil {
 		t.Fatalf("NewDerivedRun: %v", err)
 	}

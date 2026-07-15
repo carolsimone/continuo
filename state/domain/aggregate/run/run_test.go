@@ -66,7 +66,7 @@ func TestNewRun_StampsInitiatorOnAggregateAndEvent(t *testing.T) {
 	})
 
 	t.Run("derived rerun", func(t *testing.T) {
-		r, evt, err := run.NewDerivedRun("daily", run.KindRerun, src, "okta|bob", now)
+		r, evt, err := run.NewDerivedRun("daily", run.KindRerun, src, "okta|bob", model.OperationRun, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

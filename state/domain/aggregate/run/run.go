@@ -149,13 +149,17 @@ func NewPendingRun(
 	return r, evt, nil
 }
 
-// NewDerivedRun creates a PENDING Run for rerun/rebase. Stamps last_heartbeat_at
-// so dashboards show the new run immediately.
+// NewDerivedRun creates a PENDING Run for rerun/rebase. The derived run
+// inherits the source run's operation: rerun/rebase re-issue the source
+// run's dbt verb (run/build) against the derived task set. A test source
+// is rejected upstream in orchestrator before a derived run is requested.
+// Stamps last_heartbeat_at so dashboards show the new run immediately.
 func NewDerivedRun(
 	scheduleName string,
 	kind Kind,
 	sourceRunID uuid.UUID,
 	initiatedBy string,
+	operation model.Operation,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
 	if scheduleName == "" {
@@ -173,7 +177,7 @@ func NewDerivedRun(
 		kind:            kind,
 		sourceRunID:     &sourceRunID,
 		initiatedBy:     initiatedBy,
-		operation:       model.OperationRun,
+		operation:       operation,
 		createdAt:       now,
 		lastHeartbeatAt: &now,
 		serviceMetadata: map[string]ServiceMetadata{},
