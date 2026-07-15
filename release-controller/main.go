@@ -103,6 +103,13 @@ func main() {
 		}
 	}()
 
+	nodeResultConsumer := redisadapter.NewValidationNodeResultConsumer(rc, deps, logger)
+	go func() {
+		if err := nodeResultConsumer.Start(ctx); err != nil && ctx.Err() == nil {
+			logger.Error("validation node-result consumer stopped", "error", err)
+		}
+	}()
+
 	seedBuildConsumer := redisadapter.NewSeedBuildCompletedConsumer(rc, deps, logger)
 	go func() {
 		if err := seedBuildConsumer.Start(ctx); err != nil && ctx.Err() == nil {
