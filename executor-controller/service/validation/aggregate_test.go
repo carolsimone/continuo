@@ -54,13 +54,16 @@ func (r *fakeAggRepo) ClaimEmission(context.Context, string, model.Mode, time.Ti
 
 var _ repository.ValidationAggregateRepository = (*fakeAggRepo)(nil)
 
-// captureOutbox captures the last outbox entry created.
+// captureOutbox captures the last outbox entry created, and the full ordered
+// sequence of entries so a test can assert on every row a settle produced.
 type captureOutbox struct {
 	last *outbox.Entry
+	all  []*outbox.Entry
 }
 
 func (c *captureOutbox) Create(_ context.Context, e *outbox.Entry) error {
 	c.last = e
+	c.all = append(c.all, e)
 	return nil
 }
 func (c *captureOutbox) GetPendingBatch(context.Context, int) ([]*outbox.Entry, error) {

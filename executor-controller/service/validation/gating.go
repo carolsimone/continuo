@@ -34,7 +34,8 @@ func SettleNodeTerminal(
 	if err := aggRepo.LockRelease(ctx, releaseID, cfg.mode); err != nil {
 		return fmt.Errorf("lock release for settle: %w", err)
 	}
-	if err := propagateGating(ctx, depRepo, cfg.mode, releaseID, completedNodeID, outcome, now); err != nil {
+	skipped, err := propagateGating(ctx, depRepo, cfg.mode, releaseID, completedNodeID, outcome, now)
+	if err != nil {
 		return fmt.Errorf("propagate gating: %w", err)
 	}
 	// Emit the live per-node projection for this settled node before the aggregate
@@ -46,22 +47,43 @@ func SettleNodeTerminal(
 	if err != nil {
 		return fmt.Errorf("get settled node for projection: %w", err)
 	}
-	nodePayload, err := json.Marshal(perNodeResultPayload(
-		releaseID, completedNodeID, settled.Outcome(), settled.DBTLogURI(), settled.DBTRunResultsURI()))
+	if err := emitPerNodeResult(ctx, outboxRepo,
+		perNodeResultPayload(releaseID, completedNodeID, settled.Outcome(), settled.DBTLogURI(), settled.DBTRunResultsURI())); err != nil {
+		return err
+	}
+	// Nodes this failure skipped never run through SettleNodeTerminal on their own,
+	// so they would otherwise never project a per-node result. Emit one per skipped
+	// node with status "skipped" and no URIs (they never ran), so the read model
+	// becomes complete: release-controller's completeness barrier resolves and the
+	// release rejects (a skipped node has status != "ok", so it counts as failing).
+	for _, skippedID := range skipped {
+		if err := emitPerNodeResult(ctx, outboxRepo,
+			perNodeResultPayload(releaseID, skippedID, "skipped", "", "")); err != nil {
+			return err
+		}
+	}
+	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, cfg, releaseID, now)
+}
+
+// emitPerNodeResult writes one validation.node.result:v1 projection row from an
+// already-built payload. Each row uses a distinct AggregateID so the projection
+// is an idempotent last-write upsert, not a deduped decision.
+func emitPerNodeResult(ctx context.Context, outboxRepo outbox.Repository, payload map[string]any) error {
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal per-node projection: %w", err)
 	}
 	if err := outboxRepo.Create(ctx, &outbox.Entry{
 		AggregateType: "release",
-		AggregateID:   uuid.New(), // distinct per emit: an idempotent last-write projection, not a deduped decision
+		AggregateID:   uuid.New(),
 		EventType:     EventTypeValidationNodeResult,
-		Payload:       nodePayload,
+		Payload:       body,
 		StreamName:    streams.ValidationNodeResultV1,
 		MaxRetries:    3,
 	}); err != nil {
 		return fmt.Errorf("create per-node projection row: %w", err)
 	}
-	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, cfg, releaseID, now)
+	return nil
 }
 
 // SettleSeedBuildNodeTerminal settles a seed-build node after it reaches a
@@ -82,8 +104,9 @@ func SettleSeedBuildNodeTerminal(
 		return fmt.Errorf("lock release for seed-build settle: %w", err)
 	}
 	// No-op over flat seed roots, but kept for symmetry and to defend against a
-	// future seed dependency edge: it only ever transitions blocked rows.
-	if err := propagateGating(ctx, depRepo, seedBuildEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
+	// future seed dependency edge: it only ever transitions blocked rows. Seeds
+	// project no per-node stream, so any skipped IDs it returns are ignored.
+	if _, err := propagateGating(ctx, depRepo, seedBuildEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
 		return fmt.Errorf("propagate seed-build gating: %w", err)
 	}
 	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, seedBuildEmit, releaseID, now)
@@ -106,7 +129,8 @@ func SettleCompileNodeTerminal(
 		return fmt.Errorf("lock release for compile settle: %w", err)
 	}
 	// Compile is a single root — no gating to propagate, but kept for symmetry.
-	if err := propagateGating(ctx, depRepo, compileEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
+	// It projects no per-node stream, so any skipped IDs it returns are ignored.
+	if _, err := propagateGating(ctx, depRepo, compileEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
 		return fmt.Errorf("propagate compile gating: %w", err)
 	}
 	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, compileEmit, releaseID, now)
@@ -118,10 +142,15 @@ func SettleCompileNodeTerminal(
 // transitively downstream of the failed node is Skipped — it can never be
 // validated. Readiness/reachability is computed in Go over the release's rows;
 // transitions go through the guarded aggregate methods, one Save per change.
-func propagateGating(ctx context.Context, repo repository.DeploymentRepository, mode model.Mode, releaseID, completedNode, outcome string, now time.Time) error {
+//
+// It returns the node IDs it actually transitioned to skipped (the failure
+// branch only; the success branch skips nothing). These nodes never run through
+// SettleNodeTerminal on their own, so the validation-leg caller is responsible
+// for emitting their per-node projection rows.
+func propagateGating(ctx context.Context, repo repository.DeploymentRepository, mode model.Mode, releaseID, completedNode, outcome string, now time.Time) (skipped []string, err error) {
 	rows, err := repo.ListValidationByRelease(ctx, releaseID, mode)
 	if err != nil {
-		return fmt.Errorf("list validation by release: %w", err)
+		return nil, fmt.Errorf("list validation by release: %w", err)
 	}
 	byNode := make(map[string]*model.Deployment, len(rows))
 	for _, d := range rows {
@@ -134,14 +163,15 @@ func propagateGating(ctx context.Context, repo repository.DeploymentRepository, 
 			d := byNode[victim]
 			if d != nil && d.Status() == model.StatusBlocked {
 				if err := d.Skip("upstream "+completedNode+" failed validation", now); err != nil {
-					return fmt.Errorf("skip %s: %w", victim, err)
+					return nil, fmt.Errorf("skip %s: %w", victim, err)
 				}
 				if err := repo.Save(ctx, d); err != nil {
-					return fmt.Errorf("save skipped %s: %w", victim, err)
+					return nil, fmt.Errorf("save skipped %s: %w", victim, err)
 				}
+				skipped = append(skipped, victim)
 			}
 		}
-		return nil
+		return skipped, nil
 	}
 
 	okOutcome := func(id string) bool {
@@ -162,14 +192,14 @@ func propagateGating(ctx context.Context, repo repository.DeploymentRepository, 
 		}
 		if allOK {
 			if err := d.Unblock(now); err != nil {
-				return fmt.Errorf("unblock %s: %w", d.NodeID(), err)
+				return nil, fmt.Errorf("unblock %s: %w", d.NodeID(), err)
 			}
 			if err := repo.Save(ctx, d); err != nil {
-				return fmt.Errorf("save unblocked %s: %w", d.NodeID(), err)
+				return nil, fmt.Errorf("save unblocked %s: %w", d.NodeID(), err)
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // childIndex maps each node to the in-set nodes that declare it as an upstream.

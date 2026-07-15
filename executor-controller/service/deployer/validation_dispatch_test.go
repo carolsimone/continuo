@@ -396,12 +396,19 @@ func TestDispatcher_DispatchValidation_FailAtDispatch_SkipsDescendant_EmitsAggre
 	assert.Equal(t, "failed", repo.nodes["node_a"].Outcome())
 	assert.Equal(t, model.StatusSkipped, repo.statusOf("node_b"), "B skipped — its only upstream A failed")
 
-	// SettleNodeTerminal writes the per-node projection for node_a, then (no nodes
-	// left pending) the aggregate. node_b's skip is a propagation side effect, not
-	// a separate settle, so it produces no projection row of its own.
-	require.Len(t, outboxRepo.created, 2, "per-node projection + validation.completed aggregate emitted")
+	// SettleNodeTerminal writes the per-node projection for node_a, then a per-node
+	// projection for node_b (which was skipped by the propagation and never settles
+	// on its own — it still needs a projection so the read model is complete), then
+	// (no nodes left pending) the aggregate.
+	require.Len(t, outboxRepo.created, 3, "node_a projection + node_b skip projection + validation.completed aggregate emitted")
 	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[0].StreamName)
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[1].StreamName)
+	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[1].StreamName)
+	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[2].StreamName)
+
+	var skipProjection map[string]any
+	require.NoError(t, json.Unmarshal(outboxRepo.created[1].Payload, &skipProjection))
+	assert.Equal(t, "node_b", skipProjection["node_id"])
+	assert.Equal(t, "skipped", skipProjection["status"], "the skipped descendant projects status skipped")
 }
 
 // --- Task 14: aggregate-emit gate (validation.EmitValidationAggregateIfComplete) -

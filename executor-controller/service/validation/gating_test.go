@@ -265,3 +265,53 @@ func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
 	assert.Equal(t, "validation", p["stage"])
 	assert.Equal(t, "s3://logs/a.txt", p["dbt_log_uri"])
 }
+
+// (e) A failing settle skips its transitive blocked descendants, and each skipped
+// node — which never runs through SettleNodeTerminal on its own — MUST still get a
+// per-node validation.node.result:v1 projection row emitted for it (status
+// "skipped", no URIs). Without this the release-controller completeness barrier
+// waits forever for those nodes' projections and the release hangs in validating.
+func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testing.T) {
+	log := &callLog{}
+	a1 := validationNode(t, "rel", "a1", model.StatusDeployed)
+	require.NoError(t, a1.FailValidation("boom", time.Now())) // a1 terminal failed
+	a2 := validationNode(t, "rel", "a2", model.StatusBlocked, "a1")
+	a3 := validationNode(t, "rel", "a3", model.StatusBlocked, "a2")
+	repo := newChainDepRepo(log, a1, a2, a3)
+	outboxRepo := &captureOutbox{}
+	agg := &orderedAggRepo{won: true, log: log}
+
+	err := validation.SettleNodeTerminal(
+		context.Background(), repo, outboxRepo, agg,
+		validation.DedupNamespace, "rel", "a1", "failed", time.Now())
+	require.NoError(t, err)
+
+	assert.Equal(t, model.StatusSkipped, repo.statusOf("a2"), "a2 skipped — upstream a1 failed")
+	assert.Equal(t, model.StatusSkipped, repo.statusOf("a3"), "a3 transitively skipped")
+
+	// Collect every per-node projection row by node_id.
+	perNode := map[string]map[string]any{}
+	for _, e := range outboxRepo.all {
+		if e.EventType != validation.EventTypeValidationNodeResult {
+			continue
+		}
+		assert.Equal(t, streams.ValidationNodeResultV1, e.StreamName)
+		var p map[string]any
+		require.NoError(t, json.Unmarshal(e.Payload, &p))
+		perNode[p["node_id"].(string)] = p
+	}
+
+	// The completed (failed) node and both skipped descendants each get a row.
+	require.Contains(t, perNode, "a1", "completed node projection emitted")
+	require.Contains(t, perNode, "a2", "skipped descendant a2 projection emitted")
+	require.Contains(t, perNode, "a3", "skipped descendant a3 projection emitted")
+
+	assert.Equal(t, "skipped", perNode["a2"]["status"], "a2 reported as skipped")
+	assert.Equal(t, "skipped", perNode["a3"]["status"], "a3 reported as skipped")
+	assert.Equal(t, "validation", perNode["a2"]["stage"])
+	// Skipped nodes never ran, so they carry no dbt log / run-results pointers.
+	_, hasLog := perNode["a2"]["dbt_log_uri"]
+	assert.False(t, hasLog, "skipped node carries no dbt_log_uri")
+	_, hasRR := perNode["a2"]["run_results_uri"]
+	assert.False(t, hasRR, "skipped node carries no run_results_uri")
+}

@@ -145,13 +145,15 @@ The terminal event carries only the decision (`release_id`, `aggregate_status`, 
 load release FOR UPDATE, read stored per_node_results where stage="validation"
 completeness barrier: if any id in validation_node_ids has no stored validation result →
    return error so the message redelivers (the terminal event overtook a per-node event on
-   its separate stream); guaranteed to resolve, since every node result is emitted before the
-   aggregate. No promote/reject decision is taken while the projection is incomplete.
+   its separate stream); guaranteed to resolve, since every node projects a result before the
+   aggregate — including nodes skipped by a failed upstream, which executor-controller emits a
+   status="skipped" projection for even though they never ran. No promote/reject decision is
+   taken while the projection is incomplete.
 all stored nodes ok and aggregate_status ok → handleValidationOK:
    update current_prod to this release's candidate topology,
    upsert the changed service's service_prod pointer (canonical key + image tag + release id),
    transition to Promoted, emit release.promoted:v1
-any stored node not ok / aggregate_status not ok → Reject(reason=validation_failed),
+any stored node not ok (failed or skipped) / aggregate_status not ok → Reject(reason=validation_failed),
    emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,
         per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_sql_uri}], repo, commit_sha}
         (per_node sourced from the stored read model, enriched with each node's candidate_sql_uri)

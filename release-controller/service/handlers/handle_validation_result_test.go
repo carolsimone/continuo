@@ -143,6 +143,32 @@ func TestHandleValidationResult_FailedNodeInStore_Rejects(t *testing.T) {
 	assert.Equal(t, []string{"a"}, r.FailingNodes())
 }
 
+// TestHandleValidationResult_SkippedNodeInStore_CompletesBarrierAndRejects
+// verifies that a per-node result with status "skipped" (emitted for a node whose
+// upstream failed validation, so it never ran) satisfies the completeness barrier
+// and counts as failing: the release rejects and names the skipped node. This is
+// the read-model side of the executor-controller emitting a skip projection for
+// every node its failure propagation skips — without it the barrier would wait
+// forever for that node and the release would hang in validating.
+func TestHandleValidationResult_SkippedNodeInStore_CompletesBarrierAndRejects(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "failed", DBTLogURI: "s3://l"},
+		{NodeID: "b", Status: "skipped"}, // downstream of the failed node; never ran
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rA",
+		AggregateStatus: "failed",
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	// Both the failed node and the skipped node are non-ok, so both are failing.
+	assert.Equal(t, []string{"a", "b"}, r.FailingNodes())
+}
+
 // TestHandleValidationResult_UnknownRelease_DropsWithoutPanic guards against a
 // stale or duplicate validation.completed:v1 message whose release row no longer
 // exists (e.g. it was pruned, or the message was reclaimed from a previous
