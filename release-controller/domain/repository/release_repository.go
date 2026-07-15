@@ -24,6 +24,11 @@ type ListFilter struct {
 // aggregate. Concrete implementations live in adapters/postgres.
 type ReleaseRepository interface {
 	Get(ctx context.Context, id string) (*release.Release, error)
+	// Load returns the Release with the given ID like Get, but takes a row-level
+	// FOR UPDATE lock so concurrent per-node projection upserts and the terminal
+	// handler serialize on the same release row. Must be called inside a
+	// transaction; the lock releases at commit/rollback. Returns nil if absent.
+	Load(ctx context.Context, id string) (*release.Release, error)
 	Save(ctx context.Context, r *release.Release) error
 	NextQueuedRelease(ctx context.Context) (*release.Release, error)                                  // oldest StatusReceived; nil if none
 	ActiveRelease(ctx context.Context) (*release.Release, error)                                      // single Parsing or Validating; nil if none
