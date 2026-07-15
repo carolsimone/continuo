@@ -96,7 +96,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Durable state | `executor_deployments`, `executor_outbox`, `message_processing`, `cancelled_schedules`, `validation_aggregates` |
 | gRPC server methods owned | none |
 | Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.completed:v1` |
-| Redis produces | `node.deployed:v1`, `task.status.updated:v1` (FAILED only, on the never-deployed terminal dispatch failure — k8s-controller owns RUNNING and the pod terminal), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.completed:v1` (per-release validation aggregate) |
+| Redis produces | `node.deployed:v1`, `task.status.updated:v1` (FAILED only, on the never-deployed terminal dispatch failure — k8s-controller owns RUNNING and the pod terminal), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.completed:v1` (per-release validation aggregate), `validation.node.result:v1` (per-node validation projection, one per node as it settles) |
 | External DB writes | dbt warehouse (`DBT_POSTGRES_DB`) — creates the `_candidate_<release>` schema on `validation.requested:v1` via `CandidateSchemaCreator`; drops it on `validation.completed:v1` via `CandidateSchemaCleaner` |
 | Outbound gRPC calls | none |
 
