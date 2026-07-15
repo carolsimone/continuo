@@ -14,22 +14,23 @@ import (
 // package by the repository implementations. Domain logic operates on
 // run.Run aggregates; hydrateRun / dehydrateRun translate between the two.
 type SchedulerTracker struct {
-	ScheduleID           uuid.UUID                  `json:"schedule_id" db:"schedule_id"`
-	ScheduleName         string                     `json:"schedule_name" db:"schedule_name"`
-	Status               run.SchedulerStatus        `json:"status" db:"status"`
-	CreatedAt            time.Time                  `json:"created_at" db:"created_at"`
-	StartedAt            *time.Time                 `json:"started_at,omitempty" db:"started_at"`
-	CompletedAt          *time.Time                 `json:"completed_at,omitempty" db:"completed_at"`
-	LastHeartbeatAt      *time.Time                 `json:"last_heartbeat_at,omitempty" db:"last_heartbeat_at"`
-	CancelledAt          *time.Time                 `json:"cancelled_at,omitempty" db:"cancelled_at"`
-	CancelledBy          *string                    `json:"cancelled_by,omitempty" db:"cancelled_by"`
-	CancellationReason   *string                    `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
-	InitializationStatus string                     `json:"initialization_status" db:"initialization_status"`
-	TotalTaskCount       sql.NullInt32              `json:"total_task_count,omitempty" db:"total_task_count"`
-	TerminalTaskCount    int32                      `json:"terminal_task_count" db:"terminal_task_count"`
-	Kind                 string                     `json:"kind" db:"kind"`
-	SourceRunID          *uuid.UUID                 `json:"source_run_id,omitempty" db:"source_run_id"`
-	InitiatedBy          string                     `json:"initiated_by" db:"initiated_by"`
+	ScheduleID           uuid.UUID                      `json:"schedule_id" db:"schedule_id"`
+	ScheduleName         string                         `json:"schedule_name" db:"schedule_name"`
+	Status               run.SchedulerStatus            `json:"status" db:"status"`
+	CreatedAt            time.Time                      `json:"created_at" db:"created_at"`
+	StartedAt            *time.Time                     `json:"started_at,omitempty" db:"started_at"`
+	CompletedAt          *time.Time                     `json:"completed_at,omitempty" db:"completed_at"`
+	LastHeartbeatAt      *time.Time                     `json:"last_heartbeat_at,omitempty" db:"last_heartbeat_at"`
+	CancelledAt          *time.Time                     `json:"cancelled_at,omitempty" db:"cancelled_at"`
+	CancelledBy          *string                        `json:"cancelled_by,omitempty" db:"cancelled_by"`
+	CancellationReason   *string                        `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
+	InitializationStatus string                         `json:"initialization_status" db:"initialization_status"`
+	TotalTaskCount       sql.NullInt32                  `json:"total_task_count,omitempty" db:"total_task_count"`
+	TerminalTaskCount    int32                          `json:"terminal_task_count" db:"terminal_task_count"`
+	Kind                 string                         `json:"kind" db:"kind"`
+	SourceRunID          *uuid.UUID                     `json:"source_run_id,omitempty" db:"source_run_id"`
+	InitiatedBy          string                         `json:"initiated_by" db:"initiated_by"`
+	Operation            string                         `json:"operation" db:"operation"`
 	ServiceMetadata      map[string]run.ServiceMetadata `json:"service_metadata"`
 	ServiceMetadataRaw   []byte                         `json:"-" db:"service_metadata"`
 }

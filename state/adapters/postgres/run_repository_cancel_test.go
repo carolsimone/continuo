@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -45,6 +46,7 @@ func TestRunRepositoryAdapter_SaveRun_CancelPersistsAggregateInstant(t *testing.
 		run.KindCron,
 		nil,
 		identity.SystemUserID,
+		model.OperationRun,
 		now.Add(-time.Hour),
 		nil, nil, nil, nil,
 		nil, nil,
