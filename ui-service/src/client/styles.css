@@ -73,6 +73,7 @@ body {
 .status-succeeded  { background: #dcfce7; color: #15803d; }
 .status-failed     { background: #fee2e2; color: #dc2626; }
 .status-cancelled  { background: #fff7ed; color: #c2410c; }
+.status-skipped    { background: #f3f4f6; color: #6b7280; }
 .status-never-run  { background-color: #888; color: #fff; }
 
 /* Task table */
