@@ -8,7 +8,7 @@ const mkRun = (over: Partial<NodeRun>): NodeRun => ({
   run_id: 'r1', schedule_name: 'daily', kind: 'cron',
   terminal_status: 'succeeded', task_id: 't1',
   task_status: 'succeeded', retry_count: 0,
-  image_tag: 'v1', manifest_version: 'm1',
+  image_tag: 'v1', manifest_version: 'm1', operation: 'run',
   created_at: '2026-05-10T10:00:00Z',
   started_at: '2026-05-10T10:00:05Z',
   completed_at: '2026-05-10T10:01:00Z',

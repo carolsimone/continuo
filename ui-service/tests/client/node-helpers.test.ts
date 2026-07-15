@@ -6,7 +6,7 @@ const mkRun = (over: Partial<NodeRun>): NodeRun => ({
   run_id: 'r', schedule_name: 's', kind: 'cron',
   terminal_status: 'succeeded', task_id: 't',
   task_status: 'succeeded', retry_count: 0,
-  image_tag: 'v1', manifest_version: 'm1',
+  image_tag: 'v1', manifest_version: 'm1', operation: 'run',
   created_at: '2026-05-10T10:00:00Z',
   started_at: '2026-05-10T10:00:05Z',
   completed_at: '2026-05-10T10:01:00Z',
@@ -96,7 +96,7 @@ describe('computeNodeStats — extended fields', () => {
   const mkRunExt = (over: Partial<NodeRun>): NodeRun => ({
     run_id: 'r', schedule_name: 's', kind: 'cron', terminal_status: '',
     task_id: Math.random().toString(), task_status: 'succeeded', retry_count: 0,
-    image_tag: '', manifest_version: '', created_at: '2026-06-08T11:00:00Z',
+    image_tag: '', manifest_version: '', operation: 'run', created_at: '2026-06-08T11:00:00Z',
     started_at: '2026-06-08T11:00:00Z', completed_at: '2026-06-08T11:00:10Z',
     error_message: null, log_s3_key: null, ...over,
   });
