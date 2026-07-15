@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -45,6 +46,7 @@ func TestRunToProto_PopulatesStartedAt(t *testing.T) {
 		run.KindCron,
 		nil,
 		identity.SystemUserID,
+		model.OperationRun,
 		created,
 		&started, nil, nil, nil,
 		nil, nil,
