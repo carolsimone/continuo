@@ -815,11 +815,43 @@ func TestRecordTaskStatus_TransientWhenTaskRowMissing(t *testing.T) {
 	}
 }
 
+func TestMarkDispatchTerminal_BenignFinalizesSkipped(t *testing.T) {
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	evts, err := r.MarkDispatchTerminal(true, "no_tests", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status() != run.SchedulerStatusSkipped {
+		t.Fatalf("status=%q, want skipped", r.Status())
+	}
+	fin, ok := evts[0].(run.RunFinalized)
+	if !ok || fin.Outcome != run.SchedulerStatusSkipped {
+		t.Fatalf("expected RunFinalized{Outcome=skipped}, got %+v", evts[0])
+	}
+}
+
+func TestMarkDispatchTerminal_NonBenignFinalizesFailed(t *testing.T) {
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	evts, err := r.MarkDispatchTerminal(false, "empty_projection", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status() != run.SchedulerStatusFailed {
+		t.Fatalf("status=%q, want failed", r.Status())
+	}
+	fin, ok := evts[0].(run.RunFinalized)
+	if !ok || fin.Outcome != run.SchedulerStatusFailed {
+		t.Fatalf("expected RunFinalized{Outcome=failed}, got %+v", evts[0])
+	}
+}
+
 func TestCanBeRerunSource_AcceptsFailedTerminalWithWork(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
-	_, _ = r.MarkDispatchFailed("orchestrator empty", time.Now())
+	_, _ = r.MarkDispatchTerminal(false, "orchestrator empty", time.Now())
 	tc.hasNonSucc = true
 
 	if err := r.CanBeRerunSource(ctx, tc); err != nil {
@@ -842,7 +874,7 @@ func TestCanBeRerunSource_RejectsWhenAllSucceeded(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
-	_, _ = r.MarkDispatchFailed("any reason", time.Now())
+	_, _ = r.MarkDispatchTerminal(false, "any reason", time.Now())
 	tc.hasNonSucc = false
 
 	if err := r.CanBeRerunSource(ctx, tc); err != run.ErrNothingToRerun {
