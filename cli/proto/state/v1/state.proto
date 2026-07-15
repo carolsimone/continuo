@@ -344,6 +344,7 @@ message ListNodeRunsRequest {
   string schema_name  = 2;
   string table_name   = 3;
   int32  limit        = 4;  // 0 → server default 50; max 50
+  string operation    = 5;  // run | test | build; "" = run
 }
 
 message ListNodeRunsResponse {
@@ -365,6 +366,7 @@ message NodeRun {
   string completed_at     = 12; // RFC3339, "" if not finished
   string error_message    = 13; // "" when none
   string log_s3_key       = 14; // "" when none
+  string operation        = 15; // run | test | build
 }
 
 message ListNodesRequest {
@@ -372,6 +374,7 @@ message ListNodesRequest {
   string service_name = 2;  // exact service filter; "" = all services
   int32  limit        = 3;  // page size; 0 -> default 50, clamped to max 200
   int32  offset       = 4;  // page offset; default 0
+  string operation    = 5;  // run | test | build; "" = run (model)
 }
 
 message ListNodesResponse {
@@ -390,6 +393,7 @@ message NodeSummary {
   int32  flaky_rate_pct   = 8;   // % of window runs with retry_count > 0; 0 when none
   string last_status      = 9;   // succeeded|failed|running|cancelled|pending
   string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
+  string operation        = 11;  // run | test | build
 }
 
 message ListNodeNamesRequest {

@@ -69,7 +69,7 @@ func (f *fakeState) ListTasks(_ context.Context, _ string, _ statev1.TaskStatus,
 	panic("ListTasks should not be called in trigger tests")
 }
 
-func (f *fakeState) ListNodeRuns(_ context.Context, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
+func (f *fakeState) ListNodeRuns(_ context.Context, _, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
 	panic("ListNodeRuns should not be called in schedule tests")
 }
 

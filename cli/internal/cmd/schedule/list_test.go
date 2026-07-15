@@ -50,7 +50,7 @@ func (f *fakeStateList) CancelSchedule(_ context.Context, _, _, _ string) (*stat
 	panic("CancelSchedule should not be called in list tests")
 }
 
-func (f *fakeStateList) ListNodeRuns(_ context.Context, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
+func (f *fakeStateList) ListNodeRuns(_ context.Context, _, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
 	panic("ListNodeRuns should not be called in schedule tests")
 }
 

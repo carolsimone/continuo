@@ -58,7 +58,7 @@ func (f *fakeStateStatus) ListTasks(ctx context.Context, _ string, _ statev1.Tas
 func (f *fakeStateStatus) CancelSchedule(_ context.Context, _, _, _ string) (*statev1.CancelScheduleResponse, error) {
 	panic("CancelSchedule should not be called in status tests")
 }
-func (f *fakeStateStatus) ListNodeRuns(_ context.Context, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
+func (f *fakeStateStatus) ListNodeRuns(_ context.Context, _, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
 	panic("ListNodeRuns should not be called in schedule tests")
 }
 
