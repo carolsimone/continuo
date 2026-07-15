@@ -327,6 +327,7 @@ func (r *Run) AcceptDispatch(
 			ManifestVersion:     p.ManifestVersion,
 			ImageTag:            p.ImageTag,
 			InheritedFromTaskID: p.InheritedFromTaskID,
+			Operation:           r.operation,
 		})
 	}
 

@@ -60,17 +60,20 @@ func NewTaskTrackerRepository(db *sqlx.DB, logger *slog.Logger) TaskTrackerRepos
 	}
 }
 
-// Create inserts a new task_tracker record into the database
+// Create inserts a new task_tracker record into the database. Operation is
+// normalized here (empty → 'run') so callers that build a TaskTracker without
+// setting it still satisfy the task_tracker_operation_check constraint.
 func (r *taskTrackerRepository) Create(ctx context.Context, task *TaskTracker) error {
+	task.Operation = operationWithDefault(task.Operation)
 	query := `
 		INSERT INTO task_tracker (
 			task_id, schedule_id, created_at, service_name, schema_name,
 			table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-			manifest_version, image_tag, inherited_from_task_id
+			manifest_version, image_tag, inherited_from_task_id, operation
 		) VALUES (
 			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
 			:table_name, :job_name, :status, :retry_count, :max_retries, :cancelled_at, :cancelled_by,
-			:manifest_version, :image_tag, :inherited_from_task_id
+			:manifest_version, :image_tag, :inherited_from_task_id, :operation
 		)
 	`
 
@@ -105,7 +108,7 @@ func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       manifest_version, image_tag, inherited_from_task_id
+		       manifest_version, image_tag, inherited_from_task_id, operation
 		FROM task_tracker
 		WHERE task_id = $1
 	`
@@ -139,7 +142,7 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       manifest_version, image_tag, inherited_from_task_id
+		       manifest_version, image_tag, inherited_from_task_id, operation
 		FROM task_tracker
 		WHERE schedule_id = $1
 		  AND service_name = $2
@@ -248,13 +251,19 @@ func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, t
 	if len(tasks) == 0 {
 		return nil
 	}
+	// Operation is normalized here (empty → 'run') so callers that build a
+	// TaskTracker without setting it still satisfy the
+	// task_tracker_operation_check constraint.
+	for _, t := range tasks {
+		t.Operation = operationWithDefault(t.Operation)
+	}
 	query := `
 		INSERT INTO task_tracker (
 			task_id, schedule_id, created_at, service_name, schema_name,
-			table_name, job_name, status, retry_count, max_retries, manifest_version, image_tag, inherited_from_task_id
+			table_name, job_name, status, retry_count, max_retries, manifest_version, image_tag, inherited_from_task_id, operation
 		) VALUES (
 			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
-			:table_name, :job_name, :status, :retry_count, :max_retries, :manifest_version, :image_tag, :inherited_from_task_id
+			:table_name, :job_name, :status, :retry_count, :max_retries, :manifest_version, :image_tag, :inherited_from_task_id, :operation
 		)
 		ON CONFLICT (task_id) DO NOTHING
 	`

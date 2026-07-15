@@ -78,6 +78,7 @@ func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, 
 		ManifestVersion:     t.ManifestVersion,
 		ImageTag:            t.ImageTag,
 		InheritedFromTaskID: t.InheritedFromTaskID,
+		Operation:           operationFromColumn(t.Operation),
 	}, nil
 }
 
@@ -105,6 +106,7 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 			ManifestVersion:     t.ManifestVersion,
 			ImageTag:            t.ImageTag,
 			InheritedFromTaskID: t.InheritedFromTaskID,
+			Operation:           operationWithDefault(string(t.Operation)),
 		})
 	}
 	return a.repo.BulkCreateTx(ctx, a.tx, rows)
