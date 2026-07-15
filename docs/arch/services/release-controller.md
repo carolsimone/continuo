@@ -41,7 +41,8 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | `compile.completed:v1` | `release-controller-compile-completed` | Compile job result from executor-controller. |
 | `manifest.loaded.candidate:v1` | `release-controller-manifest-loaded-candidate` | Resolved candidate topology (or a parse failure) from manifest-controller. |
 | `seed.build.completed:v1` | `release-controller-seed-build-completed` | Aggregate seed-build results from executor-controller. |
-| `validation.completed:v1` | `release-controller-validation-completed` | Aggregate per-node validation results from executor-controller. |
+| `validation.node.result:v1` | `release-controller-validation-node-result` | Per-node validation outcome from executor-controller, projected incrementally into the release's `per_node_results` read model as each node settles (loads the release `FOR UPDATE`, upserts the one node). |
+| `validation.completed:v1` | `release-controller-validation-completed` | Terminal validation decision from executor-controller; the per-node content was projected earlier via `validation.node.result:v1`, and a completeness barrier defers the decision until every expected node is stored. |
 
 ## Outbound Interfaces
 
@@ -138,15 +139,22 @@ status=ok:
 ```
 
 ### On `validation.completed:v1`
+
+The terminal event carries only the decision (`release_id`, `aggregate_status`, `candidate_schema`); the per-node content was already projected into the release's `per_node_results` read model by the incremental `validation.node.result:v1` stream. The handler loads the release `FOR UPDATE` (serializing against in-flight per-node upserts) and reads the stored validation-stage results rather than any per-node array on the event.
 ```
-RecordStageResults("validation", per_node_results) — persists per-node outcomes for all nodes
-all nodes ok and none missing → handleValidationOK:
+load release FOR UPDATE, read stored per_node_results where stage="validation"
+completeness barrier: if any id in validation_node_ids has no stored validation result →
+   return error so the message redelivers (the terminal event overtook a per-node event on
+   its separate stream); guaranteed to resolve, since every node result is emitted before the
+   aggregate. No promote/reject decision is taken while the projection is incomplete.
+all stored nodes ok and aggregate_status ok → handleValidationOK:
    update current_prod to this release's candidate topology,
    upsert the changed service's service_prod pointer (canonical key + image tag + release id),
    transition to Promoted, emit release.promoted:v1
-any node failed / missing / aggregate not ok → Reject(reason=validation_failed),
+any stored node not ok / aggregate_status not ok → Reject(reason=validation_failed),
    emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,
         per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_sql_uri}], repo, commit_sha}
+        (per_node sourced from the stored read model, enriched with each node's candidate_sql_uri)
 advance queue
 ```
 
@@ -156,10 +164,10 @@ Before updating `current_prod`, `promoteToProduction` computes the set of change
 
 ## Consumer Reliability
 
-- Four consumer groups (`compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.completed:v1`) run in the same process; each maintains its own offset.
+- Five consumer groups (`compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.node.result:v1`, `validation.completed:v1`) run in the same process; each maintains its own offset.
 - Inbound messages are deduped via `message_processing` (idempotent on the upstream `outbox_entry_id`), so a redelivery is absorbed.
-- A permanent parse-decode failure is ACKed (logged, not retried); transient errors are not ACKed and replay.
-- A message on any of the four inbound streams whose `release_id` no longer has a `releases` row (pruned, or reclaimed from a previous consumer for a deleted release) is logged and dropped rather than processed. The repository's `Get` returns no row as `(nil, nil)`, so all handlers nil-check the aggregate before use; without that guard a reclaimed message for a missing release would crash the consumer on startup.
+- A permanent parse-decode failure is ACKed (logged, not retried); transient errors are not ACKed and replay. The `validation.completed:v1` completeness barrier deliberately uses this replay path: it returns a transient error until every expected per-node result is stored, so the terminal decision never runs on a partial projection.
+- A message on any of the inbound streams whose `release_id` no longer has a `releases` row (pruned, or reclaimed from a previous consumer for a deleted release) is logged and dropped rather than processed. The repository's `Get` returns no row as `(nil, nil)`, so all handlers nil-check the aggregate before use; without that guard a reclaimed message for a missing release would crash the consumer on startup.
 - State changes and the outbox row are written in one transaction; the outbox publisher drains rows and XADDs them, injecting `outbox_entry_id` for downstream dedup.
 
 ## Background Loops
@@ -170,6 +178,7 @@ Before updating `current_prod`, `promoteToProduction` computes the set of change
 | `compile.completed:v1` consumer | Dispatches to the compile-result handler. |
 | `manifest.loaded.candidate:v1` consumer | Dispatches to the parsed-manifest handler. |
 | `seed.build.completed:v1` consumer | Dispatches to the seed-build-result handler. |
+| `validation.node.result:v1` consumer | Dispatches to the per-node validation-result handler (incremental projection). |
 | `validation.completed:v1` consumer | Dispatches to the validation-result handler. |
 | Retention | Runs on the janitor interval (`RELEASE_JANITOR_INTERVAL`, default 24h). Deletes terminal releases (promoted, rejected, superseded) whose creation timestamp is older than `RELEASE_RETENTION_DAYS` (default 90 days). Never deletes the release referenced by `current_prod` or by any `service_prod` pointer. For each pruned release, also deletes the `candidate-sql/<release_id>/` S3 prefix (soft-fail — a delete error does not abort the prune; the S3 lifecycle expiry rule is the backstop). |
 

@@ -346,7 +346,10 @@ func TestValidationPipeline_FailurePath(t *testing.T) {
 }
 
 // assertAggregate reads the single validation.completed:v1 outbox row for a
-// release and asserts its aggregate_status and the set of per-node results.
+// release and asserts its slim decision payload (release_id + aggregate_status,
+// no per-node content). Per-node results reach release-controller through the
+// separate validation.node.result:v1 projection stream; this checks one such row
+// was emitted per expected node so the read model can reconstruct the set.
 func assertAggregate(t *testing.T, db *sqlx.DB, releaseID, wantStatus string, wantNodeIDs []string) {
 	t.Helper()
 	var payload []byte
@@ -357,23 +360,16 @@ func assertAggregate(t *testing.T, db *sqlx.DB, releaseID, wantStatus string, wa
 	var got struct {
 		ReleaseID       string `json:"release_id"`
 		AggregateStatus string `json:"aggregate_status"`
-		PerNodeResults  []struct {
-			NodeID string `json:"node_id"`
-			Status string `json:"status"`
-		} `json:"per_node_results"`
 	}
 	require.NoError(t, json.Unmarshal(payload, &got))
 	assert.Equal(t, releaseID, got.ReleaseID)
 	assert.Equal(t, wantStatus, got.AggregateStatus)
-	require.Len(t, got.PerNodeResults, len(wantNodeIDs))
 
-	gotNodes := map[string]string{}
-	for _, r := range got.PerNodeResults {
-		gotNodes[r.NodeID] = r.Status
-		assert.NotEmpty(t, r.Status, "per-node status populated for %s", r.NodeID)
-	}
-	for _, id := range wantNodeIDs {
-		_, ok := gotNodes[id]
-		assert.True(t, ok, "per_node_results contains %s", id)
-	}
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(payload, &raw))
+	_, present := raw["per_node_results"]
+	assert.False(t, present, "terminal event must not re-carry per-node content")
+
+	assert.Equal(t, len(wantNodeIDs), countByStream(t, db, streams.ValidationNodeResultV1),
+		"one per-node projection row emitted per settled node")
 }

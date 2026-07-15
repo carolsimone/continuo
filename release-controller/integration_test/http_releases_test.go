@@ -84,13 +84,16 @@ func TestIntegration_GetReleaseIncludesPerNode(t *testing.T) {
 			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
 		},
 	}))
-	// Fail validation on node b so the release is rejected and per-node results are stored.
+	// Project each node's result via the per-node stream (node b failing) so the
+	// per_node_results are stored, then deliver the slim terminal decision.
+	for _, n := range []handlers.NodeValidationResultInput{
+		{ReleaseID: "rd1", Stage: "validation", NodeID: "a", Status: "ok"},
+		{ReleaseID: "rd1", Stage: "validation", NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/b"},
+	} {
+		require.NoError(t, handlers.HandleNodeValidationResult(ctx, deps, n))
+	}
 	require.NoError(t, handlers.HandleValidationResult(ctx, deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rd1",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"},
-			{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/b"},
-		},
+		ReleaseID:       "rd1",
 		AggregateStatus: "partial_failed",
 	}))
 

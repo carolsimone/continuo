@@ -495,17 +495,20 @@ sequenceDiagram
     KC->>R: publish validation.node.completed:v1 {release_id, node_id, outcome, dbt_log_uri}
     R->>EC: consume validation.node.completed:v1
     Note over EC: RecordOutcome, then gating — ok unblocks ready downstream,<br/>non-ok skips all reachable downstream
+    EC->>R: publish validation.node.result:v1 (per node, as it settles)<br/>{release_id, stage="validation", node_id, status, dbt_log_uri?, run_results_uri?}
+    R->>RC: consume validation.node.result:v1 → upsert per_node_results (read model)
   end
-  Note over EC: per-release advisory lock + emission sentinel (exactly-once):<br/>when no node remains pending/blocked/deployed → build aggregate
-  EC->>R: publish validation.completed:v1<br/>{per_node_results[{node_id, status, dbt_log_uri}], aggregate_status, candidate_schema}
+  Note over EC: per-release advisory lock + emission sentinel (exactly-once):<br/>when no node remains pending/blocked/deployed → build decision
+  EC->>R: publish validation.completed:v1<br/>{release_id, aggregate_status, candidate_schema} (decision only — no per-node array)
 
   Note over RC: Phase 5 — promote or reject
   R->>RC: consume validation.completed:v1
-  alt aggregate_status=ok
-    Note over RC: RecordStageResults("validation", per_node_results)<br/>current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted
+  Note over RC: load release FOR UPDATE; read stored per_node_results (stage="validation")<br/>completeness barrier: if any expected node not yet projected → return error to redeliver
+  alt every stored node ok and aggregate_status=ok
+    Note over RC: current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted
     RC->>R: publish release.promoted:v1
-  else any node failed / missing
-    Note over RC: RecordStageResults("validation", per_node_results)<br/>Reject(validation_failed)<br/>emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri,candidate_sql_uri}], repo, commit_sha}
+  else any stored node failed / aggregate_status not ok
+    Note over RC: Reject(validation_failed) using stored per-node results<br/>emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri,candidate_sql_uri}], repo, commit_sha}
     RC->>R: publish release.rejected:v1
     R->>RM: consume release.rejected:v1
     Note over RM: stage="validation" → SourceValidation; no file_path at this layer<br/>classify + emit remediation.requested:v1 (agent resolves file_path via ancestry)

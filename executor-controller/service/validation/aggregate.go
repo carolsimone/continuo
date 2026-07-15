@@ -238,9 +238,11 @@ func emitAggregateIfComplete(
 }
 
 // aggregatePayload builds the leg-specific completion payload. The validation
-// leg's shape is preserved byte-for-byte ({release_id, per_node_results,
-// aggregate_status, candidate_schema}); the seed-build leg uses release-
-// controller's HandleSeedBuildResult contract ({release_id, status, per_node,
+// leg carries only the decision ({release_id, aggregate_status,
+// candidate_schema}): the per-node content is projected into release-controller's
+// read model incrementally by validation.node.result:v1, so the terminal event
+// no longer re-carries it. The seed-build leg uses release-controller's
+// HandleSeedBuildResult contract ({release_id, status, per_node,
 // candidate_schema} — it reads only release_id + status, the rest is symmetry).
 // The compile leg shares the seed-build shape: release-controller's
 // HandleCompileResultInput reads release_id + status under the "status" key, so
@@ -258,7 +260,6 @@ func aggregatePayload(mode model.Mode, releaseID string, perNode []map[string]an
 	}
 	return map[string]any{
 		"release_id":       releaseID,
-		"per_node_results": perNode,
 		"aggregate_status": aggregate,
 		"candidate_schema": candidateSchema,
 	}

@@ -455,29 +455,22 @@ func TestMaybeEmit_EmitsAggregateOk_WhenAllOutcomesOk(t *testing.T) {
 	assert.Equal(t, "validation_completed", e.EventType)
 	assert.Equal(t, streams.ValidationCompletedV1, e.StreamName)
 
+	// The terminal validation.completed:v1 carries only the decision. Per-node
+	// content (including dbt_log_uri) reaches release-controller through the
+	// separate validation.node.result:v1 projection stream, so it must not appear
+	// on this event.
 	var payload struct {
 		ReleaseID       string `json:"release_id"`
 		AggregateStatus string `json:"aggregate_status"`
-		PerNodeResults  []struct {
-			NodeID    string `json:"node_id"`
-			Status    string `json:"status"`
-			DBTLogURI string `json:"dbt_log_uri"`
-		} `json:"per_node_results"`
 	}
 	require.NoError(t, json.Unmarshal(e.Payload, &payload))
 	assert.Equal(t, "rel_1", payload.ReleaseID)
 	assert.Equal(t, "ok", payload.AggregateStatus)
-	require.Len(t, payload.PerNodeResults, 2)
-	assert.Equal(t, "s3://logs/a", payload.PerNodeResults[0].DBTLogURI)
-	assert.Equal(t, "", payload.PerNodeResults[1].DBTLogURI, "empty log uri omitted -> decodes to zero value")
 
-	// omitempty: the node with no log produces no dbt_log_uri key at all.
-	var raw struct {
-		PerNodeResults []map[string]any `json:"per_node_results"`
-	}
+	var raw map[string]any
 	require.NoError(t, json.Unmarshal(e.Payload, &raw))
-	_, present := raw.PerNodeResults[1]["dbt_log_uri"]
-	assert.False(t, present, "absent log uri key omitted")
+	_, present := raw["per_node_results"]
+	assert.False(t, present, "terminal event must not re-carry per-node content")
 }
 
 func TestMaybeEmit_EmitsAggregateFailed_WhenAnyOutcomeFailed(t *testing.T) {

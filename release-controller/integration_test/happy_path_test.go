@@ -79,12 +79,17 @@ func TestIntegration_HappyPath(t *testing.T) {
 	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	assert.Equal(t, release.StatusValidating, r.Status())
 
-	// 4. Simulate validation result
+	// 4. Project each node's result via the per-node stream, then deliver the slim
+	// terminal decision. The terminal validation.completed:v1 no longer carries
+	// per-node content; the decision reads what the per-node stream stored.
+	for _, n := range []handlers.NodeValidationResultInput{
+		{ReleaseID: "rA", Stage: "validation", NodeID: "a", Status: "ok"},
+		{ReleaseID: "rA", Stage: "validation", NodeID: "b", Status: "ok"},
+	} {
+		require.NoError(t, handlers.HandleNodeValidationResult(context.Background(), deps, n))
+	}
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok", DurationMS: 5}, {NodeID: "b", Status: "ok"},
-		},
+		ReleaseID:       "rA",
 		AggregateStatus: "ok",
 	}))
 	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
@@ -92,7 +97,6 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NotNil(t, r)
 	require.NotEmpty(t, r.PerNodeResults())
 	assert.Equal(t, "ok", r.PerNodeResults()[0].Status)
-	assert.Equal(t, int64(5), r.PerNodeResults()[0].DurationMS)
 
 	// 5. GET /current-prod
 	req = httptest.NewRequest(http.MethodGet, "/current-prod", nil)

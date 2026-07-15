@@ -59,6 +59,90 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 	return deps, store
 }
 
+// seedValidationNodes projects each per-node validation result into the release
+// read model through HandleNodeValidationResult, exactly as the
+// validation.node.result:v1 stream does at runtime. The slim
+// validation.completed:v1 terminal event no longer carries per-node content, so
+// the results its decision reads must already be stored before it is invoked.
+func seedValidationNodes(t *testing.T, deps *handlers.Deps, releaseID string, nodes []handlers.NodeResult) {
+	t.Helper()
+	for _, n := range nodes {
+		require.NoError(t, handlers.HandleNodeValidationResult(context.Background(), deps, handlers.NodeValidationResultInput{
+			ReleaseID:     releaseID,
+			Stage:         "validation",
+			NodeID:        n.NodeID,
+			Status:        n.Status,
+			DBTLogURI:     n.DBTLogURI,
+			RunResultsURI: n.RunResultsURI,
+		}))
+	}
+}
+
+// TestHandleValidationResult_IncompleteProjection_ReturnsErrorForRedelivery
+// covers the completeness barrier: when the terminal validation.completed:v1
+// arrives before every per-node projection has landed (the two events travel on
+// separate streams), the handler must return an error so the message redelivers
+// and retries once the missing per-node results are stored. Here node "b" has no
+// stored result, so the decision must defer rather than promote or reject.
+func TestHandleValidationResult_IncompleteProjection_ReturnsErrorForRedelivery(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+
+	// Only node "a" has been projected; "b" is still in flight.
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rA",
+		AggregateStatus: "ok",
+	})
+	require.Error(t, err, "barrier must defer (error) so the message redelivers until b is projected")
+
+	// The release must not have been decided while the projection is incomplete.
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusValidating, r.Status())
+}
+
+// TestHandleValidationResult_CompleteProjection_Promotes verifies that once every
+// expected per-node result is stored and the aggregate is ok, the barrier passes
+// and the release promotes.
+func TestHandleValidationResult_CompleteProjection_Promotes(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "ok"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rA",
+		AggregateStatus: "ok",
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusPromoted, r.Status())
+}
+
+// TestHandleValidationResult_FailedNodeInStore_Rejects verifies that a failed
+// per-node result already stored in the read model drives a rejection naming
+// that node, even though the terminal event itself carries only the aggregate.
+func TestHandleValidationResult_FailedNodeInStore_Rejects(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "failed", DBTLogURI: "s3://l"},
+		{NodeID: "b", Status: "ok"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rA",
+		AggregateStatus: "failed",
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, []string{"a"}, r.FailingNodes())
+}
+
 // TestHandleValidationResult_UnknownRelease_DropsWithoutPanic guards against a
 // stale or duplicate validation.completed:v1 message whose release row no longer
 // exists (e.g. it was pruned, or the message was reclaimed from a previous
@@ -69,10 +153,7 @@ func TestHandleValidationResult_UnknownRelease_DropsWithoutPanic(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 
 	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "does-not-exist",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"},
-		},
+		ReleaseID:       "does-not-exist",
 		AggregateStatus: "ok",
 	})
 	require.NoError(t, err, "unknown release must be dropped, not error")
@@ -84,13 +165,13 @@ func TestHandleValidationResult_UnknownRelease_DropsWithoutPanic(t *testing.T) {
 
 func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "ok"},
+	})
 
 	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"},
-			{NodeID: "b", Status: "ok"},
-		},
+		ReleaseID:       "rA",
 		AggregateStatus: "ok",
 	})
 	require.NoError(t, err)
@@ -118,13 +199,13 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 
 func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/b.log"},
+	})
 
 	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"},
-			{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/b.log"},
-		},
+		ReleaseID:       "rA",
 		AggregateStatus: "failed",
 	})
 	require.NoError(t, err)
@@ -154,52 +235,10 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 	assert.Equal(t, "validation", stage)
 }
 
-// TestHandleValidationResult_EmptyResults_Rejects ensures that a result with no
-// per_node_results does not promote a release whose validation nodes were never run.
-func TestHandleValidationResult_EmptyResults_Rejects(t *testing.T) {
-	deps, store := seedToValidating(t, "rA")
-
-	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID:       "rA",
-		PerNodeResults:  nil,
-		AggregateStatus: "ok",
-	})
-	require.NoError(t, err)
-
-	r, err := store.GetRelease("rA")
-	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "validation_failed", r.RejectReason())
-}
-
-// TestHandleValidationResult_MissingNodeInResults_Rejects ensures that a result
-// that omits one of the required validation node IDs does not promote the
-// release, and that the outbox payload surfaces missing_nodes distinctly from
-// failing_nodes so operators can tell the two failure modes apart.
-func TestHandleValidationResult_MissingNodeInResults_Rejects(t *testing.T) {
-	deps, store := seedToValidating(t, "rA")
-
-	// Report only node "a"; node "b" is missing from the results.
-	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID:       "rA",
-		PerNodeResults:  []handlers.NodeResult{{NodeID: "a", Status: "ok"}},
-		AggregateStatus: "ok",
-	})
-	require.NoError(t, err)
-
-	r, err := store.GetRelease("rA")
-	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Contains(t, r.FailingNodes(), "b")
-
-	entries := outboxEntries(store)
-	require.Len(t, entries, 4)
-	var payload rejectedPayload
-	require.NoError(t, json.Unmarshal(entries[3].Payload, &payload))
-	assert.Empty(t, payload.FailingNodes, "no explicitly-failed nodes in this scenario")
-	assert.Equal(t, []string{"b"}, payload.MissingNodes, "b was expected but never reported")
-	assert.Equal(t, "ok", payload.AggregateStatus, "aggregate_status passed through unchanged")
-}
+// A terminal event whose expected nodes are not all projected yet (the empty- or
+// partial-result cases that previously rejected) now defers via the completeness
+// barrier instead of rejecting. Those scenarios are covered by
+// TestHandleValidationResult_IncompleteProjection_ReturnsErrorForRedelivery.
 
 // seedToValidatingWithURIs is like seedToValidating but uses a two-node topology
 // where each node carries a CandidateSQLURI so the rejected payload enrichment
@@ -246,13 +285,13 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 // investigating a failure without inline SQL bloat in the event.
 func TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance(t *testing.T) {
 	deps, store := seedToValidatingWithURIs(t, "rA")
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/rA/b.log", RunResultsURI: "run-results/rA/b.json"},
+	})
 
 	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"},
-			{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/rA/b.log", RunResultsURI: "run-results/rA/b.json"},
-		},
+		ReleaseID:       "rA",
 		AggregateStatus: "failed",
 	})
 	require.NoError(t, err)
@@ -312,13 +351,13 @@ func TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance(t *
 // operators can diagnose the rejection.
 func TestHandleValidationResult_AggregateStatusFailed_Rejects(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "ok"},
+	})
 
 	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"},
-			{NodeID: "b", Status: "ok"},
-		},
+		ReleaseID:       "rA",
 		AggregateStatus: "partial_failed",
 	})
 	require.NoError(t, err)
@@ -403,12 +442,12 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 		},
 	}))
 
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "ok"},
+	})
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"},
-			{NodeID: "b", Status: "ok"},
-		},
+		ReleaseID:       "rA",
 		AggregateStatus: "ok",
 	}))
 
@@ -441,13 +480,13 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 // no-op if validation.completed already cleaned it up).
 func TestHandleValidationResult_Promote_CarriesCandidateSchema(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "ok"},
+	})
 
 	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"},
-			{NodeID: "b", Status: "ok"},
-		},
+		ReleaseID:       "rA",
 		AggregateStatus: "ok",
 	})
 	require.NoError(t, err)
@@ -485,8 +524,9 @@ func TestHandleValidationResult_Promote_EmitsOriginalFilePath(t *testing.T) {
 			{UniqueID: "a", ServiceName: "svc-a", OriginalFilePath: "models/a.sql", UpstreamUniqueIDs: []string{}},
 		},
 	}))
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA", PerNodeResults: []handlers.NodeResult{{NodeID: "a", Status: "ok"}}, AggregateStatus: "ok",
+		ReleaseID: "rA", AggregateStatus: "ok",
 	}))
 
 	entries := outboxEntries(store)
@@ -519,8 +559,9 @@ func TestHandleValidationResult_Promote_EmitsTestCount(t *testing.T) {
 			{UniqueID: "a", ServiceName: "svc-a", TestCount: 3, UpstreamUniqueIDs: []string{}},
 		},
 	}))
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA", PerNodeResults: []handlers.NodeResult{{NodeID: "a", Status: "ok"}}, AggregateStatus: "ok",
+		ReleaseID: "rA", AggregateStatus: "ok",
 	}))
 
 	entries := outboxEntries(store)
