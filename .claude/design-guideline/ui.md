@@ -289,6 +289,11 @@ The sanctioned wrapper for a labelled native control (e.g. a filter
                        padding: 4px 8px;
                        border: 1px solid #d1d5db; border-radius: 4px;
                        background: #fff; color: #374151; cursor: pointer; }
+
+/* Inline in an action row, the block margin is wrong: it inflates the flex
+   row and (being asymmetric) shifts the select off the buttons' centre line. */
+.page-action-row .form-field,
+.scheduler-card-header .form-field { margin: 0; }
 ```
 
 Rules:
@@ -297,7 +302,13 @@ Rules:
   `.section-header__title`.
 - Use a native control. Do not build a custom dropdown widget.
 - For a filter that drives a list, the `.form-field` sits above the
-  `.section-header` of the list it filters.
+  `.section-header` of the list it filters. There the `8px 0 12px`
+  block margin gives it breathing room.
+- When the `.form-field` is used *inline* as an operation selector inside
+  an action row (`.page-action-row`, `.scheduler-card-header`), that block
+  margin must be zeroed. Otherwise it makes the field taller than its
+  sibling `.btn`s and pushes the `<select>` above their shared centre line
+  — the field and the buttons must sit on one baseline.
 
 ## Tables
 
