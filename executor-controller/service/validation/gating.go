@@ -2,12 +2,14 @@ package validation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -34,6 +36,30 @@ func SettleNodeTerminal(
 	}
 	if err := propagateGating(ctx, depRepo, cfg.mode, releaseID, completedNodeID, outcome, now); err != nil {
 		return fmt.Errorf("propagate gating: %w", err)
+	}
+	// Emit the live per-node projection for this settled node before the aggregate
+	// gate. It carries only this node's outcome; release-controller upserts it into
+	// the per_node_results read model so the UI count climbs as nodes finish. It is
+	// created before the aggregate row so the outbox publishes it first (best-effort
+	// ordering; release-controller's completeness barrier is the real guarantee).
+	settled, err := depRepo.GetByReleaseNode(ctx, releaseID, completedNodeID, cfg.mode)
+	if err != nil {
+		return fmt.Errorf("get settled node for projection: %w", err)
+	}
+	nodePayload, err := json.Marshal(perNodeResultPayload(
+		releaseID, completedNodeID, settled.Outcome(), settled.DBTLogURI(), settled.DBTRunResultsURI()))
+	if err != nil {
+		return fmt.Errorf("marshal per-node projection: %w", err)
+	}
+	if err := outboxRepo.Create(ctx, &outbox.Entry{
+		AggregateType: "release",
+		AggregateID:   uuid.New(), // distinct per emit: an idempotent last-write projection, not a deduped decision
+		EventType:     EventTypeValidationNodeResult,
+		Payload:       nodePayload,
+		StreamName:    streams.ValidationNodeResultV1,
+		MaxRetries:    3,
+	}); err != nil {
+		return fmt.Errorf("create per-node projection row: %w", err)
 	}
 	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, cfg, releaseID, now)
 }

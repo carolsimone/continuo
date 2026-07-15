@@ -2,6 +2,7 @@ package validation_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -231,4 +233,35 @@ func TestSettleNodeTerminal_MultiUpstreamConvergesSequentially(t *testing.T) {
 		context.Background(), repo, outboxRepo, agg,
 		validation.DedupNamespace, "rel", "b1", "ok", time.Now()))
 	assert.Equal(t, model.StatusPending, repo.statusOf("c"), "c unblocked once both upstreams ok")
+}
+
+// (d) SettleNodeTerminal writes a per-node validation.node.result:v1 projection
+// row for the just-settled node, in addition to advancing the gate. node.b is
+// still pending, so the aggregate does NOT fire — the only outbox row produced
+// is the per-node projection, and its payload carries this node's outcome.
+func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
+	log := &callLog{}
+	a := validationNode(t, "rel-1", "node.a", model.StatusDeployed)
+	require.NoError(t, a.RecordOutcome("ok", "s3://logs/a.txt", "", time.Now()))
+	b := validationNode(t, "rel-1", "node.b", model.StatusPending)
+	repo := newChainDepRepo(log, a, b)
+	outboxRepo := &captureOutbox{}
+	agg := &orderedAggRepo{won: true, log: log}
+
+	err := validation.SettleNodeTerminal(
+		context.Background(), repo, outboxRepo, agg,
+		validation.DedupNamespace, "rel-1", "node.a", "ok", time.Now())
+	require.NoError(t, err)
+
+	require.NotNil(t, outboxRepo.last, "expected a per-node projection outbox row")
+	assert.Equal(t, validation.EventTypeValidationNodeResult, outboxRepo.last.EventType)
+	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.last.StreamName)
+
+	var p map[string]any
+	require.NoError(t, json.Unmarshal(outboxRepo.last.Payload, &p))
+	assert.Equal(t, "rel-1", p["release_id"])
+	assert.Equal(t, "node.a", p["node_id"])
+	assert.Equal(t, "ok", p["status"])
+	assert.Equal(t, "validation", p["stage"])
+	assert.Equal(t, "s3://logs/a.txt", p["dbt_log_uri"])
 }

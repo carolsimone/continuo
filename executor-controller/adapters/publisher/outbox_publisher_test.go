@@ -228,6 +228,11 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 			streamName: streams.CompileCompletedV1,
 			payload:    []byte(`{"release_id":"rel1","status":"ok"}`),
 		},
+		{
+			eventType:  validation.EventTypeValidationNodeResult,
+			streamName: streams.ValidationNodeResultV1,
+			payload:    []byte(`{"release_id":"rel1","stage":"validation","node_id":"node.a","status":"ok"}`),
+		},
 	}
 
 	for _, tc := range cases {

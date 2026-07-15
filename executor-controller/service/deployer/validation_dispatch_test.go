@@ -2,6 +2,7 @@ package deployer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -76,8 +77,18 @@ func (r *fakeDeploymentRepo) Save(_ context.Context, d *model.Deployment) error 
 	r.saved = append(r.saved, d)
 	return nil
 }
-func (r *fakeDeploymentRepo) GetByReleaseNode(context.Context, string, string, model.Mode) (*model.Deployment, error) {
-	return nil, nil
+// GetByReleaseNode returns the most recently Saved row matching nodeID,
+// mirroring production's within-transaction read-after-write (SettleNodeTerminal
+// fetches the just-settled node right after the dispatcher Saves its terminal
+// outcome). A miss returns sql.ErrNoRows, matching the real repository's
+// contract — it never returns (nil, nil).
+func (r *fakeDeploymentRepo) GetByReleaseNode(_ context.Context, _ string, nodeID string, _ model.Mode) (*model.Deployment, error) {
+	for i := len(r.saved) - 1; i >= 0; i-- {
+		if r.saved[i].NodeID() == nodeID {
+			return r.saved[i], nil
+		}
+	}
+	return nil, sql.ErrNoRows
 }
 func (r *fakeDeploymentRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
 	r.calls = append(r.calls, "PendingValidationCount")
@@ -229,8 +240,11 @@ func TestDispatcher_DispatchOne_ValidationMode_OnPermanentFailure_RecordsOutcome
 	assert.Equal(t, model.StatusFailed, repo.saved[0].Status(), "permanent deploy failure is terminal")
 	assert.Equal(t, "failed", repo.saved[0].Outcome(), "terminal outcome recorded as failed")
 	assert.Equal(t, 1, agg.claimCalls, "aggregate emit attempted once last node is terminal")
-	require.Len(t, outboxRepo.created, 1, "aggregate validation.completed:v1 row written")
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
+	// SettleNodeTerminal writes two rows: the per-node projection for this node,
+	// then (since it is also the release's last pending node) the aggregate.
+	require.Len(t, outboxRepo.created, 2, "per-node projection + aggregate validation.completed:v1 row written")
+	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[1].StreamName)
 }
 
 func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGate(t *testing.T) {
@@ -263,9 +277,11 @@ func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGa
 	require.GreaterOrEqual(t, saveIdx, 0, "Save was called")
 	require.GreaterOrEqual(t, countIdx, 0, "gate counted pending")
 	assert.Less(t, saveIdx, countIdx, "outcome is persisted before the aggregate gate counts pending")
-	// And with no other nodes pending, the aggregate fires.
-	require.Len(t, outboxRepo.created, 1, "aggregate validation.completed:v1 emitted for the last (failed) node")
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
+	// And with no other nodes pending, the aggregate fires — alongside the
+	// per-node projection SettleNodeTerminal always writes for the settled node.
+	require.Len(t, outboxRepo.created, 2, "aggregate validation.completed:v1 emitted for the last (failed) node")
+	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[1].StreamName)
 }
 
 func indexOf(s []string, v string) int {
@@ -380,8 +396,12 @@ func TestDispatcher_DispatchValidation_FailAtDispatch_SkipsDescendant_EmitsAggre
 	assert.Equal(t, "failed", repo.nodes["node_a"].Outcome())
 	assert.Equal(t, model.StatusSkipped, repo.statusOf("node_b"), "B skipped — its only upstream A failed")
 
-	require.Len(t, outboxRepo.created, 1, "validation.completed aggregate emitted")
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
+	// SettleNodeTerminal writes the per-node projection for node_a, then (no nodes
+	// left pending) the aggregate. node_b's skip is a propagation side effect, not
+	// a separate settle, so it produces no projection row of its own.
+	require.Len(t, outboxRepo.created, 2, "per-node projection + validation.completed aggregate emitted")
+	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[1].StreamName)
 }
 
 // --- Task 14: aggregate-emit gate (validation.EmitValidationAggregateIfComplete) -

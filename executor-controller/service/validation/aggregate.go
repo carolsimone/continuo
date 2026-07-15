@@ -35,6 +35,12 @@ const EventTypeSeedBuildCompleted = "seed_build_completed"
 // the compile.completed:v1 aggregate event.
 const EventTypeCompileCompleted = "compile_completed"
 
+// EventTypeValidationNodeResult is the outbox event_type for the per-node
+// validation projection event validation.node.result:v1, emitted once per node
+// as it settles. It feeds release-controller's live per-node read model only;
+// the promote/reject decision derives from validation.completed:v1.
+const EventTypeValidationNodeResult = "validation_node_result"
+
 // DedupNamespace seeds the deterministic aggregate_id for a release's
 // validation.completed:v1 outbox row so a re-emission (e.g. a retried batch that
 // re-wins the sentinel after a crash between INSERT and commit) deduplicates to
@@ -256,4 +262,22 @@ func aggregatePayload(mode model.Mode, releaseID string, perNode []map[string]an
 		"aggregate_status": aggregate,
 		"candidate_schema": candidateSchema,
 	}
+}
+
+// perNodeResultPayload builds the validation.node.result:v1 body for one settled
+// node. URIs are omitted when empty (omitempty parity with the aggregate event).
+func perNodeResultPayload(releaseID, nodeID, status, dbtLogURI, runResultsURI string) map[string]any {
+	p := map[string]any{
+		"release_id": releaseID,
+		"stage":      string(model.ModeValidation), // == "validation", release-controller's read-model stage label
+		"node_id":    nodeID,
+		"status":     status,
+	}
+	if dbtLogURI != "" {
+		p["dbt_log_uri"] = dbtLogURI
+	}
+	if runResultsURI != "" {
+		p["run_results_uri"] = runResultsURI
+	}
+	return p
 }
