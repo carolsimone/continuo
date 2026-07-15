@@ -46,6 +46,8 @@ const (
 	ValidationRequestedV1 = "validation.requested:v1"
 	// ValidationNodeCompletedV1 — Per-node validation Job terminal status from k8s-controller back to executor-controller; aggregated into validation.completed:v1.
 	ValidationNodeCompletedV1 = "validation.node.completed:v1"
+	// ValidationNodeResultV1 — Per-node validation outcome from executor-controller, emitted as each node settles, for release-controller's live per-node read model. The promote/reject decision still derives from validation.completed:v1.
+	ValidationNodeResultV1 = "validation.node.result:v1"
 	// ValidationCompletedV1 — Per-node validation results from executor-controller back to release-controller.
 	ValidationCompletedV1 = "validation.completed:v1"
 	// SeedBuildRequestedV1 — release-controller requests candidate seed builds; executor dispatches per-seed team-image jobs.
@@ -120,6 +122,8 @@ const (
 	ExecutorValidationRequested = "executor-validation-requested"
 	// ExecutorValidationNodeCompleted — executor-controller consumer group on validation.node.completed:v1.
 	ExecutorValidationNodeCompleted = "executor-validation-node-completed"
+	// ReleaseControllerValidationNodeResult — release-controller consumer group on validation.node.result:v1.
+	ReleaseControllerValidationNodeResult = "release-controller-validation-node-result"
 	// ReleaseControllerValidationCompleted — release-controller consumer group on validation.completed:v1.
 	ReleaseControllerValidationCompleted = "release-controller-validation-completed"
 	// ExecutorValidationCompleted — executor-controller consumer group on validation.completed:v1.
@@ -174,6 +178,7 @@ var All = []string{
 	ManifestLoadedCandidateV1,
 	ValidationRequestedV1,
 	ValidationNodeCompletedV1,
+	ValidationNodeResultV1,
 	ValidationCompletedV1,
 	SeedBuildRequestedV1,
 	SeedBuildNodeCompletedV1,

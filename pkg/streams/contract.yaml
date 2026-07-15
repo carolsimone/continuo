@@ -214,6 +214,15 @@ streams:
         group: executor-validation-node-completed
         const: ExecutorValidationNodeCompleted
 
+  - name: validation.node.result:v1
+    const: ValidationNodeResultV1
+    description: Per-node validation outcome from executor-controller, emitted as each node settles, for release-controller's live per-node read model. The promote/reject decision still derives from validation.completed:v1.
+    producers: [executor-controller]
+    consumers:
+      - service: release-controller
+        group: release-controller-validation-node-result
+        const: ReleaseControllerValidationNodeResult
+
   - name: validation.completed:v1
     const: ValidationCompletedV1
     description: Per-node validation results from executor-controller back to release-controller.
