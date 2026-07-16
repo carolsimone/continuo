@@ -7,9 +7,9 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
-// NodeValidationResultInput is the wire shape of one validation.node.result:v1
-// message: a single node's terminal outcome, projected into the release read
-// model as it settles.
+// NodeValidationResultInput is the wire shape of the kind:"node" message on
+// validation.result:v1: a single node's terminal outcome, projected into the
+// release read model as it settles.
 type NodeValidationResultInput struct {
 	ReleaseID     string `json:"release_id"`
 	Stage         string `json:"stage"`
@@ -21,7 +21,7 @@ type NodeValidationResultInput struct {
 
 // HandleNodeValidationResult upserts one node's outcome into the release's
 // per_node_results read model so the UI can render results incrementally,
-// before the terminal validation.completed:v1 arrives. It loads the release
+// before the kind:"complete" terminal message arrives. It loads the release
 // FOR UPDATE so concurrent per-node upserts (and the terminal handler)
 // serialize on the row. An unknown release is acked and dropped: a
 // stale/duplicate for a pruned release has nothing to project.

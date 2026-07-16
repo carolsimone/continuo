@@ -3,11 +3,12 @@ package handlers
 import "github.com/carolsimone/continuo/release-controller/domain/release"
 
 // NodeResult is the inbound wire shape of one per-node result carried by the
-// compile and seed-build aggregate events (validation.completed:v1 no longer
-// carries per-node content — it is projected via validation.node.result:v1). It
-// is kept separate from the domain value object release.NodeValidationResult so
-// the transport shape stays decoupled from the domain; the handlers map
-// NodeResult → release.NodeValidationResult before recording it.
+// compile and seed-build aggregate events (the validation leg instead streams
+// per-node content as kind:"node" messages on the unified validation.result:v1
+// stream). It is kept separate from the domain value object
+// release.NodeValidationResult so the transport shape stays decoupled from the
+// domain; the handlers map NodeResult → release.NodeValidationResult before
+// recording it.
 type NodeResult struct {
 	NodeID        string `json:"node_id"`
 	Status        string `json:"status"` // "ok" or "failed"

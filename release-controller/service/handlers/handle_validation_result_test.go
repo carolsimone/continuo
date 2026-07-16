@@ -1,8 +1,10 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -87,6 +89,11 @@ func seedValidationNodes(t *testing.T, deps *handlers.Deps, releaseID string, no
 func TestHandleValidationResult_MissingNode_AggregateOK_Promotes(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 
+	// Swap in a buffer-backed logger so the test can assert the missing-node
+	// warn actually fires, instead of only inferring it from the promote outcome.
+	var logBuf bytes.Buffer
+	deps.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+
 	// Only node "a" projected; "b"'s projection write was permanently dropped.
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 
@@ -100,6 +107,8 @@ func TestHandleValidationResult_MissingNode_AggregateOK_Promotes(t *testing.T) {
 	assert.Equal(t, release.StatusPromoted, r.Status(),
 		"a missing audit row must not reject a release the aggregate says passed")
 	assert.Empty(t, r.FailingNodes(), "the missing node must not be fabricated as failing")
+	assert.Contains(t, logBuf.String(), "per-node audit missing nodes",
+		"the missing-node warn must fire when deciding from aggregate_status")
 }
 
 // TestHandleValidationResult_MissingNode_AggregateFailed_Rejects verifies that a

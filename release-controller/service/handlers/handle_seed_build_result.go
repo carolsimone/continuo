@@ -167,8 +167,8 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 
 	// Filter the recorded validation IDs to exclude the just-built seeds. This
 	// same filtered set is both persisted onto the release (below) and sent to
-	// the validation leg, so the terminal completeness barrier expects exactly
-	// the nodes the executor emits per-node results for.
+	// the validation leg, keeping the release's stored validation node set equal
+	// to exactly the nodes the executor validates and emits per-node results for.
 	validationIDs := make([]string, 0, len(allIDs))
 	for _, id := range allIDs {
 		if !builtSeeds[id] {

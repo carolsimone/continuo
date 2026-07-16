@@ -165,9 +165,10 @@ func (r *Release) RecordStageResults(stage string, results []NodeValidationResul
 
 // UpsertStageResult adds or replaces a single per-node result identified by
 // (stage, node_id), leaving every other entry intact. It backs the incremental
-// projection: each validation.node.result:v1 event upserts exactly one node, so
-// the read model fills in as nodes settle. Re-delivery or a retry re-emission of
-// the same node replaces in place (last-write), never appends a duplicate.
+// projection: each kind:"node" message on validation.result:v1 upserts exactly
+// one node, so the read model fills in as nodes settle. Re-delivery or a retry
+// re-emission of the same node replaces in place (last-write), never appends a
+// duplicate.
 func (r *Release) UpsertStageResult(stage string, result NodeValidationResult) {
 	result.Stage = stage
 	for i, n := range r.perNodeResults {
@@ -252,10 +253,10 @@ func (r *Release) TransitionToSeedBuilding(topology Topology, validationNodeIDs 
 // candidate seeds are built. It narrows the persisted validation set to
 // validationNodeIDs — the nodes actually sent to the validation leg, which
 // excludes the just-built seeds (already materialised in the candidate schema).
-// This keeps ValidationNodeIDs() equal to the set the executor emits per-node
-// results for, so the terminal completeness barrier never waits on a seed that
-// never validates. It also stamps validatingStartedAt; the candidate topology is
-// already set by TransitionToSeedBuilding.
+// This keeps ValidationNodeIDs() equal to what the executor validates, so the
+// terminal decision's failing/audit reflect exactly the validated nodes. It
+// also stamps validatingStartedAt; the candidate topology is already set by
+// TransitionToSeedBuilding.
 func (r *Release) TransitionFromSeedBuilding(validationNodeIDs []string, now time.Time) error {
 	if r.status != StatusSeedBuilding {
 		return fmt.Errorf("cannot transition to validating from %s", r.status)
