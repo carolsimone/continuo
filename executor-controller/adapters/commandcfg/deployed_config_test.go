@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
@@ -33,10 +34,19 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	gotSeedBuild := r.SeedBuildCommand("finance", "seed_fx_rates_eur", "cand_schema")
 	assertArgv(t, "finance seed_build", gotSeedBuild, []string{"wise-dbt", "load-seed", "seed_fx_rates_eur"})
 
-	gotCompile, manifest := r.CompileCommand("finance")
-	assertArgv(t, "finance compile", gotCompile, []string{"wise-dbt", "compile-project"})
-	if manifest != "/project/target/manifest.json" {
-		t.Fatalf("finance compile manifest_path = %q, want /project/target/manifest.json", manifest)
+	gotCompile := r.CompileCommand("finance")
+	assertArgv(t, "finance compile", gotCompile.Argv, []string{"wise-dbt", "compile-project"})
+	if gotCompile.ManifestPath != "/project/target/manifest.json" {
+		t.Fatalf("finance compile manifest_path = %q, want /project/target/manifest.json", gotCompile.ManifestPath)
+	}
+
+	// The wise-dbt wrapper declares a reusable parse cache; a service with no
+	// override makes no such claim.
+	if got := r.WrapperCachePolicy("finance"); got != ports.WrapperCacheRequired {
+		t.Fatalf("finance wrapper_cache = %q, want %q", got, ports.WrapperCacheRequired)
+	}
+	if got := r.WrapperCachePolicy("service-3"); got != ports.WrapperCacheOpaque {
+		t.Fatalf("service-3 wrapper_cache = %q, want %q", got, ports.WrapperCacheOpaque)
 	}
 
 	// A service with no override falls back to the default block (plain dbt).

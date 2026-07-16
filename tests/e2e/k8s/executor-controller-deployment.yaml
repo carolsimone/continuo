@@ -28,6 +28,10 @@ data:
         compile:
           command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
           manifest_path: "/project/target/manifest.json"
+        # wise-dbt leaves dbt's partial parse where dbt writes it (beside
+        # manifest.json), so partial_parse_path derives and the cache is reusable.
+        worker:
+          wrapper_cache: required
 ---
 apiVersion: v1
 kind: ServiceAccount

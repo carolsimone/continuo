@@ -6,11 +6,21 @@ package commandcfg
 
 import "regexp"
 
-// compileSpec is a compile override: the team's compile argv plus the
-// absolute path where their tool writes manifest.json.
+// compileSpec is a compile override: the team's compile argv plus the absolute
+// paths where their tool writes its outputs. partial_parse_path is optional and
+// only needed by a wrapper that relocates the file; otherwise it derives beside
+// manifest.json, where dbt writes it by default.
 type compileSpec struct {
-	Command      []string `yaml:"command"`
-	ManifestPath string   `yaml:"manifest_path"`
+	Command          []string `yaml:"command"`
+	ManifestPath     string   `yaml:"manifest_path"`
+	PartialParsePath string   `yaml:"partial_parse_path,omitempty"`
+}
+
+// workerSpec declares how a team's dbt wrapper behaves in a reusable worker.
+type workerSpec struct {
+	// WrapperCache is "required" or "opaque". Empty means the service made
+	// no claim, which resolves to opaque.
+	WrapperCache string `yaml:"wrapper_cache,omitempty"`
 }
 
 // opSet is one command set covering the operations continuo can dispatch.
@@ -23,6 +33,7 @@ type opSet struct {
 	Test      []string     `yaml:"test"`
 	Build     []string     `yaml:"build"`
 	Compile   *compileSpec `yaml:"compile"`
+	Worker    *workerSpec  `yaml:"worker,omitempty"`
 }
 
 // fileConfig is the root dbt-commands.yaml document.

@@ -1,6 +1,10 @@
 package commandcfg
 
 import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+
 	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
@@ -68,14 +72,84 @@ func (r *Resolver) SeedBuildCommand(serviceName, node, targetSchema string) []st
 	return substitute(t, map[string]string{"node": node, "target_schema": targetSchema})
 }
 
-// CompileCommand resolves the compile argv and manifest.json path. The default
-// block is always complete, so a compile spec is always present.
-func (r *Resolver) CompileCommand(serviceName string) ([]string, string) {
+// compileSpec resolves the compile block with the usual precedence. The default
+// block is always complete, so a spec is always present.
+func (r *Resolver) compileSpec(serviceName string) *compileSpec {
 	if ops := r.cfg.Services[serviceName]; ops != nil && ops.Compile != nil {
-		return append([]string(nil), ops.Compile.Command...), ops.Compile.ManifestPath
+		return ops.Compile
 	}
-	d := r.cfg.Default.Compile
-	return append([]string(nil), d.Command...), d.ManifestPath
+	return r.cfg.Default.Compile
+}
+
+// CompileCommand resolves the compile leg. A service that does not declare
+// partial_parse_path gets the dbt default location: beside manifest.json.
+func (r *Resolver) CompileCommand(serviceName string) ports.CompileCommand {
+	spec := r.compileSpec(serviceName)
+	partial := spec.PartialParsePath
+	if partial == "" {
+		partial = filepath.Join(filepath.Dir(spec.ManifestPath), "partial_parse.msgpack")
+	}
+	return ports.CompileCommand{
+		Argv:             append([]string(nil), spec.Command...),
+		ManifestPath:     spec.ManifestPath,
+		PartialParsePath: partial,
+	}
+}
+
+// WrapperCachePolicy resolves the service's declared wrapper-cache behaviour.
+// Anything undeclared — no override, no worker block, or an empty one — is
+// opaque: continuo only assumes a reusable parse cache when a team says so.
+func (r *Resolver) WrapperCachePolicy(serviceName string) ports.WrapperCachePolicy {
+	if ops := r.cfg.Services[serviceName]; ops != nil && ops.Worker != nil && ops.Worker.WrapperCache != "" {
+		return ports.WrapperCachePolicy(ops.Worker.WrapperCache)
+	}
+	if d := r.cfg.Default; d != nil && d.Worker != nil && d.Worker.WrapperCache != "" {
+		return ports.WrapperCachePolicy(d.Worker.WrapperCache)
+	}
+	return ports.WrapperCacheOpaque
+}
+
+// runtimeContextDoc is the canonical shape of a service's resolved command
+// surface. It is a struct, not a map, so encoding/json emits its fields in a
+// fixed declared order and the JSON is byte-stable across processes.
+type runtimeContextDoc struct {
+	Run              []string `json:"run"`
+	Seed             []string `json:"seed"`
+	Snapshot         []string `json:"snapshot"`
+	SeedBuild        []string `json:"seed_build"`
+	Test             []string `json:"test"`
+	Build            []string `json:"build"`
+	Compile          []string `json:"compile"`
+	ManifestPath     string   `json:"manifest_path"`
+	PartialParsePath string   `json:"partial_parse_path"`
+	WrapperCache     string   `json:"wrapper_cache"`
+}
+
+// RuntimeContext returns the canonical JSON of everything that decides what dbt
+// actually runs for the service: the seven raw templates (unsubstituted, since
+// the node name is per-invocation and must not enter the context), both compile
+// paths, and the wrapper policy. Any config change a team makes to these
+// changes the JSON, and therefore the parse-context digest derived from it.
+func (r *Resolver) RuntimeContext(serviceName string) string {
+	compile := r.CompileCommand(serviceName)
+	body, err := json.Marshal(runtimeContextDoc{
+		Run:              r.template(serviceName, func(o *opSet) []string { return o.Run }),
+		Seed:             r.template(serviceName, func(o *opSet) []string { return o.Seed }),
+		Snapshot:         r.template(serviceName, func(o *opSet) []string { return o.Snapshot }),
+		SeedBuild:        r.template(serviceName, func(o *opSet) []string { return o.SeedBuild }),
+		Test:             r.template(serviceName, func(o *opSet) []string { return o.Test }),
+		Build:            r.template(serviceName, func(o *opSet) []string { return o.Build }),
+		Compile:          compile.Argv,
+		ManifestPath:     compile.ManifestPath,
+		PartialParsePath: compile.PartialParsePath,
+		WrapperCache:     string(r.WrapperCachePolicy(serviceName)),
+	})
+	if err != nil {
+		// runtimeContextDoc holds only strings and string slices, which
+		// encoding/json cannot fail on.
+		panic(fmt.Sprintf("marshal runtime context for %s: %v", serviceName, err))
+	}
+	return string(body)
 }
 
 // substitute replaces {{ name }} tokens in each argv element with vals[name].

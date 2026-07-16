@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	"gopkg.in/yaml.v3"
 )
 
@@ -108,15 +109,39 @@ func validateOpSet(path string, ops *opSet) error {
 			map[string]bool{}, nil); err != nil {
 			return err
 		}
-		mp := ops.Compile.ManifestPath
-		switch {
-		case mp == "":
+		if ops.Compile.ManifestPath == "" {
 			return fmt.Errorf("%s.compile.manifest_path: required", path)
-		case placeholderRe.MatchString(mp):
-			return fmt.Errorf("%s.compile.manifest_path: placeholders are not allowed", path)
-		case !strings.HasPrefix(mp, "/"):
-			return fmt.Errorf("%s.compile.manifest_path: must be an absolute path, got %q", path, mp)
 		}
+		if err := validateLiteralAbsPath(path+".compile.manifest_path", ops.Compile.ManifestPath); err != nil {
+			return err
+		}
+		// partial_parse_path is optional: absent means "derive beside
+		// manifest.json". A declared one is held to the same shape.
+		if ops.Compile.PartialParsePath != "" {
+			if err := validateLiteralAbsPath(path+".compile.partial_parse_path", ops.Compile.PartialParsePath); err != nil {
+				return err
+			}
+		}
+	}
+	if ops.Worker != nil && ops.Worker.WrapperCache != "" {
+		switch ports.WrapperCachePolicy(ops.Worker.WrapperCache) {
+		case ports.WrapperCacheRequired, ports.WrapperCacheOpaque:
+		default:
+			return fmt.Errorf("%s.worker.wrapper_cache: must be %q or %q, got %q",
+				path, ports.WrapperCacheRequired, ports.WrapperCacheOpaque, ops.Worker.WrapperCache)
+		}
+	}
+	return nil
+}
+
+// validateLiteralAbsPath requires a path the executor can use verbatim: a
+// literal absolute path, with no placeholder to substitute.
+func validateLiteralAbsPath(path, value string) error {
+	if placeholderRe.MatchString(value) {
+		return fmt.Errorf("%s: placeholders are not allowed", path)
+	}
+	if !strings.HasPrefix(value, "/") {
+		return fmt.Errorf("%s: must be an absolute path, got %q", path, value)
 	}
 	return nil
 }

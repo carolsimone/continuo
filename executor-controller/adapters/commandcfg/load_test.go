@@ -199,6 +199,26 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			yaml:    completeDefault + "services:\n  wise: {}",
 			wantErr: "services.wise: incomplete command set, missing",
 		},
+		{
+			name:    "compile relative partial_parse_path",
+			yaml:    "default:\n  compile:\n    command: [\"dbt\", \"compile\"]\n    manifest_path: \"/p/m.json\"\n    partial_parse_path: \"target/pp.msgpack\"",
+			wantErr: "default.compile.partial_parse_path: must be an absolute path",
+		},
+		{
+			name:    "compile partial_parse_path with placeholder",
+			yaml:    "default:\n  compile:\n    command: [\"dbt\", \"compile\"]\n    manifest_path: \"/p/m.json\"\n    partial_parse_path: \"/p/{{ node }}/pp.msgpack\"",
+			wantErr: "default.compile.partial_parse_path: placeholders are not allowed",
+		},
+		{
+			name:    "unknown wrapper_cache value",
+			yaml:    completeDefault + "  worker:\n    wrapper_cache: sometimes",
+			wantErr: `default.worker.wrapper_cache: must be "required" or "opaque", got "sometimes"`,
+		},
+		{
+			name:    "unknown worker key",
+			yaml:    completeDefault + "  worker:\n    cache: required",
+			wantErr: "field cache not found",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -45,6 +45,11 @@ type SourceFQN struct {
 const (
 	AnnotationReleaseID = "continuo.dev/release-id"
 	AnnotationNodeID    = "continuo.dev/node-id"
+	// AnnotationExecutorDeploymentID names the executor_deployments row a
+	// Job was dispatched for. Release and node identity alone do not
+	// distinguish two dispatches of the same node, so this annotation ties
+	// an outcome back to the exact dispatch that asked for it.
+	AnnotationExecutorDeploymentID = "continuo.dev/executor-deployment-id"
 )
 
 // NodeType represents the dbt resource type for a graph node.

@@ -12,6 +12,14 @@
 # compile (validation-pipeline leg: command + absolute manifest_path).
 # Placeholders: {{ node }} (required in run/seed/snapshot/test/build/seed_build),
 # {{ target_schema }} (seed_build only).
+#
+# Optional per block:
+#   compile.partial_parse_path — absolute path where the team's tool leaves dbt's
+#     partial parse. Omit it (as below) when the tool leaves it where dbt writes
+#     it: beside manifest.json.
+#   worker.wrapper_cache — "required" when the team's wrapper reliably writes a
+#     reusable partial parse at that path, "opaque" when its cache behaviour is
+#     unknown. Absent means opaque.
 default:
   run:        ["dbt", "run", "--select", "{{ node }}"]
   seed:       ["dbt", "seed", "--select", "{{ node }}"]

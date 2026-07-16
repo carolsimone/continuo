@@ -592,8 +592,8 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 		return nil
 	}
 
-	compileArgv, manifestPath := c.commands.CompileCommand(params.ServiceName)
-	podSpec, err := buildCompilePodSpec(params, compileArgv, manifestPath)
+	compile := c.commands.CompileCommand(params.ServiceName)
+	podSpec, err := buildCompilePodSpec(params, compile.Argv, compile.ManifestPath)
 	if err != nil {
 		return fmt.Errorf("failed to build compile pod spec: %w", err)
 	}

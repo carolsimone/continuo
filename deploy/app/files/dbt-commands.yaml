@@ -6,6 +6,11 @@
 # Keys: run / seed / snapshot (by node_type for operation=run), test / build
 # (node-agnostic), seed_build (candidate-schema seed leg; schema via the
 # DBT_TARGET_SCHEMA env var + generate_schema_name macro), compile.
+#
+# Optional per block: compile.partial_parse_path (absolute path where the team's
+# tool leaves dbt's partial parse; omit when it stays beside manifest.json) and
+# worker.wrapper_cache ("required" when the wrapper reliably writes a reusable
+# partial parse there, "opaque" — the default — when its behaviour is unknown).
 default:
   run:        ["dbt", "run", "--select", "{{ node }}"]
   seed:       ["dbt", "seed", "--select", "{{ node }}"]
@@ -34,3 +39,7 @@ services:
     compile:
       command:       ["wise-dbt", "compile-project"]
       manifest_path: "/project/target/manifest.json"
+    # wise-dbt leaves dbt's partial parse where dbt writes it (beside
+    # manifest.json), so partial_parse_path derives and the cache is reusable.
+    worker:
+      wrapper_cache: required
