@@ -54,17 +54,17 @@ type DispatcherConfig struct {
 // deploy is a command effect kept off the outbox so every outbox Publisher
 // stays a uniform marshal-and-XADD.
 type Dispatcher struct {
-	db              *sqlx.DB
-	deployer        deploy.Deployer
-	newRepo         RepoFactory
-	newAggRepo      ValidationAggRepoFactory
-	maxConcurrent   int
-	logger          *slog.Logger
-	tick            time.Duration
-	batchSize       int
-	backoff         model.BackoffPolicy
-	recoveryAfter   time.Duration
-	now             func() time.Time
+	db            *sqlx.DB
+	deployer      deploy.Deployer
+	newRepo       RepoFactory
+	newAggRepo    ValidationAggRepoFactory
+	maxConcurrent int
+	logger        *slog.Logger
+	tick          time.Duration
+	batchSize     int
+	backoff       model.BackoffPolicy
+	recoveryAfter time.Duration
+	now           func() time.Time
 }
 
 func NewDispatcher(
@@ -241,12 +241,27 @@ func (d *Dispatcher) reserveOne(ctx context.Context) (*model.Deployment, error) 
 	return reserved, nil
 }
 
-// deployAndSettle creates the deployment's Kubernetes Job outside any
-// transaction, then records the outcome in one. Every settle path releases the
-// reserved slot or leaves the Job to release it on its terminal status.
+// deployAndSettle creates the deployment's Kubernetes Job and records the
+// outcome in one transaction, on the row as it stands now rather than as the
+// reserving transaction left it. Between the two transactions the row is
+// unlocked, so a cancellation can settle it and release its slot; re-reading it
+// under a FOR UPDATE lock is what stops this transaction from dispatching that
+// row anyway and saving 'deployed' over the cancellation — which would re-take
+// an execution slot no later event would ever hand back. Every settle path
+// releases the reserved slot or leaves the Job to release it on its terminal
+// status.
 func (d *Dispatcher) deployAndSettle(ctx context.Context, dep *model.Deployment) error {
 	return d.inTx(ctx, func(repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository) error {
-		return d.dispatchOne(ctx, repo, outboxRepo, aggRepo, dep)
+		current, err := repo.GetByIDForUpdate(ctx, dep.ID())
+		if err != nil {
+			return fmt.Errorf("reload deployment %s: %w", dep.ID(), err)
+		}
+		if current.IsTerminal() {
+			d.logger.Info("Deployment settled before its dispatch was recorded — leaving it terminal",
+				"deployment_id", current.ID(), "status", current.Status(), "mode", current.Mode())
+			return nil
+		}
+		return d.dispatchOne(ctx, repo, outboxRepo, aggRepo, current)
 	})
 }
 

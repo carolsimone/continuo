@@ -14,9 +14,11 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
+	"github.com/carolsimone/continuo/executor-controller/domain/events"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
+	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
@@ -696,4 +698,89 @@ func TestDispatcher_MixedJobAndWorkerReservationsShareOneBudget(t *testing.T) {
 		`SELECT COUNT(*) FROM executor_deployments WHERE slot_reserved_at IS NOT NULL AND slot_released_at IS NULL`).
 		Scan(&held))
 	assert.Equal(t, limit, held, "Jobs and workers together consume exactly the one budget")
+}
+
+// seedDispatchingJobForSchedule inserts a row that has reserved its execution
+// slot and is parked in 'dispatching' for scheduleID, stale enough that the next
+// batch re-drives it.
+func seedDispatchingJobForSchedule(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	payload, err := json.Marshal(command.DeployTask{
+		TaskID: uuid.New().String(), ScheduleID: scheduleID.String(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskRetryCount: 0, TaskMaxRetries: 2,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count,
+		     next_attempt_at, status, slot_reserved_at)
+		 VALUES ($1, $2, $3, $4, 3, 0, NOW() - interval '1 minute', 'dispatching', NOW() - interval '10 minutes')`,
+		id, uuid.New(), scheduleID, payload)
+	require.NoError(t, err)
+	return id
+}
+
+// cancelSchedule runs the real schedule.cancelled:v1 handler against db in its
+// own transaction, exactly as the binding does.
+func cancelSchedule(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) {
+	t.Helper()
+	u := postgres.NewUnitOfWork(db, testLogger())
+	require.NoError(t, u.Begin(context.Background()))
+	err := handlers.NewScheduleCancelledHandler(testLogger()).Handle(
+		context.Background(), u, events.ScheduleCancelled{ScheduleID: scheduleID}, uuid.Nil)
+	require.NoError(t, err)
+	require.NoError(t, u.Commit())
+}
+
+// TestDispatcher_CancelBetweenReserveAndSettleIsNotResurrected pins the window
+// between the transaction that reserves a slot and the one that records the
+// dispatch. The row is unlocked in between, so a cancellation can settle it and
+// hand its slot back. Saving the aggregate read before that would write
+// 'deployed' with a fresh reservation over the cancellation, taking a slot no
+// event would ever release: the Job's terminal is absorbed for a cancelled
+// schedule, so nothing else would ever free it.
+//
+// The settle transaction's repository factory is the injection point: it runs
+// once the settle transaction has begun and before it touches the row, which is
+// precisely the window the cancellation lands in.
+func TestDispatcher_CancelBetweenReserveAndSettleIsNotResurrected(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	scheduleID := uuid.New()
+	id := seedDispatchingJobForSchedule(t, db, scheduleID)
+
+	fk := &fakeDeployer{}
+	txCount := 0
+	d := deployer.NewDispatcher(
+		db, fk,
+		func(exec outbox.Executor) repository.DeploymentRepository {
+			txCount++
+			if txCount == 2 { // the settle transaction, before it reads the row
+				cancelSchedule(t, db, scheduleID)
+			}
+			return postgres.NewDeploymentsRepository(exec, testLogger())
+		},
+		func(exec outbox.Executor) repository.ValidationAggregateRepository {
+			return postgres.NewValidationAggregateRepository(exec)
+		},
+		5, testLogger(), deployer.DispatcherConfig{},
+	)
+	require.NoError(t, d.ProcessBatch(context.Background()))
+
+	var status string
+	var released *time.Time
+	require.NoError(t, db.QueryRow(
+		`SELECT status, slot_released_at FROM executor_deployments WHERE id=$1`, id).
+		Scan(&status, &released))
+	assert.Equal(t, "cancelled", status, "the dispatch must not resurrect a cancelled row")
+	assert.NotNil(t, released, "the cancelled row must not re-take an execution slot")
+
+	var held int
+	require.NoError(t, db.QueryRow(
+		`SELECT COUNT(*) FROM executor_deployments WHERE slot_reserved_at IS NOT NULL AND slot_released_at IS NULL`).
+		Scan(&held))
+	assert.Equal(t, 0, held, "cancelling returns the whole budget")
 }
