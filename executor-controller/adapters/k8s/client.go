@@ -335,9 +335,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	case "clone_from_prod":
 		// No candidate SQL, no S3, single container.
 		return corev1.PodSpec{
-			RestartPolicy:  corev1.RestartPolicyNever,
+			RestartPolicy:   corev1.RestartPolicyNever,
 			SecurityContext: jobPodSecurityContext(),
-			Containers:     []corev1.Container{mainContainer},
+			Containers:      []corev1.Container{mainContainer},
 		}, nil
 
 	case "build_from_sql":
