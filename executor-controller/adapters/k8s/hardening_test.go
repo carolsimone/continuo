@@ -65,6 +65,17 @@ func TestBuildValidationPodSpecHardening(t *testing.T) {
 	assertNonRoot(t, spec.Containers[0].SecurityContext)
 }
 
+func TestBuildValidationPodSpecBuildFromSQLHardening(t *testing.T) {
+	p := validationParams()
+	p.ValidationOp = "build_from_sql"
+	p.CandidateSQLURI = "s3://bucket/candidate.sql"
+	spec, err := buildValidationPodSpec(p)
+	require.NoError(t, err)
+	assertPodHardening(t, spec)
+	// validation-runner is continuo-owned and built non-root (uid 65532).
+	assertNonRoot(t, spec.Containers[0].SecurityContext)
+}
+
 func TestBuildCompilePodSpecHardening(t *testing.T) {
 	p := validationParams()
 	p.ManifestS3URI = "s3://bucket/svc/rel/manifest.json"

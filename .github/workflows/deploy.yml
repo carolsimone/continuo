@@ -222,6 +222,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_REPO }}:${{ github.sha }}
             ${{ env.IMAGE_REPO }}:latest
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/continuo-base:v1
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
 

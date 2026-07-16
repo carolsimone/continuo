@@ -12,6 +12,9 @@ global:
   # Registry/namespace prefix for per-team dbt images (executor-controller
   # composes "<prefix>/<service>:<tag>" for compile/seed/scheduled Jobs).
   # Independent of dockerHubUser, which locates continuo's own images.
+  # Empty string renders DOCKERHUB_USERNAME="", which executor-controller
+  # treats as unset, so team images resolve to bare unprefixed names (for
+  # clusters that side-load team images).
   teamImagePrefix: ""
 
   env: dev

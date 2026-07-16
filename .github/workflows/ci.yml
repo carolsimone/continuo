@@ -83,11 +83,18 @@ jobs:
           install: true
 
       # Normally pull continuo-base from ghcr (published by publish-base.yml,
-      # public package — anonymous pull). Fall back to a local build when the
-      # pull fails (e.g. first run or registry hiccup).
+      # public package — anonymous pull), falling back to a local build if the
+      # pull fails (e.g. first run or registry hiccup). But a PR that changes
+      # Dockerfile.base must be tested against ITS OWN base, not the published
+      # one — build locally in that case, so a broken base change fails CI
+      # instead of merging unvalidated and poisoning the published :v1 tag.
       - name: Provide continuo-base image
         run: |
-          if docker pull ghcr.io/${{ github.repository_owner }}/continuo-base:v1; then
+          git fetch origin main --depth=1
+          if git diff --name-only origin/main...HEAD | grep -q '^Dockerfile\.base$'; then
+            echo "Dockerfile.base changed in this branch; building continuo-base locally..."
+            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
+          elif docker pull ghcr.io/${{ github.repository_owner }}/continuo-base:v1; then
             docker tag ghcr.io/${{ github.repository_owner }}/continuo-base:v1 continuo-base:latest
           else
             echo "Pull failed; building continuo-base locally..."
@@ -95,12 +102,13 @@ jobs:
           fi
 
       - name: Switch to docker driver for local image access
-        # The docker-container buildx driver (used above for the ghcr pull) runs
-        # in an isolated container and cannot see local daemon images.
-        # The default docker driver shares the daemon's image store, so
-        # "FROM continuo-base:latest" resolves correctly in docker compose build.
-        # Docker Engine 24+ (shipped on ubuntu-latest) supports type=gha cache
-        # with the default driver, so docker compose build still benefits.
+        # The docker-container buildx driver set up above (used by the buildx
+        # builds later in this job) runs in an isolated container and cannot
+        # see local daemon images. The default docker driver shares the
+        # daemon's image store, so "FROM continuo-base:latest" resolves
+        # correctly in docker compose build. Docker Engine 24+ (shipped on
+        # ubuntu-latest) supports type=gha cache with the default driver, so
+        # docker compose build still benefits.
         run: docker buildx use default
 
       - name: Set up infrastructure
