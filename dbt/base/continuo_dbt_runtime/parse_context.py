@@ -51,10 +51,13 @@ import os
 #                            the controller's own process environment rather
 #                            than from either pod, is the same for every release
 #                            the controller builds, and is embedded verbatim in
-#                            the controller context handed to both pods. It is
-#                            therefore identical on both sides and does not
-#                            strand pools. Changing the controller portion to
-#                            carry a per-release or per-pod schema would.
+#                            the controller context this module's digest is
+#                            compared against. Whichever pod recomputes the
+#                            digest reads that embedded value rather than its
+#                            own environment, so the comparison does not
+#                            strand pools on a schema that diverges by design.
+#                            Changing the controller portion to carry a
+#                            per-release or per-pod schema would.
 #   DBT_POSTGRES_HOST/PORT/  Connection credentials. They do not change what dbt
 #   USER/PASSWORD            parses, and hashing them would strand every pool on
 #                            a routine credential rotation.
