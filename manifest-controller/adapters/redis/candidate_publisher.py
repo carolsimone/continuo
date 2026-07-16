@@ -2,6 +2,7 @@ import json
 import logging
 
 from adapters.redis.constants import STREAM_MAXLEN
+from domain.model import RuntimeManifestRef
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +21,31 @@ class CandidateManifestPublisher:
         self._redis = redis_client
         self._stream = stream_name
 
-    def publish_ok(self, release_id: str, topology: list[dict]) -> None:
-        body = {"release_id": release_id, "status": "ok", "topology": topology}
+    def publish_ok(
+        self,
+        release_id: str,
+        topology: list[dict],
+        runtime_manifests: dict[str, RuntimeManifestRef],
+    ) -> None:
+        """Publish the resolved topology plus, per service, the runtime manifest
+        its nodes execute against. Services whose release carries no runtime
+        manifest are simply absent from runtime_manifests."""
+        body = {
+            "release_id": release_id,
+            "status": "ok",
+            "topology": topology,
+            "runtime_manifests": {
+                service: ref.to_wire() for service, ref in runtime_manifests.items()
+            },
+        }
         self._redis.xadd(self._stream, {"payload": json.dumps(body)}, maxlen=STREAM_MAXLEN)
         logger.info(
             "Published manifest.loaded.candidate ok",
-            extra={"release_id": release_id, "node_count": len(topology)},
+            extra={
+                "release_id": release_id,
+                "node_count": len(topology),
+                "runtime_manifest_count": len(runtime_manifests),
+            },
         )
 
     def publish_failed(self, release_id: str, error_class: str, error_detail: str) -> None:

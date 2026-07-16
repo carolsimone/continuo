@@ -129,7 +129,8 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Durable state | none (S3 objects at `candidate-sql/<release_id>/<unique_id>.sql` are written but not owned; retention is managed by release-controller prune and the S3 lifecycle rule) |
 | gRPC server methods owned | none |
 | Redis consumes | `release.requested:v1` |
-| Redis produces | `manifest.loaded.candidate:v1` (per-node `candidate_sql_uri` — `s3://` reference to the rewritten SQL object; empty string for seeds) |
+| Redis produces | `manifest.loaded.candidate:v1` (per-node `candidate_sql_uri` — `s3://` reference to the rewritten SQL object, empty string for seeds; per-node `dbt_unique_id` — dbt's own node key, distinct from the graph's `schema.table` `unique_id`; `runtime_manifests` — one runtime manifest reference per declaring service, absent for services whose release carries no descriptor) |
+| S3 reads | `GetObject` on each release's `manifest.json` and its sibling `runtime-manifest.json` descriptor (key derived from the manifest key, never listed). A missing descriptor is a manifest-only release; a descriptor that fails validation causes `status=failed` with `error_class=MalformedRuntimeManifest` |
 | S3 writes | `PutObject` to `candidate-sql/<release_id>/<unique_id>.sql` per non-seed node; upload failure is fatal and causes `status=failed` on `manifest.loaded.candidate:v1` |
 | Outbound gRPC calls | none |
 

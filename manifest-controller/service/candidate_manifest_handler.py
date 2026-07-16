@@ -3,8 +3,8 @@ import logging
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.sources import ManifestSource
-from domain.exceptions import UnqualifiedTableReferenceError
-from domain.model import NodeRegistry, NodeRegistryEntry
+from domain.exceptions import MalformedRuntimeManifestError, UnqualifiedTableReferenceError
+from domain.model import NodeRegistry, NodeRegistryEntry, RuntimeManifestRef
 from service.parser import parse_manifest
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name, rewrite_to_candidate_schema
@@ -25,6 +25,11 @@ class CandidateManifestHandler:
     the topology carries candidate_sql_uri (an s3:// reference) rather than
     the inline SQL string. Upload failures are fatal — publish_failed is
     called and the handler returns so the consumer ACKs without dangling refs.
+
+    Alongside the topology it publishes, per service, the runtime manifest that
+    service's nodes execute against — taken from the descriptor the source read
+    beside each manifest. A service whose release carries no runtime manifest is
+    absent from that map.
 
     On parse/resolve failures that re-delivery cannot fix, publishes
     status=failed and returns normally so the consumer ACKs.
@@ -47,13 +52,28 @@ class CandidateManifestHandler:
             self._source.cleanup()
 
     def _handle_impl(self, release_id: str) -> None:
-        manifests = self._source.list_manifests()
+        try:
+            manifests = self._source.list_manifests()
+        except MalformedRuntimeManifestError as exc:
+            # A descriptor that exists but is unusable is permanent — no
+            # re-delivery can repair it, so report failed and let the consumer
+            # ACK. Transport and authentication failures are deliberately not
+            # caught here so they stay pending and are retried.
+            self._publisher.publish_failed(
+                release_id=release_id,
+                error_class="MalformedRuntimeManifest",
+                error_detail=str(exc),
+            )
+            return
+
         if not manifests:
             logger.warning(
                 "candidate: no manifest files found — publishing empty topology",
                 extra={"release_id": release_id},
             )
-            self._publisher.publish_ok(release_id=release_id, topology=[])
+            self._publisher.publish_ok(
+                release_id=release_id, topology=[], runtime_manifests={},
+            )
             return
 
         logger.info(
@@ -106,6 +126,28 @@ class CandidateManifestHandler:
                     return
 
             all_nodes.extend(nodes)
+
+        # One service resolves to exactly one runtime manifest per release. Two
+        # manifests declaring the same service with different artifacts leave no
+        # basis for choosing between them, so the release fails permanently
+        # rather than binding the service's nodes to an arbitrary one.
+        runtime_manifests: dict[str, RuntimeManifestRef] = {}
+        for mf in manifests:
+            if mf.runtime_manifest is None:
+                continue
+            existing = runtime_manifests.get(mf.declared_service)
+            if existing is not None and existing != mf.runtime_manifest:
+                self._publisher.publish_failed(
+                    release_id=release_id,
+                    error_class="ConflictingRuntimeManifest",
+                    error_detail=(
+                        f"{mf.declared_service}: two manifests declare different runtime "
+                        f"manifests ({existing.uri} sha {existing.sha256} vs "
+                        f"{mf.runtime_manifest.uri} sha {mf.runtime_manifest.sha256})"
+                    ),
+                )
+                return
+            runtime_manifests[mf.declared_service] = mf.runtime_manifest
 
         registry = NodeRegistry(entries=[
             NodeRegistryEntry(
@@ -163,6 +205,7 @@ class CandidateManifestHandler:
 
             topology.append({
                 "unique_id":           unique_id,
+                "dbt_unique_id":       node.dbt_unique_id,
                 "schema_name":         node.schema_name,
                 "table_name":          node.table_name,
                 "service_name":        node.service_name,
@@ -178,7 +221,11 @@ class CandidateManifestHandler:
                 "candidate_sql_uri":   candidate_sql_uri,
             })
 
-        self._publisher.publish_ok(release_id=release_id, topology=topology)
+        self._publisher.publish_ok(
+            release_id=release_id,
+            topology=topology,
+            runtime_manifests=runtime_manifests,
+        )
         logger.info(
             "candidate: parse complete",
             extra={"release_id": release_id, "published_nodes": len(topology)},

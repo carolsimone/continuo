@@ -1,0 +1,11 @@
+{
+  "format": "dbt-partial-parse-msgpack-v1",
+  "service_name": "service-1",
+  "release_id": "rel-1",
+  "image_tag": "sha-abc123",
+  "artifact_uri": "s3://continuo/service-1/rel-1/partial_parse.msgpack",
+  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "dbt_core_version": "1.12.0b1",
+  "adapter_type": "postgres",
+  "parse_context_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

@@ -13,6 +13,16 @@ def test_parse_valid_manifest():
     assert names == {"orders", "users", "my_seed", "my_snapshot"}
 
 
+def test_parser_preserves_dbt_unique_id():
+    """dbt's own node key is carried through verbatim, alongside (not instead of)
+    the graph's schema.table identity."""
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    by_table = {n.table_name: n for n in nodes}
+    assert by_table["orders"].dbt_unique_id == "model.service_1.orders"
+    assert by_table["my_seed"].dbt_unique_id == "seed.service_1.my_seed"
+    assert by_table["my_snapshot"].dbt_unique_id == "snapshot.service_1.my_snapshot"
+
+
 def test_parse_sets_node_type_model():
     nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
     orders = next(n for n in nodes if n.table_name == "orders")

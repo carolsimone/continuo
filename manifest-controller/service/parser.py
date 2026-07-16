@@ -127,6 +127,7 @@ def parse_manifest(manifest_path: str, manifest_version: str, image_tag: str = "
             criticality=criticality,
             compiled_sql=node.get("compiled_code", ""),
             node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
+            dbt_unique_id=node_id,
             content_hash=_content_hash(node, macros),
             manifest_version=manifest_version,
             image_tag=image_tag,

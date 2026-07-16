@@ -1,4 +1,11 @@
-from domain.model import ManifestFile, ManifestNode, NodeRegistry, NodeRegistryEntry, UpstreamDep
+from domain.model import (
+    ManifestFile,
+    ManifestNode,
+    NodeRegistry,
+    NodeRegistryEntry,
+    RuntimeManifestRef,
+    UpstreamDep,
+)
 from domain.exceptions import UnqualifiedTableReferenceError
 
 
@@ -6,6 +13,55 @@ def test_manifest_file_attributes():
     mf = ManifestFile(path="/manifests/service_a/manifest_v3.json", version="v3")
     assert mf.path == "/manifests/service_a/manifest_v3.json"
     assert mf.version == "v3"
+
+
+def test_manifest_file_runtime_manifest_defaults_to_none():
+    """A manifest without a sibling descriptor carries no runtime manifest."""
+    mf = ManifestFile(path="/manifests/service_a/manifest.json", version="v1")
+    assert mf.runtime_manifest is None
+
+
+def test_runtime_manifest_ref_to_wire():
+    ref = RuntimeManifestRef(
+        uri="s3://continuo/service-1/r1/partial_parse.msgpack",
+        sha256="a" * 64,
+        dbt_version="1.12.0b1",
+        parse_context_sha256="b" * 64,
+    )
+    assert ref.to_wire() == {
+        "runtime_manifest_uri": "s3://continuo/service-1/r1/partial_parse.msgpack",
+        "runtime_manifest_sha256": "a" * 64,
+        "runtime_manifest_dbt_version": "1.12.0b1",
+        "runtime_manifest_parse_context_sha256": "b" * 64,
+    }
+
+
+def test_runtime_manifest_ref_compares_by_value():
+    """Two refs describing the same artifact are equal, so a service declared
+    twice with an identical descriptor is not a conflict."""
+    def _ref(sha):
+        return RuntimeManifestRef(
+            uri="s3://continuo/service-1/r1/partial_parse.msgpack",
+            sha256=sha,
+            dbt_version="1.12.0b1",
+            parse_context_sha256="b" * 64,
+        )
+
+    assert _ref("a" * 64) == _ref("a" * 64)
+    assert _ref("a" * 64) != _ref("c" * 64)
+
+
+def test_manifest_node_dbt_unique_id_defaults_to_empty():
+    node = ManifestNode(
+        table_name="orders",
+        schema_name="public",
+        service_name="service-1",
+        owner="data-platform",
+        schedule_name="daily",
+        criticality="SECONDARY",
+        compiled_sql="SELECT 1",
+    )
+    assert node.dbt_unique_id == ""
 
 
 def test_manifest_node_manifest_version_defaults_to_empty():

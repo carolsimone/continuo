@@ -3,8 +3,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
 from adapters.sources import ManifestSource
-from domain.model import ManifestFile
-from domain.exceptions import UnqualifiedTableReferenceError
+from domain.model import ManifestFile, RuntimeManifestRef
+from domain.exceptions import MalformedRuntimeManifestError, UnqualifiedTableReferenceError
 from service.candidate_manifest_handler import CandidateManifestHandler
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -93,7 +93,9 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
     handler.handle(release_id="rel-empty")
 
-    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[])
+    publisher.publish_ok.assert_called_once_with(
+        release_id="rel-empty", topology=[], runtime_manifests={},
+    )
     publisher.publish_failed.assert_not_called()
 
 
@@ -384,3 +386,142 @@ def test_handle_calls_source_cleanup_even_on_upload_failure():
     handler.handle(release_id="rel-upload-fail")
 
     source.cleanup.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# dbt unique ids and per-service runtime manifest refs
+# ---------------------------------------------------------------------------
+
+def _ref(sha="a" * 64, uri="s3://continuo/service-1/rel-1/partial_parse.msgpack"):
+    return RuntimeManifestRef(
+        uri=uri,
+        sha256=sha,
+        dbt_version="1.12.0b1",
+        parse_context_sha256="b" * 64,
+    )
+
+
+def _make_source_with_runtime(entries):
+    """entries is a list of (fixture_name, version, declared_service, ref) tuples."""
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(
+            path=str(FIXTURES / name), version=version, image_tag="",
+            declared_service=declared, runtime_manifest=ref,
+        )
+        for name, version, declared, ref in entries
+    ]
+    return source
+
+
+def test_handle_publishes_dbt_unique_id_alongside_graph_unique_id(resolved_topology):
+    """Every node carries dbt's own key as well as the graph's schema.table key;
+    the two are separate identities and must not be conflated."""
+    by_table = {n["table_name"]: n for n in resolved_topology}
+    assert by_table["users"]["dbt_unique_id"] == "model.service-1.users"
+    assert by_table["orders"]["dbt_unique_id"] == "model.service-2.orders"
+    for node in resolved_topology:
+        assert node["unique_id"] == f"{node['schema_name']}.{node['table_name']}"
+
+
+def test_handle_publishes_one_runtime_manifest_per_declaring_service():
+    source = _make_source_with_runtime([
+        ("manifest_service1.json", "v1", "service-1", _ref()),
+        ("manifest_service2.json", "v2", "service-2",
+         _ref(sha="c" * 64, uri="s3://continuo/service-2/rel-1/partial_parse.msgpack")),
+    ])
+    publisher = MagicMock()
+
+    CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(),
+    ).handle(release_id="rel-1")
+
+    published = publisher.publish_ok.call_args.kwargs["runtime_manifests"]
+    assert published == {"service-1": _ref(), "service-2": _ref(
+        sha="c" * 64, uri="s3://continuo/service-2/rel-1/partial_parse.msgpack",
+    )}
+
+
+def test_handle_omits_services_without_a_runtime_manifest():
+    """A service compiled before the runtime exporter simply has no entry."""
+    source = _make_source_with_runtime([
+        ("manifest_service1.json", "v1", "service-1", _ref()),
+        ("manifest_service2.json", "v2", "service-2", None),
+    ])
+    publisher = MagicMock()
+
+    CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(),
+    ).handle(release_id="rel-1")
+
+    assert publisher.publish_ok.call_args.kwargs["runtime_manifests"] == {"service-1": _ref()}
+
+
+def test_handle_publishes_failed_on_conflicting_runtime_manifests():
+    """One service cannot resolve to two different artifacts in one release."""
+    source = _make_source_with_runtime([
+        ("manifest_service1.json", "v1", "service-1", _ref()),
+        ("manifest_service1.json", "v1", "service-1", _ref(sha="d" * 64)),
+    ])
+    publisher = MagicMock()
+
+    CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(),
+    ).handle(release_id="rel-conflict")  # must NOT raise
+
+    publisher.publish_ok.assert_not_called()
+    publisher.publish_failed.assert_called_once()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "ConflictingRuntimeManifest"
+    assert "service-1" in publisher.publish_failed.call_args.kwargs["error_detail"]
+
+
+def test_handle_accepts_repeated_identical_runtime_manifest():
+    """The same service declared twice with the same artifact is not a conflict."""
+    source = _make_source_with_runtime([
+        ("manifest_service1.json", "v1", "service-1", _ref()),
+        ("manifest_service1.json", "v1", "service-1", _ref()),
+    ])
+    publisher = MagicMock()
+
+    CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(),
+    ).handle(release_id="rel-dup")
+
+    publisher.publish_failed.assert_not_called()
+    assert publisher.publish_ok.call_args.kwargs["runtime_manifests"] == {"service-1": _ref()}
+
+
+def test_handle_publishes_failed_on_malformed_runtime_manifest():
+    """A descriptor no re-delivery can fix is permanent: report failed and ACK."""
+    source = create_autospec(ManifestSource)
+    source.list_manifests.side_effect = MalformedRuntimeManifestError(
+        "runtime manifest descriptor: adapter_type must be 'postgres'"
+    )
+    publisher = MagicMock()
+
+    CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(),
+    ).handle(release_id="rel-bad-descriptor")  # must NOT raise
+
+    publisher.publish_ok.assert_not_called()
+    publisher.publish_failed.assert_called_once()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedRuntimeManifest"
+    assert "adapter_type" in publisher.publish_failed.call_args.kwargs["error_detail"]
+    source.cleanup.assert_called_once()
+
+
+def test_handle_propagates_transient_source_error():
+    """A download failure is retryable: it escapes so the message stays pending
+    rather than failing the release."""
+    source = create_autospec(ManifestSource)
+    source.list_manifests.side_effect = ConnectionError("s3 unreachable")
+    publisher = MagicMock()
+
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(),
+    )
+    with pytest.raises(ConnectionError):
+        handler.handle(release_id="rel-transient")
+
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_not_called()
