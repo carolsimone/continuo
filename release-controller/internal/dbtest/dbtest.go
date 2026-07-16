@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -25,6 +26,20 @@ const DSNEnv = "RELEASE_TEST_PG_DSN"
 // each other's rows mid-test. The value is arbitrary; it only has to be the
 // same in every binary contending for this database.
 const advisoryLockKey = 8641975320
+
+// advisoryLockPollInterval is how often acquireAdvisoryLock retries
+// pg_try_advisory_lock while another binary holds the lock.
+const advisoryLockPollInterval = 500 * time.Millisecond
+
+// advisoryLockLogEvery bounds how often acquireAdvisoryLock prints a waiting
+// message to stderr, so a long wait is visible without spamming a line every
+// poll.
+const advisoryLockLogEvery = 10 * time.Second
+
+// advisoryLockWaitTimeout bounds how long acquireAdvisoryLock will wait before
+// giving up. A leaked lock from a killed test run would otherwise block the
+// next run indefinitely with no diagnostic until the outer `go test` timeout.
+const advisoryLockWaitTimeout = 3 * time.Minute
 
 // DSN returns the configured DSN, or the empty string when unset.
 func DSN() string { return os.Getenv(DSNEnv) }
@@ -51,8 +66,8 @@ func RunSerialized(m *testing.M) int {
 	// binary's lifetime instead of handing it back to the pool.
 	db.SetMaxOpenConns(1)
 
-	if _, err := db.Exec("SELECT pg_advisory_lock($1)", advisoryLockKey); err != nil {
-		fmt.Fprintf(os.Stderr, "dbtest: acquire advisory lock: %v\n", err)
+	if err := acquireAdvisoryLock(db, advisoryLockKey, advisoryLockPollInterval, advisoryLockLogEvery, advisoryLockWaitTimeout); err != nil {
+		fmt.Fprintf(os.Stderr, "dbtest: %v\n", err)
 		return 1
 	}
 	defer func() {
@@ -60,4 +75,45 @@ func RunSerialized(m *testing.M) int {
 	}()
 
 	return m.Run()
+}
+
+// acquireAdvisoryLock blocks until db's single session holds the Postgres
+// advisory lock identified by key. It polls pg_try_advisory_lock rather than
+// calling the blocking pg_advisory_lock, so a session left over from a killed
+// test run produces a periodic, named diagnostic on stderr instead of hanging
+// silently until go test's outer 20-minute timeout. It gives up and returns an
+// error after timeout, which keeps the same serialization guarantee as a plain
+// blocking lock (nothing proceeds until the lock is held) while making a stuck
+// wait legible. key, pollInterval, and logEvery are parameters (rather than
+// reading the package constants directly) so tests can exercise the retry and
+// timeout paths on a private lock key, without waiting the full production
+// durations or contending with the real continuo_release lock other test
+// binaries may be holding at the same time.
+func acquireAdvisoryLock(db *sql.DB, key int64, pollInterval, logEvery, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	lastLog := time.Now()
+	for {
+		var acquired bool
+		if err := db.QueryRow("SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
+			return fmt.Errorf("acquire advisory lock: %w", err)
+		}
+		if acquired {
+			return nil
+		}
+		now := time.Now()
+		if now.After(deadline) {
+			return fmt.Errorf(
+				"timed out after %s waiting for the continuo_release advisory lock (key %d); "+
+					"another test binary is likely holding it — check for a killed test-go run "+
+					"that left a Postgres session open",
+				timeout, key)
+		}
+		if now.Sub(lastLog) >= logEvery {
+			fmt.Fprintf(os.Stderr,
+				"dbtest: waiting for the continuo_release advisory lock (key %d), held by another test binary...\n",
+				key)
+			lastLog = now
+		}
+		time.Sleep(pollInterval)
+	}
 }
