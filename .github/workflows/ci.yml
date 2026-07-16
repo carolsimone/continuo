@@ -82,6 +82,14 @@ jobs:
           # so docker compose build also benefits from the buildx cache backend.
           install: true
 
+      - name: Detect Dockerfile.base changes
+        id: basefilter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            base:
+              - 'Dockerfile.base'
+
       # Normally pull continuo-base from ghcr (published by publish-base.yml,
       # public package — anonymous pull), falling back to a local build if the
       # pull fails (e.g. first run or registry hiccup). But a PR that changes
@@ -90,9 +98,14 @@ jobs:
       # instead of merging unvalidated and poisoning the published :v1 tag.
       - name: Provide continuo-base image
         run: |
-          git fetch origin main --depth=1
-          if git diff --name-only origin/main...HEAD | grep -q '^Dockerfile\.base$'; then
-            echo "Dockerfile.base changed in this branch; building continuo-base locally..."
+          # A PR that changes Dockerfile.base must be tested against ITS OWN
+          # base, not the published one — build locally in that case (detected
+          # via the paths-filter step; the shallow checkout has no history for
+          # a git diff). Otherwise pull the published ghcr base (public
+          # package, anonymous pull) and fall back to a local build if the
+          # pull fails.
+          if [ "${{ steps.basefilter.outputs.base }}" = "true" ]; then
+            echo "Dockerfile.base changed in this PR; building continuo-base locally..."
             DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
           elif docker pull ghcr.io/${{ github.repository_owner }}/continuo-base:v1; then
             docker tag ghcr.io/${{ github.repository_owner }}/continuo-base:v1 continuo-base:latest
