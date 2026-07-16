@@ -186,3 +186,111 @@ readOnlyRootFilesystem: true
 capabilities:
   drop: ["ALL"]
 {{- end -}}
+
+{{/* Stable generated password: reuse the value already stored in the live
+     Secret (lookup) so upgrades never rotate it; generate on first install.
+     `helm template`/`--dry-run` cannot lookup and will show a fresh random —
+     harmless, install/upgrade is what matters.
+     Call: include "continuo.generatedSecret" (dict "root" $ "secretName" "x" "key" "password") */}}
+{{- define "continuo.generatedSecret" -}}
+{{- $existing := lookup "v1" "Secret" .root.Release.Namespace .secretName -}}
+{{- if and $existing (hasKey $existing.data .key) -}}
+{{- index $existing.data .key | b64dec -}}
+{{- else -}}
+{{- randAlphaNum 32 -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Which Secret holds a credential group. Resolution order per group:
+     bundled datastore secret (generated or its own existingSecret) →
+     external existingSecret → chart credentials Secret (inline values). */}}
+{{- define "continuo.secretName" -}}
+{{- $v := .root.Values -}}
+{{- if eq .ref "postgres" -}}
+  {{- if $v.postgresql.enabled -}}
+    {{- default (include "continuo.postgresql.fullname" .root) $v.postgresql.auth.existingSecret -}}
+  {{- else if $v.externalDatabase.existingSecret -}}
+    {{- $v.externalDatabase.existingSecret -}}
+  {{- else -}}
+    {{- include "continuo.credentialsSecretName" .root -}}
+  {{- end -}}
+{{- else if eq .ref "redis" -}}
+  {{- if $v.redis.enabled -}}
+    {{- include "continuo.redis.fullname" .root -}}
+  {{- else if $v.externalRedis.existingSecret -}}
+    {{- $v.externalRedis.existingSecret -}}
+  {{- else -}}
+    {{- include "continuo.credentialsSecretName" .root -}}
+  {{- end -}}
+{{- else if eq .ref "neo4j" -}}
+  {{- if $v.neo4j.enabled -}}
+    {{- include "continuo.neo4j.fullname" .root -}}
+  {{- else if $v.externalNeo4j.existingSecret -}}
+    {{- $v.externalNeo4j.existingSecret -}}
+  {{- else -}}
+    {{- include "continuo.credentialsSecretName" .root -}}
+  {{- end -}}
+{{- else if or (eq .ref "s3AccessKeyId") (eq .ref "s3SecretAccessKey") -}}
+  {{- if $v.minio.enabled -}}
+    {{- include "continuo.minio.fullname" .root -}}
+  {{- else if $v.s3.existingSecret -}}
+    {{- $v.s3.existingSecret -}}
+  {{- else -}}
+    {{- include "continuo.credentialsSecretName" .root -}}
+  {{- end -}}
+{{- else if eq .ref "authClientSecret" -}}
+  {{- if $v.dex.enabled -}}
+    {{- include "continuo.dex.fullname" .root -}}
+  {{- else if $v.auth.existingSecret -}}
+    {{- $v.auth.existingSecret -}}
+  {{- else -}}
+    {{- include "continuo.credentialsSecretName" .root -}}
+  {{- end -}}
+{{- else if eq .ref "llm" -}}
+  {{- default (include "continuo.credentialsSecretName" .root) $v.llm.existingSecret -}}
+{{- else if or (eq .ref "githubToken") (eq .ref "githubAppPrivateKey") -}}
+  {{- default (include "continuo.credentialsSecretName" .root) $v.github.existingSecret -}}
+{{- else -}}
+{{- fail (printf "unknown secretEnv ref %q" .ref) -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Which key inside that Secret. */}}
+{{- define "continuo.secretKey" -}}
+{{- $v := .root.Values -}}
+{{- if eq .ref "postgres" -}}
+  {{- if $v.postgresql.enabled -}}
+    {{- if $v.postgresql.auth.existingSecret -}}{{ $v.postgresql.auth.existingSecretPasswordKey }}{{- else -}}password{{- end -}}
+  {{- else if $v.externalDatabase.existingSecret -}}
+    {{- $v.externalDatabase.existingSecretPasswordKey -}}
+  {{- else -}}postgres-password{{- end -}}
+{{- else if eq .ref "redis" -}}
+  {{- if $v.redis.enabled -}}password
+  {{- else if $v.externalRedis.existingSecret -}}{{ $v.externalRedis.existingSecretPasswordKey }}
+  {{- else -}}redis-password{{- end -}}
+{{- else if eq .ref "neo4j" -}}
+  {{- if $v.neo4j.enabled -}}password
+  {{- else if $v.externalNeo4j.existingSecret -}}{{ $v.externalNeo4j.existingSecretPasswordKey }}
+  {{- else -}}neo4j-password{{- end -}}
+{{- else if eq .ref "s3AccessKeyId" -}}
+  {{- if $v.minio.enabled -}}access-key-id
+  {{- else if $v.s3.existingSecret -}}{{ $v.s3.existingSecretAccessKeyIdKey }}
+  {{- else -}}s3-access-key-id{{- end -}}
+{{- else if eq .ref "s3SecretAccessKey" -}}
+  {{- if $v.minio.enabled -}}secret-access-key
+  {{- else if $v.s3.existingSecret -}}{{ $v.s3.existingSecretSecretKeyKey }}
+  {{- else -}}s3-secret-access-key{{- end -}}
+{{- else if eq .ref "authClientSecret" -}}
+  {{- if $v.dex.enabled -}}client-secret
+  {{- else if $v.auth.existingSecret -}}{{ $v.auth.existingSecretClientSecretKey }}
+  {{- else -}}auth-oidc-client-secret{{- end -}}
+{{- else if eq .ref "llm" -}}
+  {{- if $v.llm.existingSecret -}}{{ $v.llm.existingSecretApiKeyKey }}{{- else -}}llm-api-key{{- end -}}
+{{- else if eq .ref "githubToken" -}}
+  {{- if $v.github.existingSecret -}}{{ $v.github.existingSecretTokenKey }}{{- else -}}github-token{{- end -}}
+{{- else if eq .ref "githubAppPrivateKey" -}}
+  {{- if $v.github.existingSecret -}}{{ $v.github.existingSecretAppPrivateKeyKey }}{{- else -}}github-app-private-key{{- end -}}
+{{- else -}}
+{{- fail (printf "unknown secretEnv ref %q" .ref) -}}
+{{- end -}}
+{{- end -}}
