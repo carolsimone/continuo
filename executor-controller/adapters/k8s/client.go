@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	validationmodel "github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/ports"
@@ -55,6 +56,24 @@ type JobParams struct {
 	ResolvedArgv []string
 }
 
+// apiRequestTimeout bounds every Kubernetes API request this client makes.
+//
+// The dispatcher creates a Job while holding the deployment row's FOR UPDATE
+// lock, and that lock is what fences the row against a concurrent cancellation —
+// so schedule.cancelled:v1 waits behind the Job create for every schedule, not
+// just the one being dispatched. An unbounded request against a wedged API
+// server would park the cancel consumer indefinitely.
+//
+// This client issues only single Job Get and Create calls — no watches and no
+// log streaming — so one timeout covers every request it makes without cutting
+// off a long-lived one. 30s sits far above the milliseconds those calls take
+// against a healthy API server, so a merely slow one never trips it, while a
+// hung one costs the cancel consumer seconds instead of forever. A request that
+// does time out fails the deploy transiently: the row keeps its retry budget and
+// backs off, and job creation is guarded by a JobExists check, so re-attempting
+// a create the server may already have accepted does not double-run the task.
+const apiRequestTimeout = 30 * time.Second
+
 // K8sClient provides methods to interact with Kubernetes
 type K8sClient struct {
 	clientset kubernetes.Interface
@@ -81,6 +100,7 @@ func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver) (*K8sClie
 			return nil, fmt.Errorf("failed to build in-cluster config: %w", err)
 		}
 	}
+	restConfig.Timeout = apiRequestTimeout
 
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
