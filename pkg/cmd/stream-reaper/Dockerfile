@@ -1,7 +1,8 @@
 # The stream-reaper lives in the self-contained pkg module, so it builds in
 # module mode from the pkg build context (no go.work required). Build context
 # is `pkg/`.
-FROM carolsimone/continuo-base:latest AS builder
+ARG BASE_IMAGE=ghcr.io/carolsimone/continuo-base:v1
+FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./

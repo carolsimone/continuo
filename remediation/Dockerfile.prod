@@ -1,5 +1,6 @@
 # Build stage
-FROM carolsimone/continuo-base:latest AS builder
+ARG BASE_IMAGE=ghcr.io/carolsimone/continuo-base:v1
+FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
 
