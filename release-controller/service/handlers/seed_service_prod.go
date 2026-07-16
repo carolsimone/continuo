@@ -14,7 +14,12 @@ import (
 // taken verbatim from existingKeys (service_name -> s3 key); a service present
 // in the snapshot but absent from existingKeys is an error (we cannot point at
 // a manifest we do not know). image_tag is the first non-empty tag among the
-// service's nodes. Idempotent: re-running upserts the same rows.
+// service's nodes. The runtime manifest reference is derived from the
+// snapshot's own nodes via runtimeManifestForService, so a snapshot carrying
+// pinned artifacts seeds pointers that keep those pins rather than reverting
+// every service to the legacy in-Job parse path; a service whose nodes
+// disagree on the reference fails the whole seed rather than silently seeding
+// a zero ref. Idempotent: re-running upserts the same rows.
 // Returns the count of services seeded.
 func SeedServiceProd(
 	ctx context.Context,
@@ -52,8 +57,13 @@ func SeedServiceProd(
 		}
 	}
 
+	topo := cp.TopologySnapshot()
 	for _, svc := range orderSeen {
-		sp := release.NewServiceProd(svc, cp.ReleaseID(), existingKeys[svc], entries[svc].imageTag, now)
+		ref, err := runtimeManifestForService(topo, svc)
+		if err != nil {
+			return 0, fmt.Errorf("resolve runtime manifest for service %q: %w", svc, err)
+		}
+		sp := release.NewServiceProdWithRuntime(svc, cp.ReleaseID(), existingKeys[svc], entries[svc].imageTag, ref, now)
 		if err := repo.Upsert(ctx, sp); err != nil {
 			return 0, fmt.Errorf("upsert service_prod for %q: %w", svc, err)
 		}

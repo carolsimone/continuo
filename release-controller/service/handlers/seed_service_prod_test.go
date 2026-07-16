@@ -2,14 +2,25 @@ package handlers_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func seedTestRuntimeRef() pkgmodel.RuntimeManifestRef {
+	return pkgmodel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo/service-1/rA/manifest.msgpack",
+		RuntimeManifestSHA256:             "aa" + strings.Repeat("0", 62),
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "bb" + strings.Repeat("0", 62),
+	}
+}
 
 func buildCurrentProd(releaseID string, nodes ...release.Node) *release.CurrentProd {
 	return release.RehydrateCurrentProd(releaseID, release.Topology(nodes), time.Unix(1, 0).UTC())
@@ -114,6 +125,62 @@ func TestSeedServiceProd_IdempotentOnRerun(t *testing.T) {
 	sp, _ := repo.Get(context.Background(), "service-1")
 	require.NotNil(t, sp)
 	assert.Equal(t, "rel-1", sp.ReleaseID(), "second run must not change the pointer")
+}
+
+func TestSeedServiceProd_PersistsRuntimeManifestRefs(t *testing.T) {
+	now := time.Unix(1_000_000, 0).UTC()
+	ref := seedTestRuntimeRef()
+
+	// Both of service-1's nodes agree on the ref; service-2 pins nothing.
+	cp := buildCurrentProd("rel-1",
+		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", RuntimeManifestRef: ref},
+		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1", RuntimeManifestRef: ref},
+		release.Node{UniqueID: "n3", ServiceName: "service-2", ImageTag: "t2"},
+	)
+	existingKeys := map[string]string{
+		"service-1": "s3://bucket/service-1/manifest.json",
+		"service-2": "s3://bucket/service-2/manifest.json",
+	}
+
+	store := newFakeStore()
+	repo := &fakeServiceProdRepo{store: store}
+
+	n, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	sp1, err := repo.Get(context.Background(), "service-1")
+	require.NoError(t, err)
+	require.NotNil(t, sp1)
+	assert.Equal(t, ref, sp1.RuntimeManifest(),
+		"a snapshot carrying a pinned artifact must seed a pointer that keeps the pin")
+
+	sp2, err := repo.Get(context.Background(), "service-2")
+	require.NoError(t, err)
+	require.NotNil(t, sp2)
+	assert.Equal(t, pkgmodel.RuntimeManifestRef{}, sp2.RuntimeManifest(),
+		"a service with no pinned artifact must still seed the zero ref (legacy path)")
+}
+
+func TestSeedServiceProd_DisagreeingNodesReturnsError(t *testing.T) {
+	now := time.Unix(1_000_000, 0).UTC()
+
+	other := seedTestRuntimeRef()
+	other.RuntimeManifestSHA256 = "cc" + strings.Repeat("0", 62)
+
+	cp := buildCurrentProd("rel-1",
+		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", RuntimeManifestRef: seedTestRuntimeRef()},
+		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1", RuntimeManifestRef: other},
+	)
+	existingKeys := map[string]string{"service-1": "s3://bucket/service-1/manifest.json"}
+
+	store := newFakeStore()
+	repo := &fakeServiceProdRepo{store: store}
+
+	_, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "service-1",
+		"disagreement must fail loudly rather than silently seed a zero ref")
 }
 
 func TestSeedServiceProd_EmptyTopologyReturnsZero(t *testing.T) {
