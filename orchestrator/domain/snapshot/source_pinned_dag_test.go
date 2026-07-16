@@ -37,6 +37,48 @@ func TestSourcePinnedDAG_SingleFailedTask_NoDescendants_RebasesOnlyThat(t *testi
 	}
 }
 
+// A rerun reproduces the source run's frozen :EXECUTES set. Both the rebased
+// and the inherited rows must carry the reference the source task pinned, so a
+// release promoted since that run cannot retarget the rerun at a new artifact.
+func TestSourcePinnedDAG_PinsRuntimeManifestFromSourceTasks(t *testing.T) {
+	srcID := uuid.New()
+	failed := snapshot.FQN{Service: "svc", Schema: "sch", Table: "f", ScheduleName: "x"}
+	succA := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+
+	r := &fakeTopologyReader{
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {
+				failed: {
+					TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model",
+					ImageTag: "v1", ManifestVersion: "m1",
+					DBTUniqueID: "model.finance.orders", RuntimeManifestRef: pinnedRef(),
+				},
+				succA: {
+					TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model",
+					ImageTag: "v1", ManifestVersion: "m1",
+					DBTUniqueID: "model.finance.customers", RuntimeManifestRef: pinnedRef(),
+				},
+			},
+		},
+		DescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{srcID.String(): {failed: nil}},
+		// Latest topology has drifted; the rerun must ignore it entirely.
+		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
+			failed: {ScheduleName: "x", NodeType: "dbt-model", DBTUniqueID: "drifted", RuntimeManifestRef: driftedRef()},
+		},
+	}
+	got, err := snapshot.SourcePinnedDAG{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := indexByFQN(got)
+	if by[failed].DBTUniqueID != "model.finance.orders" || by[failed].RuntimeManifestRef != pinnedRef() {
+		t.Errorf("rebased row not pinned to source: %+v", by[failed])
+	}
+	if by[succA].DBTUniqueID != "model.finance.customers" || by[succA].RuntimeManifestRef != pinnedRef() {
+		t.Errorf("inherited row not pinned to source: %+v", by[succA])
+	}
+}
+
 func TestSourcePinnedDAG_TwoIndependentFailedSubtrees_BothRebased(t *testing.T) {
 	srcID := uuid.New()
 	// Subtree 1: e (FAILED) → f (SKIPPED).

@@ -9,6 +9,56 @@ import (
 	"github.com/google/uuid"
 )
 
+// A rebase deliberately re-runs the rebased partition against the LATEST
+// topology, so rebased rows take latest's reference. Inherited rows represent
+// work the source run already completed and are never re-executed, so they keep
+// the reference the source pinned — mixing the two would misattribute a
+// completed node to an artifact it never ran against.
+func TestRebasePartition_RebasedRowsTakeLatestRef_InheritedRowsKeepSourceRef(t *testing.T) {
+	srcID := uuid.New()
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"} // failed → rebase
+	c := snapshot.FQN{Service: "svc", Schema: "sch", Table: "c", ScheduleName: "x"} // succeeded → inherit
+
+	r := &fakeTopologyReader{
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {
+				a: {
+					TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model",
+					DBTUniqueID: "model.finance.orders", RuntimeManifestRef: pinnedRef(),
+				},
+				c: {
+					TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model",
+					DBTUniqueID: "model.finance.customers", RuntimeManifestRef: pinnedRef(),
+				},
+			},
+		},
+		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
+			a: {
+				ScheduleName: "x", NodeType: "dbt-model",
+				DBTUniqueID: "model.finance.orders_v2", RuntimeManifestRef: driftedRef(),
+			},
+			c: {
+				ScheduleName: "x", NodeType: "dbt-model",
+				DBTUniqueID: "model.finance.customers_v2", RuntimeManifestRef: driftedRef(),
+			},
+		},
+	}
+	got, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, ScheduleName: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[snapshot.FQN]snapshot.TaskProjection{}
+	for _, p := range got {
+		by[snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName, ScheduleName: p.ScheduleName}] = p
+	}
+	if by[a].DBTUniqueID != "model.finance.orders_v2" || by[a].RuntimeManifestRef != driftedRef() {
+		t.Errorf("rebased row should take latest's ref: %+v", by[a])
+	}
+	if by[c].DBTUniqueID != "model.finance.customers" || by[c].RuntimeManifestRef != pinnedRef() {
+		t.Errorf("inherited row should keep the source's pinned ref: %+v", by[c])
+	}
+}
+
 func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *testing.T) {
 	srcID := uuid.New()
 	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"} // failed → rebase

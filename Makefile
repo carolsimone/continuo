@@ -149,6 +149,22 @@ PG_USER := continuo_svc
 PG_PASSWORD := continuo
 PG_SSLMODE := disable
 
+# Connection parameters for the local test Neo4j brought up by test-deps-up.
+# They mirror NEO4J_AUTH in docker-compose.yml. Every Neo4j-backed test skips
+# itself when it cannot connect, so each of these being wrong buys a green run
+# that executed nothing:
+#   - NEO4J_URI defaults to the compose hostname (bolt://neo4j:7687) in-test,
+#     which does not resolve from the host, so it must name the published port.
+#   - NEO4J_USER/NEO4J_PASSWORD must match compose. Wrong credentials do more
+#     than skip their own package: repeated failed handshakes trip Neo4j's
+#     authentication rate limiter, which then locks out the packages testing
+#     alongside them and skips those too.
+NEO4J_HOST := localhost
+NEO4J_BOLT_PORT := 7687
+NEO4J_URI := bolt://$(NEO4J_HOST):$(NEO4J_BOLT_PORT)
+NEO4J_USER := neo4j
+NEO4J_PASSWORD := atlas_password
+
 # Run go tests for one service (SERVICE=x) or all. Brings deps up first; points
 # DB-backed tests at the local Postgres/Neo4j with the FULL per-service env.
 # pkgconfig.LoadPostgres requires POSTGRES_DB/USER/PASSWORD and defaults
@@ -171,7 +187,8 @@ test-go: test-deps-up
 	  echo "== go test $$s (db=$$db) =="; \
 	  (cd $$s && POSTGRES_HOST=$(PG_HOST) POSTGRES_PORT=$(PG_PORT) POSTGRES_DB=$$db \
 	     POSTGRES_USER=$(PG_USER) POSTGRES_PASSWORD=$(PG_PASSWORD) DB_SSLMODE=$(PG_SSLMODE) \
-	     NEO4J_HOST=localhost \
+	     NEO4J_HOST=$(NEO4J_HOST) NEO4J_URI=$(NEO4J_URI) \
+	     NEO4J_USER=$(NEO4J_USER) NEO4J_PASSWORD=$(NEO4J_PASSWORD) \
 	     RELEASE_TEST_PG_DSN="postgres://$(PG_USER):$(PG_PASSWORD)@$(PG_HOST):$(PG_PORT)/$$db?sslmode=$(PG_SSLMODE)" \
 	     go test -tags integration -count=1 ./... -timeout 20m) || rc=1; \
 	done; exit $$rc

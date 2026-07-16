@@ -56,6 +56,11 @@ func (r *RunAggregateRepository) rehydrateFull(ctx context.Context, runID string
             COALESCE(e.status, 'PENDING')      AS status,
             COALESCE(e.manifest_version, '')   AS manifest_version,
             COALESCE(e.image_tag, '')          AS image_tag,
+            COALESCE(e.dbt_unique_id, '')      AS dbt_unique_id,
+            COALESCE(e.runtime_manifest_uri, '')    AS runtime_manifest_uri,
+            COALESCE(e.runtime_manifest_sha256, '') AS runtime_manifest_sha256,
+            COALESCE(e.runtime_manifest_dbt_version, '') AS runtime_manifest_dbt_version,
+            COALESCE(e.runtime_manifest_parse_context_sha256, '') AS runtime_manifest_parse_context_sha256,
             t.table_name                       AS table_name,
             t.schema_name                      AS schema_name,
             t.service_name                     AS service_name,
@@ -111,6 +116,11 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
                 COALESCE(e.status, 'PENDING')      AS status,
                 COALESCE(e.manifest_version, '')   AS manifest_version,
                 COALESCE(e.image_tag, '')          AS image_tag,
+                COALESCE(e.dbt_unique_id, '')      AS dbt_unique_id,
+                COALESCE(e.runtime_manifest_uri, '')    AS runtime_manifest_uri,
+                COALESCE(e.runtime_manifest_sha256, '') AS runtime_manifest_sha256,
+                COALESCE(e.runtime_manifest_dbt_version, '') AS runtime_manifest_dbt_version,
+                COALESCE(e.runtime_manifest_parse_context_sha256, '') AS runtime_manifest_parse_context_sha256,
                 t.table_name                       AS table_name,
                 t.schema_name                      AS schema_name,
                 t.service_name                     AS service_name,
@@ -151,6 +161,11 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
                 COALESCE(e.status, 'PENDING')      AS status,
                 COALESCE(e.manifest_version, '')   AS manifest_version,
                 COALESCE(e.image_tag, '')          AS image_tag,
+                COALESCE(e.dbt_unique_id, '')      AS dbt_unique_id,
+                COALESCE(e.runtime_manifest_uri, '')    AS runtime_manifest_uri,
+                COALESCE(e.runtime_manifest_sha256, '') AS runtime_manifest_sha256,
+                COALESCE(e.runtime_manifest_dbt_version, '') AS runtime_manifest_dbt_version,
+                COALESCE(e.runtime_manifest_parse_context_sha256, '') AS runtime_manifest_parse_context_sha256,
                 t.table_name                       AS table_name,
                 t.schema_name                      AS schema_name,
                 t.service_name                     AS service_name,
@@ -372,6 +387,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		schedTVal, _ := rec.Get("schedule_name_t")
 		mvVal, _ := rec.Get("manifest_version")
 		itVal, _ := rec.Get("image_tag")
+		dbtUIDVal, _ := rec.Get("dbt_unique_id")
 		upsRaw, _ := rec.Get("upstreams")
 		downsRaw, _ := rec.Get("downstreams")
 
@@ -399,8 +415,13 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 			NodeType:        safeString(ntypeVal),
 			ManifestVersion: safeString(mvVal),
 			ImageTag:        safeString(itVal),
-			Upstreams:       ups,
-			Downstreams:     downs,
+			// Read from the :EXECUTES edge, so a node unblocked later in the run
+			// dispatches against the artifact the run was snapshotted with rather
+			// than one a release promoted in the meantime.
+			DBTUniqueID:        safeString(dbtUIDVal),
+			RuntimeManifestRef: runtimeManifestRefFromRecord(rec),
+			Upstreams:          ups,
+			Downstreams:        downs,
 		})
 	}
 	if err := result.Err(); err != nil {

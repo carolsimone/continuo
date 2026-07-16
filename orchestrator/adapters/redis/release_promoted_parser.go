@@ -28,5 +28,17 @@ func ParseReleasePromoted(msg goredis.XMessage) (event.ReleasePromoted, error) {
 	if evt.Topology == nil {
 		return event.ReleasePromoted{}, fmt.Errorf("%w: release.promoted payload (message %s) has nil topology", events.ErrPermanent, msg.ID)
 	}
+	// A node either pins a complete runtime manifest or pins none at all. A
+	// half-filled reference cannot be executed and cannot be repaired by a
+	// retry, so it is rejected here rather than persisted into the topology and
+	// discovered at dispatch time.
+	for i, n := range evt.Topology {
+		ref := n.RuntimeManifestRef
+		if err := ref.Validate(); err != nil {
+			return event.ReleasePromoted{}, fmt.Errorf(
+				"%w: release.promoted payload (message %s) topology[%d] (%s): %v",
+				events.ErrPermanent, msg.ID, i, n.UniqueID, err)
+		}
+	}
 	return evt, nil
 }

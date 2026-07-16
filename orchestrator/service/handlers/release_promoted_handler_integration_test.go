@@ -65,7 +65,7 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 		_, _ = pgDB.ExecContext(context.Background(),
 			`DELETE FROM orchestrator_outbox WHERE event_type = 'release_promoted'`)
 		_, _ = pgDB.ExecContext(context.Background(),
-			`DELETE FROM message_processing WHERE stream_name = $1`, streams.ReleasePromotedV1)
+			`DELETE FROM message_processing WHERE stream_name = $1`, streams.OrchestratorReleasePromoted)
 	})
 
 	repo := neo4jinfra.NewReleasePromotionRepository(client, newTestLogger())
@@ -175,10 +175,14 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 
 	// ── Postgres dedup assertions ─────────────────────────────────────────────
 
+	// Two orchestrator consumer groups read release.promoted:v1, so each scopes
+	// its dedup rows by its own group name rather than the stream name, keeping
+	// the two groups' rows independent. The dedup scope here is therefore the
+	// group name.
 	var dedupCount int
 	require.NoError(t, pgDB.QueryRowContext(ctx,
 		`SELECT count(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
-		msgID, streams.ReleasePromotedV1,
+		msgID, streams.OrchestratorReleasePromoted,
 	).Scan(&dedupCount))
 	assert.Equal(t, 1, dedupCount, "exactly one dedup row must be written for the message")
 }
@@ -203,7 +207,7 @@ func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 		_, _ = pgDB.ExecContext(context.Background(),
 			`DELETE FROM orchestrator_outbox WHERE event_type = 'release_promoted'`)
 		_, _ = pgDB.ExecContext(context.Background(),
-			`DELETE FROM message_processing WHERE stream_name = $1`, streams.ReleasePromotedV1)
+			`DELETE FROM message_processing WHERE stream_name = $1`, streams.OrchestratorReleasePromoted)
 	})
 
 	repo := neo4jinfra.NewReleasePromotionRepository(client, newTestLogger())
@@ -290,7 +294,7 @@ func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 	var dedupCount int
 	require.NoError(t, pgDB.QueryRowContext(ctx,
 		`SELECT count(*) FROM message_processing WHERE stream_name = $1 AND message_id IN ($2, $3)`,
-		streams.ReleasePromotedV1, msgID1, msgID2,
+		streams.OrchestratorReleasePromoted, msgID1, msgID2,
 	).Scan(&dedupCount))
 	assert.Equal(t, 2, dedupCount, "each unique message_id must produce its own dedup row")
 }
@@ -314,7 +318,7 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 		_, _ = pgDB.ExecContext(context.Background(),
 			`DELETE FROM orchestrator_outbox WHERE event_type = 'release_promoted'`)
 		_, _ = pgDB.ExecContext(context.Background(),
-			`DELETE FROM message_processing WHERE stream_name = $1`, streams.ReleasePromotedV1)
+			`DELETE FROM message_processing WHERE stream_name = $1`, streams.OrchestratorReleasePromoted)
 	})
 
 	repo := neo4jinfra.NewReleasePromotionRepository(client, newTestLogger())

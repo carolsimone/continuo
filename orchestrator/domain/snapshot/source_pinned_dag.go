@@ -114,9 +114,14 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				InitialStatus:   "PENDING",
 				ImageTag:        st.ImageTag,
 				ManifestVersion: st.ManifestVersion,
-				TestCountKnown:  false, // SourceTaskRow carries no test_count; rebased rows never gate on it
-				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
-				ReadyToDispatch: !blocked,
+				// Pinned from the source's :EXECUTES edge, never from the current
+				// :Table: a rerun reproduces the artifact the source ran against,
+				// even if a release has since moved the topology on.
+				DBTUniqueID:        st.DBTUniqueID,
+				RuntimeManifestRef: st.RuntimeManifestRef,
+				TestCountKnown:     false, // SourceTaskRow carries no test_count; rebased rows never gate on it
+				MaxRetries:         pkgEvents.DefaultTaskMaxRetries,
+				ReadyToDispatch:    !blocked,
 			})
 			continue
 		}
@@ -134,6 +139,8 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 			InitialStatus:       st.Status,
 			ImageTag:            st.ImageTag,
 			ManifestVersion:     st.ManifestVersion,
+			DBTUniqueID:         st.DBTUniqueID,
+			RuntimeManifestRef:  st.RuntimeManifestRef,
 			TestCountKnown:      false, // SourceTaskRow carries no test_count; inherited rows never gate on it
 			InheritedFromTaskID: &root,
 			MaxRetries:          0,

@@ -1,6 +1,10 @@
 package topology
 
-import "time"
+import (
+	"time"
+
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
+)
 
 // ReleasePromotedTopologyNode is the domain representation of a node in a
 // release.promoted:v1 payload. Used by ReleasePromotionRepository.
@@ -26,4 +30,10 @@ type ReleasePromotedTopologyNode struct {
 	LastRepo          string
 	LastChangedAt     time.Time
 	OriginalFilePath  string
+	// DBTUniqueID is the node's dbt identity ("model.finance.orders"). It is
+	// separate from UniqueID, which keys the graph as "schema.table".
+	DBTUniqueID string
+	// RuntimeManifestRef names the prebuilt artifact this node executes against.
+	// Empty for a release promoted before runtime manifests existed.
+	pkgModel.RuntimeManifestRef
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -40,7 +41,12 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           COALESCE(t.node_type, 'dbt-model')      AS node_type,
 		           t.test_count                             AS test_count,
 		           COALESCE(t.image_tag, '')                AS image_tag,
-		           COALESCE(t.manifest_version, '')         AS manifest_version
+		           COALESCE(t.manifest_version, '')         AS manifest_version,
+		           COALESCE(t.dbt_unique_id, '')            AS dbt_unique_id,
+		           COALESCE(t.runtime_manifest_uri, '')     AS runtime_manifest_uri,
+		           COALESCE(t.runtime_manifest_sha256, '')  AS runtime_manifest_sha256,
+		           COALESCE(t.runtime_manifest_dbt_version, '') AS runtime_manifest_dbt_version,
+		           COALESCE(t.runtime_manifest_parse_context_sha256, '') AS runtime_manifest_parse_context_sha256
 
 		    UNION
 
@@ -55,10 +61,17 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           s.node_type     AS node_type,
 		           s.test_count                     AS test_count,
 		           COALESCE(s.image_tag, '')        AS image_tag,
-		           COALESCE(s.manifest_version, '') AS manifest_version
+		           COALESCE(s.manifest_version, '') AS manifest_version,
+		           COALESCE(s.dbt_unique_id, '')    AS dbt_unique_id,
+		           COALESCE(s.runtime_manifest_uri, '')    AS runtime_manifest_uri,
+		           COALESCE(s.runtime_manifest_sha256, '') AS runtime_manifest_sha256,
+		           COALESCE(s.runtime_manifest_dbt_version, '') AS runtime_manifest_dbt_version,
+		           COALESCE(s.runtime_manifest_parse_context_sha256, '') AS runtime_manifest_parse_context_sha256
 		}
 		RETURN DISTINCT schema_name, table_name, service_name, schedule_name,
-		                node_type, test_count, image_tag, manifest_version
+		                node_type, test_count, image_tag, manifest_version,
+		                dbt_unique_id, runtime_manifest_uri, runtime_manifest_sha256,
+		                runtime_manifest_dbt_version, runtime_manifest_parse_context_sha256
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{"schedule_name": scheduleName})
 	if err != nil {
@@ -76,12 +89,14 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		}
 		tc, tcKnown := intFieldPresent(rec, "test_count")
 		out[f] = snapshot.LatestTableRow{
-			ScheduleName:    schedName,
-			NodeType:        stringField(rec, "node_type"),
-			TestCount:       tc,
-			TestCountKnown:  tcKnown,
-			ImageTag:        stringField(rec, "image_tag"),
-			ManifestVersion: stringField(rec, "manifest_version"),
+			ScheduleName:       schedName,
+			NodeType:           stringField(rec, "node_type"),
+			TestCount:          tc,
+			TestCountKnown:     tcKnown,
+			ImageTag:           stringField(rec, "image_tag"),
+			ManifestVersion:    stringField(rec, "manifest_version"),
+			DBTUniqueID:        stringField(rec, "dbt_unique_id"),
+			RuntimeManifestRef: runtimeManifestRefFromRecord(rec),
 		}
 	}
 	if err := result.Err(); err != nil {
@@ -102,6 +117,11 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 		       COALESCE(se.status, 'PENDING')      AS status,
 		       COALESCE(se.image_tag, '')          AS image_tag,
 		       COALESCE(se.manifest_version, '')   AS manifest_version,
+		       COALESCE(se.dbt_unique_id, '')      AS dbt_unique_id,
+		       COALESCE(se.runtime_manifest_uri, '')    AS runtime_manifest_uri,
+		       COALESCE(se.runtime_manifest_sha256, '') AS runtime_manifest_sha256,
+		       COALESCE(se.runtime_manifest_dbt_version, '') AS runtime_manifest_dbt_version,
+		       COALESCE(se.runtime_manifest_parse_context_sha256, '') AS runtime_manifest_parse_context_sha256,
 		       se.inherited_from_task_id           AS inherited_from
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{"source_run_id": sourceRunID})
@@ -120,12 +140,14 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 			ScheduleName: stringField(rec, "schedule_name"),
 		}
 		st := snapshot.SourceTaskRow{
-			TaskID:          taskID,
-			ScheduleName:    stringField(rec, "schedule_name"),
-			NodeType:        stringField(rec, "node_type"),
-			Status:          stringField(rec, "status"),
-			ImageTag:        stringField(rec, "image_tag"),
-			ManifestVersion: stringField(rec, "manifest_version"),
+			TaskID:             taskID,
+			ScheduleName:       stringField(rec, "schedule_name"),
+			NodeType:           stringField(rec, "node_type"),
+			Status:             stringField(rec, "status"),
+			ImageTag:           stringField(rec, "image_tag"),
+			ManifestVersion:    stringField(rec, "manifest_version"),
+			DBTUniqueID:        stringField(rec, "dbt_unique_id"),
+			RuntimeManifestRef: runtimeManifestRefFromRecord(rec),
 		}
 		if v, _ := rec.Get("inherited_from"); v != nil {
 			if s, ok := v.(string); ok && s != "" {
@@ -315,7 +337,12 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
 		       tbl.test_count                       AS test_count,
 		       COALESCE(tbl.image_tag, '')          AS image_tag,
-		       COALESCE(tbl.manifest_version, '')   AS manifest_version
+		       COALESCE(tbl.manifest_version, '')   AS manifest_version,
+		       COALESCE(tbl.dbt_unique_id, '')      AS dbt_unique_id,
+		       COALESCE(tbl.runtime_manifest_uri, '')    AS runtime_manifest_uri,
+		       COALESCE(tbl.runtime_manifest_sha256, '') AS runtime_manifest_sha256,
+		       COALESCE(tbl.runtime_manifest_dbt_version, '') AS runtime_manifest_dbt_version,
+		       COALESCE(tbl.runtime_manifest_parse_context_sha256, '') AS runtime_manifest_parse_context_sha256
 		LIMIT 1
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
@@ -334,12 +361,14 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 	rec := result.Record()
 	tc, tcKnown := intFieldPresent(rec, "test_count")
 	return snapshot.LatestTableRow{
-		ScheduleName:    stringField(rec, "schedule_name"),
-		NodeType:        stringField(rec, "node_type"),
-		TestCount:       tc,
-		TestCountKnown:  tcKnown,
-		ImageTag:        stringField(rec, "image_tag"),
-		ManifestVersion: stringField(rec, "manifest_version"),
+		ScheduleName:       stringField(rec, "schedule_name"),
+		NodeType:           stringField(rec, "node_type"),
+		TestCount:          tc,
+		TestCountKnown:     tcKnown,
+		ImageTag:           stringField(rec, "image_tag"),
+		ManifestVersion:    stringField(rec, "manifest_version"),
+		DBTUniqueID:        stringField(rec, "dbt_unique_id"),
+		RuntimeManifestRef: runtimeManifestRefFromRecord(rec),
 	}, true, nil
 }
 
@@ -353,7 +382,12 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
 		       srcEdge.test_count                     AS test_count,
 		       COALESCE(srcEdge.image_tag, '')        AS image_tag,
-		       COALESCE(srcEdge.manifest_version, '') AS manifest_version
+		       COALESCE(srcEdge.manifest_version, '') AS manifest_version,
+		       COALESCE(srcEdge.dbt_unique_id, '')    AS dbt_unique_id,
+		       COALESCE(srcEdge.runtime_manifest_uri, '')    AS runtime_manifest_uri,
+		       COALESCE(srcEdge.runtime_manifest_sha256, '') AS runtime_manifest_sha256,
+		       COALESCE(srcEdge.runtime_manifest_dbt_version, '') AS runtime_manifest_dbt_version,
+		       COALESCE(srcEdge.runtime_manifest_parse_context_sha256, '') AS runtime_manifest_parse_context_sha256
 		LIMIT 1
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
@@ -373,12 +407,14 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 	rec := result.Record()
 	tc, tcKnown := intFieldPresent(rec, "test_count")
 	return snapshot.LatestTableRow{
-		ScheduleName:    stringField(rec, "schedule_name"),
-		NodeType:        stringField(rec, "node_type"),
-		TestCount:       tc,
-		TestCountKnown:  tcKnown,
-		ImageTag:        stringField(rec, "image_tag"),
-		ManifestVersion: stringField(rec, "manifest_version"),
+		ScheduleName:       stringField(rec, "schedule_name"),
+		NodeType:           stringField(rec, "node_type"),
+		TestCount:          tc,
+		TestCountKnown:     tcKnown,
+		ImageTag:           stringField(rec, "image_tag"),
+		ManifestVersion:    stringField(rec, "manifest_version"),
+		DBTUniqueID:        stringField(rec, "dbt_unique_id"),
+		RuntimeManifestRef: runtimeManifestRefFromRecord(rec),
 	}, true, nil
 }
 
@@ -409,6 +445,18 @@ func stringField(rec *neo4j.Record, k string) string {
 		}
 	}
 	return ""
+}
+
+// runtimeManifestRefFromRecord reads the four runtime manifest fields, which
+// every query in this reader aliases to the same names regardless of whether it
+// read them from a :Table or an :EXECUTES edge.
+func runtimeManifestRefFromRecord(rec *neo4j.Record) pkgModel.RuntimeManifestRef {
+	return pkgModel.RuntimeManifestRef{
+		RuntimeManifestURI:                stringField(rec, "runtime_manifest_uri"),
+		RuntimeManifestSHA256:             stringField(rec, "runtime_manifest_sha256"),
+		RuntimeManifestDBTVersion:         stringField(rec, "runtime_manifest_dbt_version"),
+		RuntimeManifestParseContextSHA256: stringField(rec, "runtime_manifest_parse_context_sha256"),
+	}
 }
 
 // intFieldPresent returns the int value of key and whether the field was

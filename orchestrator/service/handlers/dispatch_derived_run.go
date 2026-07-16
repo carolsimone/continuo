@@ -107,17 +107,19 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 			return fmt.Errorf("compute job name for %s.%s: %w", t.SchemaName, t.TableName, err)
 		}
 		queryEvt := domain.NodeReadyForExecution{
-			ScheduleID:      d.RunID,
-			ScheduleName:    d.ScheduleName,
-			ServiceName:     t.ServiceName,
-			SchemaName:      t.SchemaName,
-			TableName:       t.TableName,
-			TaskID:          t.TaskID.String(),
-			JobName:         jobName,
-			NodeType:        t.NodeType,
-			ManifestVersion: t.ManifestVersion,
-			ImageTag:        t.ImageTag,
-			Operation:       d.Operation,
+			ScheduleID:         d.RunID,
+			ScheduleName:       d.ScheduleName,
+			ServiceName:        t.ServiceName,
+			SchemaName:         t.SchemaName,
+			TableName:          t.TableName,
+			TaskID:             t.TaskID.String(),
+			JobName:            jobName,
+			NodeType:           t.NodeType,
+			ManifestVersion:    t.ManifestVersion,
+			ImageTag:           t.ImageTag,
+			DBTUniqueID:        t.DBTUniqueID,
+			RuntimeManifestRef: t.RuntimeManifestRef,
+			Operation:          d.Operation,
 		}
 		queryPayload, err := json.Marshal(queryEvt)
 		if err != nil {

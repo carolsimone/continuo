@@ -1,6 +1,9 @@
 package run
 
-import "github.com/google/uuid"
+import (
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/google/uuid"
+)
 
 // DomainEvent is the sealed interface for events emitted by the Run aggregate.
 type DomainEvent interface{ domainEvent() }
@@ -23,6 +26,13 @@ type NodeUnblocked struct {
 	NodeType        string
 	ManifestVersion string
 	ImageTag        string
+	// DBTUniqueID is the node's dbt identity ("model.finance.orders"), used to
+	// select the model inside a hydrated manifest.
+	DBTUniqueID string
+	// RuntimeManifestRef is the artifact the run pinned for this node when it
+	// was snapshotted, carried so the unblock dispatch targets the same artifact
+	// the rest of the run used.
+	pkgModel.RuntimeManifestRef
 	// Operation is the run's operation ("" | "test" | "build"), carried so the
 	// downstream unblock dispatch runs the same dbt verb as the frontier.
 	Operation string

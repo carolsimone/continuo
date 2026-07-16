@@ -112,10 +112,14 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				InitialStatus:   "PENDING",
 				ImageTag:        lt.ImageTag,
 				ManifestVersion: lt.ManifestVersion,
-				TestCount:       lt.TestCount,
-				TestCountKnown:  lt.TestCountKnown,
-				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
-				ReadyToDispatch: !blocked,
+				// Rebased rows re-execute against the latest topology by design,
+				// so they take latest's pinned artifact.
+				DBTUniqueID:        lt.DBTUniqueID,
+				RuntimeManifestRef: lt.RuntimeManifestRef,
+				TestCount:          lt.TestCount,
+				TestCountKnown:     lt.TestCountKnown,
+				MaxRetries:         pkgEvents.DefaultTaskMaxRetries,
+				ReadyToDispatch:    !blocked,
 			})
 			continue
 		}
@@ -125,15 +129,20 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				root = *st.InheritedFromRoot
 			}
 			projection = append(projection, TaskProjection{
-				TaskID:              uuid.New(),
-				ServiceName:         f.Service,
-				SchemaName:          f.Schema,
-				TableName:           f.Table,
-				ScheduleName:        st.ScheduleName,
-				NodeType:            st.NodeType,
-				InitialStatus:       "SUCCEEDED",
-				ImageTag:            st.ImageTag,
-				ManifestVersion:     st.ManifestVersion,
+				TaskID:          uuid.New(),
+				ServiceName:     f.Service,
+				SchemaName:      f.Schema,
+				TableName:       f.Table,
+				ScheduleName:    st.ScheduleName,
+				NodeType:        st.NodeType,
+				InitialStatus:   "SUCCEEDED",
+				ImageTag:        st.ImageTag,
+				ManifestVersion: st.ManifestVersion,
+				// Inherited rows record work the source run already completed and
+				// are never re-executed, so they keep the artifact that produced
+				// them rather than adopting latest's.
+				DBTUniqueID:         st.DBTUniqueID,
+				RuntimeManifestRef:  st.RuntimeManifestRef,
 				TestCountKnown:      false, // SourceTaskRow carries no test_count; inherited rows never gate on it
 				InheritedFromTaskID: &root,
 				MaxRetries:          0,

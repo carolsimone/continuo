@@ -261,20 +261,22 @@ func toDomainNodes(wire []domainEvent.ReleasePromotedNode, repo, commitSHA strin
 	out := make([]topology.ReleasePromotedTopologyNode, 0, len(wire))
 	for _, n := range wire {
 		out = append(out, topology.ReleasePromotedTopologyNode{
-			UniqueID:          n.UniqueID,
-			SchemaName:        n.SchemaName,
-			TableName:         n.TableName,
-			ServiceName:       n.ServiceName,
-			NodeType:          n.NodeType,
-			TestCount:         n.TestCount,
-			ImageTag:          n.ImageTag,
-			Schedule:          n.Schedule,
-			UpstreamUniqueIDs: append([]string(nil), n.UpstreamUniqueIDs...),
-			Changed:           n.Changed,
-			LastCommitSHA:     commitSHA,
-			LastRepo:          repo,
-			LastChangedAt:     promotedAt,
-			OriginalFilePath:  n.OriginalFilePath,
+			UniqueID:           n.UniqueID,
+			SchemaName:         n.SchemaName,
+			TableName:          n.TableName,
+			ServiceName:        n.ServiceName,
+			NodeType:           n.NodeType,
+			TestCount:          n.TestCount,
+			ImageTag:           n.ImageTag,
+			Schedule:           n.Schedule,
+			UpstreamUniqueIDs:  append([]string(nil), n.UpstreamUniqueIDs...),
+			Changed:            n.Changed,
+			LastCommitSHA:      commitSHA,
+			LastRepo:           repo,
+			LastChangedAt:      promotedAt,
+			OriginalFilePath:   n.OriginalFilePath,
+			DBTUniqueID:        n.DBTUniqueID,
+			RuntimeManifestRef: n.RuntimeManifestRef,
 		})
 	}
 	return out

@@ -7,6 +7,7 @@ import (
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
@@ -183,6 +184,72 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	require.Equal(t, taskB.String(), rows[1]["tid"])
 	require.Equal(t, rootB.String(), rows[1]["inh"])
 	require.Nil(t, rows[1]["test_count"], "TestCountKnown=false must not stamp e.test_count")
+}
+
+// Copying the pin onto the :EXECUTES edge at snapshot time is what makes the run
+// immune to a later promotion: every subsequent read takes the artifact from the
+// edge rather than from the :Table, which a new release may already have moved.
+func TestSnapshotWriter_PinsRuntimeManifestOnExecutesEdge(t *testing.T) {
+	driver := newDriver(t)
+	scheduleName := "test-mat-rm-" + uuid.New().String()[:8]
+	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1", "v1")
+
+	runID := uuid.New().String()
+	taskA := uuid.New()
+	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-rm-") })
+
+	ref := pkgModel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://artifacts/svc/rel-1/partial_parse.msgpack",
+		RuntimeManifestSHA256:             "1111111111111111111111111111111111111111111111111111111111111111",
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "2222222222222222222222222222222222222222222222222222222222222222",
+	}
+	projection := []snapshot.TaskProjection{{
+		TaskID:             taskA,
+		ServiceName:        "svc",
+		SchemaName:         "s",
+		TableName:          "a",
+		ScheduleName:       scheduleName,
+		NodeType:           "dbt-model",
+		InitialStatus:      "PENDING",
+		ImageTag:           "img:1",
+		ManifestVersion:    "v1",
+		DBTUniqueID:        "model.finance.a",
+		RuntimeManifestRef: ref,
+		MaxRetries:         2,
+	}}
+	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "cron"}
+
+	session := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(context.Background())
+	_, err := session.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return nil, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(context.Background(), params, projection)
+	})
+	require.NoError(t, err)
+
+	read := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer read.Close(context.Background())
+	res, err := read.Run(context.Background(), `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(:Table {table_name: 'a', schedule_name: $sched})
+		RETURN e.dbt_unique_id AS dbt_unique_id,
+		       e.runtime_manifest_uri AS uri,
+		       e.runtime_manifest_sha256 AS sha,
+		       e.runtime_manifest_dbt_version AS ver,
+		       e.runtime_manifest_parse_context_sha256 AS ctx`,
+		map[string]interface{}{"run_id": runID, "sched": scheduleName})
+	require.NoError(t, err)
+	require.True(t, res.Next(context.Background()))
+	rec := res.Record()
+	dbtUID, _ := rec.Get("dbt_unique_id")
+	require.Equal(t, "model.finance.a", dbtUID)
+	uri, _ := rec.Get("uri")
+	require.Equal(t, ref.RuntimeManifestURI, uri)
+	sha, _ := rec.Get("sha")
+	require.Equal(t, ref.RuntimeManifestSHA256, sha)
+	ver, _ := rec.Get("ver")
+	require.Equal(t, ref.RuntimeManifestDBTVersion, ver)
+	pctx, _ := rec.Get("ctx")
+	require.Equal(t, ref.RuntimeManifestParseContextSHA256, pctx)
 }
 
 func TestSnapshotWriter_EmptyProjectionReturnsErr(t *testing.T) {

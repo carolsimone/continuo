@@ -30,7 +30,15 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 //
 // :EXECUTES edge:  task_id, status, image_tag, manifest_version, test_count?,
 //
-//	inherited_from_task_id?
+//	inherited_from_task_id?, dbt_unique_id, runtime_manifest_uri,
+//	runtime_manifest_sha256, runtime_manifest_dbt_version,
+//	runtime_manifest_parse_context_sha256
+//
+// The dbt_unique_id and runtime_manifest_* properties pin the artifact each task
+// executes against for the life of the run. Copying them onto the edge is what
+// makes a run immune to a release promoted while it is still in flight: every
+// later read (unblock dispatch, rerun, single-node rerun) takes them from the
+// edge rather than from the :Table, which the new release has already moved.
 //
 // test_count is set only when the projection entry's TestCountKnown is true
 // (assigning a nil parameter to a Cypher SET removes/leaves the property
@@ -63,16 +71,21 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 			testCount = t.TestCount
 		}
 		tasks[i] = map[string]interface{}{
-			"task_id":                t.TaskID.String(),
-			"service_name":           t.ServiceName,
-			"schema_name":            t.SchemaName,
-			"table_name":             t.TableName,
-			"schedule_name":          t.ScheduleName,
-			"initial_status":         t.InitialStatus,
-			"image_tag":              t.ImageTag,
-			"manifest_version":       t.ManifestVersion,
-			"test_count":             testCount,
-			"inherited_from_task_id": inheritedFrom,
+			"task_id":                               t.TaskID.String(),
+			"service_name":                          t.ServiceName,
+			"schema_name":                           t.SchemaName,
+			"table_name":                            t.TableName,
+			"schedule_name":                         t.ScheduleName,
+			"initial_status":                        t.InitialStatus,
+			"image_tag":                             t.ImageTag,
+			"manifest_version":                      t.ManifestVersion,
+			"test_count":                            testCount,
+			"inherited_from_task_id":                inheritedFrom,
+			"dbt_unique_id":                         t.DBTUniqueID,
+			"runtime_manifest_uri":                  t.RuntimeManifestURI,
+			"runtime_manifest_sha256":               t.RuntimeManifestSHA256,
+			"runtime_manifest_dbt_version":          t.RuntimeManifestDBTVersion,
+			"runtime_manifest_parse_context_sha256": t.RuntimeManifestParseContextSHA256,
 		}
 	}
 	const query = `
@@ -117,7 +130,12 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              e.task_id          = t.task_id,
 		              e.image_tag        = t.image_tag,
 		              e.manifest_version = t.manifest_version,
-		              e.test_count       = t.test_count
+		              e.test_count       = t.test_count,
+		              e.dbt_unique_id    = t.dbt_unique_id,
+		              e.runtime_manifest_uri                  = t.runtime_manifest_uri,
+		              e.runtime_manifest_sha256               = t.runtime_manifest_sha256,
+		              e.runtime_manifest_dbt_version          = t.runtime_manifest_dbt_version,
+		              e.runtime_manifest_parse_context_sha256 = t.runtime_manifest_parse_context_sha256
 		FOREACH (_ IN CASE WHEN t.inherited_from_task_id IS NULL THEN [] ELSE [1] END |
 		    SET e.inherited_from_task_id = t.inherited_from_task_id
 		)

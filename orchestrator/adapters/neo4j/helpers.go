@@ -2,6 +2,7 @@ package neo4jinfra
 
 import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -33,6 +34,7 @@ func recordToTableNode(record *neo4j.Record) (*domain.TableNode, error) {
 	taskID, _ := record.Get("task_id")
 	manifestVersion, _ := record.Get("manifest_version")
 	imageTag, _ := record.Get("image_tag")
+	dbtUniqueID, _ := record.Get("dbt_unique_id")
 
 	node := &domain.TableNode{
 		TableName:       safeString(tableName),
@@ -45,6 +47,13 @@ func recordToTableNode(record *neo4j.Record) (*domain.TableNode, error) {
 		TaskID:          safeString(taskID),
 		ManifestVersion: safeString(manifestVersion),
 		ImageTag:        safeString(imageTag),
+		DBTUniqueID:     safeString(dbtUniqueID),
+		RuntimeManifestRef: pkgModel.RuntimeManifestRef{
+			RuntimeManifestURI:                safeString(recordValue(record, "runtime_manifest_uri")),
+			RuntimeManifestSHA256:             safeString(recordValue(record, "runtime_manifest_sha256")),
+			RuntimeManifestDBTVersion:         safeString(recordValue(record, "runtime_manifest_dbt_version")),
+			RuntimeManifestParseContextSHA256: safeString(recordValue(record, "runtime_manifest_parse_context_sha256")),
+		},
 	}
 
 	if lastUpdatedAtNeo, ok := lastUpdatedAt.(neo4j.LocalDateTime); ok {

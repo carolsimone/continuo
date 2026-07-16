@@ -6,6 +6,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/adapters/publisher"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
@@ -80,6 +81,44 @@ func TestOutboxPublisher_NodeReadyForExecution(t *testing.T) {
 	// Plain run-operation dispatches carry no operation field (wire shape unchanged).
 	_, hasOperation := vals["operation"]
 	assert.False(t, hasOperation, "run-operation node_ready_for_execution must not carry an operation field")
+	// A node pinned to no runtime manifest omits all five fields, so its wire
+	// shape is byte-identical to a dispatch produced before they existed.
+	for _, f := range []string{
+		"dbt_unique_id",
+		"runtime_manifest_uri",
+		"runtime_manifest_sha256",
+		"runtime_manifest_dbt_version",
+		"runtime_manifest_parse_context_sha256",
+	} {
+		_, has := vals[f]
+		assert.False(t, has, "unpinned node_ready_for_execution must not carry %s", f)
+	}
+}
+
+func TestOutboxPublisher_NodeReadyForExecution_CarriesRuntimeManifestPin(t *testing.T) {
+	// The executor routes a pinned node to a reusable worker pool keyed on the
+	// manifest digest, and selects the model by its dbt unique_id. Both must
+	// reach the wire or the node silently falls back to the per-node Job path.
+	evt := domain.NodeReadyForExecution{
+		ScheduleID: "sched-1", ScheduleName: "daily", ServiceName: "svc",
+		SchemaName: "public", TableName: "orders", TaskID: "task-1", JobName: "job-1",
+		NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1",
+		DBTUniqueID: "model.finance.orders",
+		RuntimeManifestRef: pkgModel.RuntimeManifestRef{
+			RuntimeManifestURI:                "s3://continuo-artifacts/finance/rel-1/partial_parse.msgpack",
+			RuntimeManifestSHA256:             "1111111111111111111111111111111111111111111111111111111111111111",
+			RuntimeManifestDBTVersion:         "1.12.0b1",
+			RuntimeManifestParseContextSHA256: "2222222222222222222222222222222222222222222222222222222222222222",
+		},
+	}
+	entry := makeEntry("node_ready_for_execution", mustMarshal(t, evt))
+	vals := payloadToValuesFor(t, entry)
+
+	assert.Equal(t, "model.finance.orders", vals["dbt_unique_id"])
+	assert.Equal(t, "s3://continuo-artifacts/finance/rel-1/partial_parse.msgpack", vals["runtime_manifest_uri"])
+	assert.Equal(t, "1111111111111111111111111111111111111111111111111111111111111111", vals["runtime_manifest_sha256"])
+	assert.Equal(t, "1.12.0b1", vals["runtime_manifest_dbt_version"])
+	assert.Equal(t, "2222222222222222222222222222222222222222222222222222222222222222", vals["runtime_manifest_parse_context_sha256"])
 }
 
 func TestOutboxPublisher_NodeReadyForExecution_CarriesTestOperation(t *testing.T) {

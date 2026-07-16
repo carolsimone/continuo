@@ -132,6 +132,19 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		if evt.Operation != "" {
 			values["operation"] = evt.Operation
 		}
+		// The dbt identity and the runtime manifest pin are carried only for
+		// nodes whose release published them. A node with neither produces a
+		// field map identical to a dispatch from before they existed, and the
+		// executor runs it down the per-node Job path.
+		if evt.DBTUniqueID != "" {
+			values["dbt_unique_id"] = evt.DBTUniqueID
+		}
+		if evt.RuntimeManifestURI != "" {
+			values["runtime_manifest_uri"] = evt.RuntimeManifestURI
+			values["runtime_manifest_sha256"] = evt.RuntimeManifestSHA256
+			values["runtime_manifest_dbt_version"] = evt.RuntimeManifestDBTVersion
+			values["runtime_manifest_parse_context_sha256"] = evt.RuntimeManifestParseContextSHA256
+		}
 		return values, nil
 
 	case "cascade_task_skipped":

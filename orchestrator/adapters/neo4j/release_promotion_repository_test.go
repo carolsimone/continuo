@@ -9,6 +9,7 @@ import (
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -541,6 +542,52 @@ func TestPromotion_PersistsTestCount(t *testing.T) {
 	require.True(t, res.Next(ctx))
 	tc, _ := res.Record().Get("test_count")
 	assert.Equal(t, int64(2), tc)
+}
+
+func TestPromotion_PersistsRuntimeManifestPin(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t) // skips if Neo4j is unreachable
+	wipeReleaseFixtures(t, client)
+	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
+
+	repo := newReleaseRepo(client)
+	ref := pkgModel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://artifacts/s/rel-1/partial_parse.msgpack",
+		RuntimeManifestSHA256:             "1111111111111111111111111111111111111111111111111111111111111111",
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "2222222222222222222222222222222222222222222222222222222222222222",
+	}
+	nodes := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "p.ta", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
+			UpstreamUniqueIDs: []string{}, DBTUniqueID: "model.finance.ta", RuntimeManifestRef: ref},
+	}
+	changed, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	s := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `
+		MATCH (t:Table {unique_id:'p.ta'})
+		RETURN t.dbt_unique_id AS dbt_unique_id,
+		       t.runtime_manifest_uri AS uri,
+		       t.runtime_manifest_sha256 AS sha,
+		       t.runtime_manifest_dbt_version AS ver,
+		       t.runtime_manifest_parse_context_sha256 AS ctx`, nil)
+	require.NoError(t, err)
+	require.True(t, res.Next(ctx))
+	rec := res.Record()
+	// The graph keys on "schema.table"; the dbt id is a separate identity.
+	dbtUID, _ := rec.Get("dbt_unique_id")
+	assert.Equal(t, "model.finance.ta", dbtUID)
+	uri, _ := rec.Get("uri")
+	assert.Equal(t, ref.RuntimeManifestURI, uri)
+	sha, _ := rec.Get("sha")
+	assert.Equal(t, ref.RuntimeManifestSHA256, sha)
+	ver, _ := rec.Get("ver")
+	assert.Equal(t, ref.RuntimeManifestDBTVersion, ver)
+	pctx, _ := rec.Get("ctx")
+	assert.Equal(t, ref.RuntimeManifestParseContextSHA256, pctx)
 }
 
 func TestReleasePromotionRepository_SetsOriginalFilePathUnconditionally(t *testing.T) {

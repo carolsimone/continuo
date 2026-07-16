@@ -4,7 +4,30 @@ import (
 	"context"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 )
+
+// pinnedRef is the runtime manifest reference a selector is expected to carry
+// from its pinned source row onto the projection, verbatim.
+func pinnedRef() pkgModel.RuntimeManifestRef {
+	return pkgModel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo-artifacts/finance/rel-1/partial_parse.msgpack",
+		RuntimeManifestSHA256:             "1111111111111111111111111111111111111111111111111111111111111111",
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "2222222222222222222222222222222222222222222222222222222222222222",
+	}
+}
+
+// driftedRef is a second, distinct reference used to prove a selector pins the
+// reference it read rather than one from another source.
+func driftedRef() pkgModel.RuntimeManifestRef {
+	return pkgModel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo-artifacts/finance/rel-2/partial_parse.msgpack",
+		RuntimeManifestSHA256:             "3333333333333333333333333333333333333333333333333333333333333333",
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "4444444444444444444444444444444444444444444444444444444444444444",
+	}
+}
 
 // fakeTopologyReader is a hand-rolled in-memory implementation used by the
 // pure-Go selector tests. Each field is pre-loaded by the test; methods just

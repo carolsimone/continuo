@@ -10,6 +10,7 @@ import (
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	domainRun "github.com/carolsimone/continuo/orchestrator/domain/run"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -377,6 +378,126 @@ func TestRunAggregateRepository_RehydrateScopeNodeCompletion_Succeeded_IncludesN
 	assert.True(t, keys[kA], "target A must be in scope")
 	assert.True(t, keys[kC], "immediate downstream C must be in scope")
 	assert.True(t, keys[kB], "C's other upstream B must be in scope for unblocking evaluation")
+}
+
+// pinExecutesRuntimeManifest stamps a node's :EXECUTES edge with the metadata a
+// snapshot pinned when the run started.
+func pinExecutesRuntimeManifest(
+	t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient,
+	runID, schema, table, dbtUniqueID string, ref pkgModel.RuntimeManifestRef,
+) {
+	t.Helper()
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table {schema_name: $schema, table_name: $table})
+		SET e.dbt_unique_id                          = $dbt_unique_id,
+		    e.runtime_manifest_uri                   = $uri,
+		    e.runtime_manifest_sha256                = $sha,
+		    e.runtime_manifest_dbt_version           = $ver,
+		    e.runtime_manifest_parse_context_sha256  = $ctx
+	`, map[string]any{
+		"run_id": runID, "schema": schema, "table": table,
+		"dbt_unique_id": dbtUniqueID,
+		"uri":           ref.RuntimeManifestURI,
+		"sha":           ref.RuntimeManifestSHA256,
+		"ver":           ref.RuntimeManifestDBTVersion,
+		"ctx":           ref.RuntimeManifestParseContextSHA256,
+	})
+	require.NoError(t, err)
+}
+
+// promoteTableRuntimeManifest rewrites a :Table's runtime metadata, standing in
+// for a release promoted while a run is already in flight.
+func promoteTableRuntimeManifest(
+	t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient,
+	schema, table, dbtUniqueID string, ref pkgModel.RuntimeManifestRef,
+) {
+	t.Helper()
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `
+		MATCH (t:Table {schema_name: $schema, table_name: $table, test_marker: $marker})
+		SET t.dbt_unique_id                          = $dbt_unique_id,
+		    t.runtime_manifest_uri                   = $uri,
+		    t.runtime_manifest_sha256                = $sha,
+		    t.runtime_manifest_dbt_version           = $ver,
+		    t.runtime_manifest_parse_context_sha256  = $ctx
+	`, map[string]any{
+		"schema": schema, "table": table, "marker": t.Name(),
+		"dbt_unique_id": dbtUniqueID,
+		"uri":           ref.RuntimeManifestURI,
+		"sha":           ref.RuntimeManifestSHA256,
+		"ver":           ref.RuntimeManifestDBTVersion,
+		"ctx":           ref.RuntimeManifestParseContextSHA256,
+	})
+	require.NoError(t, err)
+}
+
+// A run executes the artifact it was snapshotted against, for its whole life. A
+// release promoted after the run started rewrites the :Table topology, but the
+// in-flight run's remaining nodes must still dispatch against the reference
+// pinned on their :EXECUTES edges. Reading the current :Table here would splice
+// a half-old, half-new artifact into one run — the exact corruption pinning
+// exists to prevent, and one that surfaces no error.
+func TestRunAggregateRepository_NodeUnblocked_PinsRuntimeManifestFromExecutesNotCurrentTable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestAggRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	runID := fmt.Sprintf("run-%s", t.Name())
+	// a -> b: completing a SUCCEEDED unblocks b.
+	seedRun(t, ctx, client, runID, 2, 0, 0,
+		[]seededNode{
+			{"public", "a", "svc-1", "PENDING"},
+			{"public", "b", "svc-1", "PENDING"},
+		},
+		[]seededEdge{
+			{childSchema: "public", childTable: "b", parentSchema: "public", parentTable: "a"},
+		},
+	)
+
+	runPinned := pkgModel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo-artifacts/svc-1/rel-1/partial_parse.msgpack",
+		RuntimeManifestSHA256:             "1111111111111111111111111111111111111111111111111111111111111111",
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "2222222222222222222222222222222222222222222222222222222222222222",
+	}
+	promoted := pkgModel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo-artifacts/svc-1/rel-2/partial_parse.msgpack",
+		RuntimeManifestSHA256:             "3333333333333333333333333333333333333333333333333333333333333333",
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "4444444444444444444444444444444444444444444444444444444444444444",
+	}
+	pinExecutesRuntimeManifest(t, ctx, client, runID, "public", "b", "model.svc_1.b", runPinned)
+
+	// A release lands mid-run and retargets the shared :Table topology.
+	promoteTableRuntimeManifest(t, ctx, client, "public", "b", "model.svc_1.b_v2", promoted)
+
+	kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
+	agg, err := repo.Rehydrate(ctx, runID,
+		domainRun.ScopeNodeCompletion{Key: kA, Status: "SUCCEEDED"})
+	require.NoError(t, err)
+
+	events, err := agg.CompleteNode(kA, "SUCCEEDED")
+	require.NoError(t, err)
+
+	var unblocked *domainRun.NodeUnblocked
+	for i := range events {
+		if e, ok := events[i].(domainRun.NodeUnblocked); ok {
+			unblocked = &e
+			break
+		}
+	}
+	require.NotNil(t, unblocked, "completing a must emit NodeUnblocked for b")
+
+	assert.Equal(t, "model.svc_1.b", unblocked.DBTUniqueID,
+		"unblocked node must carry the dbt_unique_id pinned on :EXECUTES, not the mid-run promoted :Table value")
+	assert.Equal(t, runPinned, unblocked.RuntimeManifestRef,
+		"unblocked node must carry the runtime manifest pinned on :EXECUTES, not the mid-run promoted :Table value")
 }
 
 func TestRunAggregateRepository_Save_PersistsNodeStatusesAndCounters(t *testing.T) {

@@ -176,17 +176,19 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		}
 
 		nodeEvt := domain.NodeReadyForExecution{
-			ScheduleID:      evt.ScheduleID.String(),
-			ScheduleName:    task.ScheduleName,
-			ServiceName:     task.ServiceName,
-			SchemaName:      task.SchemaName,
-			TableName:       task.TableName,
-			TaskID:          task.TaskID.String(),
-			JobName:         jobName,
-			NodeType:        string(nodeType),
-			ManifestVersion: task.ManifestVersion,
-			ImageTag:        task.ImageTag,
-			Operation:       evt.Operation,
+			ScheduleID:         evt.ScheduleID.String(),
+			ScheduleName:       task.ScheduleName,
+			ServiceName:        task.ServiceName,
+			SchemaName:         task.SchemaName,
+			TableName:          task.TableName,
+			TaskID:             task.TaskID.String(),
+			JobName:            jobName,
+			NodeType:           string(nodeType),
+			ManifestVersion:    task.ManifestVersion,
+			ImageTag:           task.ImageTag,
+			DBTUniqueID:        task.DBTUniqueID,
+			RuntimeManifestRef: task.RuntimeManifestRef,
+			Operation:          evt.Operation,
 		}
 
 		evtPayload, err := json.Marshal(nodeEvt)

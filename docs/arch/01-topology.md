@@ -193,7 +193,7 @@ Each `release.promoted:v1` that changes the current release atomically increment
 - The `:TopologyRoot {id:'singleton'}` Neo4j node — holds the current generation and the full `service_metadata` JSON map (`{svc: {manifest_version, image_tag}}`).
 - Each `Table` node in Neo4j (`image_tag`, `node_type`, `topology_generation` properties).
 - Each `Run` node in Neo4j (`topology_generation`, `service_metadata` properties) — **copied from `:TopologyRoot` at `SnapshotGraph` time**.
-- Each `EXECUTES` edge in Neo4j (`image_tag`, `manifest_version` properties) — **stamped from the Table at `SnapshotGraph` time**.
+- Each `EXECUTES` edge in Neo4j (`image_tag`, `manifest_version`, `dbt_unique_id`, `runtime_manifest_uri`, `runtime_manifest_sha256`, `runtime_manifest_dbt_version`, `runtime_manifest_parse_context_sha256` properties) — **stamped from the Table at `SnapshotGraph` time**.
 
 ### Run Isolation (Lazy Generation Switch)
 
@@ -201,10 +201,51 @@ Each `release.promoted:v1` that changes the current release atomically increment
 
 1. The generation counter increments in Postgres and `:TopologyRoot` is updated.
 2. The in-flight `Run` node already has its `topology_generation` stamped — it is **not** updated.
-3. All `EXECUTES` edges for the in-flight run carry the `image_tag` from the snapshot — they are **not** updated.
+3. All `EXECUTES` edges for the in-flight run carry the `image_tag`, `dbt_unique_id`, and runtime manifest reference from the snapshot — they are **not** updated.
 4. The next `SnapshotGraph` call (for the next run) copies the new generation and `service_metadata` from `:TopologyRoot`.
 
 This guarantees that every K8s Pod in a run uses the exact image tag that was current when the run was started.
+
+### `:Table` → `:EXECUTES` Pinning
+
+A node's execution metadata lives in two places, and the distinction is what keeps a run coherent:
+
+- The `:Table` node carries what the **current** release says: the latest `image_tag`, `dbt_unique_id`, and runtime manifest reference.
+- The `:EXECUTES` edge carries what **this run** executes: the same fields, copied from the `:Table` at `SnapshotGraph` time and never rewritten afterwards.
+
+Every read on a run's execution path resolves from the edge, not from the `:Table`:
+
+| Path | Metadata source |
+|---|---|
+| Fresh run (cron / trigger / single-node "latest") | the current `:Table` — this run is defining its pin |
+| Initial dispatch frontier | the `:EXECUTES` edges just written |
+| A node unblocked later in the run | the node's `:EXECUTES` edge |
+| Rerun (`SourcePinnedDAG`) and single-node `snapshot_of_run` | the **source** run's `:EXECUTES` edges |
+| Rebase (`RebasePartition`) | rebased nodes re-execute against the current `:Table`; inherited nodes keep the source `:EXECUTES` edge that produced them |
+
+Because a promotion rewrites `:Table` properties in place, a run that re-read the `:Table` mid-flight would execute its later nodes against a different artifact than its earlier ones — splicing two releases into one run's output with no error raised. Pinning on the edge at snapshot time is what makes that unrepresentable.
+
+### Runtime Manifest References
+
+A node that executes in a reusable worker pool carries a reference to the prebuilt dbt manifest the worker hydrates, rather than having the worker re-parse the dbt project. The reference is four fields, always set together or not at all:
+
+| Property | Meaning |
+|---|---|
+| `runtime_manifest_uri` | `s3://` location of the artifact |
+| `runtime_manifest_sha256` | artifact content digest; verifies the download and names the worker pool |
+| `runtime_manifest_dbt_version` | dbt-core version that produced it; a partial parse loads only in the version that wrote it |
+| `runtime_manifest_parse_context_sha256` | digest of the parse context (command dialect plus target/environment) it was produced under |
+
+A partial reference is a contract violation and is rejected where it enters orchestrator. An **empty** reference is valid and means "no runtime manifest": those nodes execute down the per-node Job path. Nodes from a release promoted before runtime manifests existed carry an empty reference, so both paths coexist in one topology.
+
+### Graph Identity vs dbt Identity
+
+Two distinct identities travel together and must not be conflated:
+
+- `unique_id` — the **graph's** key for a `:Table`, spelled `schema.table`. It keys promotion upserts and `:DEPENDS_ON` edges.
+- `dbt_unique_id` — **dbt's** own node key, e.g. `model.finance.orders`. It selects the model inside a hydrated manifest.
+
+They are separate properties on the `:Table` and on the `:EXECUTES` edge. A node may carry a graph `unique_id` and no `dbt_unique_id`, which is the pre-runtime-manifest shape.
 
 ### Content-Addressed Image Tags
 

@@ -1,6 +1,10 @@
 package event
 
-import "time"
+import (
+	"time"
+
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
+)
 
 // ReleasePromotedNode is the wire-format representation of a single node in a
 // release.promoted:v1 payload's topology array. Nodes are keyed by unique_id
@@ -18,6 +22,13 @@ type ReleasePromotedNode struct {
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Changed           bool     `json:"changed"`
 	OriginalFilePath  string   `json:"original_file_path"`
+	// DBTUniqueID is the node's dbt identity ("model.finance.orders"). It is
+	// separate from UniqueID, which keys the graph as "schema.table".
+	DBTUniqueID string `json:"dbt_unique_id,omitempty"`
+	// RuntimeManifestRef names the prebuilt artifact this node executes against.
+	// A release promoted before runtime manifests existed carries none, which is
+	// valid: those nodes execute down the per-node Job path.
+	pkgModel.RuntimeManifestRef
 }
 
 // ReleasePromoted is the full release.promoted:v1 payload as published by

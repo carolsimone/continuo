@@ -633,6 +633,66 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_HitAndMiss(t *testing.T) {
 // no_tests gate for a stale (snapshot_of_run) test rerun against an older
 // source run — evaluating the gate against different metadata than the image
 // that will actually execute.
+// The rerun path reads a node's runtime manifest from the source run's pinned
+// :EXECUTES edge. A release promoted since that run has already rewritten the
+// :Table; reading it here would rerun the node against an artifact the original
+// run never executed.
+func TestTopologyReader_LoadSingleTableFromSourceRun_ReadsPinnedRuntimeManifestNotCurrentTable(t *testing.T) {
+	sched := "test-tr-sfr-rm-" + uuid.New().String()[:8]
+	runID := uuid.New().String()
+	taskID := uuid.New().String()
+
+	withTopologyReader(t,
+		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:1", "v1", true); err != nil {
+				return err
+			}
+			if err := txSeedRun(ctx, tx, runID, sched); err != nil {
+				return err
+			}
+			if err := txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
+				{Svc: "svc", Schema: "s", Tbl: "z", Status: "SUCCEEDED", TaskID: taskID, Img: "img:1", Mv: "v1"},
+			}); err != nil {
+				return err
+			}
+			// The edge pins what the run actually executed.
+			if _, err := tx.Run(ctx, `
+				MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(:Table {schedule_name: $sched, table_name: "z"})
+				SET e.dbt_unique_id = 'model.finance.z',
+				    e.runtime_manifest_uri = 's3://artifacts/svc/rel-1/partial_parse.msgpack',
+				    e.runtime_manifest_sha256 = '1111111111111111111111111111111111111111111111111111111111111111',
+				    e.runtime_manifest_dbt_version = '1.12.0b1',
+				    e.runtime_manifest_parse_context_sha256 = '2222222222222222222222222222222222222222222222222222222222222222'`,
+				map[string]interface{}{"run_id": runID, "sched": sched}); err != nil {
+				return err
+			}
+			// A later promotion retargets the CURRENT :Table, leaving the edge alone.
+			_, err := tx.Run(ctx, `
+				MATCH (t:Table {schedule_name: $sched, table_name: "z"})
+				SET t.dbt_unique_id = 'model.finance.z_v2',
+				    t.runtime_manifest_uri = 's3://artifacts/svc/rel-2/partial_parse.msgpack',
+				    t.runtime_manifest_sha256 = '3333333333333333333333333333333333333333333333333333333333333333',
+				    t.runtime_manifest_dbt_version = '1.12.0b1',
+				    t.runtime_manifest_parse_context_sha256 = '4444444444444444444444444444444444444444444444444444444444444444'`,
+				map[string]interface{}{"sched": sched})
+			return err
+		},
+		func(ctx context.Context, r snapshot.TopologyReader) error {
+			row, found, err := r.LoadSingleTableFromSourceRun(ctx, runID, snapshot.FQN{Service: "svc", Schema: "s", Table: "z"})
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.Equal(t, "model.finance.z", row.DBTUniqueID,
+				"must read the PINNED edge dbt_unique_id, not the current :Table value")
+			assert.Equal(t, "s3://artifacts/svc/rel-1/partial_parse.msgpack", row.RuntimeManifestURI,
+				"must read the PINNED edge artifact (rel-1), not the current :Table value (rel-2)")
+			assert.Equal(t, "1111111111111111111111111111111111111111111111111111111111111111", row.RuntimeManifestSHA256)
+			assert.Equal(t, "1.12.0b1", row.RuntimeManifestDBTVersion)
+			assert.Equal(t, "2222222222222222222222222222222222222222222222222222222222222222", row.RuntimeManifestParseContextSHA256)
+			return nil
+		},
+	)
+}
+
 func TestTopologyReader_LoadSingleTableFromSourceRun_ReadsPinnedTestCountNotCurrentTable(t *testing.T) {
 	sched := "test-tr-sfr-tc-" + uuid.New().String()[:8]
 	runID := uuid.New().String()

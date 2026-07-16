@@ -15,6 +15,7 @@ package snapshot
 import (
 	"errors"
 
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 )
 
@@ -65,15 +66,23 @@ type Params struct {
 // TaskProjection is one task's place in a run's projection. Each entry becomes
 // one :EXECUTES edge from the new :Run to its :Table.
 type TaskProjection struct {
-	TaskID              uuid.UUID
-	ServiceName         string
-	SchemaName          string
-	TableName           string
-	ScheduleName        string // schedule_name on the :Table node we MATCH against
-	NodeType            string
-	InitialStatus       string // "PENDING" | "SUCCEEDED"
-	ImageTag            string
-	ManifestVersion     string
+	TaskID          uuid.UUID
+	ServiceName     string
+	SchemaName      string
+	TableName       string
+	ScheduleName    string // schedule_name on the :Table node we MATCH against
+	NodeType        string
+	InitialStatus   string // "PENDING" | "SUCCEEDED"
+	ImageTag        string
+	ManifestVersion string
+	// DBTUniqueID is the node's dbt identity ("model.finance.orders"), used to
+	// select the model inside a hydrated manifest. Distinct from the graph's
+	// unique_id, which is "schema.table".
+	DBTUniqueID string
+	// RuntimeManifestRef is the artifact this task will execute against, copied
+	// from whichever row the selector pinned. Written onto the :EXECUTES edge so
+	// the run keeps executing it even after a later release moves the topology.
+	pkgModel.RuntimeManifestRef
 	TestCount           int
 	TestCountKnown      bool       // true iff the pinned source (:Table or source :EXECUTES edge) had a test_count property
 	InheritedFromTaskID *uuid.UUID // non-nil iff InitialStatus == "SUCCEEDED" via inherit; root pointer

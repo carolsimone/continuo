@@ -60,17 +60,19 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 
 func toSingleNodeProjection(fqn FQN, row LatestTableRow) TaskProjection {
 	return TaskProjection{
-		TaskID:          uuid.New(),
-		ServiceName:     fqn.Service,
-		SchemaName:      fqn.Schema,
-		TableName:       fqn.Table,
-		ScheduleName:    row.ScheduleName,
-		NodeType:        row.NodeType,
-		InitialStatus:   "PENDING",
-		ImageTag:        row.ImageTag,
-		ManifestVersion: row.ManifestVersion,
-		TestCount:       row.TestCount,
-		TestCountKnown:  row.TestCountKnown,
-		MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+		TaskID:             uuid.New(),
+		ServiceName:        fqn.Service,
+		SchemaName:         fqn.Schema,
+		TableName:          fqn.Table,
+		ScheduleName:       row.ScheduleName,
+		NodeType:           row.NodeType,
+		InitialStatus:      "PENDING",
+		ImageTag:           row.ImageTag,
+		ManifestVersion:    row.ManifestVersion,
+		DBTUniqueID:        row.DBTUniqueID,
+		RuntimeManifestRef: row.RuntimeManifestRef,
+		TestCount:          row.TestCount,
+		TestCountKnown:     row.TestCountKnown,
+		MaxRetries:         pkgEvents.DefaultTaskMaxRetries,
 	}
 }

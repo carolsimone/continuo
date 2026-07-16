@@ -1,6 +1,7 @@
 package run
 
 import (
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 )
 
@@ -44,8 +45,14 @@ type RunNode struct {
 	NodeType        string
 	ManifestVersion string
 	ImageTag        string
-	Upstreams       []NodeKey // used to check if all upstreams are terminal (unblocking)
-	Downstreams     []NodeKey // immediate downstream keys (cascade skip traversal)
+	// DBTUniqueID is the node's dbt identity ("model.finance.orders"), used to
+	// select the model inside a hydrated manifest.
+	DBTUniqueID string
+	// RuntimeManifestRef is the artifact this run pinned for the node, rehydrated
+	// from its :EXECUTES edge so an unblock dispatch reproduces it exactly.
+	pkgModel.RuntimeManifestRef
+	Upstreams   []NodeKey // used to check if all upstreams are terminal (unblocking)
+	Downstreams []NodeKey // immediate downstream keys (cascade skip traversal)
 }
 
 func (n *RunNode) isTerminal() bool {

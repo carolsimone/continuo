@@ -2,6 +2,8 @@ package domain
 
 import (
 	"time"
+
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 type Criticality string
@@ -54,6 +56,11 @@ type TableNode struct {
 	TaskID          string
 	ManifestVersion string
 	ImageTag        string
+	// DBTUniqueID is the node's dbt identity ("model.finance.orders"). Distinct
+	// from the graph's unique_id, which is "schema.table".
+	DBTUniqueID string
+	// RuntimeManifestRef is the artifact the node's current release pinned.
+	pkgModel.RuntimeManifestRef
 }
 
 type ScheduleGraph struct {
@@ -81,6 +88,15 @@ type NodeReadyForExecution struct {
 	NodeType        string `json:"node_type"`
 	ManifestVersion string `json:"manifest_version"`
 	ImageTag        string `json:"image_tag"`
+	// DBTUniqueID is the node's dbt identity ("model.finance.orders"), which the
+	// executor uses to select the model inside a hydrated manifest. Empty (and
+	// omitted from the wire) for a node whose release pinned no runtime manifest.
+	DBTUniqueID string `json:"dbt_unique_id,omitempty"`
+	// RuntimeManifestRef names the prebuilt artifact a reusable worker hydrates
+	// to execute this node. Its fields are omitempty, so a node with no pinned
+	// manifest produces a wire shape identical to a pre-runtime-manifest
+	// dispatch and executes down the per-node Job path.
+	pkgModel.RuntimeManifestRef
 	// Mode is omitempty so normal production messages are wire-identical (empty
 	// string is not serialised). Set to events.ModePromoteSeed for promote-seed
 	// jobs so k8s-controller can suppress the production lifecycle for them.

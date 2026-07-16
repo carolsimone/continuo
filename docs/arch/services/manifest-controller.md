@@ -106,7 +106,32 @@ Failure-handling distinction: a parse or resolve failure that re-delivery cannot
 | Operation | Description |
 |---|---|
 | `download_file` | Download each manifest JSON named in `manifest_keys` to a temp path; no S3 listing is performed |
+| `GetObject` | Fetch each manifest's sibling `runtime-manifest.json` descriptor, at a key derived from the manifest key; never listed. A missing descriptor is a manifest-only release, not an error |
 | `PutObject` | Upload the rewritten candidate SQL for each non-seed node to `candidate-sql/<release_id>/<unique_id>.sql`; failure is fatal and aborts the load |
+
+### Three-object release layout
+
+A dbt service's CI publishes up to three objects per release. The first is required; the second and third are published together by a service that supports reusable workers.
+
+| Object | Role |
+|---|---|
+| `manifest.json` | dbt's compiled manifest. Parsed for the node topology, `content_hash`, and compiled SQL. The one object every release must publish |
+| `partial_parse.msgpack` | The prebuilt dbt partial parse a reusable worker hydrates instead of re-parsing the dbt project. Referenced, never read by this service |
+| `runtime-manifest.json` | The descriptor **naming** `partial_parse.msgpack` — its URI, digest, dbt version, and parse context. Read at a key derived from the manifest key |
+
+The descriptor is the indirection that keeps the artifact self-describing: a consumer reads the descriptor to learn whether it can load the artifact at all (its own dbt version and parse context must match) before downloading it.
+
+### Descriptor validation
+
+A descriptor is accepted only when it is internally complete and consistent; anything else fails the load rather than emitting a reference a consumer cannot act on.
+
+| Condition | Outcome |
+|---|---|
+| No descriptor beside a manifest | Manifest-only release; no runtime manifest reference is emitted for that service, and its nodes execute down the per-node Job path |
+| Descriptor is malformed, or fails validation (wrong `format`, non-`s3://` URI, digest that is not 64 lowercase hex characters) | `status=failed` with `error_class=MalformedRuntimeManifest` |
+| Two manifests declare the same service with different runtime manifest references | `status=failed` with `error_class=ConflictingRuntimeManifest` — a service resolves to exactly one artifact per release |
+
+Validated descriptors are narrowed to the four-field reference (`runtime_manifest_uri`, `runtime_manifest_sha256`, `runtime_manifest_dbt_version`, `runtime_manifest_parse_context_sha256`) and published on `manifest.loaded.candidate:v1` under `runtime_manifests`, keyed by service.
 
 ## Consumer Reliability
 

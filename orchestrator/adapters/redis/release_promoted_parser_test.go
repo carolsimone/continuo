@@ -32,6 +32,58 @@ func TestParseReleasePromoted_HappyPath(t *testing.T) {
 	assert.Equal(t, "sha256:aaa", evt.ImageTags["svc-a"])
 }
 
+func TestParseReleasePromoted_ParsesRuntimeManifestPin(t *testing.T) {
+	msg := goredis.XMessage{
+		ID: "1-0",
+		Values: map[string]interface{}{
+			"payload": `{"release_id":"rel-1","topology":[{"unique_id":"public.orders","schema_name":"public","table_name":"orders","service_name":"svc-a","node_type":"dbt-model","image_tag":"sha256:aaa","schedule":"daily","upstream_unique_ids":[],"dbt_unique_id":"model.finance.orders","runtime_manifest_uri":"s3://artifacts/svc-a/rel-1/partial_parse.msgpack","runtime_manifest_sha256":"1111111111111111111111111111111111111111111111111111111111111111","runtime_manifest_dbt_version":"1.12.0b1","runtime_manifest_parse_context_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}],"image_tags":{"svc-a":"sha256:aaa"}}`,
+		},
+	}
+	evt, err := ParseReleasePromoted(msg)
+	require.NoError(t, err)
+	require.Len(t, evt.Topology, 1)
+	n := evt.Topology[0]
+	// The graph id and the dbt id are separate identities and must not collide.
+	assert.Equal(t, "public.orders", n.UniqueID)
+	assert.Equal(t, "model.finance.orders", n.DBTUniqueID)
+	assert.Equal(t, "s3://artifacts/svc-a/rel-1/partial_parse.msgpack", n.RuntimeManifestURI)
+	assert.Equal(t, "1111111111111111111111111111111111111111111111111111111111111111", n.RuntimeManifestSHA256)
+	assert.Equal(t, "1.12.0b1", n.RuntimeManifestDBTVersion)
+	assert.Equal(t, "2222222222222222222222222222222222222222222222222222222222222222", n.RuntimeManifestParseContextSHA256)
+}
+
+// A release promoted before runtime manifests existed carries no reference.
+// That is a supported topology, not a poison message.
+func TestParseReleasePromoted_NodeWithoutRuntimeManifestIsAccepted(t *testing.T) {
+	msg := goredis.XMessage{
+		ID: "1-0",
+		Values: map[string]interface{}{
+			"payload": `{"release_id":"rel-1","topology":[{"unique_id":"public.orders","schema_name":"public","table_name":"orders","service_name":"svc-a","node_type":"dbt-model","image_tag":"sha256:aaa","schedule":"daily","upstream_unique_ids":[]}],"image_tags":{"svc-a":"sha256:aaa"}}`,
+		},
+	}
+	evt, err := ParseReleasePromoted(msg)
+	require.NoError(t, err)
+	require.Len(t, evt.Topology, 1)
+	assert.Empty(t, evt.Topology[0].DBTUniqueID)
+	assert.Empty(t, evt.Topology[0].RuntimeManifestURI)
+}
+
+// A half-filled reference cannot be executed and no retry can complete it, so
+// it is rejected at the boundary rather than persisted into the topology and
+// discovered at dispatch time.
+func TestParseReleasePromoted_PartialRuntimeManifestIsPermanentError(t *testing.T) {
+	msg := goredis.XMessage{
+		ID: "1-0",
+		Values: map[string]interface{}{
+			"payload": `{"release_id":"rel-1","topology":[{"unique_id":"public.orders","schema_name":"public","table_name":"orders","service_name":"svc-a","node_type":"dbt-model","image_tag":"sha256:aaa","schedule":"daily","upstream_unique_ids":[],"runtime_manifest_uri":"s3://artifacts/svc-a/rel-1/partial_parse.msgpack"}],"image_tags":{"svc-a":"sha256:aaa"}}`,
+		},
+	}
+	_, err := ParseReleasePromoted(msg)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
+	assert.Contains(t, err.Error(), "public.orders")
+}
+
 func TestParseReleasePromoted_MissingPayloadField(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{}}
 	_, err := ParseReleasePromoted(msg)

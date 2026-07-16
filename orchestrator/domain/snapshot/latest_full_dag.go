@@ -41,19 +41,21 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 				continue
 			}
 			projection = append(projection, TaskProjection{
-				TaskID:          uuid.New(),
-				ServiceName:     f.Service,
-				SchemaName:      f.Schema,
-				TableName:       f.Table,
-				ScheduleName:    row.ScheduleName,
-				NodeType:        row.NodeType,
-				InitialStatus:   "PENDING",
-				ImageTag:        row.ImageTag,
-				ManifestVersion: row.ManifestVersion,
-				TestCount:       row.TestCount,
-				TestCountKnown:  row.TestCountKnown,
-				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
-				ReadyToDispatch: true, // edgeless: no blocking frontier for tests
+				TaskID:             uuid.New(),
+				ServiceName:        f.Service,
+				SchemaName:         f.Schema,
+				TableName:          f.Table,
+				ScheduleName:       row.ScheduleName,
+				NodeType:           row.NodeType,
+				InitialStatus:      "PENDING",
+				ImageTag:           row.ImageTag,
+				ManifestVersion:    row.ManifestVersion,
+				DBTUniqueID:        row.DBTUniqueID,
+				RuntimeManifestRef: row.RuntimeManifestRef,
+				TestCount:          row.TestCount,
+				TestCountKnown:     row.TestCountKnown,
+				MaxRetries:         pkgEvents.DefaultTaskMaxRetries,
+				ReadyToDispatch:    true, // edgeless: no blocking frontier for tests
 			})
 		}
 		if len(projection) == 0 {
@@ -93,19 +95,21 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 	for f, row := range rows {
 		_, isBlocked := blocked[f]
 		projection = append(projection, TaskProjection{
-			TaskID:          uuid.New(),
-			ServiceName:     f.Service,
-			SchemaName:      f.Schema,
-			TableName:       f.Table,
-			ScheduleName:    row.ScheduleName,
-			NodeType:        row.NodeType,
-			InitialStatus:   "PENDING",
-			ImageTag:        row.ImageTag,
-			ManifestVersion: row.ManifestVersion,
-			TestCount:       row.TestCount,
-			TestCountKnown:  row.TestCountKnown,
-			MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
-			ReadyToDispatch: !isBlocked,
+			TaskID:             uuid.New(),
+			ServiceName:        f.Service,
+			SchemaName:         f.Schema,
+			TableName:          f.Table,
+			ScheduleName:       row.ScheduleName,
+			NodeType:           row.NodeType,
+			InitialStatus:      "PENDING",
+			ImageTag:           row.ImageTag,
+			ManifestVersion:    row.ManifestVersion,
+			DBTUniqueID:        row.DBTUniqueID,
+			RuntimeManifestRef: row.RuntimeManifestRef,
+			TestCount:          row.TestCount,
+			TestCountKnown:     row.TestCountKnown,
+			MaxRetries:         pkgEvents.DefaultTaskMaxRetries,
+			ReadyToDispatch:    !isBlocked,
 		})
 	}
 	return projection, nil

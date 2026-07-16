@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 func TestLatestFullDAG_BuildsProjectionFromLatestRows(t *testing.T) {
@@ -40,6 +41,57 @@ func TestLatestFullDAG_BuildsProjectionFromLatestRows(t *testing.T) {
 			p.ImageTag != want.ImageTag || p.ManifestVersion != want.ManifestVersion {
 			t.Errorf("row mismatch for %+v: got %+v want %+v", fqn, p, want)
 		}
+	}
+}
+
+func TestLatestFullDAG_PinsRuntimeManifestFromLatestRows(t *testing.T) {
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+	r := &fakeTopologyReader{
+		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
+			a: {
+				ScheduleName:       "x",
+				NodeType:           "dbt-model",
+				ImageTag:           "v1",
+				ManifestVersion:    "m1",
+				DBTUniqueID:        "model.finance.orders",
+				RuntimeManifestRef: pinnedRef(),
+			},
+		},
+	}
+	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d, want 1", len(got))
+	}
+	if got[0].DBTUniqueID != "model.finance.orders" {
+		t.Errorf("DBTUniqueID=%q, want model.finance.orders", got[0].DBTUniqueID)
+	}
+	if got[0].RuntimeManifestRef != pinnedRef() {
+		t.Errorf("RuntimeManifestRef=%+v, want %+v", got[0].RuntimeManifestRef, pinnedRef())
+	}
+}
+
+// A node promoted before runtime manifests existed carries no reference. The
+// selector must leave it empty rather than inventing one, because an empty
+// reference is what routes the node down the legacy per-node Job path.
+func TestLatestFullDAG_LeavesRuntimeManifestEmptyWhenTopologyHasNone(t *testing.T) {
+	a := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a", ScheduleName: "x"}
+	r := &fakeTopologyReader{
+		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
+			a: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
+		},
+	}
+	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].DBTUniqueID != "" {
+		t.Errorf("DBTUniqueID=%q, want empty", got[0].DBTUniqueID)
+	}
+	if got[0].RuntimeManifestRef != (pkgModel.RuntimeManifestRef{}) {
+		t.Errorf("RuntimeManifestRef=%+v, want zero", got[0].RuntimeManifestRef)
 	}
 }
 

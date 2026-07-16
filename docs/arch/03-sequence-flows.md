@@ -242,23 +242,33 @@ sequenceDiagram
 
   note over RC,NEO: Run S1 is already in-flight — Snapshot already committed
 
-  RC->>R: release.promoted:v1 (image_tag=T2, release_id=V2)
+  RC->>R: release.promoted:v1 (image_tag=T2, release_id=V2, runtime_manifest=M2)
   R->>OR: consume release.promoted:v1
+  OR->>OR: validate every node's runtime manifest ref (complete or empty; partial ⇒ ErrPermanent, drop)
   OR->>ORPG: UPDATE topology_state SET topology_generation = G1+1
   OR->>NEO: MERGE :TopologyRoot SET topology_generation=G1+1, service_metadata=...
-  OR->>NEO: MERGE Table nodes SET image_tag=T2, topology_generation=G1+1
+  OR->>NEO: MERGE Table nodes SET image_tag=T2, dbt_unique_id, runtime_manifest_*=M2, topology_generation=G1+1
 
   note over NEO: Run S1 node still has topology_generation=G1 — unchanged
-  note over NEO: S1's EXECUTES edges still carry image_tag=T1 — unchanged
+  note over NEO: S1's EXECUTES edges still carry image_tag=T1 and runtime_manifest=M1 — unchanged
 
   OR->>R: publish schedules.loaded:v1 (catalog update)
 
+  note over OR,NEO: S1 continues: an upstream completes and unblocks a node
+  OR->>NEO: rehydrate S1 — read image_tag + runtime_manifest_* from the EXECUTES edge
+  OR->>R: publish query.model:v1 (image_tag=T1, runtime_manifest=M1)
+  note over OR,R: the unblocked node runs against M1, the artifact S1 started with — not M2
+
   note over OR,NEO: Next run (S2) triggers Snapshot(LatestFullDAG)
   OR->>NEO: MATCH :TopologyRoot → copy topology_generation=G1+1, service_metadata to Run S2
-  OR->>NEO: EXECUTES edges for S2 get image_tag=T2 from Table nodes
+  OR->>NEO: EXECUTES edges for S2 get image_tag=T2 and runtime_manifest=M2 from Table nodes
 ```
 
 Key invariant: `Snapshot(LatestFullDAG)` reads `:TopologyRoot` at call time. Derived runs (rerun / rebase / stale-mode single-node) instead inherit `topology_generation` + `service_metadata` from their source `:Run`. Any in-flight run's `Run` node and its `EXECUTES` edges are immutable after creation.
+
+This is why per-node execution metadata is pinned onto the `:EXECUTES` edge at snapshot time rather than re-read from the `:Table`. The promotion above rewrites the `:Table` in place, so a run that consulted the `:Table` to dispatch its remaining nodes would execute its later nodes against M2 while its earlier ones ran against M1 — one run's output spliced from two releases, and nothing about it would raise an error. Reading from the edge makes the run's artifact a property of the run.
+
+Rerun and `snapshot_of_run` extend the same rule across runs: they read the **source** run's `:EXECUTES` edges, reproducing what that run actually executed rather than what the topology now says. A rebase is the deliberate exception — its whole purpose is to re-execute the rebased partition against the current topology, so rebased nodes take the `:Table`'s values while inherited nodes (already completed, never re-executed) keep the source edge that produced them.
 
 ## 8. Dispatch Watchdog Termination
 
