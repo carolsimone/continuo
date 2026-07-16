@@ -1,0 +1,211 @@
+{{- range $svc := .Values.services }}
+{{- if ($svc.enabled | default true) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svc.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $svc.name }}
+spec:
+  replicas: {{ default 1 $svc.replicas }}
+  selector:
+    matchLabels:
+      {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 8 }}
+    spec:
+      {{- if and $svc.rbac $svc.rbac.enabled }}
+      serviceAccountName: {{ $svc.name }}
+      {{- end }}
+      securityContext:
+        {{- include "continuo.podSecurityContext" $ | nindent 8 }}
+        {{- if eq $svc.name "ui-service" }}
+        runAsUser: 1000
+        runAsGroup: 1000
+        {{- else }}
+        runAsUser: 65532
+        runAsGroup: 65532
+        {{- end }}
+      {{- if and $.Values.postgresql.enabled $svc.env $svc.env.POSTGRES_DB }}
+      initContainers:
+        # Bundled mode: the migration Job is a regular resource (hooks would
+        # deadlock — see db-init-migrate-job.yaml), so Postgres-backed services
+        # gate on Flyway having initialized their database. BYO installs keep
+        # the pre-install hook and render no initContainer.
+        - name: wait-for-migrations
+          image: {{ include "continuo.image" (dict "root" $ "name" "migrations") | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "continuo.containerSecurityContext" $ | nindent 12 }}
+          env:
+            - name: PGHOST
+              value: {{ include "continuo.postgresql.host" $ | quote }}
+            - name: PGPORT
+              value: {{ include "continuo.postgresql.port" $ | quote }}
+            - name: PGUSER
+              value: {{ include "continuo.postgresql.username" $ | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "postgres") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "postgres") | quote }}
+            - name: PGDATABASE
+              value: {{ $svc.env.POSTGRES_DB | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until psql -tc "SELECT 1 FROM flyway_schema_history LIMIT 1" >/dev/null 2>&1; do
+                echo "waiting for migrations on ${PGDATABASE}..."; sleep 3
+              done
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      {{- end }}
+      containers:
+        - name: {{ $svc.name }}
+          image: {{ default (include "continuo.image" (dict "root" $ "name" $svc.name)) $svc.image | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "continuo.containerSecurityContext" $ | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "continuo.configMapName" $ }}
+          {{- if or $svc.secretEnv $svc.env }}
+          env:
+            {{- range $secret := ($svc.secretEnv | default (list)) }}
+            - name: {{ $secret.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" $secret.ref) | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" $secret.ref) | quote }}
+            {{- end }}
+          {{- if $svc.env }}
+            {{- range $key, $val := $svc.env }}
+            - name: {{ $key }}
+              {{- if and (eq $key "K8S_NAMESPACE") (eq $val "__RELEASE_NAMESPACE__") }}
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+              {{- else if eq $val "__REDIS_URL__" }}
+              value: {{ printf "redis://:$(REDIS_PASSWORD)@%s:%s" (include "continuo.redis.host" $) (include "continuo.redis.port" $) | quote }}
+              {{- else if eq $val "__DOCKERHUB_USERNAME__" }}
+              value: {{ $.Values.global.teamImagePrefix | quote }}
+              {{- else if eq $val "__VALIDATION_IMAGE__" }}
+              value: {{ include "continuo.image" (dict "root" $ "name" "validation-runner") | quote }}
+              {{- else if eq $val "__S3_SIDECAR_IMAGE__" }}
+              value: {{ include "continuo.image" (dict "root" $ "name" "s3-sidecar") | quote }}
+              {{- else if eq $val "__AUTH_ISSUER_URL__" }}
+              value: {{ include "continuo.auth.issuerUrl" $ | quote }}
+              {{- else if eq $val "__AUTH_CLIENT_ID__" }}
+              value: {{ include "continuo.auth.clientId" $ | quote }}
+              {{- else if eq $val "__AUTH_PUBLIC_URL__" }}
+              value: {{ $.Values.auth.publicUrl | quote }}
+              {{- else if eq $val "__AUTH_OPERATOR_EMAILS__" }}
+              value: {{ include "continuo.auth.operatorEmails" $ | quote }}
+              {{- else if eq $val "__AUTH_VIEWER_EMAILS__" }}
+              value: {{ $.Values.auth.viewerEmails | quote }}
+              {{- else if eq $val "__AUTH_ROLE_MAPPING__" }}
+              value: {{ $.Values.auth.roleMapping | quote }}
+              {{- else if eq $val "__GITHUB_APP_ID__" }}
+              value: {{ $.Values.github.appId | default "" | quote }}
+              {{- else if eq $val "__GITHUB_APP_INSTALLATION_ID__" }}
+              value: {{ $.Values.github.installationId | default "" | quote }}
+              {{- else if eq $val "__LLM_PROVIDER__" }}
+              value: {{ $.Values.llm.provider | quote }}
+              {{- else if eq $val "__LLM_MODEL__" }}
+              value: {{ $.Values.llm.model | quote }}
+              {{- else }}
+              value: {{ $val | quote }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- if or $svc.httpPort $svc.grpcPort }}
+          ports:
+            {{- if $svc.httpPort }}
+            - name: http
+              containerPort: {{ $svc.httpPort }}
+            {{- end }}
+            {{- if $svc.grpcPort }}
+            - name: grpc
+              containerPort: {{ $svc.grpcPort }}
+            {{- end }}
+          {{- end }}
+          {{- if $svc.httpPort }}
+          readinessProbe:
+            httpGet:
+              path: {{ default (default "/health" $svc.probePath) $svc.readinessPath }}
+              port: {{ $svc.httpPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: {{ default "/health" $svc.probePath }}
+              port: {{ $svc.httpPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          {{- else }}
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import os; os.kill(1, 0)"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os; os.kill(1, 0)"]
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+          {{- end }}
+          resources:
+            {{- toYaml (default $.Values.defaultResources $svc.resources) | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- with $svc.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- if $svc.volumes }}
+        {{- if eq $svc.name "state" }}
+        {{- range $volume := $svc.volumes }}
+        - name: {{ $volume.name }}
+          configMap:
+            name: {{ default (include "continuo.schedulesConfigMapName" $) $volume.configMap.name }}
+        {{- end }}
+        {{- else if eq $svc.name "ui-service" }}
+        {{- range $volume := $svc.volumes }}
+        - name: {{ $volume.name }}
+          configMap:
+            name: {{ default (include "continuo.cancelConfigMapName" $) $volume.configMap.name }}
+        {{- end }}
+        {{- else if eq $svc.name "remediation-agent" }}
+        {{- range $volume := $svc.volumes }}
+        - name: {{ $volume.name }}
+          configMap:
+            name: {{ default (include "continuo.serviceReposConfigMapName" $) $volume.configMap.name }}
+        {{- end }}
+        {{- else if eq $svc.name "executor-controller" }}
+        {{- range $volume := $svc.volumes }}
+        - name: {{ $volume.name }}
+          configMap:
+            name: {{ default (include "continuo.dbtCommandsConfigMapName" $) $volume.configMap.name }}
+        {{- end }}
+        {{- else }}
+        {{- toYaml $svc.volumes | nindent 8 }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}
