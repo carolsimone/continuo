@@ -11,10 +11,10 @@ import (
 )
 
 // TestHandleNodeValidationResult_UpsertsOneNode verifies that a single
-// validation.node.result:v1 event is projected onto the release's
+// validation.result:v1 (kind=node) event is projected onto the release's
 // per_node_results read model, so the UI count can climb 0→N as nodes settle
 // mid-validation rather than jumping straight from 0 to N on the terminal
-// validation.completed:v1.
+// validation.result:v1 (kind=complete).
 func TestHandleNodeValidationResult_UpsertsOneNode(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 
@@ -39,7 +39,7 @@ func TestHandleNodeValidationResult_UpsertsOneNode(t *testing.T) {
 }
 
 // TestHandleNodeValidationResult_UnknownReleaseDropsCleanly guards against a
-// stale or duplicate validation.node.result:v1 message whose release row no
+// stale or duplicate validation.result:v1 (kind=node) message whose release row no
 // longer exists (e.g. it was pruned, or the message was reclaimed from a
 // previous consumer for a deleted release). The handler must ack and drop
 // rather than dereference a nil aggregate.

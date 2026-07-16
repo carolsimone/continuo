@@ -111,9 +111,9 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	case validation.EventTypeValidationNodeResult:
-		// validation.node.result:v1 carries the per-node projection as a single
-		// JSON "payload" field, same shape convention as the aggregate events.
-		// Re-emit the stored payload verbatim.
+		// validation.result:v1 (kind=node) carries the per-node projection as a
+		// single JSON "payload" field, same shape convention as the aggregate
+		// events. Re-emit the stored payload verbatim.
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:

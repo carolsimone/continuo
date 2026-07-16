@@ -63,8 +63,8 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 
 // seedValidationNodes projects each per-node validation result into the release
 // read model through HandleNodeValidationResult, exactly as the
-// validation.node.result:v1 stream does at runtime. The slim
-// validation.completed:v1 terminal event no longer carries per-node content, so
+// validation.result:v1 (kind=node) rows do at runtime. The slim
+// validation.result:v1 (kind=complete) terminal event no longer carries per-node content, so
 // the results its decision reads must already be stored before it is invoked.
 func seedValidationNodes(t *testing.T, deps *handlers.Deps, releaseID string, nodes []handlers.NodeResult) {
 	t.Helper()
@@ -200,7 +200,7 @@ func TestHandleValidationResult_SkippedNodeInStore_Rejects(t *testing.T) {
 }
 
 // TestHandleValidationResult_UnknownRelease_DropsWithoutPanic guards against a
-// stale or duplicate validation.completed:v1 message whose release row no longer
+// stale or duplicate validation.result:v1 (kind=complete) message whose release row no longer
 // exists (e.g. it was pruned, or the message was reclaimed from a previous
 // consumer for a deleted release). ReleaseRepo.Get returns (nil, nil) for a
 // missing release; the handler must ack and drop rather than dereference a nil

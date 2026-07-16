@@ -244,8 +244,8 @@ func TestSettleNodeTerminal_MultiUpstreamConvergesSequentially(t *testing.T) {
 	assert.Equal(t, model.StatusPending, repo.statusOf("c"), "c unblocked once both upstreams ok")
 }
 
-// (d) SettleNodeTerminal writes a per-node validation.node.result:v1 projection
-// row for the just-settled node, in addition to advancing the gate. node.b is
+// (d) SettleNodeTerminal writes a per-node validation.result:v1 (kind=node)
+// projection row for the just-settled node, in addition to advancing the gate. node.b is
 // still pending, so the aggregate does NOT fire — the only outbox row produced
 // is the per-node projection, and its payload carries this node's outcome.
 func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
@@ -281,7 +281,7 @@ func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
 
 // (e) A failing settle skips its transitive blocked descendants, and each skipped
 // node — which never runs through SettleNodeTerminal on its own — MUST still get a
-// per-node validation.node.result:v1 projection row emitted for it (status
+// per-node validation.result:v1 (kind=node) projection row emitted for it (status
 // "skipped", no URIs). Without this the release-controller completeness barrier
 // waits forever for those nodes' projections and the release hangs in validating.
 func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testing.T) {

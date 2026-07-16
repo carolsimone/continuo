@@ -242,7 +242,7 @@ func TestDispatcher_DispatchOne_ValidationMode_OnPermanentFailure_RecordsOutcome
 	assert.Equal(t, 1, agg.claimCalls, "aggregate emit attempted once last node is terminal")
 	// SettleNodeTerminal writes two rows: the per-node projection for this node,
 	// then (since it is also the release's last pending node) the aggregate.
-	require.Len(t, outboxRepo.created, 2, "per-node projection + aggregate validation.completed:v1 row written")
+	require.Len(t, outboxRepo.created, 2, "per-node projection + aggregate validation.result:v1 (kind=complete) row written")
 	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
 	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
 }
@@ -279,7 +279,7 @@ func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGa
 	assert.Less(t, saveIdx, countIdx, "outcome is persisted before the aggregate gate counts pending")
 	// And with no other nodes pending, the aggregate fires — alongside the
 	// per-node projection SettleNodeTerminal always writes for the settled node.
-	require.Len(t, outboxRepo.created, 2, "aggregate validation.completed:v1 emitted for the last (failed) node")
+	require.Len(t, outboxRepo.created, 2, "aggregate validation.result:v1 (kind=complete) emitted for the last (failed) node")
 	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
 	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
 }
@@ -462,10 +462,10 @@ func TestMaybeEmit_EmitsAggregateOk_WhenAllOutcomesOk(t *testing.T) {
 	assert.Equal(t, "validation_completed", e.EventType)
 	assert.Equal(t, streams.ValidationResultV1, e.StreamName)
 
-	// The terminal validation.completed:v1 carries only the decision. Per-node
-	// content (including dbt_log_uri) reaches release-controller through the
-	// separate validation.node.result:v1 projection stream, so it must not appear
-	// on this event.
+	// The terminal validation.result:v1 (kind=complete) row carries only the
+	// decision. Per-node content (including dbt_log_uri) reaches
+	// release-controller through the same stream's separate kind=node projection
+	// rows, so it must not appear on this event.
 	var payload struct {
 		ReleaseID       string `json:"release_id"`
 		AggregateStatus string `json:"aggregate_status"`

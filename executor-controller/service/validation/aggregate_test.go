@@ -116,11 +116,11 @@ func TestEmitValidationAggregate_IncludesCandidateSchema(t *testing.T) {
 }
 
 // TestEmitValidationAggregate_CarriesDecisionOnly asserts the terminal
-// validation.completed:v1 payload carries only the decision (aggregate_status)
-// and candidate_schema — never per-node content. Per-node results (including
-// dbt_log_uri / run_results_uri) reach release-controller through the separate
-// validation.node.result:v1 projection stream, so re-carrying them here would be
-// redundant.
+// validation.result:v1 (kind=complete) payload carries only the decision
+// (aggregate_status) and candidate_schema — never per-node content. Per-node
+// results (including dbt_log_uri / run_results_uri) reach release-controller
+// through the same stream's separate kind=node projection rows, so re-carrying
+// them here would be redundant.
 func TestEmitValidationAggregate_CarriesDecisionOnly(t *testing.T) {
 	cmd := command.ValidationDeployTask{
 		ReleaseID:       "rel",
