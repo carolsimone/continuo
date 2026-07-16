@@ -103,14 +103,18 @@ func rejectDeployment(
 		"task_id", cmd.TaskID, "service_name", cmd.ServiceName,
 		"dbt_unique_id", cmd.DBTUniqueID, "error", cause)
 
+	// The recorded reason carries the specific defect after the constant prefix,
+	// so an operator reading error_message sees which check rejected the node.
+	reason := fmt.Sprintf("%s: %s", incompleteRefReason, cause.Error())
+
 	dep := model.NewDeployment(cmd, optionalID(msgProcID), now)
-	if err := dep.RejectBeforeExecution(incompleteRefReason, now); err != nil {
+	if err := dep.RejectBeforeExecution(reason, now); err != nil {
 		return fmt.Errorf("reject executor deployment: %w", err)
 	}
 	if err := u.DeploymentsRepo().Add(ctx, dep); err != nil {
 		return fmt.Errorf("add rejected executor deployment: %w", err)
 	}
-	if err := (tasklifecycle.Fanout{}).DispatchRejected(ctx, u.OutboxRepo(), dep, incompleteRefReason); err != nil {
+	if err := (tasklifecycle.Fanout{}).DispatchRejected(ctx, u.OutboxRepo(), dep, reason); err != nil {
 		return fmt.Errorf("announce rejected executor deployment: %w", err)
 	}
 	return nil

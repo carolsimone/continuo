@@ -196,7 +196,11 @@ func TestQueryModelHandler_IncompleteRefOnACanaryServiceIsRejected(t *testing.T)
 	dep := depl.added[0]
 	assert.Equal(t, model.StatusFailed, dep.Status())
 	require.NotNil(t, dep.ErrorMessage())
+	// The reason keeps the constant prefix and appends the specific defect, so an
+	// operator reading error_message can tell which check rejected the node.
 	assert.Contains(t, *dep.ErrorMessage(), "runtime manifest reference is incomplete")
+	assert.Contains(t, *dep.ErrorMessage(), evt.DBTUniqueID,
+		"the failing check's own message is recorded, not just the constant")
 
 	streamNames := make([]string, 0, len(outboxRepo.entries))
 	for _, e := range outboxRepo.entries {
