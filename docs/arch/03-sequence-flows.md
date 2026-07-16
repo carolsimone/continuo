@@ -499,7 +499,7 @@ sequenceDiagram
     R->>RC: consume kind=node → upsert per_node_results (read model)
   end
   Note over EC: per-release advisory lock + emission sentinel (exactly-once):<br/>when no node remains pending/blocked/deployed → build decision
-  EC->>R: publish validation.result:v1 kind=complete (emitted last, same aggregate_id)<br/>{kind:"complete", release_id, aggregate_status, candidate_schema} (decision only — no per-node array)
+  EC->>R: publish validation.result:v1 kind=complete (emitted last; decision reads aggregate_status, order-independent)<br/>{kind:"complete", release_id, aggregate_status, candidate_schema} (decision only — no per-node array)
 
   Note over RC: Phase 5 — promote or reject
   R->>RC: consume kind=complete

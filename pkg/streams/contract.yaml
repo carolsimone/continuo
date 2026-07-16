@@ -216,7 +216,7 @@ streams:
 
   - name: validation.result:v1
     const: ValidationResultV1
-    description: Unified validation-leg stream from executor-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last), all under one aggregate_id so they publish in order. release-controller projects nodes and decides on complete; executor-controller drops the candidate schema on complete.
+    description: Unified validation-leg stream from executor-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. executor-controller drops the candidate schema on complete.
     producers: [executor-controller]
     consumers:
       - service: release-controller

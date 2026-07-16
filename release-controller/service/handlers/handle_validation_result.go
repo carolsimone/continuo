@@ -26,13 +26,14 @@ type HandleValidationResultInput struct {
 // HandleValidationResult decides the terminal outcome of a release's validation
 // leg from the per-node results already projected into the release read model.
 //
-// The terminal message shares one aggregate_id with every per-node message on
-// validation.result:v1 and is emitted last, so a single in-order consumer has
-// already stored every node's outcome by the time this runs — no completeness
-// barrier is needed. The only way a node can be absent from the store is a
-// permanently-dropped projection write; in that case the decision falls back to
-// the authoritative aggregate_status (which executor computed from every node's
-// terminal outcome) and logs the missing nodes rather than blocking.
+// The kind=complete message is emitted last, after every per-node message on
+// validation.result:v1, so a single in-order consumer has normally stored every
+// node's outcome by the time this runs. The decision itself reads only
+// aggregate_status (which executor computed from every node's terminal outcome),
+// so it is order-independent and needs no completeness barrier: if a node is
+// absent from the store — a projection write not yet delivered, or permanently
+// dropped — the decision still stands on aggregate_status and logs the missing
+// nodes rather than blocking.
 //
 // If every present validation node passed and the aggregate status is ok:
 // promotes the release to production, updates CurrentProd, upserts the changed

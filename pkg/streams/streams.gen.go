@@ -46,7 +46,7 @@ const (
 	ValidationRequestedV1 = "validation.requested:v1"
 	// ValidationNodeCompletedV1 — Per-node validation Job terminal status from k8s-controller back to executor-controller; settled into the validation.result:v1 stream (per-node kind=node, plus the terminal kind=complete once all nodes settle).
 	ValidationNodeCompletedV1 = "validation.node.completed:v1"
-	// ValidationResultV1 — Unified validation-leg stream from executor-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last), all under one aggregate_id so they publish in order. release-controller projects nodes and decides on complete; executor-controller drops the candidate schema on complete.
+	// ValidationResultV1 — Unified validation-leg stream from executor-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. executor-controller drops the candidate schema on complete.
 	ValidationResultV1 = "validation.result:v1"
 	// SeedBuildRequestedV1 — release-controller requests candidate seed builds; executor dispatches per-seed team-image jobs.
 	SeedBuildRequestedV1 = "seed.build.requested:v1"

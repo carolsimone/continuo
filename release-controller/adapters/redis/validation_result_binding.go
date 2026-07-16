@@ -15,11 +15,13 @@ import (
 // validation.result:v1 stream and, per message kind, either projects one node's
 // outcome into the release read model or decides the terminal promote-or-reject.
 //
-// Both kinds share one aggregate_id, so PerAggregateFIFO delivers them in order
-// through a single consumer: every kind=node message lands before the trailing
-// kind=complete message. That lets the terminal decision read a fully-projected
-// store without any completeness barrier. Call Start(ctx) in a goroutine to
-// begin consuming; the consumer group is created idempotently by Start.
+// executor emits the kind=complete message last, after every kind=node row for
+// the release; the per-node rows publish in parallel and, in the normal case,
+// flush in the same created_at-ordered outbox batch as the terminal, so a single
+// in-order consumer has already projected every node by the time it decides. The
+// terminal decision reads only aggregate_status, so it does not depend on
+// delivery order and needs no completeness barrier. Call Start(ctx) in a
+// goroutine to begin consuming; the consumer group is created idempotently by Start.
 func NewValidationResultConsumer(rc *goredis.Client, deps *handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
 	handler := newValidationResultHandler(deps, logger)
 	return pkgredis.NewStreamConsumer(
