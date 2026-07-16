@@ -669,8 +669,10 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 // buildCompilePodSpec constructs the PodSpec for a compile Job. The pod has:
 //   - a shared emptyDir volume "shared" mounted at /shared in both containers;
 //   - an initContainer "compile" using the team image (ImageTag must be
-//     non-empty) that runs the service's resolved compile command and copies
-//     the manifest from its declared path into /shared/manifest.json;
+//     non-empty) that runs the service's resolved compile command, copies
+//     the manifest from its declared path into /shared/manifest.json, and
+//     chmods it 644 so it is world-readable regardless of the team image's
+//     uid/umask (the upload container below runs as a fixed, different uid);
 //   - a main container "upload" using the shared s3-sidecar image (no dbt;
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
@@ -719,7 +721,8 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command: []string{
 					"sh", "-c",
-					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json",
+					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json" +
+						" && chmod 644 /shared/manifest.json",
 				},
 				Env:             initEnvVars,
 				VolumeMounts:    []corev1.VolumeMount{mount},

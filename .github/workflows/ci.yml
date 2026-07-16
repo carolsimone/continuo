@@ -111,14 +111,19 @@ jobs:
           # a git diff). Otherwise pull the published ghcr base (public
           # package, anonymous pull) and fall back to a local build if the
           # pull fails.
+          # --load is required: the docker-container buildx driver set up
+          # above builds in an isolated builder and does not populate the
+          # daemon's image store on its own, so without it continuo-base
+          # would stay in the builder cache and later steps could fall back
+          # to a stale continuo-base:latest tag from a previous run.
           if [ "${{ steps.basefilter.outputs.base }}" = "true" ]; then
             echo "Dockerfile.base changed in this PR; building continuo-base locally..."
-            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
+            DOCKER_BUILDKIT=1 docker build --load -t continuo-base:latest -f Dockerfile.base .
           elif docker pull ghcr.io/${{ github.repository_owner }}/continuo-base:v1; then
             docker tag ghcr.io/${{ github.repository_owner }}/continuo-base:v1 continuo-base:latest
           else
             echo "Pull failed; building continuo-base locally..."
-            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
+            DOCKER_BUILDKIT=1 docker build --load -t continuo-base:latest -f Dockerfile.base .
           fi
 
       - name: Switch to docker driver for local image access
