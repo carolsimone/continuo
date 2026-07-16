@@ -10,6 +10,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
+	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -168,7 +169,7 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 		{
 			eventType:  event.EventTypeExecutorJobTerminal,
 			streamName: streams.ExecutorJobTerminalV1,
-			payload:    []byte(`{"executor_deployment_id":"e6b1c0a2-1f3d-4c5e-8a7b-9d0e1f2a3b4c","job_name":"j1","terminal_status":"Succeeded"}`),
+			payload:    []byte(`{"executor_deployment_id":"e6b1c0a2-1f3d-4c5e-8a7b-9d0e1f2a3b4c","job_name":"j1","terminal_status":"succeeded"}`),
 		},
 	}
 
@@ -254,7 +255,7 @@ func TestPublisher_ExecutorJobTerminal(t *testing.T) {
 	payload := mustMarshalK8s(t, pkgevents.ExecutorJobTerminal{
 		ExecutorDeploymentID: depID.String(),
 		JobName:              "job-1",
-		TerminalStatus:       "Succeeded",
+		TerminalStatus:       string(model.JobStatusSucceeded),
 		CompletedAt:          "2026-07-16T10:00:00Z",
 	})
 	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
@@ -271,7 +272,7 @@ func TestPublisher_ExecutorJobTerminal(t *testing.T) {
 	var got pkgevents.ExecutorJobTerminal
 	require.NoError(t, json.Unmarshal([]byte(entries[0].Values["payload"].(string)), &got))
 	assert.Equal(t, depID.String(), got.ExecutorDeploymentID)
-	assert.Equal(t, "Succeeded", got.TerminalStatus)
+	assert.Equal(t, string(model.JobStatusSucceeded), got.TerminalStatus)
 }
 
 // TestPublisher_CheckDelayedRecirculatesDurableFields keeps the self-poll loop

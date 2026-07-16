@@ -34,7 +34,8 @@ It is responsible for:
 |---|---|---|
 | `query.model:v1` | `executor-query-model` | Primary dispatch: new node ready for execution |
 | `retry.task:v1` | `executor-retry` | Retry dispatch: re-attempt a failed node |
-| `schedule.cancelled:v1` | `executor-schedule-cancelled` | Schedule cancellation: suppress future deployments for the schedule |
+| `schedule.cancelled:v1` | `executor-schedule-cancelled` | Schedule cancellation: suppress future deployments for the schedule and cancel the ones already in flight, releasing their execution slots |
+| `executor.job.terminal:v1` | `executor-job-terminal` | A dispatched Kubernetes Job has settled; releases the execution slot it held |
 | `validation.requested:v1` | `executor-validation-requested` | Candidate-release validation request: enqueue one `mode=validation` deployment per node |
 | `validation.node.completed:v1` | `executor-validation-node-completed` | Per-node validation Job terminal status from k8s-controller; records the node outcome, unblocks or skips in-set downstreams, and runs the per-release aggregate-emit gate |
 | `validation.completed:v1` | `executor-validation-completed` | Per-release validation aggregate emitted by executor-controller itself; consumed by a second consumer in the same process to drop the `_candidate_<release>` schema from the dbt warehouse via `CandidateSchemaCleaner` |
@@ -55,7 +56,7 @@ executor-controller consumes the streams above via `pkg/redis.StreamConsumer`. F
 
 `pkg/redis.StreamConsumer` → `adapters/redis/<stream>_binding.go` → `service/handlers/<stream>_handler.go`
 
-The binding parses the XMessage into a typed `domain/events.<Event>`, runs `pkg/messageprocessing.Dedup` against the per-service `message_processing` table (keyed on `(message_id, stream_name)`), and invokes the handler inside a single Unit-of-Work transaction. `schedule.cancelled:v1` skips dedup because `cancelled_schedules.Insert` is `INSERT ... ON CONFLICT DO NOTHING` and is naturally idempotent.
+The binding parses the XMessage into a typed `domain/events.<Event>`, runs `pkg/messageprocessing.Dedup` against the per-service `message_processing` table (keyed on `(message_id, stream_name)`), and invokes the handler inside a single Unit-of-Work transaction. `schedule.cancelled:v1` skips dedup because it is naturally idempotent: `cancelled_schedules.Insert` is `INSERT ... ON CONFLICT DO NOTHING`, and a redelivery finds the schedule's deployments already terminal, so the schedule-scoped `FOR UPDATE` lookup returns none to cancel.
 
 The cancelled-schedule guard runs inside `QueryModelHandler` and `RetryTaskHandler` via `uow.CancelledSchedulesRepo().Exists`; a cancelled match commits the dedup row (so the message is ACKed and never reprocessed) and returns without writing to `executor_deployments`.
 
@@ -203,11 +204,21 @@ Transaction B — record the outcome:
 ```
 
 A reserved slot is released exactly one of two ways: by the aggregate transition
-that settles the row (`RegisterFailure`, `FailValidation`, `FailSeedBuild`,
-`FailCompile`, `Complete`, `MarkRetryPending`, `MarkFailed`, `Cancel`), or —
-for a Job that actually launched — by the `executor.job.terminal:v1` event
-k8s-controller emits when the Job settles. A Job's row has no aggregate
-transition of its own at that point, which is why that stream exists.
+that settles the row (`RegisterFailure`, `RejectBeforeExecution`,
+`FailValidation`, `FailSeedBuild`, `FailCompile`, `Complete`,
+`MarkRetryPending`, `MarkFailed`, `Cancel`), or — for a Job that actually
+launched — by the `executor.job.terminal:v1` event k8s-controller emits when the
+Job settles. A Job's row has no aggregate transition of its own at that point,
+which is why that stream exists.
+
+A cancelled schedule is the one case where a launched Job's terminal never
+arrives: k8s-controller absorbs the status check for it. `ScheduleCancelledHandler`
+closes that gap by cancelling the schedule's non-terminal rows itself, so the
+release happens through `Cancel` instead. It reads them `FOR UPDATE`, which also
+fences the dispatcher: a settle transaction re-reads its row under the same lock
+and abandons a dispatch whose row was cancelled while its Job was being created,
+rather than writing `deployed` back over the cancellation and re-taking a slot
+that no terminal would ever return.
 
 The dispatcher only dispatches `pending` validation rows; `blocked` rows (with unresolved in-set upstreams) remain in place until the `ValidationNodeCompletedHandler` transitions them to `pending`. On a successful K8s validation Job creation, the dispatcher `MarkDeployed`s the row and writes a single `node_deployed` → `node.deployed:v1` outbox row so k8s-controller status-checks the Job — it never polls, so without this trigger the release would hang in `validating`. This is the same single-row deploy announcement the production path now writes; validation rows have no real task/schedule, and k8s-controller suppresses the RUNNING announcement for `mode=validation` Jobs, so no `task_status_updated` row is ever surfaced for them. The per-node terminal outcome (`ok`/`failed`) arrives later via `validation.node.completed:v1`. A validation row that fails AT dispatch (not deployable, or a permanent pre-deploy error) is made terminal via `FailValidation`, records `outcome=failed`, emits no `node.deployed` trigger, skips transitively `blocked` downstreams (marking them `skipped`), and runs the aggregate gate.
 
@@ -242,7 +253,7 @@ On XADD failure:
 
 | Loop | Description |
 |---|---|
-| Redis consumers | Reads `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.completed:v1`, `seed.build.requested:v1`, `seed.build.node.completed:v1`, `compile.requested:v1`, and `compile.node.completed:v1` via `pkg/redis.StreamConsumer`; crash-recovery for pending messages on startup |
+| Redis consumers | Reads `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `executor.job.terminal:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.completed:v1`, `seed.build.requested:v1`, `seed.build.node.completed:v1`, `compile.requested:v1`, and `compile.node.completed:v1` via `pkg/redis.StreamConsumer`; crash-recovery for pending messages on startup |
 | Deploy dispatcher (`deployer.Dispatcher`) | Polls `executor_deployments` every 5 seconds; creates K8s Jobs and writes outbox announcement rows, capped by `MAX_CONCURRENT_EXECUTIONS` |
 | Outbox processor (`pkg/outbox.Processor`) | Polls `executor_outbox` every 5 seconds; processes up to 100 entries per batch via `OutboxPublisher` (uniform marshal-and-XADD) |
 

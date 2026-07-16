@@ -95,7 +95,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 |---|---|
 | Durable state | `executor_deployments`, `executor_outbox`, `message_processing`, `cancelled_schedules`, `validation_aggregates` |
 | gRPC server methods owned | none |
-| Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.completed:v1` |
+| Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `executor.job.terminal:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.completed:v1` |
 | Redis produces | `node.deployed:v1`, `task.status.updated:v1` (FAILED only, on the never-deployed terminal dispatch failure — k8s-controller owns RUNNING and the pod terminal), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.completed:v1` (per-release validation aggregate) |
 | External DB writes | dbt warehouse (`DBT_POSTGRES_DB`) — creates the `_candidate_<release>` schema on `validation.requested:v1` via `CandidateSchemaCreator`; drops it on `validation.completed:v1` via `CandidateSchemaCleaner` |
 | Outbound gRPC calls | none |
@@ -104,7 +104,8 @@ Provisioning databases inside the job — rather than relying solely on the Post
 
 - **Inbound handlers write only to `executor_deployments`.** `QueryModelHandler` and `RetryTaskHandler` commit a `pending` row inside their Unit-of-Work transaction. No Kubernetes I/O occurs during inbound message handling.
 - **Concurrency is capped by durably reserved execution slots.** A deployment takes a slot (`slot_reserved_at`, cleared by `slot_released_at`) before its work starts and holds it until the work settles. `deployer.Dispatcher` reserves under a `pg_advisory_xact_lock`, so the slot count it reads cannot be stale by the time it takes one. Kubernetes-Job and worker-pool work draw from the single `MAX_CONCURRENT_EXECUTIONS` budget — a slot held under a worker lease throttles the Jobs path exactly as a Job's own does. Rows beyond the cap remain `pending`.
-- **A Job's slot is released by its terminal notification.** A row whose Kubernetes Job launched has no aggregate transition of its own when that Job ends, so k8s-controller emits `executor.job.terminal:v1` on every terminal branch and the executor releases the slot on it. Every other exit from a reservation releases inside the aggregate transition that settles the row.
+- **A Job's slot is released by its terminal notification, or by cancelling the row.** A row whose Kubernetes Job launched has no aggregate transition of its own when that Job ends, so k8s-controller emits `executor.job.terminal:v1` on every terminal branch it routes and the executor releases the slot on it. The one branch that emits nothing is a cancelled schedule, whose Job result k8s-controller absorbs before routing; `ScheduleCancelledHandler` covers it by cancelling the schedule's non-terminal deployments, which releases their slots inside the `Cancel` transition. Every other exit from a reservation releases inside the aggregate transition that settles the row.
+- **A cancelled schedule settles its in-flight rows.** `ScheduleCancelledHandler` records the schedule in `cancelled_schedules` (so later `query.model:v1` / `retry.task:v1` messages for it are dropped) and, in the same transaction, reads its non-terminal `executor_deployments` rows `FOR UPDATE` and `Cancel`s each. The lock is what lets the dispatcher's settle transaction re-read a row it reserved earlier and leave a cancellation standing instead of writing `deployed` over it and re-taking a slot nothing would release.
 - **Validation rows start `blocked` or `pending`.** Each per-node `executor_deployments` row written by `ValidationRequestedHandler` starts `pending` (no in-set upstreams) or `blocked` (has in-set upstreams — intra- or cross-service — that are not yet `ok`). The dispatcher only dispatches `pending` rows.
 - **Topological unblock/skip on node completion.** `ValidationNodeCompletedHandler` transitions `blocked` downstreams whose every in-set upstream is now `ok` to `pending` (ready for dispatch); on a node failure it marks transitively `blocked` downstreams `skipped` (terminal non-`ok`). `blocked` is non-terminal; `skipped` fails the release.
 - **Permanent dispatch failures bypass the retry budget.** `dispatchRow` classifies `CreateQueryJob` errors via `errors.Is(err, events.ErrPermanent)`. On match, `writeFailed` is called immediately regardless of remaining retries, writing `task.status.updated:v1` FAILED + `node.updated:v1` FAILED outbox rows and marking the deployment `failed`.
@@ -120,7 +121,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Durable state | `k8s_outbox`, `message_processing` |
 | gRPC server methods owned | none |
 | Redis consumes | `node.deployed:v1`, `check.k8s:v1`, `schedule.cancelled:v1` |
-| Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `task.status.updated:v1` (RUNNING + SUCCEEDED/FAILED — the full pod lifecycle), `task.execution.recorded:v1`, `node.updated:v1` |
+| Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `task.status.updated:v1` (RUNNING + SUCCEEDED/FAILED — the full pod lifecycle), `task.execution.recorded:v1`, `node.updated:v1`, `executor.job.terminal:v1` (a settled Job's execution slot), `validation.node.completed:v1`, `seed.build.node.completed:v1`, `compile.node.completed:v1` |
 | Outbound gRPC calls | none |
 
 ## `manifest-controller`
