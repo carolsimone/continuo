@@ -1,0 +1,108 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "continuo.migrateJobName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: db-init-migrate
+  {{- if not .Values.postgresql.enabled }}
+  annotations:
+    # BYO database exists before install → strict pre-install/pre-upgrade
+    # ordering, exactly like the previous production flow. With the bundled
+    # Postgres this Job is a regular resource instead: pre-install hooks run
+    # before ANY release resource exists, so a hook could never connect.
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+spec:
+  backoffLimit: 3
+  {{- if .Values.postgresql.enabled }}
+  ttlSecondsAfterFinished: 86400
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "continuo.selectorLabels" (dict "root" $ "service" "db-init-migrate") | nindent 8 }}
+      annotations:
+        ignore-check.kube-linter.io/no-read-only-root-fs: "flyway writes reports under /flyway"
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        {{- include "continuo.podSecurityContext" . | nindent 8 }}
+        runAsUser: 65532
+        runAsGroup: 65532
+      {{- if .Values.databaseInit.enabled }}
+      initContainers:
+        # Idempotently creates every continuo database (the 8 Flyway-migrated
+        # service DBs plus continuo_dbt, the dbt warehouse). Requires CREATEDB;
+        # disable databaseInit when a DBA pre-creates the databases.
+        - name: db-init
+          image: {{ include "continuo.image" (dict "root" $ "name" "migrations") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: PGHOST
+              value: {{ include "continuo.postgresql.host" . | quote }}
+            - name: PGPORT
+              value: {{ include "continuo.postgresql.port" . | quote }}
+            - name: PGUSER
+              value: {{ include "continuo.postgresql.username" . | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "postgres") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "postgres") | quote }}
+            - name: PGDATABASE
+              value: postgres
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              tries=0
+              until psql -tc "SELECT 1" >/dev/null 2>&1; do
+                tries=$((tries+1))
+                [ "$tries" -gt 100 ] && echo "postgres never became reachable" && exit 1
+                echo "waiting for postgres ($tries)..."; sleep 3
+              done
+              for db in continuo_state continuo_executor continuo_orchestrator \
+                        continuo_k8s continuo_release continuo_agent \
+                        continuo_remediation continuo_remediation_agent continuo_dbt; do
+                if psql -tc "SELECT 1 FROM pg_database WHERE datname = '${db}'" | grep -q 1; then
+                  echo "database ${db} already exists"
+                else
+                  echo "creating database ${db}"
+                  psql -c "CREATE DATABASE ${db}"
+                fi
+                psql -d "${db}" -c "GRANT ALL ON SCHEMA public TO \"${PGUSER}\""
+              done
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "continuo.image" (dict "root" $ "name" "migrations") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: POSTGRES_HOST
+              value: {{ include "continuo.postgresql.host" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ include "continuo.postgresql.port" . | quote }}
+            - name: POSTGRES_USER
+              value: {{ include "continuo.postgresql.username" . | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "postgres") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "postgres") | quote }}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 512Mi}
