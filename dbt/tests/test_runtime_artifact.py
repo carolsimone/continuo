@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import msgpack.exceptions
 import pytest
 from dbt.contracts.graph.manifest import Manifest
 
@@ -17,6 +18,7 @@ from continuo_dbt_runtime.descriptor import FORMAT, validate_descriptor
 from continuo_dbt_runtime.export_artifacts import export_runtime_artifacts
 from continuo_dbt_runtime.parse_context import (
     PARSE_CONTEXT_ENV_KEYS,
+    _parse_context_payload,
     parse_context_sha256,
 )
 
@@ -168,7 +170,7 @@ def test_export_rejects_unhydratable_partial_parse(tmp_path):
     manifest_json, partial_parse = write_sources(tmp_path, make_manifest())
     partial_parse.write_bytes(b"not msgpack")
 
-    with pytest.raises(Exception):
+    with pytest.raises(msgpack.exceptions.ExtraData):
         export_runtime_artifacts(
             manifest_path=manifest_json,
             partial_parse_path=partial_parse,
@@ -266,14 +268,38 @@ def test_parse_context_allowlist_excludes_schema_and_credentials():
     assert "DBT_POSTGRES_PASSWORD" not in PARSE_CONTEXT_ENV_KEYS
 
 
-def test_parse_context_never_stores_plaintext_env_values(monkeypatch):
+def test_parse_context_payload_never_carries_plaintext_env_values(monkeypatch):
+    """Allowlisted env values reach the payload only as hashes.
+
+    Asserted against the payload rather than the digest: a digest is hex, so it
+    cannot contain a plaintext value under any implementation and asserting
+    against it would pass even if the payload embedded the value verbatim.
+    """
     for key in PARSE_CONTEXT_ENV_KEYS:
         monkeypatch.setenv(key, "super-secret-value")
     manifest = fake_manifest()
 
-    digest = parse_context_sha256(manifest, CONTROLLER_CONTEXT)
+    payload = _parse_context_payload(manifest, CONTROLLER_CONTEXT)
 
-    assert "super-secret-value" not in digest
+    assert "super-secret-value" not in json.dumps(payload)
+    for key in PARSE_CONTEXT_ENV_KEYS:
+        assert payload["parse_env_sha256"][key] == (
+            hashlib.sha256(b"super-secret-value").hexdigest()
+        )
+
+
+def test_parse_context_digest_is_the_hash_of_the_canonical_payload(monkeypatch):
+    """Binds the digest to the payload the plaintext test inspects."""
+    for key in PARSE_CONTEXT_ENV_KEYS:
+        monkeypatch.setenv(key, "same")
+    manifest = fake_manifest()
+
+    payload = _parse_context_payload(manifest, CONTROLLER_CONTEXT)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+    assert parse_context_sha256(manifest, CONTROLLER_CONTEXT) == (
+        hashlib.sha256(canonical).hexdigest()
+    )
 
 
 def test_parse_context_treats_unset_env_as_empty(monkeypatch):

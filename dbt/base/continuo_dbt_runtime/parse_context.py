@@ -35,10 +35,26 @@ import os
 #                     Neither pod spec sets it, so it resolves from the shared
 #                     team image.
 #
-# Deliberately excluded:
-#   DBT_TARGET_SCHEMA        Diverges by design — a compile runs against the
-#                            release's candidate schema while the worker it
-#                            feeds runs against the production schema.
+# Excluded from this allowlist:
+#   DBT_TARGET_SCHEMA        The pod-level value diverges by design — a compile
+#                            pod runs against the release's candidate schema
+#                            while the worker pod it feeds runs against the
+#                            production schema — so hashing the pod's own value
+#                            would strand every pool.
+#
+#                            This exclusion scopes to this allowlist only. The
+#                            digest is not schema-independent: the controller
+#                            portion of the payload separately carries the
+#                            executor-controller's DBT_TARGET_SCHEMA — both a
+#                            hash of it under environment_sha256 and the raw
+#                            value under target.schema. That value is read from
+#                            the controller's own process environment rather
+#                            than from either pod, is the same for every release
+#                            the controller builds, and is embedded verbatim in
+#                            the controller context handed to both pods. It is
+#                            therefore identical on both sides and does not
+#                            strand pools. Changing the controller portion to
+#                            carry a per-release or per-pod schema would.
 #   DBT_POSTGRES_HOST/PORT/  Connection credentials. They do not change what dbt
 #   USER/PASSWORD            parses, and hashing them would strand every pool on
 #                            a routine credential rotation.
@@ -54,16 +70,19 @@ def _file_hash(value) -> dict[str, str]:
     return {"name": value.name, "checksum": value.checksum}
 
 
-def parse_context_sha256(manifest, controller_context: str) -> str:
-    """Digest the conditions manifest was parsed under.
+def _parse_context_payload(manifest, controller_context: str) -> dict:
+    """Build the payload parse_context_sha256 hashes.
 
     controller_context is the controller's canonical JSON description of the
-    service's resolved command surface and target. Environment values are
-    hashed individually, never carried, so the digest is safe to publish.
+    service's resolved command surface and target; it is embedded verbatim, so
+    the raw non-secret values it carries (target name, database, schema) appear
+    in the payload as-is. This pod's own environment contributes only hashes,
+    under parse_env_sha256 — no value read from os.environ here is carried in
+    plaintext. Only the digest of this payload is ever published.
     """
     controller = json.loads(controller_context)
     state = manifest.state_check
-    payload = {
+    return {
         "controller": controller,
         "state_check": {
             "vars_hash": _file_hash(state.vars_hash),
@@ -80,5 +99,10 @@ def parse_context_sha256(manifest, controller_context: str) -> str:
             for key in PARSE_CONTEXT_ENV_KEYS
         },
     }
+
+
+def parse_context_sha256(manifest, controller_context: str) -> str:
+    """Digest the conditions manifest was parsed under."""
+    payload = _parse_context_payload(manifest, controller_context)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(canonical).hexdigest()
