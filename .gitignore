@@ -84,3 +84,11 @@ __pycache__/
 # Local agent/tooling artifacts (never commit)
 .enola/
 .claire/
+
+# Private keys and certificates must never be committed
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
