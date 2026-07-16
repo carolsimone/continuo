@@ -514,10 +514,12 @@ func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxR
 	return nil
 }
 
-// writeFailedAnnouncements settles a production task whose deploy exhausted its
-// attempt budget. A task that will never run announces the same terminal pair
-// however it got there, so this shares the fanout with the rejection path rather
-// than shaping the two events a second time.
+// writeFailedAnnouncements settles a production task the executor will never
+// run. It is reached three ways: the row is undeployable, its deploy failed
+// permanently, or its deploy exhausted its attempt budget. A task that will
+// never run announces the same terminal pair however it got there, so this
+// shares the fanout with the rejection path rather than shaping the two events a
+// second time.
 func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	reason := ""
 	if msg := dep.ErrorMessage(); msg != nil {
