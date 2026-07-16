@@ -265,8 +265,9 @@ func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
 	require.NotNil(t, outboxRepo.last, "expected a per-node projection outbox row")
 	assert.Equal(t, validation.EventTypeValidationNodeResult, outboxRepo.last.EventType)
 	assert.Equal(t, streams.ValidationResultV1, outboxRepo.last.StreamName)
-	assert.Equal(t, uuid.NewSHA1(validation.DedupNamespace, []byte("release:rel-1")), outboxRepo.last.AggregateID,
-		"per-node row uses the same shared aggregate_id formula as the terminal row")
+	assert.NotEqual(t, uuid.Nil, outboxRepo.last.AggregateID, "per-node row gets its own generated aggregate_id")
+	assert.NotEqual(t, uuid.NewSHA1(validation.DedupNamespace, []byte("release:rel-1")), outboxRepo.last.AggregateID,
+		"per-node row does not share the terminal row's deterministic aggregate_id")
 
 	var p map[string]any
 	require.NoError(t, json.Unmarshal(outboxRepo.last.Payload, &p))
@@ -303,13 +304,14 @@ func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testi
 
 	// Collect every per-node projection row by node_id.
 	perNode := map[string]map[string]any{}
+	seenAggIDs := map[uuid.UUID]bool{}
 	for _, e := range outboxRepo.all {
 		if e.EventType != validation.EventTypeValidationNodeResult {
 			continue
 		}
 		assert.Equal(t, streams.ValidationResultV1, e.StreamName)
-		assert.Equal(t, uuid.NewSHA1(validation.DedupNamespace, []byte("release:rel")), e.AggregateID,
-			"every per-node row shares the release's aggregate_id")
+		assert.False(t, seenAggIDs[e.AggregateID], "each per-node row gets its own distinct aggregate_id")
+		seenAggIDs[e.AggregateID] = true
 		var p map[string]any
 		require.NoError(t, json.Unmarshal(e.Payload, &p))
 		assert.Equal(t, "node", p["kind"])
@@ -331,38 +333,54 @@ func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testi
 	assert.False(t, hasRR, "skipped node carries no run_results_uri")
 }
 
-// (f) The per-node projection rows AND the terminal aggregate row all share one
-// aggregate_id (uuid.NewSHA1(namespace, "release:"+releaseID)). This is the
-// ordering key: the outbox processor runs PerAggregateFIFO, so sharing it makes
-// every per-node row for a release publish before that release's terminal row.
-func TestSettleNodeTerminal_PerNodeAndTerminalShareAggregateID(t *testing.T) {
+// (f) Per-node projection rows each get a distinct, randomly generated
+// aggregate_id — never the terminal row's deterministic
+// uuid.NewSHA1(namespace, "release:"+releaseID) id, and never each other's.
+// The terminal ("kind":"complete") row keeps that deterministic id. Per-node
+// rows are no longer forced into the terminal's PerAggregateFIFO lane, so they
+// can publish in parallel instead of draining one per processor tick.
+func TestSettleNodeTerminal_PerNodeUsesDistinctAggregateID(t *testing.T) {
 	log := &callLog{}
 	a := validationNode(t, "rel-2", "node.a", model.StatusDeployed)
-	require.NoError(t, a.RecordOutcome("ok", "", "", time.Now()))
-	repo := newChainDepRepo(log, a)
+	b := validationNode(t, "rel-2", "node.b", model.StatusDeployed)
+	repo := newChainDepRepo(log, a, b)
 	outboxRepo := &captureOutbox{}
 	agg := &orderedAggRepo{won: true, log: log}
 
-	err := validation.SettleNodeTerminal(
+	// Settle node.a first: node.b has no outcome recorded yet, so it still counts
+	// as pending and only node.a's per-node row is emitted (no terminal yet).
+	markOk(t, a)
+	require.NoError(t, validation.SettleNodeTerminal(
 		context.Background(), repo, outboxRepo, agg,
-		validation.DedupNamespace, "rel-2", "node.a", "ok", time.Now())
-	require.NoError(t, err)
+		validation.DedupNamespace, "rel-2", "node.a", "ok", time.Now()))
 
-	wantAggID := uuid.NewSHA1(validation.DedupNamespace, []byte("release:rel-2"))
+	// Settle node.b: its per-node row is emitted, and since nothing remains
+	// pending the aggregate gate also fires the terminal row.
+	markOk(t, b)
+	require.NoError(t, validation.SettleNodeTerminal(
+		context.Background(), repo, outboxRepo, agg,
+		validation.DedupNamespace, "rel-2", "node.b", "ok", time.Now()))
 
-	var nodeRows, completeRows int
+	wantTerminalAggID := uuid.NewSHA1(validation.DedupNamespace, []byte("release:rel-2"))
+
+	var nodeAggIDs []uuid.UUID
+	var completeRows int
 	for _, e := range outboxRepo.all {
 		assert.Equal(t, streams.ValidationResultV1, e.StreamName)
-		assert.Equal(t, wantAggID, e.AggregateID, "row %s shares the release's aggregate_id", e.EventType)
 		var p map[string]any
 		require.NoError(t, json.Unmarshal(e.Payload, &p))
 		switch p["kind"] {
 		case "node":
-			nodeRows++
+			nodeAggIDs = append(nodeAggIDs, e.AggregateID)
 		case "complete":
 			completeRows++
+			assert.Equal(t, wantTerminalAggID, e.AggregateID, "terminal row keeps the deterministic aggregate_id")
 		}
 	}
-	assert.Equal(t, 1, nodeRows, "one per-node row for node.a")
+
+	require.Len(t, nodeAggIDs, 2, "one per-node row for node.a and one for node.b")
+	assert.NotEqual(t, nodeAggIDs[0], nodeAggIDs[1], "per-node rows get distinct aggregate_ids from each other")
+	assert.NotEqual(t, wantTerminalAggID, nodeAggIDs[0], "node.a's row does not share the terminal's aggregate_id")
+	assert.NotEqual(t, wantTerminalAggID, nodeAggIDs[1], "node.b's row does not share the terminal's aggregate_id")
 	assert.Equal(t, 1, completeRows, "one terminal row once nothing pending")
 }

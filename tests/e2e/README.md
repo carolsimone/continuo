@@ -216,7 +216,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 POST /releases → release.requested:v1 → manifest-controller candidate parse
 → manifest.loaded.candidate:v1 → release-controller derives the changed-node set
 → validation.requested:v1 → executor/k8s run per-node validation jobs
-→ validation.node.completed:v1 → validation.completed:v1
+→ validation.node.completed:v1 → validation.result:v1 (kind=complete)
 → release-controller promotes → release.promoted:v1
 → orchestrator swaps the Neo4j topology
 ```

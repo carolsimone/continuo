@@ -143,18 +143,20 @@ status=ok:
 
 ### On `validation.result:v1`
 
-A single in-order consumer reads both message kinds off one stream. A `kind=node` message projects that node's outcome into the release's `per_node_results` read model (loads the release `FOR UPDATE`, upserts the one node). A `kind=complete` message carries only the decision (`release_id`, `aggregate_status`, `candidate_schema`) and is emitted last; because both kinds share one `aggregate_id`, PerAggregateFIFO guarantees every node is already projected when it arrives, so the decision reads the stored validation-stage results with no completeness barrier.
+A single consumer reads both message kinds off one stream. A `kind=node` message projects that node's outcome into the release's `per_node_results` read model (loads the release `FOR UPDATE`, upserts the one node). A `kind=complete` message carries only the decision (`release_id`, `aggregate_status`, `candidate_schema`) and decides directly from the authoritative `aggregate_status` column rather than from the `per_node_results` projections, so it does not need every `kind=node` message to have already been consumed — there is no completeness barrier.
 ```
 on kind=node: upsert per_node_results[node_id] (stage="validation")
    Nodes skipped by a failed upstream are included: executor-controller emits a
    status="skipped" projection for them even though they never ran.
 on kind=complete:
 load release FOR UPDATE, read stored per_node_results where stage="validation"
-missing-node fallback: a node is absent only if its projection write was permanently dropped
-   (in-order delivery means the store is otherwise complete). Do not block or fabricate the
-   node as failing: log the missing ids and decide from the authoritative aggregate_status,
-   which reflects that node's real outcome. Only stored, non-ok nodes count toward failing, so
-   a missing node with aggregate_status ok still promotes.
+missing-node fallback: a node can be absent from per_node_results either because its
+   projection hasn't been consumed yet (per-node rows no longer share the terminal's
+   aggregate_id, so relative delivery order isn't guaranteed) or because its write was
+   permanently dropped. Either way, do not block or fabricate the node as failing: log
+   the missing ids and decide from the authoritative aggregate_status, which reflects
+   that node's real outcome regardless of projection visibility. Only stored, non-ok
+   nodes count toward failing, so a missing node with aggregate_status ok still promotes.
 all stored (and present) nodes ok and aggregate_status ok → handleValidationOK:
    update current_prod to this release's candidate topology,
    upsert the changed service's service_prod pointer (canonical key + image tag + release id),
@@ -174,7 +176,7 @@ Before updating `current_prod`, `promoteToProduction` computes the set of change
 
 - Four consumer groups (`compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.result:v1`) run in the same process; each maintains its own offset.
 - Inbound messages are deduped via `message_processing` (idempotent on the upstream `outbox_entry_id`), so a redelivery is absorbed.
-- A permanent parse-decode failure (or an unrecognised `validation.result:v1` kind) is ACKed (logged, not retried); transient errors are not ACKed and replay. Because the `kind=node` and `kind=complete` messages share one `aggregate_id` and are consumed in order, the terminal decision always sees a complete store without needing to defer; a permanently-dropped projection write leaves a node absent, which the decision handles by falling back to the authoritative `aggregate_status` rather than blocking the release or the queue.
+- A permanent parse-decode failure (or an unrecognised `validation.result:v1` kind) is ACKed (logged, not retried); transient errors are not ACKed and replay. The `kind=complete` decision reads only the authoritative `aggregate_status` column, not the `per_node_results` projections, so it never needs to defer: a `kind=node` message that hasn't been consumed yet or a permanently-dropped projection write both leave a node absent from `per_node_results`, and the decision handles either case by falling back to `aggregate_status` rather than blocking the release or the queue.
 - A message on any of the inbound streams whose `release_id` no longer has a `releases` row (pruned, or reclaimed from a previous consumer for a deleted release) is logged and dropped rather than processed. The repository's `Get` returns no row as `(nil, nil)`, so all handlers nil-check the aggregate before use; without that guard a reclaimed message for a missing release would crash the consumer on startup.
 - State changes and the outbox row are written in one transaction; the outbox publisher drains rows and XADDs them, injecting `outbox_entry_id` for downstream dedup.
 

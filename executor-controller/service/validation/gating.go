@@ -40,10 +40,7 @@ func SettleNodeTerminal(
 	}
 	// Emit the live per-node projection for this settled node before the aggregate
 	// gate. It carries only this node's outcome; release-controller upserts it into
-	// the per_node_results read model so the UI count climbs as nodes finish. It
-	// shares its aggregate_id with the terminal row emitted below, and the outbox
-	// processor runs PerAggregateFIFO, so every per-node row for this release is
-	// guaranteed to publish before the terminal row that follows it.
+	// the per_node_results read model so the UI count climbs as nodes finish.
 	settled, err := depRepo.GetByReleaseNode(ctx, releaseID, completedNodeID, cfg.mode)
 	if err != nil {
 		return fmt.Errorf("get settled node for projection: %w", err)
@@ -54,9 +51,10 @@ func SettleNodeTerminal(
 	}
 	// Nodes this failure skipped never run through SettleNodeTerminal on their own,
 	// so they would otherwise never project a per-node result. Emit one per skipped
-	// node with status "skipped" and no URIs (they never ran), so the read model
-	// becomes complete: release-controller's completeness barrier resolves and the
-	// release rejects (a skipped node has status != "ok", so it counts as failing).
+	// node with status "skipped" and no URIs (they never ran). Release-controller
+	// records each result as it arrives and, once the terminal (kind=complete) row
+	// shows up, decides from aggregate_status (a skipped node has status != "ok",
+	// so it counts as failing).
 	for _, skippedID := range skipped {
 		if err := emitPerNodeResult(ctx, outboxRepo, cfg.namespace, releaseID,
 			perNodeResultPayload(releaseID, skippedID, "skipped", "", "")); err != nil {
@@ -67,13 +65,25 @@ func SettleNodeTerminal(
 }
 
 // emitPerNodeResult writes one "kind":"node" row to the shared
-// validation.result:v1 stream from an already-built payload. It shares its
-// AggregateID formula with the terminal "kind":"complete" row
-// (uuid.NewSHA1(namespace, "release:"+releaseID)) so both land in the same
-// outbox PerAggregateFIFO lane: every per-node row for a release publishes
-// before that release's terminal row. The projection itself is an idempotent
-// last-write upsert keyed by node_id, not a deduped decision, so sharing the
-// aggregate_id across many per-node rows (and the terminal) is safe.
+// validation.result:v1 stream from an already-built payload. It gets its own
+// distinct AggregateID (uuid.New()) rather than sharing the terminal
+// "kind":"complete" row's deterministic id: the outbox processor runs
+// PerAggregateFIFO, which withholds every row in an (aggregate_type,
+// aggregate_id) lane behind an older still-pending sibling in that same lane.
+// Putting all of a release's per-node rows in the terminal's lane serialized
+// them to roughly one per processor tick, throttling the live UI. A distinct
+// id per emit lets per-node rows publish in parallel; strict ordering ahead of
+// the terminal is not required because (a) release-controller's promote/reject
+// decision reads only aggregate_status, which is order-independent, and (b) in
+// the normal case the per-node rows and the terminal are all still pending
+// together and flush in one created_at-ordered outbox batch anyway. The
+// projection itself is an idempotent last-write upsert keyed by node_id, so
+// out-of-order per-node delivery is harmless on its own.
+//
+// Residual: only a transient XADD failure of one per-node row that happens to
+// race a rejection could omit that node from the reject audit trail — the
+// promote/reject decision itself is still correct since it derives from
+// aggregate_status, not from the per-node stream. Acceptable.
 func emitPerNodeResult(ctx context.Context, outboxRepo outbox.Repository, namespace uuid.UUID, releaseID string, payload map[string]any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -81,7 +91,7 @@ func emitPerNodeResult(ctx context.Context, outboxRepo outbox.Repository, namesp
 	}
 	if err := outboxRepo.Create(ctx, &outbox.Entry{
 		AggregateType: "release",
-		AggregateID:   uuid.NewSHA1(namespace, []byte("release:"+releaseID)),
+		AggregateID:   uuid.New(),
 		EventType:     EventTypeValidationNodeResult,
 		Payload:       body,
 		StreamName:    streams.ValidationResultV1,
