@@ -8,9 +8,14 @@
 # DBT_TARGET_SCHEMA env var + generate_schema_name macro), compile.
 #
 # Optional per block: compile.partial_parse_path (absolute path where the team's
-# tool leaves dbt's partial parse; omit when it stays beside manifest.json) and
-# worker.wrapper_cache ("required" when the wrapper reliably writes a reusable
-# partial parse there, "opaque" — the default — when its behaviour is unknown).
+# tool leaves dbt's partial parse; omit when it stays beside manifest.json).
+#
+# Optional per services.<name> block only: worker.wrapper_cache ("required" when
+# the wrapper reliably writes a reusable partial parse there, "opaque" when its
+# behaviour is unknown). Absent, or a worker block with no wrapper_cache, means
+# opaque: a reusable parse cache is only assumed when the owning team claims one.
+# It describes one team's wrapper, so a worker block on the `default` block
+# (which describes plain dbt) is a fatal boot error. Native dbt ignores the key.
 default:
   run:        ["dbt", "run", "--select", "{{ node }}"]
   seed:       ["dbt", "seed", "--select", "{{ node }}"]

@@ -37,6 +37,22 @@ default:
     manifest_path: "/project/target/manifest.json"
 `
 
+// completeService returns a complete services.<name> override, ready for a
+// caller to append further indented keys (such as a worker block) to.
+func completeService(name string) string {
+	return "services:\n  " + name + `:
+    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
+    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
+    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+    compile:
+      command:       ["wise-dbt", "compile"]
+      manifest_path: "/project/target/manifest.json"
+`
+}
+
 func TestLoad_EmptyPathUsesDefaults(t *testing.T) {
 	r, err := Load("", testLogger())
 	require.NoError(t, err)
@@ -211,13 +227,23 @@ func TestLoad_ValidationErrors(t *testing.T) {
 		},
 		{
 			name:    "unknown wrapper_cache value",
-			yaml:    completeDefault + "  worker:\n    wrapper_cache: sometimes",
-			wantErr: `default.worker.wrapper_cache: must be "required" or "opaque", got "sometimes"`,
+			yaml:    completeDefault + completeService("wise") + "    worker:\n      wrapper_cache: sometimes",
+			wantErr: `services.wise.worker.wrapper_cache: must be "required" or "opaque", got "sometimes"`,
 		},
 		{
 			name:    "unknown worker key",
-			yaml:    completeDefault + "  worker:\n    cache: required",
+			yaml:    completeDefault + completeService("wise") + "    worker:\n      cache: required",
 			wantErr: "field cache not found",
+		},
+		{
+			name:    "worker block on the default block is rejected",
+			yaml:    completeDefault + "  worker:\n    wrapper_cache: required",
+			wantErr: "default.worker: not allowed on the default block",
+		},
+		{
+			name:    "empty worker block on the default block is rejected",
+			yaml:    completeDefault + "  worker: {}",
+			wantErr: "default.worker: not allowed on the default block",
 		},
 	}
 	for _, tt := range tests {

@@ -96,15 +96,16 @@ func (r *Resolver) CompileCommand(serviceName string) ports.CompileCommand {
 	}
 }
 
-// WrapperCachePolicy resolves the service's declared wrapper-cache behaviour.
-// Anything undeclared — no override, no worker block, or an empty one — is
-// opaque: continuo only assumes a reusable parse cache when a team says so.
+// WrapperCachePolicy resolves the service's declared wrapper-cache behaviour
+// from its own services.<name> block alone. Unlike the command keys, this one
+// never consults the default block: it is a claim about a specific team's dbt
+// wrapper, and the default block describes plain dbt, so a worker block there
+// is rejected at load. Anything undeclared — no override, no worker block, or
+// an empty one — is opaque: continuo only assumes a reusable parse cache when
+// the owning team says so.
 func (r *Resolver) WrapperCachePolicy(serviceName string) ports.WrapperCachePolicy {
 	if ops := r.cfg.Services[serviceName]; ops != nil && ops.Worker != nil && ops.Worker.WrapperCache != "" {
 		return ports.WrapperCachePolicy(ops.Worker.WrapperCache)
-	}
-	if d := r.cfg.Default; d != nil && d.Worker != nil && d.Worker.WrapperCache != "" {
-		return ports.WrapperCachePolicy(d.Worker.WrapperCache)
 	}
 	return ports.WrapperCacheOpaque
 }

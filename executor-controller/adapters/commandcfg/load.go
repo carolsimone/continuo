@@ -44,14 +44,18 @@ func Load(path string, logger *slog.Logger) (*Resolver, error) {
 	return &Resolver{cfg: &cfg}, nil
 }
 
-// validate enforces the config schema: the default block is required and
-// complete, every service override is complete, and each present template
-// passes the per-template checks (non-empty argv, required/allowed placeholders,
-// absolute literal compile manifest_path). Per-template checks run before the
-// completeness check so a malformed present key reports its specific error.
+// validate enforces the config schema: the default block is required, complete
+// and carries no worker block, every service override is complete, and each
+// present template passes the per-template checks (non-empty argv,
+// required/allowed placeholders, absolute literal compile manifest_path).
+// Per-template checks run before the completeness check so a malformed present
+// key reports its specific error.
 func validate(cfg *fileConfig) error {
 	if cfg.Default == nil {
 		return fmt.Errorf("default: required and must define every command")
+	}
+	if err := validateNoDefaultWorker(cfg.Default); err != nil {
+		return err
 	}
 	if err := validateOpSet("default", cfg.Default); err != nil {
 		return err
@@ -69,6 +73,26 @@ func validate(cfg *fileConfig) error {
 		if err := requireComplete("services."+name, ops); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateNoDefaultWorker rejects a worker block on the default block.
+//
+// worker.wrapper_cache is a claim about one team's dbt wrapper: that the
+// wrapper reliably writes a reusable parse cache. The default block describes
+// plain dbt, which is no team's wrapper, so such a claim there belongs to
+// nobody. Honouring it would make continuo reuse a parse artifact on behalf of
+// a team that never claimed to write one — the unsafe direction — and matching
+// the rest of this config, where a team that overrides its CLI declares its own
+// full key set and nothing falls through to a claim written for a different
+// tool. Ignoring the block instead would parse and validate it and then do
+// nothing, so it is rejected outright and a team declares the key on its own
+// services.<name> block.
+func validateNoDefaultWorker(def *opSet) error {
+	if def.Worker != nil {
+		return fmt.Errorf("default.worker: not allowed on the default block; " +
+			"wrapper_cache describes one team's dbt wrapper, so declare it on that team's services.<name> block")
 	}
 	return nil
 }

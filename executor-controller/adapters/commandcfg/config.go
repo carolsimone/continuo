@@ -33,7 +33,9 @@ type opSet struct {
 	Test      []string     `yaml:"test"`
 	Build     []string     `yaml:"build"`
 	Compile   *compileSpec `yaml:"compile"`
-	Worker    *workerSpec  `yaml:"worker,omitempty"`
+	// Worker is valid on a services.<name> block only; load rejects it on the
+	// default block, which describes plain dbt rather than a team's wrapper.
+	Worker *workerSpec `yaml:"worker,omitempty"`
 }
 
 // fileConfig is the root dbt-commands.yaml document.

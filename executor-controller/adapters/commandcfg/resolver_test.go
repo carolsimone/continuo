@@ -182,8 +182,8 @@ func TestResolver_WrapperCachePolicy(t *testing.T) {
 		"a service with no override at all defaults to opaque")
 }
 
-// A present-but-empty worker block must resolve to the documented default, not
-// to the invalid empty policy value.
+// A present-but-empty worker block resolves to opaque, not to the invalid
+// empty policy value.
 func TestResolver_WrapperCachePolicy_EmptyWorkerBlockIsOpaque(t *testing.T) {
 	r := loadTestConfig(t, `
 default:
@@ -196,30 +196,8 @@ default:
   compile:
     command:       ["dbt", "compile"]
     manifest_path: "/project/target/manifest.json"
-  worker: {}
-`)
-	assert.Equal(t, ports.WrapperCacheOpaque, r.WrapperCachePolicy("svc"))
-}
-
-// worker follows the same service-override-beats-default precedence as every
-// command key, so a deployment-wide policy is honoured rather than silently
-// ignored.
-func TestResolver_WrapperCachePolicy_DefaultBlockPrecedence(t *testing.T) {
-	r := loadTestConfig(t, `
-default:
-  run:        ["dbt", "run", "--select", "{{ node }}"]
-  seed:       ["dbt", "seed", "--select", "{{ node }}"]
-  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
-  test:       ["dbt", "test", "--select", "{{ node }}"]
-  build:      ["dbt", "build", "--select", "{{ node }}"]
-  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
-  compile:
-    command:       ["dbt", "compile"]
-    manifest_path: "/project/target/manifest.json"
-  worker:
-    wrapper_cache: required
 services:
-  opaque-svc:
+  svc:
     run:        ["o-dbt", "run", "{{ node }}"]
     seed:       ["o-dbt", "seed", "{{ node }}"]
     snapshot:   ["o-dbt", "snapshot", "{{ node }}"]
@@ -229,12 +207,9 @@ services:
     compile:
       command:       ["o-dbt", "compile"]
       manifest_path: "/project/target/manifest.json"
-    worker:
-      wrapper_cache: opaque
+    worker: {}
 `)
-	assert.Equal(t, ports.WrapperCacheRequired, r.WrapperCachePolicy("inherits-default"))
-	assert.Equal(t, ports.WrapperCacheOpaque, r.WrapperCachePolicy("opaque-svc"),
-		"a service override beats the default block")
+	assert.Equal(t, ports.WrapperCacheOpaque, r.WrapperCachePolicy("svc"))
 }
 
 // wrapperCacheYAML declares each wrapper-cache shape a service can take.
