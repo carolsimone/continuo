@@ -26,6 +26,11 @@ func loadEnv(t *testing.T, overrides map[string]string) (Config, *pkgconfig.Vali
 		"POSTGRES_PASSWORD":             "secret",
 		"K8S_NAMESPACE":                 "default",
 		"DBT_POSTGRES_DB":               "continuo_dbt",
+		"S3_ENDPOINT_URL":               "http://localstack:4566",
+		"S3_BUCKET":                     "continuo",
+		"AWS_DEFAULT_REGION":            "us-east-1",
+		"AWS_ACCESS_KEY_ID":             "test",
+		"AWS_SECRET_ACCESS_KEY":         "test",
 		"MAX_CONCURRENT_EXECUTIONS":     "50",
 		"MAX_CONCURRENT_JOBS":           "",
 		"EXECUTION_MODE":                "",
@@ -73,6 +78,36 @@ func TestLoad_DefaultsAreTheJobsPath(t *testing.T) {
 	}
 	if cfg.WorkerClaimWait != 20*time.Second {
 		t.Errorf("want claim wait 20s, got %s", cfg.WorkerClaimWait)
+	}
+}
+
+// TestLoad_S3IsRequired pins that the executor cannot start without knowing
+// where the object store is: worker pods hold no credentials of their own and
+// reach every artifact through URLs this configuration signs.
+func TestLoad_S3IsRequired(t *testing.T) {
+	for _, key := range []string{"S3_ENDPOINT_URL", "S3_BUCKET", "AWS_DEFAULT_REGION"} {
+		t.Run(key, func(t *testing.T) {
+			_, v := loadEnv(t, map[string]string{key: ""})
+			if !slices.Contains(v.Missing(), key) {
+				t.Errorf("want %s reported missing, got %v", key, v.Missing())
+			}
+		})
+	}
+}
+
+func TestLoad_S3FromEnv(t *testing.T) {
+	cfg, v := loadEnv(t, nil)
+	if len(v.Missing()) != 0 {
+		t.Fatalf("want no missing vars, got %v", v.Missing())
+	}
+	if cfg.S3.Bucket != "continuo" {
+		t.Errorf("want bucket continuo, got %q", cfg.S3.Bucket)
+	}
+	if cfg.S3.EndpointURL != "http://localstack:4566" {
+		t.Errorf("want the configured endpoint, got %q", cfg.S3.EndpointURL)
+	}
+	if cfg.S3.Region != "us-east-1" {
+		t.Errorf("want region us-east-1, got %q", cfg.S3.Region)
 	}
 }
 

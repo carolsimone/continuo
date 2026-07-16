@@ -70,7 +70,7 @@ func (d *Deployment) Claim(
 // It reports changed=false for a duplicate start so a retrying worker neither
 // errors nor moves started_at.
 func (d *Deployment) AcknowledgeStart(leaseID uuid.UUID, tokenSHA256 string, now time.Time) (bool, error) {
-	if !d.lease.authorizes(leaseID, tokenSHA256) {
+	if !d.lease.Authorizes(leaseID, tokenSHA256) {
 		return false, ErrStaleLease
 	}
 	if d.lease.StartedAt != nil {
@@ -92,7 +92,7 @@ func (d *Deployment) AcknowledgeStart(leaseID uuid.UUID, tokenSHA256 string, now
 // would pull the deadline in is rejected so a delayed heartbeat cannot shorten a
 // live lease.
 func (d *Deployment) Heartbeat(leaseID uuid.UUID, tokenSHA256 string, now, expiresAt time.Time) error {
-	if !d.lease.authorizes(leaseID, tokenSHA256) {
+	if !d.lease.Authorizes(leaseID, tokenSHA256) {
 		return ErrStaleLease
 	}
 	if d.status != StatusLeased && d.status != StatusRunning {
@@ -112,7 +112,7 @@ func (d *Deployment) Heartbeat(leaseID uuid.UUID, tokenSHA256 string, now, expir
 // travels through MarkRetryPending or MarkFailed, which the lease service picks
 // after classifying the failure.
 func (d *Deployment) Complete(leaseID uuid.UUID, tokenSHA256 string, result WorkerResult, now time.Time) error {
-	if !d.lease.authorizes(leaseID, tokenSHA256) {
+	if !d.lease.Authorizes(leaseID, tokenSHA256) {
 		return ErrStaleLease
 	}
 	if d.lease.FinishedAt != nil {
@@ -164,7 +164,7 @@ func (d *Deployment) ReportFailure(
 	now time.Time,
 	backoff time.Duration,
 ) error {
-	if !d.lease.authorizes(leaseID, tokenSHA256) {
+	if !d.lease.Authorizes(leaseID, tokenSHA256) {
 		return ErrStaleLease
 	}
 	if result.Succeeded {

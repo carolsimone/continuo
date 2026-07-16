@@ -30,6 +30,11 @@ type Config struct {
 	Redis    pkgconfig.RedisConfig
 	Postgres pkgconfig.PostgresConfig
 
+	// S3 is the object store holding runtime artifacts and task results. Worker
+	// pods hold no credentials of their own: they read their artifact and write
+	// their results through URLs the executor signs with these.
+	S3 pkgconfig.S3Config
+
 	// DBTWarehouse is the connection to the dbt materialization database (the same
 	// Postgres server executor forwards to dbt job pods, database DBT_POSTGRES_DB).
 	// Used to drop candidate schemas after validation completes. Host/port/user/password
@@ -95,6 +100,7 @@ func Load(v *pkgconfig.Validator) Config {
 	return Config{
 		Redis:    pkgconfig.LoadRedis(v),
 		Postgres: pkgconfig.LoadPostgres(v),
+		S3:       pkgconfig.LoadS3(v),
 
 		DBTWarehouse: DBTWarehouse{
 			Host:     pkgconfig.EnvOrDefault("POSTGRES_HOST", ""),

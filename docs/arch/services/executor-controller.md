@@ -20,6 +20,7 @@ It is responsible for:
 | `executor_outbox` | Canonical transactional outbox — one row per pending Redis announcement (`task_status_updated` FAILED on the never-deployed path, plus `node_deployed`/`node_updated`); `pkg/outbox.Processor` polls and performs the Redis XADD per row. The deploy-success path no longer announces RUNNING — k8s-controller owns the running/terminal pod lifecycle. |
 | `message_processing` | Inbound dedup: keyed on `(message_id, stream_name)`; prevents double-processing of duplicate Redis messages |
 | `cancelled_schedules` | Records schedule cancellations; consulted by deploy handlers before writing to `executor_deployments` |
+| `executor_worker_pools` | Registers the pools of reusable worker pods, one row per (service, image, runtime manifest, credential) combination, keyed by `pool_key`. Holds the pool's `credential_sha256` — the digest the internal worker API authenticates against; the raw credential is never stored — plus `desired_replicas`, `last_activity_at`, and `initialization_error` (non-empty means the pool's workers could not hydrate their artifact, so the pool is handed no work). No component writes a row yet, so the table is empty and the worker API authenticates nobody. |
 | `validation_aggregates` | Per-release-per-mode sentinel (PK: `(release_id, mode)`; mode CHECK allows `validation`, `seed_build`, `compile`). `ClaimEmission(release_id, mode)` does an `INSERT … ON CONFLICT DO NOTHING` so exactly one caller wins the right to emit the aggregate announcement for that leg. `LockRelease(release_id, mode)` takes a transaction-scoped advisory lock (`pg_advisory_xact_lock(hashtext(release_id || ':' || mode))`) that serializes the whole count→claim→emit gate per `(release_id, mode)` pair, so the three legs of one release lock independently and concurrent last-node terminals cannot both no-op (lost emission) under READ COMMITTED. |
 
 `executor_deployments` schema: `id`, `message_processing_id` (nullable FK), `task_id`, `schedule_id`, `job_params` (JSONB), `status` (`pending` / `blocked` / `dispatching` / `deployed` / `leased` / `running` / `retry_pending` / `succeeded` / `failed` / `skipped` / `cancelled`), `retry_count`, `max_retries`, `next_attempt_at`, `created_at`, `deployed_at`, `error_message`, plus the validation-mode columns `mode` (`production` / `validation` / `seed_build` / `compile`), `release_id`, `node_id`, `outcome` (`ok` / `failed` / `skipped`), `dbt_log_uri`, `run_results_uri` (S3 key of the structured validation result; NULL when the pod emitted no block), `outcome_at`. Production rows leave the validation columns NULL. Validation, seed-build, and compile rows have no real task/schedule identity, so the `NOT NULL` `task_id`/`schedule_id` columns are filled with deterministic UUIDv5 values derived from an immutable namespace over `(release_id, node_id)`; a partial unique index on `(release_id, node_id) WHERE mode IN ('validation','seed_build','compile')` enforces one row per (release, node, mode) combination, and a partial unique index on `(candidate_release, candidate_release_node_mode)` covers the same predicate for release-level uniqueness. Migration V16 relaxed the status and outcome CHECK constraints to accommodate the new values. `blocked` is non-terminal in the aggregate gate (the release cannot complete while any node is `blocked`). `skipped` is a terminal non-`ok` outcome (a node that could not run because an upstream failed; its presence fails the release).
@@ -221,6 +222,77 @@ rather than writing `deployed` back over the cancellation and re-taking a slot
 that no terminal would ever return.
 
 The dispatcher only dispatches `pending` validation rows; `blocked` rows (with unresolved in-set upstreams) remain in place until the `ValidationNodeCompletedHandler` transitions them to `pending`. On a successful K8s validation Job creation, the dispatcher `MarkDeployed`s the row and writes a single `node_deployed` → `node.deployed:v1` outbox row so k8s-controller status-checks the Job — it never polls, so without this trigger the release would hang in `validating`. This is the same single-row deploy announcement the production path now writes; validation rows have no real task/schedule, and k8s-controller suppresses the RUNNING announcement for `mode=validation` Jobs, so no `task_status_updated` row is ever surfaced for them. The per-node terminal outcome (`ok`/`failed`) arrives later via `validation.node.completed:v1`. A validation row that fails AT dispatch (not deployable, or a permanent pre-deploy error) is made terminal via `FailValidation`, records `outcome=failed`, emits no `node.deployed` trigger, skips transitively `blocked` downstreams (marking them `skipped`), and runs the aggregate gate.
+
+### Internal worker API
+
+`executor-controller` serves one HTTP server on `HTTP_PORT` (8084): the `/health`
+and `/ready` probes Kubernetes reads, and an internal API worker pods call. The
+transport is pull-only — the executor never calls a worker. A worker asks for
+work, reports on it, and asks for the URLs it uploads through; nothing is pushed
+to a pod.
+
+**Current reach.** No component registers a row in `executor_worker_pools`. A
+caller authenticates against a pool row, so with the table empty every request to
+the API is answered `401`, and no lease is ever granted. The endpoints below are
+mounted and serve that rejection; the claim-to-completion path they describe
+cannot run until pool registration exists.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /internal/v1/worker/runtime` | Signed reads of the pool's runtime descriptor and artifact |
+| `POST /internal/v1/workers/claim` | Long-poll for one task in the caller's pool; `204` when none is due |
+| `POST /internal/v1/workers/initialization` | Record or clear the pool's initialization error |
+| `POST /internal/v1/leases/{id}/start` | The lease holder's dbt process has started |
+| `POST /internal/v1/leases/{id}/heartbeat` | Extend the lease |
+| `POST /internal/v1/leases/{id}/result-urls` | Signed uploads for the task's log and run results |
+| `POST /internal/v1/leases/{id}/complete` | The lease holder's terminal report |
+
+**Two credentials, two scopes.** A request carries `X-Continuo-Pool-Key` naming a
+pool and `Authorization: Bearer <credential>` proving it; `executor_worker_pools`
+stores only the credential's SHA-256 digest, compared in constant time, so a read
+of the row authenticates nothing. Lease-scoped endpoints additionally carry the
+raw lease token in `X-Continuo-Lease-Token`. Neither secret is logged, echoed in
+an error body, or persisted.
+
+**Fencing, then ownership.** Every lease-scoped call is fenced on the lease token
+first and checked against the authenticated pool second. A caller that does not
+hold the lease is told only that its lease is stale, so it cannot use the
+distinction to discover which tasks exist; only a caller holding the genuine
+token can learn that the task belongs to another pool. The pool a claim is served
+from is read from the credential, never from the request body.
+
+**Every rejection is settled, not transient.** A worker that gets one of these
+stops; none is a signal to retry, and answering any of them `5xx` would leave a
+superseded worker retrying against the fence forever.
+
+| Condition | Status | Code |
+|---|---|---|
+| No valid pool credential | `401` | `unauthenticated` |
+| Task belongs to another pool | `403` | `pool_mismatch` |
+| Lease no longer current (`ErrStaleLease`) | `409` | `stale_lease` |
+| Pool has not hydrated its artifact | `409` | `pool_not_ready` |
+| Task was cancelled | `410` | `cancelled` |
+| Malformed body or identifier | `400` | `invalid_request` |
+
+`410 cancelled` on heartbeat is the only channel by which a running worker learns
+its task was cancelled: cancelling a task releases its slot but does not stop the
+pod, so the worker is told at its next heartbeat and abandons the task.
+
+**Signed URLs are capabilities.** A worker holds no object-store credential. It
+reads its artifact and writes its results through URLs the executor signs, each
+scoped to one object, one operation, and a 15-minute expiry. Result locations are
+derived from the task's own fenced row —
+`s3://<bucket>/dbt-runs/<schedule_id>/<task_id>/<lease_id>/{dbt.log,run_results.json}`
+— never from the request: a worker that could name its own keys could mint a
+capability to write into another schedule's prefix. A terminal report is accepted
+only if the artifact URIs it carries are the ones that lease was issued, or none
+at all (a worker that failed before uploading still has to report).
+
+**Initialization.** A worker that cannot hydrate its artifact reports the failure
+and stays unready rather than crash-looping; the pool records the error and is
+handed no work until a later worker reports a clean hydration, which clears it.
+Hydration duration is logged as an observation of one pod's startup and is not
+stored — it is not part of the pool's state.
 
 ### Per-release aggregate gate
 

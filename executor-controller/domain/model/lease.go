@@ -47,8 +47,9 @@ type Lease struct {
 	FinishedAt  *time.Time
 }
 
-// authorizes reports whether leaseID and tokenSHA256 identify this lease.
-func (l *Lease) authorizes(leaseID uuid.UUID, tokenSHA256 string) bool {
+// Authorizes reports whether leaseID and tokenSHA256 identify this lease. A nil
+// lease authorizes nobody, so a task carrying no lease fences every caller.
+func (l *Lease) Authorizes(leaseID uuid.UUID, tokenSHA256 string) bool {
 	if l == nil || l.ID != leaseID {
 		return false
 	}

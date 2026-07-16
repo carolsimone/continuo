@@ -13,7 +13,7 @@ Legend:
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `state` | `RW` | `-` | `RW` | server | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` |
 | `orchestrator` | `RW` (`topology_state` also read on query path) | `RW` | `RW` | `R` (watchdog) | server | `-` | `-` | `-` | `-` | `-` | `-` | `-` | `-` |
-| `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `W` | `-` | `W` (candidate schema teardown) | `-` | `-` | `-` | `-` |
+| `executor-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `W` | `-` (holds S3 credentials to sign URLs for worker pods; signing is local and issues no S3 call) | `W` (candidate schema teardown) | `-` | `-` | `-` | `-` |
 | `k8s-controller` | `RW` | `-` | `RW` | `-` | `-` | `-` | `R` | `W` | `-` | `-` | `-` | `-` | `-` |
 | `manifest-controller` | `-` | `-` | `RW` | `-` | `-` | `-` | `-` | `RW` | `-` | `-` | `-` | `-` | `-` |
 | `release-controller` | `RW` | `-` | `RW` | `-` | `-` | server | `-` | `W` (prune-time delete of `candidate-sql/<release_id>/`) | `-` | `-` | `-` | `-` | `-` |
@@ -109,10 +109,27 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 |---|---|
 | `ui-service` | `GET /releases`, `GET /releases/{id}`, `GET /current-prod` |
 
+## HTTP Calls to `executor-controller`
+
+The internal worker API, on the executor's own port (`HTTP_PORT`, 8084). It is
+pull-only: every call is made by a worker pod, and the executor never calls a
+worker. Callers authenticate with `X-Continuo-Pool-Key` plus a bearer credential
+whose SHA-256 digest the pool row stores; lease-scoped calls additionally present
+the raw lease token in `X-Continuo-Lease-Token`.
+
+| Caller | Routes used |
+|---|---|
+| worker pod | `GET /internal/v1/worker/runtime`, `POST /internal/v1/workers/claim`, `POST /internal/v1/workers/initialization`, `POST /internal/v1/leases/{id}/{start,heartbeat,result-urls,complete}` |
+
+No component registers a worker pool, so `executor_worker_pools` is empty, no
+caller can authenticate, and every one of these routes answers `401`. No worker
+pod runs.
+
 ## S3 Matrix
 
 | Service | Operation type | Concrete calls |
 |---|---|---|
+| `executor-controller` | sign only | No S3 call. Signs `GetObject` URLs (a pool's runtime descriptor and artifact) and `PutObject` URLs (a lease's `dbt-runs/<schedule_id>/<task_id>/<lease_id>/{dbt.log,run_results.json}`) for worker pods, each scoped to one object and expiring in 15 minutes. Signing is local; the objects are fetched and written by the worker holding the URL |
 | `manifest-controller` | read + write | `download_file` (the `manifest.json` files named in the `release.requested:v1` `manifest_keys` list; no S3 listing); `PutObject` (candidate SQL per non-seed node to `candidate-sql/<release_id>/<unique_id>.sql`; upload failure aborts the load) |
 | `k8s-controller` | write | `PutObject` (pod logs to `logs/` prefix) |
 | `release-controller` | delete | `DeleteObjects` — prune-time delete of `candidate-sql/<release_id>/` prefix for each expired release (soft-fail; lifecycle rule is the backstop) |

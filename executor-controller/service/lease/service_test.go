@@ -196,7 +196,7 @@ func TestClaim_RetryUsesPersistedCommand(t *testing.T) {
 	require.Equal(t, []string{"dbt", "run", "--select", "orders"}, first.Argv)
 
 	// The task fails retryably and is requeued for its next attempt.
-	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: first.LeaseID, Token: first.Token,
 		Result: model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"},
 	}))
@@ -235,7 +235,7 @@ func TestStart_AnnouncesRunningOnce(t *testing.T) {
 	dep := h.seedDue(workerCmd())
 	grant := h.mustClaim(t)
 
-	in := lease.StartInput{DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token}
+	in := lease.StartInput{PoolKey: poolKey, DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token}
 	require.NoError(t, h.svc.Start(context.Background(), in))
 	assert.Equal(t, model.StatusRunning, h.repo.statusOf(dep.ID()))
 
@@ -254,7 +254,7 @@ func TestStart_FencesStaleToken(t *testing.T) {
 	dep := h.seedDue(workerCmd())
 	grant := h.mustClaim(t)
 
-	err := h.svc.Start(context.Background(), lease.StartInput{
+	err := h.svc.Start(context.Background(), lease.StartInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: "not-the-token",
 	})
 
@@ -271,7 +271,7 @@ func TestHeartbeat_ExtendsTheLease(t *testing.T) {
 	grant := h.mustClaim(t)
 	h.clock.now = h.clock.now.Add(20 * time.Second)
 
-	require.NoError(t, h.svc.Heartbeat(context.Background(), lease.HeartbeatInput{
+	require.NoError(t, h.svc.Heartbeat(context.Background(), lease.HeartbeatInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 	}))
 
@@ -287,7 +287,7 @@ func TestHeartbeat_FencesStaleToken(t *testing.T) {
 	grant := h.mustClaim(t)
 	before := h.repo.rows[dep.ID()].dep.ActiveLease().ExpiresAt
 
-	err := h.svc.Heartbeat(context.Background(), lease.HeartbeatInput{
+	err := h.svc.Heartbeat(context.Background(), lease.HeartbeatInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: uuid.New(), Token: grant.Token,
 	})
 
@@ -302,12 +302,12 @@ func TestComplete_SuccessSettlesTaskOnce(t *testing.T) {
 	h := newHarness(t, 4)
 	dep := h.seedDue(workerCmd())
 	grant := h.mustClaim(t)
-	require.NoError(t, h.svc.Start(context.Background(), lease.StartInput{
+	require.NoError(t, h.svc.Start(context.Background(), lease.StartInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 	}))
 	h.outbox.entries = nil
 
-	in := lease.CompleteInput{
+	in := lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{
 			Succeeded: true, ExecutionSeconds: 12.5,
@@ -338,7 +338,7 @@ func TestComplete_SuccessWithFailedUploadIsNotRerun(t *testing.T) {
 	dep := h.seedDue(workerCmd())
 	grant := h.mustClaim(t)
 
-	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{Succeeded: true, ExecutionSeconds: 12.5, UploadSeconds: 0},
 	}))
@@ -356,7 +356,7 @@ func TestComplete_FencesStaleToken(t *testing.T) {
 	dep := h.seedDue(workerCmd())
 	grant := h.mustClaim(t)
 
-	err := h.svc.Complete(context.Background(), lease.CompleteInput{
+	err := h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: "not-the-token",
 		Result: model.WorkerResult{Succeeded: true},
 	})
@@ -382,7 +382,7 @@ func TestComplete_StaleReportCannotDisplaceANewHolder(t *testing.T) {
 	holder := h.mustClaim(t)
 	require.NotEqual(t, reaped.LeaseID, holder.LeaseID)
 
-	err := h.svc.Complete(context.Background(), lease.CompleteInput{
+	err := h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: reaped.LeaseID, Token: reaped.Token,
 		Result: model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "stale report"},
 	})
@@ -404,7 +404,7 @@ func TestComplete_RetryableFailureParksAndAsksForRetry(t *testing.T) {
 	dep := h.seedDue(workerCmd())
 	grant := h.mustClaim(t)
 
-	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{
 			Succeeded: false, Retryable: true,
@@ -445,7 +445,7 @@ func TestComplete_FinalAttemptIsPermanentDespiteWorkerHint(t *testing.T) {
 	dep := h.seedDue(cmd)
 	grant := h.mustClaim(t)
 
-	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"},
 	}))
@@ -476,7 +476,7 @@ func TestComplete_UnfixableErrorClassesAreNeverRetried(t *testing.T) {
 			dep := h.seedDue(workerCmd()) // retry budget is untouched: 0 of 3
 			grant := h.mustClaim(t)
 
-			require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+			require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 				DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 				Result: model.WorkerResult{
 					Succeeded: false, Retryable: true,
@@ -500,7 +500,7 @@ func TestComplete_WorkerHintFalseIsPermanent(t *testing.T) {
 	dep := h.seedDue(workerCmd())
 	grant := h.mustClaim(t)
 
-	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{Succeeded: false, Retryable: false, ErrorMessage: "compilation error"},
 	}))
@@ -518,7 +518,7 @@ func TestComplete_DuplicatePermanentFailureSettlesTaskOnce(t *testing.T) {
 	dep := h.seedDue(workerCmd())
 	grant := h.mustClaim(t)
 
-	in := lease.CompleteInput{
+	in := lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{
 			Succeeded: false, Retryable: false,
@@ -552,7 +552,7 @@ func TestComplete_DuplicateRetryableFailureIsFenced(t *testing.T) {
 	dep := h.seedDue(workerCmd())
 	grant := h.mustClaim(t)
 
-	in := lease.CompleteInput{
+	in := lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{
 			Succeeded: false, Retryable: true,
@@ -587,13 +587,13 @@ func TestComplete_RecordsTheExecutionsTiming(t *testing.T) {
 
 	h.clock.now = h.clock.now.Add(2 * time.Second)
 	startedAt := h.clock.now
-	require.NoError(t, h.svc.Start(context.Background(), lease.StartInput{
+	require.NoError(t, h.svc.Start(context.Background(), lease.StartInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 	}))
 
 	h.clock.now = h.clock.now.Add(30 * time.Second)
 	completedAt := h.clock.now
-	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{Succeeded: true, ExecutionSeconds: 30},
 	}))
@@ -616,12 +616,12 @@ func TestComplete_RetryableFailureRecordsTimingCapturedBeforeParking(t *testing.
 
 	h.clock.now = h.clock.now.Add(2 * time.Second)
 	startedAt := h.clock.now
-	require.NoError(t, h.svc.Start(context.Background(), lease.StartInput{
+	require.NoError(t, h.svc.Start(context.Background(), lease.StartInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 	}))
 
 	h.clock.now = h.clock.now.Add(10 * time.Second)
-	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"},
 	}))
@@ -643,7 +643,7 @@ func TestComplete_RollsBackOnOutboxFailure(t *testing.T) {
 	grant := h.mustClaim(t)
 	h.outbox.err = assert.AnError
 
-	err := h.svc.Complete(context.Background(), lease.CompleteInput{
+	err := h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
 		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
 		Result: model.WorkerResult{Succeeded: true},
 	})

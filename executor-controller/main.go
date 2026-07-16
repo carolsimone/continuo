@@ -14,18 +14,36 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/executor-controller/adapters/redis"
+	"github.com/carolsimone/continuo/executor-controller/adapters/s3"
 	"github.com/carolsimone/continuo/executor-controller/config"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/internal/lifecycle"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
+	"github.com/carolsimone/continuo/executor-controller/service/lease"
+	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	"github.com/carolsimone/continuo/executor-controller/service/routing"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
+	"github.com/carolsimone/continuo/executor-controller/service/workerapi"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
+)
+
+const (
+	// signedURLTTL is how long a URL the executor signs for a worker stays
+	// usable. A signed URL is a capability, so it is scoped in time as well as
+	// to one object: long enough to download an artifact or upload a result,
+	// short enough that a leaked one expires before it is useful.
+	signedURLTTL = 15 * time.Minute
+
+	// workerRetryBackoff is how long a task that failed retryably on a worker
+	// waits before another attempt may claim it. It matches the first retry
+	// delay of the Kubernetes Job path, so a task's retry cadence does not
+	// depend on which path ran it.
+	workerRetryBackoff = 5 * time.Second
 )
 
 func main() {
@@ -338,19 +356,42 @@ func main() {
 	}()
 
 	// ========================================================================
-	// START HTTP HEALTH CHECK SERVER
+	// START HTTP SERVER (health probes + internal worker API)
 	// ========================================================================
 
-	healthServer := http.NewHealthServer(cfg.HTTPPort, logger)
+	// The worker API is inert until a pool is registered: it authenticates every
+	// caller against a pool row, and no pool exists until the reconciler creates
+	// one. On the Jobs path nothing registers a pool, so every call is rejected.
+	leaseService := lease.NewService(lease.Config{
+		UnitOfWork:              uowFactory,
+		Commands:                cmdResolver,
+		Clock:                   ports.SystemClock{},
+		MaxConcurrentExecutions: cfg.MaxConcurrentExecutions,
+		LeaseTTL:                cfg.WorkerLeaseTTL,
+		RetryBackoff:            workerRetryBackoff,
+		Logger:                  logger,
+	})
+	workerPoolsRepo := postgres.NewWorkerPoolRepository(pgDB)
+	httpServer := http.NewServer(cfg.HTTPPort, http.WorkerAPIConfig{
+		Leases: leaseService,
+		Auth:   workerapi.NewAuthenticator(workerPoolsRepo),
+		Pools:  workerapi.NewPools(workerPoolsRepo, ports.SystemClock{}, logger),
+		Signer: s3.NewPresigner(
+			cfg.S3.EndpointURL, cfg.S3.Region,
+			cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey, logger),
+		Bucket:    cfg.S3.Bucket,
+		ClaimWait: cfg.WorkerClaimWait,
+		URLTTL:    signedURLTTL,
+	}, logger)
 
 	go func() {
-		if err := healthServer.Start(); err != nil {
-			logger.Error("Health server error", "error", err)
+		if err := httpServer.Start(); err != nil {
+			logger.Error("HTTP server error", "error", err)
 		}
 	}()
 
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		return healthServer.Shutdown(ctx)
+		return httpServer.Shutdown(ctx)
 	})
 
 	// ========================================================================

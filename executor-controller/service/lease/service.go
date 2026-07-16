@@ -32,6 +32,22 @@ import (
 // token unguessable, so holding one is proof of having claimed the task.
 const tokenBytes = 32
 
+// ErrPoolMismatch rejects a worker that holds a task's lease but authenticated
+// as a different pool than the task belongs to. Pools are per-service,
+// per-image, and per-credential, so a worker acting outside its own pool is
+// crossing a boundary whatever token it carries.
+//
+// It is checked after the lease fence, so a caller that does not hold the lease
+// is told only that its lease is stale and cannot use the distinction to
+// discover which tasks exist.
+var ErrPoolMismatch = errors.New("task belongs to another pool")
+
+// ErrCancelled tells the lease holder its task was cancelled and it must stop.
+// Cancelling a schedule does not reach a worker pod, so the heartbeat is the
+// only channel by which a running worker learns this; a worker that gets it
+// abandons the task rather than retrying.
+var ErrCancelled = errors.New("task was cancelled")
+
 // unretryableErrorClasses are the failures no rerun can fix: the task's runtime
 // artifact was rejected or could not be verified, or the dbt node it names cannot
 // be resolved to exactly one node. Retrying them burns the task's budget and
@@ -66,8 +82,10 @@ type Grant struct {
 	Command       command.DeployTask
 }
 
-// StartInput is a worker's report that its dbt process has started.
+// StartInput is a worker's report that its dbt process has started. PoolKey is
+// the pool the reporting worker authenticated as, which must own the task.
 type StartInput struct {
+	PoolKey      string
 	DeploymentID uuid.UUID
 	LeaseID      uuid.UUID
 	Token        string
@@ -75,6 +93,7 @@ type StartInput struct {
 
 // HeartbeatInput is a worker's request to extend the lease it holds.
 type HeartbeatInput struct {
+	PoolKey      string
 	DeploymentID uuid.UUID
 	LeaseID      uuid.UUID
 	Token        string
@@ -82,10 +101,27 @@ type HeartbeatInput struct {
 
 // CompleteInput is a worker's terminal report for the task it holds.
 type CompleteInput struct {
+	PoolKey      string
 	DeploymentID uuid.UUID
 	LeaseID      uuid.UUID
 	Token        string
 	Result       model.WorkerResult
+}
+
+// TaskInput asks for the identity of the task a lease holds.
+type TaskInput struct {
+	PoolKey      string
+	DeploymentID uuid.UUID
+	LeaseID      uuid.UUID
+	Token        string
+}
+
+// TaskRef is a task's own identity, read from its row. Callers derive a task's
+// result locations from this rather than from anything a worker sends, so a
+// worker cannot name a task it does not hold.
+type TaskRef struct {
+	PoolKey string
+	Command command.DeployTask
 }
 
 // Config wires a Service to its collaborators.
@@ -230,6 +266,46 @@ func (s *Service) rejectUnrunnable(
 	return nil
 }
 
+// authorize decides whether a worker's report may act on this task at all. The
+// lease fence runs first and dominates: a caller that does not hold the lease
+// learns only that its lease is stale, never whether the task exists or which
+// pool owns it. Only a caller holding the genuine lease is then checked against
+// the pool it authenticated as.
+//
+// Every lease-bearing transition fences again inside the aggregate; this is the
+// application's own check, and the one that adds pool ownership.
+func (s *Service) authorize(dep *model.Deployment, leaseID uuid.UUID, token, poolKey string) error {
+	if !dep.ActiveLease().Authorizes(leaseID, tokenHash(token)) {
+		return model.ErrStaleLease
+	}
+	if dep.PoolKey() != poolKey {
+		return ErrPoolMismatch
+	}
+	return nil
+}
+
+// Task returns the identity of the task a lease holds. It is the only way a
+// caller learns a task's schedule and task IDs, so the locations derived from
+// them describe the task the worker actually holds.
+func (s *Service) Task(ctx context.Context, in TaskInput) (TaskRef, error) {
+	var ref TaskRef
+	err := s.withTx(ctx, func(repo repository.DeploymentRepository, _ outbox.Repository) error {
+		dep, err := s.load(ctx, repo, in.DeploymentID)
+		if err != nil {
+			return err
+		}
+		if err := s.authorize(dep, in.LeaseID, in.Token, in.PoolKey); err != nil {
+			return err
+		}
+		ref = TaskRef{PoolKey: dep.PoolKey(), Command: dep.Command()}
+		return nil
+	})
+	if err != nil {
+		return TaskRef{}, err
+	}
+	return ref, nil
+}
+
 // Start records that the lease holder's dbt process is running and announces it.
 // A worker that retries a start report it never saw acknowledged neither errors
 // nor announces RUNNING twice.
@@ -237,6 +313,9 @@ func (s *Service) Start(ctx context.Context, in StartInput) error {
 	return s.withTx(ctx, func(repo repository.DeploymentRepository, outboxRepo outbox.Repository) error {
 		dep, err := s.load(ctx, repo, in.DeploymentID)
 		if err != nil {
+			return err
+		}
+		if err := s.authorize(dep, in.LeaseID, in.Token, in.PoolKey); err != nil {
 			return err
 		}
 		changed, err := dep.AcknowledgeStart(in.LeaseID, tokenHash(in.Token), s.clock.Now())
@@ -253,11 +332,21 @@ func (s *Service) Start(ctx context.Context, in StartInput) error {
 // Heartbeat extends the deadline of the lease its holder presents. Identical
 // repeated heartbeats are safe; a worker whose lease no longer holds the task is
 // fenced, so it cannot keep a reassigned task's lease alive.
+//
+// A heartbeat on a cancelled task returns ErrCancelled to the holder. Cancelling
+// a task releases its slot but does not stop the pod running it, so this is the
+// worker's only notice that its work is no longer wanted.
 func (s *Service) Heartbeat(ctx context.Context, in HeartbeatInput) error {
 	return s.withTx(ctx, func(repo repository.DeploymentRepository, _ outbox.Repository) error {
 		dep, err := s.load(ctx, repo, in.DeploymentID)
 		if err != nil {
 			return err
+		}
+		if err := s.authorize(dep, in.LeaseID, in.Token, in.PoolKey); err != nil {
+			return err
+		}
+		if dep.Status() == model.StatusCancelled {
+			return ErrCancelled
 		}
 		now := s.clock.Now()
 		if err := dep.Heartbeat(in.LeaseID, tokenHash(in.Token), now, now.Add(s.leaseTTL)); err != nil {
@@ -275,6 +364,9 @@ func (s *Service) Complete(ctx context.Context, in CompleteInput) error {
 	return s.withTx(ctx, func(repo repository.DeploymentRepository, outboxRepo outbox.Repository) error {
 		dep, err := s.load(ctx, repo, in.DeploymentID)
 		if err != nil {
+			return err
+		}
+		if err := s.authorize(dep, in.LeaseID, in.Token, in.PoolKey); err != nil {
 			return err
 		}
 		if in.Result.Succeeded {
