@@ -27,6 +27,13 @@ jobs:
     # default. The slow setup phase carries its own tighter cap below.
     timeout-minutes: 75
 
+    # The repo's default workflow token is restricted (contents/metadata/packages
+    # read only), which denies the pull-requests API that paths-filter uses to
+    # detect changed files on PR events — grant that scope explicitly.
+    permissions:
+      contents: read
+      pull-requests: read
+
     env:
       DOCKER_BUILDKIT: "1"
 
