@@ -441,10 +441,10 @@ func sharedVolumeMount() corev1.VolumeMount {
 // validationImagePullPolicy resolves the pull policy applied to both the
 // validation main container and the compile leg's s3-sidecar upload container.
 //
-// The default is PullAlways so the s3-sidecar (:latest, mutable tag) is
-// re-pulled when it is re-pushed to the registry. The SHA-pinned validation
-// image just receives a cheap digest check under PullAlways rather than a full
-// layer download.
+// The default is PullAlways so that when either image reference is a mutable
+// tag (the env-unset fallbacks are validation-runner:latest / s3-sidecar:latest)
+// a re-push is picked up on the next Job. When the Helm chart pins both images
+// to the release tag, PullAlways costs only a cheap digest check.
 //
 // e2e and local clusters side-load images directly into the node's image cache
 // and have no registry to pull from, so they set VALIDATION_IMAGE_PULL_POLICY
