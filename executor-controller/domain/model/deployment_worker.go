@@ -26,7 +26,9 @@ func (d *Deployment) ReserveForDispatch(now time.Time) error {
 
 // Claim gives a worker an exclusive, expiring hold on a due pending worker-mode
 // task and takes its execution slot. tokenSHA256 is the digest of the raw lease
-// token; the raw token stays with the claiming worker and is never stored.
+// token; the raw token stays with the claiming worker and is never stored. Each
+// claim counts one attempt against the task, so a requeued task's next lease
+// carries the higher attempt number.
 func (d *Deployment) Claim(
 	leaseID uuid.UUID,
 	tokenSHA256, owner, podName, podUID string,
@@ -46,10 +48,7 @@ func (d *Deployment) Claim(
 	if !path.Valid() || path == "" {
 		return fmt.Errorf("invalid execution path %q", path)
 	}
-	attempt := 1
-	if d.lease != nil {
-		attempt = d.lease.Attempt + 1
-	}
+	d.attempt++
 	d.status = StatusLeased
 	d.resolvedArgv = argv
 	d.executionPath = path
@@ -59,7 +58,7 @@ func (d *Deployment) Claim(
 		Owner:       owner,
 		PodName:     podName,
 		PodUID:      podUID,
-		Attempt:     attempt,
+		Attempt:     d.attempt,
 		ExpiresAt:   expiresAt,
 		HeartbeatAt: now,
 	}
@@ -87,12 +86,14 @@ func (d *Deployment) AcknowledgeStart(leaseID uuid.UUID, tokenSHA256 string, now
 	return true, nil
 }
 
-// Heartbeat extends the current lease's deadline. Callers verify the lease
-// holder's identity before calling. An expiry that would pull the deadline in is
-// rejected so a delayed heartbeat cannot shorten a live lease.
-func (d *Deployment) Heartbeat(now, expiresAt time.Time) error {
-	if d.lease == nil {
-		return fmt.Errorf("deployment %s holds no lease to extend", d.id)
+// Heartbeat extends the current lease's deadline for the worker holding it. A
+// caller whose lease no longer holds the task is fenced with ErrStaleLease, so a
+// superseded worker cannot keep a reassigned task's lease alive. An expiry that
+// would pull the deadline in is rejected so a delayed heartbeat cannot shorten a
+// live lease.
+func (d *Deployment) Heartbeat(leaseID uuid.UUID, tokenSHA256 string, now, expiresAt time.Time) error {
+	if !d.lease.authorizes(leaseID, tokenSHA256) {
+		return ErrStaleLease
 	}
 	if d.status != StatusLeased && d.status != StatusRunning {
 		return fmt.Errorf("cannot heartbeat deployment %s in status %q", d.id, d.status)
@@ -135,9 +136,41 @@ func (d *Deployment) Complete(leaseID uuid.UUID, tokenSHA256 string, result Work
 	return nil
 }
 
+// ReportFailure applies the lease holder's failed terminal report. retryable
+// selects the transition: a retryable failure parks the task for requeue after
+// backoff, a permanent one fails it and records the report for audit. Both
+// release the task's execution slot. A caller whose lease no longer holds the
+// task is fenced with ErrStaleLease, so a superseded worker cannot drop the
+// current holder's lease or free the slot that holder occupies.
+func (d *Deployment) ReportFailure(
+	leaseID uuid.UUID,
+	tokenSHA256 string,
+	result WorkerResult,
+	retryable bool,
+	now time.Time,
+	backoff time.Duration,
+) error {
+	if !d.lease.authorizes(leaseID, tokenSHA256) {
+		return ErrStaleLease
+	}
+	if result.Succeeded {
+		return fmt.Errorf("ReportFailure requires a failed result for deployment %s", d.id)
+	}
+	if retryable {
+		return d.MarkRetryPending(now, backoff)
+	}
+	if err := d.MarkFailed(now, result.ErrorMessage); err != nil {
+		return err
+	}
+	res := result
+	d.terminalResult = &res
+	return nil
+}
+
 // MarkRetryPending parks a worker task that failed retryably, or whose lease
 // expired, for requeue after backoff and releases its execution slot in the same
-// transition. The lease is dropped so the next attempt claims a fresh one.
+// transition. The lease is dropped so the next attempt claims a fresh one. It is
+// unfenced: the lease reaper and cancellation drive it holding no worker token.
 func (d *Deployment) MarkRetryPending(now time.Time, backoff time.Duration) error {
 	if d.status.terminal() {
 		return fmt.Errorf("cannot retry deployment %s from terminal status %q", d.id, d.status)
@@ -150,7 +183,8 @@ func (d *Deployment) MarkRetryPending(now time.Time, backoff time.Duration) erro
 }
 
 // MarkFailed drives a worker task to a permanent failure and releases its
-// execution slot in the same transition.
+// execution slot in the same transition. It is unfenced: the lease reaper and
+// cancellation drive it holding no worker token.
 func (d *Deployment) MarkFailed(now time.Time, reason string) error {
 	if d.status.terminal() {
 		return fmt.Errorf("cannot fail deployment %s from terminal status %q", d.id, d.status)
@@ -199,6 +233,10 @@ func (d *Deployment) PoolKey() string               { return d.poolKey }
 func (d *Deployment) ResolvedArgv() []string        { return d.resolvedArgv }
 func (d *Deployment) ExecutionPath() ExecutionPath  { return d.executionPath }
 func (d *Deployment) Reservation() Reservation      { return d.reservation }
+
+// Attempt reports how many times a worker has claimed this task. It survives the
+// lease being dropped between attempts, so a requeued task keeps counting up.
+func (d *Deployment) Attempt() int { return d.attempt }
 func (d *Deployment) TerminalResult() *WorkerResult { return d.terminalResult }
 
 // ActiveLease returns the lease currently held on this Deployment, or nil when

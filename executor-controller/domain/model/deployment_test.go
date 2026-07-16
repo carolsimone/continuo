@@ -92,6 +92,55 @@ func TestRegisterFailure_PermanentFailsImmediately(t *testing.T) {
 	assert.Equal(t, model.StatusFailed, d.Status())
 }
 
+// TestRegisterFailure_ReschedulingReleasesSlotAndRequeues pins that a dispatch
+// that reserved a slot and then hit a transient error hands the slot back and
+// returns to a status the dispatcher polls, rather than parking in 'dispatching'
+// against the executor's capacity forever.
+func TestRegisterFailure_ReschedulingReleasesSlotAndRequeues(t *testing.T) {
+	now := time.Now()
+	d := model.NewDeployment(deployableCmd(), nil, now)
+	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 2 * time.Minute}
+	require.NoError(t, d.ReserveForDispatch(now))
+
+	terminal := d.RegisterFailure(now, false, "apiserver down", backoff)
+
+	assert.False(t, terminal)
+	assert.Equal(t, model.StatusPending, d.Status(), "requeueable by the due-jobs query")
+	require.NotNil(t, d.SlotReleasedAt(), "the failed attempt hands its slot back")
+	assert.Equal(t, now, *d.SlotReleasedAt())
+}
+
+// TestRegisterFailure_TerminalReleasesSlot pins that a permanently failed
+// dispatch hands back the slot it reserved; nothing downstream releases it,
+// because a Job that never launched reports no terminal status.
+func TestRegisterFailure_TerminalReleasesSlot(t *testing.T) {
+	now := time.Now()
+	d := model.NewDeployment(deployableCmd(), nil, now)
+	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 2 * time.Minute}
+	require.NoError(t, d.ReserveForDispatch(now))
+
+	terminal := d.RegisterFailure(now, true, "invalid node type", backoff)
+
+	assert.True(t, terminal)
+	assert.Equal(t, model.StatusFailed, d.Status())
+	require.NotNil(t, d.SlotReleasedAt())
+	assert.Equal(t, now, *d.SlotReleasedAt())
+}
+
+// TestRegisterFailure_WithoutReservationHoldsNoSlot keeps the released-implies-
+// reserved invariant: a deployment that failed before reserving a slot records
+// no release.
+func TestRegisterFailure_WithoutReservationHoldsNoSlot(t *testing.T) {
+	now := time.Now()
+	d := model.NewDeployment(deployableCmd(), nil, now)
+	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 2 * time.Minute}
+
+	d.RegisterFailure(now, false, "apiserver down", backoff)
+
+	assert.Nil(t, d.Reservation().ReservedAt)
+	assert.Nil(t, d.SlotReleasedAt(), "nothing to release")
+}
+
 func validationCmd() command.ValidationDeployTask {
 	return command.ValidationDeployTask{
 		ReleaseID: uuid.New().String(), NodeID: uuid.New().String(),

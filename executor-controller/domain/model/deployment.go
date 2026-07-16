@@ -92,11 +92,15 @@ type Deployment struct {
 	// deployment that reaches dbt through a per-task Kubernetes Job; the fields
 	// below it are populated only on the workers path, as a worker claims and
 	// runs the task.
-	executionMode  ExecutionMode
-	poolKey        string
-	resolvedArgv   []string
-	executionPath  ExecutionPath
-	reservation    Reservation
+	executionMode ExecutionMode
+	poolKey       string
+	resolvedArgv  []string
+	executionPath ExecutionPath
+	reservation   Reservation
+	// attempt counts the claims a worker has taken on this task. It lives on the
+	// Deployment rather than the Lease because a requeue drops the lease, and the
+	// count must carry across to the next attempt; Lease.Attempt projects it.
+	attempt        int
 	lease          *Lease
 	terminalResult *WorkerResult
 
@@ -226,6 +230,7 @@ type ReconstituteInput struct {
 	ResolvedArgv        []string
 	ExecutionPath       ExecutionPath
 	Reservation         Reservation
+	Attempt             int
 	Lease               *Lease
 	Outcome             string
 	DBTLogURI           string
@@ -255,6 +260,7 @@ func Reconstitute(in ReconstituteInput) *Deployment {
 		resolvedArgv:        in.ResolvedArgv,
 		executionPath:       in.ExecutionPath,
 		reservation:         in.Reservation,
+		attempt:             in.Attempt,
 		lease:               in.Lease,
 		terminalResult:      in.TerminalResult,
 		outcome:             in.Outcome,
@@ -306,17 +312,23 @@ func (d *Deployment) MarkDeployed(now time.Time) error {
 
 // RegisterFailure records a failed deploy attempt and applies the retry policy.
 // When the failure is transient and the attempt budget is not yet exhausted it
-// reschedules (bumps retryCount, pushes nextAttemptAt) and returns terminal=false.
-// Otherwise it marks the Deployment failed and returns terminal=true.
+// reschedules (returns the Deployment to pending, bumps retryCount, pushes
+// nextAttemptAt) and returns terminal=false. Otherwise it marks the Deployment
+// failed and returns terminal=true. Either way the attempt's hold on the
+// executor's capacity ends, so both branches release any execution slot the
+// Deployment reserved.
 func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason string, backoff BackoffPolicy) (terminal bool) {
 	msg := reason
 	d.errorMessage = &msg
 	if !permanent && d.retryCount+1 < d.maxRetries {
 		d.nextAttemptAt = now.Add(backoff.delay(d.retryCount))
 		d.retryCount++
+		d.status = StatusPending
+		d.releaseSlot(now)
 		return false
 	}
 	d.status = StatusFailed
+	d.releaseSlot(now)
 	return true
 }
 

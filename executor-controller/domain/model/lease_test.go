@@ -174,9 +174,9 @@ func TestAcknowledgeStart_FencesStaleLease(t *testing.T) {
 }
 
 func TestHeartbeat_ExtendsExpiry(t *testing.T) {
-	dep, _, _ := claimed(t)
+	dep, token, leaseID := claimed(t)
 
-	require.NoError(t, dep.Heartbeat(time.Unix(60, 0), time.Unix(120, 0)))
+	require.NoError(t, dep.Heartbeat(leaseID, sha256Hex(token), time.Unix(60, 0), time.Unix(120, 0)))
 	assert.Equal(t, time.Unix(120, 0), dep.ActiveLease().ExpiresAt)
 	assert.Equal(t, time.Unix(60, 0), dep.ActiveLease().HeartbeatAt)
 	assert.Equal(t, model.StatusLeased, dep.Status(), "a heartbeat is not a state change")
@@ -187,7 +187,7 @@ func TestHeartbeat_AllowedWhileRunning(t *testing.T) {
 	_, err := dep.AcknowledgeStart(leaseID, sha256Hex(token), time.Unix(21, 0))
 	require.NoError(t, err)
 
-	require.NoError(t, dep.Heartbeat(time.Unix(60, 0), time.Unix(120, 0)))
+	require.NoError(t, dep.Heartbeat(leaseID, sha256Hex(token), time.Unix(60, 0), time.Unix(120, 0)))
 	assert.Equal(t, model.StatusRunning, dep.Status())
 }
 
@@ -196,17 +196,36 @@ func TestHeartbeat_RejectedOnTerminalDeployment(t *testing.T) {
 	require.NoError(t, dep.Complete(leaseID, sha256Hex(token),
 		model.WorkerResult{Succeeded: true}, time.Unix(30, 0)))
 
-	require.Error(t, dep.Heartbeat(time.Unix(60, 0), time.Unix(120, 0)),
-		"a finished task holds no lease to extend")
+	require.Error(t, dep.Heartbeat(leaseID, sha256Hex(token), time.Unix(60, 0), time.Unix(120, 0)),
+		"a finished task's lease is not extended")
 }
 
 func TestHeartbeat_NeverShortensExpiry(t *testing.T) {
-	dep, _, _ := claimed(t)
+	dep, token, leaseID := claimed(t)
 
-	require.NoError(t, dep.Heartbeat(time.Unix(60, 0), time.Unix(120, 0)))
-	require.Error(t, dep.Heartbeat(time.Unix(61, 0), time.Unix(90, 0)),
+	require.NoError(t, dep.Heartbeat(leaseID, sha256Hex(token), time.Unix(60, 0), time.Unix(120, 0)))
+	require.Error(t, dep.Heartbeat(leaseID, sha256Hex(token), time.Unix(61, 0), time.Unix(90, 0)),
 		"an out-of-order heartbeat must not pull the expiry back in")
 	assert.Equal(t, time.Unix(120, 0), dep.ActiveLease().ExpiresAt)
+}
+
+func TestHeartbeat_FencesStaleLease(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+
+	assert.ErrorIs(t, dep.Heartbeat(uuid.New(), sha256Hex(token), time.Unix(60, 0), time.Unix(120, 0)),
+		model.ErrStaleLease, "a different lease ID is stale")
+	assert.ErrorIs(t, dep.Heartbeat(leaseID, sha256Hex("stale"), time.Unix(60, 0), time.Unix(120, 0)),
+		model.ErrStaleLease, "a wrong token is stale")
+	assert.Equal(t, time.Unix(80, 0), dep.ActiveLease().ExpiresAt,
+		"a superseded worker cannot extend the holder's lease")
+	assert.Equal(t, time.Unix(20, 0), dep.ActiveLease().HeartbeatAt)
+}
+
+func TestHeartbeat_RequiresLease(t *testing.T) {
+	dep := model.NewWorkerDeployment(deployableCmd(), uuid.Nil, poolFixture(), time.Unix(10, 0))
+
+	assert.ErrorIs(t, dep.Heartbeat(uuid.New(), sha256Hex("t"), time.Unix(60, 0), time.Unix(120, 0)),
+		model.ErrStaleLease, "an unclaimed task has no lease to extend")
 }
 
 func TestComplete_RecordsTerminalResultAndReleasesSlot(t *testing.T) {
@@ -389,5 +408,96 @@ func TestWorkerTransitions_RejectedOnJobsDeployment(t *testing.T) {
 		model.WorkerResult{Succeeded: true}, time.Unix(30, 0)), model.ErrStaleLease)
 	_, err := dep.AcknowledgeStart(uuid.New(), sha256Hex("t"), time.Unix(30, 0))
 	assert.ErrorIs(t, err, model.ErrStaleLease)
-	require.Error(t, dep.Heartbeat(time.Unix(30, 0), time.Unix(90, 0)))
+	assert.ErrorIs(t, dep.Heartbeat(uuid.New(), sha256Hex("t"), time.Unix(30, 0), time.Unix(90, 0)),
+		model.ErrStaleLease)
+}
+
+// TestClaim_CountsAttemptsAcrossRequeue pins that the attempt counter survives
+// the requeue that drops the lease, so a re-claimed task's lease reports the
+// higher attempt. Because the counter lives on the Deployment and not the Lease,
+// the second claim reads it back even though no lease bridges the two attempts.
+func TestClaim_CountsAttemptsAcrossRequeue(t *testing.T) {
+	dep, _, _ := claimed(t)
+	assert.Equal(t, 1, dep.Attempt(), "the first claim is attempt 1")
+	assert.Equal(t, 1, dep.ActiveLease().Attempt, "the lease projects the counter")
+
+	require.NoError(t, dep.MarkRetryPending(time.Unix(90, 0), 30*time.Second))
+	require.Nil(t, dep.ActiveLease(), "the requeue drops the lease")
+
+	// The state the parked task is served from once its backoff elapses: pending
+	// again, holding the attempts it already spent and no lease.
+	requeued := model.Reconstitute(model.ReconstituteInput{
+		ID: dep.ID(), Mode: model.ModeProduction, Command: deployableCmd(),
+		Status: model.StatusPending, RetryCount: dep.RetryCount(), MaxRetries: dep.MaxRetries(),
+		NextAttemptAt: dep.NextAttemptAt(), CreatedAt: time.Unix(10, 0),
+		ExecutionMode: model.ExecutionModeWorkers, PoolKey: poolFixture(),
+		Reservation: dep.Reservation(), Attempt: dep.Attempt(),
+	})
+
+	token := strings.Repeat("2", 64)
+	require.NoError(t, requeued.Claim(uuid.New(), sha256Hex(token), "worker-2", "pod-b", "uid-b",
+		time.Unix(130, 0), time.Unix(190, 0), argvFixture(), model.ExecutionPathNative))
+
+	assert.Equal(t, 2, requeued.Attempt(), "the re-claim is attempt 2")
+	assert.Equal(t, 2, requeued.ActiveLease().Attempt)
+}
+
+func TestReportFailure_RetryableParksForRequeue(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+	result := model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"}
+
+	require.NoError(t, dep.ReportFailure(leaseID, sha256Hex(token), result, true,
+		time.Unix(90, 0), 30*time.Second))
+
+	assert.Equal(t, model.StatusRetryPending, dep.Status())
+	assert.Equal(t, time.Unix(120, 0), dep.NextAttemptAt())
+	assert.Equal(t, time.Unix(90, 0), *dep.SlotReleasedAt())
+	assert.Nil(t, dep.ActiveLease())
+}
+
+func TestReportFailure_PermanentFailsAndRecordsResult(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+	result := model.WorkerResult{
+		Succeeded:    false,
+		ErrorClass:   "dbt_unique_id_not_found",
+		ErrorMessage: "node orders not in manifest",
+	}
+
+	require.NoError(t, dep.ReportFailure(leaseID, sha256Hex(token), result, false,
+		time.Unix(90, 0), 30*time.Second))
+
+	assert.Equal(t, model.StatusFailed, dep.Status())
+	assert.Equal(t, "node orders not in manifest", *dep.ErrorMessage())
+	assert.Equal(t, time.Unix(90, 0), *dep.SlotReleasedAt())
+	require.NotNil(t, dep.TerminalResult())
+	assert.Equal(t, result, *dep.TerminalResult())
+}
+
+// TestReportFailure_FencesStaleLease pins the boundary a superseded worker must
+// not cross: reporting a failure on a task that was reaped and re-claimed must
+// not drop the new holder's lease or free the slot it still occupies.
+func TestReportFailure_FencesStaleLease(t *testing.T) {
+	dep, holderToken, holderLeaseID := claimed(t)
+
+	// The report a worker whose lease was reaped and reassigned sends in.
+	stale := model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "stale report"}
+	assert.ErrorIs(t, dep.ReportFailure(uuid.New(), sha256Hex(holderToken), stale, true,
+		time.Unix(140, 0), 30*time.Second), model.ErrStaleLease, "a different lease ID is stale")
+	assert.ErrorIs(t, dep.ReportFailure(holderLeaseID, sha256Hex("stale"), stale, false,
+		time.Unix(140, 0), 30*time.Second), model.ErrStaleLease, "a wrong token is stale")
+
+	assert.Equal(t, model.StatusLeased, dep.Status(), "a fenced report drives no transition")
+	require.NotNil(t, dep.ActiveLease(), "the current holder keeps its lease")
+	assert.Equal(t, holderLeaseID, dep.ActiveLease().ID)
+	assert.Nil(t, dep.SlotReleasedAt(), "the holder still occupies its slot")
+}
+
+func TestReportFailure_RequiresFailedResult(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+
+	err := dep.ReportFailure(leaseID, sha256Hex(token), model.WorkerResult{Succeeded: true}, false,
+		time.Unix(90, 0), 30*time.Second)
+	require.Error(t, err, "a succeeded result travels through Complete")
+	assert.NotErrorIs(t, err, model.ErrStaleLease)
+	assert.Equal(t, model.StatusLeased, dep.Status())
 }
