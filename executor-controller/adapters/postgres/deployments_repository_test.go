@@ -147,6 +147,51 @@ func TestRepo_GetDueJobs_OnlyDueRowsOldestFirst(t *testing.T) {
 	assert.Equal(t, past2, deployments[1].ID())
 }
 
+// TestRepo_Save_ResolvedExecutionIsWriteOnce pins that once a task's argv and
+// execution path are stored, later Saves cannot replace them. They record what
+// the task was actually attempted with, so a config reload between attempts must
+// not rewrite the command of a task already resolved under the old config.
+func TestRepo_Save_ResolvedExecutionIsWriteOnce(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	ctx := context.Background()
+
+	now := time.Now()
+	dep := model.NewDeployment(validCmd(), nil, now)
+	require.NoError(t, repo.Add(ctx, dep))
+
+	first := model.Reconstitute(model.ReconstituteInput{
+		ID: dep.ID(), Mode: dep.Mode(), Command: dep.Command(),
+		Status: dep.Status(), RetryCount: dep.RetryCount(), MaxRetries: dep.MaxRetries(),
+		NextAttemptAt: dep.NextAttemptAt(), CreatedAt: dep.CreatedAt(),
+		ExecutionMode: dep.ExecutionMode(),
+		ResolvedArgv:  []string{"dbt", "run", "--select", "orders"},
+		ExecutionPath: model.ExecutionPathNative,
+	})
+	require.NoError(t, repo.Save(ctx, first))
+
+	// A second Save carrying a different resolution must not land.
+	second := model.Reconstitute(model.ReconstituteInput{
+		ID: dep.ID(), Mode: dep.Mode(), Command: dep.Command(),
+		Status: dep.Status(), RetryCount: dep.RetryCount(), MaxRetries: dep.MaxRetries(),
+		NextAttemptAt: dep.NextAttemptAt(), CreatedAt: dep.CreatedAt(),
+		ExecutionMode: dep.ExecutionMode(),
+		ResolvedArgv:  []string{"uv", "run", "dbt", "run", "--select", "customers"},
+		ExecutionPath: model.ExecutionPathWrapperRequired,
+	})
+	require.NoError(t, repo.Save(ctx, second))
+
+	var argv []byte
+	var path *string
+	require.NoError(t, db.QueryRow(
+		`SELECT resolved_argv, execution_path FROM executor_deployments WHERE id=$1`, dep.ID(),
+	).Scan(&argv, &path))
+	assert.JSONEq(t, `["dbt","run","--select","orders"]`, string(argv), "argv is write-once")
+	require.NotNil(t, path)
+	assert.Equal(t, string(model.ExecutionPathNative), *path, "execution_path is write-once")
+}
+
 func TestRepo_Save_MarkDeployed(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()

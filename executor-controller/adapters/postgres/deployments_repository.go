@@ -163,11 +163,16 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 	}
 	lease := newLeaseRow(d.ActiveLease())
 
+	// resolved_argv and execution_path are write-once: they record what a task was
+	// actually attempted with, so once stored they must survive every later Save.
+	// COALESCE keeps the first non-NULL value, which means a config reload cannot
+	// change the argv or path of a task that has already been resolved.
 	const query = `
 		UPDATE executor_deployments
 		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6,
 		    outcome = $7, dbt_log_uri = $8, outcome_at = $9, run_results_uri = $10,
-		    execution_mode = $11, pool_key = $12, resolved_argv = $13, execution_path = $14,
+		    execution_mode = $11, pool_key = $12,
+		    resolved_argv = COALESCE(resolved_argv, $13), execution_path = COALESCE(execution_path, $14),
 		    slot_reserved_at = $15, slot_released_at = $16,
 		    lease_id = $17, lease_token_sha256 = $18, lease_owner = $19,
 		    lease_pod_name = $20, lease_pod_uid = $21, attempt = $22,
