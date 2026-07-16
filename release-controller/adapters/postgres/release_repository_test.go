@@ -328,6 +328,95 @@ func TestReleaseRepository_DeleteResolvedBeforeEmptyKeepSlice(t *testing.T) {
 	assert.Nil(t, gone)
 }
 
+// TestReleaseRepository_Load_ReturnsRow verifies that Load returns the same
+// row content as Get for an existing release.
+func TestReleaseRepository_Load_ReturnsRow(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db, nil)
+	ctx := context.Background()
+	r := release.New("rLoad", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	txRepo := postgres.NewReleaseRepository(tx, nil)
+
+	got, err := txRepo.Load(ctx, "rLoad")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "rLoad", got.ID())
+	assert.Equal(t, release.StatusReceived, got.Status())
+	assert.Equal(t, "svc", got.ChangedService())
+}
+
+// TestReleaseRepository_Load_ReturnsNilForMissingRow verifies Load matches
+// Get's absent-row behaviour (nil, nil error) rather than surfacing
+// sql.ErrNoRows.
+func TestReleaseRepository_Load_ReturnsNilForMissingRow(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	txRepo := postgres.NewReleaseRepository(tx, nil)
+
+	got, err := txRepo.Load(ctx, "does-not-exist")
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+// TestReleaseRepository_Load_BlocksConcurrentLoad verifies that Load's
+// FOR UPDATE lock serializes a second transaction's Load on the same row:
+// it must not observe the row until the first transaction commits.
+func TestReleaseRepository_Load_BlocksConcurrentLoad(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db, nil)
+	ctx := context.Background()
+	r := release.New("rLock", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+
+	tx1, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx1.Rollback() }()
+	repo1 := postgres.NewReleaseRepository(tx1, nil)
+	got1, err := repo1.Load(ctx, "rLock")
+	require.NoError(t, err)
+	require.NotNil(t, got1)
+
+	unblocked := make(chan struct{})
+	go func() {
+		tx2, err := db.BeginTxx(ctx, nil)
+		if !assert.NoError(t, err) {
+			return
+		}
+		defer func() { _ = tx2.Rollback() }()
+		repo2 := postgres.NewReleaseRepository(tx2, nil)
+		_, err = repo2.Load(ctx, "rLock")
+		if !assert.NoError(t, err) {
+			return
+		}
+		close(unblocked)
+	}()
+
+	select {
+	case <-unblocked:
+		t.Fatal("second Load must block while the first transaction holds the row lock")
+	case <-time.After(300 * time.Millisecond):
+		// expected: still blocked
+	}
+
+	require.NoError(t, tx1.Commit())
+
+	select {
+	case <-unblocked:
+		// expected: unblocks once tx1 commits
+	case <-time.After(5 * time.Second):
+		t.Fatal("second Load did not unblock after the first transaction committed")
+	}
+}
+
 func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db, nil)

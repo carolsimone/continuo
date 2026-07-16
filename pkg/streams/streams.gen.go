@@ -44,10 +44,10 @@ const (
 	ManifestLoadedCandidateV1 = "manifest.loaded.candidate:v1"
 	// ValidationRequestedV1 — dbt --empty validation run requested by release-controller; executor-controller dispatches per-node jobs.
 	ValidationRequestedV1 = "validation.requested:v1"
-	// ValidationNodeCompletedV1 — Per-node validation Job terminal status from k8s-controller back to executor-controller; aggregated into validation.completed:v1.
+	// ValidationNodeCompletedV1 — Per-node validation Job terminal status from k8s-controller back to executor-controller; settled into the validation.result:v1 stream (per-node kind=node, plus the terminal kind=complete once all nodes settle).
 	ValidationNodeCompletedV1 = "validation.node.completed:v1"
-	// ValidationCompletedV1 — Per-node validation results from executor-controller back to release-controller.
-	ValidationCompletedV1 = "validation.completed:v1"
+	// ValidationResultV1 — Unified validation-leg stream from executor-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. executor-controller drops the candidate schema on complete.
+	ValidationResultV1 = "validation.result:v1"
 	// SeedBuildRequestedV1 — release-controller requests candidate seed builds; executor dispatches per-seed team-image jobs.
 	SeedBuildRequestedV1 = "seed.build.requested:v1"
 	// SeedBuildNodeCompletedV1 — per-seed build terminal status from k8s-controller back to executor-controller.
@@ -120,10 +120,10 @@ const (
 	ExecutorValidationRequested = "executor-validation-requested"
 	// ExecutorValidationNodeCompleted — executor-controller consumer group on validation.node.completed:v1.
 	ExecutorValidationNodeCompleted = "executor-validation-node-completed"
-	// ReleaseControllerValidationCompleted — release-controller consumer group on validation.completed:v1.
-	ReleaseControllerValidationCompleted = "release-controller-validation-completed"
-	// ExecutorValidationCompleted — executor-controller consumer group on validation.completed:v1.
-	ExecutorValidationCompleted = "executor-validation-completed"
+	// ReleaseControllerValidationResult — release-controller consumer group on validation.result:v1.
+	ReleaseControllerValidationResult = "release-controller-validation-result"
+	// ExecutorValidationResultTeardown — executor-controller consumer group on validation.result:v1.
+	ExecutorValidationResultTeardown = "executor-validation-result-teardown"
 	// ExecutorSeedBuildRequested — executor-controller consumer group on seed.build.requested:v1.
 	ExecutorSeedBuildRequested = "executor-seed-build-requested"
 	// ExecutorSeedBuildNodeCompleted — executor-controller consumer group on seed.build.node.completed:v1.
@@ -174,7 +174,7 @@ var All = []string{
 	ManifestLoadedCandidateV1,
 	ValidationRequestedV1,
 	ValidationNodeCompletedV1,
-	ValidationCompletedV1,
+	ValidationResultV1,
 	SeedBuildRequestedV1,
 	SeedBuildNodeCompletedV1,
 	SeedBuildCompletedV1,

@@ -2,6 +2,7 @@ package deployer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -76,8 +77,18 @@ func (r *fakeDeploymentRepo) Save(_ context.Context, d *model.Deployment) error 
 	r.saved = append(r.saved, d)
 	return nil
 }
-func (r *fakeDeploymentRepo) GetByReleaseNode(context.Context, string, string, model.Mode) (*model.Deployment, error) {
-	return nil, nil
+// GetByReleaseNode returns the most recently Saved row matching nodeID,
+// mirroring production's within-transaction read-after-write (SettleNodeTerminal
+// fetches the just-settled node right after the dispatcher Saves its terminal
+// outcome). A miss returns sql.ErrNoRows, matching the real repository's
+// contract — it never returns (nil, nil).
+func (r *fakeDeploymentRepo) GetByReleaseNode(_ context.Context, _ string, nodeID string, _ model.Mode) (*model.Deployment, error) {
+	for i := len(r.saved) - 1; i >= 0; i-- {
+		if r.saved[i].NodeID() == nodeID {
+			return r.saved[i], nil
+		}
+	}
+	return nil, sql.ErrNoRows
 }
 func (r *fakeDeploymentRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
 	r.calls = append(r.calls, "PendingValidationCount")
@@ -229,8 +240,11 @@ func TestDispatcher_DispatchOne_ValidationMode_OnPermanentFailure_RecordsOutcome
 	assert.Equal(t, model.StatusFailed, repo.saved[0].Status(), "permanent deploy failure is terminal")
 	assert.Equal(t, "failed", repo.saved[0].Outcome(), "terminal outcome recorded as failed")
 	assert.Equal(t, 1, agg.claimCalls, "aggregate emit attempted once last node is terminal")
-	require.Len(t, outboxRepo.created, 1, "aggregate validation.completed:v1 row written")
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
+	// SettleNodeTerminal writes two rows: the per-node projection for this node,
+	// then (since it is also the release's last pending node) the aggregate.
+	require.Len(t, outboxRepo.created, 2, "per-node projection + aggregate validation.result:v1 (kind=complete) row written")
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
 }
 
 func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGate(t *testing.T) {
@@ -263,9 +277,11 @@ func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGa
 	require.GreaterOrEqual(t, saveIdx, 0, "Save was called")
 	require.GreaterOrEqual(t, countIdx, 0, "gate counted pending")
 	assert.Less(t, saveIdx, countIdx, "outcome is persisted before the aggregate gate counts pending")
-	// And with no other nodes pending, the aggregate fires.
-	require.Len(t, outboxRepo.created, 1, "aggregate validation.completed:v1 emitted for the last (failed) node")
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
+	// And with no other nodes pending, the aggregate fires — alongside the
+	// per-node projection SettleNodeTerminal always writes for the settled node.
+	require.Len(t, outboxRepo.created, 2, "aggregate validation.result:v1 (kind=complete) emitted for the last (failed) node")
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
 }
 
 func indexOf(s []string, v string) int {
@@ -380,8 +396,19 @@ func TestDispatcher_DispatchValidation_FailAtDispatch_SkipsDescendant_EmitsAggre
 	assert.Equal(t, "failed", repo.nodes["node_a"].Outcome())
 	assert.Equal(t, model.StatusSkipped, repo.statusOf("node_b"), "B skipped — its only upstream A failed")
 
-	require.Len(t, outboxRepo.created, 1, "validation.completed aggregate emitted")
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
+	// SettleNodeTerminal writes the per-node projection for node_a, then a per-node
+	// projection for node_b (which was skipped by the propagation and never settles
+	// on its own — it still needs a projection so the read model is complete), then
+	// (no nodes left pending) the aggregate.
+	require.Len(t, outboxRepo.created, 3, "node_a projection + node_b skip projection + validation.completed aggregate emitted")
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[2].StreamName)
+
+	var skipProjection map[string]any
+	require.NoError(t, json.Unmarshal(outboxRepo.created[1].Payload, &skipProjection))
+	assert.Equal(t, "node_b", skipProjection["node_id"])
+	assert.Equal(t, "skipped", skipProjection["status"], "the skipped descendant projects status skipped")
 }
 
 // --- Task 14: aggregate-emit gate (validation.EmitValidationAggregateIfComplete) -
@@ -433,31 +460,24 @@ func TestMaybeEmit_EmitsAggregateOk_WhenAllOutcomesOk(t *testing.T) {
 	e := outboxRepo.created[0]
 	assert.Equal(t, "release", e.AggregateType)
 	assert.Equal(t, "validation_completed", e.EventType)
-	assert.Equal(t, streams.ValidationCompletedV1, e.StreamName)
+	assert.Equal(t, streams.ValidationResultV1, e.StreamName)
 
+	// The terminal validation.result:v1 (kind=complete) row carries only the
+	// decision. Per-node content (including dbt_log_uri) reaches
+	// release-controller through the same stream's separate kind=node projection
+	// rows, so it must not appear on this event.
 	var payload struct {
 		ReleaseID       string `json:"release_id"`
 		AggregateStatus string `json:"aggregate_status"`
-		PerNodeResults  []struct {
-			NodeID    string `json:"node_id"`
-			Status    string `json:"status"`
-			DBTLogURI string `json:"dbt_log_uri"`
-		} `json:"per_node_results"`
 	}
 	require.NoError(t, json.Unmarshal(e.Payload, &payload))
 	assert.Equal(t, "rel_1", payload.ReleaseID)
 	assert.Equal(t, "ok", payload.AggregateStatus)
-	require.Len(t, payload.PerNodeResults, 2)
-	assert.Equal(t, "s3://logs/a", payload.PerNodeResults[0].DBTLogURI)
-	assert.Equal(t, "", payload.PerNodeResults[1].DBTLogURI, "empty log uri omitted -> decodes to zero value")
 
-	// omitempty: the node with no log produces no dbt_log_uri key at all.
-	var raw struct {
-		PerNodeResults []map[string]any `json:"per_node_results"`
-	}
+	var raw map[string]any
 	require.NoError(t, json.Unmarshal(e.Payload, &raw))
-	_, present := raw.PerNodeResults[1]["dbt_log_uri"]
-	assert.False(t, present, "absent log uri key omitted")
+	_, present := raw["per_node_results"]
+	assert.False(t, present, "terminal event must not re-carry per-node content")
 }
 
 func TestMaybeEmit_EmitsAggregateFailed_WhenAnyOutcomeFailed(t *testing.T) {

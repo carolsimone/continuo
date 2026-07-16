@@ -18,10 +18,11 @@ import (
 //
 // candidate_schema is always present on release.promoted (set by
 // handle_validation_result.go). For normal validation releases the schema is
-// already torn down by validation.completed (via NewValidationCompletedTeardownBinding),
-// so DropCandidateSchema here is a no-op (idempotent drop of a schema that no
-// longer exists). For the seed-only zero-validation path (seed-build only,
-// no validation.completed fires) this binding performs the live teardown.
+// already torn down by the validation.result:v1 terminal row (via
+// NewValidationResultTeardownBinding), so DropCandidateSchema here is a no-op
+// (idempotent drop of a schema that no longer exists). For the seed-only
+// zero-validation path (seed-build only, no validation terminal row fires)
+// this binding performs the live teardown.
 //
 // Teardown is best-effort: a parse or cleaner failure is logged and the message
 // is ACKed (returns nil), because a leftover candidate schema must never block
@@ -67,8 +68,8 @@ func newReleaseTerminalTeardownBinding(label string, cleaner ports.CandidateSche
 
 // NewReleaseRejectedTeardownBinding returns a pkg/redis.MessageHandler that
 // consumes release.rejected:v1 and drops the release's candidate schema if
-// present. Mirrors NewValidationCompletedTeardownBinding for the failed
-// seed-build terminal path.
+// present. Mirrors NewValidationResultTeardownBinding's terminal-row teardown
+// for the failed seed-build path.
 func NewReleaseRejectedTeardownBinding(cleaner ports.CandidateSchemaCleaner, logger *slog.Logger) pkgredis.MessageHandler {
 	return newReleaseTerminalTeardownBinding("release-rejected teardown", cleaner, logger)
 }
@@ -76,8 +77,8 @@ func NewReleaseRejectedTeardownBinding(cleaner ports.CandidateSchemaCleaner, log
 // NewReleasePromotedTeardownBinding returns a pkg/redis.MessageHandler that
 // consumes release.promoted:v1 and drops the release's candidate schema.
 // candidate_schema is always present on release.promoted; the drop is a no-op
-// for normal validation releases (already torn down by validation.completed) and
-// the live teardown for the seed-only zero-validation path.
+// for normal validation releases (already torn down by the validation.result:v1
+// terminal row) and the live teardown for the seed-only zero-validation path.
 func NewReleasePromotedTeardownBinding(cleaner ports.CandidateSchemaCleaner, logger *slog.Logger) pkgredis.MessageHandler {
 	return newReleaseTerminalTeardownBinding("release-promoted teardown", cleaner, logger)
 }

@@ -310,6 +310,45 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 	assert.Equal(t, "_candidate_rel_seed_uniform", candidateSchema)
 }
 
+// TestHandleSeedBuildResult_OKThenValidationCompletePromotes proves the
+// seed-build leg leaves the persisted validation set equal to what the executor
+// actually emits per-node events for (the non-seed models). After the seed
+// builds ok, only the downstream model is validated, so only that node's per-node
+// result lands. The validation terminal (kind=complete) must then PROMOTE, not stall
+// by rejecting over the seed, which is not part of the release's validation set.
+func TestHandleSeedBuildResult_OKThenValidationCompletePromotes(t *testing.T) {
+	deps, store := newTestDeps(t)
+	releaseID := "rel-seed-then-validate"
+	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedPlusModel())
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: releaseID, Status: "ok",
+	}))
+
+	// The persisted validation set must exclude the built seed so the barrier's
+	// expected set matches the executor's per-node emissions.
+	r := mustGetRelease(t, store, releaseID)
+	require.Equal(t, release.StatusValidating, r.Status())
+	assert.Equal(t, []string{"model.fin.report"}, r.ValidationNodeIDs(),
+		"persisted validation set must drop the just-built seed")
+
+	// Executor validates only the non-seed model and emits one per-node result;
+	// the seed gets no validation event.
+	seedValidationNodes(t, deps, releaseID, []handlers.NodeResult{
+		{NodeID: "model.fin.report", Status: "ok"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(ctx(t), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       releaseID,
+		AggregateStatus: "ok",
+	}))
+
+	r = mustGetRelease(t, store, releaseID)
+	assert.Equal(t, release.StatusPromoted, r.Status(),
+		"seed-build then per-node validation-ok must promote, not hang on the barrier")
+	assert.Equal(t, streams.ReleasePromotedV1, lastOutbox(t, store).StreamName)
+}
+
 func TestHandleSeedBuildResult_UnknownReleaseDropped(t *testing.T) {
 	deps, store := newTestDeps(t)
 	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{

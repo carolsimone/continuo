@@ -13,34 +13,32 @@ import (
 	"github.com/google/uuid"
 )
 
-// NodeResult is the wire-input counterpart of the domain value object
-// release.NodeValidationResult. It is intentionally kept separate (rather than
-// reusing the domain type) so the inbound transport shape stays decoupled from
-// the domain: the handler maps NodeResult → release.NodeValidationResult before
-// recording it on the aggregate. The outbox payload (perNodeEntry) is likewise a
-// distinct boundary DTO that deliberately omits duration_ms.
-type NodeResult struct {
-	NodeID        string `json:"node_id"`
-	Status        string `json:"status"` // "ok" or "failed"
-	DBTLogURI     string `json:"dbt_log_uri,omitempty"`
-	RunResultsURI string `json:"run_results_uri,omitempty"`
-	DurationMS    int64  `json:"duration_ms,omitempty"`
-}
-
-// HandleValidationResultInput carries the aggregated validation outcome from
-// executor-controller.
+// HandleValidationResultInput carries the terminal validation decision (the
+// kind=complete message on validation.result:v1). Per-node content is not
+// carried here: each node's outcome arrives earlier on the same stream as a
+// kind=node message and is projected into the release read model, then read back
+// from the store when this terminal message decides promote-or-reject.
 type HandleValidationResultInput struct {
-	ReleaseID       string       `json:"release_id"`
-	PerNodeResults  []NodeResult `json:"per_node_results"`
-	AggregateStatus string       `json:"aggregate_status"`
+	ReleaseID       string `json:"release_id"`
+	AggregateStatus string `json:"aggregate_status"`
 }
 
-// HandleValidationResult processes the per-node validation results received from
-// executor-controller.
+// HandleValidationResult decides the terminal outcome of a release's validation
+// leg from the per-node results already projected into the release read model.
 //
-// If every node passed: promotes the release to production, updates CurrentProd,
-// upserts the changed service's service_prod pointer, and emits release.promoted:v1.
-// If any node failed: rejects the release and emits release.rejected:v1.
+// The kind=complete message is emitted last, after every per-node message on
+// validation.result:v1, so a single in-order consumer has normally stored every
+// node's outcome by the time this runs. The decision itself reads only
+// aggregate_status (which executor computed from every node's terminal outcome),
+// so it is order-independent and needs no completeness barrier: if a node is
+// absent from the store — a projection write not yet delivered, or permanently
+// dropped — the decision still stands on aggregate_status and logs the missing
+// nodes rather than blocking.
+//
+// If every present validation node passed and the aggregate status is ok:
+// promotes the release to production, updates CurrentProd, upserts the changed
+// service's service_prod pointer, and emits release.promoted:v1. Otherwise
+// rejects the release and emits release.rejected:v1.
 func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationResultInput) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -48,9 +46,9 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.ReleaseRepo().Get(ctx, in.ReleaseID)
+	r, err := u.ReleaseRepo().Load(ctx, in.ReleaseID) // FOR UPDATE: serialize against per-node upserts
 	if err != nil {
-		return fmt.Errorf("get release: %w", err)
+		return fmt.Errorf("load release: %w", err)
 	}
 	if r == nil {
 		// The release referenced by this result no longer exists (e.g. it was
@@ -64,41 +62,47 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 
 	now := d.Clock.Now()
 
-	results := make([]release.NodeValidationResult, len(in.PerNodeResults))
-	for i, n := range in.PerNodeResults {
-		results[i] = release.NodeValidationResult{
-			NodeID:        n.NodeID,
-			Status:        n.Status,
-			DBTLogURI:     n.DBTLogURI,
-			RunResultsURI: n.RunResultsURI,
-			DurationMS:    n.DurationMS,
-		}
-	}
-	r.RecordValidationResults(results)
-
-	seen := map[string]string{}
-	for _, n := range in.PerNodeResults {
-		seen[n.NodeID] = n.Status
-	}
-
-	var failing []string
-	for _, n := range in.PerNodeResults {
-		if n.Status != "ok" {
-			failing = append(failing, n.NodeID)
+	// Per-node content lives in the read model, projected from the earlier
+	// kind=node messages on validation.result:v1. Read the validation-stage
+	// results the stream already stored rather than re-carrying them here.
+	stored := map[string]release.NodeValidationResult{}
+	for _, n := range r.PerNodeResults() {
+		if n.Stage == "validation" {
+			stored[n.NodeID] = n
 		}
 	}
 
+	// With a single in-order consumer the store is already complete when the
+	// terminal message arrives, so no completeness barrier is needed. A node can
+	// only be absent if its projection write was permanently dropped. Do not block
+	// or treat it as failing: log the gap and decide from the authoritative
+	// aggregate_status, which reflects that node's real outcome.
 	var missing []string
 	for _, id := range r.ValidationNodeIDs() {
-		if _, ok := seen[id]; !ok {
+		if _, ok := stored[id]; !ok {
 			missing = append(missing, id)
+		}
+	}
+	if len(missing) > 0 {
+		d.Logger.Warn("deciding from aggregate_status; per-node audit missing nodes",
+			"release_id", in.ReleaseID, "missing", missing)
+	}
+
+	// Only flag nodes that ARE present and non-ok. A missing node (whose
+	// projection row was lost) has an absent/zero status; treating that as non-ok
+	// would wrongly reject a good release when aggregate_status == "ok". With this
+	// guard, missing nodes neither block nor fail, and the decision rests on the
+	// aggregate. In the normal complete case every ValidationNodeID is present.
+	var failing []string
+	for _, id := range r.ValidationNodeIDs() {
+		if n, ok := stored[id]; ok && n.Status != "ok" {
+			failing = append(failing, id)
 		}
 	}
 
 	aggregateOK := in.AggregateStatus == "ok"
-
-	if len(failing) > 0 || len(missing) > 0 || !aggregateOK {
-		return handleValidationFailed(ctx, d, u, r, in, failing, missing, now)
+	if len(failing) > 0 || !aggregateOK {
+		return handleValidationFailed(ctx, d, u, r, in, failing, now)
 	}
 	return handleValidationOK(ctx, d, u, r, in, now)
 }
@@ -217,24 +221,22 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(in.PerNodeResults), 0, 0)
+	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(r.ValidationNodeIDs()), 0, 0)
 	d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(r.CandidateTopology()))
 	return nil
 }
 
-// handleValidationFailed records a validation rejection. failing carries
-// explicit per-node failures from PerNodeResults; missing carries nodes the
-// release expected but executor-controller never reported. Both are persisted
-// on the Release aggregate (as the combined failing_nodes audit set) and
-// surfaced separately in the outbox payload alongside the raw aggregate_status
-// so operators can distinguish why the release was rejected — including the
-// case where neither list has entries and only a non-ok aggregate_status
-// triggered the rejection.
-func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing, missing []string, now time.Time) error {
-	combined := append([]string{}, failing...)
-	combined = append(combined, missing...)
-
-	if err := r.TransitionToRejected("validation_failed", combined, now); err != nil {
+// handleValidationFailed records a validation rejection. failing carries the
+// validation nodes whose stored per-node outcome was not "ok"; it may be empty
+// when only a non-ok aggregate_status triggered the rejection. The failing set
+// is persisted on the Release aggregate and surfaced in the outbox payload
+// alongside the raw aggregate_status so operators can distinguish why the release
+// was rejected. The per-node audit rows are sourced from the read model that the
+// kind=node messages projected, not from this terminal message. A node whose
+// projection write was permanently dropped may be absent from the read model, in
+// which case only present, non-ok nodes appear in failing.
+func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing []string, now time.Time) error {
+	if err := r.TransitionToRejected("validation_failed", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
@@ -256,15 +258,20 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		RunResultsURI   string `json:"run_results_uri,omitempty"`
 		CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
 	}
-	perNode := make([]perNodeEntry, len(in.PerNodeResults))
-	for i, nr := range in.PerNodeResults {
-		perNode[i] = perNodeEntry{
+	// Source the per-node audit rows from the projected read model, enriched with
+	// each node's candidate SQL pointer from the candidate topology.
+	var perNode []perNodeEntry
+	for _, nr := range r.PerNodeResults() {
+		if nr.Stage != "validation" {
+			continue
+		}
+		perNode = append(perNode, perNodeEntry{
 			NodeID:          nr.NodeID,
 			Status:          nr.Status,
 			DBTLogURI:       nr.DBTLogURI,
 			RunResultsURI:   nr.RunResultsURI,
 			CandidateSQLURI: uriByNodeID[nr.NodeID],
-		}
+		})
 	}
 
 	payload, err := json.Marshal(map[string]any{
@@ -272,7 +279,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		"stage":            "validation",
 		"reason":           "validation_failed",
 		"failing_nodes":    failing,
-		"missing_nodes":    missing,
+		"missing_nodes":    []string{}, // dropped-projection nodes are logged, not carried here; kept for payload shape stability
 		"aggregate_status": in.AggregateStatus,
 		"per_node":         perNode,
 		"repo":             r.Repo(),
@@ -299,8 +306,8 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	okCount := len(in.PerNodeResults) - len(failing)
-	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, false, okCount, len(combined), 0)
-	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "validation_failed", combined)
+	okCount := len(r.ValidationNodeIDs()) - len(failing)
+	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, false, okCount, len(failing), 0)
+	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "validation_failed", failing)
 	return nil
 }

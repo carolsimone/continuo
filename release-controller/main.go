@@ -96,10 +96,10 @@ func main() {
 		}
 	}()
 
-	validationConsumer := redisadapter.NewValidationCompletedConsumer(rc, deps, logger)
+	validationConsumer := redisadapter.NewValidationResultConsumer(rc, deps, logger)
 	go func() {
 		if err := validationConsumer.Start(ctx); err != nil && ctx.Err() == nil {
-			logger.Error("validation.completed consumer stopped", "error", err)
+			logger.Error("validation.result consumer stopped", "error", err)
 		}
 	}()
 

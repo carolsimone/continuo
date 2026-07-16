@@ -122,6 +122,14 @@ func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*release.Release, e
 	return f.store.releases[id], nil
 }
 
+// Load mirrors Get: the in-memory fake has no row-level locking to simulate,
+// so it returns the same result as Get.
+func (f *fakeReleaseRepo) Load(_ context.Context, id string) (*release.Release, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	return f.store.releases[id], nil
+}
+
 func (f *fakeReleaseRepo) Save(_ context.Context, r *release.Release) error {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()

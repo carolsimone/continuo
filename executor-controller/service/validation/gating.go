@@ -2,12 +2,14 @@ package validation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -32,10 +34,72 @@ func SettleNodeTerminal(
 	if err := aggRepo.LockRelease(ctx, releaseID, cfg.mode); err != nil {
 		return fmt.Errorf("lock release for settle: %w", err)
 	}
-	if err := propagateGating(ctx, depRepo, cfg.mode, releaseID, completedNodeID, outcome, now); err != nil {
+	skipped, err := propagateGating(ctx, depRepo, cfg.mode, releaseID, completedNodeID, outcome, now)
+	if err != nil {
 		return fmt.Errorf("propagate gating: %w", err)
 	}
+	// Emit the live per-node projection for this settled node before the aggregate
+	// gate. It carries only this node's outcome; release-controller upserts it into
+	// the per_node_results read model so the UI count climbs as nodes finish.
+	settled, err := depRepo.GetByReleaseNode(ctx, releaseID, completedNodeID, cfg.mode)
+	if err != nil {
+		return fmt.Errorf("get settled node for projection: %w", err)
+	}
+	if err := emitPerNodeResult(ctx, outboxRepo, cfg.namespace, releaseID,
+		perNodeResultPayload(releaseID, completedNodeID, settled.Outcome(), settled.DBTLogURI(), settled.DBTRunResultsURI())); err != nil {
+		return err
+	}
+	// Nodes this failure skipped never run through SettleNodeTerminal on their own,
+	// so they would otherwise never project a per-node result. Emit one per skipped
+	// node with status "skipped" and no URIs (they never ran). Release-controller
+	// records each result as it arrives and, once the terminal (kind=complete) row
+	// shows up, decides from aggregate_status (a skipped node has status != "ok",
+	// so it counts as failing).
+	for _, skippedID := range skipped {
+		if err := emitPerNodeResult(ctx, outboxRepo, cfg.namespace, releaseID,
+			perNodeResultPayload(releaseID, skippedID, "skipped", "", "")); err != nil {
+			return err
+		}
+	}
 	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, cfg, releaseID, now)
+}
+
+// emitPerNodeResult writes one "kind":"node" row to the shared
+// validation.result:v1 stream from an already-built payload. It gets its own
+// distinct AggregateID (uuid.New()) rather than sharing the terminal
+// "kind":"complete" row's deterministic id: the outbox processor runs
+// PerAggregateFIFO, which withholds every row in an (aggregate_type,
+// aggregate_id) lane behind an older still-pending sibling in that same lane.
+// Putting all of a release's per-node rows in the terminal's lane serialized
+// them to roughly one per processor tick, throttling the live UI. A distinct
+// id per emit lets per-node rows publish in parallel; strict ordering ahead of
+// the terminal is not required because (a) release-controller's promote/reject
+// decision reads only aggregate_status, which is order-independent, and (b) in
+// the normal case the per-node rows and the terminal are all still pending
+// together and flush in one created_at-ordered outbox batch anyway. The
+// projection itself is an idempotent last-write upsert keyed by node_id, so
+// out-of-order per-node delivery is harmless on its own.
+//
+// Residual: only a transient XADD failure of one per-node row that happens to
+// race a rejection could omit that node from the reject audit trail — the
+// promote/reject decision itself is still correct since it derives from
+// aggregate_status, not from the per-node stream. Acceptable.
+func emitPerNodeResult(ctx context.Context, outboxRepo outbox.Repository, namespace uuid.UUID, releaseID string, payload map[string]any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal per-node projection: %w", err)
+	}
+	if err := outboxRepo.Create(ctx, &outbox.Entry{
+		AggregateType: "release",
+		AggregateID:   uuid.New(),
+		EventType:     EventTypeValidationNodeResult,
+		Payload:       body,
+		StreamName:    streams.ValidationResultV1,
+		MaxRetries:    3,
+	}); err != nil {
+		return fmt.Errorf("create per-node projection row: %w", err)
+	}
+	return nil
 }
 
 // SettleSeedBuildNodeTerminal settles a seed-build node after it reaches a
@@ -56,8 +120,9 @@ func SettleSeedBuildNodeTerminal(
 		return fmt.Errorf("lock release for seed-build settle: %w", err)
 	}
 	// No-op over flat seed roots, but kept for symmetry and to defend against a
-	// future seed dependency edge: it only ever transitions blocked rows.
-	if err := propagateGating(ctx, depRepo, seedBuildEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
+	// future seed dependency edge: it only ever transitions blocked rows. Seeds
+	// project no per-node stream, so any skipped IDs it returns are ignored.
+	if _, err := propagateGating(ctx, depRepo, seedBuildEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
 		return fmt.Errorf("propagate seed-build gating: %w", err)
 	}
 	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, seedBuildEmit, releaseID, now)
@@ -80,7 +145,8 @@ func SettleCompileNodeTerminal(
 		return fmt.Errorf("lock release for compile settle: %w", err)
 	}
 	// Compile is a single root — no gating to propagate, but kept for symmetry.
-	if err := propagateGating(ctx, depRepo, compileEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
+	// It projects no per-node stream, so any skipped IDs it returns are ignored.
+	if _, err := propagateGating(ctx, depRepo, compileEmit.mode, releaseID, completedNodeID, outcome, now); err != nil {
 		return fmt.Errorf("propagate compile gating: %w", err)
 	}
 	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, compileEmit, releaseID, now)
@@ -92,10 +158,15 @@ func SettleCompileNodeTerminal(
 // transitively downstream of the failed node is Skipped — it can never be
 // validated. Readiness/reachability is computed in Go over the release's rows;
 // transitions go through the guarded aggregate methods, one Save per change.
-func propagateGating(ctx context.Context, repo repository.DeploymentRepository, mode model.Mode, releaseID, completedNode, outcome string, now time.Time) error {
+//
+// It returns the node IDs it actually transitioned to skipped (the failure
+// branch only; the success branch skips nothing). These nodes never run through
+// SettleNodeTerminal on their own, so the validation-leg caller is responsible
+// for emitting their per-node projection rows.
+func propagateGating(ctx context.Context, repo repository.DeploymentRepository, mode model.Mode, releaseID, completedNode, outcome string, now time.Time) (skipped []string, err error) {
 	rows, err := repo.ListValidationByRelease(ctx, releaseID, mode)
 	if err != nil {
-		return fmt.Errorf("list validation by release: %w", err)
+		return nil, fmt.Errorf("list validation by release: %w", err)
 	}
 	byNode := make(map[string]*model.Deployment, len(rows))
 	for _, d := range rows {
@@ -108,14 +179,15 @@ func propagateGating(ctx context.Context, repo repository.DeploymentRepository, 
 			d := byNode[victim]
 			if d != nil && d.Status() == model.StatusBlocked {
 				if err := d.Skip("upstream "+completedNode+" failed validation", now); err != nil {
-					return fmt.Errorf("skip %s: %w", victim, err)
+					return nil, fmt.Errorf("skip %s: %w", victim, err)
 				}
 				if err := repo.Save(ctx, d); err != nil {
-					return fmt.Errorf("save skipped %s: %w", victim, err)
+					return nil, fmt.Errorf("save skipped %s: %w", victim, err)
 				}
+				skipped = append(skipped, victim)
 			}
 		}
-		return nil
+		return skipped, nil
 	}
 
 	okOutcome := func(id string) bool {
@@ -136,14 +208,14 @@ func propagateGating(ctx context.Context, repo repository.DeploymentRepository, 
 		}
 		if allOK {
 			if err := d.Unblock(now); err != nil {
-				return fmt.Errorf("unblock %s: %w", d.NodeID(), err)
+				return nil, fmt.Errorf("unblock %s: %w", d.NodeID(), err)
 			}
 			if err := repo.Save(ctx, d); err != nil {
-				return fmt.Errorf("save unblocked %s: %w", d.NodeID(), err)
+				return nil, fmt.Errorf("save unblocked %s: %w", d.NodeID(), err)
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // childIndex maps each node to the in-set nodes that declare it as an upstream.

@@ -46,7 +46,8 @@ func (r *validationAggregateRepository) LockRelease(ctx context.Context, release
 // INSERT ... ON CONFLICT DO NOTHING makes the claim atomic: exactly one
 // concurrent caller affects a row (true) and may emit the leg's completion
 // event; losers see zero rows affected (false). The (release_id, mode) key lets
-// a single release emit both seed.build.completed:v1 and validation.completed:v1.
+// a single release emit both seed.build.completed:v1 and validation.result:v1
+// (kind=complete).
 func (r *validationAggregateRepository) ClaimEmission(ctx context.Context, releaseID string, mode model.Mode, now time.Time) (bool, error) {
 	const q = `
 		INSERT INTO validation_aggregates (release_id, mode, aggregate_emitted_at)

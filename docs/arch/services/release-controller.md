@@ -27,7 +27,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | Route | Purpose |
 |---|---|
 | `POST /releases` | Accept a candidate release for a single dbt service. Body: `{service, release_id, image_tag, repo, commit_sha, bootstrap?}`. `repo` (GitHub owner/name) and `commit_sha` (full SHA) are required; missing either returns 400. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
-| `GET /releases/{id}` | Full release detail: `{release_id, status, changed_service, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap, repo, commit_sha}`. `per_node_results` is an array of `{stage, node_id, status, dbt_log_uri, run_results_uri, duration_ms, file_path?}` accumulated across all pipeline legs; the `stage` field (`compile`, `seed_build`, or `validation`) identifies which leg produced each entry. For the compile leg the single entry's `node_id` is the service name; `file_path` is non-empty when the failure maps to a specific source file. |
+| `GET /releases/{id}` | Full release detail: `{release_id, status, changed_service, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap, repo, commit_sha}`. `per_node_results` is an array of `{stage, node_id, status, dbt_log_uri, run_results_uri, duration_ms, file_path?}` accumulated across all pipeline legs; the `stage` field (`compile`, `seed_build`, or `validation`) identifies which leg produced each entry. For the compile leg the single entry's `node_id` is the service name; `file_path` is non-empty when the failure maps to a specific source file. `duration_ms` is populated for the `compile` and `seed_build` legs; the `validation` stage's per-node results come from the incremental `kind=node` projections on `validation.result:v1`, which do not carry a duration, so `duration_ms` is absent (zero) for those entries. |
 | `GET /releases` | Paginated release history, newest-first. Query params: `status` (optional exact-match filter), `limit` (default 20; values that are unparseable, non-positive, or exceed 100 fall back to the default of 20), `cursor` (opaque keyset cursor). Response: `{"releases":[{release_id, status, created_at, resolved_at, node_count, bootstrap, reject_reason}], "next_cursor":"<opaque or empty>"}`. |
 | `GET /current-prod` | The current promoted release + topology snapshot. |
 | `GET /healthz` | Liveness. |
@@ -41,7 +41,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | `compile.completed:v1` | `release-controller-compile-completed` | Compile job result from executor-controller. |
 | `manifest.loaded.candidate:v1` | `release-controller-manifest-loaded-candidate` | Resolved candidate topology (or a parse failure) from manifest-controller. |
 | `seed.build.completed:v1` | `release-controller-seed-build-completed` | Aggregate seed-build results from executor-controller. |
-| `validation.completed:v1` | `release-controller-validation-completed` | Aggregate per-node validation results from executor-controller. |
+| `validation.result:v1` | `release-controller-validation-result` | Unified validation-leg stream from executor-controller. Carries per-node outcomes (`kind=node`, one per node as it settles) and the terminal decision (`kind=complete`, emitted last), all under one `aggregate_id` so a single in-order consumer sees every node before the decision. |
 
 ## Outbound Interfaces
 
@@ -131,22 +131,41 @@ status=failed:
   advance queue
 status=ok:
   RecordStageResults("seed_build", per_node results)
-  TransitionFromSeedBuilding (SeedBuilding → Validating)
-  emit validation.requested:v1  (excluding the just-built seeds from the validation set)
+  compute the filtered validation set: all recorded validation ids minus the just-built seeds
+     (seeds already live in the candidate schema and are not validated)
+  TransitionFromSeedBuilding (SeedBuilding → Validating), narrowing the persisted
+     validation_node_ids to that filtered set so the terminal decision expects exactly the
+     nodes the executor emits per-node results for
+  emit validation.requested:v1 for the same filtered set (single source: persisted set and emit derive from one computation)
   advance queue
   edge case: if excluding the built seeds leaves an empty validation set, promote directly
 ```
 
-### On `validation.completed:v1`
+### On `validation.result:v1`
+
+A single consumer reads both message kinds off one stream. A `kind=node` message projects that node's outcome into the release's `per_node_results` read model (loads the release `FOR UPDATE`, upserts the one node). A `kind=complete` message carries only the decision (`release_id`, `aggregate_status`, `candidate_schema`) and decides by reading back the stored `per_node_results` for the validation stage together with the authoritative `aggregate_status`: it rejects if any *stored* per-node result is non-ok or `aggregate_status` is not ok. A node absent from the store is not counted as failing — for that node the decision rests on `aggregate_status` alone, so the terminal message does not need every `kind=node` message to have already been consumed — there is no completeness barrier.
 ```
-RecordStageResults("validation", per_node_results) — persists per-node outcomes for all nodes
-all nodes ok and none missing → handleValidationOK:
+on kind=node: upsert per_node_results[node_id] (stage="validation")
+   Nodes skipped by a failed upstream are included: executor-controller emits a
+   status="skipped" projection for them even though they never ran.
+on kind=complete:
+load release FOR UPDATE, read stored per_node_results where stage="validation"
+missing-node fallback: a node can be absent from per_node_results either because its
+   projection hasn't been consumed yet (each per-node row publishes under its own
+   distinct aggregate_id, separate from the terminal's deterministic aggregate_id, so
+   per-node rows publish in parallel and relative delivery order isn't guaranteed) or
+   because its write was permanently dropped. Either way, do not block or fabricate the node as failing: log
+   the missing ids and decide from the authoritative aggregate_status, which reflects
+   that node's real outcome regardless of projection visibility. Only stored, non-ok
+   nodes count toward failing, so a missing node with aggregate_status ok still promotes.
+all stored (and present) nodes ok and aggregate_status ok → handleValidationOK:
    update current_prod to this release's candidate topology,
    upsert the changed service's service_prod pointer (canonical key + image tag + release id),
    transition to Promoted, emit release.promoted:v1
-any node failed / missing / aggregate not ok → Reject(reason=validation_failed),
+any stored node not ok (failed or skipped) / aggregate_status not ok → Reject(reason=validation_failed),
    emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,
         per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_sql_uri}], repo, commit_sha}
+        (per_node sourced from the stored read model, enriched with each node's candidate_sql_uri)
 advance queue
 ```
 
@@ -156,10 +175,10 @@ Before updating `current_prod`, `promoteToProduction` computes the set of change
 
 ## Consumer Reliability
 
-- Four consumer groups (`compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.completed:v1`) run in the same process; each maintains its own offset.
+- Four consumer groups (`compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.result:v1`) run in the same process; each maintains its own offset.
 - Inbound messages are deduped via `message_processing` (idempotent on the upstream `outbox_entry_id`), so a redelivery is absorbed.
-- A permanent parse-decode failure is ACKed (logged, not retried); transient errors are not ACKed and replay.
-- A message on any of the four inbound streams whose `release_id` no longer has a `releases` row (pruned, or reclaimed from a previous consumer for a deleted release) is logged and dropped rather than processed. The repository's `Get` returns no row as `(nil, nil)`, so all handlers nil-check the aggregate before use; without that guard a reclaimed message for a missing release would crash the consumer on startup.
+- A permanent parse-decode failure (or an unrecognised `validation.result:v1` kind) is ACKed (logged, not retried); transient errors are not ACKed and replay. The `kind=complete` decision reads the stored `per_node_results` projections together with the authoritative `aggregate_status` column, so it never needs to defer: a `kind=node` message that hasn't been consumed yet or a permanently-dropped projection write both leave a node absent from `per_node_results`, and for that node the decision falls back to `aggregate_status` alone rather than blocking the release or the queue; only a node that is present and non-ok in the store counts toward the reject.
+- A message on any of the inbound streams whose `release_id` no longer has a `releases` row (pruned, or reclaimed from a previous consumer for a deleted release) is logged and dropped rather than processed. The repository's `Get` returns no row as `(nil, nil)`, so all handlers nil-check the aggregate before use; without that guard a reclaimed message for a missing release would crash the consumer on startup.
 - State changes and the outbox row are written in one transaction; the outbox publisher drains rows and XADDs them, injecting `outbox_entry_id` for downstream dedup.
 
 ## Background Loops
@@ -170,7 +189,7 @@ Before updating `current_prod`, `promoteToProduction` computes the set of change
 | `compile.completed:v1` consumer | Dispatches to the compile-result handler. |
 | `manifest.loaded.candidate:v1` consumer | Dispatches to the parsed-manifest handler. |
 | `seed.build.completed:v1` consumer | Dispatches to the seed-build-result handler. |
-| `validation.completed:v1` consumer | Dispatches to the validation-result handler. |
+| `validation.result:v1` consumer | Routes by kind: `node` → per-node projection handler, `complete` → terminal validation-result handler, then advances the queue. |
 | Retention | Runs on the janitor interval (`RELEASE_JANITOR_INTERVAL`, default 24h). Deletes terminal releases (promoted, rejected, superseded) whose creation timestamp is older than `RELEASE_RETENTION_DAYS` (default 90 days). Never deletes the release referenced by `current_prod` or by any `service_prod` pointer. For each pruned release, also deletes the `candidate-sql/<release_id>/` S3 prefix (soft-fail — a delete error does not abort the prune; the S3 lifecycle expiry rule is the backstop). |
 
 ## S3 Behavior

@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -54,13 +55,16 @@ func (r *fakeAggRepo) ClaimEmission(context.Context, string, model.Mode, time.Ti
 
 var _ repository.ValidationAggregateRepository = (*fakeAggRepo)(nil)
 
-// captureOutbox captures the last outbox entry created.
+// captureOutbox captures the last outbox entry created, and the full ordered
+// sequence of entries so a test can assert on every row a settle produced.
 type captureOutbox struct {
 	last *outbox.Entry
+	all  []*outbox.Entry
 }
 
 func (c *captureOutbox) Create(_ context.Context, e *outbox.Entry) error {
 	c.last = e
+	c.all = append(c.all, e)
 	return nil
 }
 func (c *captureOutbox) GetPendingBatch(context.Context, int) ([]*outbox.Entry, error) {
@@ -106,10 +110,18 @@ func TestEmitValidationAggregate_IncludesCandidateSchema(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, outboxRepo.last, "expected an outbox entry to be created")
+	require.Equal(t, streams.ValidationResultV1, outboxRepo.last.StreamName)
+	require.Contains(t, string(outboxRepo.last.Payload), `"kind":"complete"`)
 	require.Contains(t, string(outboxRepo.last.Payload), `"candidate_schema":"_candidate_rel"`)
 }
 
-func TestEmitValidationAggregate_IncludesRunResultsURI(t *testing.T) {
+// TestEmitValidationAggregate_CarriesDecisionOnly asserts the terminal
+// validation.result:v1 (kind=complete) payload carries only the decision
+// (aggregate_status) and candidate_schema — never per-node content. Per-node
+// results (including dbt_log_uri / run_results_uri) reach release-controller
+// through the same stream's separate kind=node projection rows, so re-carrying
+// them here would be redundant.
+func TestEmitValidationAggregate_CarriesDecisionOnly(t *testing.T) {
 	cmd := command.ValidationDeployTask{
 		ReleaseID:       "rel",
 		NodeID:          "n1",
@@ -137,5 +149,11 @@ func TestEmitValidationAggregate_IncludesRunResultsURI(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, outboxRepo.last, "expected an outbox entry to be created")
-	require.Contains(t, string(outboxRepo.last.Payload), `"run_results_uri":"run-results/n1.json"`)
+	require.Equal(t, streams.ValidationResultV1, outboxRepo.last.StreamName)
+	payload := string(outboxRepo.last.Payload)
+	require.Contains(t, payload, `"kind":"complete"`, "terminal row is distinguished from per-node rows on the shared stream")
+	require.Contains(t, payload, `"aggregate_status":"failed"`, "terminal event carries the decision")
+	require.Contains(t, payload, `"candidate_schema":"_candidate_rel"`)
+	require.NotContains(t, payload, "per_node_results", "terminal event must not re-carry per-node content")
+	require.NotContains(t, payload, "run_results_uri", "per-node URIs travel on the projection stream, not the terminal event")
 }

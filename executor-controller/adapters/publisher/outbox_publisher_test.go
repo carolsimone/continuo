@@ -120,10 +120,10 @@ func TestPublisher_ValidationCompleted(t *testing.T) {
 	body := []byte(`{"release_id":"rel_1","per_node_results":[{"node_id":"public.orders","status":"ok"}],"aggregate_status":"ok"}`)
 	id := uuid.New()
 	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
-		ID: id, EventType: "validation_completed", StreamName: streams.ValidationCompletedV1, Payload: body,
+		ID: id, EventType: "validation_completed", StreamName: streams.ValidationResultV1, Payload: body,
 	}))
 
-	v := lastEntryFields(t, r, streams.ValidationCompletedV1)
+	v := lastEntryFields(t, r, streams.ValidationResultV1)
 	assert.Equal(t, id.String(), v["outbox_entry_id"])
 	payloadStr, ok := v["payload"].(string)
 	require.True(t, ok, "expected a string payload field")
@@ -215,7 +215,7 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 		{
 			// Uses the shared constant — the single source of truth for this wire string.
 			eventType:  validation.EventTypeValidationCompleted,
-			streamName: streams.ValidationCompletedV1,
+			streamName: streams.ValidationResultV1,
 			payload:    []byte(`{"release_id":"rel1","aggregate_status":"ok"}`),
 		},
 		{
@@ -227,6 +227,11 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 			eventType:  validation.EventTypeCompileCompleted,
 			streamName: streams.CompileCompletedV1,
 			payload:    []byte(`{"release_id":"rel1","status":"ok"}`),
+		},
+		{
+			eventType:  validation.EventTypeValidationNodeResult,
+			streamName: streams.ValidationResultV1,
+			payload:    []byte(`{"release_id":"rel1","stage":"validation","node_id":"node.a","status":"ok"}`),
 		},
 	}
 
