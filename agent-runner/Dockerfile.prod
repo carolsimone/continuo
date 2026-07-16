@@ -1,5 +1,6 @@
 # Build stage
-FROM carolsimone/continuo-base:latest AS builder
+ARG BASE_IMAGE=ghcr.io/carolsimone/continuo-base:v1
+FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -51,5 +52,8 @@ COPY --from=builder /app/bin/agent-runner /usr/local/bin/agent-runner
 COPY --from=builder /app/bin/continuo /usr/local/bin/continuo
 
 EXPOSE 8091 50053
+
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
 
 CMD ["agent-runner"]

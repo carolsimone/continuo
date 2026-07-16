@@ -109,7 +109,7 @@ func TestCreateCompileJob_UsesDialectAndQuotesManifestPath(t *testing.T) {
 	job := fetchJob(t, c, "default", "j4")
 	line := job.Spec.Template.Spec.InitContainers[0].Command[2]
 	assert.Equal(t,
-		"wise-dbt compile --profiles-dir /project && cp '/project/out dir/manifest.json' /shared/manifest.json",
+		"wise-dbt compile --profiles-dir /project && cp '/project/out dir/manifest.json' /shared/manifest.json && chmod 644 /shared/manifest.json",
 		line, "manifest path with a space must be shell-quoted")
 }
 
@@ -135,7 +135,7 @@ func TestCreateCompileJob_DefaultLineByteIdentical(t *testing.T) {
 	}))
 	job := fetchJob(t, c, "default", "j5")
 	assert.Equal(t,
-		"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json",
+		"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json && chmod 644 /shared/manifest.json",
 		job.Spec.Template.Spec.InitContainers[0].Command[2],
 		"no config: compile line must be byte-identical to the plain-dbt form")
 }

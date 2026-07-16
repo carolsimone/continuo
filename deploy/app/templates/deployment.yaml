@@ -49,7 +49,7 @@ spec:
               {{- else if and (eq $key "REDIS_URL") (eq $val "__REDIS_URL_FROM_AUTH__") }}
               value: {{ printf "redis://:$(REDIS_PASSWORD)@%s:%v" $.Values.global.redis.host $.Values.global.redis.port | quote }}
               {{- else if and (eq $key "DOCKERHUB_USERNAME") (eq $val "__DOCKERHUB_USERNAME__") }}
-              value: {{ $.Values.global.dockerHubUser | quote }}
+              value: {{ $.Values.global.teamImagePrefix | quote }}
               {{- else if and (eq $key "VALIDATION_IMAGE") (eq $val "__VALIDATION_IMAGE__") }}
               value: {{ printf "%s/continuo-validation-runner:%s" $.Values.global.dockerHubUser $.Values.global.imageTag | quote }}
               {{- else if and (eq $key "S3_SIDECAR_IMAGE") (eq $val "__S3_SIDECAR_IMAGE__") }}

@@ -1,5 +1,6 @@
 # Build stage
-FROM carolsimone/continuo-base:latest AS builder
+ARG BASE_IMAGE=ghcr.io/carolsimone/continuo-base:v1
+FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -41,5 +42,8 @@ RUN apk --no-cache add ca-certificates tzdata
 COPY --from=builder /app/bin/remediation-agent /usr/local/bin/remediation-agent
 
 EXPOSE 8092
+
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
 
 CMD ["remediation-agent"]

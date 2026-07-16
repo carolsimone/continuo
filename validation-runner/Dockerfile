@@ -13,5 +13,10 @@ COPY warehouse.py /warehouse.py
 COPY validation_result.py /validation_result.py
 COPY s3_common.py /s3_common.py
 
+RUN useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
+
+# Reads code from the image, writes only to stdout — run unprivileged.
+USER 65532:65532
+
 ENTRYPOINT []
 CMD ["python", "/validation_runner.py"]
