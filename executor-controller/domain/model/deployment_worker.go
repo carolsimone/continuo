@@ -141,6 +141,13 @@ func (d *Deployment) Complete(leaseID uuid.UUID, tokenSHA256 string, result Work
 // task is fenced with ErrStaleLease, so a superseded worker cannot drop the
 // current holder's lease or free the slot that holder occupies.
 //
+// A permanent failure finishes the lease that reported it, so a redelivery of
+// the same report is absorbed and a conflicting second result is rejected —
+// the same idempotency Complete gives a successful report. A retryable failure
+// drops the lease instead, so its redelivery is fenced with ErrStaleLease: once
+// the lease is gone the report is indistinguishable from one sent by a worker
+// whose task has been reassigned.
+//
 // result.Retryable and the retryable parameter are distinct and may disagree.
 // result.Retryable is the worker's own hint, stored verbatim as part of the
 // terminal result for audit. The retryable parameter is the caller's decision
@@ -163,12 +170,20 @@ func (d *Deployment) ReportFailure(
 	if result.Succeeded {
 		return fmt.Errorf("ReportFailure requires a failed result for deployment %s", d.id)
 	}
+	if d.lease.FinishedAt != nil {
+		if d.terminalResult != nil && *d.terminalResult == result {
+			return nil
+		}
+		return fmt.Errorf("deployment %s already reported a different terminal result", d.id)
+	}
 	if retryable {
 		return d.MarkRetryPending(now, backoff)
 	}
 	if err := d.MarkFailed(now, result.ErrorMessage); err != nil {
 		return err
 	}
+	ts := now
+	d.lease.FinishedAt = &ts
 	res := result
 	d.terminalResult = &res
 	return nil

@@ -490,6 +490,68 @@ func TestReportFailure_PermanentDecisionOverridesWorkerHint(t *testing.T) {
 		"the worker's hint is recorded as observed, not rewritten to match the transition")
 }
 
+// TestReportFailure_PermanentAbsorbsRedelivery pins that a worker's terminal
+// report reaches the executor at least once, so the same permanent failure can
+// arrive twice. The second one records the result already recorded rather than
+// erroring, which is the acknowledgement the worker retried the report to get.
+func TestReportFailure_PermanentAbsorbsRedelivery(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+	result := model.WorkerResult{
+		Succeeded: false, ErrorClass: "dbt_compilation_error", ErrorMessage: "syntax error",
+	}
+	require.NoError(t, dep.ReportFailure(leaseID, sha256Hex(token), result, false,
+		time.Unix(90, 0), 30*time.Second))
+	releasedAt := *dep.SlotReleasedAt()
+
+	// The worker never saw the first report acknowledged and sends it again.
+	require.NoError(t, dep.ReportFailure(leaseID, sha256Hex(token), result, false,
+		time.Unix(95, 0), 30*time.Second))
+
+	assert.Equal(t, model.StatusFailed, dep.Status())
+	assert.Equal(t, result, *dep.TerminalResult(), "the recorded result is unchanged")
+	assert.Equal(t, releasedAt, *dep.SlotReleasedAt(), "the slot is released once, at the first report")
+	assert.Equal(t, time.Unix(90, 0), *dep.ActiveLease().FinishedAt,
+		"the redelivery does not move the time the execution finished")
+}
+
+// TestReportFailure_RejectsAConflictingSecondResult pins that redelivery
+// tolerance does not extend to rewriting a settled outcome: a second, different
+// result on a finished lease is a contradiction, not a retry.
+func TestReportFailure_RejectsAConflictingSecondResult(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+	first := model.WorkerResult{Succeeded: false, ErrorMessage: "syntax error"}
+	require.NoError(t, dep.ReportFailure(leaseID, sha256Hex(token), first, false,
+		time.Unix(90, 0), 30*time.Second))
+
+	second := model.WorkerResult{Succeeded: false, ErrorMessage: "a different failure"}
+	err := dep.ReportFailure(leaseID, sha256Hex(token), second, false,
+		time.Unix(95, 0), 30*time.Second)
+
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, model.ErrStaleLease)
+	assert.Equal(t, first, *dep.TerminalResult(), "the first result stands")
+}
+
+// TestReportFailure_RetryableRedeliveryIsFenced pins the other half of the
+// at-least-once contract. Parking a task for requeue drops its lease, so a
+// redelivered retryable report arrives on a task carrying no lease that may
+// already have been re-claimed. The executor cannot tell it apart from a
+// superseded worker's report, so it fences it rather than guess.
+func TestReportFailure_RetryableRedeliveryIsFenced(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+	result := model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"}
+	require.NoError(t, dep.ReportFailure(leaseID, sha256Hex(token), result, true,
+		time.Unix(90, 0), 30*time.Second))
+	require.Nil(t, dep.ActiveLease(), "parking the task dropped the lease that reported")
+
+	err := dep.ReportFailure(leaseID, sha256Hex(token), result, true,
+		time.Unix(95, 0), 30*time.Second)
+
+	assert.ErrorIs(t, err, model.ErrStaleLease)
+	assert.Equal(t, model.StatusRetryPending, dep.Status(), "the parked task is undisturbed")
+	assert.Equal(t, time.Unix(120, 0), dep.NextAttemptAt(), "and its backoff is not extended")
+}
+
 // TestReportFailure_FencesStaleLease pins the boundary a superseded worker must
 // not cross: reporting a failure on a task that was reaped and re-claimed must
 // not drop the new holder's lease or free the slot it still occupies.
