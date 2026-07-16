@@ -16,11 +16,15 @@ import (
 )
 
 // NewScheduleCancelledBinding wires ParseScheduleCancelled into the
-// ScheduleCancelledHandler. No messageprocessing.Dedup is required —
-// CancelledSchedulesRepository.Insert is INSERT … ON CONFLICT DO NOTHING,
-// so duplicate deliveries are naturally idempotent. The binding does
-// not call uow.Begin: a single autocommit INSERT is correct and
-// avoids needless transaction overhead.
+// ScheduleCancelledHandler inside a single Unit-of-Work transaction. The
+// transaction is what makes the handler's row locks meaningful: it reads the
+// schedule's in-flight deployments FOR UPDATE and cancels them, so the locks
+// must be held until the cancellations commit together with the
+// cancelled_schedules row.
+//
+// No messageprocessing.Dedup is required — the cancelled_schedules insert is
+// INSERT … ON CONFLICT DO NOTHING and a redelivery finds the schedule's
+// deployments already terminal, so it cancels nothing.
 func NewScheduleCancelledBinding(
 	uowFactory func() uow.UnitOfWork,
 	handler *handlers.ScheduleCancelledHandler,
@@ -33,6 +37,19 @@ func NewScheduleCancelledBinding(
 			return fmt.Errorf("%w: %v", pkgevents.ErrPermanent, err)
 		}
 		u := uowFactory()
+		if err := u.Begin(ctx); err != nil {
+			return fmt.Errorf("begin uow: %w", err)
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				if rbErr := u.Rollback(); rbErr != nil {
+					logger.Error("schedule.cancelled: rollback failed",
+						"message_id", msg.ID, "error", rbErr)
+				}
+			}
+		}()
+
 		if err := handler.Handle(ctx, u, evt, uuid.Nil); err != nil {
 			if errors.Is(err, pkgevents.ErrPermanent) {
 				logger.Error("schedule.cancelled: permanent handler error",
@@ -43,6 +60,10 @@ func NewScheduleCancelledBinding(
 			}
 			return err
 		}
+		if err := u.Commit(); err != nil {
+			return fmt.Errorf("commit tx: %w", err)
+		}
+		committed = true
 		return nil
 	}
 }

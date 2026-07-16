@@ -12,14 +12,30 @@ import (
 )
 
 // stubDeploymentsRepo captures Add and Save calls for assertion without a real
-// DB. byID serves GetByID lookups the same-row retry path performs.
+// DB. byID serves GetByID lookups the same-row retry path performs, and
+// bySchedule serves the schedule-scoped lookup the cancellation path performs.
 type stubDeploymentsRepo struct {
 	// Embeds the port so operations this test never exercises need no stub.
 	repository.DeploymentRepository
-	mu    sync.Mutex
-	added []*model.Deployment
-	saved []*model.Deployment
-	byID  map[uuid.UUID]*model.Deployment
+	mu         sync.Mutex
+	added      []*model.Deployment
+	saved      []*model.Deployment
+	byID       map[uuid.UUID]*model.Deployment
+	bySchedule map[uuid.UUID][]*model.Deployment
+}
+
+// GetNonTerminalByScheduleForUpdate returns the schedule's seeded deployments
+// that have not settled, mirroring the adapter's status filter.
+func (r *stubDeploymentsRepo) GetNonTerminalByScheduleForUpdate(_ context.Context, scheduleID uuid.UUID) ([]*model.Deployment, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*model.Deployment
+	for _, d := range r.bySchedule[scheduleID] {
+		if !d.IsTerminal() {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 
 func (r *stubDeploymentsRepo) Add(_ context.Context, d *model.Deployment) error {

@@ -522,8 +522,13 @@ func (d *Deployment) ReleaseID() string { return d.validationCmd.ReleaseID }
 
 // NodeID is meaningful only when Mode() == ModeValidation, ModeSeedBuild,
 // or ModeCompile; for production deployments it returns "".
-func (d *Deployment) NodeID() string           { return d.validationCmd.NodeID }
-func (d *Deployment) Status() Status           { return d.status }
+func (d *Deployment) NodeID() string { return d.validationCmd.NodeID }
+func (d *Deployment) Status() Status { return d.status }
+
+// IsTerminal reports whether this Deployment has settled and admits no further
+// lifecycle transition.
+func (d *Deployment) IsTerminal() bool { return d.status.terminal() }
+
 func (d *Deployment) RetryCount() int          { return d.retryCount }
 func (d *Deployment) MaxRetries() int          { return d.maxRetries }
 func (d *Deployment) NextAttemptAt() time.Time { return d.nextAttemptAt }

@@ -228,6 +228,52 @@ func (r *deploymentsRepository) GetByID(ctx context.Context, id uuid.UUID) (*mod
 	return dep, nil
 }
 
+// GetByIDForUpdate returns one Deployment locked FOR UPDATE, or sql.ErrNoRows
+// when it does not exist. The lock is held until the caller's transaction ends,
+// so a concurrent transition of the same row waits rather than interleaving.
+func (r *deploymentsRepository) GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*model.Deployment, error) {
+	const query = `
+		SELECT` + selectColumns + `
+		FROM executor_deployments
+		WHERE id = $1
+		FOR UPDATE`
+	dep, err := r.getOne(ctx, query, id)
+	if err != nil {
+		return nil, fmt.Errorf("get deployment %s for update: %w", id, err)
+	}
+	if dep == nil {
+		return nil, sql.ErrNoRows
+	}
+	return dep, nil
+}
+
+// nonTerminalStatuses lists the statuses a deployment can still transition out
+// of. A row in any of them may hold an execution slot.
+const nonTerminalStatuses = `('pending','blocked','dispatching','deployed','leased','running','retry_pending')`
+
+// GetNonTerminalByScheduleForUpdate returns every not-yet-terminal deployment of
+// scheduleID, locked FOR UPDATE. Plain FOR UPDATE (no SKIP LOCKED) is
+// deliberate: the caller has to reach every row, so a row another transaction
+// holds is waited for and read at its committed state instead of being skipped
+// and left holding its execution slot.
+func (r *deploymentsRepository) GetNonTerminalByScheduleForUpdate(ctx context.Context, scheduleID uuid.UUID) ([]*model.Deployment, error) {
+	const query = `
+		SELECT` + selectColumns + `
+		FROM executor_deployments
+		WHERE schedule_id = $1 AND status IN ` + nonTerminalStatuses + `
+		ORDER BY created_at ASC
+		FOR UPDATE`
+	var rows []*deploymentRow
+	if err := r.exec.SelectContext(ctx, &rows, query, scheduleID); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("get non-terminal deployments of schedule %s: %w", scheduleID, err)
+	}
+	out := make([]*model.Deployment, len(rows))
+	for i, row := range rows {
+		out[i] = r.toAggregate(row)
+	}
+	return out, nil
+}
+
 // getOne runs a query expected to yield at most one row and reconstitutes it,
 // returning (nil, nil) when it matched nothing.
 func (r *deploymentsRepository) getOne(ctx context.Context, query string, args ...interface{}) (*model.Deployment, error) {
@@ -479,15 +525,18 @@ func (r *deploymentsRepository) GetExpiredLeaseForUpdate(ctx context.Context, no
 	return dep, nil
 }
 
-// GetStaleDispatchingForUpdate returns one deployment that has held a
+// GetStaleDispatchingForUpdate returns one Jobs-mode deployment that has held a
 // 'dispatching' reservation since before the given instant, locked FOR UPDATE
 // SKIP LOCKED, or nil when none is stale. It recovers the window between
-// creating a Kubernetes Job and committing the transition.
+// creating a Kubernetes Job and committing the transition. Worker-mode rows are
+// excluded: recovery re-drives the row through the Jobs dispatcher, which would
+// give a pool-destined task a Kubernetes Job of its own and run it twice.
 func (r *deploymentsRepository) GetStaleDispatchingForUpdate(ctx context.Context, before time.Time) (*model.Deployment, error) {
 	const query = `
 		SELECT` + selectColumns + `
 		FROM executor_deployments
 		WHERE status = 'dispatching' AND slot_reserved_at < $1
+		  AND execution_mode = 'jobs'
 		ORDER BY slot_reserved_at ASC
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`
@@ -599,8 +648,7 @@ func (r *deploymentsRepository) CancelSchedule(ctx context.Context, scheduleID u
 		        WHEN slot_reserved_at IS NOT NULL AND slot_released_at IS NULL THEN $2
 		        ELSE slot_released_at
 		    END
-		WHERE schedule_id = $1
-		  AND status IN ('pending','blocked','dispatching','deployed','leased','running','retry_pending')
+		WHERE schedule_id = $1 AND status IN ` + nonTerminalStatuses + `
 		RETURNING id, lease_id, lease_pod_name, lease_pod_uid`
 	type cancelledRow struct {
 		ID      uuid.UUID  `db:"id"`

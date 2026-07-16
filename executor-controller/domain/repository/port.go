@@ -27,6 +27,18 @@ type DeploymentRepository interface {
 	Save(ctx context.Context, d *model.Deployment) error
 	// GetByID returns one Deployment, or sql.ErrNoRows when it does not exist.
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Deployment, error)
+	// GetByIDForUpdate returns one Deployment locked FOR UPDATE, or
+	// sql.ErrNoRows when it does not exist. Callers that transition a row they
+	// read in an earlier transaction re-read it through this method, so a
+	// transition another transaction committed in between is seen rather than
+	// overwritten. Must be called inside the transaction that saves the row.
+	GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*model.Deployment, error)
+	// GetNonTerminalByScheduleForUpdate returns every Deployment of scheduleID
+	// that still admits a transition, locked FOR UPDATE. It waits for a row a
+	// concurrent transaction holds instead of skipping it: the caller drives the
+	// schedule's rows terminal, and a row left behind would hold its execution
+	// slot forever. Must be called inside the transaction that transitions them.
+	GetNonTerminalByScheduleForUpdate(ctx context.Context, scheduleID uuid.UUID) ([]*model.Deployment, error)
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
 	// sql.ErrNoRows when none exists. mode scopes the lookup so the validation
 	// and seed-build legs of one release (which share release_id) never read each
