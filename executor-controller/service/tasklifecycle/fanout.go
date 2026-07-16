@@ -62,6 +62,12 @@ func (Fanout) DispatchRejected(
 
 // create writes one outbox row for dep, keyed on the task aggregate so a task's
 // announcements publish in the order they were written.
+//
+// A row that recovered only a partial identity can carry a task_id that is not a
+// UUID (an unparseable or empty job_params task_id). Such a row still owes the
+// system its terminal announcements, so an unparseable task_id degrades the
+// aggregate key to uuid.Nil rather than failing the write: refusing to write
+// would leave the caller unable to settle the row.
 func create(
 	ctx context.Context,
 	repo outbox.Repository,
@@ -73,10 +79,7 @@ func create(
 	if err != nil {
 		return fmt.Errorf("marshal %s payload: %w", eventType, err)
 	}
-	aggregateID, err := uuid.Parse(dep.Command().TaskID)
-	if err != nil {
-		return fmt.Errorf("invalid task_id %q on deployment %s: %w", dep.Command().TaskID, dep.ID(), err)
-	}
+	aggregateID, _ := uuid.Parse(dep.Command().TaskID)
 	return repo.Create(ctx, &outbox.Entry{
 		MessageProcessingID: dep.MessageProcessingID(),
 		AggregateType:       "task",

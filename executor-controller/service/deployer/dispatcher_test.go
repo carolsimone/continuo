@@ -91,6 +91,65 @@ func outboxCountByType(t *testing.T, db *sqlx.DB, eventType string) int {
 	return n
 }
 
+// seedUndeployableJob inserts a pending row whose job_params carry an empty
+// task_id. IsDeployable() is false for such a row, and its task_id is not a
+// parseable UUID, so it exercises the degraded-identity dispatch path.
+func seedUndeployableJob(t *testing.T, db *sqlx.DB) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	payload, err := json.Marshal(command.DeployTask{
+		TaskID: "", ScheduleID: uuid.New().String(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskRetryCount: 0, TaskMaxRetries: 2,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		 VALUES ($1, $2, $3, $4, 3, 0, NOW() - interval '1 minute')`,
+		id, uuid.New(), uuid.New(), payload)
+	require.NoError(t, err)
+	return id
+}
+
+// TestDispatcher_UndeployableRowSettlesAndAnnounces pins that a row the executor
+// cannot run is marked failed and persisted in the same batch that discovers it.
+// An undeployable row's task_id is not necessarily a UUID; if that degraded
+// identity aborted the dispatch, the row would never leave 'pending' and would be
+// re-dispatched on every tick forever, with its FAILED pair never written.
+func TestDispatcher_UndeployableRowSettlesAndAnnounces(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	id := seedUndeployableJob(t, db)
+	fk := &fakeDeployer{}
+
+	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
+
+	assert.Equal(t, 0, fk.deployCalls, "an undeployable row is never handed to the deployer")
+	var status string
+	var msg *string
+	require.NoError(t, db.QueryRow(
+		`SELECT status, error_message FROM executor_deployments WHERE id=$1`, id).Scan(&status, &msg))
+	assert.Equal(t, "failed", status, "the undeployable row is settled, not left pending")
+	require.NotNil(t, msg)
+	assert.Contains(t, *msg, "not deployable")
+
+	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
+	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
+	assert.Equal(t, 0, outboxCountByType(t, db, "node_deployed"))
+
+	// The announcements key on uuid.Nil: the row recovered no parseable task
+	// identity, and a missing key must not cost the system its terminal events.
+	var aggID uuid.UUID
+	require.NoError(t, db.QueryRow(
+		`SELECT aggregate_id FROM executor_outbox WHERE event_type='node_updated'`).Scan(&aggID))
+	assert.Equal(t, uuid.Nil, aggID)
+
+	// A settled row is not due again: the next tick finds nothing to dispatch.
+	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
+	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"), "settled row is not re-dispatched")
+}
+
 func TestDispatcher_SuccessWritesDeployedOnly(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
