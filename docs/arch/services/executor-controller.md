@@ -169,7 +169,7 @@ Alongside the argv templates, the port exposes the resolved compile leg (`Compil
 
 ```
 1. CountActiveJobs — label selector app=dbt-job, .status.active > 0
-   headroom = max(0, MAX_CONCURRENT_JOBS - active)
+   headroom = max(0, MAX_CONCURRENT_EXECUTIONS - active)
    if headroom == 0: return (pending rows stay pending until next tick)
 
 2. GetDueJobs(headroom) — rows WHERE status='pending' AND next_attempt_at <= NOW()
@@ -222,7 +222,7 @@ On XADD failure:
 | Loop | Description |
 |---|---|
 | Redis consumers | Reads `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.completed:v1`, `seed.build.requested:v1`, `seed.build.node.completed:v1`, `compile.requested:v1`, and `compile.node.completed:v1` via `pkg/redis.StreamConsumer`; crash-recovery for pending messages on startup |
-| Deploy dispatcher (`deployer.Dispatcher`) | Polls `executor_deployments` every 5 seconds; creates K8s Jobs and writes outbox announcement rows, capped by `MAX_CONCURRENT_JOBS` |
+| Deploy dispatcher (`deployer.Dispatcher`) | Polls `executor_deployments` every 5 seconds; creates K8s Jobs and writes outbox announcement rows, capped by `MAX_CONCURRENT_EXECUTIONS` |
 | Outbox processor (`pkg/outbox.Processor`) | Polls `executor_outbox` every 5 seconds; processes up to 100 entries per batch via `OutboxPublisher` (uniform marshal-and-XADD) |
 
 ## Reliability Patterns
@@ -230,7 +230,7 @@ On XADD failure:
 - **Inbound dedup**: `message_processing` keyed on `(message_id, stream_name)` prevents double-processing of duplicate Redis messages; managed by `pkg/messageprocessing.Dedup`
 - **Decoupled command queue**: inbound handlers write only a `pending` row to `executor_deployments` (a pure Postgres write, no Kubernetes I/O); the K8s deploy happens asynchronously in the dispatcher, keeping the Unit-of-Work transaction free of external side effects
 - **Explicit transaction boundary**: each inbound message runs dedup + deployment row insert inside a single Unit-of-Work transaction; the dedup row and deployment intent are committed atomically
-- **Concurrency cap**: `deployer.Dispatcher` counts live K8s Jobs (`app=dbt-job`, `.status.active > 0`) on every tick and processes at most `max(0, MAX_CONCURRENT_JOBS - active)` rows; rows beyond the cap stay `pending` until the next tick
+- **Concurrency cap**: `deployer.Dispatcher` counts live K8s Jobs (`app=dbt-job`, `.status.active > 0`) on every tick and processes at most `max(0, MAX_CONCURRENT_EXECUTIONS - active)` rows; rows beyond the cap stay `pending` until the next tick
 - **K8s idempotency**: `CreateQueryJob` treats already-exists as success; a dispatcher restart or crash after K8s success but before commit will re-attempt safely
 - **Dispatcher backoff**: transient K8s failures reschedule the row via `next_attempt_at` with exponential backoff (base 5s, cap 2 min); the row stays `pending` and is retried on the next tick when due
 - **Terminal failure propagation**: on `ErrPermanent` or retry-budget exhaustion, the dispatcher writes `task_status_updated` FAILED + `node_updated` FAILED as ordinary `executor_outbox` rows before marking the deployment `failed` — ensuring orchestrator and state always learn of the terminal outcome

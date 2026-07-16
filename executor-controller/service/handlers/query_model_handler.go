@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
+	"github.com/carolsimone/continuo/executor-controller/service/routing"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/google/uuid"
 )
@@ -17,12 +18,14 @@ import (
 // same snapshot as the dedup row that the binding inserts immediately
 // before the handler runs.
 type QueryModelHandler struct {
+	policy routing.Policy
 	logger *slog.Logger
 }
 
-// NewQueryModelHandler constructs the handler.
-func NewQueryModelHandler(logger *slog.Logger) *QueryModelHandler {
-	return &QueryModelHandler{logger: logger}
+// NewQueryModelHandler constructs the handler. policy decides whether each
+// record gets its own Kubernetes Job or waits to be claimed by a worker pool.
+func NewQueryModelHandler(policy routing.Policy, logger *slog.Logger) *QueryModelHandler {
+	return &QueryModelHandler{policy: policy, logger: logger}
 }
 
 // Handle orchestrates a single query.model:v1 message. The handler is
@@ -46,5 +49,5 @@ func (h *QueryModelHandler) Handle(
 			"schedule_id", evt.ScheduleID, "task_id", evt.TaskID)
 		return nil
 	}
-	return createDeployment(ctx, u, evt, msgProcID, 0, 0)
+	return createDeployment(ctx, u, h.policy, h.logger, evt, msgProcID, 0, 0)
 }

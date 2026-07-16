@@ -7,6 +7,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestExecutionMode_Valid pins that only the two known paths are accepted. The
+// empty mode is not one of them: every Deployment is created on a definite path.
+func TestExecutionMode_Valid(t *testing.T) {
+	assert.True(t, model.ExecutionModeJobs.Valid())
+	assert.True(t, model.ExecutionModeWorkers.Valid())
+	assert.False(t, model.ExecutionMode("").Valid())
+	assert.False(t, model.ExecutionMode("lambdas").Valid())
+}
+
 func TestExecutionPath_Valid(t *testing.T) {
 	assert.True(t, model.ExecutionPathNative.Valid())
 	assert.True(t, model.ExecutionPathWrapperRequired.Valid())

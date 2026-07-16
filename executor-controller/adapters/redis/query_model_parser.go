@@ -48,19 +48,35 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 	if err != nil {
 		return events.QueryModel{}, fmt.Errorf("invalid operation: %w", err)
 	}
+	// The dbt identity and the runtime manifest pin are absent on messages
+	// produced before nodes carried them, and on nodes whose release published
+	// none. Absent is valid and yields the zero reference; a reference that is
+	// present but partial or malformed is rejected, because a consumer needs all
+	// four fields to fetch, verify and reuse the artifact.
+	ref := pkg_model.RuntimeManifestRef{
+		RuntimeManifestURI:                stringField(msg.Values, "runtime_manifest_uri"),
+		RuntimeManifestSHA256:             stringField(msg.Values, "runtime_manifest_sha256"),
+		RuntimeManifestDBTVersion:         stringField(msg.Values, "runtime_manifest_dbt_version"),
+		RuntimeManifestParseContextSHA256: stringField(msg.Values, "runtime_manifest_parse_context_sha256"),
+	}
+	if err := ref.Validate(); err != nil {
+		return events.QueryModel{}, fmt.Errorf("invalid runtime manifest reference: %w", err)
+	}
 	return events.QueryModel{
-		OutboxEntryID: outboxEntryID,
-		TaskID:        taskID,
-		ScheduleID:    scheduleID,
-		ScheduleName:  stringField(msg.Values, "schedule_name"),
-		ServiceName:   stringField(msg.Values, "service_name"),
-		SchemaName:    stringField(msg.Values, "schema_name"),
-		TableName:     stringField(msg.Values, "table_name"),
-		JobName:       stringField(msg.Values, "job_name"),
-		NodeType:      nodeType,
-		ImageTag:      stringField(msg.Values, "image_tag"),
-		Operation:     operation,
-		Mode:          stringField(msg.Values, "mode"),
+		OutboxEntryID:      outboxEntryID,
+		TaskID:             taskID,
+		ScheduleID:         scheduleID,
+		ScheduleName:       stringField(msg.Values, "schedule_name"),
+		ServiceName:        stringField(msg.Values, "service_name"),
+		SchemaName:         stringField(msg.Values, "schema_name"),
+		TableName:          stringField(msg.Values, "table_name"),
+		JobName:            stringField(msg.Values, "job_name"),
+		NodeType:           nodeType,
+		ImageTag:           stringField(msg.Values, "image_tag"),
+		Operation:          operation,
+		Mode:               stringField(msg.Values, "mode"),
+		DBTUniqueID:        stringField(msg.Values, "dbt_unique_id"),
+		RuntimeManifestRef: ref,
 	}, nil
 }
 

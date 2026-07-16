@@ -187,7 +187,7 @@ services:
     env:
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
-      MAX_CONCURRENT_JOBS: "50"
+      MAX_CONCURRENT_EXECUTIONS: "50"
       # Pull policy for validation Jobs AND the compile leg's s3-sidecar upload
       # container (both use validationImagePullPolicy). Both images are SHA-pinned
       # to the release imageTag (VALIDATION_IMAGE / S3_SIDECAR_IMAGE), so Always is

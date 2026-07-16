@@ -118,3 +118,104 @@ func TestParseQueryModel_InvalidOperationIsPermanentError(t *testing.T) {
 	}})
 	require.Error(t, err)
 }
+
+// runtimeManifestFields is a complete, well-formed pin as it travels on the wire.
+func runtimeManifestFields() map[string]interface{} {
+	return map[string]interface{}{
+		"runtime_manifest_uri":                  "s3://artifacts/finance/partial_parse.msgpack",
+		"runtime_manifest_sha256":               "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+		"runtime_manifest_dbt_version":          "1.12.0b1",
+		"runtime_manifest_parse_context_sha256": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+	}
+}
+
+func queryModelMsg(extra map[string]interface{}) goredis.XMessage {
+	values := map[string]interface{}{
+		"task_id":     uuid.New().String(),
+		"schedule_id": uuid.New().String(),
+		"node_type":   "dbt-model",
+	}
+	for k, v := range extra {
+		values[k] = v
+	}
+	return goredis.XMessage{ID: "1-0", Values: values}
+}
+
+func TestParseQueryModel_RuntimeManifestPinParses(t *testing.T) {
+	fields := runtimeManifestFields()
+	fields["dbt_unique_id"] = "model.finance.orders"
+
+	evt, err := ParseQueryModel(queryModelMsg(fields))
+	require.NoError(t, err)
+	assert.Equal(t, "model.finance.orders", evt.DBTUniqueID)
+	assert.Equal(t, fields["runtime_manifest_uri"], evt.RuntimeManifestURI)
+	assert.Equal(t, fields["runtime_manifest_sha256"], evt.RuntimeManifestSHA256)
+	assert.Equal(t, fields["runtime_manifest_dbt_version"], evt.RuntimeManifestDBTVersion)
+	assert.Equal(t, fields["runtime_manifest_parse_context_sha256"], evt.RuntimeManifestParseContextSHA256)
+	assert.True(t, evt.Complete())
+}
+
+// TestParseQueryModel_HistoricalMessageCarriesNoPin pins backward compatibility:
+// a message produced before nodes carried their dbt identity parses cleanly and
+// yields the zero reference, which routes it to the Kubernetes Job path.
+func TestParseQueryModel_HistoricalMessageCarriesNoPin(t *testing.T) {
+	evt, err := ParseQueryModel(queryModelMsg(nil))
+	require.NoError(t, err)
+	assert.Empty(t, evt.DBTUniqueID)
+	assert.Equal(t, pkg_model.RuntimeManifestRef{}, evt.RuntimeManifestRef)
+	assert.NoError(t, evt.Validate())
+}
+
+// TestParseQueryModel_PartialRuntimeManifestIsPermanentError pins the
+// all-or-none contract: a half-filled pin cannot be fetched, verified or
+// reused, so it is rejected rather than carried as an unusable reference.
+func TestParseQueryModel_PartialRuntimeManifestIsPermanentError(t *testing.T) {
+	for _, dropped := range []string{
+		"runtime_manifest_uri",
+		"runtime_manifest_sha256",
+		"runtime_manifest_dbt_version",
+		"runtime_manifest_parse_context_sha256",
+	} {
+		t.Run("without_"+dropped, func(t *testing.T) {
+			fields := runtimeManifestFields()
+			delete(fields, dropped)
+			fields["dbt_unique_id"] = "model.finance.orders"
+
+			_, err := ParseQueryModel(queryModelMsg(fields))
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestParseQueryModel_MalformedRuntimeManifestIsPermanentError(t *testing.T) {
+	cases := map[string]map[string]interface{}{
+		"non_s3_uri":       {"runtime_manifest_uri": "https://artifacts/partial_parse.msgpack"},
+		"truncated_digest": {"runtime_manifest_sha256": "abc123"},
+		"uppercase_digest": {"runtime_manifest_parse_context_sha256": "0F1E2D3C4B5A69788796A5B4C3D2E1F00F1E2D3C4B5A69788796A5B4C3D2E1F0"},
+	}
+	for name, overrides := range cases {
+		t.Run(name, func(t *testing.T) {
+			fields := runtimeManifestFields()
+			for k, v := range overrides {
+				fields[k] = v
+			}
+			fields["dbt_unique_id"] = "model.finance.orders"
+
+			_, err := ParseQueryModel(queryModelMsg(fields))
+			require.Error(t, err)
+		})
+	}
+}
+
+// TestParseQueryModel_DBTUniqueIDWithoutAPinParses pins that the two carriers
+// are independent on the wire: a node can be migrated (it has a dbt identity)
+// while its release published no runtime manifest. Routing, not parsing, decides
+// whether that combination can run.
+func TestParseQueryModel_DBTUniqueIDWithoutAPinParses(t *testing.T) {
+	evt, err := ParseQueryModel(queryModelMsg(map[string]interface{}{
+		"dbt_unique_id": "model.finance.orders",
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, "model.finance.orders", evt.DBTUniqueID)
+	assert.False(t, evt.Complete())
+}

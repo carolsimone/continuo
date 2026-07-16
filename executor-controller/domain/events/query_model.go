@@ -33,4 +33,12 @@ type QueryModel struct {
 	// jobs. The executor stamps it as a k8s Job label so k8s-controller can
 	// suppress the production lifecycle events for modes that have no real run.
 	Mode string
+	// DBTUniqueID is the node's dbt identity (e.g. "model.finance.orders"). It
+	// is the single node a worker invokes. Empty on messages produced before
+	// nodes carried it; such a node runs down the per-node Job path.
+	DBTUniqueID string
+	// RuntimeManifestRef names the prebuilt artifact this node executes against.
+	// Zero when the node's release published none, which likewise keeps the node
+	// on the Job path.
+	pkg_model.RuntimeManifestRef
 }

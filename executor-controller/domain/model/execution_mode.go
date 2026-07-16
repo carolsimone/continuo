@@ -10,6 +10,17 @@ const (
 	ExecutionModeWorkers ExecutionMode = "workers"
 )
 
+// Valid reports whether m is one of the paths the executor_deployments
+// execution_mode CHECK constraint accepts. Unlike ExecutionPath, the empty mode
+// is invalid: every Deployment is created on a definite path.
+func (m ExecutionMode) Valid() bool {
+	switch m {
+	case ExecutionModeJobs, ExecutionModeWorkers:
+		return true
+	}
+	return false
+}
+
 // ExecutionPath is how a worker invokes dbt for a claimed task. Native runs dbt
 // in-process against a hydrated manifest; the wrapper paths shell out to a
 // team-supplied entrypoint, either with a command this executor pinned

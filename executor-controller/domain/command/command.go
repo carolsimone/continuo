@@ -2,7 +2,10 @@
 // to perform work, distinct from the events that announce work has happened.
 package command
 
-import "github.com/carolsimone/continuo/executor-controller/domain/deploy"
+import (
+	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+)
 
 // Command is a marker interface for all commands.
 type Command interface {
@@ -33,6 +36,18 @@ type DeployTask struct {
 	// jobs. Persisted in job_params and forwarded to the k8s JobSpec so the
 	// k8s adapter can stamp the mode label on the Job.
 	Mode string `json:"mode,omitempty"`
+	// DBTUniqueID is the one dbt node this task invokes (e.g.
+	// "model.finance.orders"). A worker selects exactly it — it never derives SQL
+	// or reconstructs a materialization. Empty on tasks from before nodes carried
+	// their dbt identity, which run down the per-node Job path.
+	DBTUniqueID string `json:"dbt_unique_id,omitempty"`
+	// RuntimeManifestRef names the prebuilt artifact this task executes against.
+	// Zero on the Job path, which parses the project itself.
+	pkg_model.RuntimeManifestRef
+	// ExecutorDeploymentID names this task's own deployment row, so a retry can
+	// point back at it and re-attempt in place rather than enqueueing a second
+	// row. Empty on the Job path, which retries by enqueueing.
+	ExecutorDeploymentID string `json:"executor_deployment_id,omitempty"`
 }
 
 func (DeployTask) isCommand() {}
@@ -47,20 +62,20 @@ func (DeployTask) isCommand() {}
 // dispatch of this node. It is persisted in job_params and read back by the
 // dispatcher to evaluate whether all upstreams have completed successfully.
 type ValidationDeployTask struct {
-	ReleaseID        string   `json:"release_id"`
-	NodeID           string   `json:"node_id"`
-	ServiceName      string   `json:"service_name"`
-	SchemaName       string   `json:"schema_name"`
-	TableName        string   `json:"table_name"`
-	NodeType         string   `json:"node_type"`
-	ImageTag         string   `json:"image_tag"`
-	JobName          string   `json:"job_name"`
-	CandidateSchema  string   `json:"candidate_schema"`
-	CandidateSQLURI  string   `json:"candidate_sql_uri"`
-	ValidationOp     string   `json:"validation_op"`
-	ProdSchema       string   `json:"prod_schema"`
-	UpstreamNodeIDs  []string `json:"upstream_node_ids"`
-	ManifestS3URI    string   `json:"manifest_s3_uri"`
+	ReleaseID       string   `json:"release_id"`
+	NodeID          string   `json:"node_id"`
+	ServiceName     string   `json:"service_name"`
+	SchemaName      string   `json:"schema_name"`
+	TableName       string   `json:"table_name"`
+	NodeType        string   `json:"node_type"`
+	ImageTag        string   `json:"image_tag"`
+	JobName         string   `json:"job_name"`
+	CandidateSchema string   `json:"candidate_schema"`
+	CandidateSQLURI string   `json:"candidate_sql_uri"`
+	ValidationOp    string   `json:"validation_op"`
+	ProdSchema      string   `json:"prod_schema"`
+	UpstreamNodeIDs []string `json:"upstream_node_ids"`
+	ManifestS3URI   string   `json:"manifest_s3_uri"`
 }
 
 func (ValidationDeployTask) isCommand() {}

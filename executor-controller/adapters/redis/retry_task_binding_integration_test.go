@@ -13,7 +13,9 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
+	"github.com/carolsimone/continuo/executor-controller/service/routing"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -50,7 +52,7 @@ func buildRetryBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMess
 	uowFactory := func() uow.UnitOfWork {
 		return postgres.NewUnitOfWork(db, logger)
 	}
-	handler := handlers.NewRetryTaskHandler(logger)
+	handler := handlers.NewRetryTaskHandler(routing.NewPolicy(model.ExecutionModeJobs, nil), logger)
 	return executorredis.NewRetryTaskBinding(uowFactory, handler, logger), logger
 }
 

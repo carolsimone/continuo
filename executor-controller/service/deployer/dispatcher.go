@@ -16,9 +16,9 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
+	"github.com/carolsimone/continuo/executor-controller/service/tasklifecycle"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -514,24 +514,16 @@ func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxR
 	return nil
 }
 
+// writeFailedAnnouncements settles a production task whose deploy exhausted its
+// attempt budget. A task that will never run announces the same terminal pair
+// however it got there, so this shares the fanout with the rejection path rather
+// than shaping the two events a second time.
 func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
-	cmd := dep.Command()
-	retryCount, err := num.Int32(cmd.TaskRetryCount, "task_retry_count")
-	if err != nil {
-		return fmt.Errorf("write FAILED task_status announcement: %w", err)
+	reason := ""
+	if msg := dep.ErrorMessage(); msg != nil {
+		reason = *msg
 	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, "task_status_updated", streams.TaskStatusUpdatedV1,
-		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "FAILED", RetryCount: retryCount}); err != nil {
-		return fmt.Errorf("write FAILED task_status announcement: %w", err)
-	}
-	nodeFailed := event.NodeUpdated{
-		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
-		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName, Status: "FAILED",
-	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, "node_updated", streams.NodeUpdatedV1, nodeFailed); err != nil {
-		return fmt.Errorf("write FAILED node_updated announcement: %w", err)
-	}
-	return nil
+	return tasklifecycle.Fanout{}.DispatchRejected(ctx, outboxRepo, dep, reason)
 }
 
 func (d *Dispatcher) createOutbox(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment, eventType, stream string, payload interface{}) error {

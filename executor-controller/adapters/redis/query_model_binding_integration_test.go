@@ -12,7 +12,9 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
+	"github.com/carolsimone/continuo/executor-controller/service/routing"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	executortest "github.com/carolsimone/continuo/executor-controller/test"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -93,7 +95,7 @@ func buildBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) 
 	uowFactory := func() uow.UnitOfWork {
 		return postgres.NewUnitOfWork(db, logger)
 	}
-	handler := handlers.NewQueryModelHandler(logger)
+	handler := handlers.NewQueryModelHandler(routing.NewPolicy(model.ExecutionModeJobs, nil), logger)
 	return executorredis.NewQueryModelBinding(uowFactory, handler, logger), logger
 }
 

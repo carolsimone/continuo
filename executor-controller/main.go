@@ -19,6 +19,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/internal/lifecycle"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
+	"github.com/carolsimone/continuo/executor-controller/service/routing"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -149,8 +150,12 @@ func main() {
 		return postgres.NewUnitOfWork(pgDB, logger)
 	}
 
-	queryHandler := handlers.NewQueryModelHandler(logger)
-	retryHandler := handlers.NewRetryTaskHandler(logger)
+	// executionRouting decides, per production record, whether the record gets
+	// its own Kubernetes Job or waits to be claimed by a worker pool.
+	executionRouting := routing.NewPolicy(cfg.ExecutionMode, cfg.ExecutionModeOverrides)
+
+	queryHandler := handlers.NewQueryModelHandler(executionRouting, logger)
+	retryHandler := handlers.NewRetryTaskHandler(executionRouting, logger)
 	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	validationNodeHandler := handlers.NewValidationNodeCompletedHandler(logger)
@@ -289,7 +294,7 @@ func main() {
 		func(exec pkgoutbox.Executor) repository.ValidationAggregateRepository {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
-		cfg.MaxConcurrentJobs, logger,
+		cfg.MaxConcurrentExecutions, logger,
 		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
 	)
 

@@ -332,6 +332,43 @@ func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason strin
 	return true
 }
 
+// RejectBeforeExecution drives a production Deployment that can never be
+// dispatched straight to a terminal failed state. It is the pre-dispatch
+// counterpart of RegisterFailure, for a defect in the record itself that no
+// retry can fix: the row is enqueued only so the rejection is auditable
+// alongside the work it stands in for, and it is never attempted.
+func (d *Deployment) RejectBeforeExecution(reason string, now time.Time) error {
+	if d.mode != ModeProduction {
+		return fmt.Errorf("RejectBeforeExecution called on non-production deployment %s", d.id)
+	}
+	if d.status != StatusPending {
+		return fmt.Errorf("cannot reject deployment %s from status %q", d.id, d.status)
+	}
+	msg := reason
+	d.errorMessage = &msg
+	d.status = StatusFailed
+	d.releaseSlot(now)
+	return nil
+}
+
+// Requeue returns a worker task parked after a retryable failure to the pending
+// queue so the next claim re-attempts it on the same row, keeping its lease
+// history and attempt counter in one place. taskRetryCount and jobName are the
+// values the state service assigned to this attempt.
+func (d *Deployment) Requeue(taskRetryCount int, jobName string, now time.Time) error {
+	if d.status != StatusRetryPending {
+		return fmt.Errorf("cannot requeue deployment %s from status %q", d.id, d.status)
+	}
+	d.command.TaskRetryCount = taskRetryCount
+	if jobName != "" {
+		d.command.JobName = jobName
+	}
+	d.status = StatusPending
+	d.nextAttemptAt = now
+	d.errorMessage = nil
+	return nil
+}
+
 // RecordOutcome attaches the terminal outcome to a previously dispatched
 // (status=deployed) validation, seed-build, OR compile deployment — all three
 // legs report a per-node terminal status the same way (validation.node.completed:v1 /

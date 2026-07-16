@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
+	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -26,10 +27,21 @@ func ParseRetryTask(msg goredis.XMessage) (events.RetryTask, error) {
 	if err != nil {
 		return events.RetryTask{}, fmt.Errorf("invalid max_retries: %w", err)
 	}
+	// executor_deployment_id points a worker task's retry at the row it
+	// re-attempts. Absent or empty → uuid.Nil, which retries by enqueueing a
+	// fresh deployment; present-but-malformed → permanent error.
+	var deploymentID uuid.UUID
+	if s := stringField(msg.Values, "executor_deployment_id"); s != "" {
+		deploymentID, err = uuid.Parse(s)
+		if err != nil {
+			return events.RetryTask{}, fmt.Errorf("invalid executor_deployment_id: %w", err)
+		}
+	}
 	return events.RetryTask{
-		QueryModel:     base,
-		TaskRetryCount: taskRetryCount,
-		MaxRetries:     maxRetries,
+		QueryModel:           base,
+		TaskRetryCount:       taskRetryCount,
+		MaxRetries:           maxRetries,
+		ExecutorDeploymentID: deploymentID,
 	}, nil
 }
 
