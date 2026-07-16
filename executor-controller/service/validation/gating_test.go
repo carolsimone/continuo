@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,8 +49,16 @@ func (r *chainDepRepo) GetByReleaseNode(_ context.Context, _ string, nodeID stri
 	return r.nodes[nodeID], nil
 }
 func (r *chainDepRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
+	// Mirrors the production query (deployments_repository.go PendingValidationCount):
+	// status in {pending, blocked, deployed} AND outcome not yet recorded. A node
+	// can sit at status=deployed with its outcome already recorded (RecordOutcome
+	// does not itself advance status), so both conditions are required — status
+	// alone over-counts terminal-but-still-"deployed" nodes as pending.
 	count := 0
 	for _, d := range r.nodes {
+		if d.Outcome() != "" {
+			continue
+		}
 		switch d.Status() {
 		case model.StatusPending, model.StatusBlocked, model.StatusDeployed:
 			count++
@@ -255,10 +264,13 @@ func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
 
 	require.NotNil(t, outboxRepo.last, "expected a per-node projection outbox row")
 	assert.Equal(t, validation.EventTypeValidationNodeResult, outboxRepo.last.EventType)
-	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.last.StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.last.StreamName)
+	assert.Equal(t, uuid.NewSHA1(validation.DedupNamespace, []byte("release:rel-1")), outboxRepo.last.AggregateID,
+		"per-node row uses the same shared aggregate_id formula as the terminal row")
 
 	var p map[string]any
 	require.NoError(t, json.Unmarshal(outboxRepo.last.Payload, &p))
+	assert.Equal(t, "node", p["kind"])
 	assert.Equal(t, "rel-1", p["release_id"])
 	assert.Equal(t, "node.a", p["node_id"])
 	assert.Equal(t, "ok", p["status"])
@@ -295,9 +307,12 @@ func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testi
 		if e.EventType != validation.EventTypeValidationNodeResult {
 			continue
 		}
-		assert.Equal(t, streams.ValidationNodeResultV1, e.StreamName)
+		assert.Equal(t, streams.ValidationResultV1, e.StreamName)
+		assert.Equal(t, uuid.NewSHA1(validation.DedupNamespace, []byte("release:rel")), e.AggregateID,
+			"every per-node row shares the release's aggregate_id")
 		var p map[string]any
 		require.NoError(t, json.Unmarshal(e.Payload, &p))
+		assert.Equal(t, "node", p["kind"])
 		perNode[p["node_id"].(string)] = p
 	}
 
@@ -314,4 +329,40 @@ func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testi
 	assert.False(t, hasLog, "skipped node carries no dbt_log_uri")
 	_, hasRR := perNode["a2"]["run_results_uri"]
 	assert.False(t, hasRR, "skipped node carries no run_results_uri")
+}
+
+// (f) The per-node projection rows AND the terminal aggregate row all share one
+// aggregate_id (uuid.NewSHA1(namespace, "release:"+releaseID)). This is the
+// ordering key: the outbox processor runs PerAggregateFIFO, so sharing it makes
+// every per-node row for a release publish before that release's terminal row.
+func TestSettleNodeTerminal_PerNodeAndTerminalShareAggregateID(t *testing.T) {
+	log := &callLog{}
+	a := validationNode(t, "rel-2", "node.a", model.StatusDeployed)
+	require.NoError(t, a.RecordOutcome("ok", "", "", time.Now()))
+	repo := newChainDepRepo(log, a)
+	outboxRepo := &captureOutbox{}
+	agg := &orderedAggRepo{won: true, log: log}
+
+	err := validation.SettleNodeTerminal(
+		context.Background(), repo, outboxRepo, agg,
+		validation.DedupNamespace, "rel-2", "node.a", "ok", time.Now())
+	require.NoError(t, err)
+
+	wantAggID := uuid.NewSHA1(validation.DedupNamespace, []byte("release:rel-2"))
+
+	var nodeRows, completeRows int
+	for _, e := range outboxRepo.all {
+		assert.Equal(t, streams.ValidationResultV1, e.StreamName)
+		assert.Equal(t, wantAggID, e.AggregateID, "row %s shares the release's aggregate_id", e.EventType)
+		var p map[string]any
+		require.NoError(t, json.Unmarshal(e.Payload, &p))
+		switch p["kind"] {
+		case "node":
+			nodeRows++
+		case "complete":
+			completeRows++
+		}
+	}
+	assert.Equal(t, 1, nodeRows, "one per-node row for node.a")
+	assert.Equal(t, 1, completeRows, "one terminal row once nothing pending")
 }

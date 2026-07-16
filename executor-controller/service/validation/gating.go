@@ -40,14 +40,15 @@ func SettleNodeTerminal(
 	}
 	// Emit the live per-node projection for this settled node before the aggregate
 	// gate. It carries only this node's outcome; release-controller upserts it into
-	// the per_node_results read model so the UI count climbs as nodes finish. It is
-	// created before the aggregate row so the outbox publishes it first (best-effort
-	// ordering; release-controller's completeness barrier is the real guarantee).
+	// the per_node_results read model so the UI count climbs as nodes finish. It
+	// shares its aggregate_id with the terminal row emitted below, and the outbox
+	// processor runs PerAggregateFIFO, so every per-node row for this release is
+	// guaranteed to publish before the terminal row that follows it.
 	settled, err := depRepo.GetByReleaseNode(ctx, releaseID, completedNodeID, cfg.mode)
 	if err != nil {
 		return fmt.Errorf("get settled node for projection: %w", err)
 	}
-	if err := emitPerNodeResult(ctx, outboxRepo,
+	if err := emitPerNodeResult(ctx, outboxRepo, cfg.namespace, releaseID,
 		perNodeResultPayload(releaseID, completedNodeID, settled.Outcome(), settled.DBTLogURI(), settled.DBTRunResultsURI())); err != nil {
 		return err
 	}
@@ -57,7 +58,7 @@ func SettleNodeTerminal(
 	// becomes complete: release-controller's completeness barrier resolves and the
 	// release rejects (a skipped node has status != "ok", so it counts as failing).
 	for _, skippedID := range skipped {
-		if err := emitPerNodeResult(ctx, outboxRepo,
+		if err := emitPerNodeResult(ctx, outboxRepo, cfg.namespace, releaseID,
 			perNodeResultPayload(releaseID, skippedID, "skipped", "", "")); err != nil {
 			return err
 		}
@@ -65,20 +66,25 @@ func SettleNodeTerminal(
 	return emitAggregateIfComplete(ctx, depRepo, outboxRepo, aggRepo, cfg, releaseID, now)
 }
 
-// emitPerNodeResult writes one validation.node.result:v1 projection row from an
-// already-built payload. Each row uses a distinct AggregateID so the projection
-// is an idempotent last-write upsert, not a deduped decision.
-func emitPerNodeResult(ctx context.Context, outboxRepo outbox.Repository, payload map[string]any) error {
+// emitPerNodeResult writes one "kind":"node" row to the shared
+// validation.result:v1 stream from an already-built payload. It shares its
+// AggregateID formula with the terminal "kind":"complete" row
+// (uuid.NewSHA1(namespace, "release:"+releaseID)) so both land in the same
+// outbox PerAggregateFIFO lane: every per-node row for a release publishes
+// before that release's terminal row. The projection itself is an idempotent
+// last-write upsert keyed by node_id, not a deduped decision, so sharing the
+// aggregate_id across many per-node rows (and the terminal) is safe.
+func emitPerNodeResult(ctx context.Context, outboxRepo outbox.Repository, namespace uuid.UUID, releaseID string, payload map[string]any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal per-node projection: %w", err)
 	}
 	if err := outboxRepo.Create(ctx, &outbox.Entry{
 		AggregateType: "release",
-		AggregateID:   uuid.New(),
+		AggregateID:   uuid.NewSHA1(namespace, []byte("release:"+releaseID)),
 		EventType:     EventTypeValidationNodeResult,
 		Payload:       body,
-		StreamName:    streams.ValidationNodeResultV1,
+		StreamName:    streams.ValidationResultV1,
 		MaxRetries:    3,
 	}); err != nil {
 		return fmt.Errorf("create per-node projection row: %w", err)

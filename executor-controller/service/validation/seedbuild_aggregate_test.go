@@ -107,7 +107,7 @@ func TestSeedBuildAggregate_ScopedToMode(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, outbox2.last)
-	assert.Equal(t, streams.ValidationCompletedV1, outbox2.last.StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outbox2.last.StreamName)
 	assert.Contains(t, string(outbox2.last.Payload), `"aggregate_status":"failed"`,
 		"validation aggregate must ignore the ok ModeSeedBuild row")
 	assert.NotContains(t, string(outbox2.last.Payload), "seed.a",

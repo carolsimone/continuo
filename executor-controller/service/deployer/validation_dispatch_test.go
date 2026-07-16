@@ -243,8 +243,8 @@ func TestDispatcher_DispatchOne_ValidationMode_OnPermanentFailure_RecordsOutcome
 	// SettleNodeTerminal writes two rows: the per-node projection for this node,
 	// then (since it is also the release's last pending node) the aggregate.
 	require.Len(t, outboxRepo.created, 2, "per-node projection + aggregate validation.completed:v1 row written")
-	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[0].StreamName)
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[1].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
 }
 
 func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGate(t *testing.T) {
@@ -280,8 +280,8 @@ func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGa
 	// And with no other nodes pending, the aggregate fires — alongside the
 	// per-node projection SettleNodeTerminal always writes for the settled node.
 	require.Len(t, outboxRepo.created, 2, "aggregate validation.completed:v1 emitted for the last (failed) node")
-	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[0].StreamName)
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[1].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
 }
 
 func indexOf(s []string, v string) int {
@@ -401,9 +401,9 @@ func TestDispatcher_DispatchValidation_FailAtDispatch_SkipsDescendant_EmitsAggre
 	// on its own — it still needs a projection so the read model is complete), then
 	// (no nodes left pending) the aggregate.
 	require.Len(t, outboxRepo.created, 3, "node_a projection + node_b skip projection + validation.completed aggregate emitted")
-	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[0].StreamName)
-	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[1].StreamName)
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[2].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[2].StreamName)
 
 	var skipProjection map[string]any
 	require.NoError(t, json.Unmarshal(outboxRepo.created[1].Payload, &skipProjection))
@@ -460,7 +460,7 @@ func TestMaybeEmit_EmitsAggregateOk_WhenAllOutcomesOk(t *testing.T) {
 	e := outboxRepo.created[0]
 	assert.Equal(t, "release", e.AggregateType)
 	assert.Equal(t, "validation_completed", e.EventType)
-	assert.Equal(t, streams.ValidationCompletedV1, e.StreamName)
+	assert.Equal(t, streams.ValidationResultV1, e.StreamName)
 
 	// The terminal validation.completed:v1 carries only the decision. Per-node
 	// content (including dbt_log_uri) reaches release-controller through the

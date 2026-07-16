@@ -36,9 +36,10 @@ const EventTypeSeedBuildCompleted = "seed_build_completed"
 const EventTypeCompileCompleted = "compile_completed"
 
 // EventTypeValidationNodeResult is the outbox event_type for the per-node
-// validation projection event validation.node.result:v1, emitted once per node
-// as it settles. It feeds release-controller's live per-node read model only;
-// the promote/reject decision derives from validation.completed:v1.
+// validation projection row ("kind":"node") on the shared validation.result:v1
+// stream, emitted once per node as it settles. It feeds release-controller's
+// live per-node read model only; the promote/reject decision derives from the
+// same stream's terminal "kind":"complete" row.
 const EventTypeValidationNodeResult = "validation_node_result"
 
 // DedupNamespace seeds the deterministic aggregate_id for a release's
@@ -76,7 +77,7 @@ type emitConfig struct {
 }
 
 var validationEmit = emitConfig{
-	streamName: streams.ValidationCompletedV1,
+	streamName: streams.ValidationResultV1,
 	eventType:  EventTypeValidationCompleted,
 	namespace:  DedupNamespace,
 	mode:       model.ModeValidation,
@@ -238,17 +239,20 @@ func emitAggregateIfComplete(
 }
 
 // aggregatePayload builds the leg-specific completion payload. The validation
-// leg carries only the decision ({release_id, aggregate_status,
-// candidate_schema}): the per-node content is projected into release-controller's
-// read model incrementally by validation.node.result:v1, so the terminal event
-// no longer re-carries it. The seed-build leg uses release-controller's
-// HandleSeedBuildResult contract ({release_id, status, per_node,
-// candidate_schema} — it reads only release_id + status, the rest is symmetry).
-// The compile leg shares the seed-build shape: release-controller's
-// HandleCompileResultInput reads release_id + status under the "status" key, so
-// compile MUST emit "status" (not "aggregate_status") — otherwise the consumer
-// decodes Status as "" and treats every compile (even a successful one) as a
-// failure, rejecting the release.
+// leg shares its stream with the per-node projection (both publish to
+// validation.result:v1), so its payload carries "kind":"complete" to
+// distinguish it from a per-node "kind":"node" row; the rest is just the
+// decision ({release_id, aggregate_status, candidate_schema}) — per-node
+// content is projected into release-controller's read model incrementally by
+// the "kind":"node" rows, so the terminal event does not re-carry it. The
+// seed-build leg uses release-controller's HandleSeedBuildResult contract
+// ({release_id, status, per_node, candidate_schema} — it reads only
+// release_id + status, the rest is symmetry) on its own dedicated stream, so it
+// carries no "kind" field. The compile leg shares the seed-build shape:
+// release-controller's HandleCompileResultInput reads release_id + status under
+// the "status" key, so compile MUST emit "status" (not "aggregate_status") —
+// otherwise the consumer decodes Status as "" and treats every compile (even a
+// successful one) as a failure, rejecting the release.
 func aggregatePayload(mode model.Mode, releaseID string, perNode []map[string]any, aggregate, candidateSchema string) map[string]any {
 	if mode == model.ModeSeedBuild || mode == model.ModeCompile {
 		return map[string]any{
@@ -259,16 +263,20 @@ func aggregatePayload(mode model.Mode, releaseID string, perNode []map[string]an
 		}
 	}
 	return map[string]any{
+		"kind":             "complete",
 		"release_id":       releaseID,
 		"aggregate_status": aggregate,
 		"candidate_schema": candidateSchema,
 	}
 }
 
-// perNodeResultPayload builds the validation.node.result:v1 body for one settled
-// node. URIs are omitted when empty (omitempty parity with the aggregate event).
+// perNodeResultPayload builds one settled node's row on the shared
+// validation.result:v1 stream. "kind":"node" distinguishes it from the
+// terminal "kind":"complete" aggregate row the same stream also carries. URIs
+// are omitted when empty (omitempty parity with the aggregate event).
 func perNodeResultPayload(releaseID, nodeID, status, dbtLogURI, runResultsURI string) map[string]any {
 	p := map[string]any{
+		"kind":       "node",
 		"release_id": releaseID,
 		"stage":      string(model.ModeValidation), // == "validation", release-controller's read-model stage label
 		"node_id":    nodeID,

@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -109,6 +110,8 @@ func TestEmitValidationAggregate_IncludesCandidateSchema(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, outboxRepo.last, "expected an outbox entry to be created")
+	require.Equal(t, streams.ValidationResultV1, outboxRepo.last.StreamName)
+	require.Contains(t, string(outboxRepo.last.Payload), `"kind":"complete"`)
 	require.Contains(t, string(outboxRepo.last.Payload), `"candidate_schema":"_candidate_rel"`)
 }
 
@@ -146,7 +149,9 @@ func TestEmitValidationAggregate_CarriesDecisionOnly(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, outboxRepo.last, "expected an outbox entry to be created")
+	require.Equal(t, streams.ValidationResultV1, outboxRepo.last.StreamName)
 	payload := string(outboxRepo.last.Payload)
+	require.Contains(t, payload, `"kind":"complete"`, "terminal row is distinguished from per-node rows on the shared stream")
 	require.Contains(t, payload, `"aggregate_status":"failed"`, "terminal event carries the decision")
 	require.Contains(t, payload, `"candidate_schema":"_candidate_rel"`)
 	require.NotContains(t, payload, "per_node_results", "terminal event must not re-carry per-node content")

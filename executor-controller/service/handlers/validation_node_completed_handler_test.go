@@ -248,8 +248,8 @@ func TestValidationNodeCompletedHandler_RecordsOutcomeAndTriggersAggregate(t *te
 	// SettleNodeTerminal writes two rows: the per-node projection for this node,
 	// then (no siblings pending) the aggregate.
 	require.Len(t, outboxRepo.created, 2, "per-node projection + validation.completed:v1 emitted")
-	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[0].StreamName)
-	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[1].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
 }
 
 func TestValidationNodeCompletedHandler_NoOpAggregateWhileNodesPending(t *testing.T) {
@@ -272,7 +272,7 @@ func TestValidationNodeCompletedHandler_NoOpAggregateWhileNodesPending(t *testin
 	// The per-node projection is still written even though the aggregate does not
 	// fire — it feeds the live per-node read model independently of completeness.
 	require.Len(t, outboxRepo.created, 1, "per-node projection emitted; no aggregate while pending")
-	assert.Equal(t, streams.ValidationNodeResultV1, outboxRepo.created[0].StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
 }
 
 func TestValidationNodeCompletedHandler_UnknownReleaseNodeIsAcked(t *testing.T) {
