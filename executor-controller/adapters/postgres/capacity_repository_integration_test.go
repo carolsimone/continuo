@@ -276,6 +276,27 @@ func TestGetStaleDispatchingForUpdate(t *testing.T) {
 	assert.Equal(t, stale.ID(), got.ID())
 }
 
+// TestGetStaleDispatchingForUpdate_SkipsWorkerRows pins that recovery never
+// picks up a pool-destined row. Recovery re-drives what it returns through the
+// Jobs dispatcher, which would give the task a Kubernetes Job of its own on top
+// of the worker that is meant to run it — the same task executed twice.
+func TestGetStaleDispatchingForUpdate_SkipsWorkerRows(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	now := time.Now().UTC()
+	worker := model.NewWorkerDeployment(validCmd(), uuid.Nil, "pool-a", now.Add(-time.Hour))
+	require.NoError(t, repo.Add(ctx, worker))
+	require.NoError(t, worker.ReserveForDispatch(now.Add(-time.Hour)))
+	require.NoError(t, repo.Save(ctx, worker))
+
+	got, err := repo.GetStaleDispatchingForUpdate(ctx, now.Add(-time.Minute))
+	require.NoError(t, err)
+	assert.Nil(t, got, "a worker-mode row is never re-driven as a Kubernetes Job")
+}
+
 func TestReleaseSlot_IsIdempotentForJobs(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
