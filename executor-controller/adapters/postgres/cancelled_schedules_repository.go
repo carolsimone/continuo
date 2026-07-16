@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
@@ -28,6 +29,18 @@ var _ repository.CancelledSchedulesRepository = (*cancelledSchedulesRepository)(
 // for autocommit, *sqlx.Tx for transaction-scoped work).
 func NewCancelledSchedulesRepository(executor cancelledExecutor) repository.CancelledSchedulesRepository {
 	return &cancelledSchedulesRepository{executor: executor}
+}
+
+// LockSchedule takes the schedule-scoped advisory lock via pg_advisory_xact_lock.
+// hashtext maps the schedule UUID to the integer key the lock takes; a collision
+// only makes two unrelated schedules serialize, which costs latency and nothing
+// else. The lock auto-releases at commit/rollback.
+func (r *cancelledSchedulesRepository) LockSchedule(ctx context.Context, id uuid.UUID) error {
+	if _, err := r.executor.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1))`, id.String()); err != nil {
+		return fmt.Errorf("lock schedule %s: %w", id, err)
+	}
+	return nil
 }
 
 func (r *cancelledSchedulesRepository) Insert(ctx context.Context, id uuid.UUID) error {

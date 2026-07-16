@@ -21,11 +21,20 @@ import (
 type recordingCancelledRepo struct {
 	mu       sync.Mutex
 	inserted []uuid.UUID
+	calls    []string
+}
+
+func (r *recordingCancelledRepo) LockSchedule(_ context.Context, _ uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, "lock")
+	return nil
 }
 
 func (r *recordingCancelledRepo) Insert(_ context.Context, id uuid.UUID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.calls = append(r.calls, "insert")
 	r.inserted = append(r.inserted, id)
 	return nil
 }
@@ -67,6 +76,22 @@ func TestScheduleCancelledHandler_InsertsCancelledRow(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cancelled.inserted, 1)
 	assert.Equal(t, id, cancelled.inserted[0])
+}
+
+// TestScheduleCancelledHandler_LocksTheScheduleBeforeRecordingIt pins the order
+// the handler settles a cancellation in. The lock is what a concurrent enqueue's
+// guard contends on, so taking it after the insert — or not at all — would let an
+// enqueue that has already passed its guard commit a deployment this handler's
+// scan cannot see, stranding that deployment's execution slot.
+func TestScheduleCancelledHandler_LocksTheScheduleBeforeRecordingIt(t *testing.T) {
+	cancelled := &recordingCancelledRepo{}
+	u := newFakeUoW(&stubDeploymentsRepo{}, cancelled)
+
+	h := handlers.NewScheduleCancelledHandler(cancelTestLogger())
+	require.NoError(t, h.Handle(
+		context.Background(), u, events.ScheduleCancelled{ScheduleID: uuid.New()}, uuid.New()))
+
+	assert.Equal(t, []string{"lock", "insert"}, cancelled.calls)
 }
 
 // TestScheduleCancelledHandler_CancelsInFlightDeploymentsAndReleasesSlots pins

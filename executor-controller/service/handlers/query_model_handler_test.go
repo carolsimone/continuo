@@ -21,13 +21,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stubCancelledRepo returns Exists()=true for any ID in ids.
+// stubCancelledRepo returns Exists()=true for any ID in ids, and records the
+// order of its calls so a test can pin that the guard locks the schedule before
+// reading it.
 type stubCancelledRepo struct {
-	ids map[uuid.UUID]bool
+	ids   map[uuid.UUID]bool
+	calls []string
 }
 
+func (r *stubCancelledRepo) LockSchedule(_ context.Context, _ uuid.UUID) error {
+	r.calls = append(r.calls, "lock")
+	return nil
+}
 func (r *stubCancelledRepo) Insert(_ context.Context, _ uuid.UUID) error { return nil }
 func (r *stubCancelledRepo) Exists(_ context.Context, id uuid.UUID) (bool, error) {
+	r.calls = append(r.calls, "exists")
 	return r.ids[id], nil
 }
 func (r *stubCancelledRepo) DeleteExpired(_ context.Context, _ time.Duration) (int64, error) {
@@ -208,6 +216,29 @@ func TestQueryModelHandler_IncompleteRefOnACanaryServiceIsRejected(t *testing.T)
 	}
 	assert.ElementsMatch(t,
 		[]string{streams.TaskStatusUpdatedV1, streams.NodeUpdatedV1}, streamNames)
+}
+
+// TestQueryModelHandler_LocksTheScheduleBeforeReadingTheGuard pins the order the
+// guard runs in. Reading cancelled_schedules without first holding the
+// schedule's lock leaves the read unserialized against a concurrent
+// cancellation, so a schedule cancelled while this handler is mid-transaction
+// would not see the deployment it goes on to enqueue — and that deployment would
+// hold its execution slot with no event left to release it.
+func TestQueryModelHandler_LocksTheScheduleBeforeReadingTheGuard(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cancelled := &stubCancelledRepo{ids: map[uuid.UUID]bool{}}
+	u := newFakeUoW(&stubDeploymentsRepo{}, cancelled)
+
+	evt := events.QueryModel{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), ScheduleName: "daily",
+		ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		JobName: "dbt-public-orders", NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "sha-abc",
+	}
+
+	h := handlers.NewQueryModelHandler(jobsPolicy(), logger)
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+
+	assert.Equal(t, []string{"lock", "exists"}, cancelled.calls)
 }
 
 func TestQueryModelHandler_EnqueuesDeployment(t *testing.T) {

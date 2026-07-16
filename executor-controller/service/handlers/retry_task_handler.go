@@ -38,7 +38,11 @@ func (h *RetryTaskHandler) Handle(
 	evt events.RetryTask,
 	msgProcID uuid.UUID,
 ) error {
-	cancelled, err := u.CancelledSchedulesRepo().Exists(ctx, evt.ScheduleID)
+	cancelledRepo := u.CancelledSchedulesRepo()
+	if err := cancelledRepo.LockSchedule(ctx, evt.ScheduleID); err != nil {
+		return fmt.Errorf("lock schedule: %w", err)
+	}
+	cancelled, err := cancelledRepo.Exists(ctx, evt.ScheduleID)
 	if err != nil {
 		return fmt.Errorf("cancelled-schedule check: %w", err)
 	}

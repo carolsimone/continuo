@@ -12,11 +12,18 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
+	"github.com/carolsimone/continuo/executor-controller/service/routing"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// jobsRoutingPolicy is the shipped default: every record takes the Kubernetes
+// Job path.
+func jobsRoutingPolicy() routing.Policy {
+	return routing.NewPolicy(model.ExecutionModeJobs, nil)
+}
 
 // addDeployedJob inserts a Jobs-mode deployment for scheduleID that holds an
 // execution slot and whose Kubernetes Job is running — the state every in-flight
@@ -92,6 +99,120 @@ func TestScheduleCancelled_ReleasesEveryInFlightJobSlot(t *testing.T) {
 	require.NoError(t, db.QueryRow(
 		`SELECT EXISTS (SELECT 1 FROM cancelled_schedules WHERE schedule_id=$1)`, scheduleID).Scan(&exists))
 	assert.True(t, exists, "the schedule is still recorded so later messages are dropped")
+}
+
+// waitUntilScheduleLockContended blocks until some backend is waiting on an
+// ungranted advisory lock, i.e. a second transaction has genuinely reached the
+// schedule lock and is parked on it. Polling pg_locks observes that state rather
+// than guessing at it with a sleep: when the lock is not taken the wait simply
+// never satisfies and the test fails on the timeout instead of passing by luck.
+func waitUntilScheduleLockContended(t *testing.T, db *sqlx.DB) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting int
+		require.NoError(t, db.QueryRow(
+			`SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted`).Scan(&waiting))
+		if waiting > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no transaction ever blocked on the schedule lock — the enqueue guard " +
+		"does not hold it, so a concurrent cancellation can miss the row it enqueues")
+}
+
+// TestScheduleCancelled_ReachesADeploymentEnqueuedConcurrently drives the exact
+// interleaving that would otherwise strand an execution slot: a query.model
+// enqueue reads the cancelled-schedule guard, and the schedule is cancelled
+// before that enqueue commits.
+//
+// The cancel scan reads executor_deployments while the guard reads
+// cancelled_schedules, so under READ COMMITTED nothing orders them by itself.
+// Left unordered, the enqueued row is invisible to the scan, survives the
+// cancellation, dispatches, and has its terminal absorbed — holding its slot
+// with no event left to release it. The schedule lock is what makes the cancel
+// wait for the enqueue and then see its row.
+func TestScheduleCancelled_ReachesADeploymentEnqueuedConcurrently(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	scheduleID := uuid.New()
+
+	// The enqueue runs its guard and writes its row, but does not commit: the
+	// window this test targets is the one between the guard's read and that
+	// commit.
+	enqueue := postgres.NewUnitOfWork(db, testLogger())
+	require.NoError(t, enqueue.Begin(ctx))
+	evt := events.QueryModel{
+		TaskID: uuid.New(), ScheduleID: scheduleID, ScheduleName: "daily",
+		ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		JobName: "dbt-public-orders", NodeType: "dbt-model", ImageTag: "sha-abc",
+	}
+	require.NoError(t, handlers.NewQueryModelHandler(jobsRoutingPolicy(), testLogger()).
+		Handle(ctx, enqueue, evt, uuid.Nil))
+
+	// The cancellation arrives while the enqueue is still open, and parks on the
+	// schedule lock the guard holds.
+	cancelled := make(chan error, 1)
+	go func() {
+		u := postgres.NewUnitOfWork(db, testLogger())
+		if err := u.Begin(ctx); err != nil {
+			cancelled <- err
+			return
+		}
+		if err := handlers.NewScheduleCancelledHandler(testLogger()).Handle(
+			ctx, u, events.ScheduleCancelled{ScheduleID: scheduleID}, uuid.Nil); err != nil {
+			_ = u.Rollback()
+			cancelled <- err
+			return
+		}
+		cancelled <- u.Commit()
+	}()
+
+	waitUntilScheduleLockContended(t, db)
+	require.NoError(t, enqueue.Commit())
+	require.NoError(t, <-cancelled)
+
+	deps, err := repo.GetNonTerminalByScheduleForUpdate(ctx, scheduleID)
+	require.NoError(t, err)
+	assert.Empty(t, deps, "the concurrently enqueued deployment must not outlive the cancellation")
+
+	count, err := repo.ActiveSlotCount(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, count, "no execution slot is left stranded")
+}
+
+// TestQueryModel_DropsAScheduleCancelledFirst pins the other ordering: once a
+// cancellation has committed, the guard sees it and enqueues nothing.
+func TestQueryModel_DropsAScheduleCancelledFirst(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	scheduleID := uuid.New()
+
+	cancel := postgres.NewUnitOfWork(db, testLogger())
+	require.NoError(t, cancel.Begin(ctx))
+	require.NoError(t, handlers.NewScheduleCancelledHandler(testLogger()).Handle(
+		ctx, cancel, events.ScheduleCancelled{ScheduleID: scheduleID}, uuid.Nil))
+	require.NoError(t, cancel.Commit())
+
+	u := postgres.NewUnitOfWork(db, testLogger())
+	require.NoError(t, u.Begin(ctx))
+	evt := events.QueryModel{
+		TaskID: uuid.New(), ScheduleID: scheduleID, ScheduleName: "daily",
+		ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		JobName: "dbt-public-orders", NodeType: "dbt-model", ImageTag: "sha-abc",
+	}
+	require.NoError(t, handlers.NewQueryModelHandler(jobsRoutingPolicy(), testLogger()).
+		Handle(ctx, u, evt, uuid.Nil))
+	require.NoError(t, u.Commit())
+
+	deps, err := repo.GetNonTerminalByScheduleForUpdate(ctx, scheduleID)
+	require.NoError(t, err)
+	assert.Empty(t, deps, "a cancelled schedule enqueues nothing")
 }
 
 // TestGetNonTerminalByScheduleForUpdate_ExcludesSettledRows pins the lookup's

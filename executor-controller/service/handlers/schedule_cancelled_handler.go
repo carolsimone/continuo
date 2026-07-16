@@ -26,6 +26,14 @@ const cancelReason = "schedule cancelled"
 // absorbed without ever reporting the Job terminal, so no later event would free
 // them. The insert is idempotent (UPSERT semantics) and Cancel only ever runs on
 // rows that are still non-terminal, so a redelivery is a no-op.
+//
+// It takes the schedule's lock before either step, because the scan alone would
+// not reach a deployment being enqueued concurrently: an enqueue whose guard has
+// read 'not cancelled' but has not yet committed its row is invisible here, and
+// that row would survive the cancellation, dispatch, and have its terminal
+// absorbed — holding its execution slot with nothing left to release it. Taking
+// the same lock the enqueue guard holds orders the two, so every deployment of
+// the schedule is either cancelled here or never created.
 type ScheduleCancelledHandler struct {
 	logger *slog.Logger
 }
@@ -44,7 +52,11 @@ func (h *ScheduleCancelledHandler) Handle(
 	evt events.ScheduleCancelled,
 	_ uuid.UUID,
 ) error {
-	if err := u.CancelledSchedulesRepo().Insert(ctx, evt.ScheduleID); err != nil {
+	cancelledRepo := u.CancelledSchedulesRepo()
+	if err := cancelledRepo.LockSchedule(ctx, evt.ScheduleID); err != nil {
+		return fmt.Errorf("lock schedule %s: %w", evt.ScheduleID, err)
+	}
+	if err := cancelledRepo.Insert(ctx, evt.ScheduleID); err != nil {
 		return fmt.Errorf("record cancelled schedule %s: %w", evt.ScheduleID, err)
 	}
 

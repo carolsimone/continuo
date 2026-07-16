@@ -16,7 +16,9 @@ import (
 // the executor_deployments command queue. The cancelled-schedule guard
 // runs through the UoW-bound CancelledSchedulesRepo so it shares the
 // same snapshot as the dedup row that the binding inserts immediately
-// before the handler runs.
+// before the handler runs. The guard holds the schedule's lock for the rest of
+// the transaction, so a concurrent cancellation of the same schedule either sees
+// the row this handler enqueues or is seen by the guard.
 type QueryModelHandler struct {
 	policy routing.Policy
 	logger *slog.Logger
@@ -40,7 +42,11 @@ func (h *QueryModelHandler) Handle(
 	evt events.QueryModel,
 	msgProcID uuid.UUID,
 ) error {
-	cancelled, err := u.CancelledSchedulesRepo().Exists(ctx, evt.ScheduleID)
+	cancelledRepo := u.CancelledSchedulesRepo()
+	if err := cancelledRepo.LockSchedule(ctx, evt.ScheduleID); err != nil {
+		return fmt.Errorf("lock schedule: %w", err)
+	}
+	cancelled, err := cancelledRepo.Exists(ctx, evt.ScheduleID)
 	if err != nil {
 		return fmt.Errorf("cancelled-schedule check: %w", err)
 	}
