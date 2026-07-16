@@ -55,15 +55,6 @@ func (l *Lease) authorizes(leaseID uuid.UUID, tokenSHA256 string) bool {
 	return subtle.ConstantTimeCompare([]byte(l.TokenSHA256), []byte(tokenSHA256)) == 1
 }
 
-// ActiveLease identifies a live worker lease and the pod holding it, so a
-// cancellation or expiry can terminate exactly that pod.
-type ActiveLease struct {
-	DeploymentID uuid.UUID
-	LeaseID      uuid.UUID
-	PodName      string
-	PodUID       string
-}
-
 // PoolDemand is the backlog and in-flight load of one worker pool, used to size
 // the pool's replicas.
 type PoolDemand struct {

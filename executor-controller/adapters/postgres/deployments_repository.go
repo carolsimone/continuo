@@ -635,46 +635,6 @@ func (r *deploymentsRepository) DemotePendingPoolToJobs(ctx context.Context, poo
 	return n, nil
 }
 
-// CancelSchedule marks a schedule's not-yet-terminal deployments cancelled and
-// returns the leases that were active, so the caller can terminate exactly those
-// worker pods. Pending rows are cancelled outright; leased and running rows are
-// reported so their pods are fenced and deleted before the cancellation commits.
-func (r *deploymentsRepository) CancelSchedule(ctx context.Context, scheduleID uuid.UUID, now time.Time) ([]model.ActiveLease, error) {
-	const query = `
-		UPDATE executor_deployments
-		SET status = 'cancelled',
-		    error_message = 'schedule cancelled',
-		    slot_released_at = CASE
-		        WHEN slot_reserved_at IS NOT NULL AND slot_released_at IS NULL THEN $2
-		        ELSE slot_released_at
-		    END
-		WHERE schedule_id = $1 AND status IN ` + nonTerminalStatuses + `
-		RETURNING id, lease_id, lease_pod_name, lease_pod_uid`
-	type cancelledRow struct {
-		ID      uuid.UUID  `db:"id"`
-		LeaseID *uuid.UUID `db:"lease_id"`
-		PodName *string    `db:"lease_pod_name"`
-		PodUID  *string    `db:"lease_pod_uid"`
-	}
-	var rows []*cancelledRow
-	if err := r.exec.SelectContext(ctx, &rows, query, scheduleID, now); err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("cancel schedule %s: %w", scheduleID, err)
-	}
-	var out []model.ActiveLease
-	for _, row := range rows {
-		if row.LeaseID == nil {
-			continue
-		}
-		out = append(out, model.ActiveLease{
-			DeploymentID: row.ID,
-			LeaseID:      *row.LeaseID,
-			PodName:      derefStr(row.PodName),
-			PodUID:       derefStr(row.PodUID),
-		})
-	}
-	return out, nil
-}
-
 // leaseRow is the nullable column set a Lease maps onto. A deployment with no
 // lease writes NULL to every lease column. The attempt column is written from
 // the Deployment's own counter, which outlives any single lease.

@@ -438,48 +438,6 @@ func TestDemotePendingPoolToJobs(t *testing.T) {
 	assert.Equal(t, "pool-b", untouched.PoolKey())
 }
 
-func TestCancelSchedule_ReportsActiveLeasesAndReleasesSlots(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-	ctx := context.Background()
-	repo := postgres.NewDeploymentsRepository(db, testLogger())
-
-	now := time.Now().UTC()
-	cmd := validCmd()
-	scheduleID := uuid.MustParse(cmd.ScheduleID)
-
-	leased := model.NewWorkerDeployment(cmd, uuid.Nil, "pool-a", now)
-	require.NoError(t, repo.Add(ctx, leased))
-	leaseID := uuid.New()
-	require.NoError(t, leased.Claim(leaseID, tokenSHA("t"), "w", "pod-x", "uid-x",
-		now, now.Add(time.Minute), []string{"dbt", "run"}, model.ExecutionPathNative))
-	require.NoError(t, repo.Save(ctx, leased))
-
-	pendingCmd := cmd
-	pendingCmd.TaskID = uuid.New().String()
-	pending := model.NewWorkerDeployment(pendingCmd, uuid.Nil, "pool-a", now)
-	require.NoError(t, repo.Add(ctx, pending))
-
-	leases, err := repo.CancelSchedule(ctx, scheduleID, now)
-	require.NoError(t, err)
-
-	require.Len(t, leases, 1, "only the leased row names a pod to terminate")
-	assert.Equal(t, leased.ID(), leases[0].DeploymentID)
-	assert.Equal(t, leaseID, leases[0].LeaseID)
-	assert.Equal(t, "pod-x", leases[0].PodName)
-	assert.Equal(t, "uid-x", leases[0].PodUID)
-
-	for _, id := range []uuid.UUID{leased.ID(), pending.ID()} {
-		got, err := repo.GetByID(ctx, id)
-		require.NoError(t, err)
-		assert.Equal(t, model.StatusCancelled, got.Status())
-	}
-
-	count, err := repo.ActiveSlotCount(ctx)
-	require.NoError(t, err)
-	assert.Zero(t, count, "cancelling releases the leased row's slot")
-}
-
 func TestListPoolDemand(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()

@@ -38,6 +38,18 @@ type DeploymentRepository interface {
 	// concurrent transaction holds instead of skipping it: the caller drives the
 	// schedule's rows terminal, and a row left behind would hold its execution
 	// slot forever. Must be called inside the transaction that transitions them.
+	//
+	// The lookup does not filter execution_mode, so it returns worker-mode rows
+	// in 'leased' and 'running' alongside Jobs-mode rows. Cancelling those rows
+	// through Deployment.Cancel releases their execution slots but does not fence
+	// the pod holding the lease: the pod is not told to stop and its writes are
+	// not rejected. Reporting the leases that were active is a read, satisfied by
+	// a lease-reporting query over these same rows and their lease columns; the
+	// cancellation itself stays on Cancel, so slot release remains inside the
+	// aggregate transition. Enabling the worker execution path and fencing those
+	// pods are therefore one change, not two: a worker pool serving cancellable
+	// schedules without that query cancels leased work while its pod keeps
+	// running.
 	GetNonTerminalByScheduleForUpdate(ctx context.Context, scheduleID uuid.UUID) ([]*model.Deployment, error)
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
 	// sql.ErrNoRows when none exists. mode scopes the lookup so the validation
@@ -97,10 +109,6 @@ type DeploymentRepository interface {
 	// retryable failure keeps its backoff and serves it out on the Jobs path.
 	// Leased and running work is never converted.
 	DemotePendingPoolToJobs(ctx context.Context, poolKey string, now time.Time) (int64, error)
-	// CancelSchedule marks a schedule's not-yet-terminal Deployments cancelled
-	// and returns the leases that were active, so the caller can terminate
-	// exactly those worker pods.
-	CancelSchedule(ctx context.Context, scheduleID uuid.UUID, now time.Time) ([]model.ActiveLease, error)
 }
 
 // ValidationAggregateRepository guards single emission of a per-release leg
