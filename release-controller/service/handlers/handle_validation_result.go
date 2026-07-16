@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -103,6 +104,31 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	return handleValidationOK(ctx, d, u, r, in, now)
 }
 
+// runtimeManifestForService returns the runtime manifest reference shared by
+// every node of serviceName in topo. All of a service's nodes are parsed from
+// one project into one artifact, so they must agree; a disagreement means the
+// topology was assembled from two different parses and there is no single
+// artifact to pin. A service with no nodes, or whose nodes pin nothing, yields
+// the zero reference.
+func runtimeManifestForService(topo release.Topology, serviceName string) (pkgmodel.RuntimeManifestRef, error) {
+	var ref pkgmodel.RuntimeManifestRef
+	var found bool
+	for _, n := range topo {
+		if n.ServiceName != serviceName {
+			continue
+		}
+		if !found {
+			ref, found = n.RuntimeManifestRef, true
+			continue
+		}
+		if n.RuntimeManifestRef != ref {
+			return pkgmodel.RuntimeManifestRef{}, fmt.Errorf(
+				"nodes disagree on the runtime manifest (node %q differs)", n.UniqueID)
+		}
+	}
+	return ref, nil
+}
+
 // promoteToProduction applies the promotion effects shared by the
 // validation-passed path and the nothing-to-validate short-circuit: it points
 // current_prod at this release's candidate topology, upserts the changed
@@ -133,13 +159,21 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	}
 
 	// Upsert the changed service's production pointer so future releases can
-	// assemble this service's manifest key at their AdvanceQueue step.
+	// assemble this service's manifest key at their AdvanceQueue step, and so its
+	// runtime manifest stays pinned while other services are released. Only this
+	// service's pointer is touched: every other service keeps the artifact its
+	// own release pinned.
 	changed := r.ChangedService()
-	sp := release.NewServiceProd(
+	changedRef, err := runtimeManifestForService(promotedTopo, changed)
+	if err != nil {
+		return fmt.Errorf("resolve runtime manifest for service %q: %w", changed, err)
+	}
+	sp := release.NewServiceProdWithRuntime(
 		changed,
 		releaseID,
 		CanonicalManifestKey(d.Bucket, changed, releaseID),
 		r.ImageTags()[changed],
+		changedRef,
 		now,
 	)
 	if err := u.ServiceProdRepo().Upsert(ctx, sp); err != nil {
@@ -153,35 +187,49 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		return fmt.Errorf("save release: %w", err)
 	}
 
+	// promotedNodeWire is the published shape of a promoted node: release.Node's
+	// durable fields plus Changed, which exists only on the wire. The runtime
+	// manifest fields are spelled out flat so the published contract is readable
+	// in one place.
 	type promotedNodeWire struct {
-		UniqueID          string   `json:"unique_id"`
-		SchemaName        string   `json:"schema_name"`
-		TableName         string   `json:"table_name"`
-		ServiceName       string   `json:"service_name"`
-		NodeType          string   `json:"node_type"`
-		ContentHash       string   `json:"content_hash"`
-		TestCount         int      `json:"test_count"`
-		ImageTag          string   `json:"image_tag"`
-		UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
-		Schedule          string   `json:"schedule"`
-		Changed           bool     `json:"changed"`
-		OriginalFilePath  string   `json:"original_file_path"`
+		UniqueID                          string   `json:"unique_id"`
+		DBTUniqueID                       string   `json:"dbt_unique_id,omitempty"`
+		SchemaName                        string   `json:"schema_name"`
+		TableName                         string   `json:"table_name"`
+		ServiceName                       string   `json:"service_name"`
+		NodeType                          string   `json:"node_type"`
+		ContentHash                       string   `json:"content_hash"`
+		TestCount                         int      `json:"test_count"`
+		ImageTag                          string   `json:"image_tag"`
+		UpstreamUniqueIDs                 []string `json:"upstream_unique_ids"`
+		Schedule                          string   `json:"schedule"`
+		Changed                           bool     `json:"changed"`
+		OriginalFilePath                  string   `json:"original_file_path"`
+		RuntimeManifestURI                string   `json:"runtime_manifest_uri,omitempty"`
+		RuntimeManifestSHA256             string   `json:"runtime_manifest_sha256,omitempty"`
+		RuntimeManifestDBTVersion         string   `json:"runtime_manifest_dbt_version,omitempty"`
+		RuntimeManifestParseContextSHA256 string   `json:"runtime_manifest_parse_context_sha256,omitempty"`
 	}
 	wireTopo := make([]promotedNodeWire, len(promotedTopo))
 	for i, n := range promotedTopo {
 		wireTopo[i] = promotedNodeWire{
-			UniqueID:          n.UniqueID,
-			SchemaName:        n.SchemaName,
-			TableName:         n.TableName,
-			ServiceName:       n.ServiceName,
-			NodeType:          n.NodeType,
-			ContentHash:       n.ContentHash,
-			TestCount:         n.TestCount,
-			ImageTag:          n.ImageTag,
-			UpstreamUniqueIDs: n.UpstreamUniqueIDs,
-			Schedule:          n.Schedule,
-			Changed:           changedSet[n.UniqueID],
-			OriginalFilePath:  n.OriginalFilePath,
+			UniqueID:                          n.UniqueID,
+			DBTUniqueID:                       n.DBTUniqueID,
+			SchemaName:                        n.SchemaName,
+			TableName:                         n.TableName,
+			ServiceName:                       n.ServiceName,
+			NodeType:                          n.NodeType,
+			ContentHash:                       n.ContentHash,
+			TestCount:                         n.TestCount,
+			ImageTag:                          n.ImageTag,
+			UpstreamUniqueIDs:                 n.UpstreamUniqueIDs,
+			Schedule:                          n.Schedule,
+			Changed:                           changedSet[n.UniqueID],
+			OriginalFilePath:                  n.OriginalFilePath,
+			RuntimeManifestURI:                n.RuntimeManifestURI,
+			RuntimeManifestSHA256:             n.RuntimeManifestSHA256,
+			RuntimeManifestDBTVersion:         n.RuntimeManifestDBTVersion,
+			RuntimeManifestParseContextSHA256: n.RuntimeManifestParseContextSHA256,
 		}
 	}
 	payload, err := json.Marshal(map[string]any{

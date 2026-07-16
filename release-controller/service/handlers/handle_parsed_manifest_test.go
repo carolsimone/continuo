@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -82,6 +83,39 @@ func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string
 		Status:    "ok",
 	}))
 	return deps, store
+}
+
+// TestHandleParsedManifest_InvalidRuntimeManifest_RejectsRelease verifies that
+// a parse result whose runtime manifest references cannot be attached rejects
+// the release rather than failing the handler. Redelivering the same result
+// would fail identically, so returning an error would retry forever and block
+// the queue behind a candidate that can never proceed.
+func TestHandleParsedManifest_InvalidRuntimeManifest_RejectsRelease(t *testing.T) {
+	deps, store := seedToParsing(t, "rBad", map[string]string{"svc-a": "sha-a"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rBad",
+		Status:    "ok",
+		Topology:  release.Topology{{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}}},
+		// Only the URI is set: a partial reference names an artifact that cannot
+		// be verified.
+		RuntimeManifests: map[string]pkgmodel.RuntimeManifestRef{
+			"svc-a": {RuntimeManifestURI: "s3://continuo/svc-a/rBad/manifest.msgpack"},
+		},
+	}))
+
+	r, err := store.GetRelease("rBad")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusRejected, r.Status())
+
+	entries := outboxEntries(store)
+	last := entries[len(entries)-1]
+	assert.Equal(t, streams.ReleaseRejectedV1, last.StreamName)
+
+	var p map[string]string
+	require.NoError(t, json.Unmarshal(last.Payload, &p))
+	assert.Equal(t, "invalid_runtime_manifest", p["reason"])
+	assert.Contains(t, p["error_detail"], "svc-a")
 }
 
 func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {

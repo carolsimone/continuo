@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -62,19 +64,36 @@ func TestIntegration_HappyPath(t *testing.T) {
 	srv.Routes().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
-	// 2. Verify release is Parsing (AdvanceQueue ran on POST)
+	// 2. Verify release is Compiling (AdvanceQueue ran on POST and dispatched the
+	// compile leg, which runs before the manifest is parsed).
 	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusCompiling, r.Status())
+
+	// 3. Simulate the compile leg completing (Compiling → Parsing).
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+	}))
+	r, err = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusParsing, r.Status())
 
-	// 3. Simulate manifest-controller reply
+	// 4. Simulate manifest-controller reply
+	runtime := pkgmodel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo/service-1/rA/manifest.msgpack",
+		RuntimeManifestSHA256:             strings.Repeat("a", 64),
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: strings.Repeat("b", 64),
+	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
 		Topology: release.Topology{
-			{UniqueID: "a", ServiceName: "service-1"},
-			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
+			{UniqueID: "a", DBTUniqueID: "model.service_1.a", ServiceName: "service-1"},
+			{UniqueID: "b", DBTUniqueID: "model.service_1.b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
 		},
+		RuntimeManifests: map[string]pkgmodel.RuntimeManifestRef{"service-1": runtime},
 	}))
 	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	assert.Equal(t, release.StatusValidating, r.Status())
@@ -103,13 +122,22 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cp))
 	assert.Equal(t, "rA", cp["current_prod_release_id"])
 
-	// 6. service_prod must be upserted for service-1.
+	// 6. service_prod must be upserted for service-1, pinned to the runtime
+	// manifest the parse reported, so later releases of other services resolve
+	// service-1 against this exact artifact.
 	var spCount int
 	require.NoError(t, db.Get(&spCount, `SELECT count(*) FROM service_prod WHERE service_name = 'service-1'`))
 	assert.Equal(t, 1, spCount, "service_prod must have a row for the promoted service")
 
-	// 7. Outbox has 3 entries (release.requested + validation.requested + release.promoted)
+	sp, err := deps.NewUoW().ServiceProdRepo().Get(context.Background(), "service-1")
+	require.NoError(t, err)
+	require.NotNil(t, sp)
+	assert.Equal(t, runtime, sp.RuntimeManifest(),
+		"the promoted service's pointer must persist the runtime manifest through the database")
+
+	// 7. Outbox has one entry per dispatched leg: compile.requested +
+	// release.requested + validation.requested + release.promoted.
 	var count int
 	require.NoError(t, db.Get(&count, `SELECT count(*) FROM release_controller_outbox`))
-	assert.Equal(t, 3, count)
+	assert.Equal(t, 4, count)
 }

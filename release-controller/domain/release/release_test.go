@@ -2,13 +2,82 @@ package release_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// completeRuntimeRef returns a fully-populated runtime manifest reference whose
+// digests are well-formed lowercase SHA-256 hex, so it survives Validate.
+func completeRuntimeRef() pkgmodel.RuntimeManifestRef {
+	return pkgmodel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo/finance/rA/manifest.msgpack",
+		RuntimeManifestSHA256:             "aa" + strings.Repeat("0", 62),
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "bb" + strings.Repeat("0", 62),
+	}
+}
+
+func TestNode_CarriesDBTIdentitySeparateFromGraphIdentity(t *testing.T) {
+	// unique_id is the graph identity (schema.table); dbt_unique_id is dbt's own
+	// key. The two namespaces must serialise as distinct fields.
+	n := release.Node{
+		UniqueID:           "public.orders",
+		DBTUniqueID:        "model.finance.orders",
+		RuntimeManifestRef: completeRuntimeRef(),
+	}
+	raw, err := json.Marshal(n)
+	require.NoError(t, err)
+
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(raw, &wire))
+	assert.Equal(t, "public.orders", wire["unique_id"])
+	assert.Equal(t, "model.finance.orders", wire["dbt_unique_id"])
+	// The embedded reference must flatten onto the node, not nest under a key.
+	assert.Equal(t, "s3://continuo/finance/rA/manifest.msgpack", wire["runtime_manifest_uri"])
+	assert.Equal(t, "1.12.0b1", wire["runtime_manifest_dbt_version"])
+}
+
+func TestNode_OmitsRuntimeManifestFieldsWhenAbsent(t *testing.T) {
+	// A legacy node carries no reference at all; the wire form must not sprout
+	// empty runtime keys that a consumer could mistake for a partial reference.
+	raw, err := json.Marshal(release.Node{UniqueID: "public.orders"})
+	require.NoError(t, err)
+
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(raw, &wire))
+	for _, k := range []string{
+		"dbt_unique_id",
+		"runtime_manifest_uri",
+		"runtime_manifest_sha256",
+		"runtime_manifest_dbt_version",
+		"runtime_manifest_parse_context_sha256",
+	} {
+		assert.NotContains(t, wire, k)
+	}
+}
+
+func TestTopology_WithoutCandidateSQLURI_PreservesRuntimeManifestAndDBTID(t *testing.T) {
+	// Stripping the transient candidate SQL pointer must not strip the node's
+	// pinned runtime manifest or its dbt identity, which are durable facts.
+	topo := release.Topology{{
+		UniqueID:           "public.orders",
+		DBTUniqueID:        "model.finance.orders",
+		CandidateSQLURI:    "s3://continuo/finance/rA/orders.sql",
+		RuntimeManifestRef: completeRuntimeRef(),
+	}}
+	stripped := topo.WithoutCandidateSQLURI()
+
+	require.Len(t, stripped, 1)
+	assert.Empty(t, stripped[0].CandidateSQLURI)
+	assert.Equal(t, "model.finance.orders", stripped[0].DBTUniqueID)
+	assert.Equal(t, completeRuntimeRef(), stripped[0].RuntimeManifestRef)
+}
 
 func TestRelease_NewIsReceived(t *testing.T) {
 	r := release.New("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeef", time.Unix(0, 0))

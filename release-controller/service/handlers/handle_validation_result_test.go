@@ -3,9 +3,11 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -355,6 +357,12 @@ type promotedNodeWire struct {
 	Schedule          string   `json:"schedule"`
 	Changed           bool     `json:"changed"`
 	OriginalFilePath  string   `json:"original_file_path"`
+
+	DBTUniqueID                       string `json:"dbt_unique_id"`
+	RuntimeManifestURI                string `json:"runtime_manifest_uri"`
+	RuntimeManifestSHA256             string `json:"runtime_manifest_sha256"`
+	RuntimeManifestDBTVersion         string `json:"runtime_manifest_dbt_version"`
+	RuntimeManifestParseContextSHA256 string `json:"runtime_manifest_parse_context_sha256"`
 }
 
 // promotedPayload is the JSON shape released into release.promoted:v1.
@@ -364,6 +372,152 @@ type promotedPayload struct {
 	CommitSHA  string             `json:"commit_sha"`
 	PromotedAt time.Time          `json:"promoted_at"`
 	Topology   []promotedNodeWire `json:"topology"`
+}
+
+// runtimeRef builds a complete reference distinguished by seed, so a test can
+// tell one service's artifact from another's.
+func runtimeRef(seed string) pkgmodel.RuntimeManifestRef {
+	return pkgmodel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo/" + seed + "/manifest.msgpack",
+		RuntimeManifestSHA256:             seed + strings.Repeat("0", 64-len(seed)),
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: seed + strings.Repeat("1", 64-len(seed)),
+	}
+}
+
+// TestHandleValidationResult_Promote_UnchangedServiceKeepsItsOwnRuntimeManifest
+// is the carry-forward guarantee. An incremental release changes svc-a only.
+// svc-b's nodes and its service_prod pointer must still name svc-b's original
+// artifact afterwards — never svc-a's. Repointing a stable service at another
+// service's manifest would silently execute it against a project that never
+// described it.
+func TestHandleValidationResult_Promote_UnchangedServiceKeepsItsOwnRuntimeManifest(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	refAOld, refANew, refB := runtimeRef("a1"), runtimeRef("a2"), runtimeRef("bb")
+
+	// svc-b was promoted by an earlier release and pins its own artifact. Its
+	// manifest key is carried into this release untouched, so the parse resolves
+	// that same release directory's descriptor and reports refB again.
+	store.SeedServiceProd(release.NewServiceProdWithRuntime(
+		"svc-b", "r0", "s3://continuo/svc-b/r0/manifest.json", "sha-b", refB, time.Unix(50, 0).UTC()))
+
+	// Prior prod holds both services; a@"h-a-old" is what this release changes.
+	store.SeedCurrentProd(release.RehydrateCurrentProd("r0", release.Topology{
+		{UniqueID: "public.a", ServiceName: "svc-a", ContentHash: "h-a-old",
+			UpstreamUniqueIDs: []string{}, RuntimeManifestRef: refAOld},
+		{UniqueID: "public.b", ServiceName: "svc-b", ContentHash: "h-b",
+			UpstreamUniqueIDs: []string{}, RuntimeManifestRef: refB},
+	}, time.Unix(50, 0).UTC()))
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rB", ImageTag: "sha-a2", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rB", Status: "ok",
+	}))
+
+	// The parse reports a fresh artifact for the changed service and svc-b's
+	// unchanged one, each keyed by its own service.
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rB",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "public.a", DBTUniqueID: "model.svc_a.a", ServiceName: "svc-a",
+				ContentHash: "h-a-new", UpstreamUniqueIDs: []string{}},
+			{UniqueID: "public.b", DBTUniqueID: "model.svc_b.b", ServiceName: "svc-b",
+				ContentHash: "h-b", UpstreamUniqueIDs: []string{}},
+		},
+		RuntimeManifests: map[string]pkgmodel.RuntimeManifestRef{"svc-a": refANew, "svc-b": refB},
+	}))
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rB",
+		PerNodeResults:  []handlers.NodeResult{{NodeID: "public.a", Status: "ok"}},
+		AggregateStatus: "ok",
+	}))
+
+	entries := outboxEntries(store)
+	promotedEntry := entries[len(entries)-1]
+	require.Equal(t, streams.ReleasePromotedV1, promotedEntry.StreamName)
+
+	var p promotedPayload
+	require.NoError(t, json.Unmarshal(promotedEntry.Payload, &p))
+	byID := map[string]promotedNodeWire{}
+	for _, n := range p.Topology {
+		byID[n.UniqueID] = n
+	}
+	require.Len(t, byID, 2)
+
+	// The changed service's nodes carry its new artifact.
+	assert.Equal(t, refANew.RuntimeManifestSHA256, byID["public.a"].RuntimeManifestSHA256)
+	assert.Equal(t, refANew.RuntimeManifestURI, byID["public.a"].RuntimeManifestURI)
+	assert.Equal(t, "model.svc_a.a", byID["public.a"].DBTUniqueID)
+
+	// The unchanged service's node still carries its OWN old artifact.
+	assert.Equal(t, refB.RuntimeManifestSHA256, byID["public.b"].RuntimeManifestSHA256,
+		"svc-b's node must keep svc-b's artifact")
+	assert.NotEqual(t, refANew.RuntimeManifestSHA256, byID["public.b"].RuntimeManifestSHA256,
+		"svc-b's node must never be repointed at svc-a's artifact")
+	assert.Equal(t, refB.RuntimeManifestParseContextSHA256, byID["public.b"].RuntimeManifestParseContextSHA256)
+
+	// Graph identity is untouched by any of this.
+	assert.Equal(t, "public.b", byID["public.b"].UniqueID)
+	assert.Equal(t, "model.svc_b.b", byID["public.b"].DBTUniqueID)
+
+	// The changed service's pointer is re-pinned to its new artifact...
+	spA := store.GetServiceProd("svc-a")
+	require.NotNil(t, spA)
+	assert.Equal(t, refANew, spA.RuntimeManifest())
+	assert.Equal(t, "rB", spA.ReleaseID())
+
+	// ...while the unchanged service's persisted pointer is left exactly as it
+	// was: same release, same key, same artifact.
+	spB := store.GetServiceProd("svc-b")
+	require.NotNil(t, spB)
+	assert.Equal(t, refB, spB.RuntimeManifest(), "svc-b's pointer must keep its own artifact")
+	assert.Equal(t, "r0", spB.ReleaseID(), "svc-b's pointer must still name its own release")
+	assert.Equal(t, "s3://continuo/svc-b/r0/manifest.json", spB.ManifestS3Key())
+}
+
+// TestHandleValidationResult_Promote_LegacyReleaseCarriesNoRuntimeManifest
+// verifies a release whose parse reported no artifacts still promotes: its nodes
+// and its service_prod pointer simply pin nothing, and their Jobs keep parsing
+// the project themselves.
+func TestHandleValidationResult_Promote_LegacyReleaseCarriesNoRuntimeManifest(t *testing.T) {
+	deps, store := seedToValidating(t, "rLegacy")
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rLegacy",
+		PerNodeResults: []handlers.NodeResult{
+			{NodeID: "a", Status: "ok"},
+			{NodeID: "b", Status: "ok"},
+		},
+		AggregateStatus: "ok",
+	}))
+
+	entries := outboxEntries(store)
+	promotedEntry := entries[len(entries)-1]
+	require.Equal(t, streams.ReleasePromotedV1, promotedEntry.StreamName)
+
+	// The published nodes must omit the runtime keys entirely rather than emit
+	// empty ones, which a consumer could read as a partial reference.
+	var raw struct {
+		Topology []map[string]any `json:"topology"`
+	}
+	require.NoError(t, json.Unmarshal(promotedEntry.Payload, &raw))
+	require.NotEmpty(t, raw.Topology)
+	for _, n := range raw.Topology {
+		assert.NotContains(t, n, "runtime_manifest_uri")
+		assert.NotContains(t, n, "runtime_manifest_sha256")
+		assert.NotContains(t, n, "dbt_unique_id")
+	}
+
+	sp := store.GetServiceProd("svc-a")
+	require.NotNil(t, sp)
+	assert.Equal(t, pkgmodel.RuntimeManifestRef{}, sp.RuntimeManifest())
 }
 
 // TestHandleValidationResult_Promote_StampsChangedAndProvenance verifies that a

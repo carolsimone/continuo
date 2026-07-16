@@ -3,6 +3,8 @@ package release
 import (
 	"fmt"
 	"time"
+
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 type Status string
@@ -47,7 +49,13 @@ type NodeValidationResult struct {
 type Topology []Node
 
 type Node struct {
-	UniqueID          string   `json:"unique_id"`
+	// UniqueID is the node's graph identity: the schema-qualified relation
+	// ("public.orders"). It keys every edge, run, and projection in the system.
+	UniqueID string `json:"unique_id"`
+	// DBTUniqueID is dbt's own key for the node ("model.finance.orders"). It is
+	// how a node is selected inside a dbt runtime manifest, and is deliberately
+	// distinct from UniqueID: the two namespaces never coincide.
+	DBTUniqueID       string   `json:"dbt_unique_id,omitempty"`
 	SchemaName        string   `json:"schema_name"`
 	TableName         string   `json:"table_name"`
 	ServiceName       string   `json:"service_name"`
@@ -65,6 +73,12 @@ type Node struct {
 	// in the candidate schema. This is transient validation data and must not be
 	// persisted to current_prod or published in the promoted topology.
 	CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
+	// RuntimeManifestRef pins the node to the pre-built dbt manifest its service
+	// was parsed into, letting a worker hydrate that artifact instead of parsing
+	// the project in every Job. It is embedded so its fields flatten onto the
+	// node's wire form. The zero reference means "no artifact": nodes from a
+	// release made before runtime manifests existed carry none.
+	pkgmodel.RuntimeManifestRef
 }
 
 // WithoutCandidateSQLURI returns a copy of the topology with per-node

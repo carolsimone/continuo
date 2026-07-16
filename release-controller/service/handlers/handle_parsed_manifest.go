@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -19,11 +20,54 @@ import (
 // HandleParsedManifestInput carries the result of the manifest-controller
 // parsing a candidate release. Status must be "ok" or "failed".
 type HandleParsedManifestInput struct {
-	ReleaseID   string           `json:"release_id"`
-	Status      string           `json:"status"` // "ok" or "failed"
-	Topology    release.Topology `json:"topology,omitempty"`
-	ErrorClass  string           `json:"error_class,omitempty"`
-	ErrorDetail string           `json:"error_detail,omitempty"`
+	ReleaseID string           `json:"release_id"`
+	Status    string           `json:"status"` // "ok" or "failed"
+	Topology  release.Topology `json:"topology,omitempty"`
+	// RuntimeManifests maps a service name to the runtime manifest artifact its
+	// nodes should execute against. A service is absent when the parse produced
+	// no artifact for it, in which case its nodes' Jobs parse the dbt project
+	// themselves.
+	RuntimeManifests map[string]pkgmodel.RuntimeManifestRef `json:"runtime_manifests,omitempty"`
+	ErrorClass       string                                 `json:"error_class,omitempty"`
+	ErrorDetail      string                                 `json:"error_detail,omitempty"`
+}
+
+// attachRuntimeManifests returns a copy of topo with each node carrying its own
+// service's runtime manifest reference. A service with no entry in refs keeps
+// the zero reference, so a release whose parse produced no artifact still flows
+// through. Every reference is validated before it is attached, and a reference
+// keyed by a service with no node in the topology is rejected: the parse result
+// and the topology disagree about what this release contains, and silently
+// dropping the key would hide that.
+func attachRuntimeManifests(topo release.Topology, refs map[string]pkgmodel.RuntimeManifestRef) (release.Topology, error) {
+	for svc, ref := range refs {
+		if err := ref.Validate(); err != nil {
+			return nil, fmt.Errorf("runtime manifest for service %q: %w", svc, err)
+		}
+	}
+
+	services := make(map[string]bool, len(topo))
+	for _, n := range topo {
+		services[n.ServiceName] = true
+	}
+	unreferenced := make([]string, 0, len(refs))
+	for svc := range refs {
+		if !services[svc] {
+			unreferenced = append(unreferenced, svc)
+		}
+	}
+	if len(unreferenced) > 0 {
+		sort.Strings(unreferenced)
+		return nil, fmt.Errorf("runtime manifest references services absent from the topology: %s",
+			strings.Join(unreferenced, ", "))
+	}
+
+	out := make(release.Topology, len(topo))
+	for i, n := range topo {
+		n.RuntimeManifestRef = refs[n.ServiceName]
+		out[i] = n
+	}
+	return out, nil
 }
 
 // HandleParsedManifest handles the manifest parse result from manifest-controller.
@@ -99,7 +143,11 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 }
 
 func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
-	topo := joinImageTags(in.Topology, r.ImageTags())
+	pinned, err := attachRuntimeManifests(in.Topology, in.RuntimeManifests)
+	if err != nil {
+		return rejectInvalidRuntimeManifest(ctx, d, u, r, in.ReleaseID, err, now)
+	}
+	topo := joinImageTags(pinned, r.ImageTags())
 
 	// A bootstrap release skips validation entirely: it seeds current_prod and
 	// swaps topology directly. This is the one-time cutover (or a trusted
@@ -428,6 +476,51 @@ func unionSorted(a, b []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// rejectInvalidRuntimeManifest transitions the release to Rejected and emits
+// release.rejected:v1 describing why the parse result's runtime manifest
+// references could not be attached. The reference set is part of the parse
+// result, so a malformed one is a defect in that result and cannot be fixed by
+// redelivering it: rejecting (rather than returning an error) keeps the message
+// from being retried forever and lets the queue advance to the next candidate.
+func rejectInvalidRuntimeManifest(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, cause error, now time.Time) error {
+	if err := r.TransitionToRejected("invalid_runtime_manifest", nil, now); err != nil {
+		return fmt.Errorf("transition to rejected: %w", err)
+	}
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+	payload, err := json.Marshal(map[string]string{
+		"release_id":   releaseID,
+		"reason":       "invalid_runtime_manifest",
+		"error_class":  "invalid_runtime_manifest",
+		"error_detail": cause.Error(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		ID:            uuid.New(),
+		AggregateType: "release-controller",
+		AggregateID:   AggregateIDForRelease(releaseID),
+		EventType:     "release_rejected",
+		Payload:       payload,
+		StreamName:    streams.ReleaseRejectedV1,
+		Status:        "pending",
+		MaxRetries:    3,
+		CreatedAt:     now,
+	}); err != nil {
+		return fmt.Errorf("outbox insert: %w", err)
+	}
+	if err := u.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	// The parse itself succeeded; the release is rejected on the contents of its
+	// result, not on a parse failure.
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
+	d.Telemetry.ReleaseRejected(ctx, releaseID, "invalid_runtime_manifest", nil)
+	return nil
 }
 
 // rejectUnbuildableCrossServiceUpstream transitions the release to Rejected and
