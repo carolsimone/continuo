@@ -213,7 +213,7 @@ A node's execution metadata lives in two places, and the distinction is what kee
 - The `:Table` node carries what the **current** release says: the latest `image_tag`, `dbt_unique_id`, and runtime manifest reference.
 - The `:EXECUTES` edge carries what **this run** executes: the same fields, copied from the `:Table` at `SnapshotGraph` time and never rewritten afterwards.
 
-Every read on a run's execution path resolves from the edge, not from the `:Table`:
+Snapshotting is where the `:Table` is read; once a run is snapshotted, every read on its execution path resolves from the edge:
 
 | Path | Metadata source |
 |---|---|
